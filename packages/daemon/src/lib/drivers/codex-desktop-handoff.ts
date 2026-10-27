@@ -3,6 +3,7 @@ import type { SpawnFn } from '../runtime-spawn/index.ts';
 import { type CodexDesktopIpc, withCodexDesktopIpc } from './codex-desktop-ipc.ts';
 import type { Result, WorkDelivery } from './types.ts';
 import { reject } from './work-operations.ts';
+import { workerSandboxOn } from './worker-sandbox.ts';
 
 const log = new Logger('codex-send');
 
@@ -252,7 +253,11 @@ export async function steerCodexDesktopTurn(
           {
             conversationId: threadId,
             turnStart: {
-              request: { threadId, input: [{ type: 'text', text, text_elements: [] }] },
+              request: {
+                threadId,
+                input: [{ type: 'text', text, text_elements: [] }],
+                ...(!workerSandboxOn(true) ? { sandboxPolicy: { type: 'dangerFullAccess' } } : {}),
+              },
               context: { inheritThreadSettings: true },
             },
           },

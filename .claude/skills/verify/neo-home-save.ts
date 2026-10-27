@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readFile, readlink, rename, rm, symlink, writeFile } from 'node:fs/promises';
 const [port, run, mode = 'normal'] = process.argv.slice(2);
 if (!port || !run || port === '8399') throw new Error('usage: neo-home-save.ts <test-port> <run-dir>');
 const log = await readFile(`${run}/daemon.log`, 'utf8');
@@ -26,10 +26,83 @@ if (mode === 'runtime') {
   }
 }
 const input = { path: 'projects/verify/digest.md', content: '  Curated progress 🦊.\n\n', message: 'Record verified progress' };
+if (mode === 'ownership-before' || mode === 'ownership') {
+  await mkdir(`${root}/evidence`, { recursive: true });
+  await writeFile(`${root}/evidence/run.json`, '{"observed":true}');
+  await mkdir(`${root}/projects/verify`, { recursive: true });
+  await writeFile(`${root}/${input.path}`, input.content);
+  const saved = await rpc(input);
+  await writeFile(`${run}/evidence/neo-home-ownership.json`, JSON.stringify({ mode, saved }, null, 2));
+  if (mode === 'ownership-before') {
+    if (saved.ok || !saved.reason?.includes('dirty')) throw new Error('Expected original dirty refusal');
+    console.log('REPRODUCED: untracked evidence refuses the real save RPC.');
+    process.exit(0);
+  }
+  if (!saved.ok) throw new Error(JSON.stringify(saved));
+  const committed = await git('show', `HEAD:${input.path}`);
+  const evidence = { saved, exactContent: await readFile(`${root}/${input.path}`, 'utf8'), head: await git('rev-parse', 'HEAD'), committed, untracked: await git('status', '--porcelain'), trackedEvidence: await git('ls-files', 'evidence'), original: await readFile(`${root}/evidence/run.json`, 'utf8') };
+  await writeFile(`${run}/evidence/neo-home-ownership.json`, JSON.stringify(evidence, null, 2));
+  if (evidence.exactContent !== input.content || saved.commit !== evidence.head || committed !== input.content.trim() || evidence.trackedEvidence || evidence.original !== '{"observed":true}' || !evidence.untracked.includes('evidence/')) throw new Error('Ownership proof failed');
+  console.log('PASS: real daemon saves and commits exact document bytes with untracked evidence present.');
+  process.exit(0);
+}
 const first = await rpc(input);
 await writeFile(`${run}/evidence/neo-home-save.json`, JSON.stringify({ first }, null, 2));
 if (!first.ok) throw new Error(JSON.stringify(first));
 const head = await git('rev-parse', 'HEAD');
+if (mode === 'ignore-edits') {
+  await writeFile(`${root}/.gitignore`, '# Legacy home\n');
+  await git('commit', '-am', 'Legacy ignores');
+  const remote = `${run}/remote.git`;
+  await git('init', '--bare', remote);
+  await git('remote', 'add', 'origin', remote);
+  const branch = await git('symbolic-ref', '--short', 'HEAD');
+  await git('push', '-u', 'origin', branch);
+  const pending = '# Legacy home\nhuman-draft/\n';
+  await writeFile(`${root}/.gitignore`, pending);
+  await git('add', '.gitignore');
+  await writeFile(`${root}/${input.path}`, 'Progress without adopting ignore edits.');
+  const saved = await rpc({ ...input, content: 'Progress without adopting ignore edits.' });
+  const evidence = { saved, workingIgnore: await readFile(`${root}/.gitignore`, 'utf8'), stagedIgnore: await git('show', ':.gitignore'), publishedIgnore: await git('--git-dir', remote, 'show', `${branch}:.gitignore`), stagedPaths: await git('diff', '--cached', '--name-only'), publishedContent: await git('--git-dir', remote, 'show', `${branch}:${input.path}`) };
+  await writeFile(`${run}/evidence/neo-home-ignore-edits.json`, JSON.stringify(evidence, null, 2));
+  if (!saved.ok || evidence.workingIgnore !== pending || evidence.stagedIgnore !== pending.trim() || evidence.publishedIgnore !== '# Legacy home' || evidence.stagedPaths !== '.gitignore' || evidence.publishedContent !== 'Progress without adopting ignore edits.') throw new Error('Ignore edits were altered or published');
+  const outside = `${run}/human-ignore`;
+  await writeFile(outside, 'Synthetic outside bytes.\n');
+  await rm(`${root}/.gitignore`);
+  await symlink(outside, `${root}/.gitignore`);
+  const linked = await rpc({ ...input, path: 'linked-ignore-check.md' });
+  const outsideBytes = await readFile(outside, 'utf8');
+  await writeFile(`${run}/evidence/neo-home-ignore-link.json`, JSON.stringify({ linked, outsideBytes }, null, 2));
+  if (!linked.ok || outsideBytes !== 'Synthetic outside bytes.\n') throw new Error('Ignore symlink target was modified');
+  const opaque = [];
+  for (const state of ['unreadable', 'dangling']) {
+    const ignore = `${root}/.gitignore`;
+    const missing = `${run}/missing-ignore`;
+    await rm(ignore);
+    if (state === 'dangling') await symlink(missing, ignore);
+    else {
+      await writeFile(ignore, pending);
+      await chmod(ignore, 0);
+    }
+    try {
+      const readError = await readFile(ignore, 'utf8').then(() => null, (error) => error.code);
+      if (readError !== (state === 'dangling' ? 'ENOENT' : 'EACCES')) throw new Error('Opaque ignore fixture is readable');
+      const path = `opaque-${state}.md`;
+      const saved = await rpc({ ...input, path });
+      const entry = state === 'dangling' ? await readlink(ignore) : (await lstat(ignore)).mode & 0o777;
+      const published = await git('--git-dir', remote, 'show', `${branch}:${path}`);
+      const publishedIgnore = await git('--git-dir', remote, 'show', `${branch}:.gitignore`);
+      const stagedIgnore = await git('show', ':.gitignore');
+      opaque.push({ state, readError, saved, entry, published, publishedIgnore, stagedIgnore });
+      await writeFile(`${run}/evidence/neo-home-ignore-opaque.json`, JSON.stringify(opaque, null, 2));
+      if (!saved.ok || published !== input.content.trim() || publishedIgnore !== '# Legacy home' || stagedIgnore !== pending.trim() || entry !== (state === 'dangling' ? missing : 0)) throw new Error('Opaque ignore entry prevented save or was changed');
+    } finally {
+      if (state === 'unreadable') await chmod(ignore, 0o644);
+    }
+  }
+  console.log('PASS: real RPC publishes only requested documents, preserving staged ignore bytes, outside targets and unreadable/dangling entries.');
+  process.exit(0);
+}
 if (mode === 'inherited-filters') {
   const config = `${run}/home/.gitconfig`;
   const original = await readFile(config, 'utf8');
@@ -73,8 +146,7 @@ if (mode === 'inherited-filters') {
   } finally {
     await writeFile(config, original);
   }
-  console.log('PASS: save and read RPC preserve exact bytes without running inherited clean, smudge or process filters.');
-  process.exit(0);
+  console.log('PASS: save and read RPC preserve exact bytes without running inherited clean, smudge or process filters.');  process.exit(0);
 }
 if (mode === 'write-races') {
   const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
@@ -132,11 +204,12 @@ if (mode === 'ignore-repair') {
   await rm(`${root}/.gitignore`);
   await git('commit', '-am', 'Existing home without coordinator ignore');
   const before = await git('rev-parse', 'HEAD');
+  await writeFile(`${root}/direction.md`, 'Pending direction draft.');
   const saved = await rpc({ ...input, content: 'Progress after ignore repair.' });
-  const evidence = { mode, saved, before, after: await git('rev-parse', 'HEAD'), content: await readFile(`${root}/${input.path}`, 'utf8'), transcript: await readFile(`${root}/.coordinators/verify/transcript.md`, 'utf8'), tracked: await git('ls-files', '.coordinators'), status: await git('status', '--porcelain') };
+  const evidence = { mode, saved, committedDirection: await git('show', 'HEAD:direction.md'), directionDraft: await readFile(`${root}/direction.md`, 'utf8'), before, after: await git('rev-parse', 'HEAD'), content: await readFile(`${root}/${input.path}`, 'utf8'), transcript: await readFile(`${root}/.coordinators/verify/transcript.md`, 'utf8'), tracked: await git('ls-files', '.coordinators'), status: await git('status', '--porcelain') };
   await writeFile(`${run}/evidence/neo-home-save.json`, JSON.stringify(evidence, null, 2));
-  if (!saved.ok || evidence.after === before || evidence.content !== 'Progress after ignore repair.' || evidence.transcript !== 'Synthetic private transcript.' || evidence.tracked || evidence.status) throw new Error('Save with ignore repair failed');
-  console.log('PASS: real save RPC repairs the coordinator ignore, preserves private transcripts and commits only curated content.');
+  if (!saved.ok || evidence.after === before || evidence.content !== 'Progress after ignore repair.' || evidence.transcript !== 'Synthetic private transcript.' || evidence.tracked || evidence.committedDirection !== '' || evidence.directionDraft !== 'Pending direction draft.' || evidence.status !== 'M direction.md') throw new Error('Save with ignore repair failed');
+  console.log('PASS: real save RPC repairs the coordinator ignore, preserves private transcripts, leaves the direction draft uncommitted and saves curated content.');
   process.exit(0);
 }
 if (mode === 'unicode') {
@@ -163,10 +236,10 @@ const repeat = await rpc(input);
 const commits = await git('rev-list', '--count', 'HEAD');
 const committedPaths = await git('show', '--format=', '--name-only', 'HEAD');
 const content = await readFile(`${root}/${input.path}`, 'utf8');
-const denied = await rpc({ ...input, path: 'secret.md', content: 'sk-' + 'v'.repeat(32) });
+const denied = await rpc({ ...input, path: 'secret.md', content: '\ud800' });
 const confirmation = await rpc({ ...input, path: 'direction.md' });
 await writeFile(`${root}/human.md`, 'Synthetic human draft.');
-const dirty = await rpc({ ...input, content: 'Must not write.' });
+const dirty = await rpc(input);
 const humanDraft = await readFile(`${root}/human.md`, 'utf8');
 await rm(`${root}/human.md`);
 await git('config', 'user.name', '');
@@ -195,5 +268,5 @@ if (mode === 'runtime') for (const dir of ['.claude', 'worktrees']) {
 }
 const evidence = { runtime, first, repeat, commits, committedPaths, head, content, denied, confirmation, dirty, humanDraft, failure, afterFailure, retry, writeFailure, createFailure, finalHead: await git('rev-parse', 'HEAD'), status: await git('status', '--porcelain'), trackedTranscripts: await git('ls-files', '.coordinators') };
 await writeFile(`${run}/evidence/neo-home-save.json`, JSON.stringify(evidence, null, 2));
-if (!repeat.ok || first.commit !== head || repeat.commit !== head || commits !== '2' || committedPaths !== input.path || content !== input.content || denied.ok || !denied.reason?.includes('content') || confirmation.ok || !confirmation.reason?.includes('confirmation_required') || dirty.ok || !dirty.reason?.includes('dirty') || humanDraft !== 'Synthetic human draft.' || !String(failure.error).includes('Author identity unknown') || afterFailure !== input.content || !retry.ok || !String(writeFailure.error).includes('ENAMETOOLONG') || !String(createFailure.error).includes('EACCES') || evidence.finalHead !== head || evidence.status || evidence.trackedTranscripts) throw new Error('Home save contract failed');
-console.log('PASS: real RPC saves exact bytes in one commit, refuses credentials/confirmation/dirty writes, preserves existing content on failure, and retries cleanly.');
+if (!repeat.ok || first.commit !== head || repeat.commit !== head || commits !== '2' || committedPaths !== input.path || content !== input.content || denied.ok || !denied.reason?.includes('content') || confirmation.ok || !confirmation.reason?.includes('confirmation_required') || !dirty.ok || humanDraft !== 'Synthetic human draft.' || !String(failure.error).includes('Author identity unknown') || afterFailure !== input.content || !retry.ok || !String(writeFailure.error).includes('ENAMETOOLONG') || !String(createFailure.error).includes('EACCES') || evidence.finalHead !== head || evidence.status || evidence.trackedTranscripts) throw new Error('Home save contract failed');
+console.log('PASS: real RPC saves exact bytes in one commit, refuses malformed text/unconfirmed mandates and permits unrelated drafts, preserves existing content on failure, and retries cleanly.');

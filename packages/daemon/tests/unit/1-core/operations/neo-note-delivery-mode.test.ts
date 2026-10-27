@@ -6,6 +6,7 @@ import {
   createOperationRegistry,
   defineOperation,
 } from '../../../../src/lib/operations/registry.ts';
+import { wakeStalledAsks } from '../../../../src/lib/neo/stalled-asks.ts';
 import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import {
   InternalEventBus,
@@ -64,6 +65,62 @@ describe('Neo daemon notes', () => {
       .getJobQueueRepo()
       .listActiveByPayload('mailbox', { 'to.sessionId': rootId, messageUuid: messageId })
       .map((job) => job.payload.deliveryMode);
+
+  test('stalled-ask nudges and todo-done notices are persisted as synthetic inputs', async () => {
+    const now = Date.now();
+    const ask = service.todos.openAsk({
+      id: 'stalled-synthetic',
+      sessionId: rootId,
+      projectId: null,
+      originMessageId: null,
+      title: 'Stalled work',
+      request: 'Complete the work',
+      createdAt: now - 3 * 3_600_000,
+    });
+    await wakeStalledAsks(service.todos, service.deliverForward.bind(service), now);
+    vi.spyOn(service, 'installedPacks').mockReturnValue([
+      {
+        id: 'synthetic-proof',
+        describe: 'Synthetic completion fixture',
+        todos: {
+          schema: () => {},
+          check: async () => ({ done: true, evidence: 'Observed' }),
+          statusLine: () => null,
+        },
+      },
+    ]);
+    service.todos.addTodo(
+      'synthetic-done',
+      ask.id,
+      {
+        title: 'Synthetic task',
+        doneWhen: 'Observed',
+        instruction: null,
+        named: null,
+        check: { pack: 'synthetic-proof', kind: 'observed', params: {} },
+      },
+      now
+    );
+    await service.todoRunner.refresh((message, error) => {
+      throw new Error(message, { cause: error });
+    });
+    const rows = db.getSDKMessages(rootId).messages;
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          uuid: expect.stringMatching(/^neo-stalled-ask:/),
+          inputKind: 'system',
+          isSynthetic: true,
+        }),
+        expect.objectContaining({
+          uuid: expect.stringMatching(/^neo-todo:/),
+          inputKind: 'system',
+          isSynthetic: true,
+          message: expect.objectContaining({ content: expect.stringContaining('is done') }),
+        }),
+      ])
+    );
+  });
 
   test.each(['wakeNeo', 'sendToRef'])('%s keeps structured PR events immediate', async (path) => {
     if (path === 'wakeNeo') await service.wakeNeo('structured-pr', 'PR requires action.');

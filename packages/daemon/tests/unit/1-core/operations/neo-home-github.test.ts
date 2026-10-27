@@ -123,6 +123,75 @@ afterEach(async () => {
 });
 
 describe('Neo private GitHub home proposal', () => {
+  test('publishes through gh without running home hooks and preserves configured push destinations', async () => {
+    const keys = ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'];
+    const previous = new Map(keys.map((key) => [key, process.env[key]]));
+    process.env.GIT_CONFIG_COUNT = '1';
+    process.env.GIT_CONFIG_KEY_0 = 'remote.origin.pushurl';
+    process.env.GIT_CONFIG_VALUE_0 = join(fixture, 'remote.git');
+    try {
+      const stub = join(fixture, 'bin', 'gh');
+      await writeFile(
+        stub,
+        (await readFile(stub, 'utf8')).replace(
+          'git remote add origin "$NEO_GITHUB_FIXTURE/remote.git"',
+          'git remote add origin "$NEO_GITHUB_FIXTURE/missing.git"'
+        )
+      );
+      await git('config', 'core.hooksPath', '.git/hooks');
+      await writeFile(
+        join(root, '.git', 'hooks', 'pre-push'),
+        '#!/bin/sh\nprintf executed > "$NEO_GITHUB_FIXTURE/hook-ran"\n',
+        { mode: 0o755 }
+      );
+      const proposed = await call({ askId: 'ask' });
+      await answer(proposed.questionId);
+      expect(await call({ questionId: proposed.questionId })).toMatchObject({
+        ok: true,
+        status: 'created',
+      });
+      expect(await readFile(join(fixture, 'hook-ran'), 'utf8').catch(() => null)).toBeNull();
+      expect(await git('--git-dir', join(fixture, 'remote.git'), 'rev-parse', 'HEAD')).toBe(
+        await git('rev-parse', 'HEAD')
+      );
+    } finally {
+      for (const [key, value] of previous) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+  test('does not publish credential-like bytes in an existing commit message', async () => {
+    await git('commit', '--allow-empty', '-m', 'Rotate ghp_' + 'synthetic'.repeat(5));
+    const proposed = await call({ askId: 'ask' });
+    await answer(proposed.questionId);
+    const result = await call({ questionId: proposed.questionId });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('content_refused');
+    expect(await log()).not.toContain('repo create');
+  });
+  test('does not publish credentials added only in a merge resolution', async () => {
+    const branch = await git('symbolic-ref', '--short', 'HEAD');
+    await git('switch', '-c', 'side');
+    await writeFile(join(root, 'side.md'), 'Side progress.');
+    await git('add', 'side.md');
+    await git('commit', '-m', 'Side progress');
+    await git('switch', branch);
+    await writeFile(join(root, 'main.md'), 'Main progress.');
+    await git('add', 'main.md');
+    await git('commit', '-m', 'Main progress');
+    await git('merge', '--no-ff', '--no-commit', 'side');
+    await writeFile(join(root, 'fixture.md'), 'TOKEN=' + 'synthetic'.repeat(4));
+    await git('add', 'fixture.md');
+    await git('commit', '-m', 'Merge resolution');
+    const proposed = await call({ askId: 'ask' });
+    await answer(proposed.questionId);
+    const result = await call({ questionId: proposed.questionId });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('content_refused');
+    expect(await log()).not.toContain('repo create');
+  });
+
   test.each(['count', 'parameters'])(
     'preserves inherited %s configuration in gh Git children',
     async (source) => {
@@ -265,15 +334,22 @@ describe('Neo private GitHub home proposal', () => {
     });
     expect((await log()).match(/repo create/g)).toHaveLength(1);
   });
-  test.each(['existing origin', 'dirty file'])('refuses %s before creation', async (state) => {
-    const proposed = await call({ askId: 'ask' });
-    await answer(proposed.questionId);
-    if (state === 'existing origin')
-      await git('remote', 'add', 'origin', join(fixture, 'remote.git'));
-    else await writeFile(join(root, 'human.md'), 'Preserve human draft.');
-    expect(await call({ questionId: proposed.questionId })).toMatchObject({ ok: false });
-    expect(await log()).not.toContain('repo create');
-  });
+  test.each(['existing origin', 'credential history'])(
+    'refuses %s before creation',
+    async (state) => {
+      const proposed = await call({ askId: 'ask' });
+      await answer(proposed.questionId);
+      if (state === 'existing origin')
+        await git('remote', 'add', 'origin', join(fixture, 'remote.git'));
+      else {
+        await writeFile(join(root, 'fixture.md'), 'TOKEN=' + 'synthetic'.repeat(4));
+        await git('add', 'fixture.md');
+        await git('commit', '-m', 'Synthetic local fixture');
+      }
+      expect(await call({ questionId: proposed.questionId })).toMatchObject({ ok: false });
+      expect(await log()).not.toContain('repo create');
+    }
+  );
   test('concurrent proposals show only one question and reject replacement repository fields', async () => {
     const results = await Promise.all([call({ askId: 'ask' }), call({ askId: 'ask' })]);
     expect(results[0]).toEqual(results[1]);

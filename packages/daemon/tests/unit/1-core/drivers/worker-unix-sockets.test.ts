@@ -36,4 +36,7 @@ test('a Codex worker may reach any Unix socket and still binds locally', () => {
   const policy = codexWorkerSandbox(root).config.features.network_proxy;
   expect(policy.dangerously_allow_all_unix_sockets).toBe(true);
   expect(policy.allow_local_binding).toBe(true);
+  const profile = codexWorkerSandbox(root).config.permissions['hyperneo-worker'].network;
+  expect(profile.dangerously_allow_all_unix_sockets).toBe(true);
+  expect(profile.allow_local_binding).toBe(true);
 });

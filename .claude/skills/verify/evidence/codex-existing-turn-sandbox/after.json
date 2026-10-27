@@ -1,0 +1,70 @@
+{
+  "productionChangedLines": 26,
+  "native": {
+    "desktop": {
+      "initialProfile": "old-restricted",
+      "activeProfile": null,
+      "sandboxPolicy": {
+        "type": "danger-full-access"
+      },
+      "loopbackConnected": true,
+      "networkFetch": true,
+      "signedCommit": true,
+      "outsideWritePermitted": true,
+      "cleanup": {
+        "appServerClosed": true,
+        "modelClosed": true,
+        "signingAgentStopped": true
+      }
+    },
+    "queue": {
+      "initialProfile": "old-restricted",
+      "activeProfile": null,
+      "sandboxPolicy": {
+        "type": "danger-full-access"
+      },
+      "loopbackConnected": true,
+      "networkFetch": true,
+      "signedCommit": true,
+      "outsideWritePermitted": true,
+      "cleanup": {
+        "appServerClosed": true,
+        "modelClosed": true,
+        "signingAgentStopped": true
+      }
+    }
+  },
+  "unitAndRepositoryChecks": {
+    "focused": "passed",
+    "repository": "passed"
+  },
+  "daemonRpc": {
+    "settingTransition": "always to off on the same existing thread",
+    "turnSandboxPolicy": {
+      "type": "dangerFullAccess"
+    },
+    "inheritThreadSettings": true,
+    "nativeQueueAndOwnerRoutingChecks": "passed",
+    "wrapperExitCode": 0
+  },
+  "desktopInheritanceSourceChecked": true,
+  "desktopSourceSha256": "fad45aa7d81de6fe166704e8879e3b7cbfc85151e72df7946853336c7cbc5a3c",
+  "desktopInheritanceFinding": "Explicit turn sandboxPolicy clears the inherited named profile and has priority over current/inherited sandbox settings; other thread settings may remain inherited.",
+  "enabledControl": {
+    "profileId": "hyperneo-worker",
+    "secretRefused": true,
+    "repoReadable": true,
+    "outsideRefused": true,
+    "signedCommit": true,
+    "loopbackConnected": true
+  },
+  "redCommits": [
+    "0d7560567033d437ffa79638a5ffd8f595659888",
+    "cff0d252191de0776426bd0a8d5b99a310c7173f"
+  ],
+  "focusedTestsPassed": 213,
+  "unverified": [
+    "Native Desktop GUI and the seven human worker threads",
+    "Deployment of the fix to the live daemon"
+  ]
+}

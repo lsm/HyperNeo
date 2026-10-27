@@ -1,6 +1,14 @@
 import { afterEach, expect, test } from 'bun:test';
 import { vi } from 'vitest';
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, rmSync, type Stats } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  statSync,
+  type Stats,
+} from 'node:fs';
 import { lstat, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -34,6 +42,7 @@ function fixture(target: string, sharedModes = true) {
   mkdirSync(join(root, '.git'));
   dataDir = mkdtempSync(join(tmpdir(), 'worker-data-'));
   vi.stubEnv('HYPERNEO_DATA_DIR', dataDir);
+  vi.stubEnv('HOME', join(dataDir, 'home'));
   Object.defineProperty(process, 'platform', { value: target, configurable: true });
   if (sharedModes) {
     Object.defineProperty(process, 'getuid', {
@@ -87,6 +96,30 @@ test('runtime preparation creates every work location on demand', async () => {
   expect(await readFile(join(env.TMPDIR, 'probe'), 'utf8')).toBe('synthetic');
 });
 
+test('worker gh configuration preserves public settings without copying host credentials', async () => {
+  fixture('darwin', false);
+  const home = join(dataDir, 'synthetic-home');
+  vi.stubEnv('HOME', home);
+  mkdirSync(join(home, '.config/gh'), { recursive: true });
+  await writeFile(join(home, '.config/gh/config.yml'), 'git_protocol: ssh\n');
+  await writeFile(
+    join(home, '.config/gh/hosts.yml'),
+    'github.com:\n  oauth_token: synthetic-only\n'
+  );
+  const env = await prepareWorkerSandbox(root);
+  expect(env.GH_CONFIG_DIR).toBeTruthy();
+  expect(await readFile(join(env.GH_CONFIG_DIR, 'config.yml'), 'utf8')).toBe('git_protocol: ssh\n');
+  expect(existsSync(join(env.GH_CONFIG_DIR, 'hosts.yml'))).toBe(false);
+  await writeFile(join(home, '.config/gh/config.yml'), 'git_protocol: https\n');
+  await prepareWorkerSandbox(root);
+  expect(await readFile(join(env.GH_CONFIG_DIR, 'config.yml'), 'utf8')).toBe(
+    'git_protocol: https\n'
+  );
+  rmSync(join(home, '.config/gh/config.yml'));
+  await prepareWorkerSandbox(root);
+  expect(existsSync(join(env.GH_CONFIG_DIR, 'config.yml'))).toBe(false);
+});
+
 test('runtime preparation tolerates shared work locations with ordinary modes', async () => {
   const data = fixture('darwin', false);
   const shared = join(data, 'worktrees', 'acme', 'demo');
@@ -95,6 +128,21 @@ test('runtime preparation tolerates shared work locations with ordinary modes', 
   const env = (await prepareWorkerSandbox(root)) as Record<string, string>;
   expect(env.HYPERNEO_WORKTREES).toBe(join(data, 'worktrees'));
   expect(env.TMPDIR.startsWith(join(data, 'work', 'scratch'))).toBe(true);
+});
+
+test('repairs existing owned scratch and cache modes without losing their contents', async () => {
+  fixture('darwin', false);
+  const paths = workerSandboxPaths(root);
+  for (const path of [paths.TMPDIR, paths.XDG_CACHE_HOME]) {
+    mkdirSync(path, { recursive: true, mode: 0o755 });
+    chmodSync(path, 0o755);
+    await writeFile(join(path, 'retained'), 'worker bytes');
+  }
+  await prepareWorkerSandbox(root);
+  for (const path of [paths.TMPDIR, paths.XDG_CACHE_HOME]) {
+    expect(statSync(path).mode & 0o777).toBe(0o700);
+    expect(await readFile(join(path, 'retained'), 'utf8')).toBe('worker bytes');
+  }
 });
 
 test('Windows workers accept synthesized NTFS modes under the data root', async () => {
@@ -111,7 +159,8 @@ test('Windows runtime preparation does not reject synthesized group and other bi
   await expect(prepareWorkerSandbox(root)).resolves.toHaveProperty('TMPDIR');
 });
 
-test('POSIX workers still refuse shared directory modes', async () => {
+test('POSIX workers still refuse directories owned by another user', async () => {
   fixture('linux');
+  vi.mocked(lstat).mockResolvedValue({ uid: 502, isDirectory: () => true } as Stats);
   await expect(prepareWorkerSandbox(root)).rejects.toThrow('owned private directories');
 });

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { startSigningAgent } from './signing-agent.ts';
 import { startCodexBootstrapServer } from '../../../packages/daemon/src/lib/drivers/codex-app-server.ts';
 import { queueCodexMessage, type CodexDesktopAdapterDeps } from '../../../packages/daemon/src/lib/drivers/codex-desktop-adapter.ts';
-import { codexWorkerSandbox, prepareWorkerSandbox, releaseWorkerSandbox } from '../../../packages/daemon/src/lib/drivers/worker-sandbox.ts';
+import { codexWorkerSandbox, configureWorkerSandbox, prepareWorkerSandbox, releaseWorkerSandbox } from '../../../packages/daemon/src/lib/drivers/worker-sandbox.ts';
 
 const [codex, runArg] = process.argv.slice(2);
 const run = resolve(runArg);
@@ -23,7 +23,7 @@ assert.equal(git.status, 0, git.stderr);
 await prepareWorkerSandbox(worker);
 const signing = startSigningAgent(run);
 const model = spawn('python3', [fileURLToPath(new URL('./worker-sandbox-model.py', import.meta.url)), run, worker, 'codex-app-server'], {
-  env: { ...process.env, VERIFY_LOOPBACK: '1', ...signing.env }, stdio: ['ignore', 'pipe', 'pipe'],
+  env: { ...process.env, VERIFY_LOOPBACK: '1', VERIFY_SECRET_READ: '1', ...signing.env }, stdio: ['ignore', 'pipe', 'pipe'],
 });
 let modelLog = '';
 model.stdout.on('data', chunk => { modelLog += chunk; });
@@ -45,14 +45,17 @@ try {
   server = await startCodexBootstrapServer(codex);
   const sandbox = codexWorkerSandbox(worker);
   const started = await server.call('thread/start', {
-    cwd: worker, sandbox: sandbox.sandbox, approvalPolicy: 'never', model: 'synthetic',
-    config: { ...sandbox.config, model_provider: 'synthetic',
+    cwd: worker, permissions: sandbox.permissions, approvalPolicy: 'never', model: 'synthetic',
+    config: { ...sandbox.config,
+      permissions: { ...sandbox.config.permissions, 'hyperneo-loopback-restricted': { ...sandbox.config.permissions['hyperneo-worker'], network: { enabled: false } } },
+      model_provider: 'synthetic',
       model_providers: { synthetic: { name: 'Synthetic', base_url: `http://127.0.0.1:${port}/v1`, wire_api: 'responses', requires_openai_auth: false } },
-      features: { shell_snapshot: false },
+      features: { ...sandbox.config.features, shell_snapshot: false },
     },
-  }) as { thread: { id: string; path: string } };
+  }) as { thread: { id: string; path: string }; activePermissionProfile: { id: string } };
+  assert.equal(started.activePermissionProfile?.id, sandbox.permissions);
   const id = started.thread.id;
-  await server.call('thread/settings/update', { threadId: id, sandboxPolicy: { ...sandbox.sandboxPolicy, networkAccess: false } });
+  await server.call('thread/settings/update', { threadId: id, permissions: 'hyperneo-loopback-restricted' });
   const deps = {
     appServer: async () => ({
       call: async (method: string, params: Record<string, unknown>) => {
@@ -64,6 +67,7 @@ try {
     spawn: () => { throw new Error('Unexpected CLI fallback'); },
     desktopRunning: async () => false,
   } as unknown as CodexDesktopAdapterDeps;
+  configureWorkerSandbox(() => 'always');
   const queued = await queueCodexMessage({ thread: { id, folder: worker, title: 'Synthetic worker', archived: 0, updatedAt: 1, rolloutPath: started.thread.path }, roots: [] }, 'Run the synthetic probe.', deps, 'queue');
   assert(queued.ok, JSON.stringify(queued));
   await wait(() => {
@@ -76,16 +80,20 @@ try {
     try { const record = JSON.parse(line); return record.type === 'turn_context' ? [record.payload] : []; } catch { return []; }
   });
   const observed = { calls, localServer: existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : null,
-    networkAccess: contexts.at(-1)?.sandbox_policy?.network_access,
+    profileId: contexts.at(-1)?.active_permission_profile?.id,
+    secretRefused: readFileSync(join(worker, 'secret-read-status-codex-app-server.txt'), 'utf8') !== '0' && readFileSync(join(worker, 'secret-read-result-codex-app-server.txt'), 'utf8') === '',
+    repoReadable: readFileSync(join(worker, 'repo-read-result-codex-app-server.txt'), 'utf8') === 'synthetic-repo-readable',
     outsideRefused: !existsSync(join(run, 'codex-app-server-outside/escaped.txt')),
     signedCommit: existsSync(join(worker, 'signed-codex-app-server.txt')) && readFileSync(join(worker, 'signed-codex-app-server.txt'), 'utf8').trim() === '1',
   };
   writeFileSync(join(run, 'evidence/queued-loopback.json'), JSON.stringify(observed, null, 2));
-  assert.equal(observed.networkAccess, true, 'Queued turn recorded restricted networking');
+  assert.equal(observed.profileId, sandbox.permissions, 'Queued turn lost its named worker profile');
+  assert(observed.secretRefused && observed.repoReadable, 'Secret denial and ordinary repository reads must both hold');
   assert(observed.localServer?.connected, 'Queued worker could not start/connect to a loopback server');
   assert(observed.outsideRefused, 'Worker wrote outside its allowed roots');
   assert(observed.signedCommit, 'Queued worker could not sign a commit through the agent socket');
 } finally {
+  configureWorkerSandbox(() => 'off');
   signing.stop();
   await server?.close();
   writeFileSync(join(run, 'codex-app-server-finish'), 'done');

@@ -11,7 +11,7 @@ import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logg
 import { startCodexDesktopTurn, steerCodexDesktopTurn } from '../../../packages/daemon/src/lib/drivers/codex-desktop-handoff.ts';
 import { spawnProcess } from '../../../packages/daemon/src/lib/runtime-spawn/index.ts';
 import { mock } from 'bun:test';
-import { codexWorkerSandbox } from '../../../packages/daemon/src/lib/drivers/worker-sandbox.ts';
+const sandboxExports = { ...await import('../../../packages/daemon/src/lib/drivers/worker-sandbox.ts') };
 
 const [action, portText, runText] = process.argv.slice(2);
 const port = Number(portText);
@@ -49,7 +49,8 @@ const worker = join(run, 'worker');
 mkdirSync(join(worker, '.git'), { recursive: true });
 let prepared = true;
 mock.module('../../../packages/daemon/src/lib/drivers/worker-sandbox.ts', () => ({
-  resumeWorkerSandbox: async () => prepared ? codexWorkerSandbox(worker) : null,
+  ...sandboxExports,
+  resumeWorkerSandbox: async () => prepared ? sandboxExports.codexWorkerSandbox(worker) : null,
 }));
 const workerDb = new Database(join(home, 'state_5.sqlite'));
 workerDb.prepare('UPDATE threads SET cwd=?').run(worker);
@@ -121,6 +122,10 @@ server.on('connection', (socket) => socket.on('message', (bytes) => {
     socket.close();
     return;
   }
+  if (request.method === 'permissionProfile/list') {
+    socket.send(JSON.stringify({ id: request.id, result: { data: [{ id: 'hyperneo-worker', allowed: true }] } }));
+    return;
+  }
   if (request.method === 'thread/loaded/list') {
     socket.send(JSON.stringify({ id: request.id, result: { data: loaded ? ['synthetic'] : [], nextCursor: null } }));
     return;
@@ -149,6 +154,10 @@ server.on('connection', (socket) => socket.on('message', (bytes) => {
     else socket.close();
     return;
   }
+  if (prepared && ['thread/resume', 'thread/settings/update'].includes(request.method)) {
+    assert.equal(request.params.permissions, 'hyperneo-worker');
+    assert.equal(request.params.sandboxPolicy, undefined);
+  }
   if (request.method === 'thread/resume' && !resumeError) loaded = true;
   if (request.method === 'thread/queue/add') pendingText = request.params.input[0].text;
   const result = request.method === 'thread/resume' ? { thread: { id: 'synthetic', status: { type: 'idle' }, turns: [] } }
@@ -168,6 +177,7 @@ try {
   ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connection failed')); });
   const send = (mode?: string, describe = false, adapters = false, receipt?: { executionId: string; inputId: string }, message = 'synthetic marker') => new Promise<any>((done, fail) => {
+    const workerSandbox = mode === 'sandbox-off' ? 'off' : mode === 'sandbox-always' ? 'always' : undefined;
     const id = crypto.randomUUID();
     const timer = setTimeout(() => fail(new Error('RPC timeout')), 10000);
     const listener = (event: MessageEvent) => {
@@ -177,8 +187,9 @@ try {
       if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data);
     };
     ws!.addEventListener('message', listener);
-    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: receipt ? { name: 'work.status', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, receipt } } : adapters ? { name: 'work.adapters', input: {} } : describe ? { name: 'operations.describe', input: { name: 'work.send' } } : { name: 'work.send', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, message, ...(mode ? { mode } : {}) } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
+    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: workerSandbox ? 'settings.global.update' : 'operation.invoke', data: workerSandbox ? { updates: { workerSandbox } } : receipt ? { name: 'work.status', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, receipt } } : adapters ? { name: 'work.adapters', input: {} } : describe ? { name: 'operations.describe', input: { name: 'work.send' } } : { name: 'work.send', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, message, ...(mode ? { mode } : {}) } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
+  await send('sandbox-always');
   await startCodexDesktopTurn(join(home, 'ipc/ipc.sock'), spawnProcess, 'new-handoff-control', { threadId: 'new-handoff-control', input: [{ type: 'text', text: 'synthetic opening turn', text_elements: [] }] });
   assert(calls.some(call => {
     const request = call as { desktop?: string; params?: { conversationId?: string } };
@@ -233,7 +244,7 @@ try {
     assert.equal(calls.slice(marked).filter(call => (call as { server?: string }).server === 'thread/queue/add').length, 1);
     writeFileSync(rollout, '');
   }
-  for (const step of ['thread/loaded/list', 'thread/resume', 'thread/settings/update']) {
+  for (const step of ['permissionProfile/list', 'thread/loaded/list', 'thread/resume', 'thread/settings/update']) {
     loaded = false; failedStep = step;
     const before = calls.length;
     const failure = await send();
@@ -284,6 +295,11 @@ try {
   const before = calls.length;
   assert.equal((await send('steer')).reason, 'not_delivered');
   assert(!calls.slice(before).some(call => (call as { server?: string }).server === 'thread/queue/add'));
+  await send('sandbox-off');
+  const offStart = calls.length;
+  assert.equal((await send()).value.startedTurnId, 'desktop-started');
+  const nextTurn = calls.slice(offStart).find(call => (call as { desktop?: string }).desktop === 'thread-follower-start-turn') as { params: { turnStart: { request: { sandboxPolicy?: unknown } } } };
+  assert.deepEqual(nextTurn.params.turnStart.request.sandboxPolicy, { type: 'dangerFullAccess' }, 'Current off preference must replace the old Desktop policy for the next turn');
   const opens = readFileSync(openLog, 'utf8').trim().split('\n').map(line => JSON.parse(line));
   assert.equal(opens.length, 2, 'Only new-thread creation and the first ownerless automatic send open Desktop');
   console.log(`${action} PASS: ${run}/evidence/observed.json`);

@@ -19,3 +19,33 @@ commit (`git commit -S`, `gpg.format=ssh`, key `key::<pub>`), serves and fetches
 
 On: `worker-sandbox.ts` and `worker-native-writes.ts` set `workerSandbox: 'always'`
 before `work.start`; their journeys keep the sandbox proofs (outside writes denied).
+
+Existing Codex threads also apply the current `off` preference on their next turn.
+Use `codex-existing-turn-sandbox.md` for native worker networking/signing and the
+synthetic-daemon Codex send journey for a live `always` to `off` settings change.
+Active-turn steering is unchanged; the setting applies when a new turn starts.
+
+## Resume after permissive scratch modes (#9093 slice A)
+
+Run through the shared disposable-home wrapper with an explicitly selected installed CLI:
+
+```bash
+VERIFY_CLAUDE="$(command -v claude)" TMPDIR=/private/tmp \
+  bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
+  .claude/skills/verify/worker-scratch-startup.ts
+```
+
+The helper owns a test daemon on an ephemeral port and seeds only synthetic
+worker policies. Both scratch and cache start at 0755 with retained files. The
+actual SDK option builder must repair enabled policies to 0700, preserve files,
+and leave disabled directories unchanged. Disabled policies normalize required
+SDK fields and location hints, remove generated temp/cache environment values,
+and preserve custom environment values. A third case deletes the scratch/cache
+directories and leaves only sparse disabled settings before the SDK build. The installed
+Claude CLI then uses each resulting policy against a loopback scripted model
+and executes a real Bash write in its worker directory. The native child receives
+the generated SDK environment; this proves startup, not separate temp routing. Disabled policies must
+not recreate missing runtime roots or forward dangling temp/cache paths.
+Evidence is observed.json and all three native shell logs. Desktop UI and retry/backoff
+behavior are outside this slice. The daemon and model subprocesses end before
+wrapper cleanup; no live session, keys or host sandbox settings are used.

@@ -76,8 +76,18 @@ try {
   assert(String((evidence.unrelatedQuestion as { reason: string }).reason).includes('question does not bind'));
   assert.equal(await git(root, 'rev-parse', 'HEAD'), normal.localHead);
   assert.equal(await git(remote, 'rev-parse', 'main'), normal.remoteHead);
+  await writeFile(join(root, normal.path), 'Later local bytes\n');
+  await git(root, 'add', normal.path); await git(root, 'commit', '-m', 'Later local version');
+  await writeFile(join(peer, normal.path), 'Later remote bytes\n');
+  await git(peer, 'add', normal.path); await git(peer, 'commit', '-m', 'Later remote version');
+  await git(peer, 'push', 'origin', 'main');
+  const changedLocal = await git(root, 'rev-parse', 'HEAD'), changedRemote = await git(remote, 'rev-parse', 'main');
+  evidence.changedVersions = { changedLocal, changedRemote };
+  evidence.unseenVersion = await rpc('neo.home.save', { ...input, content: 'Later remote bytes\n' });
+  assert.equal((evidence.unseenVersion as { ok: boolean }).ok, false);
+  assert.equal(await git(root, 'rev-parse', 'HEAD'), changedLocal);
+  assert.equal(await git(remote, 'rev-parse', 'main'), changedRemote);
  }
- if (mode === 'race') await writeFile(join(run, 'network-race'), '');
  const first = await rpc('neo.home.save', input); evidence.normalResult = first;
  if (mode === 'ignored') {
   evidence.privateBytes = await readFile(join(root, 'private-note.txt'), 'utf8');
@@ -88,17 +98,6 @@ try {
    assert.equal(await git(remote, 'rev-parse', 'main'), normal.remoteHead);
   }
   console.log(phase === 'before' ? 'REPRODUCED: merge replaced the ignored human file with remote bytes.' : 'PASS: merge refuses an ignored human-file collision without applying the choice.');
- } else if (mode === 'race') {
-  assert.equal(await readFile(join(run, 'raced'), 'utf8'), '');
-  assert.equal(await readFile(join(root, 'human.md'), 'utf8'), 'Human edit during network check\n');
-  assert.equal(first.ok, phase === 'before');
-  if (phase === 'after') {
-   assert(String(first.reason).includes('stale_conflict'));
-   assert.equal(await readFile(join(root, normal.path), 'utf8'), local);
-   assert.equal(await git(root, 'rev-parse', 'HEAD'), normal.localHead);
-   assert.equal(await git(remote, 'rev-parse', 'main'), normal.remoteHead);
-  }
-  console.log(phase === 'before' ? 'REPRODUCED: a human edit during remote inspection still allowed application.' : 'PASS: human edit during remote inspection refuses application and preserves both heads and human bytes.');
  } else if (phase === 'before') {
   assert.equal(first.ok, false); assert(String(first.reason).includes('conflict'));
   assert.equal(await readFile(join(root, normal.path), 'utf8'), local);
@@ -107,6 +106,12 @@ try {
   assert.equal(first.ok, true); assert.equal(await readFile(join(root, normal.path), 'utf8'), other);
   await git(root, 'merge-base', '--is-ancestor', normal.localHead, 'HEAD'); await git(root, 'merge-base', '--is-ancestor', normal.remoteHead, 'HEAD');
   assert.equal(await git(remote, 'rev-parse', 'main'), first.commit);
+  if (mode === 'chat') {
+   const changed = evidence.changedVersions as { changedLocal: string; changedRemote: string };
+   await git(root, 'merge-base', '--is-ancestor', changed.changedLocal, 'HEAD');
+   await git(root, 'merge-base', '--is-ancestor', changed.changedRemote, 'HEAD');
+   console.log('PASS: changed bytes cannot inherit the old answer; exact recorded bytes apply without a stale-revision veto, preserving both newer histories.');
+  }
   const protectedFile = await divergent('direction.md'); evidence.protected = protectedFile;
   const protectedInput = { path: protectedFile.path, content: other, message: 'Apply protected choice', conflictQuestionId: protectedFile.questionId };
   evidence.withoutConfirmation = await rpc('neo.home.save', protectedInput);

@@ -85,6 +85,8 @@ export class ArtifactReferenceSourceRepository {
               todo.instruction ?? '',
               todo.report ?? '',
               todo.evidence ?? '',
+              todo.blockedReason ?? '',
+              todo.nextAction ?? '',
             ],
             contexts: [{ kind: 'todo', id: todo.id }],
           }
