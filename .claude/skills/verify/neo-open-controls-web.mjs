@@ -35,7 +35,9 @@ export async function verifyOpenControls(page, fixture, { theme, touch = false, 
     await card.screenshot({path:`${evidence}/${theme}-${touch?'touch':'desktop'}-${source.adapter}.png`,scale:'css'});
     observed.push({adapter:source.adapter,headerOpeners:0,questionAndTodoLogos:true,...colors});
   }
-  const retired=page.locator('[data-ask="retired-focus"]:visible');
+  const focusedCases=[];
+  for(const id of ['retired-focus','start-focus']) {
+  const retired=page.locator(`[data-ask="${id}"]:visible`);
   const retainedOpen=retired.getByRole('button',{name:'Open session: Local worker',exact:true});
   await retainedOpen.waitFor();
   assert.equal(await retired.locator('[data-ask-focused-session] button').count(),0);
@@ -46,11 +48,13 @@ export async function verifyOpenControls(page, fixture, { theme, touch = false, 
   assert(retiredColors.logoContrast>=3 && retiredColors.textContrast>=4.5);
   await retired.scrollIntoViewIfNeeded();
   await page.evaluate(async()=>{await Promise.all(document.getAnimations().filter(a=>a.effect?.getComputedTiming().iterations!==Infinity).map(a=>a.finished));});
-  await retired.screenshot({path:`${evidence}/${theme}-${touch?'touch':'desktop'}-retired-focus.png`,scale:'css'});
+  await retired.screenshot({path:`${evidence}/${theme}-${touch?'touch':'desktop'}-${id}.png`,scale:'css'});
   await use(retainedOpen);
   await page.locator('.neo-session-pane').getByRole('heading',{name:/Local worker/}).waitFor();
   await use(page.locator('.neo-session-pane').getByRole('button',{name:'Back to Neo',exact:true}));
   await retainedOpen.waitFor();
+  focusedCases.push({id,navigation:true,...retiredColors});
+  }
   const local=page.locator('[data-ask="open-local-worker"]:visible');
   for(const control of [local.locator('[data-question-source] button'),local.locator('[data-ask-todo] button[aria-label^="Open "]')]) {
     await use(control);
@@ -60,5 +64,5 @@ export async function verifyOpenControls(page, fixture, { theme, touch = false, 
     await local.getByRole('button',{name:'Continue',exact:true}).waitFor();
   }
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
-  return {theme,touch,observed,retiredFocus:{navigation:true,...retiredColors},localQuestionAndTodoNavigation:true,answerControlsPreserved:true};
+  return {theme,touch,observed,focusedCases,localQuestionAndTodoNavigation:true,answerControlsPreserved:true};
 }

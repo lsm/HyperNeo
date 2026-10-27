@@ -278,36 +278,47 @@ describe('NeoAskTodos', () => {
     ).toBe('todo');
   });
 
-  it('keeps retired focused discussion navigation on the card without a header pill', () => {
-    locale.value = 'en';
-    const onOpen = vi.fn();
-    const focusedSession = {
-      adapter: 'hyperneo',
-      id: 'discussion',
-      name: 'Positioning discussion',
-      label: 'HyperNeo · Positioning discussion',
-      provider: 'Anthropic',
-      link: '/session/discussion',
-    };
-    const original = entry({
-      questions: [question('prepared', { state: 'retired', retiredReason: 'Discuss directly' })],
-    });
-    const app = render(
-      <NeoAskTodos
-        entry={{ ...original, ask: { ...original.ask, ...{ focusedSession } } }}
-        onOpen={onOpen}
-        onAnswer={vi.fn()}
-      />
-    );
-    expect(app.container.querySelector('[data-ask-question]')).toBeNull();
-    expect(app.getByText('Positioning discussion · Anthropic')).toBeTruthy();
-    expect(app.container.querySelector('[data-ask-focused-session] button')).toBeNull();
-    const open = app.getByRole('button', { name: 'Open session: Positioning discussion' });
-    expect(open.textContent).toBe('Open');
-    expect(open.querySelector('svg')).toBeTruthy();
-    fireEvent.click(open);
-    expect(onOpen).toHaveBeenCalledWith('/session/discussion', focusedSession.label);
-  });
+  it.each(['retired', 'start'])(
+    'keeps %s focused discussion navigation on the card without a header pill',
+    (state) => {
+      locale.value = 'en';
+      const onOpen = vi.fn();
+      const focusedSession = {
+        adapter: 'hyperneo',
+        id: 'discussion',
+        name: 'Positioning discussion',
+        label: 'HyperNeo · Positioning discussion',
+        provider: 'Anthropic',
+        link: '/session/discussion',
+      };
+      const original = entry({
+        questions: [
+          question(
+            'prepared',
+            state === 'retired'
+              ? { state: 'retired', retiredReason: 'Discuss directly' }
+              : { kind: 'start', startTodos: ['prepared-todo'] }
+          ),
+        ],
+        todos: state === 'start' ? [todo('prepared-todo', { link: focusedSession.link })] : [],
+      });
+      const app = render(
+        <NeoAskTodos
+          entry={{ ...original, ask: { ...original.ask, ...{ focusedSession } } }}
+          onOpen={onOpen}
+          onAnswer={vi.fn()}
+        />
+      );
+      expect(app.container.querySelector('[data-ask-question]') !== null).toBe(state === 'start');
+      expect(app.getByText('Positioning discussion · Anthropic')).toBeTruthy();
+      expect(app.container.querySelector('[data-ask-focused-session] button')).toBeNull();
+      const open = app.getByRole('button', { name: 'Open session: Positioning discussion' });
+      expect(open.textContent).toBe('Open');
+      expect(open.querySelector('svg')).toBeTruthy();
+      fireEvent.click(open);
+      expect(onOpen).toHaveBeenCalledWith('/session/discussion', focusedSession.label);
+    }
+  );
 
   it.each(['question', 'todo'])('does not duplicate the visible %s session opener', (surface) => {
     locale.value = 'en';
