@@ -25,6 +25,15 @@ SQL from the main event loop; the shared reader can still queue behind slow read
 Reader failure must reject status without a synchronous main fallback. Adapter
 unit contracts cover that failure and preserve recovery/compaction filtering.
 
+Run all adapter fixtures, not only the verb suites, when changing the reader
+dependency. Existing Space status/discovery and attribution fixtures must supply
+the same in-memory turn reader and retain their result-isolation assertions:
+
+```bash
+cd packages/daemon
+TMPDIR=/private/tmp bunx --no-install vitest run --maxWorkers=1 --no-file-parallelism tests/unit/1-core/drivers tests/unit/1-core/operations/neo-attribution-acceptance.test.ts tests/unit/4-space-storage/storage/sdk-status-reader.test.ts
+```
+
 The same reader is injected into HyperNeo and Space status adapters. In-memory
 test databases use their existing connection in the storage facade. After Neo
 updates the live daemon, use hyperneo build and read-only structured query logs
