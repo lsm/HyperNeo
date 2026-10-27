@@ -15,7 +15,7 @@ export function neoGitRepo(remote: string | undefined): string | null {
 
 export function neoTodoRepo(
   draft: Draft,
-  packs: readonly NeoPack[],
+  packs: readonly { todos?: Pick<NonNullable<NeoPack['todos']>, 'repository'> }[],
   ask: Pick<NeoAsk, 'repo'>
 ): string | null {
   const place = draft.target?.verb === 'start' ? draft.target.place : null;

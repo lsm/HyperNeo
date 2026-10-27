@@ -59,7 +59,7 @@ export function NeoWorkerPermissionSettings() {
         </SettingsRow>
         <SettingsRow
           label="Worker sandbox"
-          description="Always: workers Neo starts from now on may write only inside their work folder. Off: no OS sandbox."
+          description="Always: workers Neo starts from now on may write only inside their work folder. On demand: only starts Neo marks as untrusted, such as PRs from forks. Off: no OS sandbox."
         >
           <select
             aria-label="Worker sandbox"
@@ -76,30 +76,6 @@ export function NeoWorkerPermissionSettings() {
               </option>
             ))}
           </select>
-        </SettingsRow>
-        <SettingsRow
-          label="Worker Unix sockets"
-          description="New worker sessions may connect to these human-approved sockets."
-        >
-          {(settings.workerUnixSockets ?? []).map((path) => (
-            <div key={path}>
-              <code>{path}</code>
-              <button
-                type="button"
-                disabled={saving}
-                onClick={() =>
-                  save({
-                    workerUnixSockets: settings.workerUnixSockets!.filter(
-                      (socket) => socket !== path
-                    ),
-                  })
-                }
-              >
-                Remove
-              </button>
-            </div>
-          ))}
-          {!settings.workerUnixSockets?.length && <span>No sockets allowed</span>}
         </SettingsRow>
       </SettingsGroup>
     </SettingsSection>

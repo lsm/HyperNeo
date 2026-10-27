@@ -1,3 +1,5 @@
+import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPack, NeoTodoCheckResult } from '../../../../src/lib/neo/pack-contract.ts';
@@ -16,6 +18,7 @@ function setup(result: NeoTodoCheckResult = merged) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
+  createCodingPackTables(db);
   const store = new NeoAskTodoRepository(db);
   store.openAsk({
     id: 'ask',
@@ -42,6 +45,7 @@ function setup(result: NeoTodoCheckResult = merged) {
   } satisfies NeoPack;
   const told: string[] = [];
   const runner = createNeoTodoRunner({
+    write: gatewayFor(db).run.bind(gatewayFor(db)),
     store,
     sessions: new NeoTodoSessionRepository(db),
     invoke: async () => ({ kind: 'completed', value: null }) as OperationOutcome,

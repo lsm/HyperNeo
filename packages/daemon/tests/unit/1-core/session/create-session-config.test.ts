@@ -117,6 +117,11 @@ describe('admitCreateSessionConfig', () => {
     ).toThrowError(/plugins/);
   });
 
+  it('refuses a client-supplied tool profile, which only the daemon assigns', () => {
+    expect(() => admitCreateSessionConfig({ toolProfile: 'worker' })).toThrow(/toolProfile/);
+    expect(() => admitUpdateSessionConfig({ toolProfile: 'manual' })).toThrow(/toolProfile/);
+  });
+
   it('ignores rejected keys that are present but undefined', () => {
     expect(() => admitCreateSessionConfig({ env: undefined, cwd: undefined })).not.toThrow();
   });

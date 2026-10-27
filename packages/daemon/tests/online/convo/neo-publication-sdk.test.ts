@@ -1,18 +1,18 @@
 import { expect, test } from 'bun:test';
-import { randomUUID } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { link, mkdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MessageHub, WebSocketClientTransport, type Session } from '@hyperneo/shared';
+import { MessageHub, type Session, WebSocketClientTransport } from '@hyperneo/shared';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
-import { createScheduleDelivery } from '../../../src/lib/scheduler/session-schedule-delivery.ts';
-import { createOperationRegistry } from '../../../src/lib/operations/registry.ts';
-import { SessionScheduleRepository } from '../../../src/storage/repositories/session-schedule-repository.ts';
-import { NeoAskTodoRepository } from '../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { readNeoPublications } from '../../../../web/src/neo/publication-client.ts';
+import { createOperationRegistry } from '../../../src/lib/operations/registry.ts';
+import { createScheduleDelivery } from '../../../src/lib/scheduler/session-schedule-delivery.ts';
+import { NeoAskTodoRepository } from '../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import { SessionScheduleRepository } from '../../../src/storage/repositories/session-schedule-repository.ts';
 
 const sandboxProof = process.env.HYPERNEO_TEST_DISABLE_SANDBOX !== '1';
 async function verifyNeoGithubSource(githubSource: 'store' | 'daemon-gh') {
@@ -126,6 +126,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
   const nativeToolsSeen: string[][] = [];
   const shortText = 'The fictional moon garden is ready.';
   const fullText = '## Fictional garden\n\nThe moon garden has three blue flowers.';
+  const verbatimText = '> kept quote\n\n```md\n# Draft\nCopy exactly: "as written"\n```';
   const calls: string[] = [];
   const receipts: { accepted: boolean; created?: boolean }[] = [];
   const receivedToolCalls = new Set<string>();
@@ -214,7 +215,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
           }
           if (id.startsWith('tool-fictional-'))
             for (const item of result.content ?? [])
-              if (item.text) receipts.push(JSON.parse(item.text));
+              if (item.text?.startsWith('{')) receipts.push(JSON.parse(item.text));
         }
       }
     }
@@ -245,17 +246,24 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
                     : 'neo.question.ask',
               input:
                 round <= 2
-                  ? {
-                      requestId: 'fictional-send',
-                      shortText,
-                      fullText,
-                      links: [],
-                      replyTo: [requestId],
-                    }
+                  ? round === 2
+                    ? {
+                        requestId: 'fictional-verbatim',
+                        verbatim: true,
+                        fullText: verbatimText,
+                        links: [],
+                        replyTo: [requestId],
+                      }
+                    : {
+                        requestId: 'fictional-send',
+                        shortText,
+                        fullText,
+                        links: [],
+                        replyTo: [requestId],
+                      }
                   : round === 3
                     ? {
                         messageId: requestId,
-                        from: 'Tell me about the fictional moon garden. Keep synthetic garden changes as drafts.',
                         add: ['Keep synthetic garden changes as drafts.'],
                       }
                     : {
@@ -641,16 +649,21 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
     let page = await read();
     const deadline = Date.now() + 45000;
     while (
-      !page.items?.some((item: NeoPublication) => item.shortText === shortText) &&
+      (!page.items?.some((item: NeoPublication) => item.shortText === shortText) ||
+        !page.items?.some((item: NeoPublication) => item.verbatim === true)) &&
       Date.now() < deadline
     ) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       page = await read();
     }
     expect(page.ok).toBe(true);
-    expect(page.items.filter((item) => !item.cardReply)).toHaveLength(2);
+    const verbatim = page.items.filter((item) => item.verbatim === true);
+    expect(verbatim, JSON.stringify({ calls, receipts, sdkErrors })).toHaveLength(1);
+    expect(verbatim[0]).not.toHaveProperty('shortText');
+    expect(verbatim[0].fullText).toBe(verbatimText);
+    expect(page.items.filter((item) => !item.cardReply)).toHaveLength(3);
     expect(
-      page.items.filter((item) => item.shortText.startsWith('Daily dropped work '))
+      page.items.filter((item) => item.shortText?.startsWith('Daily dropped work '))
     ).toHaveLength(1);
     const authored = page.items.filter((item) => item.shortText === shortText);
     expect(authored, JSON.stringify({ calls, receipts, requests, sdkErrors })).toHaveLength(1);
@@ -675,15 +688,13 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
       },
       {
         accepted: true,
-        created: false,
-        publication: { publicationId: authored[0].publicationId },
+        created: true,
+        publication: { publicationId: verbatim[0].publicationId },
       },
-      { ok: true, standingRules: ['Keep synthetic garden changes as drafts.'] },
+      { ok: false, reason: expect.stringContaining('human yes') },
       { ok: true, question: { replyTo: [requestId] } },
     ]);
-    expect(daemon.db.getGlobalSettings().neo?.standingRules).toEqual([
-      'Keep synthetic garden changes as drafts.',
-    ]);
+    expect(daemon.db.getGlobalSettings().neo?.standingRules ?? []).toEqual([]);
     expect(todos.listQuestions('fictional-garden')).toEqual([
       expect.objectContaining({ replyTo: [requestId] }),
     ]);
@@ -695,7 +706,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
       })
     ).toMatchObject({ ok: true, question: { replyTo: [requestId] } });
     page = await read();
-    expect(page.items).toHaveLength(3);
+    expect(page.items).toHaveLength(4);
     const notices = page.items.filter((item) => item.cardReply);
     expect(notices).toHaveLength(1);
     expect(notices[0]).toMatchObject({
@@ -709,7 +720,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
       },
     });
     expect(notices[0].replyTo).toBeUndefined();
-    expect(page.items.filter((item) => !item.cardReply)).toHaveLength(2);
+    expect(page.items.filter((item) => !item.cardReply)).toHaveLength(3);
     expect((await read()).items).toEqual(page.items);
     const messageStatuses = await hub.request<{
       items: { requestId: string; messageStatus?: string }[];

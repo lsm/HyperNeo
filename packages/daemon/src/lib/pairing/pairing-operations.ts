@@ -168,7 +168,7 @@ export function createDevicePairingOperations({
     defineOperation({
       name: 'device.unpaired.list',
       description:
-        'List connections seen without a paired device credential (kind, origin, host, address, counts); never a credential.',
+        'List connections seen without a paired device credential (kind, origin, host, address, counts); never a credential. Any local caller or the session door can read this diagnostic; agents cannot.',
       policy: { safetyClass: 'human_only' },
       inputSchema: z.object({}).strict(),
       resultSchema: z.union([
@@ -191,15 +191,13 @@ export function createDevicePairingOperations({
       ]),
       execute: async (_input, caller) => {
         if (!isLocalUser(caller) && !fromDoor(caller)) return refused;
-        if (!fromDoor(caller) && !isPairedHuman(caller))
-          return { ok: false as const, reason: NEEDS_PAIRED_HUMAN };
         return { ok: true as const, connections: pairing().listUnpaired() };
       },
     }),
     defineOperation({
       name: 'device.would_refuse.list',
       description:
-        'List requests the Origin/Host checks would refuse once pairing is required (reason, kind, host, origin, counts). Nothing is refused yet.',
+        'List requests the Origin/Host checks would refuse once pairing is required (reason, kind, host, origin, counts). Nothing is refused yet. Any local caller or the session door can read this diagnostic; agents cannot.',
       policy: { safetyClass: 'human_only' },
       inputSchema: z.object({}).strict(),
       resultSchema: z.union([
@@ -221,8 +219,6 @@ export function createDevicePairingOperations({
       ]),
       execute: async (_input, caller) => {
         if (!isLocalUser(caller) && !fromDoor(caller)) return refused;
-        if (!fromDoor(caller) && !isPairedHuman(caller))
-          return { ok: false as const, reason: NEEDS_PAIRED_HUMAN };
         return { ok: true as const, requests: pairing().listWouldRefuse() };
       },
     }),

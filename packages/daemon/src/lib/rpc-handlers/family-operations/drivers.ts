@@ -143,6 +143,7 @@ export async function createDriverSession(
         ? { sessionId: prepared.sessionId, executionProjectPath: prepared.projectPath }
         : {}),
       worktreeMode: placement.kind === 'worktree' ? 'worktree' : 'direct',
+      toolProfile: 'worker',
       ...(config || thinkingLevel
         ? { config: { ...config, ...(thinkingLevel ? { thinkingLevel } : {}) } }
         : {}),

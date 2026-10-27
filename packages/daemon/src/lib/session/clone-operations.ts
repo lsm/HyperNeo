@@ -136,6 +136,7 @@ export async function buildCloneParams(
     spaceId: parent.context?.spaceId,
     parentSessionId: parent.id,
     promptProvenance: parent.metadata.promptProvenance,
+    toolProfile: parent.config.toolProfile,
     config: {
       ...config,
       ...(input.model ? { model: input.model } : {}),

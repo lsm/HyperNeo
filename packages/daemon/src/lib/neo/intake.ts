@@ -1,10 +1,5 @@
-import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
-import { NeoPreviewContextSchema, NeoPreviewReferenceSchema } from './preview-context-schema.ts';
-import { admitNeoPreviewContext } from './preview-context.ts';
-import { neoLocalTimeLine } from './local-time.ts';
 import type { UUID } from 'node:crypto';
 import type { Session } from '@hyperneo/shared';
-import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { NeoAsk, NeoQuestion, NeoReplyTo, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import {
@@ -12,23 +7,28 @@ import {
   neoLabelledOptions,
   neoReplyExcerpt,
 } from '@hyperneo/shared/types/neo-ask';
+import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
+import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../storage/database.ts';
-import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import {
   type NeoConversationAskImageRow,
   NeoConversationAskRepository,
 } from '../../storage/repositories/neo-conversation-ask-repository.ts';
-import { neoImageSize } from './image-size.ts';
 import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
+import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { toMailboxMessage } from '../mailbox/entry.ts';
 import { MessageSessionIdSchema, SessionContentSchema } from '../messaging/message-send.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { NeoReplyRefSchema } from './conversation-ask.ts';
+import { neoImageSize } from './image-size.ts';
+import { neoLocalTimeLine } from './local-time.ts';
+import { admitNeoPreviewContext } from './preview-context.ts';
+import { NeoPreviewContextSchema, NeoPreviewReferenceSchema } from './preview-context-schema.ts';
 
 const Input = z
   .object({
@@ -206,7 +206,7 @@ export function neoReplySnapshot(
   if (replyTo?.kind !== 'message') return replyTo;
   if (stored) return stored.replyTo;
   const text = publication
-    ? publication.shortText.trim() || publication.fullText.trim()
+    ? publication.shortText?.trim() || publication.fullText.trim()
     : quoted
       ? neoAskText(quoted.content, '\n').trim() || '(attachment)'
       : '';
@@ -238,7 +238,8 @@ export function recordNeoReplyAnswer(
       reply.question,
       neoChoiceByLetter(words, reply.question) ?? words,
       'chat',
-      Date.now()
+      Date.now(),
+      { sessionId, messageId: input.requestId }
     );
   return receipt;
 }

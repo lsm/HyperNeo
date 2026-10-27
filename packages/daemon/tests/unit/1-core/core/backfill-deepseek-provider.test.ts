@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { unlinkSync } from 'node:fs';
+import { existsSync, unlinkSync } from 'node:fs';
 import {
   backfillDeepSeekProvider,
-  gateProviderImport,
-  gateDeepSeekKey,
   gateDeepSeekImport,
+  gateDeepSeekKey,
+  gateProviderImport,
   migrateProvidersIfNeeded,
 } from '../../../../src/lib/credential-discovery';
 import { Database } from '../../../../src/storage';
@@ -16,16 +16,21 @@ describe('backfillDeepSeekProvider', () => {
   const originalKey = process.env.DEEPSEEK_API_KEY;
 
   beforeEach(async () => {
-    dbPath = `/tmp/test-deepseek-backfill-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`;
+    const tmpBase = (process.env.TMPDIR || '/tmp').replace(/\/$/, '');
+    dbPath = `${tmpBase}/test-deepseek-backfill-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`;
     db = new Database(dbPath);
     await db.initialize(createReactiveDatabase(db));
   });
 
   afterEach(() => {
     db.close();
-    try {
-      unlinkSync(dbPath);
-    } catch {}
+    for (const suffix of ['', '-wal', '-shm']) {
+      try {
+        unlinkSync(`${dbPath}${suffix}`);
+      } catch {}
+    }
+    expect(existsSync(`${dbPath}-wal`)).toBe(false);
+    expect(existsSync(`${dbPath}-shm`)).toBe(false);
     if (originalKey === undefined) delete process.env.DEEPSEEK_API_KEY;
     else process.env.DEEPSEEK_API_KEY = originalKey;
   });
@@ -167,16 +172,21 @@ describe('migrateProvidersIfNeeded', () => {
   };
 
   beforeEach(async () => {
-    dbPath = `/tmp/test-provider-import-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`;
+    const tmpBase = (process.env.TMPDIR || '/tmp').replace(/\/$/, '');
+    dbPath = `${tmpBase}/test-provider-import-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`;
     db = new Database(dbPath);
     await db.initialize(createReactiveDatabase(db));
   });
 
   afterEach(() => {
     db.close();
-    try {
-      unlinkSync(dbPath);
-    } catch {}
+    for (const suffix of ['', '-wal', '-shm']) {
+      try {
+        unlinkSync(`${dbPath}${suffix}`);
+      } catch {}
+    }
+    expect(existsSync(`${dbPath}-wal`)).toBe(false);
+    expect(existsSync(`${dbPath}-shm`)).toBe(false);
     for (const [key, value] of Object.entries(originalEnv)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
@@ -206,7 +216,8 @@ describe('migrateProvidersIfNeeded', () => {
   const originalKey = process.env.GLM_API_KEY;
 
   beforeEach(async () => {
-    dbPath = `/tmp/test-provider-import-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`;
+    const tmpBase = (process.env.TMPDIR || '/tmp').replace(/\/$/, '');
+    dbPath = `${tmpBase}/test-provider-import-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`;
     db = new Database(dbPath);
     await db.initialize(createReactiveDatabase(db));
     process.env.GLM_API_KEY = 'glm-from-env';
@@ -214,9 +225,13 @@ describe('migrateProvidersIfNeeded', () => {
 
   afterEach(() => {
     db.close();
-    try {
-      unlinkSync(dbPath);
-    } catch {}
+    for (const suffix of ['', '-wal', '-shm']) {
+      try {
+        unlinkSync(`${dbPath}${suffix}`);
+      } catch {}
+    }
+    expect(existsSync(`${dbPath}-wal`)).toBe(false);
+    expect(existsSync(`${dbPath}-shm`)).toBe(false);
     if (originalKey === undefined) delete process.env.GLM_API_KEY;
     else process.env.GLM_API_KEY = originalKey;
   });

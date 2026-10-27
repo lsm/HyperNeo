@@ -8,6 +8,7 @@ import { Database as DaemonDatabase } from '../../../../src/storage/database.ts'
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { runMigration288 } from '../../../../src/storage/schema/m288-neo-publications.ts';
+import { runMigration387 } from '../../../../src/storage/schema/m387-neo-ask-todo-tables.ts';
 import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
 import { admitNeoPublication } from '../../../../src/lib/neo/publication.ts';
 import { getAccessibleTableNames, getExcludedTableNames } from '../../../helpers/db-query-scope.ts';
@@ -88,6 +89,71 @@ describe('Neo publication ledger', () => {
     );
   });
 
+  test('a verbatim reply cannot rewrite a card-reply notice into an undecodable row', () => {
+    runMigration387(db);
+    db.prepare(
+      `INSERT INTO neo_questions (id, ask_id, text, kind, start_todos, created_at)
+       VALUES ('q1', 'ask-1', 'Keep or change?', 'choice', '[]', 1)`
+    ).run();
+    const cardReply = {
+      sourceMessageIds: [input.conversationId],
+      askId: 'ask-1',
+      questionId: 'q1',
+      mutationId: '30000000-0000-4000-8000-000000000001',
+    };
+    expect(repo.append({ ...next(90), cardReply, links: [] })).toMatchObject({ accepted: true });
+    expect(
+      repo.append({
+        ...next(91),
+        shortText: undefined,
+        verbatim: true,
+        fullText: 'The deliverable, unchanged.',
+        cardReply,
+        links: [],
+      })
+    ).toMatchObject({ accepted: false, reason: 'invalid_publication' });
+    expect(() => repo.list(input.conversationId)).not.toThrow();
+    expect(repo.list(input.conversationId)![0].fullText).toBe(input.fullText);
+  });
+
+  test('editing a verbatim reply rejects a split rewrite instead of a conflict', () => {
+    runMigration387(db);
+    const created = repo.append({
+      ...next(92),
+      shortText: undefined,
+      verbatim: true,
+      fullText: 'The deliverable, unchanged.',
+      links: [],
+    });
+    expect(created).toMatchObject({ accepted: true });
+    const id = (created as { publication: { publicationId: string } }).publication.publicationId;
+    expect(
+      repo.edit(
+        input.conversationId,
+        id,
+        { shortText: 'New preview' },
+        '2026-10-26T00:00:00.000Z',
+        'avatar',
+        undefined,
+        '40000000-0000-4000-8000-000000000001'
+      )
+    ).toMatchObject({ accepted: false, reason: 'invalid_publication' });
+    expect(
+      repo.edit(
+        input.conversationId,
+        id,
+        { fullText: 'The deliverable, revised.' },
+        '2026-10-26T00:00:01.000Z',
+        'avatar',
+        undefined,
+        '40000000-0000-4000-8000-000000000002'
+      )
+    ).toMatchObject({
+      accepted: true,
+      publication: { verbatim: true, fullText: 'The deliverable, revised.' },
+    });
+  });
+
   test.each([
     null,
     {},
@@ -112,6 +178,27 @@ describe('Neo publication ledger', () => {
     expect(admitNeoPublication(value)).toEqual({ reason: 'invalid_publication' });
     expect(repo.append(value)).toEqual({ accepted: false, reason: 'invalid_publication' });
     expect(repo.list(input.conversationId)).toEqual([]);
+  });
+
+  test('a verbatim publication is admitted, stored and listed without a short text', () => {
+    const { shortText: _shortText, ...rest } = input;
+    const verbatim = { ...rest, verbatim: true as const };
+    const admitted = admitNeoPublication(verbatim);
+    if (!('value' in admitted)) throw new Error('verbatim publication rejected');
+    expect(admitted.value.verbatim).toBe(true);
+    expect(admitted.value.shortText).toBeUndefined();
+    expect(repo.append(verbatim)).toMatchObject({ accepted: true });
+    const listed = repo
+      .list(input.conversationId)
+      .find((row) => row.publicationId === input.publicationId);
+    expect(listed?.verbatim).toBe(true);
+    expect(listed?.shortText).toBeUndefined();
+    expect(admitNeoPublication({ ...input, verbatim: true })).toEqual({
+      reason: 'invalid_publication',
+    });
+    expect(admitNeoPublication({ ...input, verbatim: 'yes' })).toEqual({
+      reason: 'invalid_publication',
+    });
   });
 
   test('maximum bounds, Unicode, authored whitespace and link ordering are preserved', () => {

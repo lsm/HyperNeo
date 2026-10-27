@@ -58,7 +58,7 @@ describe('operation MCP server', () => {
           {
             name: 'operations.list',
             description:
-              'List the operations meant for this session. Pass { all: true } for the full catalog and { query } with keywords to keep only operations whose name or description contains every word; an unlisted operation can still be described and invoked by name.',
+              'List the operations meant for this session. Pass { all: true } for the full catalog the session tool profile advertises and { query } with keywords to keep only operations whose name or description contains every word; an unlisted operation can still be described and invoked by name.',
           },
           {
             name: 'operations.describe',
@@ -73,6 +73,38 @@ describe('operation MCP server', () => {
       expect.objectContaining({ type: 'text', text: expect.stringContaining('"type":"string"') }),
     ]);
     expect(calls).toEqual([]);
+  });
+
+  test('derives advertised core call shapes from the current operation schemas', () => {
+    for (const verbs of [['start', 'send', 'bind'], ['future']] as const) {
+      const registry = createOperationRegistry([
+        defineOperation({
+          name: 'neo.todo.add',
+          description: 'Add a todo',
+          inputSchema: z.object({
+            askId: z.string(),
+            target: z.object({ verb: z.enum(verbs) }),
+            start: z.boolean().default(false),
+          }),
+          resultSchema: z.unknown(),
+          execute: async () => null,
+        }),
+      ]);
+      const advertised = operationInvokeTool(
+        createOperationMcpServer(
+          () => registry,
+          () => ({ role: 'neo' }),
+          undefined,
+          'neo'
+        )
+      ).description;
+      expect(advertised).toContain('neo.todo.add');
+      expect(advertised).toContain('askId');
+      expect(advertised).toContain('target');
+      expect(advertised).toContain(verbs.map((verb) => JSON.stringify(verb)).join('|'));
+      expect(advertised).toContain('start?');
+      expect(advertised).not.toContain('neo.todo.close');
+    }
   });
 
   test('invokes the canonical implementation with a server-bound caller', async () => {

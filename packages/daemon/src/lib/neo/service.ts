@@ -1,5 +1,4 @@
 import { createNeoQuestionAnswerDelivery } from './question-answer-delivery.ts';
-import { discoverSigningSocket } from './worker-sockets.ts';
 import type { UUID } from 'node:crypto';
 import { WORKER_BATCH_SENDER } from '../../storage/repositories/neo-session-message-repository.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
@@ -130,7 +129,7 @@ export class NeoService {
     readonly db: Database,
     readonly sessions: SessionManager,
     hub: MessageHub,
-    events: InternalEventBus<DaemonInternalEventMap>,
+    readonly events: InternalEventBus<DaemonInternalEventMap>,
     readonly publishSettings?: (settings: GlobalSettings) => void
   ) {
     this.notifyChanged = () => {
@@ -168,6 +167,7 @@ export class NeoService {
     );
     this.todoSessions = new NeoTodoSessionRepository(db.getDatabase());
     this.todoRunner = createNeoTodoRunner({
+      write: gatewayFor(db.getDatabase()).run.bind(gatewayFor(db.getDatabase())),
       store: this.todos,
       sessions: this.todoSessions,
       invoke: (caller, name, input) =>
@@ -233,7 +233,7 @@ export class NeoService {
         if (sessionId !== this.defaultSessionId()) return;
         const preferences = this.db.getGlobalSettings().neo?.preferences;
         if (!preferences) return;
-        await this.applyCompactPercent(sessionId, preferences).catch((error) =>
+        await this.applyCompactPercentNow(sessionId, preferences).catch((error) =>
           this.log.warn('Neo auto-compact percentage not applied', error)
         );
       },
@@ -313,22 +313,20 @@ export class NeoService {
     this.publishSettings?.(updated);
     const root = this.repo.defaultBinding();
     if (!root) return saved;
-    const target = await this.alignModelPreference(root.sessionId).catch((error) => {
+    await this.alignModelPreference(root.sessionId).catch((error) => {
       this.log.warn('Neo model preference not applied', error);
-      return null;
     });
-    await this.applyCompactPercent(root.sessionId, saved, target);
+    await this.applyCompactPercent(root.sessionId, saved);
     return saved;
   }
 
   private async applyCompactPercent(
     sessionId: string,
-    preferences: NeoModelPreference,
-    target?: { model: string; provider: string } | null
+    preferences: NeoModelPreference
   ): Promise<void> {
     const session = this.db.getSession(sessionId);
     if (!session) return;
-    const percent = neoCompactPercentFor(preferences, target ?? session.config);
+    const percent = neoCompactPercentFor(preferences, session.config);
     if (
       session.config.autoCompactPercent !== percent ||
       session.metadata.pendingAutoCompactPercent !== undefined
@@ -338,30 +336,51 @@ export class NeoService {
       });
   }
 
-  private async alignModelPreference(
-    sessionId: string
-  ): Promise<{ model: string; provider: string } | null> {
+  private async applyCompactPercentNow(
+    sessionId: string,
+    preferences: NeoModelPreference
+  ): Promise<void> {
+    const session = this.db.getSession(sessionId);
+    if (!session) return;
+    const percent = neoCompactPercentFor(preferences, session.config);
+    if (
+      session.config.autoCompactPercent === percent &&
+      session.metadata.pendingAutoCompactPercent === undefined
+    )
+      return;
+    const config = { ...session.config, autoCompactPercent: percent };
+    const metadata = { ...session.metadata, pendingAutoCompactPercent: undefined };
+    const live = await this.sessions.getSessionForControl(sessionId);
+    if (live) await live.updateMetadata({ config, metadata });
+    else await this.db.updateSession(sessionId, { config, metadata });
+    await this.events.publish('session.updated', {
+      sessionId,
+      source: 'update',
+      session: { config },
+    });
+  }
+
+  private async alignModelPreference(sessionId: string): Promise<void> {
     const preference = this.modelPreference();
     const config = this.db.getSession(sessionId)?.config;
     const plan = preference && config ? planNeoAlignment(config, preference) : null;
-    if (!preference || !plan) return null;
+    if (!preference || !plan) return;
     const live = await this.sessions.getSessionForControl(sessionId);
-    if (!live) return null;
+    if (!live) return;
     if (live.isLimitRecoveryPending?.() || live.getRateLimitWatchdogState?.().lastUserMessage)
-      return null;
+      return;
     const previousThinking = live.getSessionData().config.thinkingLevel;
     if (plan.thinking)
       await this.sessions.updateSession(sessionId, {
         config: { ...live.getSessionData().config, thinkingLevel: preference.thinkingLevel },
       });
-    if (!plan.model) return null;
+    if (!plan.model) return;
     let restored = false;
     try {
       const switched = await live.requestModelSwitch(preference.model, preference.provider);
       restored = switched.success && !switched.pending;
-      if (switched.success) return { model: preference.model, provider: preference.provider };
-      this.log.warn(`Neo session ${sessionId} keeps its model: ${switched.error ?? ''}`);
-      return null;
+      if (!switched.success)
+        this.log.warn(`Neo session ${sessionId} keeps its model: ${switched.error ?? ''}`);
     } finally {
       if (!restored && plan.thinking)
         await this.sessions.updateSession(sessionId, {
@@ -658,8 +677,6 @@ export class NeoService {
   async recover(): Promise<void> {
     this.sessionWatcher.loadSessionNoticeGroups();
     const id = this.defaultSessionId();
-    const socket = await discoverSigningSocket();
-    if (socket) await this.requestWorkerSocket(socket);
     if (id) await this.alignCoordinatorConfig(id);
     const session = id ? this.db.getSession(id) : null;
     const metadata = session?.metadata as
@@ -681,13 +698,6 @@ export class NeoService {
         .catch((error) => this.log.warn(`Neo ${pack.id} sweep failed`, error));
     await publishDroppedWork(this, Date.now(), this.appendPublication.bind(this));
     this.notifyChanged();
-  }
-
-  async requestWorkerSocket(socket: string) {
-    const session = this.defaultSessionId() ?? (await this.openDefault());
-    const question = await this.todos.write('requestWorkerSocket', session, socket);
-    this.notifyChanged();
-    return question;
   }
 
   deliverQuestionAnswers(questionId?: string): Promise<void> {

@@ -26,7 +26,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 1000 }, locale: 'en-US' });
   await page.goto(`http://127.0.0.1:${port}/settings?tab=neo-model`);
   const section = page.getByRole('region', { name: 'Neo standing rules', exact: true });
-  await section.getByText('19 of 20 rules', { exact: true }).waitFor();
+  await section.getByText('19 rules', { exact: true }).waitFor();
   assert.equal(await section.getByRole('listitem').count(), 19);
   const box = section.getByLabel('New Neo rule', { exact: true });
   const add = section.getByRole('button', { name: 'Add rule', exact: true });
@@ -43,13 +43,12 @@ try {
   await dialog.getByText(added, { exact: true }).waitFor();
   await dialog.screenshot({ path: `${run}/evidence/neo-rules-confirm-add.png`, animations: 'disabled' });
   await dialog.getByRole('button', { name: 'Add', exact: true }).click();
-  await section.getByText('20 of 20 rules', { exact: true }).waitFor();
+  await section.getByText('20 rules', { exact: true }).waitFor();
   assert.deepEqual(rules(), [...seeded, added]);
   evidence.addAppendsOnlyTarget = true;
 
   await box.fill('One more synthetic rule.');
-  await section.getByText('Neo keeps at most 20 rules; remove one first.', { exact: true }).waitFor();
-  assert.equal(await add.isDisabled(), true);
+  assert.equal(await add.isEnabled(), true);
   await box.fill('x'.repeat(501));
   await section.getByText('501 / 500 characters', { exact: true }).waitFor();
   assert.equal(await add.isDisabled(), true);
@@ -59,7 +58,7 @@ try {
   await section.getByRole('button', { name: 'Remove Neo rule 3', exact: true }).click();
   await dialog.getByText(seeded[2], { exact: true }).waitFor();
   await dialog.getByRole('button', { name: 'Remove', exact: true }).click();
-  await section.getByText('19 of 20 rules', { exact: true }).waitFor();
+  await section.getByText('19 rules', { exact: true }).waitFor();
   const afterRemove = [...seeded.filter((rule) => rule !== seeded[2]), added];
   assert.deepEqual(rules(), afterRemove);
   evidence.removeDropsOnlyTarget = true;
@@ -77,7 +76,7 @@ try {
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 1000 });
     await page.reload();
-    await section.getByText(`${current.length} of 20 rules`, { exact: true }).waitFor();
+    await section.getByText(`${current.length} rules`, { exact: true }).waitFor();
     const shown = await section.getByRole('listitem').allInnerTexts();
     assert.deepEqual(shown.map((row) => row.replace(/^\d+\.\s*/, '').replace(/\s*Remove$/, '').trim()), current);
     const overflow = await section.evaluate((element) => [...element.querySelectorAll('textarea,button,li')].filter((child) => { const rect = child.getBoundingClientRect(); return rect.x < 0 || rect.right > innerWidth + 1; }).map((child) => child.outerHTML.slice(0, 120)));
@@ -87,7 +86,7 @@ try {
     await page.screenshot({ path: `${run}/evidence/neo-rules-settings-${width}-add.png`, animations: 'disabled' });
     evidence.observations.push({ width, rows: shown.length, matchesSnapshot: true, controlsFit: true });
   }
-  console.log('PASS: Settings > Neo rules list, confirm-before-write add/remove, cancel, 20/500 limits, stale remove refusal and reload at 1280/390 px.');
+  console.log('PASS: Settings > Neo rules list, confirm-before-write add/remove, cancel, uncapped rules and 500-character limit, stale remove refusal and reload at 1280/390 px.');
 } finally {
   writeFileSync(`${run}/evidence/neo-rules-settings.json`, JSON.stringify(evidence, null, 2));
   await browser.close();

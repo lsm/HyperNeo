@@ -107,11 +107,11 @@ export async function steerCodexDesktopTurn(
   threadId: string,
   text: string,
   messageId: string,
-  mode: 'auto' | 'steer' = 'auto',
+  mode: 'auto' | 'steer' | 'queue' = 'auto',
   desktopRunning = () => codexDesktopRunning(spawn, probePlatform),
   probePlatform = process.platform
 ): Promise<CodexSendGate<'app-server'>> {
-  const deadline = Date.now() + 8_000;
+  const deadline = Date.now() + TIMEOUT_MS;
   try {
     if (!(await desktopRunning())) {
       log.warn('work.send route', {
@@ -131,6 +131,59 @@ export async function steerCodexDesktopTurn(
       detail: String(error),
     });
     return { reason: reject('not_delivered', String(error), true) };
+  }
+  if (mode === 'queue') {
+    let owned = false;
+    if (socketPath) {
+      try {
+        owned = await withCodexDesktopIpc(
+          socketPath,
+          async ({ call }) => {
+            const discovered = await discoverCodexDesktopOwner({ call }, threadId);
+            if (discovered?.resultType === 'success' && discovered.handledByClientId) return true;
+            if (
+              discovered &&
+              discovered.resultType !== 'success' &&
+              discovered.error !== 'no-client-found'
+            )
+              throw new Error(discovered.error ?? 'Codex Desktop ownership discovery failed.');
+            return false;
+          },
+          deadline
+        );
+      } catch (error) {
+        log.warn('work.send route', {
+          threadId,
+          messageId,
+          path: 'app-server',
+          reason: 'desktop_owner_unknown',
+          detail: String(error),
+        });
+        owned = false;
+      }
+    }
+    if (!owned) {
+      log.warn('work.send route', {
+        threadId,
+        messageId,
+        path: 'app-server',
+        reason: 'desktop_not_owner',
+      });
+      return { value: 'app-server' };
+    }
+    log.warn('work.send route', {
+      threadId,
+      messageId,
+      path: 'refused',
+      reason: 'desktop_owns_queue',
+    });
+    return {
+      reason: reject(
+        'busy',
+        'Codex Desktop owns this thread; queued input cannot be added until the thread is released.',
+        true
+      ),
+    };
   }
   if (!socketPath) {
     log.warn('work.send route', {

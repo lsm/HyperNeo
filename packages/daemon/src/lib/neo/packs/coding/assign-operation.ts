@@ -30,6 +30,7 @@ const Pr = z.object({
   body: z.string(),
   headRefOid: z.string(),
   state: z.literal('OPEN'),
+  isCrossRepository: z.boolean().optional(),
 });
 type Pr = z.infer<typeof Pr>;
 type Deps = {
@@ -130,6 +131,7 @@ export function createCodingAssignmentOperation(deps: Deps) {
               head: input.head,
               role: input.stage,
             },
+            ...(pr.isCrossRepository ? { sandbox: true } : {}),
           },
         },
         caller
@@ -181,7 +183,7 @@ export function createCodingAssignmentOperation(deps: Deps) {
     .pipe(
       async (input: Input): Promise<Gate<Pr>> => {
         const read = await runGhJson(
-          ['gh', 'pr', 'view', input.url, '--json', 'body,headRefOid,state'],
+          ['gh', 'pr', 'view', input.url, '--json', 'body,headRefOid,state,isCrossRepository'],
           homedir(),
           spawnProcess
         );

@@ -15,9 +15,8 @@ is unavailable. The browser always runs headlessly.
 
 It seeds 19 synthetic rules through `neo.rule.save`, then drives Settings > Neo
 model > Standing rules: Add shows the exact rule in an inline confirmation, Cancel leaves
-`neo.snapshot` standingRules unchanged, and confirming appends only that rule. At
-20 rules, and for text over 500 characters, Add stays disabled with the reason
-shown. Remove confirms the exact text and drops only that rule. A rule removed
+`neo.snapshot` standingRules unchanged, and confirming appends only that rule. At 20 rules, Add still allows another rule. Text over 500 characters keeps Add
+disabled with the reason shown. Remove confirms the exact text and drops only that rule. A rule removed
 behind the open confirmation is refused by the daemon and the reason shows in
 it. After reload at 1280 and 390 px the list matches the snapshot and every
 control fits. Evidence: `evidence/neo-rules-settings.json`, the confirmation and

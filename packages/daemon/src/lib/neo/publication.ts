@@ -9,7 +9,7 @@ const text = (max: number) =>
     .refine((value) => !!value.trim());
 const origin = z.object({ sessionId: text(160), messageId: text(160) }).strict();
 
-export const NeoPublicationSchema = z
+export const NeoPublicationObject = z
   .object({
     cardReply: z
       .object({
@@ -24,9 +24,15 @@ export const NeoPublicationSchema = z
     publicationId: z.string().uuid(),
     askOrigin: origin.optional(),
     producerInput: origin.optional(),
-    shortText: text(2000).describe(
-      'What the human reads first; it must stand alone and summarize the message.'
-    ),
+    shortText: text(2000)
+      .describe('What the human reads first; it must stand alone and summarize the message.')
+      .optional(),
+    verbatim: z
+      .literal(true)
+      .describe(
+        'Send the reply as one field: the full content in fullText with no shortText; a request with both is rejected.'
+      )
+      .optional(),
     fullText: text(16000).describe('The details of the topic(s) shortText names.'),
     links: z
       .array(
@@ -57,7 +63,7 @@ export const NeoPublicationSchema = z
         z
           .object({
             revisionId: z.uuid(),
-            shortText: text(2000),
+            shortText: text(2000).optional(),
             fullText: text(16000),
             createdAt: z.string().datetime(),
             producerInput: origin.optional(),
@@ -70,15 +76,32 @@ export const NeoPublicationSchema = z
   })
   .strict();
 
+export function publicationTextRule(
+  value: { verbatim?: true; shortText?: string; cardReply?: unknown },
+  ctx: z.RefinementCtx
+): void {
+  if (value.verbatim === true && value.cardReply !== undefined)
+    ctx.addIssue({ code: 'custom', message: 'verbatim rejects cardReply notices' });
+  if (value.verbatim === true && value.shortText !== undefined)
+    ctx.addIssue({
+      code: 'custom',
+      message: 'verbatim rejects shortText; pass the whole content as fullText',
+    });
+  if (value.verbatim !== true && value.shortText === undefined)
+    ctx.addIssue({ code: 'custom', message: 'shortText is required without verbatim' });
+}
+
+export const NeoPublicationSchema = NeoPublicationObject.superRefine(publicationTextRule);
+
 export const NeoPublicationResultSchema = z.union([
   z.object({ accepted: z.literal(false), reason: z.string(), detail: z.string().optional() }),
   z.object({
     accepted: z.literal(true),
     created: z.boolean(),
-    publication: NeoPublicationSchema.extend({
+    publication: NeoPublicationObject.extend({
       sequence: z.number().int().positive(),
       createdAt: z.string(),
-    }),
+    }).superRefine(publicationTextRule),
   }),
 ]);
 

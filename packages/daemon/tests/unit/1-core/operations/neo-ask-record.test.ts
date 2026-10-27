@@ -3,10 +3,14 @@ import { describe, expect, test } from 'bun:test';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import {
   createNeoAskRecordOperations,
+  requireAskSession,
+  requireNeoAskGoal,
   requireNeoAskProject,
   requireNeoAskSession,
 } from '../../../../src/lib/neo/ask-record-operations.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
+import { listOperationSummaries } from '../../../../src/lib/operations/discovery.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -67,7 +71,7 @@ function setup() {
   );
   const call = async (name: string, input: unknown, caller: OperationCaller) =>
     (await ops[name].execute(ops[name].inputSchema.parse(input), caller)) as Receipt;
-  return { store, goals, sessions, call, started, stopped, refuse, stopFails, onStop };
+  return { store, goals, sessions, call, started, stopped, refuse, stopFails, onStop, ops };
 }
 
 const opening = {
@@ -87,6 +91,23 @@ const opening = {
 };
 
 describe('neo.ask.open and neo.ask.settle', () => {
+  test('worker roles discover ask opening in the default operation list', () => {
+    const { ops } = setup();
+    const registry = createOperationRegistry(Object.values(ops));
+    for (const role of ['workflow_worker', 'direct_task_worker', 'long_term_agent'] as const)
+      expect(
+        listOperationSummaries(registry, { source: 'mcp', sessionId: 'worker-1', role }).map(
+          (item) => item.name
+        )
+      ).toContain('neo.ask.open');
+    expect(
+      listOperationSummaries(registry, {
+        source: 'mcp',
+        sessionId: 'worker-1',
+        role: 'universal_read',
+      }).map((item) => item.name)
+    ).not.toContain('neo.ask.outcome');
+  });
   test('settling an ask preserves an unverified close instead of treating it as unfinished', async () => {
     const h = setup();
     const opened = await h.call(
@@ -219,18 +240,20 @@ describe('neo.ask.open and neo.ask.settle', () => {
     expect(h.store.getAsk(opened.ask.id)?.outcome).toBe('Finished');
   });
 
-  test('only the goal owner links an ask; retries and repo splits retain that goal', async () => {
+  test('an ask links any existing goal; retries and repo splits retain that goal', async () => {
     const { store, goals, call, started } = setup();
     const mine = goals.create('neo-a', { title: 'Ship', doneTest: 'Released' }, 'neo', 1);
     const other = goals.create('neo-other', { title: 'Other', doneTest: 'Released' }, 'neo', 1);
-    for (const goalId of ['missing', other.id]) {
-      expect(await call('neo.ask.open', { ...opening, goalId }, turn('m1'))).toMatchObject({
+    expect(await call('neo.ask.open', { ...opening, goalId: 'missing' }, turn('m1'))).toMatchObject(
+      {
         ok: false,
         reason: expect.stringContaining('goal_not_found'),
-      });
-    }
+      }
+    );
     expect(store.listAsks(undefined, 100)).toEqual([]);
     expect(started).toEqual([]);
+    const foreign = await call('neo.ask.open', { ...opening, goalId: other.id }, turn('m1'));
+    expect(foreign.ok && foreign.ask.goalId).toBe(other.id);
     const result = await call('neo.ask.open', { ...opening, goalId: mine.id }, turn('m1'));
     if (!result.ok) throw new Error(result.reason);
     expect(result.ask.goalId).toBe(mine.id);
@@ -450,5 +473,28 @@ describe('requireNeoAskSession', () => {
     expect(requireNeoAskSession({ source: 'mcp', sessionId: 'worker-1' }, () => false)).toEqual(
       refused
     );
+  });
+});
+
+describe('requireAskSession and requireNeoAskGoal', () => {
+  test('any agent session opens an ask and may name a goal another session owns', () => {
+    expect(
+      requireAskSession({ source: 'mcp', role: 'direct_task_worker', sessionId: 'worker-1' })
+    ).toEqual({ value: 'worker-1' });
+    expect(requireAskSession({ source: 'mcp', sessionId: 'worker-1' })).toMatchObject({
+      reason: { ok: false, reason: 'no_session: opening an ask needs an agent session.' },
+    });
+    expect(
+      requireAskSession({ source: 'mcp', role: 'universal_read', sessionId: 'chat-1' })
+    ).toMatchObject({
+      reason: { ok: false, reason: 'no_session: opening an ask needs an agent session.' },
+    });
+    expect(requireAskSession({ source: 'rpc', principal: 'local' })).toMatchObject({
+      reason: { ok: false, reason: 'no_session: opening an ask needs an agent session.' },
+    });
+    const goal = { ownerSessionId: 'neo:root' } as unknown as Parameters<
+      typeof requireNeoAskGoal
+    >[2];
+    expect(requireNeoAskGoal('goal-1', 'worker-1', goal)).toEqual({ value: 'goal-1' });
   });
 });

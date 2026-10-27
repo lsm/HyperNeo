@@ -37,8 +37,8 @@ to its own loopback model. No policy/env injection occurs in the SDK transport
 wrapper. The daemon and model process close in finally; no fixed mock port is used.
 All three routes also curl the synthetic server through the sandbox's configured
 HTTP proxy. This proves HTTP network access, not real GitHub push/authentication.
-Claude allows HTTP(S) hosts explicitly. Unix sockets default to denied; the
-human-approved exceptions journey is `worker-unix-sockets.md`. SSH push is not verified.
+Claude allows HTTP(S) hosts explicitly, and sandboxed workers may reach any Unix socket
+(`worker-loopback.md` signs a commit through an agent socket). SSH push is not verified.
 
 Focused tests remove runtime roots before resuming a Claude worker or building SDK options; those paths must recreate
 their own private dirs. Creating a sibling must preserve existing env/sandbox
@@ -88,13 +88,41 @@ checks; the POSIX counterpart must still reject shared mode bits. These are
 modeled API-shape tests, not a native Windows sandbox proof. Native Windows and
 Linux worker OS enforcement are not verified on this macOS machine.
 
-Darwin deliberately keeps the short `/tmp` base: the real CLI journey rejects
-Claude's shared-temp fallback when a long path exceeds its socket limit. Other
-platforms use `os.tmpdir()`. The SDK adapter fixture owns a dedicated parent with
-its prepared clone below it. A synthetic unreadable directory alongside that
-parent reproduces the shared-temp sibling-scan EACCES before the fixture fix,
-and must not affect the corrected prepared start. All owned permissions are
-restored in finally. Regressions were committed first in `311804768a`.
+Darwin deliberately kept the short `/tmp` base because the real CLI journey
+rejects Claude's shared-temp fallback when a long path exceeds its socket
+limit; since #8999 the runtime lives under the data root instead (see below),
+so that length budget still applies to the data-root path. The SDK adapter
+fixture owns a dedicated parent with its prepared clone below it. A synthetic
+unreadable directory alongside that parent reproduces the shared-temp
+sibling-scan EACCES before the fixture fix, and must not affect the corrected
+prepared start. All owned permissions are restored in finally. Regressions
+were committed first in `311804768a`.
+
+## Data-root work locations (#8999)
+
+The per-worker runtime now lives under the daemon data root instead of the
+system temp base: `work/scratch/<worker key>` is the removable runtime and is
+exported as `TMPDIR` (with `TMP`, `TEMP`, `CLAUDE_CODE_TMPDIR` and
+`XDG_CACHE_HOME` inside it), while `HYPERNEO_WORKTREES` (the shared
+`worktrees/` root), `HYPERNEO_EVIDENCE` (`work/evidence/<key>`) and
+`HYPERNEO_BUILDS` (`work/builds/<key>`) name the fixed output locations. The
+key is derived from the worker clone root, so release and resume recompute the
+same paths, and every location is created on demand by runtime preparation.
+Keep the scratch key short: Claude's per-uid socket directory still must not
+exceed the Unix socket path limit, so an overly long data-root path can
+reintroduce the shared-temp fallback this journey rejects.
+
+`evidence/work-locations.json` records all three routes (Claude policy env,
+Codex `shell_environment_policy.set`, SDK settings env); each entry must sit
+under the run's `HYPERNEO_DATA_DIR` and exist on disk. The shared `worktrees/`
+root is also the Neo read-checkout tree, so it is exported as a location hint
+only: neither the Claude policy's `allowWrite` nor Codex `writable_roots` may
+include it, and resume replaces runtime-managed env keys (`TMPDIR`,
+`XDG_CACHE_HOME`, the `HYPERNEO_*` locations) so pre-upgrade workers adopt the
+data-root layout. The brief states the four paths only for workspaces carrying
+the worker-sandbox marker. The worker brief's
+`## Runtime Location` section states the same four paths (unit-covered in
+`custom-agent.test.ts`).
 
 Per-worker policy replacements are atomic. No cross-worker filesystem transaction
 is claimed for the pre-existing native-permission sibling refresh; try/precompute

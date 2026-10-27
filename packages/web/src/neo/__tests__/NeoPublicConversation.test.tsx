@@ -4,12 +4,12 @@ import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import { signal } from '@preact/signals';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { SessionStore } from '../../lib/session-store.ts';
 import {
   artifactPreviewStack,
   artifactPreviewWorkspace,
   closeArtifactPreview,
 } from '../../lib/artifact-preview-store.ts';
+import type { SessionStore } from '../../lib/session-store.ts';
 import { connectionState } from '../../lib/state.ts';
 import { NeoConversation } from '../NeoConversation.tsx';
 import { NeoPublicConversation, PendingAsk, publicAskText } from '../NeoPublicConversation.tsx';
@@ -236,7 +236,7 @@ describe('durable public conversation presentation', () => {
       );
       const more = await screen.findByRole('button', { name: /more$/ });
       expect(getComputedStyle(more).getPropertyValue('float')).toBe('right');
-      fireEvent.click(screen.getByText(value.shortText.trim()));
+      fireEvent.click(screen.getByText((value.shortText ?? '').trim()));
       expect(container.querySelector('[data-publication-details]')).toBeNull();
       fireEvent.click(more);
       const less = await screen.findByRole('button', { name: /less$/ });
@@ -277,6 +277,39 @@ describe('durable public conversation presentation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Copy Neo’s message' }));
     await waitFor(() => expect(clipboard).toHaveBeenLastCalledWith(value.fullText));
     expect(container.querySelector('script')).toBeNull();
+  });
+
+  it('renders a verbatim publication in full with no more control and copies the whole content', async () => {
+    const value = publication({
+      verbatim: true,
+      shortText: undefined,
+      fullText:
+        '## Sent as is\n\nThe entire message arrives uncollapsed.\n\n| Source | Finding |\n| --- | --- |\n| A | Different |\n\n> Reported evidence, not verified completion.\n\n```text\nFictional detail\n```',
+    });
+    const { container } = render(
+      <NeoPublicConversation conversation={conversation([], [value])} />
+    );
+    await waitFor(() => expect(container.querySelector('table')).toBeTruthy());
+    expect(container.querySelector('blockquote')?.textContent).toContain('not verified completion');
+    expect(container.querySelector('pre code')?.textContent).toContain('Fictional detail');
+    expect(screen.queryByRole('button', { name: /^more$/ })).toBeNull();
+    expect(container.querySelector('[data-publication-details]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy Neo’s message' }));
+    await waitFor(() => expect(clipboard).toHaveBeenLastCalledWith(value.fullText));
+  });
+
+  it('renders a verbatim publication in full even when a short text arrives too', async () => {
+    const value = publication({
+      verbatim: true,
+      shortText: 'A short preview that must not collapse the message.',
+      fullText: 'The entire message arrives uncollapsed, from first line to last line.',
+    });
+    const { container } = render(
+      <NeoPublicConversation conversation={conversation([], [value])} />
+    );
+    await waitFor(() => expect(container.textContent).toContain('from first line to last line'));
+    expect(screen.queryByRole('button', { name: /^more$/ })).toBeNull();
+    expect(container.querySelector('[data-publication-details]')).toBeNull();
   });
 
   it('offers select, copy and reply on a right-click, and copying flips the footer icon', async () => {

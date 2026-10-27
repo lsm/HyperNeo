@@ -18,10 +18,10 @@ import {
 import { dirname, join } from 'node:path';
 import type { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
 import { isSafeFsSupported, replaceFileWithinWorkspace } from '../../acp/acp-safe-fs.ts';
-import { spawnProcess } from '../../runtime-spawn/index.ts';
 import { neoDerivedId } from '../derived-id.ts';
 import { applyHomeChoice } from './apply-choice.ts';
 import type { HomeConflict, HomeFailure } from './conflicts.ts';
+import { spawnHomeCommand } from './git-environment.ts';
 import { type HomeReadInput, type HomeReadResult, homeRemoteUrl } from './read.ts';
 import type { HomeSavePlan, HomeSaveResult } from './save.ts';
 import { publicationLog, requireHomePath, requireHomeSave } from './save.ts';
@@ -34,9 +34,6 @@ type HomeSyncResult = { value: string | null } | { reason: HomeFailure };
 
 const HOME_RUNTIME_DIRS = ['.coordinators', '.claude', 'worktrees'];
 
-const CREDENTIAL_SUBCOMMANDS = new Set(['fetch', 'push', 'clone']);
-const COMMITTING_SUBCOMMANDS = new Set(['commit', 'merge', 'rebase', 'cherry-pick', 'revert']);
-
 export class NeoHomeRepository {
   private pending: Promise<unknown> = Promise.resolve();
   constructor(
@@ -45,25 +42,12 @@ export class NeoHomeRepository {
     private readonly networkTimeoutMs = 30_000
   ) {}
 
-  private async gitIdentity(): Promise<string[]> {
-    const identity: string[] = [];
-    for (const key of ['user.name', 'user.email']) {
-      const value = (
-        await this.command(['git', '-c', 'core.hooksPath=/dev/null', 'config', '--get', key], true)
-      ).text;
-      if (value) identity.push('-c', `${key}=${value}`);
-    }
-    return identity;
-  }
-
   private async git(args: string[], allowFailure = false, network = false, cwd = this.root) {
-    const identity = COMMITTING_SUBCOMMANDS.has(args[0]) ? await this.gitIdentity() : [];
     return this.command(
-      ['git', ...identity, '-c', 'core.hooksPath=/dev/null', ...args],
+      ['git', '-c', 'core.hooksPath=/dev/null', ...args],
       allowFailure,
       network,
-      cwd,
-      !CREDENTIAL_SUBCOMMANDS.has(args[0])
+      cwd
     );
   }
 
@@ -71,43 +55,41 @@ export class NeoHomeRepository {
     return this.command(['gh', ...args], true, true);
   }
 
-  private async command(
-    args: string[],
-    allowFailure = false,
-    network = false,
-    cwd = this.root,
-    isolateConfig = false
-  ) {
-    const inherited = Object.fromEntries(
-      Object.entries(process.env).filter(
-        (entry): entry is [string, string] => entry[1] !== undefined
-      )
+  private async command(args: string[], allowFailure = false, network = false, cwd = this.root) {
+    const command = await spawnHomeCommand(
+      args,
+      {
+        cwd,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        detached: network,
+        env: network
+          ? {
+              ...Object.fromEntries(
+                Object.entries(process.env).filter(
+                  (entry): entry is [string, string] => entry[1] !== undefined
+                )
+              ),
+              GIT_CONFIG_COUNT: String(Number(process.env.GIT_CONFIG_COUNT ?? 0) + 1),
+              [`GIT_CONFIG_KEY_${Number(process.env.GIT_CONFIG_COUNT ?? 0)}`]: 'core.hooksPath',
+              [`GIT_CONFIG_VALUE_${Number(process.env.GIT_CONFIG_COUNT ?? 0)}`]: '/dev/null',
+              GIT_TERMINAL_PROMPT: '0',
+              GH_PROMPT_DISABLED: '1',
+              GIT_ASKPASS: '/usr/bin/false',
+              SSH_ASKPASS: '/usr/bin/false',
+              SSH_ASKPASS_REQUIRE: 'force',
+              GIT_SSH_COMMAND: 'ssh -oBatchMode=yes',
+            }
+          : undefined,
+      },
+      dirname(this.root)
     );
-    const child = spawnProcess(args, {
-      cwd,
-      stdout: 'pipe',
-      stderr: 'pipe',
-      detached: network,
-      env: network
-        ? {
-            ...inherited,
-            GIT_TERMINAL_PROMPT: '0',
-            GIT_CONFIG_COUNT: String(Number(process.env.GIT_CONFIG_COUNT ?? 0) + 1),
-            [`GIT_CONFIG_KEY_${Number(process.env.GIT_CONFIG_COUNT ?? 0)}`]: 'core.hooksPath',
-            [`GIT_CONFIG_VALUE_${Number(process.env.GIT_CONFIG_COUNT ?? 0)}`]: '/dev/null',
-            GH_PROMPT_DISABLED: '1',
-            GIT_ASKPASS: '/usr/bin/false',
-            SSH_ASKPASS: '/usr/bin/false',
-            SSH_ASKPASS_REQUIRE: 'force',
-            GIT_SSH_COMMAND: 'ssh -oBatchMode=yes',
-          }
-        : {
-            ...inherited,
-            ...(isolateConfig
-              ? { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' }
-              : {}),
-          },
-    });
+    if ('failure' in command && command.failure) {
+      const { code, error } = command.failure;
+      if (!allowFailure) throw new Error(`home ${args.join(' ')}: ${error}`);
+      return { code, bytes: Buffer.alloc(0), text: '', error };
+    }
+    const { child, dispose } = command;
     let timedOut = false;
     const timer = network
       ? setTimeout(() => {
@@ -134,6 +116,7 @@ export class NeoHomeRepository {
       return { code, bytes, text: bytes.toString('utf8').trim(), error: diagnostic };
     } finally {
       clearTimeout(timer);
+      await dispose();
     }
   }
 

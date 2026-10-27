@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -525,8 +526,8 @@ describe('claude-desktop start', () => {
       retained.sandbox.network.allowedDomains = ['synthetic.invalid'];
       writeFileSync(settingsPath, JSON.stringify(retained));
       const firstRuntime = retained.env.TMPDIR;
-      rmSync(join(firstRuntime, '..'), { recursive: true, force: true });
-      if (runtimeState === 'unusable') writeFileSync(join(firstRuntime, '..'), 'unrelated runtime');
+      rmSync(firstRuntime, { recursive: true, force: true });
+      if (runtimeState === 'unusable') writeFileSync(firstRuntime, 'unrelated runtime');
       const secondDriver = adapter({
         prepareExecution: async () => ({
           ok: true,
@@ -547,10 +548,10 @@ describe('claude-desktop start', () => {
       ).toBe(true);
       const readPolicy = (root: string) =>
         JSON.parse(readFileSync(join(root, '.claude/settings.local.json'), 'utf8'));
-      expect(existsSync(firstRuntime)).toBe(false);
+      expect(existsSync(firstRuntime) && statSync(firstRuntime).isDirectory()).toBe(false);
       expect(readPolicy(first).env).toEqual(retained.env);
       expect(readPolicy(first).sandbox).toEqual(retained.sandbox);
-      rmSync(join(firstRuntime, '..'), { recursive: true, force: true });
+      rmSync(firstRuntime, { recursive: true, force: true });
       expect(readPolicy(first).env.TMPDIR).not.toBe(readPolicy(sibling).env.TMPDIR);
       expect(readPolicy(first).env.XDG_CACHE_HOME).not.toBe(readPolicy(sibling).env.XDG_CACHE_HOME);
       expect(readPolicy(first).permissions.deny).toContain(`Edit(/${sibling}/**)`);
@@ -641,7 +642,7 @@ describe('claude-desktop start', () => {
     ).toBe(true);
     const settings = join(directory, '.claude/settings.local.json');
     const runtime = JSON.parse(readFileSync(settings, 'utf8')).env.TMPDIR;
-    rmSync(join(runtime, '..'), { recursive: true, force: true });
+    rmSync(runtime, { recursive: true, force: true });
     expect(
       (await driver.send!({ adapter: 'claude-desktop', id: 'local_u1' }, 'Synthetic resume', user))
         .ok
@@ -693,7 +694,8 @@ describe('claude-desktop start', () => {
     const prepared = join(dir, 'prepared');
     mkdirSync(join(prepared, '.claude'));
     const settings = join(prepared, '.claude/settings.local.json');
-    writeFileSync(settings, '{"env":{"SYNTHETIC_SENTINEL":"do not read or overwrite"}}');
+    mkdirSync(settings);
+    writeFileSync(join(settings, 'sentinel'), 'do not overwrite');
     const result = await adapter({
       prepareExecution: async () => ({
         ok: true,
@@ -710,9 +712,7 @@ describe('claude-desktop start', () => {
       reason: 'preparation_failed',
       detail: expect.stringContaining('native write policy'),
     });
-    expect(readFileSync(settings, 'utf8')).toBe(
-      '{"env":{"SYNTHETIC_SENTINEL":"do not read or overwrite"}}'
-    );
+    expect(readFileSync(join(settings, 'sentinel'), 'utf8')).toBe('do not overwrite');
     expect(spawned).toEqual([]);
     expect(released).toBe(1);
   });

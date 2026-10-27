@@ -81,6 +81,21 @@ afterEach(async () => {
 });
 
 describe('Neo home read', () => {
+  test('reads a local document when inherited Git configuration is malformed', async () => {
+    const content = 'Human direction remains readable.\n';
+    await writeFile(join(root, 'direction.md'), content);
+    const configuration = join(fixture, 'invalid.gitconfig');
+    await writeFile(configuration, '[broken\n');
+    const previous = process.env.GIT_CONFIG_GLOBAL;
+    process.env.GIT_CONFIG_GLOBAL = configuration;
+    try {
+      expect(await read('direction.md')).toMatchObject({ ok: true, content });
+      await expect(home.init()).rejects.toThrow('bad config line');
+    } finally {
+      if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = previous;
+    }
+  });
   test.each([
     ['git@github.com:example/neo-home.git', 'https://github.com/example/neo-home'],
     [

@@ -5,7 +5,12 @@ import { z } from 'zod';
 import { convertMcpServersForAcp } from '../../../../src/lib/acp/acp-query-runner';
 import { AcpMcpProxyBridge } from '../../../../src/lib/acp/mcp-proxy-bridge';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
-import { createOperationRegistry, defineOperation } from '../../../../src/lib/operations/registry';
+import {
+  createOperationRegistry,
+  defineOperation,
+  type OperationRegistry,
+} from '../../../../src/lib/operations/registry';
+import { createDiscoveryOperations } from '../../../../src/lib/operations/discovery';
 import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
 import { SessionManager } from '../../../../src/lib/session/session-manager';
 import type { Database } from '../../../../src/storage/database';
@@ -17,7 +22,7 @@ import {
   createTestInternalEventBus,
   createTestSession,
 } from '../../../helpers/database';
-import { operationInvoke } from '../../../helpers/operation-mcp';
+import { operationInvoke, operationInvokeTool } from '../../../helpers/operation-mcp';
 
 describe('session operation MCP attachment', () => {
   let db: Database;
@@ -51,6 +56,78 @@ describe('session operation MCP attachment', () => {
     sessions.push(session);
     return session;
   }
+
+  test('only the Neo caller role receives core call shapes, regardless of session name or model', async () => {
+    const registry = createOperationRegistry([
+      defineOperation({
+        name: 'neo.snapshot',
+        description: 'Read a snapshot',
+        inputSchema: z.object({ projectId: z.string().optional() }),
+        resultSchema: z.unknown(),
+        execute: async () => null,
+      }),
+    ]);
+    for (const [index, role] of (
+      [
+        undefined,
+        'neo',
+        'workflow_worker',
+        'direct_task_worker',
+        'long_term_agent',
+        'universal_read',
+      ] as const
+    ).entries()) {
+      const record = createTestSession(`inbox-${index}`);
+      record.title = 'Neo';
+      await db.createSession(record);
+      const session = await restore(record.id);
+      session.setOperationRegistryProvider(() => registry);
+      session.setCallerScopeResolver(() => ({ role }));
+      for (const origin of [undefined, () => ({ messageId: 'input' })]) {
+        const description = operationInvokeTool(session.getOperationMcpServer(origin)).description;
+        if (role === 'neo') {
+          expect(description).toContain('Core input shapes:');
+          expect(description).toContain('neo.snapshot {projectId?}');
+        } else {
+          expect(description).toBe(
+            'Invoke {name,input}. operations.list discovers others; operations.describe {name} returns full schemas. message.send acceptance means durable mailbox persistence, not an agent reply.'
+          );
+        }
+      }
+    }
+  });
+
+  test('refreshes cached call shapes when the resolved caller role changes', async () => {
+    const record = createTestSession('changing-role');
+    await db.createSession(record);
+    const session = await restore(record.id);
+    session.setOperationRegistryProvider(() =>
+      createOperationRegistry([
+        defineOperation({
+          name: 'neo.snapshot',
+          description: 'Read a snapshot',
+          inputSchema: z.object({}),
+          resultSchema: z.unknown(),
+          execute: async () => null,
+        }),
+      ])
+    );
+    const initial = operationInvokeTool(session.getOperationMcpServer()).description;
+    expect(initial).not.toContain('Core input shapes:');
+    session.setCallerScopeResolver(() => ({ role: 'neo' }));
+    expect(operationInvokeTool(session.getOperationMcpServer()).description).toContain(
+      'neo.snapshot'
+    );
+    let role: 'neo' | undefined;
+    session.setCallerScopeResolver(() => ({ role }));
+    expect(operationInvokeTool(session.getOperationMcpServer()).description).toBe(initial);
+    role = 'neo';
+    expect(operationInvokeTool(session.getOperationMcpServer()).description).toContain(
+      'neo.snapshot'
+    );
+    role = undefined;
+    expect(operationInvokeTool(session.getOperationMcpServer()).description).toBe(initial);
+  });
 
   test('manager provider adoption reaches cached, restored, new and registered session servers', async () => {
     const manager = new SessionManager(
@@ -271,6 +348,57 @@ describe('session operation MCP attachment', () => {
     if (listed.type !== 'text') throw new Error('Expected catalog JSON');
     expect(JSON.parse(listed.text)).toContainEqual(expect.objectContaining({ name: 'task.get' }));
   });
+
+  test.each([
+    ['worker', ['message.send', 'note.read']],
+    [undefined, ['message.send', 'neo.restart', 'note.read', 'pack.preferences.set', 'work.start']],
+  ] as const)(
+    'a %s session lists only the operations its tool profile advertises, and may still call the rest',
+    async (toolProfile, listed) => {
+      const base = createTestSession('profiled');
+      await db.createSession({
+        ...base,
+        config: { ...base.config, ...(toolProfile ? { toolProfile } : {}) },
+      });
+      const session = await restore('profiled');
+      const stub = (name: string) =>
+        defineOperation({
+          name,
+          description: name,
+          inputSchema: z.object({}),
+          resultSchema: z.string(),
+          execute: async () => 'ran',
+        });
+      const registry: OperationRegistry = createOperationRegistry([
+        ...['message.send', 'neo.restart', 'note.read', 'pack.preferences.set', 'work.start'].map(
+          stub
+        ),
+        ...createDiscoveryOperations(() => registry),
+      ]);
+      session.setOperationRegistryProvider(() => registry);
+      const invoke = operationInvoke(session.getOperationMcpServer());
+      const discovery = await invoke({ name: 'operations.list' });
+      const content = discovery.content[0];
+      if (content.type !== 'text') throw new Error('Expected catalog JSON');
+      expect(
+        JSON.parse(content.text)
+          .map((entry: { name: string }) => entry.name)
+          .filter((name: string) => !name.startsWith('operations.'))
+          .sort()
+      ).toEqual(listed);
+      const full = (await invoke({ name: 'operations.list', input: { all: true } })).content[0];
+      if (full.type !== 'text') throw new Error('Expected catalog JSON');
+      expect(
+        JSON.parse(full.text)
+          .map((entry: { name: string }) => entry.name)
+          .filter((name: string) => !name.startsWith('operations.'))
+          .sort()
+      ).toEqual(listed);
+      expect(JSON.stringify((await invoke({ name: 'work.start', input: {} })).content)).toContain(
+        'ran'
+      );
+    }
+  );
 
   test.each([undefined, 'lobby', 'worker', 'space_chat', 'worker'] as const)(
     'exposes canonical send for restored session type %s',

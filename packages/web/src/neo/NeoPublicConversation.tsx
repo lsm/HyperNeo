@@ -1,51 +1,51 @@
-import type { NeoCardReply } from '@hyperneo/shared/types/neo-publication';
-import { neoCardReplyTitle } from './public-conversation.ts';
-import { NativeContentDisclosure } from '../components/ui/NativeContentDisclosure.tsx';
-import { ContentDisclosureControl } from '../components/ui/ContentDisclosureControl.tsx';
-import { NeoWakeRow } from './NeoWakeRow.tsx';
-import type { NeoSessionMessage } from '@hyperneo/shared/types/neo-session-message';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { previewReferenceCandidates } from '@hyperneo/shared/types/artifact-reference';
+import type { NeoReplyTo } from '@hyperneo/shared/types/neo-ask';
 import type {
   NeoConversationAskPageItem,
   NeoConversationImageRef,
 } from '@hyperneo/shared/types/neo-conversation-ask';
-import type { NeoReplyTo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoCardReply } from '@hyperneo/shared/types/neo-publication';
+import type { NeoSessionMessage } from '@hyperneo/shared/types/neo-session-message';
 import type { NeoSessionNoticeGroup } from '@hyperneo/shared/types/neo-snapshot';
-import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ArtifactCards } from '../components/artifacts/ArtifactCards.tsx';
-import { openArtifactPreview } from '../lib/artifact-preview-store.ts';
+import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
+import { ContentDisclosureControl } from '../components/ui/ContentDisclosureControl.tsx';
 import { CopyButton } from '../components/ui/CopyButton.tsx';
+import { NativeContentDisclosure } from '../components/ui/NativeContentDisclosure.tsx';
+import { openArtifactPreview } from '../lib/artifact-preview-store.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { t } from '../lib/i18n/index.ts';
-import { type NeoAskItem, readNeoConversationImage } from './conversation-ask-client.ts';
-import { NeoIcon } from './NeoIcon.tsx';
-import { NeoPreviewReference } from './NeoPreviewReference.tsx';
-import { NeoQuoteBar } from './NeoQuoteBar.tsx';
-import { NeoClampedText } from './NeoClampedText.tsx';
-import { NeoMessageMenu, neoMessageMenuActions, useNeoMessageMenu } from './NeoMessageMenu.tsx';
 import { copyToClipboard } from '../lib/utils.ts';
-import { messageTime } from './NeoMessage.tsx';
-import { NeoPublicationHistory } from './NeoPublicationHistory.tsx';
-import { projectNeoMessageImageSources } from './neo-message-images.ts';
-import { neoMessageAnchor } from './reply-context.ts';
+import { type NeoAskItem, readNeoConversationImage } from './conversation-ask-client.ts';
 import {
   NEO_MESSAGE_STATUS_LABELS,
   NEO_MESSAGE_STATUS_TITLES,
   type NeoMessageStatus,
 } from './message-status.ts';
-import { neoAppLabel, neoSessionKind, neoSessionLink } from './work-driver.ts';
 import { NeoSessionMark } from './NeoCardParts.tsx';
+import { NeoClampedText } from './NeoClampedText.tsx';
+import { NeoIcon } from './NeoIcon.tsx';
+import { messageTime } from './NeoMessage.tsx';
+import { NeoMessageMenu, neoMessageMenuActions, useNeoMessageMenu } from './NeoMessageMenu.tsx';
+import { NeoPreviewReference } from './NeoPreviewReference.tsx';
+import { NeoPublicationHistory } from './NeoPublicationHistory.tsx';
+import { NeoQuoteBar } from './NeoQuoteBar.tsx';
+import { NeoWakeRow } from './NeoWakeRow.tsx';
 import {
   type NeoPendingAsk,
   type NeoQuote,
   neoPublicationQuoteExcerpt,
   neoQuoteExcerpt,
 } from './neo-intake.ts';
+import { projectNeoMessageImageSources } from './neo-message-images.ts';
 import type {
   NeoPublicConversation as Conversation,
   NeoPublicEntry,
 } from './public-conversation.ts';
+import { neoCardReplyTitle } from './public-conversation.ts';
+import { neoMessageAnchor } from './reply-context.ts';
+import { neoAppLabel, neoSessionKind, neoSessionLink } from './work-driver.ts';
 
 export type NeoEditUndelivered = (ask: NeoAskItem) => boolean | void | Promise<boolean | void>;
 type AskPhoto = { kind: 'inline'; src: string } | { kind: 'ref'; ref: NeoConversationImageRef };
@@ -440,9 +440,9 @@ function PublicEntry({
     () => !!ask && restoredUndelivered().includes(ask.requestId)
   );
   const [restoring, setRestoring] = useState(false);
-  const short = publication?.shortText.trim() ?? '';
+  const short = publication?.shortText?.trim() ?? '';
   const full = publication?.fullText.trim() ?? '';
-  const hasDetails = !!short && !!full && full !== short;
+  const hasDetails = !!short && !!full && full !== short && publication?.verbatim !== true;
   const copyText = ask ? publicAskText(ask.content) : full || short;
   const text = ask ? publicAskText(ask.content) : hasDetails ? short : full || short;
   const quoteText = publication ? neoPublicationQuoteExcerpt(publication) : text;

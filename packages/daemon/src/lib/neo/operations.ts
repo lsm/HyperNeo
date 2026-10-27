@@ -1,5 +1,4 @@
 import { readNeoReply } from './intake.ts';
-import { workerSocketOperation } from './worker-sockets.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { globalSettingsWrites } from '../../storage/repositories/global-settings-writes.ts';
 import { receivedNeoHumanInput } from './human-input.ts';
@@ -37,11 +36,7 @@ import { hashString32 } from '../runtime-hash.ts';
 import type { NeoService } from './service.ts';
 import type { NeoProject } from '@hyperneo/shared/types/neo-context';
 import { type NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
-import {
-  NEO_STANDING_RULE_MAX_CHARS,
-  NEO_STANDING_RULES_MAX,
-  neoStandingRules,
-} from '@hyperneo/shared/types/settings';
+import { NEO_STANDING_RULE_MAX_CHARS, neoStandingRules } from '@hyperneo/shared/types/settings';
 import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
 import { readNeoProjectIdentities } from './project-merge.ts';
@@ -77,6 +72,7 @@ import {
 } from './session-track.ts';
 import { createNeoQuestionOperations } from './question-operations.ts';
 import { createNeoTodoOperations, type NeoTodoControls } from './todo-operations.ts';
+import { wireNeoTodoMutations } from './todo-mutation-operation.ts';
 import { createArtifactRefReader } from '../artifacts/read-operations.ts';
 import { createNeoAskRecordOperations } from './ask-record-operations.ts';
 import { SessionGoalRepository } from '../../storage/repositories/session-goal-repository.ts';
@@ -94,6 +90,7 @@ import {
   PackSettingSchema,
 } from './preference-operations.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
+import { readNeoRuleApproval } from '../../storage/repositories/neo-rule-answer.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
@@ -128,6 +125,15 @@ const SnapshotOk = z.object({
   conversationId: z.string().nullable().optional(),
   projectRedirects: z.array(z.object({ sourceId: z.string(), targetId: z.string() })).optional(),
   standingRules: z.array(z.string()).optional(),
+  standingRuleSources: z
+    .record(
+      z.string(),
+      z.union([
+        z.object({ sessionId: z.string(), messageId: z.string() }),
+        z.object({ questionId: z.string() }),
+      ])
+    )
+    .optional(),
   sessionNotices: z.array(NeoSessionNoticeSchema).max(20).optional(),
   sessionNoticeGroups: z.array(NeoSessionNoticeGroupSchema).max(10).optional(),
   sessionMessages: z
@@ -241,9 +247,8 @@ const SessionTrack = z.object({ key: z.string().trim().min(1).max(400) });
 const SessionTrackResult = z.union([Failure, z.object({ ok: z.literal(true) })]);
 const StandingRule = z.string().trim().min(1).max(NEO_STANDING_RULE_MAX_CHARS);
 const SaveRules = z.object({
-  add: z.array(StandingRule).max(NEO_STANDING_RULES_MAX).optional(),
-  remove: z.array(StandingRule).max(NEO_STANDING_RULES_MAX).optional(),
-  from: z.string().trim().min(1).max(2000).optional(),
+  add: z.array(StandingRule).optional(),
+  remove: z.array(StandingRule).optional(),
   messageId: z.uuid().optional(),
 });
 const RulesResult = z.union([
@@ -288,7 +293,7 @@ function admitNeoCaller(
   const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
   if (caller.source !== 'mcp' || binding?.kind !== 'neo')
     return { reason: { ok: false, reason: 'This operation belongs to Neo.' } };
-  if (['neo.open', 'neo.restart', 'neo.session.track'].includes(name))
+  if (['neo.restart', 'neo.session.track'].includes(name))
     return { reason: { ok: false, reason: 'This action needs the user.' } };
   return { value: caller };
 }
@@ -345,6 +350,7 @@ export function neoReorganizeRuntime(service: NeoService): NeoReorganizeRuntime 
 }
 
 export function createNeoOperations(service: NeoService) {
+  const mutationGateway = gatewayFor(service.db.getDatabase());
   const messageStatuses: NeoMessageStatusPresenter = (items) =>
     readNeoMessageStatuses((refs) => service.db.getNeoMessageStatusFactsAsync(refs), items);
   const snapshots = new Map<string, ReturnType<typeof buildSnapshot>>();
@@ -432,6 +438,7 @@ export function createNeoOperations(service: NeoService) {
       sessionId,
       session: sessionId ? await worker({ adapter: 'hyperneo', id: sessionId }) : null,
       standingRules: neoStandingRules(service.db.getGlobalSettings?.().neo),
+      standingRuleSources: service.db.getGlobalSettings?.().neo?.standingRuleSources,
       ...(caller.source === 'rpc'
         ? {
             conversationId: service.repo.conversationId(),
@@ -554,28 +561,26 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(
       (input: z.infer<typeof SaveRules>, caller: OperationCaller) => {
-        if (isLocalUser(caller)) return { value: caller };
+        if (isLocalUser(caller) && !input.messageId) return { value: caller };
         const human =
           input.messageId && caller.sessionId
             ? receivedNeoHumanInput(service, caller.sessionId, input.messageId)
             : null;
-        const texts: string[] | undefined =
-          typeof human?.content === 'string'
-            ? [human.content]
-            : human?.content.flatMap((part: { type: string; text?: string }) =>
-                part.type === 'text' && typeof part.text === 'string' ? [part.text] : []
-              );
-        const changes = [...(input.add ?? []), ...(input.remove ?? [])];
-        return input.from &&
-          texts?.some(
-            (text) => text.trim() === input.from && changes.every((rule) => text.includes(rule))
-          )
-          ? { value: caller }
+        const approval = readNeoRuleApproval(service.db.getDatabase(), human, input);
+        return approval
+          ? approval.applied
+            ? {
+                reason: {
+                  ok: true as const,
+                  standingRules: neoStandingRules(service.db.getGlobalSettings().neo),
+                },
+              }
+            : { value: caller }
           : {
               reason: {
                 ok: false as const,
                 reason:
-                  'Cite messageId and quote a complete human text part containing every added or removed rule verbatim, or use neo.rule.ask for confirmation.',
+                  'Cite a received human yes to the exact neo.rule.ask proposal in this conversation, or use neo.rule.ask for confirmation.',
               },
             };
       },
@@ -583,9 +588,16 @@ export function createNeoOperations(service: NeoService) {
       'result:save'
     )
     .pipe(
-      (input: z.infer<typeof SaveRules>) =>
-        gatewayFor(service.db.getDatabase()).call(globalSettingsWrites, 'neoRules', input),
-      'input',
+      (input: z.infer<typeof SaveRules>, caller: OperationCaller) =>
+        gatewayFor(service.db.getDatabase()).call(
+          globalSettingsWrites,
+          'neoRules',
+          input,
+          input.messageId && caller.sessionId
+            ? { sessionId: caller.sessionId, messageId: input.messageId }
+            : undefined
+        ),
+      ['input', 'caller'],
       'result:save'
     )
     .pipe(
@@ -733,9 +745,6 @@ export function createNeoOperations(service: NeoService) {
     createNeoConversationImageReadOperation(service.repo, service.asks),
     createNeoDraftRecoveryOperation(service),
     ...createNeoRuleQuestions(service),
-    workerSocketOperation(service, (caller) =>
-      admitNeoCaller(service, caller, 'neo.workerSocket.ask')
-    ),
     ...createPackPreferenceQuestions(
       service.db.getDatabase(),
       service.todos,
@@ -744,13 +753,25 @@ export function createNeoOperations(service: NeoService) {
     ),
     createNeoPreferenceOperation(service),
     ...createPackPreferenceOperations(service.db.getDatabase(), () => service.installedPacks()),
-    ...createNeoTodoOperations(
-      service.todos,
-      service.todoSessions,
-      todoControls,
-      () => service.installedPacks(),
-      createArtifactRefReader(() => service.db.getDatabase()),
-      (todos) => service.todoWorkers(todos)
+    ...wireNeoTodoMutations(
+      createNeoTodoOperations(
+        service.todos,
+        service.todoSessions,
+        todoControls,
+        () => service.installedPacks(),
+        createArtifactRefReader(() => service.db.getDatabase()),
+        (todos) => service.todoWorkers(todos)
+      ),
+      {
+        gateway: mutationGateway,
+        write: mutationGateway.run.bind(mutationGateway),
+        packs: () => service.installedPacks(),
+        artifact: createArtifactRefReader(() => service.db.getDatabase()),
+        stop: (todo) => service.todoRunner.stop(todo),
+        start: (id) => service.todoRunner.start(id),
+        changed: () => service.notifyChanged(),
+        project: (todos) => service.todoWorkers(todos),
+      }
     ),
     createNeoAskReadOperation(
       service.todos,
@@ -820,10 +841,10 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.open',
       description:
-        'Open the one Neo conversation; a projectId is checked and opens the same session.',
+        'Open the one Neo conversation; a projectId is checked and opens the same session. The bound Neo session may open itself.',
       inputSchema: Scope,
       resultSchema: Snapshot,
-      policy: { safetyClass: 'human_only' },
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: open,
     }),
     defineOperation({
@@ -838,7 +859,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.rule.save',
       description:
-        'Prefer neo.rule.ask for human confirmation first. Directly add or remove standing rules (neo.snapshot standingRules); the other rules stay. Only while answering the human’s own message, when they state or correct something lasting about how work should go (what done means, where a project lives, which app to use) or answer your question about it: pass add with the new rule, remove with the exact text of a rule they replaced or withdrew, and from with a complete text part of that message, quoted exactly. Pass messageId from the human message’s [message id: ...] line and quote a complete text part exactly in from. Each added or removed rule must appear verbatim in that text part. For paraphrases or a text part exceeding 2000 characters, use neo.rule.ask. The message must have been received in this Neo conversation; system notes and other sessions cannot authorize a rule edit. Up to 20 rules of up to 500 characters.',
+        'Prefer neo.rule.ask for human confirmation first. Directly add or remove standing rules only with human approval: pass messageId from the approving human message’s [message id: ...] line. The daemon records that message reference with each added rule, so consent stays traceable; paraphrasing is allowed. The message must be a consumed human yes replying to the immutable neo.rule.ask proposal for these exact add/remove arrays in this Neo conversation; system notes and other sessions cannot authorize edits. Remove uses exact saved rule text. Already-applied approvals return the current rules without replaying the edit. Each rule may have up to 500 characters.',
       inputSchema: SaveRules,
       resultSchema: RulesResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

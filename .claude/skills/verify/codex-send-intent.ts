@@ -184,20 +184,38 @@ try {
     const request = call as { desktop?: string; params?: { conversationId?: string } };
     return request.desktop === 'thread-follower-start-turn' && request.params?.conversationId === 'new-handoff-control';
   }), 'New-thread control must open and hand off its first turn');
+  owner = 'missing';
+  let marked = calls.length;
+  const steered = await send();
+  assert.equal(steered.ok, true, JSON.stringify(steered));
+  assert.equal(steered.value.delivered, true);
+  assert.equal(steered.value.steeredIntoTurnId, 'desktop-active');
+  assert(!calls.slice(marked).some(call => (call as { server?: string }).server), 'Automatic send must never resume or enqueue on the app-server while Desktop owns the thread');
+  assert(calls.slice(marked).some(call => (call as { desktop?: string }).desktop === 'thread-follower-steer-turn'));
+  assert(readFileSync(openLog, 'utf8').includes('codex://threads/synthetic'), 'An ownerless thread is opened in Desktop for delivery');
+  refuse = true;
+  marked = calls.length;
+  const restarted = await send();
+  assert.equal(restarted.ok, true, JSON.stringify(restarted));
+  assert.equal(restarted.value.delivered, true);
+  assert.equal(restarted.value.startedTurnId, 'desktop-started');
+  assert(!calls.slice(marked).some(call => (call as { server?: string }).server), 'No app-server writer may start while Desktop owns the thread');
+  refuse = false;
+  unlinkSync(runningFlag);
   for (const turnActive of [true, false]) {
     active = turnActive;
     loaded = turnActive;
     owner = 'missing';
-    const before = calls.length;
+    const marked = calls.length;
     const pending = await send();
     assert.equal(pending.ok, true, JSON.stringify(pending));
     assert.equal(pending.value.queuedSubmissionId, 'synthetic-queue');
     assert.equal(pending.value.delivered, false);
     assert.equal(pending.value.receipt, undefined);
-    assert(!calls.slice(before).some(call => (call as { desktop?: string }).desktop));
-    assert(!calls.slice(before).some(call => ['turn/start', 'turn/steer'].includes((call as { server?: string }).server ?? '')));
+    assert(!calls.slice(marked).some(call => (call as { desktop?: string }).desktop));
+    assert(!calls.slice(marked).some(call => ['turn/start', 'turn/steer'].includes((call as { server?: string }).server ?? '')));
     assert.equal(loaded, true, 'Saved idle thread must be loaded before enqueue');
-    assert.equal(calls.slice(before).filter(call => (call as { server?: string }).server === 'thread/resume').length, turnActive ? 0 : 1);
+    assert.equal(calls.slice(marked).filter(call => (call as { server?: string }).server === 'thread/resume').length, turnActive ? 0 : 1);
     active = false;
     const text = pendingText;
     const timestamp = new Date().toISOString();
@@ -212,7 +230,7 @@ try {
     assert.equal(observed.value.inputEvidence.state, 'observed');
     assert(observed.value.inputEvidence.exchange.some((entry: { role: string; text: string }) => entry.role === 'user' && entry.text.includes('synthetic marker')));
     assert(observed.value.inputEvidence.exchange.some((entry: { role: string; text: string }) => entry.role === 'agent' && entry.text === 'Writer received queued work.'));
-    assert.equal(calls.slice(before).filter(call => (call as { server?: string }).server === 'thread/queue/add').length, 1);
+    assert.equal(calls.slice(marked).filter(call => (call as { server?: string }).server === 'thread/queue/add').length, 1);
     writeFileSync(rollout, '');
   }
   for (const step of ['thread/loaded/list', 'thread/resume', 'thread/settings/update']) {
@@ -259,6 +277,7 @@ try {
     assert.equal(calls.slice(before).filter(call => (call as { server?: string }).server === 'thread/queue/add').length, 1);
   }
   queueFault = '';
+  writeFileSync(runningFlag, 'running');
   owner = 'owned';
   assert.equal((await send('steer')).value.steeredIntoTurnId, 'desktop-active');
   refuse = true;
@@ -266,7 +285,7 @@ try {
   assert.equal((await send('steer')).reason, 'not_delivered');
   assert(!calls.slice(before).some(call => (call as { server?: string }).server === 'thread/queue/add'));
   const opens = readFileSync(openLog, 'utf8').trim().split('\n').map(line => JSON.parse(line));
-  assert.equal(opens.length, 1, 'Only new-thread creation opens Desktop');
+  assert.equal(opens.length, 2, 'Only new-thread creation and the first ownerless automatic send open Desktop');
   console.log(`${action} PASS: ${run}/evidence/observed.json`);
 } finally {
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ action, replies, calls, logs, timings, collisions }, null, 2));

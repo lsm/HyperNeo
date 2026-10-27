@@ -64,6 +64,16 @@ const saidAt = (text: string, at = '2026-10-04T11:00:05.000Z') =>
     payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] },
   });
 
+let workerDataDir: string;
+beforeEach(() => {
+  workerDataDir = mkdtempSync(join(tmpdir(), 'worker-data-'));
+  process.env.HYPERNEO_DATA_DIR = workerDataDir;
+});
+afterEach(() => {
+  rmSync(workerDataDir, { recursive: true, force: true });
+  delete process.env.HYPERNEO_DATA_DIR;
+});
+
 describe('codexQueueDelivery', () => {
   test('a queued message is receipted by the user message id it appended, not an older copy', () => {
     const before = [heardAs('msg_old', 'next step')];
@@ -498,7 +508,13 @@ describe('codex-desktop adapter status and send', () => {
     }),
     worktreesDir = '/codex/worktrees',
     stdout = '',
-    overrides: { newId?: () => string; onSpawn?: () => void; realServer?: boolean } = {}
+    overrides: {
+      newId?: () => string;
+      onSpawn?: () => void;
+      realServer?: boolean;
+      desktopRunning?: () => Promise<boolean>;
+      desktopSocketPath?: string;
+    } = {}
   ) {
     const spawn: SpawnFn = (args) => {
       spawned.push(args);
@@ -518,7 +534,8 @@ describe('codex-desktop adapter status and send', () => {
         throw new Error('not used');
       },
       statePath,
-      desktopRunning: async () => false,
+      ...(overrides.desktopSocketPath ? { desktopSocketPath: overrides.desktopSocketPath } : {}),
+      desktopRunning: overrides.desktopRunning ?? (async () => false),
       worktreesDir,
       machine: 'laptop',
       now: () => NOW,
@@ -637,6 +654,78 @@ describe('codex-desktop adapter status and send', () => {
       }
     }
   );
+
+  test.each([true, false])(
+    'existing-thread sends route by Desktop ownership (Desktop running: %s)',
+    async (desktopRunning) => {
+      const calls: string[] = [];
+      const driver = adapter(
+        0,
+        '',
+        async () => ({
+          call: async (method) => {
+            calls.push(method);
+            if (method === 'thread/queue/add') return { queuedSubmission: { id: 'queue-1' } };
+            if (method === 'thread/resume') return {};
+            throw new Error(`Unexpected app-server call ${method}`);
+          },
+          close: () => {},
+        }),
+        undefined,
+        '',
+        { desktopRunning: async () => desktopRunning }
+      );
+      const result = await driver.send!(ref('idle'), 'continue held work', user);
+      const queued = await driver.queue!(ref('idle'), 'next task after this turn', user);
+      if (desktopRunning) {
+        expect(result).toMatchObject({
+          ok: false,
+          reason: 'not_delivered',
+          notSent: true,
+          detail: expect.stringContaining('ownership endpoint is unavailable'),
+        });
+        expect(queued).toEqual({
+          ok: true,
+          value: { delivered: false, queuedSubmissionId: 'queue-1' },
+        });
+        expect(calls).toEqual(['thread/queue/add']);
+      } else {
+        expect(result).toEqual({
+          ok: true,
+          value: { delivered: false, queuedSubmissionId: 'queue-1' },
+        });
+        expect(queued).toEqual({
+          ok: true,
+          value: { delivered: false, queuedSubmissionId: 'queue-1' },
+        });
+        expect(calls).toEqual(['thread/queue/add', 'thread/queue/add']);
+      }
+    }
+  );
+
+  test('a queue send falls back to the app-server when Desktop ownership cannot be reached', async () => {
+    const calls: string[] = [];
+    const driver = adapter(
+      0,
+      '',
+      async () => ({
+        call: async (method) => {
+          calls.push(method);
+          if (method === 'thread/queue/add') return { queuedSubmission: { id: 'queue-1' } };
+          throw new Error(`Unexpected app-server call ${method}`);
+        },
+        close: () => {},
+      }),
+      undefined,
+      '',
+      { desktopRunning: async () => true, desktopSocketPath: join(dir, 'missing-ipc.sock') }
+    );
+    await expect(driver.queue!(ref('idle'), 'next task after this turn', user)).resolves.toEqual({
+      ok: true,
+      value: { delivered: false, queuedSubmissionId: 'queue-1' },
+    });
+    expect(calls).toEqual(['thread/queue/add']);
+  });
 
   test.each(['', '  Final Codex message 🔬\n'.repeat(400)])(
     'exposes explicit turn-end payloads without borrowing earlier prose: %s',
@@ -1042,7 +1131,7 @@ describe('codex-desktop adapter status and send', () => {
       const root = join(dir, 'prepared');
       mkdirSync(join(root, '.git'), { recursive: true });
       const env = workerSandboxPaths(root);
-      const runtime = join(env.TMPDIR, '..');
+      const runtime = env.TMPDIR;
       const readyAtDispatch: boolean[] = [];
       const observe = () => readyAtDispatch.push(Object.values(env).every(existsSync));
       try {
@@ -1092,9 +1181,11 @@ describe('codex-desktop adapter status and send', () => {
         close: () => {},
       }));
       await driver.send!(ref('idle'), 'routine next input', user);
-      expect(events).toHaveLength(1);
-      expect(events[0]).toContain('"path":"queue"');
-      expect(events[0]).toContain('"reason":"native_queue"');
+      expect(events).toHaveLength(2);
+      expect(events[0]).toContain('"path":"app-server"');
+      expect(events[0]).toContain('"reason":"desktop_not_running"');
+      expect(events[1]).toContain('"path":"queue"');
+      expect(events[1]).toContain('"reason":"native_queue"');
     } finally {
       off();
       configureLogger(config);

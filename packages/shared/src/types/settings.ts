@@ -118,8 +118,11 @@ export const NEO_WORKER_PERMISSION_MODES = [
 ] as const;
 export type NeoWorkerPermissionMode = (typeof NEO_WORKER_PERMISSION_MODES)[number];
 
+export type NeoRuleSource = { sessionId: string; messageId: string } | { questionId: string };
+
 export interface NeoSettings {
   standingRules?: string[];
+  standingRuleSources?: Record<string, NeoRuleSource>;
   preferences?: NeoModelPreference;
   packs?: string[];
   mutedSessions?: string[];
@@ -132,7 +135,6 @@ export function neoWorkerPermissionMode(settings?: NeoSettings): NeoWorkerPermis
   return mode && NEO_WORKER_PERMISSION_MODES.includes(mode) ? mode : 'auto';
 }
 
-export const NEO_STANDING_RULES_MAX = 20;
 export const NEO_STANDING_RULE_MAX_CHARS = 500;
 
 export function neoStandingRules(settings?: NeoSettings): string[] {
@@ -152,12 +154,11 @@ export type ChatDisplayMode = 'full' | 'compact' | 'minimal';
 
 export type LanguageSetting = 'system' | 'en' | 'zh-Hans';
 
-export const WORKER_SANDBOX_MODES = ['off', 'always'] as const;
+export const WORKER_SANDBOX_MODES = ['off', 'always', 'on-demand'] as const;
 export type WorkerSandboxMode = (typeof WORKER_SANDBOX_MODES)[number];
 
 export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
   workerSandbox?: WorkerSandboxMode;
-  workerUnixSockets?: string[];
   toolSelectionDefaults?: SessionToolSelection;
 
   settingSources: SettingSource[];
@@ -204,7 +205,6 @@ export interface SessionSettings extends GlobalSettings {
 
 export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
   workerSandbox: 'off',
-  workerUnixSockets: [],
   settingSources: ['user', 'project', 'local'],
   permissionMode: 'default',
   model: 'sonnet',

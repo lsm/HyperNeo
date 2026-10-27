@@ -1,11 +1,12 @@
 ## Codex Desktop work.send journey
 
-First run `codex-send-intent-through-a-synthetic-daemon.md`. It proves that a
-automatic input uses the native app-server queue without Desktop ownership.
-Saved unloaded threads are resumed before settings or enqueue; loaded active
-threads are not resumed. Explicit steer uses Desktop ownership when Desktop is
-running and the app-server otherwise. Explicit queue retains the shared
-app-server queue API even while Desktop is running. A fallback turn's matching completion requests
+First run `codex-send-intent-through-a-synthetic-daemon.md`. It proves that
+automatic input routes by Desktop ownership: while Desktop is running it
+delivers through the owner client and never resumes the app-server writer;
+while Desktop is not running it uses the native app-server queue, resuming
+saved unloaded threads before settings or enqueue and never resuming loaded
+active threads. Explicit steer uses Desktop ownership when Desktop is running
+and the app-server otherwise. A fallback turn's matching completion requests
 `thread/unsubscribe`; its official idle grace can retain the thread for up to
 30 minutes. No archive/unarchive or app restart transfers ownership.
 

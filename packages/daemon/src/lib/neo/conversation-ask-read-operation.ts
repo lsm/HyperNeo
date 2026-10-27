@@ -1,6 +1,7 @@
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { NeoPreviewReferenceSchema } from './preview-context-schema.ts';
 import { presentNeoPreviewAsk } from './preview-context.ts';
+import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type {
   NeoConversationAsk,
   NeoConversationAskPageItem,
@@ -15,16 +16,18 @@ import type {
   NeoConversationAskImageRow,
   NeoConversationAskRepository,
 } from '../../storage/repositories/neo-conversation-ask-repository.ts';
+import { isLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { NeoConversationAskSchema, NeoReplyToSchema } from './conversation-ask.ts';
 import { neoImageSize } from './image-size.ts';
 import {
   NeoConversationPageInput,
   NeoConversationPageShape,
+  isNeoConversationSession,
   neoConversationPageCursorValid,
   readNeoConversationPage,
-  requirePublicationReader,
   requirePublicationConversation,
+  requirePublicationReader,
 } from './publication-read-operation.ts';
 
 type Page = z.infer<typeof NeoConversationPageInput>;
@@ -171,7 +174,15 @@ function readAskImageRefs(
 const read = (superpipe({})('neo-conversation-ask-read') as PipelineAPI)
   .input(['request', 'caller', 'repo', 'ledger', 'presentStatus', 'database'])
   .pipe((request: AskPage): Page => request, 'request', 'page')
-  .pipe(requirePublicationReader, ['page', 'caller'], 'result:page')
+  .pipe(
+    (caller: OperationCaller, repo: NeoRepository) =>
+      caller.source === 'mcp' && caller.sessionId
+        ? repo.getBindingBySession(caller.sessionId)
+        : null,
+    ['caller', 'repo'],
+    'binding'
+  )
+  .pipe(requirePublicationReader, ['page', 'caller', 'binding'], 'result:page')
   .pipe((repo: NeoRepository) => repo.conversationId(), 'repo', 'conversation')
   .pipe(requirePublicationConversation, ['page', 'conversation'], 'result:page')
   .pipe(
@@ -201,7 +212,7 @@ export function createNeoConversationAskReadOperation(
     name: 'neo.conversation.asks.read',
     description:
       'Read one bounded ascending page of durably accepted human asks for the current public conversation. Original request identities and content are preserved; this never reads execution transcripts or starts a query. messageStatus is computed by the daemon: received, queued, working, read, answered or failed. Only a publication explicitly citing a consumed input in replyTo marks it answered; read without a reply stays read. Use nextAfter for later pages, or pass before (for example Number.MAX_SAFE_INTEGER for the newest page) to read the page that ends just before that sequence. An ask that could not be delivered also carries delivery: { state: "failed" }. With imageRefs: true, each photo comes back as { type: "image_ref", imageId, mediaType, bytes, width, height, thumbnail } instead of its full data; read the full photo with neo.conversation.image.read.',
-    policy: { safetyClass: 'human_only' },
+    policy: { safetyClass: 'read', roles: ['neo'] },
     inputSchema: AskPageInput,
     resultSchema: z.union([
       z.object({ ok: z.literal(false), reason: z.enum(['human_only', 'conversation_not_found']) }),
@@ -225,9 +236,10 @@ type ImageResult = ImageFailure | { ok: true; imageId: string; mediaType: string
 
 export function requireNeoImageReader(
   input: ImageInput,
-  caller: OperationCaller
+  caller: OperationCaller,
+  binding: NeoBinding | null
 ): { value: ImageInput } | { reason: ImageFailure } {
-  return caller.source === 'rpc' && caller.principal === 'local'
+  return isLocalUser(caller) || isNeoConversationSession(caller, binding)
     ? { value: input }
     : { reason: { ok: false, reason: 'human_only' } };
 }
@@ -259,7 +271,15 @@ export function readNeoConversationImage(
 
 const readImage = (superpipe({})('neo-conversation-image-read') as PipelineAPI)
   .input(['input', 'caller', 'repo', 'ledger'])
-  .pipe(requireNeoImageReader, ['input', 'caller'], 'result:image')
+  .pipe(
+    (caller: OperationCaller, repo: NeoRepository) =>
+      caller.source === 'mcp' && caller.sessionId
+        ? repo.getBindingBySession(caller.sessionId)
+        : null,
+    ['caller', 'repo'],
+    'binding'
+  )
+  .pipe(requireNeoImageReader, ['input', 'caller', 'binding'], 'result:image')
   .pipe(requireNeoImageConversation, ['input', 'repo'], 'result:image')
   .pipe(
     (input: ImageInput, ledger: NeoConversationAskRepository) =>
@@ -283,7 +303,7 @@ export function createNeoConversationImageReadOperation(
     name: 'neo.conversation.image.read',
     description:
       'Read one full photo from a human ask in the current public conversation, by the imageId that neo.conversation.asks.read returns with imageRefs: true.',
-    policy: { safetyClass: 'human_only' },
+    policy: { safetyClass: 'read', roles: ['neo'] },
     inputSchema: z
       .object({
         conversationId: z.uuid(),

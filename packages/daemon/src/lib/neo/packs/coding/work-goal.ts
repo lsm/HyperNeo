@@ -14,7 +14,8 @@ export function withCodingWorkGoal(
   return withWorkGoal(
     instruction,
     goal,
-    /merg/i.test(goal?.doneWhen ?? '')
+    goal?.checkKind === 'pr_merged' ||
+      (goal?.checkKind == null && /merg/i.test(goal?.doneWhen ?? ''))
       ? [
           NEO_WORK_GOAL_MERGE,
           eventsDelivered ? NEO_WORK_GOAL_PR_EVENTS : NEO_WORK_GOAL_PR_SUBSCRIBE,

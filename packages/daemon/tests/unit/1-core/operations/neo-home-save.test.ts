@@ -106,6 +106,81 @@ describe('Neo home save', () => {
       else process.env.GIT_CONFIG_GLOBAL = previous;
     }
   });
+  test('does not execute a filter whose configured name contains non-UTF-8 bytes', async () => {
+    const name = Buffer.from([0xe9]);
+    await writeFile(
+      join(root, '.gitattributes'),
+      Buffer.concat([Buffer.from('raw-name.md filter='), name, Buffer.from('\n')])
+    );
+    await git('add', '.gitattributes');
+    await git('commit', '-m', 'Synthetic raw attribute');
+    const marker = join(fixture, 'raw-filter-outside-home');
+    await writeFile(
+      join(root, '.git', 'config'),
+      Buffer.concat([
+        Buffer.from('\n[filter "'),
+        name,
+        Buffer.from(`"]\n clean = "printf executed > '${marker}'; cat"\n`),
+      ]),
+      { flag: 'a' }
+    );
+    const result = await save({ path: 'raw-name.md', content: 'Exact home bytes.\n' });
+    expect(await readFile(marker, 'utf8').catch(() => null)).toBeNull();
+    expect(result.ok).toBe(true);
+    expect(await git('show', 'HEAD:raw-name.md')).toBe('Exact home bytes.');
+  });
+  test.each(['global', 'system'])(
+    'does not execute an inherited %s filter selected by home attributes',
+    async (source) => {
+      await writeFile(join(root, '.gitattributes'), '*.md filter=home-probe\n');
+      await git('add', '.gitattributes');
+      await git('commit', '-m', 'Home attributes');
+      const config = join(fixture, 'gitconfig');
+      const marker = join(fixture, 'filter-ran-outside-home');
+      await git(
+        'config',
+        '--file',
+        config,
+        'filter.home-probe.clean',
+        `printf executed > '${marker}'; cat`
+      );
+      const previous = new Map(
+        ['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM'].map((key) => [
+          key,
+          process.env[key],
+        ])
+      );
+      process.env[source === 'system' ? 'GIT_CONFIG_SYSTEM' : 'GIT_CONFIG_GLOBAL'] = config;
+      if (source === 'system') process.env.GIT_CONFIG_NOSYSTEM = '0';
+      try {
+        const result = await save({ path: 'filtered.md', content: 'Curated progress.' });
+        expect(await readFile(marker, 'utf8').catch(() => null)).toBeNull();
+        expect(result.ok).toBe(true);
+        expect(await git('show', 'HEAD:filtered.md')).toBe('Curated progress.');
+      } finally {
+        for (const [key, value] of previous) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+      }
+    }
+  );
+  test('drops inherited aliases and protocol grants from the sanitized home Git config', async () => {
+    const config = join(fixture, 'gitconfig');
+    const marker = join(fixture, 'alias-ran-outside-home');
+    await git('config', '--file', config, 'alias.commit', `!printf executed > '${marker}'`);
+    await git('config', '--file', config, 'protocol.ext.allow', 'always');
+    const previous = process.env.GIT_CONFIG_GLOBAL;
+    process.env.GIT_CONFIG_GLOBAL = config;
+    try {
+      const result = await save({ path: 'alias-free.md', content: 'Exact home bytes.' });
+      expect(await readFile(marker, 'utf8').catch(() => null)).toBeNull();
+      expect(result.ok).toBe(true);
+      expect(await git('show', 'HEAD:alias-free.md')).toBe('Exact home bytes.');    } finally {
+      if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = previous;
+    }
+  });
   test.each(['file', 'parent'])(
     'does not write outside home after a %s symlink swap following validation',
     async (state) => {
