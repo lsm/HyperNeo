@@ -46,8 +46,9 @@ try:
         (run / folder).mkdir()
     if args.mode == 'before':
         baseline = subprocess.check_output(['git', 'rev-parse', 'origin/dev'], cwd=repo, text=True).strip()
-        for name in ['merge-gates.ts', 'delivery-facts.ts', 'merge-operation.ts', 'merge-receipt-db.ts']:
-            rel = f'packages/daemon/src/lib/neo/packs/coding/{name}'
+        for name in ['merge-gates.ts', 'delivery-facts.ts', 'merge-operation.ts', 'merge-receipt-db.ts', 'runtime.ts']:
+            rel = ('packages/daemon/src/lib/neo/packs/runtime.ts' if name == 'runtime.ts'
+                   else f'packages/daemon/src/lib/neo/packs/coding/{name}')
             path = repo / rel
             originals[path] = path.read_bytes()
             path.write_bytes(subprocess.check_output(['git', 'show', f'{baseline}:{rel}'], cwd=repo))
