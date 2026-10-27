@@ -1,45 +1,13 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
+import type { DependencyNode } from '../work-queue/dependency-graph.ts';
 import {
-  buildDependencyGraph,
-  hasDependencyCycle,
-  type DependencyNode,
-} from '../work-queue/dependency-graph.ts';
-
-type DependencyRejection =
-  | 'task_not_found'
-  | 'self_dependency'
-  | 'duplicate_dependency'
-  | 'dependency_not_found'
-  | 'dependency_ended'
-  | 'dependency_cycle';
-type Gate = { value: readonly string[] } | { reason: DependencyRejection };
-
-export function requireDependencyTarget(
-  tasks: readonly DependencyNode[],
-  taskId: string,
-  dependsOn: readonly string[]
-): Gate {
-  return tasks.some((task) => task.id === taskId)
-    ? { value: dependsOn }
-    : { reason: 'task_not_found' };
-}
-
-export function requireDistinctDependencies(taskId: string, dependsOn: readonly string[]): Gate {
-  if (dependsOn.includes(taskId)) return { reason: 'self_dependency' };
-  return new Set(dependsOn).size === dependsOn.length
-    ? { value: dependsOn }
-    : { reason: 'duplicate_dependency' };
-}
-
-export function requireExistingDependencies(
-  tasks: readonly DependencyNode[],
-  dependsOn: readonly string[]
-): Gate {
-  const ids = new Set(tasks.map((task) => task.id));
-  return dependsOn.every((id) => ids.has(id))
-    ? { value: dependsOn }
-    : { reason: 'dependency_not_found' };
-}
+  type DependencyGate,
+  type DependencyRejection,
+  requireAcyclicDependencies,
+  requireDependencyTarget,
+  requireDistinctDependencies,
+  requireExistingDependencies,
+} from '../work-queue/dependency-plan.ts';
 
 const ENDED_DEPENDENCY_STATUSES = new Set(['cancelled', 'archived']);
 
@@ -47,7 +15,7 @@ export function requireLiveDependencies(
   tasks: readonly DependencyNode[],
   taskId: string,
   dependsOn: readonly string[]
-): Gate {
+): DependencyGate {
   const existing = tasks.find((task) => task.id === taskId)?.dependsOn ?? [];
   const ended = new Set(
     tasks
@@ -56,16 +24,6 @@ export function requireLiveDependencies(
   );
   return dependsOn.some((id) => ended.has(id) && !existing.includes(id))
     ? { reason: 'dependency_ended' }
-    : { value: dependsOn };
-}
-
-export function requireAcyclicDependencies(
-  tasks: readonly DependencyNode[],
-  taskId: string,
-  dependsOn: readonly string[]
-): Gate {
-  return hasDependencyCycle(buildDependencyGraph(tasks, taskId, dependsOn))
-    ? { reason: 'dependency_cycle' }
     : { value: dependsOn };
 }
 
