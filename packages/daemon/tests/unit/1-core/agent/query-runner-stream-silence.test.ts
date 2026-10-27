@@ -306,6 +306,7 @@ describe('QueryRunner stream silence watchdog', () => {
     expect(spawnNexts.length).toBe(3);
     expect(ctx.session.metadata.queryFailureEpisode?.failures).toBe(3);
     expect(ctx.session.metadata.queryFailureEpisode?.failed).toBe(true);
+    expect(handleErrorSpy.mock.calls[0][2]).toBe('timeout');
     expect(String(handleErrorSpy.mock.calls[0][3])).toContain('Query stopped after 3 failures');
     expect(String(handleErrorSpy.mock.calls[0][3])).toContain('Model stream stalled');
   });

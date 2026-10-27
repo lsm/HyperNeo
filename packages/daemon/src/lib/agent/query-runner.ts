@@ -52,6 +52,7 @@ import type { QueryLike } from './query-like.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
 import {
   decideQueryRetry,
+  decideProviderTerminalCategory,
   isClaudeAuthenticationError,
   planTurnEndedGeneration,
   type QueryRetryEnvironment,
@@ -1478,27 +1479,12 @@ export class QueryRunner {
       const cancelled = isAbortError || stateManager.getState().status === 'interrupted';
       const isQueryInterrupted =
         cancelled || this.ctx.queryAbortController?.signal.aborted === true;
+      let episode: Session['metadata']['queryFailureEpisode'];
       if (!cancelled && owns()) {
-        const episode =
+        episode =
           episodeId && !(error instanceof QueryFailureCapError)
             ? await this.failures.failure(errorMessage, episodeId)
             : session.metadata.queryFailureEpisode;
-        if (episode?.failed) {
-          const terminal = new QueryFailureCapError(
-            `Query stopped after ${episode.failures} failures: ${episode.error}. Use Retry to recover.`
-          );
-          messageQueue.clear(terminal);
-          await errorManager.handleError(
-            session.id,
-            terminal,
-            ErrorCategory.SYSTEM,
-            terminal.message,
-            stateManager.getState(),
-            { queryFailureEpisode: episode },
-            () => owns() && session.metadata.queryFailureEpisode?.id === episode.id
-          );
-          return;
-        }
       }
       const isStartupTimeout = errorMessage.includes('SDK startup timeout');
       const isConversationNotFound = errorMessage.includes('No conversation found');
@@ -1552,6 +1538,22 @@ export class QueryRunner {
         recoveryState,
       };
       const routeDecision = decideQueryRetry({ errorSignal: retrySignal, env: retryEnv });
+      if (episode?.failed) {
+        const terminal = new QueryFailureCapError(
+          `Query stopped after ${episode.failures} failures: ${episode.error}. Use Retry to recover.`
+        );
+        messageQueue.clear(terminal);
+        await errorManager.handleError(
+          session.id,
+          terminal,
+          decideProviderTerminalCategory(retrySignal, retryEnv),
+          terminal.message,
+          stateManager.getState(),
+          { queryFailureEpisode: episode },
+          () => owns() && session.metadata.queryFailureEpisode?.id === episode.id
+        );
+        return;
+      }
       const queueRunningAtEntry = messageQueue.isRunning();
 
       if (routeDecision.route.action === 'expected_recovery_noop') {
@@ -1795,7 +1797,7 @@ export class QueryRunner {
         if (
           !cancelled &&
           messageQueue.getUserInterruptEpoch?.() === interruptEpoch &&
-          (decision.route.action === 'terminal' || decision.route.action === 'api_validation') &&
+          decision.route.action === 'terminal' &&
           session.metadata.queryFailureEpisode?.id === episodeId &&
           (session.metadata.queryFailureEpisode?.failures ?? 0) > 0 &&
           (this._lastConsumedUserMessage || retryEnv.hasConsumedPrompt || messageQueue.size() > 0)

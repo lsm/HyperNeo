@@ -69,3 +69,16 @@ promise before closing the synthetic DB; it does not change production replay
 policy. Audit the complete proof.log after the wrapper exits. A closed-database
 error invalidates the run even if its assertions or wrapper exit report success.
 Keep that failed log, fix fixture resource ordering, and rerun before reporting PASS.
+
+Review regressions: run the scripted helper with `consumed-validation`. A consumed
+deterministic 400 must retain its tailored API-error message with one attempt,
+leave the episode below cap, and allow a corrected request to succeed without
+reset. The existing canonical api_validation finalizer owns that result.
+Run the native helper with `health`: after one synthetic prior timeout, its real
+capped startup timeout must keep category TIMEOUT and make the public global
+API-connection state degraded with errorCount=2. Unknown failures still use
+canonical SYSTEM classification. Both use the same persisted governor.
+
+The deadline case covers optionsBuilder.build only. Provider-environment resolution
+currently precedes deadline creation and is a separate known governor follow-up;
+this journey does not claim the entire pre-options window is bounded.
