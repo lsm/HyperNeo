@@ -37,6 +37,7 @@ import {
   resolveSpaceMcpSessionPolicy,
 } from '../space/runtime/space-mcp-session-policy.ts';
 import { sleep } from '../utils/sleep.ts';
+import { QueryFailureGovernor, QueryFailureCapError } from './query-failure-episode.ts';
 import type { AgentSession } from './agent-session.ts';
 import type { AskUserQuestionHandler } from './ask-user-question-handler.ts';
 import { createFlagSettingsFileWriter } from './flag-settings-file.ts';
@@ -76,7 +77,10 @@ import {
   STREAM_STALL_ERROR,
   type StreamSilenceState,
 } from './stream-silence-watch.ts';
-import { TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE } from './task-notification-requery.ts';
+import {
+  TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE,
+  isTopLevelHollowTaskNotificationResult,
+} from './task-notification-requery.ts';
 import {
   isRetryableProviderError,
   TRANSIENT_CONNECTION_ERROR_SUBSTRINGS,
@@ -475,7 +479,13 @@ export class QueryRunner {
     return this._lastConsumedUserMessage;
   }
 
-  constructor(private ctx: QueryRunnerContext) {}
+  private readonly failures: QueryFailureGovernor;
+  constructor(private ctx: QueryRunnerContext) {
+    this.failures = new QueryFailureGovernor(ctx.session, ctx.db);
+  }
+  resetFailureEpisode() {
+    return this.failures.reset();
+  }
 
   private notifyToolInventory(): void {
     this.ctx.messageHub.event(
@@ -555,6 +565,7 @@ export class QueryRunner {
 
   async start(startGuard?: () => void): Promise<void> {
     const { messageQueue, logger } = this.ctx;
+    this.failures.assertOpen();
 
     if (messageQueue.isRunning()) {
       if (this.hasLiveQuery()) {
@@ -758,8 +769,15 @@ export class QueryRunner {
     let processExited = false;
     let deadReason: 'process_exit' | 'stream_closed' | 'backstop' | null = null;
     let removeFlagSettingsFile: (() => void) | undefined;
+    let episodeId: string | undefined;
+    const owns = () =>
+      this.ctx.getQueryGeneration() === queryGeneration && !this.ctx.isCleaningUp();
+    const live = () => attemptToken.isLive() && owns();
+    const deadline = Date.now() + Math.min(inactivityBackstopMs, 60_000);
+    const prepare = <T>(run: () => Promise<T>) => this.failures.prepare(run, deadline, live);
 
     try {
+      episodeId = await this.failures.admit(live);
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
         '../providers/factory.js'
       );
@@ -875,7 +893,7 @@ export class QueryRunner {
         provider = providerRegistry.get(resolvedProviderId) ?? provider;
       }
 
-      let queryOptions = await runLagPhase('sdk:options_build', () =>
+      const pendingOptions = runLagPhase('sdk:options_build', () =>
         optionsBuilder.build({
           askUserQuestionHook: attemptHook,
           canUseTool: this.createAttemptBoundCanUseTool(attemptToken, questionOrigin),
@@ -883,6 +901,8 @@ export class QueryRunner {
           session: providerSession,
         })
       );
+
+      let queryOptions = await prepare(() => pendingOptions);
 
       queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
       const mcpServerNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
@@ -1335,7 +1355,18 @@ export class QueryRunner {
               throw new Error('401 Claude authentication failed');
             }
           }
-          if (isSDKResultMessage(message) && message.is_error !== true) retryAttempt = 0;
+          if (isSDKResultMessage(message) && !message.parent_tool_use_id) {
+            if (message.is_error === true || isTopLevelHollowTaskNotificationResult(message)) {
+              await this.failures.failure(
+                message.is_error ? JSON.stringify(message) : 'Turn ended without a reply',
+                episodeId
+              );
+              this.failures.assertOpen();
+            } else {
+              retryAttempt = 0;
+              await this.failures.success(episodeId);
+            }
+          }
           this.streamSilence = noteStreamMessage(this.streamSilence, message, Date.now());
           if (!firstMessageArrived) {
             startupWatchMessages.push(message);
@@ -1437,10 +1468,30 @@ export class QueryRunner {
 
       const errorMessage = String(error);
       isAbortError = error instanceof Error && error.name === 'AbortError';
+      const cancelled = isAbortError || stateManager.getState().status === 'interrupted';
       const isQueryInterrupted =
-        isAbortError ||
-        stateManager.getState().status === 'interrupted' ||
-        this.ctx.queryAbortController?.signal.aborted === true;
+        cancelled || this.ctx.queryAbortController?.signal.aborted === true;
+      if (!cancelled && owns()) {
+        const episode =
+          episodeId && !(error instanceof QueryFailureCapError)
+            ? await this.failures.failure(errorMessage, episodeId)
+            : session.metadata.queryFailureEpisode;
+        if (episode?.failed) {
+          const terminal = new QueryFailureCapError(
+            `Query stopped after ${episode.failures} failures: ${episode.error}. Use Retry to recover.`
+          );
+          messageQueue.clear(terminal);
+          await errorManager.handleError(
+            session.id,
+            terminal,
+            ErrorCategory.SYSTEM,
+            terminal.message,
+            stateManager.getState(),
+            { queryFailureEpisode: episode }
+          );
+          return;
+        }
+      }
       const isStartupTimeout = errorMessage.includes('SDK startup timeout');
       const isConversationNotFound = errorMessage.includes('No conversation found');
       const isMessageNotFound = errorMessage.includes('No message found');
@@ -1702,7 +1753,9 @@ export class QueryRunner {
         });
       }
 
-      messageQueue.clear();
+      messageQueue.clear(
+        cancelled ? undefined : error instanceof Error ? error : new Error(errorMessage)
+      );
 
       if (!isAbortError) {
         const processingState = stateManager.getState();
@@ -2040,6 +2093,7 @@ export class QueryRunner {
       if (options.backoffMs !== undefined) {
         await sleep(options.backoffMs);
       }
+      await this.failures.admit(() => this.ctx.getQueryGeneration() === queryGeneration);
     };
 
     const requeueSnapshotted = (state: RetryTeardownState): RetryTeardownState => {
@@ -2081,7 +2135,7 @@ export class QueryRunner {
         options.noticeAfterTeardown !== undefined ? displayPostTeardownNotice : undefined,
       publicationAbandoned:
         options.noticeAfterTeardown !== undefined ? () => abandon('publication') : undefined,
-      backoff: options.backoffMs !== undefined ? backoff : undefined,
+      backoff,
       backoffAbandoned:
         options.backoffMs !== undefined
           ? () => {
@@ -2192,6 +2246,9 @@ export class QueryRunner {
         }
         break;
       }
+      const owner = this.ctx.getQueryGeneration();
+      const live = () => !this.ctx.isCleaningUp() && this.ctx.getQueryGeneration() === owner;
+      await this.failures.admit(live);
       await messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
       const queuedMessage = message as typeof message & { internal?: boolean };
       const isInternal = queuedMessage.internal || false;

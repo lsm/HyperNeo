@@ -18,7 +18,11 @@ describe('Query failure episode', () => {
       const first = await governor.failure('Unknown fake query error', episode);
       expect(first.failures).toBe(1);
       let ready = false;
-      const waiting = governor.admit(() => true).then(() => { ready = true; });
+      const waiting = governor
+        .admit(() => true)
+        .then(() => {
+          ready = true;
+        });
       await vi.advanceTimersByTimeAsync(999);
       expect(ready).toBe(false);
       await vi.advanceTimersByTimeAsync(1);
@@ -33,21 +37,41 @@ describe('Query failure episode', () => {
       await expect(restored.admit(() => true)).rejects.toThrow('Third unknown error');
       await restored.reset();
       const fresh = await restored.admit(() => true);
-      await expect(governor.failure('Late old failure', episode)).rejects.toMatchObject({ name: 'AbortError' });
+      await expect(governor.failure('Late old failure', episode)).rejects.toMatchObject({
+        name: 'AbortError',
+      });
       await restored.failure('New episode failure', fresh);
       await restored.success(fresh);
       expect(persisted.metadata.queryFailureEpisode?.failures).toBe(0);
-    } finally { vi.useRealTimers(); }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('bounds a preparation dependency that never resolves and rejects late superseded completion', async () => {
-    const governor = new QueryFailureGovernor({id:'deadline',metadata:{}} as Session, {} as Database);
+    const governor = new QueryFailureGovernor(
+      { id: 'deadline', metadata: {} } as Session,
+      {} as Database
+    );
     vi.useFakeTimers();
     try {
-      const pending = governor.prepare(() => new Promise(() => {}), Date.now()+100, () => true);
+      const pending = governor.prepare(
+        () => new Promise(() => {}),
+        Date.now() + 100,
+        () => true
+      );
       const checked = expect(pending).rejects.toThrow('Query preparation timed out');
-      await vi.advanceTimersByTimeAsync(100); await checked;
-      await expect(governor.prepare(async () => 'late', Date.now()+100, () => false)).rejects.toMatchObject({name:'AbortError'});
-    } finally { vi.useRealTimers(); }
+      await vi.advanceTimersByTimeAsync(100);
+      await checked;
+      await expect(
+        governor.prepare(
+          async () => 'late',
+          Date.now() + 100,
+          () => false
+        )
+      ).rejects.toMatchObject({ name: 'AbortError' });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

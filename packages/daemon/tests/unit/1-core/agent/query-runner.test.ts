@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, mock, jest } from 'bun:test';
+import { vi } from 'vitest';
 import { tmpdir } from 'node:os';
 import {
   QueryRunner,
@@ -47,6 +48,24 @@ import {
 
 mock.module('@anthropic-ai/claude-agent-sdk', () => ({
   query: mock(async () => ({ interrupt: () => {} })),
+}));
+
+vi.mock('../../../../src/lib/agent/query-failure-episode.ts', () => ({
+  QueryFailureCapError: class extends Error {},
+  QueryFailureGovernor: class {
+    assertOpen() {}
+    async admit() {
+      return 'retry-routing-fixture';
+    }
+    async failure() {
+      return { failed: false };
+    }
+    async success() {}
+    async reset() {}
+    prepare<T>(run: () => Promise<T>) {
+      return run();
+    }
+  },
 }));
 
 describe('QueryRunner', () => {
@@ -136,6 +155,7 @@ describe('QueryRunner', () => {
     getSDKMessagesSpy = mock(() => ({ messages: [], hasMore: false }));
     updateMessageStatusSpy = mock(() => {});
     mockDb = {
+      getSession: () => mockSession,
       saveSDKMessage: saveSDKMessageSpy,
       updateSession: updateSessionSpy,
       getSDKMessages: getSDKMessagesSpy,
