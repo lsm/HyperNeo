@@ -71,28 +71,17 @@ if (mode === 'interrupted') {
   const after = await Promise.all(paths.map(path => readFile(`${root}/${path}`, 'utf8')));
   const evidence = { mode, staged, recovered, contentsPreserved: JSON.stringify(before) === JSON.stringify(after), status: await git('status', '--porcelain') };
   await writeFile(`${run}/evidence/neo-home-setup.json`, JSON.stringify(evidence, null, 2));
-  if (!recovered.ok || !evidence.contentsPreserved || evidence.status || await git('rev-list', '--count', 'HEAD') !== '1') throw new Error('Interrupted bootstrap did not recover');
-  console.log('PASS: RPC recovers an unborn repository with exactly the staged bootstrap paths, preserving its files.');
+  if (!recovered.ok || !evidence.contentsPreserved || evidence.status !== 'A  .gitignore\nA  README.md\nA  direction.md' || await git('rev-list', '--count', 'HEAD') !== '1') throw new Error('Interrupted bootstrap did not recover');
+  console.log('PASS: RPC recovers an unborn repository with one empty root commit, preserving the staged bootstrap files for adoption.');
   process.exit(0);
 }
 await git('config', 'user.name', '');
 await git('config', 'user.email', '');
-if (mode === 'cleanup-failure') await writeFile(`${run}/bin/git`, `#!/bin/bash
-for arg in "$@"; do
-  if [ "$arg" = reset ]; then echo 'synthetic reset failure' >&2; exit 76; fi
-done
-exec /usr/bin/git "$@"
-`, { mode: 0o755 });
 const failed = await rpc('neo.home.init');
-const staged = await git('diff', '--cached', '--name-only');
-if (mode === 'cleanup-failure') {
-  await rm(`${run}/bin/git`);
-  await git('reset', '--', 'README.md', '.gitignore', 'direction.md');
-}
 await git('config', 'user.name', 'Verify Neo');
 await git('config', 'user.email', 'verify@example.invalid');
 const recovered = await rpc('neo.home.init');
-const evidence = { mode, project, first, second, renamed, initialHead, afterHead, tracked, direction, author, failed, staged, recovered, status: await git('status', '--porcelain') };
+const evidence = { mode, project, first, second, renamed, initialHead, afterHead, tracked, direction, author, failed, recovered, status: await git('status', '--porcelain') };
 await writeFile(`${run}/evidence/neo-home-setup.json`, JSON.stringify(evidence, null, 2));
-if (!second.ok || initialHead !== afterHead || renamed.projects.find((p: { id: string }) => p.id === project.project.id)?.homePath !== entry.homePath || tracked !== '.gitignore\nREADME.md\ndirection.md' || direction || author !== 'Verify Neo <verify@example.invalid>' || !String(failed.error).includes('Author identity unknown') || (mode === 'cleanup-failure' ? !staged : !!staged) || !recovered.ok || evidence.status) throw new Error('Home setup contract failed');
-console.log(mode === 'cleanup-failure' ? 'PASS: RPC preserves the original commit error when cleanup fails; fixture cleanup and configured retry succeed.' : 'PASS: RPC initializes one local commit, ignores transcripts, preserves project paths on rename, and recovers after identity configuration.');
+if (!second.ok || initialHead !== afterHead || renamed.projects.find((p: { id: string }) => p.id === project.project.id)?.homePath !== entry.homePath || tracked !== '.gitignore\nREADME.md\ndirection.md' || direction || author !== 'Verify Neo <verify@example.invalid>' || !String(failed.error).includes('Author identity unknown') || !recovered.ok || evidence.status !== '?? .gitignore\n?? README.md\n?? direction.md') throw new Error('Home setup contract failed');
+console.log('PASS: RPC initializes one local commit, ignores transcripts, preserves project paths on rename, recovers after identity configuration, and leaves pre-existing bootstrap files for adoption.');

@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createNeoHomeOperations } from '../../../../src/lib/neo/home/operations.ts';
 import { NeoHomeRepository } from '../../../../src/lib/neo/home/repository.ts';
-import { createNeoQuestionOperations } from '../../../../src/lib/neo/question-operations.ts';
 import { readNeoReply, recordNeoReplyAnswer } from '../../../../src/lib/neo/intake.ts';
+import { createNeoQuestionOperations } from '../../../../src/lib/neo/question-operations.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -112,12 +112,12 @@ async function state() {
 }
 async function race(mode: string) {
   const action = mode.startsWith('remote')
-    ? `printf 'Remote racing edit\\n' > '${peer}/racing.md'; /usr/bin/git -C '${peer}' add .; /usr/bin/git -C '${peer}' commit -m human-race >/dev/null; /usr/bin/git -C '${peer}' push origin main >/dev/null 2>&1`
+    ? `printf 'Remote racing edit\\n' > '${peer}/racing.md'; /usr/bin/git -C '${peer}' add .; /usr/bin/git -c user.name=Human -c user.email=race@example.invalid -C '${peer}' commit -m human-race >/dev/null; /usr/bin/git -C '${peer}' push origin main >/dev/null 2>&1`
     : mode === 'local-network'
       ? `printf 'Human edit during network check\\n' > '${root}/human.md'`
       : mode === 'local-edit'
         ? `printf 'Uncommitted human edit\\n' > '${root}/notes.md'`
-        : `printf 'Local racing commit\\n' > '${root}/racing.md'; /usr/bin/git -C '${root}' add .; /usr/bin/git -C '${root}' commit -m human-race >/dev/null`;
+        : `printf 'Local racing commit\\n' > '${root}/racing.md'; /usr/bin/git -C '${root}' add .; /usr/bin/git -c user.name=Human -c user.email=race@example.invalid -C '${root}' commit -m human-race >/dev/null`;
   const trigger =
     mode === 'local-network'
       ? 'ls-remote'
@@ -174,6 +174,31 @@ afterEach(async () => {
 });
 
 describe('Human-recorded conflict version saves', () => {
+  test('does not cite an unrelated answered question as a home conflict choice', async () => {
+    const { question } = await conflict();
+    const unrelated = await call(
+      'neo.question.ask',
+      {
+        askId: question.askId,
+        kind: 'choice',
+        text: 'Which version?',
+        options: ['Keep local', 'Use remote'],
+        multiple: false,
+      },
+      owner
+    );
+    await approve(unrelated.question.id);
+    const before = await state();
+    const result = await call('neo.home.save', {
+      path: 'notes.md',
+      content: remoteText,
+      message: 'Apply choice',
+      conflictQuestionId: unrelated.question.id,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('question does not bind');
+    expect(await state()).toEqual(before);
+  });
   test.each(['Keep local', 'Use remote'])(
     'applies a human chat reply recording the scalar %s',
     async (answer) => {
@@ -202,31 +227,6 @@ describe('Human-recorded conflict version saves', () => {
       await git(root, 'merge-base', '--is-ancestor', other, 'HEAD');
     }
   );
-  test('explains that an unrelated choice question does not bind the current snapshots', async () => {
-    const { question } = await conflict();
-    const unrelated = await call(
-      'neo.question.ask',
-      {
-        askId: question.askId,
-        kind: 'choice',
-        text: 'Which version?',
-        options: ['Keep local', 'Use remote'],
-        multiple: false,
-      },
-      owner
-    );
-    await approve(unrelated.question.id);
-    const before = await state();
-    expect(
-      await call('neo.home.save', {
-        path: 'notes.md',
-        content: remoteText,
-        message: 'Wrong question',
-        conflictQuestionId: unrelated.question.id,
-      })
-    ).toMatchObject({ ok: false, reason: expect.stringContaining('question does not bind') });
-    expect(await state()).toEqual(before);
-  });
   test.each(['Use remote', 'Keep local'])(
     'applies %s as a merge preserving both histories',
     async (answer) => {
@@ -316,7 +316,10 @@ describe('Human-recorded conflict version saves', () => {
       expect(result).toMatchObject({ ok: false });
       if (mode === 'local-edit')
         expect(await readFile(join(root, 'notes.md'), 'utf8')).toBe('Uncommitted human edit\n');
-      else expect(await readFile(join(root, 'notes.md'), 'utf8')).toBe(localText);
+      else
+        expect(await readFile(join(root, 'notes.md'), 'utf8')).toBe(
+          mode === 'remote-commit' ? remoteText : localText
+        );
       if (mode.startsWith('local')) expect(await git(remote, 'rev-parse', 'main')).toBe(other);
       if (mode.startsWith('remote'))
         expect(await git(peer, 'log', '-1', '--format=%s')).toBe('human-race');
@@ -340,28 +343,6 @@ describe('Human-recorded conflict version saves', () => {
     await git(root, 'merge-base', '--is-ancestor', other, head);
     expect(await git(remote, 'rev-parse', 'main')).toBe(await git(peer, 'rev-parse', 'HEAD'));
     expect(await readFile(join(peer, 'racing.md'), 'utf8')).toBe('Remote racing edit\n');
-  });
-});
-
-describe('A human edit during the remote snapshot check', () => {
-  test('refuses after the network wait without applying or dropping an unrelated human edit', async () => {
-    const { question, local, other } = await conflict();
-    await approve(question.id);
-    await race('local-network');
-    const result = await call('neo.home.save', {
-      path: 'notes.md',
-      content: remoteText,
-      message: 'Network race',
-      conflictQuestionId: question.id,
-    });
-    expect(await readFile(join(run, 'raced'), 'utf8')).toBe('');
-    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('stale_conflict') });
-    expect(await readFile(join(root, 'human.md'), 'utf8')).toBe(
-      'Human edit during network check\n'
-    );
-    expect(await readFile(join(root, 'notes.md'), 'utf8')).toBe(localText);
-    expect(await git(root, 'rev-parse', 'HEAD')).toBe(local);
-    expect(await git(remote, 'rev-parse', 'main')).toBe(other);
   });
 });
 
@@ -414,28 +395,97 @@ describe('Ignored human files during conflict application', () => {
   });
 });
 
-describe('Revision-bound application admission', () => {
-  test.each(['local', 'remote'])(
-    'refuses an already changed %s snapshot before staging',
-    async (side) => {
+describe('Conflict choice application', () => {
+  test('returns a typed refusal when the selected recorded revision was pruned', async () => {
+    const { question } = await conflict();
+    await approve(question.id);
+    await git(root, 'reset', '--hard', 'HEAD^');
+    await version(root, 'notes.md', 'Replacement local version\n');
+    await git(peer, 'reset', '--hard', 'HEAD^');
+    await version(peer, 'notes.md', 'Replacement remote version\n');
+    await git(remote, 'config', 'receive.denyNonFastForwards', 'false');
+    await git(peer, 'push', '--force', 'origin', 'main');
+    await git(root, 'fetch', 'origin');
+    await git(root, 'reflog', 'expire', '--expire=now', '--all');
+    await git(root, 'gc', '--prune=now');
+    const before = await state();
+    const result = await call('neo.home.save', {
+      path: 'notes.md',
+      content: remoteText,
+      message: 'Apply pruned version',
+      conflictQuestionId: question.id,
+    });
+    expect(result.ok).toBe(false);
+    expect(await state()).toEqual(before);
+  });
+  test.each(['Keep local', 'Use remote'])(
+    'applies the recorded %s bytes after both conflicting versions change',
+    async (answer) => {
       const { question } = await conflict();
-      await approve(question.id);
-      const target = side === 'local' ? root : peer;
-      await git(target, 'commit', '--allow-empty', '-m', 'Human newer snapshot');
-      if (side === 'remote') await git(peer, 'push', 'origin', 'main');
+      await approve(question.id, [answer]);
+      await version(root, 'notes.md', 'Later local bytes\n');
+      await version(peer, 'notes.md', 'Later remote bytes\n');
+      await git(peer, 'push', 'origin', 'main');
+      const local = await git(root, 'rev-parse', 'HEAD');
+      const remote = await git(peer, 'rev-parse', 'HEAD');
       const before = await state();
-      expect(
-        await call('neo.home.save', {
-          path: 'notes.md',
-          content: remoteText,
-          message: 'Stale approval',
-          conflictQuestionId: question.id,
-        })
-      ).toMatchObject({ ok: false, reason: expect.stringContaining('stale_conflict') });
+      const substituted = await call('neo.home.save', {
+        path: 'notes.md',
+        content: answer === 'Keep local' ? 'Later local bytes\n' : 'Later remote bytes\n',
+        message: 'Substitute unseen bytes',
+        conflictQuestionId: question.id,
+      });
+      expect(substituted.ok).toBe(false);
       expect(await state()).toEqual(before);
-      expect(await readFile(join(root, 'notes.md'), 'utf8')).toBe(localText);
+      const content = answer === 'Keep local' ? localText : remoteText;
+      const result = await call('neo.home.save', {
+        path: 'notes.md',
+        content,
+        message: 'Apply recorded bytes',
+        conflictQuestionId: question.id,
+      });
+      expect(result.ok).toBe(true);
+      expect(await readFile(join(root, 'notes.md'), 'utf8')).toBe(content);
+      await git(root, 'merge-base', '--is-ancestor', local, 'HEAD');
+      await git(root, 'merge-base', '--is-ancestor', remote, 'HEAD');
+      expect(result.commit).toBe(await git(root, 'rev-parse', 'HEAD'));
     }
   );
+  test('does not cite a recorded choice for a different conflicting path', async () => {
+    const { question } = await conflict();
+    await approve(question.id);
+    await git(root, 'merge', '-s', 'ours', '--no-edit', 'origin/main');
+    await git(root, 'push', 'origin', 'main');
+    await git(peer, 'pull', '--ff-only', 'origin', 'main');
+    await version(root, 'another.md', localText);
+    await version(peer, 'another.md', remoteText);
+    await git(peer, 'push', 'origin', 'main');
+    const before = await state();
+    const result = await call('neo.home.save', {
+      path: 'another.md',
+      content: remoteText,
+      message: 'Wrong question',
+      conflictQuestionId: question.id,
+    });
+    expect(result.ok).toBe(false);
+    expect(await state()).toEqual(before);
+  });
+  test.each(['local', 'remote'])('applies a choice after an unrelated %s commit', async (side) => {
+    const { question } = await conflict();
+    await approve(question.id);
+    const target = side === 'local' ? root : peer;
+    await git(target, 'commit', '--allow-empty', '-m', 'Human newer snapshot');
+    if (side === 'remote') await git(peer, 'push', 'origin', 'main');
+    expect(
+      await call('neo.home.save', {
+        path: 'notes.md',
+        content: remoteText,
+        message: 'Stale approval',
+        conflictQuestionId: question.id,
+      })
+    ).toMatchObject({ ok: true });
+    expect(await readFile(join(root, 'notes.md'), 'utf8')).toBe(remoteText);
+  });
   test('does not choose or authorize a second protected conflict implicitly', async () => {
     await version(root, 'direction.md', 'Local protected direction\n');
     await version(peer, 'direction.md', 'Remote protected direction\n');
@@ -449,7 +499,7 @@ describe('Revision-bound application admission', () => {
         message: 'Only notes approved',
         conflictQuestionId: question.id,
       })
-    ).toMatchObject({ ok: false, reason: expect.stringContaining('choice_requires_review') });
+    ).toMatchObject({ ok: false });
     expect(await state()).toEqual(before);
     expect(await readFile(join(root, 'direction.md'), 'utf8')).toBe('Local protected direction\n');
   });

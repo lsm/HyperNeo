@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import * as fs from 'node:fs';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
@@ -78,7 +78,8 @@ test('a missing token leaves gh unauthenticated in an isolated config directory'
     ENV: '/dev/null',
     GH_PROMPT_DISABLED: '1',
   });
-  expect(access.filesystem.denyWrite).toEqual(['/synthetic/Neo']);
+  expect(access.filesystem).toHaveProperty('denyWrite', ['/synthetic/Neo/.git']);
+  expect(access.filesystem.allowWrite).toContain('/synthetic/Neo');
 });
 
 test('the runtime token provider can be swapped and unavailable providers stay unauthenticated', async () => {

@@ -97,6 +97,52 @@ afterEach(async () => {
 });
 
 describe('Neo home save remote sync', () => {
+  test('publishes the requested document without adopting staged human ignore edits', async () => {
+    await commit(root, '.gitignore', '# Legacy home\n');
+    await git(root, 'push');
+    const pending = '# Legacy home\nhuman-draft/\n';
+    await writeFile(join(root, '.gitignore'), pending);
+    await git(root, 'add', '.gitignore');
+    const saved = await call('neo.home.save', input);
+    expect(saved.ok).toBe(true);
+    expect(await git(remote, 'show', 'main:.gitignore')).toBe('# Legacy home');
+    expect(await git(root, 'show', ':.gitignore')).toBe(pending.trim());
+    expect(await git(root, 'diff', '--cached', '--name-only')).toBe('.gitignore');
+    expect(await git(remote, 'show', 'main:digest.md')).toBe(input.content.trim());
+  });
+  test('saves with origin and an unrelated staged document while fetching peer progress', async () => {
+    await writeFile(join(root, 'staged.md'), 'Unrelated draft.\n');
+    await git(root, 'add', 'staged.md');
+    await commit(peer, 'peer-progress.md', 'Peer progress.\n');
+    await git(peer, 'push');
+    const result = await call('neo.home.save', input);
+    expect(result.ok).toBe(true);
+    expect(await git(root, 'diff', '--cached', '--name-only')).toBe('staged.md');
+    expect(await readFile(join(root, 'staged.md'), 'utf8')).toBe('Unrelated draft.\n');
+    expect(await readFile(join(root, 'peer-progress.md'), 'utf8')).toBe('Peer progress.\n');
+    expect(await git(remote, 'rev-parse', 'main')).toBe(await git(root, 'rev-parse', 'HEAD'));
+    expect(await git(root, 'ls-tree', '--name-only', 'HEAD', '--', 'staged.md')).toBe('');
+  });
+  test('does not publish credential-like bytes in a commit message', async () => {
+    const remoteHead = await git(remote, 'rev-parse', 'main');
+    const message = 'Rotate ghp_' + 'synthetic'.repeat(5);
+    const result = await call('neo.home.save', { ...input, message });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('content_refused');
+    expect(result.reason).toContain(await git(root, 'rev-parse', 'HEAD'));
+    expect(result.reason).toContain('local commit');
+    expect(result.reason).toContain('rewrite');
+    expect(await git(root, 'log', '-1', '--format=%B')).toBe(message);
+    expect(await git(remote, 'rev-parse', 'main')).toBe(remoteHead);
+  });
+  test('does not publish credential-like bytes introduced in binary history', async () => {
+    const remoteHead = await git(remote, 'rev-parse', 'main');
+    await commit(root, 'fixture.bin', '\0TOKEN=' + 'synthetic'.repeat(4));
+    const result = await call('neo.home.save', input);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('content_refused');
+    expect(await git(remote, 'rev-parse', 'main')).toBe(remoteHead);
+  });
   test.each(['global', 'system', 'local', 'command'])(
     'reads and resolves conflicts without executing a %s merge driver',
     async (scope) => {
@@ -266,15 +312,23 @@ describe('Neo home save remote sync', () => {
     expect(await readFile(join(root, input.path)).catch(() => null)).toBeNull();
     expect(await git(root, 'status', '--porcelain')).toBe('');
   });
-  test('preserves dirty human work without pulling or writing', async () => {
+  test('saves alongside an unrelated edited home document', async () => {
     await writeFile(join(root, 'README.md'), 'Human draft.');
-    const head = await git(root, 'rev-parse', 'HEAD');
     expect(await call('neo.home.save', input)).toMatchObject({
-      ok: false,
-      reason: expect.stringContaining('dirty'),
+      ok: true,
     });
     expect(await readFile(join(root, 'README.md'), 'utf8')).toBe('Human draft.');
-    expect(await git(root, 'rev-parse', 'HEAD')).toBe(head);
+    expect(await git(root, 'show', `HEAD:${input.path}`)).toBe(input.content.trim());
+  });
+  test('keeps credential-like local history off the remote', async () => {
+    const remoteHead = await git(remote, 'rev-parse', 'main');
+    await commit(root, 'fixture.md', 'TOKEN=' + 'synthetic'.repeat(4));
+    expect(await call('neo.home.save', input)).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('content_refused'),
+    });
+    expect(await git(root, 'show', `HEAD:${input.path}`)).toBe(input.content.trim());
+    expect(await git(remote, 'rev-parse', 'main')).toBe(remoteHead);
   });
   test('leaves a human rebase paused for editing rather than aborting it', async () => {
     await commit(root, 'local.md', 'Local commit.');
