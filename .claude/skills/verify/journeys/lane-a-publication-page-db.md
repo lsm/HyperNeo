@@ -60,3 +60,9 @@ dev, the registry diff remains exactly the granted import and appended entry.
 operations.ts merged cleanly and retains only the granted factory-call change.
 Both fresh runtime proofs identify the merged application commit; historical
 passing pairs are not evidence for the new candidate.
+
+After #9244 merged, the overlapping registry entries required another base merge.
+The ledger reader and publication writer entries are both retained. operations.ts
+merged cleanly; its net diff remains the granted factory call. The final pair was
+rerun on the merged application commit. The old publication head's approval/CI
+cannot authorize this changed head; fresh gates are required.
