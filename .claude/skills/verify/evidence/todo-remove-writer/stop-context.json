@@ -1,0 +1,40 @@
+{
+  "surface": "Real close/remove RPC and Work-card reads; scripted work.stop boundary",
+  "realClose": true,
+  "realRemove": true,
+  "fullReport": {
+    "bytes": 519999,
+    "sha256": "160d7507006b05aae2dc282ccde2b39d95a59e4a3bb36c2e5aa1a0e8d08f3d99"
+  },
+  "stopFailurePreservesCards": true,
+  "driverRefusalPreservesCard": true,
+  "unsupportedNoop": true,
+  "adoptedExempt": true,
+  "currentReplacement": true,
+  "validReplacement": true,
+  "replacementRevalidatedAfterStop": true,
+  "concurrentReport": {
+    "bytes": 850000,
+    "sha256": "3f9b3fceb06c0114abcd818ca083bf1b4f701bd5cb4da59995440ac8398388bb"
+  },
+  "lateCardRefusesClose": true,
+  "needsHumanPreserved": true,
+  "settledNoops": true,
+  "stopMainSql": 0,
+  "driverOutsideTransaction": true,
+  "verified": true,
+  "resourcesStopped": true,
+  "mainSql": 0,
+  "stopCalls": [
+    "close",
+    "remove",
+    "failed-close",
+    "failed-remove",
+    "refused",
+    "unsupported",
+    "replacement-replacement",
+    "valid-source",
+    "vanishing-source",
+    "late-card"
+  ]
+}

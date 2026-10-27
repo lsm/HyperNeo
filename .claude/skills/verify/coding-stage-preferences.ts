@@ -11,6 +11,7 @@ assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert(!existsSync(join(run, 'data')));
 mkdirSync(join(run, 'evidence'), { recursive: true });
 const evidence: unknown[] = [];
+const stagePreferences=(rows:{key:string}[])=>rows.filter(row=>/^(write|review|verify)\./.test(row.key));
 const repo = 'synthetic/preferences';
 const place = { machine: 'fixture', name: 'Fixture' };
 const standard = { adapter: 'hyperneo', place, model: 'claude-opus-5-5' };
@@ -37,7 +38,7 @@ try {
       });
       const plan = () => rpc('neo.coding.write.plan', { repo, candidates: [standard, preferred] });
       if (phase === 'initial') {
-        assert.deepEqual(await rpc('pack.preferences.list', {}), { preferences: [] });
+        assert.deepEqual(stagePreferences((await rpc('pack.preferences.list', {}) as {preferences:{key:string}[]}).preferences), []);
         assert.deepEqual(await plan(), { ok: true, target: standard, fallback: [] });
         assert.deepEqual(await rpc('pack.preferences.get', address('write.model')), { preference: null });
         for (const stage of ['write', 'review', 'verify']) {
@@ -45,7 +46,7 @@ try {
             assert.deepEqual(await rpc('pack.preferences.set', { ...address(`${stage}.${field}`), value }), { ok: true });
         }
         assert.deepEqual(await plan(), { ok: true, target: preferred, fallback: [] });
-        assert.equal((await rpc('pack.preferences.list', { pack: 'coding' }) as { preferences: unknown[] }).preferences.length, 9);
+        assert.equal(stagePreferences((await rpc('pack.preferences.list', { pack: 'coding' }) as { preferences: {key:string}[] }).preferences).length, 9);
         for (const value of [true, 'x'.repeat(201)])
           assert.equal((await rpc('pack.preferences.set', { ...address('write.model'), value }) as { ok: boolean }).ok, false);
         assert.deepEqual(await rpc('pack.preferences.set', { ...address('write.model'), value: 'unavailable-model' }), { ok: true });
@@ -54,6 +55,7 @@ try {
       } else {
         assert.deepEqual(await plan(), { ok: true, target: preferred, fallback: [] });
         const settings = await rpc('pack.preferences.list', { pack: 'coding' }) as { preferences: { key: string; setBy: string; value: unknown }[] };
+        settings.preferences=stagePreferences(settings.preferences);
         assert.equal(settings.preferences.length, 9);
         assert(settings.preferences.every(item => item.setBy === 'human'));
         assert.deepEqual(settings.preferences.filter(item => item.key.endsWith('.model')).map(item => item.value), [preferred.model, preferred.model, preferred.model]);

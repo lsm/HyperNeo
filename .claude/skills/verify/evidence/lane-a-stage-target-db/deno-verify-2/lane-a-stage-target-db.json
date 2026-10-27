@@ -1,0 +1,1180 @@
+{
+  "mode": "verify",
+  "verified": true,
+  "events": [
+    {
+      "phase": "initial",
+      "name": "pack.preferences.list",
+      "input": {},
+      "reply": {
+        "id": "8e43889c-63e2-4d2c-868b-ba48fa93f418",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "preferences": [
+            {
+              "pack": "coding",
+              "scope": {
+                "kind": "global",
+                "key": ""
+              },
+              "key": "watchedRepos",
+              "value": [],
+              "setBy": "upgrade",
+              "setAt": 1793125630702
+            }
+          ]
+        },
+        "requestId": "2564a60d-f27e-4b25-bd86-e23743f03f63",
+        "timestamp": "2026-10-27T18:27:10.886Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "phase": "initial",
+      "name": "neo.coding.write.plan",
+      "input": {
+        "repo": "synthetic/preferences",
+        "candidates": [
+          {
+            "adapter": "hyperneo",
+            "place": {
+              "machine": "fixture",
+              "name": "Fixture"
+            },
+            "model": "claude-opus-5-5"
+          },
+          {
+            "adapter": "codex-desktop",
+            "place": {
+              "machine": "fixture",
+              "name": "Fixture"
+            },
+            "model": "gpt-6",
+            "effort": "high"
+          }
+        ]
+      },
+      "reply": {
+        "id": "3751d283-04fe-493f-88e0-39ef676eb527",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true,
+          "target": {
+            "adapter": "hyperneo",
+            "place": {
+              "machine": "fixture",
+              "name": "Fixture"
+            },
+            "model": "claude-opus-5-5"
+          },
+          "fallback": []
+        },
+        "requestId": "bf34c9c3-d2b1-4b41-a454-d397df0e0bd8",
+        "timestamp": "2026-10-27T18:27:10.888Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "phase": "initial",
+      "name": "pack.preferences.get",
+      "input": {
+        "pack": "coding",
+        "scope": {
+          "kind": "repo",
+          "key": "synthetic/preferences"
+        },
+        "key": "write.model"
+      },
+      "reply": {
+        "id": "bbf90546-268f-467e-9de3-014a7a9967b2",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "preference": null
+        },
+        "requestId": "2924a269-8069-4d58-9ea1-cf4ba74deee0",
+        "timestamp": "2026-10-27T18:27:10.889Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "phase": "initial",
+      "name": "pack.preferences.set",
+      "input": {
+        "pack": "coding",
+        "scope": {
+          "kind": "repo",
+          "key": "synthetic/preferences"
+        },
+        "key": "write.harness",
+        "value": "codex-desktop"
+      },
+      "reply": {
+        "id": "aac2fb57-27e5-432f-921e-402c8e6af7fa",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true
+        },
+        "requestId": "a90a5387-468d-4ee4-af13-c3329731f37c",
+        "timestamp": "2026-10-27T18:27:10.889Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "phase": "initial",
+      "name": "pack.preferences.set",
+      "input": {
+        "pack": "coding",
+        "scope": {
+          "kind": "repo",
+          "key": "synthetic/preferences"
+        },
+        "key": "write.model",
+        "value": "gpt-6"
+      },
+      "reply": {
+        "id": "f053ef95-33ff-40e6-aea8-c9632ff3d9ac",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true
+        },
+        "requestId": "4e44741b-8509-482e-871a-f5c20266fc59",
+        "timestamp": "2026-10-27T18:27:10.889Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "phase": "initial",
+      "name": "pack.preferences.set",
+      "input": {
+        "pack": "coding",
+        "scope": {
+          "kind": "repo",
+          "key": "synthetic/preferences"
+        },
+        "key": "write.effort",
+        "value": "high"
+      },
+      "reply": {
+        "id": "d2b0793c-5f1e-48c6-83ad-cdd512bd198f",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true
+        },
+        "requestId": "fa644c96-42f5-4cad-a082-7b0fbd964853",
+        "timestamp": "2026-10-27T18:27:10.889Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "phase": "initial",
+      "name": "pack.preferences.set",
+      "input": {
+        "pack": "coding",
+        "scope": {
+          "kind": "repo",
+          "key": "synthetic/preferences"
+        },
+        "key": "review.harness",
+        "value": "codex-desktop"
+      },
+      "reply": {
+        "id": "8d11ce86-f352-4c14-8ca7-fbae2de54ca6",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true
+        },
+        "requestId": "61e48d92-e76d-42dd-9307-e5a2bc466b81",
+        "timestamp": "2026-10-27T18:27:10.890Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "phase": "initial",
+      "name": "pack.preferences.set",
+      "input": {
+        "pack": "coding",
+        "scope": {
+          "kind": "repo",
+          "key": "synthetic/preferences"
+        },
+        "key": "review.model",
+        "value": "gpt-6"
+      },
+      "reply": {
+        "id": "fd446885-0e51-4724-99c1-fa0caf47ccea",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true
+        },
+        "requestId": "61ed956c-1513-4a83-bf06-362d6d53a036",
+        "timestamp": "2026-10-27T18:27:10.890Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "phase": "initial",
+      "name": "pack.preferences.set",
+      "input": {
+        "pack": "coding",
+        "scope": {
+          "kind": "repo",
+          "key": "synthetic/preferences"
+        },
+        "key": "review.effort",
+        "value": "high"
+      },
+      "reply": {
+        "id": "a0c26936-6d0d-4c87-8013-44c666693d8a",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true
+        },
+        "requestId": "c51eaf02-7c1f-4460-a7bd-a2bb992f6128",
+        "timestamp": "2026-10-27T18:27:10.890Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "phase": "initial",
+      "name": "pack.preferences.set",
+      "input": {
+        "pack": "coding",
+        "scope": {
+          "kind": "repo",
+          "key": "synthetic/preferences"
+        },
+        "key": "verify.harness",
+        "value": "codex-desktop"
+      },
+      "reply": {
+        "id": "c787848b-3a68-4586-970e-7e2662a7b84e",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true
+        },
+        "requestId": "b02e4d9e-b3b8-44bf-b538-d6ffd7be99e2",
+        "timestamp": "2026-10-27T18:27:10.890Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "phase": "initial",
+      "name": "pack.preferences.set",
+      "input": {
+        "pack": "coding",
+        "scope": {
+          "kind": "repo",
+          "key": "synthetic/preferences"
+        },
+        "key": "verify.model",
+        "value": "gpt-6"
+      },
+      "reply": {
+        "id": "380e9121-97e0-4802-8ae9-da577c5116c6",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true
+        },
+        "requestId": "0c5de75a-eadd-4b80-a525-b57405a02592",
+        "timestamp": "2026-10-27T18:27:10.890Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "phase": "initial",
+      "name": "pack.preferences.set",
+      "input": {
+        "pack": "coding",
+        "scope": {
+          "kind": "repo",
+          "key": "synthetic/preferences"
+        },
+        "key": "verify.effort",
+        "value": "high"
+      },
+      "reply": {
+        "id": "88d31d2f-e3be-495a-a071-9770b0269297",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true
+        },
+        "requestId": "112161c8-deb9-49fb-b917-217d26cb4fcc",
+        "timestamp": "2026-10-27T18:27:10.891Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "phase": "initial",
+      "name": "neo.coding.write.plan",
+      "input": {
+        "repo": "synthetic/preferences",
+        "candidates": [
+          {
+            "adapter": "hyperneo",
+            "place": {
+              "machine": "fixture",
+              "name": "Fixture"
+            },
+            "model": "claude-opus-5-5"
+          },
+          {
+            "adapter": "codex-desktop",
+            "place": {
+              "machine": "fixture",
+              "name": "Fixture"
+            },
+            "model": "gpt-6",
+            "effort": "high"
+          }
+        ]
+      },
+      "reply": {
+        "id": "dbc76d28-c841-4a75-ba90-ceb0b67145e4",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true,
+          "target": {
+            "adapter": "codex-desktop",
+            "place": {
+              "machine": "fixture",
+              "name": "Fixture"
+            },
+            "model": "gpt-6",
+            "effort": "high"
+          },
+          "fallback": []
+        },
+        "requestId": "94aeafa5-41c5-43d7-86a4-50f29499643b",
+        "timestamp": "2026-10-27T18:27:10.891Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "phase": "initial",
+      "name": "pack.preferences.list",
+      "input": {
+        "pack": "coding"
+      },
+      "reply": {
+        "id": "83194c42-96c2-4ae5-a7c4-50136932802d",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "preferences": [
+            {
+              "pack": "coding",
+              "scope": {
+                "kind": "global",
+                "key": ""
+              },
+              "key": "watchedRepos",
+              "value": [],
+              "setBy": "upgrade",
+              "setAt": 1793125630702
+            },
+            {
+              "pack": "coding",
+              "scope": {
+                "kind": "repo",
+                "key": "synthetic/preferences"
+              },
+              "key": "review.effort",
+              "value": "high",
+              "setBy": "human",
+              "setAt": 1793125630890
+            },
+            {
+              "pack": "coding",
+              "scope": {
+                "kind": "repo",
+                "key": "synthetic/preferences"
+              },
+              "key": "review.harness",
+              "value": "codex-desktop",
+              "setBy": "human",
+              "setAt": 1793125630890
+            },
+            {
+              "pack": "coding",
+              "scope": {
+                "kind": "repo",
+                "key": "synthetic/preferences"
+              },
+              "key": "review.model",
+              "value": "gpt-6",
+              "setBy": "human",
+              "setAt": 1793125630890
+            },
+            {
+              "pack": "coding",
+              "scope": {
+                "kind": "repo",
+                "key": "synthetic/preferences"
+              },
+              "key": "verify.effort",
+              "value": "high",
+              "setBy": "human",
+              "setAt": 1793125630891
+            },
+            {
+              "pack": "coding",
+              "scope": {
+                "kind": "repo",
+                "key": "synthetic/preferences"
+              },
+              "key": "verify.harness",
+              "value": "codex-desktop",
+              "setBy": "human",
+              "setAt": 1793125630890
+            },
+            {
+              "pack": "coding",
+              "scope": {
+                "kind": "repo",
+                "key": "synthetic/preferences"
+              },
+              "key": "verify.model",
+              "value": "gpt-6",
+              "setBy": "human",
+              "setAt": 1793125630890
+            },
+            {
+              "pack": "coding",
+              "scope": {
+                "kind": "repo",
+                "key": "synthetic/preferences"
+              },
+              "key": "write.effort",
+              "value": "high",
+              "setBy": "human",
+              "setAt": 1793125630889
+            },
+            {
+              "pack": "coding",
+              "scope": {
+                "kind": "repo",
+                "key": "synthetic/preferences"
+              },
+              "key": "write.harness",
+              "value": "codex-desktop",
+              "setBy": "human",
+              "setAt": 1793125630889
+            },
+            {
+              "pack": "coding",
+              "scope": {
+                "kind": "repo",
+                "key": "synthetic/preferences"
+              },
+              "key": "write.model",
+              "value": "gpt-6",
+              "setBy": "human",
+              "setAt": 1793125630889
+            }
+          ]
+        },
+        "requestId": "5997f4ff-87ba-47b3-9b42-6bfbf5e6bda3",
+        "timestamp": "2026-10-27T18:27:10.891Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "phase": "initial",
+      "name": "pack.preferences.set",
+      "input": {
+        "pack": "coding",
+        "scope": {
+          "kind": "repo",
+          "key": "synthetic/preferences"
+        },
+        "key": "write.model",
+        "value": true
+      },
+      "reply": {
+        "id": "31693cea-bd09-43e1-831e-a0e20a53566a",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": false,
+          "reason": "Unknown setting, invalid scope or invalid value."
+        },
+        "requestId": "cc573713-7d6c-441e-b208-de51477b4255",
+        "timestamp": "2026-10-27T18:27:10.891Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "phase": "initial",
+      "name": "pack.preferences.set",
+      "input": {
+        "pack": "coding",
+        "scope": {
+          "kind": "repo",
+          "key": "synthetic/preferences"
+        },
+        "key": "write.model",
+        "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "reply": {
+        "id": "375ab164-f224-4c6b-be82-a57843b18e69",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": false,
+          "reason": "Unknown setting, invalid scope or invalid value."
+        },
+        "requestId": "c89c98c2-ed0f-49ee-8a83-e0d88a3be5bd",
+        "timestamp": "2026-10-27T18:27:10.892Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "phase": "initial",
+      "name": "pack.preferences.set",
+      "input": {
+        "pack": "coding",
+        "scope": {
+          "kind": "repo",
+          "key": "synthetic/preferences"
+        },
+        "key": "write.model",
+        "value": "unavailable-model"
+      },
+      "reply": {
+        "id": "3020b462-a06d-4a72-b577-c42a4df2cb86",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true
+        },
+        "requestId": "549fd702-fd5e-4348-b97f-8f7791aa1d67",
+        "timestamp": "2026-10-27T18:27:10.892Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "phase": "initial",
+      "name": "neo.coding.write.plan",
+      "input": {
+        "repo": "synthetic/preferences",
+        "candidates": [
+          {
+            "adapter": "hyperneo",
+            "place": {
+              "machine": "fixture",
+              "name": "Fixture"
+            },
+            "model": "claude-opus-5-5"
+          },
+          {
+            "adapter": "codex-desktop",
+            "place": {
+              "machine": "fixture",
+              "name": "Fixture"
+            },
+            "model": "gpt-6",
+            "effort": "high"
+          }
+        ]
+      },
+      "reply": {
+        "id": "912a3066-ee3a-484c-892a-1dcf5adef34d",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true,
+          "target": {
+            "adapter": "codex-desktop",
+            "place": {
+              "machine": "fixture",
+              "name": "Fixture"
+            },
+            "model": "gpt-6",
+            "effort": "high"
+          },
+          "fallback": [
+            "Preferred model \"unavailable-model\" is unavailable for this selection; using \"gpt-6\"."
+          ]
+        },
+        "requestId": "6a729b36-af23-4446-8764-8c87e673c6b4",
+        "timestamp": "2026-10-27T18:27:10.892Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "phase": "initial",
+      "name": "pack.preferences.set",
+      "input": {
+        "pack": "coding",
+        "scope": {
+          "kind": "repo",
+          "key": "synthetic/preferences"
+        },
+        "key": "write.model",
+        "value": "gpt-6"
+      },
+      "reply": {
+        "id": "ee44d888-efc8-4d37-8a85-cbd118b9ab99",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true
+        },
+        "requestId": "be142dfd-3a79-40a2-84f4-c9895a0502b7",
+        "timestamp": "2026-10-27T18:27:10.892Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "phase": "restart",
+      "name": "neo.coding.write.plan",
+      "input": {
+        "repo": "synthetic/preferences",
+        "candidates": [
+          {
+            "adapter": "hyperneo",
+            "place": {
+              "machine": "fixture",
+              "name": "Fixture"
+            },
+            "model": "claude-opus-5-5"
+          },
+          {
+            "adapter": "codex-desktop",
+            "place": {
+              "machine": "fixture",
+              "name": "Fixture"
+            },
+            "model": "gpt-6",
+            "effort": "high"
+          }
+        ]
+      },
+      "reply": {
+        "id": "52e02332-5f53-406b-9cfb-476dc8ae88ec",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true,
+          "target": {
+            "adapter": "codex-desktop",
+            "place": {
+              "machine": "fixture",
+              "name": "Fixture"
+            },
+            "model": "gpt-6",
+            "effort": "high"
+          },
+          "fallback": []
+        },
+        "requestId": "46ed0bb6-bf6a-4323-a5a0-0dd3c6fc0b01",
+        "timestamp": "2026-10-27T18:27:11.269Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "phase": "restart",
+      "name": "neo.coding.write.plan",
+      "input": {
+        "repo": "synthetic/preferences",
+        "candidates": [
+          {
+            "adapter": "hyperneo",
+            "place": {
+              "machine": "fixture",
+              "name": "Fixture"
+            },
+            "model": "claude-opus-5-5"
+          },
+          {
+            "adapter": "codex-desktop",
+            "place": {
+              "machine": "fixture",
+              "name": "Fixture"
+            },
+            "model": "gpt-6",
+            "effort": "high"
+          }
+        ]
+      },
+      "reply": {
+        "id": "4113248a-d377-4a90-a0e5-03dff80724c4",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true,
+          "target": {
+            "adapter": "codex-desktop",
+            "place": {
+              "machine": "fixture",
+              "name": "Fixture"
+            },
+            "model": "gpt-6",
+            "effort": "high"
+          },
+          "fallback": []
+        },
+        "requestId": "47c9f725-813b-44a6-beec-c2085290f95f",
+        "timestamp": "2026-10-27T18:27:11.270Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "readerWhileWriterLocked": true
+    },
+    {
+      "phase": "restart",
+      "name": "pack.preferences.list",
+      "input": {
+        "pack": "coding"
+      },
+      "reply": {
+        "id": "a93c4c8c-09ea-414b-b696-59ec31cbc761",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "preferences": [
+            {
+              "pack": "coding",
+              "scope": {
+                "kind": "repo",
+                "key": "synthetic/preferences"
+              },
+              "key": "review.effort",
+              "value": "high",
+              "setBy": "human",
+              "setAt": 1793125630890
+            },
+            {
+              "pack": "coding",
+              "scope": {
+                "kind": "repo",
+                "key": "synthetic/preferences"
+              },
+              "key": "review.harness",
+              "value": "codex-desktop",
+              "setBy": "human",
+              "setAt": 1793125630890
+            },
+            {
+              "pack": "coding",
+              "scope": {
+                "kind": "repo",
+                "key": "synthetic/preferences"
+              },
+              "key": "review.model",
+              "value": "gpt-6",
+              "setBy": "human",
+              "setAt": 1793125630890
+            },
+            {
+              "pack": "coding",
+              "scope": {
+                "kind": "repo",
+                "key": "synthetic/preferences"
+              },
+              "key": "verify.effort",
+              "value": "high",
+              "setBy": "human",
+              "setAt": 1793125630891
+            },
+            {
+              "pack": "coding",
+              "scope": {
+                "kind": "repo",
+                "key": "synthetic/preferences"
+              },
+              "key": "verify.harness",
+              "value": "codex-desktop",
+              "setBy": "human",
+              "setAt": 1793125630890
+            },
+            {
+              "pack": "coding",
+              "scope": {
+                "kind": "repo",
+                "key": "synthetic/preferences"
+              },
+              "key": "verify.model",
+              "value": "gpt-6",
+              "setBy": "human",
+              "setAt": 1793125630890
+            },
+            {
+              "pack": "coding",
+              "scope": {
+                "kind": "repo",
+                "key": "synthetic/preferences"
+              },
+              "key": "write.effort",
+              "value": "high",
+              "setBy": "human",
+              "setAt": 1793125630889
+            },
+            {
+              "pack": "coding",
+              "scope": {
+                "kind": "repo",
+                "key": "synthetic/preferences"
+              },
+              "key": "write.harness",
+              "value": "codex-desktop",
+              "setBy": "human",
+              "setAt": 1793125630889
+            },
+            {
+              "pack": "coding",
+              "scope": {
+                "kind": "repo",
+                "key": "synthetic/preferences"
+              },
+              "key": "write.model",
+              "value": "gpt-6",
+              "setBy": "human",
+              "setAt": 1793125630892
+            }
+          ]
+        },
+        "requestId": "7f6a00eb-dff3-418e-97dc-0ceeac5bc2a4",
+        "timestamp": "2026-10-27T18:27:11.270Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "phase": "restart",
+      "name": "neo.coding.write.plan",
+      "input": {
+        "repo": "synthetic/preferences",
+        "candidates": [
+          {
+            "adapter": "hyperneo",
+            "place": {
+              "machine": "fixture",
+              "name": "Fixture"
+            },
+            "model": "claude-opus-5-5"
+          }
+        ]
+      },
+      "reply": {
+        "id": "c4884e13-258e-4a9b-83a4-531062e6785c",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true,
+          "target": {
+            "adapter": "hyperneo",
+            "place": {
+              "machine": "fixture",
+              "name": "Fixture"
+            },
+            "model": "claude-opus-5-5"
+          },
+          "fallback": [
+            "Preferred harness \"codex-desktop\" is unavailable for this selection; using \"hyperneo\".",
+            "Preferred model \"gpt-6\" is unavailable for this selection; using \"claude-opus-5-5\".",
+            "Preferred effort \"high\" is unavailable for this selection; using \"default\"."
+          ]
+        },
+        "requestId": "e46aeb6d-dd78-4b48-95db-0633ec90c88a",
+        "timestamp": "2026-10-27T18:27:11.270Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "phase": "restart",
+      "name": "neo.coding.write.plan",
+      "input": {
+        "repo": "synthetic/unanswered",
+        "candidates": [
+          {
+            "adapter": "hyperneo",
+            "place": {
+              "machine": "fixture",
+              "name": "Fixture"
+            },
+            "model": "claude-opus-5-5"
+          },
+          {
+            "adapter": "codex-desktop",
+            "place": {
+              "machine": "fixture",
+              "name": "Fixture"
+            },
+            "model": "gpt-6",
+            "effort": "high"
+          }
+        ]
+      },
+      "reply": {
+        "id": "ab1d372f-7f0f-460b-8f72-0364032154fa",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true,
+          "target": {
+            "adapter": "hyperneo",
+            "place": {
+              "machine": "fixture",
+              "name": "Fixture"
+            },
+            "model": "claude-opus-5-5"
+          },
+          "fallback": []
+        },
+        "requestId": "3d832c65-f8da-4c64-b76b-e0fd19b2e5ab",
+        "timestamp": "2026-10-27T18:27:11.271Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "phase": "restart",
+      "settings": {
+        "preferences": [
+          {
+            "pack": "coding",
+            "scope": {
+              "kind": "repo",
+              "key": "synthetic/preferences"
+            },
+            "key": "review.effort",
+            "value": "high",
+            "setBy": "human",
+            "setAt": 1793125630890
+          },
+          {
+            "pack": "coding",
+            "scope": {
+              "kind": "repo",
+              "key": "synthetic/preferences"
+            },
+            "key": "review.harness",
+            "value": "codex-desktop",
+            "setBy": "human",
+            "setAt": 1793125630890
+          },
+          {
+            "pack": "coding",
+            "scope": {
+              "kind": "repo",
+              "key": "synthetic/preferences"
+            },
+            "key": "review.model",
+            "value": "gpt-6",
+            "setBy": "human",
+            "setAt": 1793125630890
+          },
+          {
+            "pack": "coding",
+            "scope": {
+              "kind": "repo",
+              "key": "synthetic/preferences"
+            },
+            "key": "verify.effort",
+            "value": "high",
+            "setBy": "human",
+            "setAt": 1793125630891
+          },
+          {
+            "pack": "coding",
+            "scope": {
+              "kind": "repo",
+              "key": "synthetic/preferences"
+            },
+            "key": "verify.harness",
+            "value": "codex-desktop",
+            "setBy": "human",
+            "setAt": 1793125630890
+          },
+          {
+            "pack": "coding",
+            "scope": {
+              "kind": "repo",
+              "key": "synthetic/preferences"
+            },
+            "key": "verify.model",
+            "value": "gpt-6",
+            "setBy": "human",
+            "setAt": 1793125630890
+          },
+          {
+            "pack": "coding",
+            "scope": {
+              "kind": "repo",
+              "key": "synthetic/preferences"
+            },
+            "key": "write.effort",
+            "value": "high",
+            "setBy": "human",
+            "setAt": 1793125630889
+          },
+          {
+            "pack": "coding",
+            "scope": {
+              "kind": "repo",
+              "key": "synthetic/preferences"
+            },
+            "key": "write.harness",
+            "value": "codex-desktop",
+            "setBy": "human",
+            "setAt": 1793125630889
+          },
+          {
+            "pack": "coding",
+            "scope": {
+              "kind": "repo",
+              "key": "synthetic/preferences"
+            },
+            "key": "write.model",
+            "value": "gpt-6",
+            "setBy": "human",
+            "setAt": 1793125630892
+          }
+        ]
+      },
+      "fallback": {
+        "ok": true,
+        "target": {
+          "adapter": "hyperneo",
+          "place": {
+            "machine": "fixture",
+            "name": "Fixture"
+          },
+          "model": "claude-opus-5-5"
+        },
+        "fallback": [
+          "Preferred harness \"codex-desktop\" is unavailable for this selection; using \"hyperneo\".",
+          "Preferred model \"gpt-6\" is unavailable for this selection; using \"claude-opus-5-5\".",
+          "Preferred effort \"high\" is unavailable for this selection; using \"default\"."
+        ]
+      }
+    }
+  ],
+  "mainSql": [],
+  "commands": [
+    {
+      "name": "coding.stageTarget.reads",
+      "method": "planTarget",
+      "mode": "read",
+      "durationMs": 0.7068329999999605,
+      "argsBytes": 309,
+      "replyBytes": 130
+    },
+    {
+      "name": "coding.stageTarget.reads",
+      "method": "planTarget",
+      "mode": "read",
+      "durationMs": 0.18833300000005693,
+      "argsBytes": 309,
+      "replyBytes": 141
+    },
+    {
+      "name": "coding.stageTarget.reads",
+      "method": "planTarget",
+      "mode": "read",
+      "durationMs": 0.1802909999998974,
+      "argsBytes": 309,
+      "replyBytes": 232
+    },
+    {
+      "name": "pairing.recordUnpaired",
+      "mode": "write",
+      "durationMs": 5.002457999999933,
+      "argsBytes": 142,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.stageTarget.reads",
+      "method": "planTarget",
+      "mode": "read",
+      "durationMs": 145.00429200000008,
+      "argsBytes": 309,
+      "replyBytes": 141
+    },
+    {
+      "name": "coding.stageTarget.reads",
+      "method": "planTarget",
+      "mode": "read",
+      "durationMs": 0.17449999999985266,
+      "argsBytes": 309,
+      "replyBytes": 141
+    },
+    {
+      "name": "coding.stageTarget.reads",
+      "method": "planTarget",
+      "mode": "read",
+      "durationMs": 0.16908399999988433,
+      "argsBytes": 202,
+      "replyBytes": 394
+    },
+    {
+      "name": "coding.stageTarget.reads",
+      "method": "planTarget",
+      "mode": "read",
+      "durationMs": 0.13495899999998073,
+      "argsBytes": 308,
+      "replyBytes": 130
+    }
+  ]
+}

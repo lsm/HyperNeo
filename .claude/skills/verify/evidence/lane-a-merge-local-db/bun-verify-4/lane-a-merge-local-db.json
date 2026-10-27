@@ -1,0 +1,852 @@
+{
+  "mode": "verify",
+  "verified": true,
+  "events": [
+    {
+      "name": "operations.describe",
+      "input": {
+        "name": "neo.coding.merge.prepare"
+      },
+      "reply": {
+        "id": "8534ca85-e6ef-41ba-96df-be97e430baf3",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "found": true,
+          "name": "neo.coding.merge.prepare",
+          "description": "Admit a linked coding PR for manual merge using persisted Review/Verify assignments, actual exact-head review, required CI, resolved findings and repository human sign-off. Re-reads the head, records gates and returns a SHA-pinned command; never merges or enables auto-merge.",
+          "inputSchema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+              "todoId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "url": {
+                "type": "string",
+                "examples": [
+                  "https://github.com/example/repo/pull/1"
+                ]
+              }
+            },
+            "required": [
+              "todoId",
+              "url"
+            ],
+            "additionalProperties": false
+          },
+          "resultSchema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "accepted": {
+                    "type": "boolean",
+                    "const": true
+                  },
+                  "head": {
+                    "type": "string"
+                  },
+                  "command": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "accepted",
+                  "head",
+                  "command"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "accepted": {
+                    "type": "boolean",
+                    "const": false
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "accepted",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "requestId": "9d83f9e1-bc19-4358-a94f-241257ec9dbb",
+        "timestamp": "2026-10-27T17:45:51.254Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "pack.preferences.set",
+      "input": {
+        "pack": "coding",
+        "scope": {
+          "kind": "repo",
+          "key": "synthetic/admission"
+        },
+        "key": "reviewBot",
+        "value": "fixture-bot"
+      },
+      "reply": {
+        "id": "cb64932e-f8bb-4988-a023-c4a27509c989",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true
+        },
+        "requestId": "2a6fc337-aa50-4f99-81d1-1528d2d54f48",
+        "timestamp": "2026-10-27T17:45:51.255Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "pack.preferences.set",
+      "input": {
+        "pack": "coding",
+        "scope": {
+          "kind": "repo",
+          "key": "synthetic/admission"
+        },
+        "key": "mergePolicy",
+        "value": "review_bot"
+      },
+      "reply": {
+        "id": "ee596b77-4cf1-4d0c-af38-eb32a0bf09ef",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true
+        },
+        "requestId": "e3b43e35-b5e1-4892-a114-45f621f58478",
+        "timestamp": "2026-10-27T17:45:51.255Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "17518332-3b90-4ff3-a58c-9d066650d635",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": false,
+          "reason": "Current Review and Verify assignments on a live linked coding todo are required."
+        },
+        "requestId": "177122c5-1f3f-4eaf-89d0-cee79ad4daeb",
+        "timestamp": "2026-10-27T17:45:51.386Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.assign",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "acceptanceContract": "artifact:acceptance",
+        "stage": "review",
+        "candidates": []
+      },
+      "reply": {
+        "id": "fba81cc3-1538-43e1-972e-ae1f93734434",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true,
+          "assignment": {
+            "url": "https://github.com/synthetic/admission/pull/7",
+            "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "acceptanceContract": "artifact:acceptance",
+            "newDispatch": true,
+            "write": {
+              "adapter": "fixture",
+              "id": "author"
+            },
+            "bot": "fixture-bot"
+          }
+        },
+        "requestId": "054f6670-9400-41a4-9628-6c6d7e5b4cd0",
+        "timestamp": "2026-10-27T17:45:51.399Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "7e93131c-0157-4df8-824d-99f6bc6aa8a1",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": false,
+          "reason": "independent_matching_head_qa_required"
+        },
+        "requestId": "3e9933f7-d808-4241-b94c-a7d54315ad1f",
+        "timestamp": "2026-10-27T17:45:51.417Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.result",
+      "input": {
+        "todoId": "todo",
+        "ref": {
+          "adapter": "fixture",
+          "id": "verifier"
+        },
+        "fact": {
+          "url": "https://github.com/synthetic/admission/pull/7",
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "stage": "verify",
+          "actor": {
+            "kind": "agent",
+            "id": "verifier",
+            "model": "gpt-6",
+            "harness": "fixture"
+          },
+          "verdict": "pass",
+          "acceptanceContract": "artifact:acceptance",
+          "evidence": [
+            "artifact:verify"
+          ]
+        }
+      },
+      "reply": {
+        "id": "98ebbdc8-fef6-4ca7-9c48-b00feb33086b",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true
+        },
+        "requestId": "9bfbbfa0-a97d-430b-a86c-af1f0ee930bf",
+        "timestamp": "2026-10-27T17:45:51.418Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "34016286-5ca2-4b38-9e72-e1f1d206573d",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": false,
+          "reason": "merge_requirements_not_satisfied"
+        },
+        "requestId": "41115789-4648-4bf6-91d8-b44215b92c1d",
+        "timestamp": "2026-10-27T17:45:51.434Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "2c0e91ec-ed76-4fe7-b500-234840fb2d22",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": false,
+          "reason": "merge_requirements_not_satisfied"
+        },
+        "requestId": "93fc6737-4791-49ee-a021-191fcec55bd9",
+        "timestamp": "2026-10-27T17:45:51.450Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "def2d283-b2f6-4880-891a-826e6d0ac1e7",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": false,
+          "reason": "matching_head_review_required"
+        },
+        "requestId": "8135f963-db3f-48cf-9673-47234c8566d7",
+        "timestamp": "2026-10-27T17:45:51.466Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "0e96c128-fd57-4818-8123-99329a735dca",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": false,
+          "reason": "matching_head_review_required"
+        },
+        "requestId": "b10f527b-61dc-4e4d-85a8-e1bb276b4cc8",
+        "timestamp": "2026-10-27T17:45:51.481Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "8f68166b-a7fe-4961-ad97-5df691dc943e",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": false,
+          "reason": "merge_requirements_not_satisfied"
+        },
+        "requestId": "e8ed2c16-04a0-4369-8ca5-e89f4e2f3709",
+        "timestamp": "2026-10-27T17:45:51.497Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "f1faf1c0-46de-4bdb-9585-859e11a26821",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": false,
+          "reason": "head_changed_before_manual_merge"
+        },
+        "requestId": "1cecaa59-d174-4ba8-971a-1ee76b11f60e",
+        "timestamp": "2026-10-27T17:45:51.522Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "pack.preferences.set",
+      "input": {
+        "pack": "coding",
+        "scope": {
+          "kind": "repo",
+          "key": "synthetic/admission"
+        },
+        "key": "humanSignoff",
+        "value": [
+          "src/**"
+        ]
+      },
+      "reply": {
+        "id": "a560b618-2e21-4cd3-bf48-bf42c9b83bb0",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true
+        },
+        "requestId": "96ee9251-56b5-450e-81a8-69f547de224b",
+        "timestamp": "2026-10-27T17:45:51.522Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "3d8bd28f-3372-4430-892a-5875bc5f0e1f",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": false,
+          "reason": "merge_requirements_not_satisfied"
+        },
+        "requestId": "bc5de645-5e15-4dd4-99d5-51d171c4aa6b",
+        "timestamp": "2026-10-27T17:45:51.538Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "2d3c1d0a-71b6-44a2-8c64-80d4b17f982c",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": true,
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "command": [
+            "gh",
+            "pr",
+            "merge",
+            "https://github.com/synthetic/admission/pull/7",
+            "--squash",
+            "--match-head-commit",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ]
+        },
+        "requestId": "d99eab16-4a85-432a-a255-4a97caaf8977",
+        "timestamp": "2026-10-27T17:45:51.564Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "434edccf-6bc0-42c8-b055-e3c3d2de802b",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": true,
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "command": [
+            "gh",
+            "pr",
+            "merge",
+            "https://github.com/synthetic/admission/pull/7",
+            "--squash",
+            "--match-head-commit",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ]
+        },
+        "requestId": "f04dccda-c0a7-43f4-a82a-129b9d8ac296",
+        "timestamp": "2026-10-27T17:45:51.591Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "baadc324-2842-46c9-a269-8d6a2385ca6b",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": true,
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "command": [
+            "gh",
+            "pr",
+            "merge",
+            "https://github.com/synthetic/admission/pull/7",
+            "--squash",
+            "--match-head-commit",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ]
+        },
+        "requestId": "9355785e-7680-44f2-a770-beee95ba9dd9",
+        "timestamp": "2026-10-27T17:45:51.866Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "abf98fcd-ab75-410b-acf2-a518290a1bfb",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": false,
+          "reason": "merge_receipt_changed"
+        },
+        "requestId": "8a82eabf-6109-468a-b3b9-38811e0660f5",
+        "timestamp": "2026-10-27T17:45:51.900Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "93cf84a5-f092-41af-bac6-c529d2a07f00",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": true,
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "command": [
+            "gh",
+            "pr",
+            "merge",
+            "https://github.com/synthetic/admission/pull/7",
+            "--squash",
+            "--match-head-commit",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ]
+        },
+        "requestId": "2a5cd5f6-afe1-4b7b-8fb8-c36853deee2b",
+        "timestamp": "2026-10-27T17:45:51.933Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "stale": {
+        "accepted": false,
+        "reason": "merge_receipt_changed"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "0dc4b90e-2d9b-4d2c-8efa-5a18dee0e323",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": false,
+          "reason": "merge_receipt_changed"
+        },
+        "requestId": "40b976f1-c811-4de2-9476-7b562cd0944a",
+        "timestamp": "2026-10-27T17:45:51.963Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "verified": true,
+      "receipt": {
+        "gate": {
+          "url": "https://github.com/synthetic/admission/pull/7",
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "acceptanceContract": "artifact:acceptance",
+          "write": {
+            "adapter": "fixture",
+            "id": "author"
+          },
+          "reviewer": "fixture-bot",
+          "qa": {
+            "adapter": "fixture",
+            "id": "verifier"
+          },
+          "evidence": [
+            "https://github.com/synthetic/admission/pull/7/checks",
+            "https://github.com/synthetic/admission/pull/7#review-1",
+            "https://github.com/synthetic/admission/pull/7#human",
+            "artifact:verify"
+          ]
+        },
+        "smoke": null
+      },
+      "conflict": {
+        "url": "https://github.com/synthetic/admission/pull/7",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "acceptanceContract": "artifact:acceptance",
+        "write": {
+          "adapter": "fixture",
+          "id": "author"
+        },
+        "reviewer": "fixture-bot",
+        "qa": {
+          "adapter": "fixture",
+          "id": "conflicting-qa"
+        },
+        "evidence": [
+          "https://github.com/synthetic/admission/pull/7/checks",
+          "https://github.com/synthetic/admission/pull/7#review-1",
+          "https://github.com/synthetic/admission/pull/7#human",
+          "artifact:verify"
+        ]
+      },
+      "race": [
+        {
+          "accepted": true,
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "command": [
+            "gh",
+            "pr",
+            "merge",
+            "https://github.com/synthetic/admission/pull/7",
+            "--squash",
+            "--match-head-commit",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ]
+        },
+        {
+          "accepted": false,
+          "reason": "merge_receipt_changed"
+        }
+      ],
+      "largeEvidenceBytes": 50009,
+      "limitation": "Real merge-prepare RPC and persisted race job; synthetic GitHub, assignments and QA. No real merge, model, harness or deployment. Target instrumentation covers local merge admission and receipt SQL; fixtures are excluded."
+    }
+  ],
+  "mainSql": [],
+  "commands": [
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 1.2870000000000346,
+      "argsBytes": 152,
+      "replyBytes": 163
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.2653330000000551,
+      "argsBytes": 152,
+      "replyBytes": 741
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.23808299999996052,
+      "argsBytes": 152,
+      "replyBytes": 1071
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.24274999999988722,
+      "argsBytes": 152,
+      "replyBytes": 1071
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.22470899999984795,
+      "argsBytes": 152,
+      "replyBytes": 1071
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.21508300000004965,
+      "argsBytes": 152,
+      "replyBytes": 1071
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.23412499999994907,
+      "argsBytes": 152,
+      "replyBytes": 1071
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.21199999999998909,
+      "argsBytes": 152,
+      "replyBytes": 1071
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.2842080000000351,
+      "argsBytes": 152,
+      "replyBytes": 1071
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.2268340000000535,
+      "argsBytes": 152,
+      "replyBytes": 1097
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.20425000000000182,
+      "argsBytes": 152,
+      "replyBytes": 1097
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.28674999999998363,
+      "argsBytes": 152,
+      "replyBytes": 1097
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.5728330000001733,
+      "argsBytes": 1731,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.2162909999999556,
+      "argsBytes": 152,
+      "replyBytes": 1097
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.30300000000011096,
+      "argsBytes": 152,
+      "replyBytes": 1097
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.193416999999954,
+      "argsBytes": 1731,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 2.5927090000000135,
+      "argsBytes": 152,
+      "replyBytes": 1097
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.6583330000000842,
+      "argsBytes": 152,
+      "replyBytes": 1097
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 1.0623330000000806,
+      "argsBytes": 1731,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.4122500000000855,
+      "argsBytes": 152,
+      "replyBytes": 1097
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.4361250000001746,
+      "argsBytes": 152,
+      "replyBytes": 1097
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.34145799999987503,
+      "argsBytes": 1731,
+      "replyBytes": 5
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.38008300000001327,
+      "argsBytes": 152,
+      "replyBytes": 1097
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.38029200000005403,
+      "argsBytes": 152,
+      "replyBytes": 1097
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.3056249999999636,
+      "argsBytes": 1731,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.24283399999990252,
+      "argsBytes": 152,
+      "replyBytes": 1097
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.3130839999998898,
+      "argsBytes": 152,
+      "replyBytes": 1097
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.2475409999999556,
+      "argsBytes": 1731,
+      "replyBytes": 5
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.3573750000000473,
+      "argsBytes": 50432,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.48649999999997817,
+      "argsBytes": 50433,
+      "replyBytes": 5
+    }
+  ]
+}

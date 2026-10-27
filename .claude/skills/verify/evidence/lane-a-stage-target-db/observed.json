@@ -1,0 +1,68 @@
+{
+  "verified": true,
+  "productionLines": 64,
+  "redRegressionCommit": "a5c8f22177c4cb70579629a620153338ec8c4b15",
+  "baselineMainSql": 36,
+  "fixedMainSql": {
+    "bun": 0,
+    "deno": 0
+  },
+  "checks": "Full bun run check passed after base merge. All 27 actor/selector tests pass under the CI Vitest runner.",
+  "limitations": "Actual Write-plan RPC and preference restart proof. Review/Verify target dispatch is covered by focused operation tests, not a native actor journey. Other assignment admission SQL, real model/harness availability, full-daemon SQL absence, GUI and latency are unverified.",
+  "proofBinding": {
+    "testedCodeCommit": "81bcdf81ff5d7b99c7a452485c89d55964eee155",
+    "testedGitTree": "bc2a6fae63db6c6ba5df2406200833b889d18442",
+    "applicationTrees": {
+      "packages": "de9a4e887344b35649456d6225b9bd55c562e36d",
+      "scripts": "246e6c2148a8e13d2e2a9f9bb4e2e63aea8a0ed9"
+    },
+    "proofBlobs": {
+      ".claude/skills/verify/lane-a-stage-target-db.ts": "f160fbe31c7ad71e54e827c4cc638351d89a50f3",
+      ".claude/skills/verify/lane-a-stage-target-db-run.py": "d5fa55c5ddb476219e00920dd23be17c836e1822",
+      ".claude/skills/verify/lane-a-stage-target-proof-binding.ts": "c8f0436c5739e84cb58ba4c5bc8c184390326afe"
+    },
+    "runs": {
+      "bun": "bun-verify-5",
+      "deno": "deno-verify-3"
+    },
+    "postProofChangePolicy": "evidence-and-journey-only"
+  },
+  "readerReviewFix": {
+    "reviewedHead": "9cc50fb77b40c094af266b9997b560c3c1bc2376",
+    "readerOperation": "coding.stageTarget.reads",
+    "tests": "27 actor/selector tests pass in Bun and Vitest.",
+    "mutationChecks": "Restoring reference comparison or write mode each causes four cloned read-only default tests to fail. Production restored.",
+    "heldWriterProof": "Bun and Deno real Write-plan RPCs return the preferred target while a synthetic BEGIN IMMEDIATE lock is held; target main SQL is zero.",
+    "coordinatorGrant": "On codex/lane-a-stage-target only, exactly two append-only edits to storage/db-gateway/db-ops.ts: codingStageTargetReads import and DB_OPS array entry. No other shared-file edits.",
+    "fixtureScope": "Query-only is scoped to the selector gateway command; unrelated legacy assignment bookkeeping on main remains outside this slice.",
+    "grantAudit": "Exactly the two authorized insertions, zero removals in db-ops.ts."
+  },
+  "ciRecovery": {
+    "head": "9cc50fb77b40c094af266b9997b560c3c1bc2376",
+    "run": 40549648872,
+    "attempt": 2,
+    "conclusion": "success",
+    "initialFailure": "Windows compiled-worker temporary directory cleanup EBUSY; runtime assertions had passed.",
+    "sourceChangeForCI": false
+  },
+  "baseMergeVerification": {
+    "base": "71e21c9512248e7c6050829387718fadc5cf59e6",
+    "codeCommit": "81bcdf81ff5d7b99c7a452485c89d55964eee155",
+    "resolution": "Preserved workflowDeleteWrites, taskSchedulePauseWrites and codingStageTargetReads registrations.",
+    "grantAudit": "Against the newer dev, exactly the two authorized stage-target insertions; zero removals.",
+    "proofs": "Fresh Bun/Deno real Write-plan RPCs pass under a held synthetic writer lock; zero target SQL on main; restart state retained; temporary data removed.",
+    "tests": "All 27 selector/actor tests pass under Vitest.",
+    "fullCheck": "bun run check passed"
+  },
+  "baseMergeHistory": [
+    {
+      "base": "7b69fbc1023e3cef9cea593d2db202c852990acb",
+      "codeCommit": "127ec9200564ec15a956b5690e9bd4b9ff78c90e",
+      "resolution": "Kept workflowDeleteWrites and codingStageTargetReads imports and registrations.",
+      "grantAudit": "Against updated dev, exactly the two authorized stage-target insertions; zero removals.",
+      "proofs": "Fresh Bun/Deno Write-plan RPCs pass while a synthetic writer lock is held; zero target SQL on main; restart state retained; temporary daemon data removed.",
+      "tests": "27 actor/selector tests pass under Vitest after merge.",
+      "fullCheck": "bun run check passed"
+    }
+  ]
+}

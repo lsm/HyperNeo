@@ -1,3 +1,4 @@
+import type { CodingMergeLocalAdmission } from './merge-local-state.ts';
 import type { WorkRef } from '../../../drivers/types.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import {
@@ -27,7 +28,7 @@ type Rejection = { accepted: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
 const refuse = (reason: string): { reason: Rejection } => ({ reason: { accepted: false, reason } });
 export const prepareCodingMerge = (superpipe({})('coding.prepare-manual-merge') as PipelineAPI)
-  .input(['repo', 'todoId', 'candidate', 'contract', 'review', 'facts', 'readHead'])
+  .input(['repo', 'todoId', 'candidate', 'contract', 'review', 'facts', 'readHead', 'admission'])
   .pipe(
     (candidate: Candidate): Gate<Candidate> =>
       candidate.open &&
@@ -115,8 +116,13 @@ export const prepareCodingMerge = (superpipe({})('coding.prepare-manual-merge') 
     'result:result'
   )
   .pipe(
-    async (repo: CodingDeliveryFactsRepository, todoId: string, gate: CodingMergeGate) => {
-      if (!(await repo.recordGateCurrent(todoId, gate)))
+    async (
+      repo: CodingDeliveryFactsRepository,
+      todoId: string,
+      gate: CodingMergeGate,
+      admission?: CodingMergeLocalAdmission
+    ) => {
+      if (!(await repo.recordGateCurrent(todoId, gate, admission)))
         return { accepted: false, reason: 'merge_receipt_changed' };
       return {
         accepted: true,
@@ -124,7 +130,7 @@ export const prepareCodingMerge = (superpipe({})('coding.prepare-manual-merge') 
         command: ['gh', 'pr', 'merge', gate.url, '--squash', '--match-head-commit', gate.head],
       };
     },
-    ['repo', 'todoId', 'gate'],
+    ['repo', 'todoId', 'gate', 'admission'],
     'result'
   )
   .endAsync('result') as (
@@ -134,5 +140,6 @@ export const prepareCodingMerge = (superpipe({})('coding.prepare-manual-merge') 
   contract: Contract,
   review: { kind: string; head: string },
   facts: readonly CodingStageFact[],
-  readHead: () => Promise<string | null>
+  readHead: () => Promise<string | null>,
+  admission?: CodingMergeLocalAdmission
 ) => Promise<{ accepted: true; head: string; command: string[] } | Rejection>;
