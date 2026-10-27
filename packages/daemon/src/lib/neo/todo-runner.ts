@@ -1,3 +1,4 @@
+import { mayRedispatch } from '../work-queue/follow-through.ts';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { neoTodoRunnerWrites } from '../../storage/repositories/neo-todo-runner-state.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -608,6 +609,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     }
   };
 
+  const sweep = { movedAt: -Infinity };
   const restartLadder = (todoId: string, now: number) => {
     const prior = sessions.readNudge(todoId);
     sessions.recordNudge(todoId, {
@@ -702,7 +704,27 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'result:admission'
     )
     .pipe(
-      async (context: NonNullable<ReturnType<typeof sessions.nudgeContext>>, now: number) => {
+      async (now: number) =>
+        mayRedispatch(
+          (await store.read('listCheckable')).filter(
+            (other) =>
+              other.state === 'doing' &&
+              !['done', 'stopped', 'failed', 'needs_you'].includes(
+                sessions.readLiveStatus(other.id) ?? ''
+              )
+          ).length,
+          sweep.movedAt,
+          now
+        ),
+      'now',
+      'move'
+    )
+    .pipe(
+      async (
+        context: NonNullable<ReturnType<typeof sessions.nudgeContext>>,
+        now: number,
+        move: boolean
+      ) => {
         const live = readDriverLive(
           await deps.invoke(caller(context.ask), 'work.status', { ref: context.ref })
         );
@@ -714,11 +736,12 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
             context.ref,
             live,
             now,
-            context.todo.updatedAt
+            context.todo.updatedAt,
+            move
           ));
         return claim ? { value: claim } : { reason: null };
       },
-      ['admission', 'now'],
+      ['admission', 'now', 'move'],
       'result:admission'
     )
     .pipe(
@@ -753,6 +776,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         const idle = `its worker has been idle with no progress for ${minutes} min.`;
         if (plan.kind === 'stall') return stall(idle);
         if (plan.kind === 'redispatch') {
+          sweep.movedAt = now;
           const refused = await stop(todo);
           if (refused)
             return stall(

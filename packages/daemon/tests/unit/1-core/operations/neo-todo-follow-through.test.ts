@@ -123,7 +123,7 @@ function world() {
   };
   const named = (name: string) => calls.filter((call) => call.name === name);
   const todo = (id: string) => store.getTodo(id) as NeoTodo;
-  return { db, store, runner, workers, knobs, told, add, adopt, at, named, todo, clock };
+  return { db, store, sessions, runner, workers, knobs, told, add, adopt, at, named, todo, clock };
 }
 
 let current: ReturnType<typeof world> | null = null;
@@ -242,5 +242,76 @@ describe('a doing todo never sits idle without someone on it', () => {
     expect(w.todo(todo.id).state).toBe('doing');
     await w.at(126);
     expect(w.todo(todo.id).blockedBy).toBe('stalled');
+  });
+
+  test('a backlog of long-idle workers is moved to fresh workers one per sweep', async () => {
+    const w = (current = world());
+    const ids = [w.add(), w.add(), w.add()].map((todo) => todo.id);
+    for (const id of ids) await w.runner.start(id);
+    await w.at(90);
+    expect(w.named('work.start')).toHaveLength(4);
+    await w.at(91);
+    expect(w.named('work.start')).toHaveLength(5);
+  });
+
+  test('no idle worker is replaced while six todo workers are already running', async () => {
+    const w = (current = world());
+    for (let index = 0; index < 6; index++) {
+      const busy = w.add();
+      await w.runner.start(busy.id);
+      w.sessions.recordLive(busy.id, 'running', undefined);
+      w.workers.get(`worker-${index + 1}`)!.status = 'running';
+    }
+    const idle = w.add();
+    await w.runner.start(idle.id);
+    for (const minutes of [20, 40, 60, 61]) await w.at(minutes);
+    expect(w.named('work.start')).toHaveLength(7);
+    expect(w.todo(idle.id).state).toBe('doing');
+  });
+
+  test('a todo whose old ladder already escalated keeps moving instead of staying doing', async () => {
+    const w = (current = world());
+    const todo = w.add();
+    await w.runner.start(todo.id);
+    w.sessions.recordNudge(todo.id, { since: Date.now(), nudges: 3 });
+    await w.at(61);
+    expect(w.named('work.start')).toHaveLength(2);
+  });
+
+  test('a sweep that starts before the last one ends cannot move a second todo the same minute', async () => {
+    const w = (current = world());
+    for (const todo of [w.add(), w.add(), w.add()]) await w.runner.start(todo.id);
+    await w.at(90);
+    await w.at(90.5);
+    expect(w.named('work.start')).toHaveLength(4);
+  });
+
+  test('workers just started or still queued count toward the six-worker cap', async () => {
+    const w = (current = world());
+    for (let index = 0; index < 6; index++) {
+      const busy = w.add();
+      await w.runner.start(busy.id);
+      w.workers.get(`worker-${index + 1}`)!.status = index % 2 ? 'queued' : 'running';
+    }
+    const idle = w.add();
+    await w.runner.start(idle.id);
+    for (const minutes of [20, 40, 60, 61]) await w.at(minutes);
+    expect(w.named('work.start')).toHaveLength(7);
+  });
+
+  test('a deferred re-dispatch leaves a ladder the human just restarted alone', async () => {
+    const w = (current = world());
+    for (let index = 0; index < 6; index++) {
+      const busy = w.add();
+      await w.runner.start(busy.id);
+      w.sessions.recordLive(busy.id, 'running', undefined);
+      w.workers.get(`worker-${index + 1}`)!.status = 'running';
+    }
+    const idle = w.add();
+    await w.runner.start(idle.id);
+    for (const minutes of [20, 40]) await w.at(minutes);
+    const before = w.sessions.readNudge(idle.id);
+    await w.at(60);
+    expect(w.sessions.readNudge(idle.id)).toEqual(before);
   });
 });

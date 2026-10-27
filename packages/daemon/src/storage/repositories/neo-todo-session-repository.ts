@@ -162,7 +162,8 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     ref: WorkRef,
     live: NonNullable<NeoDriverProgress['live']>,
     now: number,
-    updatedAt: number
+    updatedAt: number,
+    move: boolean
   ) {
     const context = this.nudgeContext(todoId);
     if (
@@ -179,10 +180,10 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     const prior = this.readNudge(todoId);
     const incident =
       prior && continuesIncident(prior, since)
-        ? prior
+        ? { ...prior, nudges: Math.min(prior.nudges, 2) }
         : { since, nudges: 0, ...(prior?.redispatched ? { redispatched: true } : {}) };
     const plan = ['done', 'stopped'].includes(live.status)
-      ? planFollowThrough(incident, now, context.follow)
+      ? planFollowThrough(incident, now, { ...context.follow, move })
       : null;
     this.recordNudge(
       todoId,
