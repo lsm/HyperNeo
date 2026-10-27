@@ -109,7 +109,9 @@ function fixture() {
                         receipt: { executionId: 'cli-w', inputId: 'in-w' },
                       },
                     }
-                  : { ok: reachable }
+                  : reachable
+                    ? { ok: true }
+                    : { ok: false, reason: 'not_delivered' }
                 : {
                     ok: true,
                     value: { status: 'stopped', lastActivityAt: progress, lastReplyAt: progress },

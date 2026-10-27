@@ -1790,7 +1790,7 @@ describe('stopped worker ladder', () => {
       h.setSend({ ok: false, reason: 'unreachable', detail: 'remote send timed out' });
       await h.at(20);
       expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
-      expect(h.told).toEqual([expect.stringContaining('could not be reached')]);
+      expect(h.told.filter((note) => note.includes('could not be reached'))).toHaveLength(1);
     } finally {
       h.clock.mockRestore();
       h.db.close();

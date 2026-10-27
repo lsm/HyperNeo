@@ -845,20 +845,42 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       (sent: OperationOutcome | null) => {
         const value =
           sent?.kind === 'completed'
-            ? (sent.value as { ok?: boolean; detail?: string; reason?: string } | null)
+            ? (sent.value as {
+                ok?: boolean;
+                detail?: string;
+                reason?: string;
+                notSent?: boolean;
+              } | null)
             : null;
-        return value?.ok ? { reason: null } : { value: value?.detail ?? value?.reason ?? null };
+        if (value?.ok) return { reason: null };
+        return {
+          value: {
+            bounced:
+              value?.notSent === true ||
+              ['not_delivered', 'not_open', 'not_found'].includes(value?.reason ?? ''),
+            detail: value?.detail ?? value?.reason ?? null,
+          },
+        };
       },
       'sent',
       'result:unreached'
     )
     .pipe(
-      (claim: NudgeClaim, unreached: string | null, now: number) =>
-        stallTodo(
-          claim,
-          `${neoTodoIdleReason(idleMinutes(claim.incident, now))} The reminder did not reach its worker${unreached ? ` (${unreached})` : ''}.`,
-          now
-        ),
+      (claim: NudgeClaim, unreached: { bounced: boolean; detail: string | null }, now: number) =>
+        unreached.bounced
+          ? stallTodo(
+              claim,
+              `${neoTodoIdleReason(idleMinutes(claim.incident, now))} The reminder did not reach its worker${unreached.detail ? ` (${unreached.detail})` : ''}.`,
+              now
+            )
+          : deps
+              .tell(
+                claim.ask,
+                claim.todo,
+                `Todo "${claim.todo.title}" has made no progress for ${idleMinutes(claim.incident, now)} min, and its worker could not be reached.`,
+                `neo-todo-remind:${claim.todo.id}:${claim.incident.since}:${claim.plan.nudges}`
+              )
+              .catch((error: unknown) => releaseNudge(claim, error)),
       ['claim', 'unreached', 'now'],
       'stalled'
     )
@@ -912,7 +934,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
             (other) => other.state === 'doing' && !sessions.workerIdle(other.id)
           ).length,
           sweep.movedAt,
-          now
+          now,
+          deps.limits().running
         ),
       'now',
       'move'
