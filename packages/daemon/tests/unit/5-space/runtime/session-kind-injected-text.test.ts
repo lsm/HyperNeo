@@ -645,6 +645,26 @@ describe('session kind injected text', () => {
       ]);
     });
 
+    test.each(['workflow_worker', 'direct_task_worker'] as const)(
+      'gives %s exactly one runtime location section across model inputs',
+      async (kind) => {
+        const { session, briefing } = await provision(kind);
+        const options = await new QueryOptionsBuilder(
+          makeBuilderContext(session, briefing)
+        ).build();
+        const message = buildCustomAgentTaskMessage({
+          task: makeSessionKindTask({ description: 'Pin the complete model input.' }),
+          space: SPACE,
+          workspacePath: WORKSPACE_PATH,
+        });
+        const prompt = options.systemPrompt as { append?: string };
+        const modelInput = [prompt.append ?? '', message].join('\n');
+        expect(modelInput.split('## Runtime Location')).toHaveLength(2);
+        expect(modelInput).toContain('HYPERNEO_WORKTREES');
+        expect(options.env?.HYPERNEO_WORKTREES).toBeTruthy();
+      }
+    );
+
     test('keeps every host-authored prompt unrecorded so a resumed session re-reads it (#4824)', async () => {
       const recording: Array<{ kind: SessionKind; recorded: boolean | 'none' }> = [];
       for (const kind of SESSION_KINDS) {
