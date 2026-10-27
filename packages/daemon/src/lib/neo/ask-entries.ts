@@ -80,6 +80,7 @@ export function neoAskEntryState(
 }
 
 export const NEO_DONE_TODOS_SHOWN = 3;
+const NEO_QUESTION_DOCUMENT_PREVIEW_CHARS = 2000;
 
 export function summarizeNeoAskEntry(entry: NeoAskEntry): NeoAskEntry {
   const line = (text: string) => text.split(/\r?\n/, 1)[0].slice(0, 200);
@@ -111,7 +112,16 @@ export function summarizeNeoAskEntry(entry: NeoAskEntry): NeoAskEntry {
         ),
       })),
     })),
-    questions: entry.questions.filter((question) => question.state === 'open'),
+    questions: entry.questions
+      .filter((question) => question.state === 'open')
+      .map((question) =>
+        question.document && question.document.length > NEO_QUESTION_DOCUMENT_PREVIEW_CHARS
+          ? {
+              ...question,
+              document: `${question.document.slice(0, NEO_QUESTION_DOCUMENT_PREVIEW_CHARS)}\n\n[Document preview truncated]`,
+            }
+          : question
+      ),
   };
 }
 
