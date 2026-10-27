@@ -11,12 +11,7 @@ import {
 import { voiceDiagnostic } from './diagnostics.ts';
 import { resolveTranscriptionEndpoint, withTimeout } from './transcribe-fetch.ts';
 import { resolveApiKey, type VoiceTranscribeOutcome } from './transcribe-pipeline.ts';
-import {
-  BATCH_TRANSCRIPTIONS_PATH,
-  serviceBaseEndpoint,
-  streamProtocol,
-  type StreamProtocol,
-} from './stream-protocols.ts';
+import { streamProtocol, type StreamProtocol } from './stream-protocols.ts';
 
 const STREAM_SAMPLE_RATE = 16_000;
 const CONNECT_TIMEOUT_MS = 5_000;
@@ -42,6 +37,7 @@ export interface VoiceStreamDeps {
 type Gate<T> = { value: T } | { reason: string };
 
 export function voiceMode(voice: VoiceSettings | undefined): VoiceMode {
+  if (!voice?.streamEndpoint?.trim()) return 'batch';
   return voice?.mode === 'batch' || voice?.mode === 'streaming' ? voice.mode : 'auto';
 }
 
@@ -52,31 +48,11 @@ export function admitVoiceStream(voice: VoiceSettings | undefined): Gate<VoiceSe
   return { value: voice };
 }
 
-function derivedStreamUrl(batchEndpoint: string): string | undefined {
-  try {
-    const url = new URL(batchEndpoint);
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') return undefined;
-    const pathname = url.pathname.replace(/\/+$/, '');
-    const base = serviceBaseEndpoint(url)
-      ? pathname
-      : pathname.endsWith(BATCH_TRANSCRIPTIONS_PATH)
-        ? pathname.slice(0, -BATCH_TRANSCRIPTIONS_PATH.length)
-        : null;
-    if (base === null) return undefined;
-    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-    url.pathname = `${base}/listen`;
-    url.search = '';
-    return url.toString();
-  } catch {
-    return undefined;
-  }
-}
-
 export function voiceStreamRoute(
   voice: VoiceSettings
 ): { url: URL; protocol: StreamProtocol } | null {
   const protocol = streamProtocol(voice.streamProtocol);
-  const endpoint = voice.streamEndpoint?.trim() || derivedStreamUrl(voice.endpoint);
+  const endpoint = voice.streamEndpoint?.trim();
   if (!protocol || !endpoint) return null;
   let url: URL;
   try {

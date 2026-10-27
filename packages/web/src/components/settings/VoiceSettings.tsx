@@ -15,6 +15,7 @@ import { SettingsGroup, SettingsRow, SettingsSection, SettingsToggle } from './S
 const DEFAULT_VOICE: VoiceSettingsConfig = {
   enabled: false,
   endpoint: '',
+  streamEndpoint: '',
   model: '',
   allowInsecureTls: false,
   allowPrivateNetwork: false,
@@ -23,12 +24,14 @@ const DEFAULT_VOICE: VoiceSettingsConfig = {
 const PRESETS = {
   openai: {
     endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+    streamEndpoint: '',
     model: 'whisper-1',
     allowInsecureTls: false,
     allowPrivateNetwork: false,
   },
   local: {
     endpoint: '',
+    streamEndpoint: '',
     model: '',
   },
 };
@@ -88,7 +91,7 @@ export function VoiceSettings() {
     }
   };
 
-  const patchOnBlur = (field: 'endpoint' | 'model') => {
+  const patchOnBlur = (field: 'endpoint' | 'streamEndpoint' | 'model') => {
     const current = draft[field]?.trim() ?? '';
     if (current === (settings[field] ?? '').trim()) return;
     void save({ ...draft, [field]: current } as VoiceSettingsConfig, { silent: true });
@@ -184,17 +187,35 @@ export function VoiceSettings() {
         </SettingsRow>
 
         <SettingsRow
-          label="Endpoint"
-          description="One link: a service base URL (ending in a version, like /speech/v1) configures batch and live listening; other full endpoint URLs are used verbatim for batch."
+          label="Batch endpoint"
+          description="Full HTTP or HTTPS URL for batch transcription. Used exactly as entered."
           layout="stacked"
         >
           <input
             type="url"
+            aria-label="Batch endpoint"
             value={draft.endpoint}
             disabled={saving}
             onInput={(event) => setDraft({ ...draft, endpoint: event.currentTarget.value })}
             onBlur={() => patchOnBlur('endpoint')}
             placeholder="https://api.openai.com/v1/audio/transcriptions"
+            class={FORM_CONTROL_CLASS}
+          />
+        </SettingsRow>
+
+        <SettingsRow
+          label="Live endpoint"
+          description="Full WebSocket URL for live transcription. Leave empty for batch only."
+          layout="stacked"
+        >
+          <input
+            type="url"
+            aria-label="Live endpoint"
+            value={draft.streamEndpoint ?? ''}
+            disabled={saving}
+            onInput={(event) => setDraft({ ...draft, streamEndpoint: event.currentTarget.value })}
+            onBlur={() => patchOnBlur('streamEndpoint')}
+            placeholder="wss://asr.example.com/v1/listen"
             class={FORM_CONTROL_CLASS}
           />
         </SettingsRow>
