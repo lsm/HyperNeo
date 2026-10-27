@@ -53,7 +53,7 @@ function setup() {
         packs: () => packs,
         artifact: () => null,
         stop: async () => null,
-        start: (id) => runner.start(id),
+        advance: () => runner.advance(),
         changed: () => {},
         project: async (todos) => todos,
       }
