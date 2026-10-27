@@ -1,3 +1,4 @@
+import { readHyperneoTurnEnds } from '../../../../src/storage/hyperneo-turn-ends-read.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -77,6 +78,7 @@ function write(id: string, type: string, seq: number | null, text: string, sessi
 
 async function status(input: Receipt | undefined = receipt) {
   const adapter = createSpaceAdapter({
+    readTurnEnds: async (id, since) => readHyperneoTurnEnds(db, id, since),
     db: () => {
       fillSdkMessageFixtureColumns(db);
       return db;

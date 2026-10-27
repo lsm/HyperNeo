@@ -1,3 +1,4 @@
+import { readHyperneoTurnEnds } from '../../../../src/storage/hyperneo-turn-ends-read.ts';
 import { readDriverSettlement } from '../../../../src/lib/neo/driver-work';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
@@ -143,6 +144,7 @@ describe('space adapter against the space tables', () => {
     const insert = db.prepare(`INSERT INTO space_tasks VALUES (?, 'sp1', ?, 'closed', 'done', ?)`);
     for (let n = 0; n < 600; n++) insert.run(`c${n}`, 100 + n, 1000 + n);
     const adapter = createSpaceAdapter({
+      readTurnEnds: async (id, since) => readHyperneoTurnEnds(db, id, since),
       db: () => db,
       machine: 'imac',
       searchChats: async () => [],
@@ -162,6 +164,7 @@ describe('space adapter against the space tables', () => {
     const insert = db.prepare(`INSERT INTO space_tasks VALUES (?, 'sp3', ?, 'routine', 'done', ?)`);
     for (let n = 0; n < 600; n++) insert.run(`c${n}`, 100 + n, 1000 + n);
     const adapter = createSpaceAdapter({
+      readTurnEnds: async (id, since) => readHyperneoTurnEnds(db, id, since),
       db: () => db,
       machine: 'imac',
       searchChats: async (text) => (text === 'parser' ? [chat('w2', 't2')] : []),
@@ -181,6 +184,7 @@ describe('space adapter against the space tables', () => {
 
   test('returns active Spaces with open tasks and counts, newest activity first', async () => {
     const adapter = createSpaceAdapter({
+      readTurnEnds: async (id, since) => readHyperneoTurnEnds(db, id, since),
       db: () => db,
       machine: 'imac',
       searchChats: async () => [],
@@ -208,6 +212,7 @@ describe('space adapter against the space tables', () => {
     const base = Date.parse('2026-10-14T10:00:00.000Z');
     const adapter = () =>
       createSpaceAdapter({
+        readTurnEnds: async (id, since) => readHyperneoTurnEnds(db, id, since),
         db: () => {
           fillSdkMessageFixtureColumns(db);
           return db;
@@ -310,6 +315,7 @@ describe('space adapter against the space tables', () => {
       ('a2', 'sp1', 'docs', 'Writer', 'paused', 's2', 35),
       ('a3', 'sp1', 'old', 'Retired', 'archived', NULL, 50)`);
     const adapter = createSpaceAdapter({
+      readTurnEnds: async (id, since) => readHyperneoTurnEnds(db, id, since),
       db: () => db,
       machine: 'imac',
       searchChats: async (text) => (text === '16px' ? [chat('s1')] : []),
