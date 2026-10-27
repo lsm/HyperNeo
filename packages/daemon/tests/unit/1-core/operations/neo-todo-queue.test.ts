@@ -203,4 +203,21 @@ describe('queued todos start themselves', () => {
     await Promise.all([w.runner.fill(), w.runner.fill()]);
     expect(w.started).toHaveLength(1);
   });
+
+  test('a todo the human left unticked in the start answer is held, not queued', async () => {
+    const w = (current = world());
+    const ask = w.approved();
+    const [ticked, unticked] = [w.add(ask), w.add(ask)];
+    for (const id of [ticked, unticked]) w.store.joinStartQuestion(w.store.getTodo(id)!, 2);
+    const question = w.store.listQuestions(ask).find((item) => item.kind === 'start')!;
+    w.store.answerQuestion(question, [ticked], 'button', 3);
+    expect(w.store.getTodo(unticked)).toMatchObject({
+      state: 'blocked',
+      blockedBy: 'held',
+      blockedReason: 'Not ticked in the start answer.',
+    });
+    await w.finish(ticked);
+    await w.tick();
+    expect(w.state(unticked)).toBe('blocked');
+  });
 });
