@@ -40,3 +40,11 @@ evidence directory may change.
 ```sh
 bun --no-install --no-env-file .claude/skills/verify/lane-a-project-save-proof-binding.ts HEAD
 ```
+
+The first bun-verify directory is an inconclusive helper-correlation failure;
+bun-verify-1 is the observed regression committed before production changes.
+The final pair named in observed.json identifies the committed worker/facade and
+exact coordinator-granted operations.ts patch. A read-only independent observer
+in CI sees only committed notification state; a failed update leaves it unchanged.
+The actual save latency under the held writer is over250ms in both fixed runs,
+retained as a missed target alongside the loop/health/off-main successes.
