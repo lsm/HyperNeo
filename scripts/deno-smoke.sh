@@ -487,6 +487,9 @@ env -i HOME="$CLEANUP_ENQUEUE_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$CLEANUP_ENQUEUE_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-cleanup-enqueue.ts" "$CLEANUP_ENQUEUE_RUN"
 
+WORKFLOW_IDENTITY_CONTRACT_RUN="$WORK_DIR/workflow-identity-contract"
+mkdir -p "$WORKFLOW_IDENTITY_CONTRACT_RUN/home"
+env -i HOME="$WORKFLOW_IDENTITY_CONTRACT_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_IDENTITY_CONTRACT_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-identity-contract.ts" verify "$WORKFLOW_IDENTITY_CONTRACT_RUN"
 MAILBOX_ADMISSION_RUN="$WORK_DIR/mailbox-admission"
 mkdir -p "$MAILBOX_ADMISSION_RUN/home"
 env -i HOME="$MAILBOX_ADMISSION_RUN/home" PATH="$PATH" NODE_ENV=test \
