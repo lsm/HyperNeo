@@ -67,6 +67,18 @@ try {
   const read = async () => (await hub.request<{ session: Session }>('session.get', { sessionId })).session;
   await hub.request('message.send', { sessionId, content: 'Synthetic consumed prompt must reach the shared cap' });
   try {
+    if (mode === 'interrupt' || mode === 'reset') {
+      await until(async () => (await read()).metadata.queryFailureEpisode?.failures === 2, 'Second consumed failure missing');
+      const before = starts.length;
+      const prior = (await read()).metadata.queryFailureEpisode!;
+      await hub.request(mode === 'interrupt' ? 'client.interrupt' : 'session.resetQuery', { sessionId, restartQuery: false });
+      await new Promise(done => setTimeout(done, 2700));
+      assert.equal(starts.length, before);
+      const current = (await read()).metadata.queryFailureEpisode!;
+      if (mode === 'reset') { assert.notEqual(current.id, prior.id); assert.equal(current.failures, 0); }
+      assert.equal(current.failed, false);
+      evidence.passed = true;
+    } else {
     await until(async () => (await read()).metadata.queryFailureEpisode?.failed === true, 'Consumed prompt stopped below the shared cap');
     await until(() => errors.some(event => event.error.includes('Query stopped after 3 failures')), 'Terminal failure not published');
     const episode = (await read()).metadata.queryFailureEpisode!;
@@ -75,12 +87,13 @@ try {
     assert.equal(starts.length, 3);
     assert(starts[1] - starts[0] >= 950);
     assert(starts[2] - starts[1] >= 1950);
-    const messages = await hub.request<{ messages: { type: string; deliveryStatus?: string }[] }>('message.sdkMessages', { sessionId });
-    assert(messages.messages.some(message => message.type === 'user' && message.deliveryStatus === 'delivered'));
+    const messages = await hub.request<{ sdkMessages: { type: string; deliveryStatus?: string }[] }>('message.sdkMessages', { sessionId });
+    assert(messages.sdkMessages.some(message => message.type === 'user' && message.deliveryStatus === 'delivered'));
     evidence.delivered = true;
     await new Promise(done => setTimeout(done, 2300));
     assert.equal(starts.length, 3);
     evidence.passed = true;
+    }
   } finally {
     evidence.starts = starts;
     evidence.episode = (await read()).metadata.queryFailureEpisode;

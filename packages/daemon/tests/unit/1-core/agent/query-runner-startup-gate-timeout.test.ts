@@ -333,7 +333,7 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
     }
   });
 
-  it('releases the slot on startup-timeout abort; the single retry re-admits through the gate', async () => {
+  it('releases the slot on startup-timeout abort; every shared-budget retry re-admits through the gate', async () => {
     const { runner, ctx } = createRunner('s1');
     runner.start();
 
@@ -351,10 +351,14 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
     const freeIndexes = events
       .map((event, index) => (event === 'free:s1' ? index : -1))
       .filter((index) => index >= 0);
-    expect(admitIndexes.length).toBe(2);
-    expect(freeIndexes.length).toBe(2);
+    expect(admitIndexes.length).toBe(3);
+    expect(freeIndexes.length).toBe(3);
     expect(admitIndexes[1]).toBeGreaterThan(freeIndexes[0]);
-    expect(handleErrorSpy.mock.calls[0][2]).toBe('timeout');
+    expect(admitIndexes[2]).toBeGreaterThan(freeIndexes[1]);
+    expect(ctx.session.metadata.queryFailureEpisode?.failures).toBe(3);
+    expect(ctx.session.metadata.queryFailureEpisode?.failed).toBe(true);
+    expect(handleErrorSpy.mock.calls[0][3]).toContain('SDK startup timeout');
+    expect(handleErrorSpy.mock.calls[0][3]).toContain('Query stopped after 3 failures');
     expect(getSdkStartupGate().getStats()).toEqual({
       active: 0,
       queued: 0,
@@ -377,14 +381,14 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
     const admissionOrder = events
       .filter((event) => event.startsWith('admit:'))
       .map((event) => event.slice('admit:'.length));
-    expect([...admissionOrder].sort()).toEqual(['s1', 's1', 's2', 's2']);
+    expect([...admissionOrder].sort()).toEqual(['s1', 's1', 's1', 's2', 's2', 's2']);
     for (const sessionId of ['s1', 's2']) {
       const sessionEvents = events
         .filter((event) => event.endsWith(`:${sessionId}`))
         .map((event) => event.split(':')[0]);
-      expect(sessionEvents).toEqual(['admit', 'free', 'admit', 'free']);
+      expect(sessionEvents).toEqual(['admit', 'free', 'admit', 'free', 'admit', 'free']);
     }
-    expect(events.filter((event) => event.startsWith('spawn')).length).toBe(4);
+    expect(events.filter((event) => event.startsWith('spawn')).length).toBe(6);
 
     let held = 0;
     let maxHeld = 0;
@@ -419,7 +423,7 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
     await ctx.queryPromise;
     await waitFor(() => handleErrorSpy.mock.calls.length > 0);
 
-    expect(spawnNexts.length).toBe(2);
+    expect(spawnNexts.length).toBe(3);
     expect(getSdkStartupGate().getStats()).toEqual({
       active: 0,
       queued: 0,
@@ -454,7 +458,8 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
     await ctx.queryPromise;
     await waitFor(() => handleErrorSpy.mock.calls.length > 0);
 
-    expect(handleErrorSpy.mock.calls[0][2]).toBe('timeout');
+    expect(handleErrorSpy.mock.calls[0][3]).toContain('SDK startup timeout');
+    expect(handleErrorSpy.mock.calls[0][3]).toContain('Query stopped after 3 failures');
     expect(getSdkStartupGate().getStats()).toEqual({
       active: 0,
       queued: 0,
@@ -474,7 +479,8 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
     await ctx.queryPromise;
     await waitFor(() => handleErrorSpy.mock.calls.length > 0);
 
-    expect(handleErrorSpy.mock.calls[0][2]).toBe('timeout');
+    expect(handleErrorSpy.mock.calls[0][3]).toContain('SDK startup timeout');
+    expect(handleErrorSpy.mock.calls[0][3]).toContain('Query stopped after 3 failures');
     expect(getSdkStartupGate().getStats()).toEqual({
       active: 0,
       queued: 0,

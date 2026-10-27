@@ -8,7 +8,7 @@ assert.equal(process.env.NODE_ENV,'test');assert.equal(process.env.HOME,join(run
 for(const name of ['workspace','bin','evidence'])mkdirSync(join(run,name),{recursive:true});
 writeFileSync(join(run,'bin/gh'),'#!/bin/sh\nexit 1\n',{mode:0o700});
 const sdk=await import('../../../packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs');
-const failures:Record<string,string>={startup:'SDK startup timeout - query aborted',auth:'401 Claude authentication failed',transient:'ECONNRESET connection closed',provider:'503 service unavailable',resume:'No message found with message.uuid of: synthetic',deadline:'Query preparation timed out'};
+const failures:Record<string,string>={'consumed-handoff':'API Error: 429 rate_limit_error: too many requests',startup:'SDK startup timeout - query aborted',auth:'401 Claude authentication failed',transient:'ECONNRESET connection closed',provider:'503 service unavailable',resume:'No message found with message.uuid of: synthetic',deadline:'Query preparation timed out'};
 const attempts:number[]=[],failure=failures[phase]??'Synthetic unknown query start failure 9093';const hollowResults:number[]=[];let healthy=phase==='hollow'||phase==='large'||phase==='scoped',finish=()=>{};
 let scopedCount=0,releaseParent=()=>{},armCompaction=()=>{};
 mock.module('@anthropic-ai/claude-agent-sdk',()=>({...sdk,query:({prompt}:{prompt:AsyncIterable<unknown>|string})=>{
@@ -17,8 +17,9 @@ mock.module('@anthropic-ai/claude-agent-sdk',()=>({...sdk,query:({prompt}:{promp
  return {async *[Symbol.asyncIterator](){
   if(typeof prompt==='string'){yield {type:'assistant',message:{role:'assistant',content:[{type:'text',text:'Synthetic title'}]}};return;}
   const feed=prompt[Symbol.asyncIterator]();await feed.next();let nextInput=feed.next();void nextInput.catch(()=>{});
-  if(phase.startsWith('consumed')&&!healthy)throw new Error(failure);
+  if(phase.startsWith('consumed')&&phase!=='consumed-init'&&!healthy)throw new Error(failure);
   yield {type:'system',subtype:'init',uuid:crypto.randomUUID(),session_id:crypto.randomUUID(),cwd:join(run,'workspace'),model:'claude-haiku-4-5-20251001',permissionMode:'default',apiKeySource:'user',claude_code_version:'synthetic',tools:[],skills:[],plugins:[],mcp_servers:[],slash_commands:[],output_style:'default'};
+  if(phase==='consumed-init'&&!healthy)throw new Error(failure);
   if(phase==='scoped'){
    const parentGate=new Promise<void>(resolve=>{releaseParent=resolve;});
    for(const [isError,parent,text] of [[true,'child','Synthetic child failure'],[false,'child','Synthetic child success'],[true,'child','401 Claude authentication failed'],[false,null,'Synthetic compact'],[true,null,'API Error: 429 rate_limit_error: too many requests']] as const){
@@ -60,6 +61,7 @@ try{
  const {sessionId}=await hub.request<{sessionId:string}>('session.create',{workspacePath:join(run,'workspace'),title:'Synthetic failure governor',config:{model:'haiku',provider:'anthropic'}});
  let releaseLate=()=>{};
  if(phase==='scoped'){const agent=app.sessionManager.getSession(sessionId)!;agent.onResultLimitError=async()=>true;armCompaction=()=>agent.messageQueue.armInternalCompactionResultAttribution();}
+ if(phase==='consumed-handoff'){const agent=app.sessionManager.getSession(sessionId)!;agent.onRateLimitExhausted=async()=>true;}
  if(phase==='deadline'){
   const agent=app.sessionManager.getSession(sessionId)!;const options=await agent.optionsBuilder.build();
   agent.optionsBuilder.build=()=>new Promise(resolve=>{releaseLate=()=>resolve(options);});
@@ -67,7 +69,8 @@ try{
  }
  await hub.request('message.send',{sessionId,content:'Synthetic fake-start regression'});
  const read=async()=>(await hub.request<{session:Session}>('session.get',{sessionId})).session;
- if(phase==='scoped'){
+ if(phase==='consumed-handoff'){await until(async()=>(await read()).metadata.queryFailureEpisode?.failures===1,'handoff did not observe the failure');await new Promise(done=>setTimeout(done,2300));assert.equal(attempts.length,1);assert.equal((await read()).metadata.queryFailureEpisode?.failed,false);evidence.acceptedHandoffPreserved=true;
+ }else if(phase==='scoped'){
   await until(()=>scopedCount===5,'scoped results incorrectly stopped the owning query');
   const prior=(await read()).metadata.queryFailureEpisode!;assert.equal(prior.failures,1);assert.equal(prior.failed,false);assert(prior.error.includes(failure));
   const rows=app.db.getDatabase().prepare("SELECT parent_tool_use_id,internal_compaction_turn,recovery_intercepted,recovery_billing_terminal FROM sdk_messages WHERE session_id=? AND message_type='result'").all(sessionId) as Record<string,unknown>[];
@@ -97,13 +100,18 @@ try{
   const failed=await read();assert.equal(failed.metadata.queryFailureEpisode?.failures,3);assert(failed.metadata.queryFailureEpisode?.error.includes(failure));assert.equal(attempts.length,phase==='deadline'?0:3);
   if(phase!=='deadline')assert(attempts[1]-attempts[0]>=950 && attempts[2]-attempts[1]>=1950);
   const beforeCount=attempts.length;await new Promise(done=>setTimeout(done,2200));assert.equal(attempts.length,beforeCount);
-  if(phase==='consumed'){const rows=await hub.request<{messages:{type:string;deliveryStatus?:string}[]}>('message.sdkMessages',{sessionId});assert(rows.messages.some(row=>row.type==='user'&&row.deliveryStatus==='delivered'));evidence.consumedDelivery=true;}
+  if(phase.startsWith('consumed')){const rows=await hub.request<{sdkMessages:{type:string;deliveryStatus?:string}[]}>('message.sdkMessages',{sessionId});assert(rows.sdkMessages.some(row=>row.type==='user'&&row.deliveryStatus==='delivered'));evidence.consumedDelivery=true;}
   evidence.failed=failed.metadata.queryFailureEpisode;evidence.attempts=[...attempts];
   const row=app.db.getDatabase().prepare('SELECT metadata FROM sessions WHERE id=?').get(sessionId) as {metadata:string};assert.deepEqual(JSON.parse(row.metadata).queryFailureEpisode,failed.metadata.queryFailureEpisode);evidence.persisted=true;
   const old=failed.metadata.queryFailureEpisode!.id;healthy=true;
   releaseLate();await new Promise(done=>setTimeout(done,150));assert.equal(attempts.length,beforeCount);delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
   const reset=await hub.request<{success:boolean}>('session.resetQuery',{sessionId,restartQuery:false});assert(reset.success);
   await hub.request('message.send',{sessionId,content:'Explicit recovery after fixing the cause'});
+  if(phase==='consumed-init'){
+   let choice:{uuid:string}|undefined;
+   await until(async()=>{const rows=await hub.request<{sdkMessages:{type:string;uuid:string;action?:string;resolved?:boolean}[]}>('message.sdkMessages',{sessionId});choice=rows.sdkMessages.find(row=>row.type==='hyperneo_action'&&row.action==='sdk_resume_choice'&&!row.resolved);return !!choice;},'synthetic transcript recovery choice missing');
+   await hub.request('session.sdkResumeChoice',{sessionId,choice:'start_fresh',messageUuid:choice!.uuid});
+  }
   await until(async()=>{const state=(await read()).metadata.queryFailureEpisode;return !!state && state.id!==old && state.failures===0 && attempts.length>beforeCount;},'explicit recovery did not start a fresh successful episode');
   evidence.recovered=(await read()).metadata.queryFailureEpisode;evidence.originalError=failure;evidence.noHotLoop=true;
  }
