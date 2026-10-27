@@ -33,6 +33,7 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
         const feed = prompt[Symbol.asyncIterator]();
         const input = await feed.next();
         consumed.push(input.value);
+        void feed.next().catch(() => {});
         const sdkSessionId = crypto.randomUUID();
         mkdirSync(getSDKProjectDir(join(run, 'workspace')), { recursive: true });
         writeFileSync(getSDKSessionFilePath(join(run, 'workspace'), sdkSessionId), JSON.stringify({ ...(input.value as object), type: 'user', parentUuid: null }) + '\n');
@@ -86,6 +87,13 @@ try {
     evidence.oldInterrupted = oldInterrupted;
     evidence.oldClosed = oldClosed;
   }
+  const agent = app.sessionManager.getSession(sessionId)!;
+  await until(() => !agent.isLimitRecoveryPending(), 'Fallback recovery callback did not settle');
+  await agent.replayPendingMessagesForImmediateMode({ waitForPostSettlementFlush: true });
+  const state = await hub.request<{ agentState: { status: string } }>('state.session', { sessionId });
+  evidence.finalState = state.agentState;
+  assert.equal(state.agentState.status, 'idle');
+  assert(oldClosed && oldInterrupted);
   assert.equal(starts.length, 2);
   assert(starts[1].model.includes('sonnet'));
   assert.equal(consumed.length, 2);
