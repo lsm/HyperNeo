@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
+import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { initializeCodingWatches } from '../../../../src/lib/neo/packs/coding/watched-repos.ts';
 import { deliverCodingHealth } from '../../../../src/lib/neo/packs/coding/health-delivery.ts';
 import {
@@ -71,6 +72,87 @@ describe('ledger reconciliation health', () => {
       ).rejects.toThrow('synthetic observation rejection');
       expect(ledger.health.read(repos[0])).toEqual(before);
       expect(ledger.list()).toEqual([]);
+    }));
+  test('gateway reconciliation admits one state transition and rejects an unwatched response', () =>
+    using(async (writer, stored) => {
+      const main = new Database(':memory:');
+      const gateway = new DbGateway(':memory:', writer);
+      bindGateway(main, gateway);
+      const send = gateway.run.bind(gateway);
+      gateway.run = (async (op, args) => {
+        if (op.mode === 'read') writer.exec('PRAGMA query_only=ON');
+        try {
+          return structuredClone(await send(op, structuredClone(args)));
+        } finally {
+          writer.exec('PRAGMA query_only=OFF');
+        }
+      }) as typeof gateway.run;
+      const fault = spyOn(main, 'prepare').mockImplementation(((sql: string) => {
+        throw new Error(`Ledger SQL on main: ${sql}`);
+      }) as typeof main.prepare);
+      const ledger = new CodingPrLedgerRepository(main);
+      const observed = (draft: boolean) => {
+        const raw = response(repos[0]);
+        return {
+          ...raw,
+          data: {
+            ...raw.data,
+            repository: {
+              ...raw.data.repository,
+              open: {
+                ...raw.data.repository.open,
+                nodes: [
+                  {
+                    number: 7,
+                    title: 'Observed 甲🙂',
+                    headRefName: 'topic',
+                    headRefOid: 'same-head',
+                    state: 'OPEN',
+                    isDraft: draft,
+                    mergeable: 'MERGEABLE',
+                    reviewDecision: null,
+                    closedAt: null,
+                  },
+                ],
+              },
+            },
+          },
+        };
+      };
+      try {
+        initializeCodingWatches(writer, [repos[0]]);
+        await reconcileCodingPrLedger(ledger, [repos[0]], async () => observed(true), 1);
+        const results = await Promise.all(
+          [1, 2].map(() =>
+            reconcileCodingPrLedger(ledger, [repos[0]], async () => observed(false), 2)
+          )
+        );
+        expect(results.flat()).toHaveLength(1);
+        expect(stored.list()).toMatchObject([
+          { title: 'Observed 甲🙂', state: 'waiting_human', readAt: 2 },
+        ]);
+        const before = stored.health.read(repos[0]);
+        await reconcileCodingPrLedger(
+          ledger,
+          [repos[0]],
+          async () => {
+            writer.exec(
+              "UPDATE neo_pack_preferences SET value_json='[]' WHERE pack='coding' AND key='watchedRepos'"
+            );
+            return observed(true);
+          },
+          3
+        );
+        expect(stored.health.read(repos[0])).toEqual(before);
+        expect(stored.list()).toEqual([]);
+        expect(writer.prepare('SELECT state FROM pack_coding_pr_ledger').get()).toEqual({
+          state: 'waiting_human',
+        });
+      } finally {
+        fault.mockRestore();
+        await gateway.close();
+        main.close();
+      }
     }));
   for (const [label, raw, reason] of [
     ['empty', response(repos[0]), 'complete'],

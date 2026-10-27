@@ -14,7 +14,7 @@ assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data')); assert(!existsSy
 for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN']) assert.equal(process.env[k], undefined);
 for (const dir of ['bin', 'evidence']) mkdirSync(join(run, dir), { recursive: true });
 writeFileSync(join(run, 'bin/claude'), '#!/bin/sh\nprintf "[]\\n"\n', { mode: 0o700 });
-writeFileSync(join(run, 'bin/gh'), String.raw`#!${process.execPath}
+writeFileSync(join(run, 'bin/gh'), String.raw`#!/usr/bin/env bun
 import {readFileSync,appendFileSync} from 'node:fs';
 const root=${JSON.stringify(run)},args=process.argv.slice(2);
 if(args[0]!=='api'||!args.includes('--include'))process.exit(2);
@@ -69,6 +69,12 @@ try {
   sql().exec("INSERT INTO pack_coding_poll_facts (subject,fact_revision,observation_revision,value_json,attempted_at) VALUES ('[\"protected-history\"]',3,5,'[]',1)");
   const protectedRows = history(); await cycle(base);
   const facts = ledger.list(); assert.equal(facts.length, 2);
+  if(mode==='verify') {
+    sql().exec('BEGIN IMMEDIATE');let released=false;
+    const release=setTimeout(()=>{released=true;sql().exec('ROLLBACK');},1000);
+    try {const snapshot=await ledger.pollSnapshotCurrent(repos),context=await ledger.pollContextCurrent(repos[0]);assert(!released,'Polling snapshots must finish while the writer lock is held');assert.equal(snapshot.order.length,2);assert.equal(context.watched,true);proof.snapshotReadUnderWriterLock=true;}
+    finally{clearTimeout(release);if(!released)sql().exec('ROLLBACK');}
+  }
   const beforeHealth=ledger.health.read(repos[0]);
   sql().exec("CREATE TRIGGER reject_ledger_observation BEFORE INSERT ON pack_coding_pr_ledger WHEN NEW.repo='synthetic/first' BEGIN SELECT RAISE(ABORT,'synthetic observation rejection'); END");
   await assert.rejects(cycle(base+50),/synthetic observation rejection/);
