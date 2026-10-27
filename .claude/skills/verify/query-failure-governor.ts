@@ -9,14 +9,23 @@ for(const name of ['workspace','bin','evidence'])mkdirSync(join(run,name),{recur
 writeFileSync(join(run,'bin/gh'),'#!/bin/sh\nexit 1\n',{mode:0o700});
 const sdk=await import('../../../packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs');
 const failures:Record<string,string>={startup:'SDK startup timeout - query aborted',auth:'401 Claude authentication failed',transient:'ECONNRESET connection closed',provider:'503 service unavailable',resume:'No message found with message.uuid of: synthetic',deadline:'Query preparation timed out'};
-const attempts:number[]=[],failure=failures[phase]??'Synthetic unknown query start failure 9093';let healthy=false,finish=()=>{};
+const attempts:number[]=[],failure=failures[phase]??'Synthetic unknown query start failure 9093';const hollowResults:number[]=[];let healthy=phase==='hollow',finish=()=>{};
 mock.module('@anthropic-ai/claude-agent-sdk',()=>({...sdk,query:({prompt}:{prompt:AsyncIterable<unknown>|string})=>{
  if(typeof prompt!=='string'){attempts.push(Date.now());if(!healthy)throw new Error(failure);}
  const ended=new Promise<void>(resolve=>{finish=resolve;});
  return {async *[Symbol.asyncIterator](){
   if(typeof prompt==='string'){yield {type:'assistant',message:{role:'assistant',content:[{type:'text',text:'Synthetic title'}]}};return;}
-  const feed=prompt[Symbol.asyncIterator]();await feed.next();void feed.next().catch(()=>{});
+  const feed=prompt[Symbol.asyncIterator]();await feed.next();let nextInput=feed.next();void nextInput.catch(()=>{});
   yield {type:'system',subtype:'init',uuid:crypto.randomUUID(),session_id:crypto.randomUUID(),cwd:join(run,'workspace'),model:'claude-haiku-4-5-20251001',permissionMode:'default',apiKeySource:'user',claude_code_version:'synthetic',tools:[],skills:[],plugins:[],mcp_servers:[],slash_commands:[],output_style:'default'};
+  if(phase==='hollow'){
+   for(let turn=0;turn<6;turn++){
+    hollowResults.push(Date.now());
+    yield {type:'result',subtype:'success',uuid:crypto.randomUUID(),session_id:crypto.randomUUID(),parent_tool_use_id:null,origin:{kind:'task-notification'},is_error:false,result:'',duration_ms:1,duration_api_ms:1,num_turns:1,total_cost_usd:0,usage:{input_tokens:0,output_tokens:0},modelUsage:{},permission_denials:[]};
+    yield {type:'system',subtype:'session_state_changed',state:'idle',uuid:crypto.randomUUID(),session_id:crypto.randomUUID()};
+    if(turn<5){await nextInput;nextInput=feed.next();void nextInput.catch(()=>{});}
+   }
+   await ended;return;
+  }
   yield {type:'result',subtype:'success',uuid:crypto.randomUUID(),session_id:crypto.randomUUID(),parent_tool_use_id:null,is_error:false,result:'Recovered synthetic reply',duration_ms:1,duration_api_ms:1,num_turns:1,total_cost_usd:0,usage:{input_tokens:1,output_tokens:1},modelUsage:{},permission_denials:[]};
   await ended;
  },close:()=>finish(),interrupt:async()=>finish(),supportedModels:async()=>[],supportedCommands:async()=>[],setMcpServers:async()=>({added:[],removed:[],errors:{}})};
@@ -43,7 +52,13 @@ try{
  }
  await hub.request('message.send',{sessionId,content:'Synthetic fake-start regression'});
  const read=async()=>(await hub.request<{session:Session}>('session.get',{sessionId})).session;
- if(phase==='before'){
+ if(phase==='hollow'){
+  await until(()=>errors.some(event=>JSON.stringify(event).includes('re-query budget exhausted')),'hollow recovery did not reach its existing exhaustion owner');
+  assert.equal(hollowResults.length,6);assert(hollowResults[1]-hollowResults[0]>=450);
+  const state=(await read()).metadata.queryFailureEpisode;assert.equal(state?.failures,0);assert.equal(state?.failed,false);
+  evidence.hollowResults=hollowResults;evidence.escalation=errors.find(event=>JSON.stringify(event).includes('re-query budget exhausted'));evidence.episode=state;
+  await new Promise(done=>setTimeout(done,1000));assert.equal(hollowResults.length,6);
+ }else if(phase==='before'){
   await until(()=>attempts.length>=5,'baseline did not reproduce repeated fake failures',45000);
   const jobs=app.db.getDatabase().prepare("SELECT retry_count AS retryCount,json_extract(payload,'$.__parkCount') AS parks FROM job_queue WHERE queue='message_delivery' AND json_extract(payload,'$.sessionId')=?").all(sessionId) as {retryCount:number;parks:number}[];assert(jobs.some(job=>job.retryCount===0 && job.parks>=4));evidence.jobs=jobs;
   evidence.baselineReproduced=true;evidence.attempts=[...attempts];

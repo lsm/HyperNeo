@@ -210,10 +210,10 @@ describe('task-notification requery policy', () => {
       ).toEqual({ action: 'hold' });
     });
 
-    it('requeries immediately on the first hollow result and backs off afterwards', () => {
+    it('backs off from the first hollow result and escalates within its own budget', () => {
       expect(
         resolveTaskNotificationRequery({ ...base, message: buildHollowTaskNotificationResult() })
-      ).toEqual({ action: 'requery', delayMs: 0 });
+      ).toEqual({ action: 'requery', delayMs: 500 });
       expect(
         resolveTaskNotificationRequery({
           ...base,
@@ -226,7 +226,7 @@ describe('task-notification requery policy', () => {
 
   describe('taskNotificationRequeryDelayMs', () => {
     it('follows the default backoff ladder', () => {
-      expect(taskNotificationRequeryDelayMs(0)).toBe(0);
+      expect(taskNotificationRequeryDelayMs(0)).toBe(500);
       expect(taskNotificationRequeryDelayMs(1)).toBe(500);
       expect(taskNotificationRequeryDelayMs(2)).toBe(1000);
       expect(taskNotificationRequeryDelayMs(3)).toBe(2000);

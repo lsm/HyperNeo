@@ -4,6 +4,20 @@ import type { Database } from '../../../../src/storage/database.ts';
 import { QueryFailureGovernor } from '../../../../src/lib/agent/query-failure-episode.ts';
 
 describe('Query failure episode', () => {
+  it('retains a bounded useful error when a provider returns a large failure', async () => {
+    const session = { id: 'large-error', metadata: {} } as Session;
+    const db = {
+      getSession: () => session,
+      updateSession: async () => {},
+    } as unknown as Database;
+    const governor = new QueryFailureGovernor(session, db);
+    const id = await governor.admit(() => true);
+    const episode = await governor.failure(`Original cause: ${'x'.repeat(100_000)}`, id);
+    expect(episode.error.startsWith('Original cause: ')).toBe(true);
+    expect(episode.error.length).toBeLessThanOrEqual(4096);
+    expect(session.metadata.queryFailureEpisode?.error).toBe(episode.error);
+  });
+
   it('retains the failure cap through rehydration and resets only on explicit recovery or success', async () => {
     const session = { id: 'synthetic-worker', metadata: {} } as Session;
     const persisted = structuredClone(session);
