@@ -191,6 +191,35 @@ describe('todo dependencies', () => {
     }
   });
 
+  test('a repeated plan cannot start a recorded step that still waits for unfinished steps', async () => {
+    const { db, store, invoke, step } = setup();
+    try {
+      const plan = { title: 'Plan', request: 'Plan' };
+      const work = {
+        instruction: 'Do it.',
+        target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } },
+      };
+      const opened = await invoke('neo.ask.open', {
+        ...plan,
+        todos: [
+          { ...step('A'), ...work },
+          { ...step('B'), ...work },
+        ],
+      });
+      const again = await invoke('neo.ask.open', {
+        ...plan,
+        todos: [
+          { ...step('A'), ...work },
+          { ...step('B'), ...work, start: true },
+        ],
+      });
+      expect(again).toMatchObject({ ok: false, reason: expect.stringContaining('not_ready') });
+      expect(store.getTodo(opened.todos[1].id)?.state).toBe('todo');
+    } finally {
+      db.close();
+    }
+  });
+
   test('a repeated plan may start a step whose index points at a recorded, finished step', async () => {
     const { db, store, invoke, step } = setup();
     try {
