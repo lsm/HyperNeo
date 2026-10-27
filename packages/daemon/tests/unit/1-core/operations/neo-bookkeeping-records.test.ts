@@ -66,7 +66,7 @@ function setup() {
     ...createNeoAskRecordOperations(
       store,
       sessions,
-      { ...runner, stop: async () => null },
+      { ...runner, resolveTarget: existingTodoTarget, stop: async () => null },
       () => null,
       () => true,
       () => [],
