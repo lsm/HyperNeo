@@ -608,7 +608,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     }
   };
 
-  const sweep = { moved: 0 };
+  const sweep = { movedAt: -Infinity };
   const restartLadder = (todoId: string, now: number) => {
     const prior = sessions.readNudge(todoId);
     sessions.recordNudge(todoId, {
@@ -757,8 +757,9 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           const running = (await store.read('listCheckable')).filter(
             (other) => other.state === 'doing' && sessions.readLiveStatus(other.id) === 'running'
           ).length;
-          if (!mayRedispatch(running, sweep.moved)) return sessions.recordNudge(todo.id, incident);
-          sweep.moved += 1;
+          if (!mayRedispatch(running, sweep.movedAt, now))
+            return sessions.recordNudge(todo.id, incident);
+          sweep.movedAt = now;
           const refused = await stop(todo);
           if (refused)
             return stall(
@@ -928,7 +929,6 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       }
     },
     async refresh(warn: (message: string, error: unknown) => void): Promise<void> {
-      sweep.moved = 0;
       for (const todoId of await sessions.read('unrecordedStarts')) {
         if (starting.has(todoId)) continue;
         await recoverStart(todoId).catch((error) => warn('Todo start recovery pending', error));
