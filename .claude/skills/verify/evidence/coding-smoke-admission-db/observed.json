@@ -19,11 +19,11 @@
   "checks": "Full checks and 35 focused Bun/Vitest tests passed, including immutable merge receipt one-winner regression.",
   "limitations": "Actual smoke RPC with synthetic GitHub merge/ancestry and QA fixtures; no actual deployment, native harness, model, GUI or latency claim. Failed startup attempt is retained separately and not counted as passing.",
   "proofBinding": {
-    "testedCodeCommit": "ee6ab7a67a16cd6404b050283e98bcf4e3bdeba9",
-    "testedGitTree": "52ed48948e46f712bf24d462c19b3b3a78ed8af9",
+    "testedCodeCommit": "0bb01f1fe83b2ddd9593f188cfa0f00a92e86993",
+    "testedGitTree": "6c222bf06caa653115968ae0a2495dcd775a3860",
     "applicationTrees": {
-      "packages": "f7f0bd4cd69c1dc7aa19e4605c9f0b81e4ed37d8",
-      "scripts": "dfc2d0176322d22de138a1165075b63fbba171f3"
+      "packages": "dc6322aa17752c1d7480fc4c520a00f8f8e4923f",
+      "scripts": "487cc507bd2f08d51501069513ee20d79fdbac9a"
     },
     "proofBlobs": {
       ".claude/skills/verify/coding-smoke-admission-db.ts": "0ab8360278e463f3b1e7496fd3500c8655fc1a3c",
@@ -31,9 +31,15 @@
       ".claude/skills/verify/coding-smoke-admission-proof-binding.ts": "dc68b857c3837e9127314e57c5c2b33825ba3e5a"
     },
     "runs": {
-      "bun": "bun-verify-1",
-      "deno": "deno-verify"
+      "bun": "bun-verify-2",
+      "deno": "deno-verify-1"
     },
     "postProofChangePolicy": "evidence-and-journey-only"
+  },
+  "baseMergeVerification": {
+    "base": "3a7b5555bccbbd74c88cacb8d21953967b259d2c",
+    "conflictResolution": "Retained smoke admission and session schedule registrations.",
+    "bun": "Fresh real smoke RPC proof passed; zero target main SQL.",
+    "deno": "Fresh real smoke RPC proof passed; zero target main SQL."
   }
 }
