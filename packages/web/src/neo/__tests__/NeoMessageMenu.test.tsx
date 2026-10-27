@@ -41,6 +41,19 @@ describe('useNeoMessageMenu', () => {
     );
   }
 
+  it('leaves right-click to the browser without opening message actions', () => {
+    render(<Probe />);
+    const event = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 10,
+      clientY: 10,
+    });
+    fireEvent(screen.getByTestId('message'), event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
   it('opens on a long press and not on a short tap, and closes on Escape', () => {
     vi.useFakeTimers();
     render(<Probe />);
