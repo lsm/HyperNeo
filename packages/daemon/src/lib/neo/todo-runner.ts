@@ -1019,16 +1019,36 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'dispatched'
     )
     .pipe(
-      ({ ask, todo, ref }: Rescue) =>
-        store.getTodo(todo.id)?.state === 'doing' && sessions.readRef(todo.id)?.id !== ref.id
-          ? deps.tell(
-              ask,
-              todo,
-              `Todo "${todo.title}" was stalled, so the daemon started a fresh worker for it where its last worker ran.`,
-              `neo-todo-rescue:${todo.id}`
-            )
-          : undefined,
-      ['rescue', 'dispatched'],
+      async (rescue: Rescue, now: number) => {
+        const { ask, todo, ref } = rescue;
+        const current = store.getTodo(todo.id);
+        if (current?.state === 'doing' && sessions.readRef(todo.id)?.id !== ref.id)
+          return deps.tell(
+            ask,
+            todo,
+            `Todo "${todo.title}" was stalled, so the daemon started a fresh worker for it where its last worker ran.`,
+            `neo-todo-rescue:${todo.id}`
+          );
+        if (
+          current &&
+          (current.state === 'failed' ||
+            (current.state === 'blocked' && current.blockedBy === 'failure'))
+        ) {
+          const restored = await recompute(
+            current,
+            {
+              state: 'blocked',
+              blockedBy: 'stalled',
+              blockedReason: `No fresh worker could start: ${current.reason ?? current.blockedReason ?? 'the start was refused'}`,
+              nextAction: NEO_TODO_STALL_NEXT,
+              finishedAt: null,
+            },
+            now
+          );
+          cardTodo({ ...rescue, todo: restored }, now);
+        }
+      },
+      ['rescue', 'now', 'dispatched'],
       'rescued'
     )
     .endAsync('rescued') as (todo: NeoTodo, now: number) => Promise<void | null>;
