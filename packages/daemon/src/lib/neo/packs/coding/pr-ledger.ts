@@ -362,6 +362,10 @@ export class CodingPrLedgerRepository {
     return this.stageFacts.record(fact);
   }
 
+  readHealth(repo: string) {
+    return this.health.read(repo);
+  }
+
   recordHealth(repo: string, cycle: RepoHealthCycle) {
     return this.health.record(repo, cycle);
   }
@@ -851,6 +855,7 @@ type CodingLedgerWrite =
   | 'acceptTerminalEvent'
   | 'acceptHealthNotice'
   | 'recordHealth'
+  | 'readHealth'
   | 'recordStage'
   | 'recordAlias'
   | 'dropRepo'
@@ -868,6 +873,7 @@ export const codingLedgerWrites = defineRepositoryOp<CodingPrLedgerRepository, C
     'acceptTerminalEvent',
     'acceptHealthNotice',
     'recordHealth',
+    'readHealth',
     'recordStage',
     'recordAlias',
     'dropRepo',
