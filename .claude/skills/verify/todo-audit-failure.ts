@@ -33,7 +33,7 @@ try {
       coding.todos.schema(db);
       const unexpected = async (): Promise<never> => { throw new Error('No worker may run'); };
       const registry = createOperationRegistry(createNeoTodoOperations(store, sessions, {
-        start: unexpected, proceed: unexpected, retry: unexpected, stop: async () => null,
+        resolveTarget: unexpected, start: unexpected, proceed: unexpected, retry: unexpected, stop: async () => null,
         recompute: async (todo, patch) => store.updateTodo(todo, patch, Date.now()),
       }, () => [coding], () => null));
       const handler = createOperationMcpHandler(() => registry, () => ({ sessionId: 'neo', role: 'neo' }), async () => {

@@ -1,3 +1,4 @@
+import { existingTodoTarget } from '../../helpers/todo-check-packs.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { describe, expect, test } from 'bun:test';
@@ -66,7 +67,7 @@ function setup() {
     ...createNeoTodoOperations(
       store,
       sessions,
-      runner,
+      { ...runner, resolveTarget: existingTodoTarget },
       () => [],
       () => null
     ),

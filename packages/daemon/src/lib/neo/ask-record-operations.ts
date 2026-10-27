@@ -216,7 +216,7 @@ export function createNeoAskRecordOperations(
             ? await addNeoTodo(
                 store,
                 sessions,
-                controls.start,
+                controls,
                 store.getAsk(ask.id)!,
                 todo,
                 packs(),

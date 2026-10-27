@@ -40,6 +40,7 @@ const TodoCheck = z.object({
 type Ran = Promise<{ ok: true; todo: NeoTodo; records?: string[] } | Rejection>;
 
 export interface NeoTodoControls {
+  resolveTarget(ref: WorkRef): Promise<Gate<WorkRef>>;
   start(todoId: string): Ran;
   recompute(todo: NeoTodo, patch: NeoTodoPatch): Promise<NeoTodo>;
   proceed(todoId: string, message: string): Ran;
@@ -106,12 +107,20 @@ export function planNeoTodoDraft<T extends Pick<NeoTodo, 'check' | 'instruction'
 export async function addNeoTodo(
   todos: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
-  start: NeoTodoControls['start'],
+  controls: Pick<NeoTodoControls, 'start' | 'resolveTarget'>,
   ask: NeoAsk,
   input: z.infer<typeof NeoTodoDraftSchema>,
   packs: readonly NeoPack[],
   split = false
 ): Promise<{ ok: true; todo?: NeoTodo; records?: string[] } | Rejection> {
+  if (input.target && input.target.verb !== 'start') {
+    const resolved = await controls.resolveTarget(input.target.ref);
+    if ('reason' in resolved) return resolved.reason;
+    input = { ...input, target: { ...input.target, ref: resolved.value } };
+    const current = todos.getAsk(ask.id);
+    if (!current) return { ok: false, reason: 'not_found: no such ask.' };
+    ask = current;
+  }
   const planned = planNeoTodoDraft(input, packs);
   if ('reason' in planned) return planned.reason;
   const draft = planned.value;
@@ -129,7 +138,7 @@ export async function addNeoTodo(
   if (draft.target?.verb === 'bind')
     return { ...bindNeoTodo(todos, sessions, added, draft.target.ref), ...records };
   if (draft.target) sessions.create(added.id, draft.target);
-  if (draft.start) return { ...(await start(added.id)), ...records };
+  if (draft.start) return { ...(await controls.start(added.id)), ...records };
   if (added.instruction) joinNeoStartQuestion(todos, added);
   return { ok: true, todo: added, ...records };
 }
@@ -491,7 +500,7 @@ export function createNeoTodoOperations(
     )
     .pipe(
       async (ask: NeoAsk, input: z.infer<typeof Add>): Promise<TodoReceipt | Rejection> =>
-        ran(await addNeoTodo(todos, sessions, controls.start, ask, input, packs())),
+        ran(await addNeoTodo(todos, sessions, controls, ask, input, packs())),
       ['outcome', 'input'],
       'outcome'
     )

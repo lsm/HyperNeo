@@ -505,8 +505,8 @@ export class Database {
     return this.getSDKReader().countPendingTurns(model, dimensions);
   }
 
-  readCodexSnapshotAsync(statePath: string, includeClosed: boolean) {
-    return this.getSDKReader().readCodexSnapshot(statePath, includeClosed);
+  readCodexSnapshotAsync(statePath: string, includeClosed: boolean, idPrefix?: string) {
+    return this.getSDKReader().readCodexSnapshot(statePath, includeClosed, idPrefix);
   }
 
   get gateway(): DbGateway {

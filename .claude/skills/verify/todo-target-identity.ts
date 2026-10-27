@@ -1,0 +1,54 @@
+import assert from 'node:assert/strict';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
+import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
+import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
+import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
+
+const run = resolve(process.argv[2]);
+assert.equal(process.env.NODE_ENV, 'test');
+assert.equal(process.env.HOME, join(run, 'home'));
+assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
+mkdirSync(join(run, 'evidence'), { recursive: true });
+mkdirSync(join(run, 'work'), { recursive: true });
+const evidence: unknown[] = [];
+const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
+try {
+  await app.jobProcessor.stop();
+  assert.notEqual(app.server.port, 8399);
+  const db = app.db.getDatabase();
+  const sender = 'neo:20000000-0000-4000-8000-000000000001';
+  const worker = '10000000-0000-4000-8000-000000000001';
+  for (const id of [sender, worker]) db.prepare("INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,type,config,metadata) VALUES (?, 'Synthetic worker', ?, '2026-10-26T00:00:00Z', '2026-10-26T00:00:00Z', 'active', 'worker', '{}', '{}')").run(id, join(run, 'work'));
+  new NeoRepository(db).reserveBinding({ sessionId: sender, kind: 'neo', projectId: null });
+  const todos = new NeoAskTodoRepository(db), sessions = new NeoTodoSessionRepository(db);
+  todos.openAsk({ id: 'synthetic-ask', sessionId: sender, projectId: null, originMessageId: null, title: 'Synthetic ask', request: 'Track work', createdAt: 1 });
+  const handler = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: sender, role: 'neo' }));
+  const add = async (verb: string, id: string, start = false) => {
+    const reply = await handler({ name: 'neo.todo.add', input: { askId: 'synthetic-ask', title: 'Synthetic todo', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Synthetic instruction', target: { verb, ref: { adapter: 'hyperneo', id } }, start } });
+    evidence.push({ verb, id, start, reply });
+    assert.notEqual(reply.isError, true);
+    return JSON.parse(reply.content[0].text);
+  };
+  for (const verb of ['send', 'bind']) {
+    const reply = await add(verb, worker.slice(0, 8));
+    assert.equal(reply.ok, true, JSON.stringify(reply));
+    const stored = verb === 'bind' ? sessions.readRef(reply.todo.id) : sessions.get(reply.todo.id)?.ref;
+    assert.deepEqual(stored, { adapter: 'hyperneo', id: worker });
+    evidence.push({ stored });
+  }
+  const count = todos.listTodos('synthetic-ask').length;
+  const rejected = await add('send', 'deadbeef', true);
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.reason, /^target_not_found:/);
+  assert.equal(todos.listTodos('synthetic-ask').length, count);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get().n, 0);
+  evidence.push({ rows: db.prepare('SELECT target, ref FROM neo_todo_sessions').all() });
+  console.log('PASS: real daemon MCP stores full target IDs and rejects unknown prefixes before recording or dispatching.');
+} finally {
+  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
+  await app.cleanup();
+}

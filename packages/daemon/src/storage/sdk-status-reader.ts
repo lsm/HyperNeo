@@ -42,7 +42,7 @@ type SDKReadArgs =
   | WorkSearchArgs
   | MessageFeedArgs
   | { neoMessageStatus: NeoMessageStatusRef[] }
-  | { codexSnapshot: { statePath: string; includeClosed: boolean } }
+  | { codexSnapshot: { statePath: string; includeClosed: boolean; idPrefix?: string } }
   | { turnVectors: { model: string; dimensions: number; limit: number | null } };
 export type SDKReadResult =
   | SDKStatusPage
@@ -198,8 +198,14 @@ export class SDKStatusReader {
     return this.enqueue({ turnVectors: { model, dimensions, limit: null } }) as Promise<number>;
   }
 
-  readCodexSnapshot(statePath: string, includeClosed: boolean): Promise<CodexSnapshot> {
-    return this.enqueue({ codexSnapshot: { statePath, includeClosed } }) as Promise<CodexSnapshot>;
+  readCodexSnapshot(
+    statePath: string,
+    includeClosed: boolean,
+    idPrefix?: string
+  ): Promise<CodexSnapshot> {
+    return this.enqueue({
+      codexSnapshot: { statePath, includeClosed, ...(idPrefix ? { idPrefix } : {}) },
+    }) as Promise<CodexSnapshot>;
   }
 
   private async enqueue(args: SDKReadArgs): Promise<SDKReadResult> {

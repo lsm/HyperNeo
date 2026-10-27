@@ -1,3 +1,4 @@
+import { resolveNeoTodoTarget } from '../../../packages/daemon/src/lib/neo/todo-target.ts';
 import { createCodingPackTables } from '../../../packages/daemon/src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { gatewayFor } from '../../../packages/daemon/src/storage/db-gateway/db-gateway.ts';
 import { strict as assert } from 'node:assert';
@@ -36,7 +37,7 @@ const adapter=createHyperneoAdapter({db:()=>db,machine:'synthetic',searchChats:a
  sessions:{create:async()=>{throw new Error('unused');},resolveModel:async()=>null,model:()=>null,chooseWorktree:async()=>{},announce:()=>{},interrupt:()=>false},neoFolder:()=>join(run,'data/Neo'),folderExists:()=>true,makeFolder:()=>{},homeDir:join(run,'home')});
 let registry:ReturnType<typeof createOperationRegistry>;const notes:string[]=[];const errors:string[]=[];
 const runner=createNeoTodoRunner({ write: gatewayFor(db).run.bind(gatewayFor(db)),store,sessions,invoke:(caller,name,input)=>invokeOperation(registry,name,input,caller),packs:()=>[],tell:async(_ask,_todo,note)=>{notes.push(note);},changed:()=>{}});
-registry=createOperationRegistry([...createWorkVerbOperations({adapters:()=>[adapter],daemonName:'synthetic',remote:{list:()=>[],invoke:async()=>{throw new Error('no remote');}}}),...createNeoTodoOperations(store,sessions,runner,()=>[])]);
+registry=createOperationRegistry([...createWorkVerbOperations({adapters:()=>[adapter],daemonName:'synthetic',remote:{list:()=>[],invoke:async()=>{throw new Error('no remote');}}}),...createNeoTodoOperations(store,sessions,{...runner,resolveTarget:(ref)=>resolveNeoTodoTarget(ref,(name,input)=>invokeOperation(registry,name,input,{source:'internal',role:'neo'}))},()=>[])]);
 const results:string[]=[];let step=0;
 const strings=(value:unknown):string=>typeof value==='string'?value:Array.isArray(value)?value.map(strings).join('\n'):value&&typeof value==='object'&&'text'in value?strings(value.text):JSON.stringify(value);
 const object=(value:string)=>JSON.parse(value.slice(value.indexOf('{'),value.lastIndexOf('}')+1));

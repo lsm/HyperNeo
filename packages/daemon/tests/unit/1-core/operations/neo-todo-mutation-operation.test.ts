@@ -1,3 +1,4 @@
+import { existingTodoTarget } from '../../helpers/todo-check-packs.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { wireNeoTodoMutations } from '../../../../src/lib/neo/todo-mutation-operation.ts';
@@ -73,6 +74,7 @@ describe('Writer-backed todo operation activation', () => {
       store,
       new NeoTodoSessionRepository(db),
       {
+        resolveTarget: existingTodoTarget,
         recompute: async () => {
           throw new Error('Legacy mutation write was called');
         },

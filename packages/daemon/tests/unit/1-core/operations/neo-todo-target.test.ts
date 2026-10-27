@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
+import { resolveNeoTodoTarget } from '../../../../src/lib/neo/todo-target.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -11,7 +12,13 @@ import { createTodoCheckPacks, pendingTodoCheck } from '../../helpers/todo-check
 
 const full = '10000000-0000-4000-8000-000000000001';
 
-function fixture() {
+function fixture(
+  options: {
+    refs?: WorkRef[];
+    more?: boolean;
+    beforeLookup?: (todos: NeoAskTodoRepository) => void;
+  } = {}
+) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -32,10 +39,46 @@ function fixture() {
       todos,
       sessions,
       {
-        resolveTarget: async (ref: WorkRef) =>
-          ref.id === full || ref.id === full.slice(0, 8)
-            ? { value: { ...ref, id: full } }
-            : { reason: { ok: false as const, reason: 'target_not_found: unknown work' } },
+        resolveTarget: (ref: WorkRef) =>
+          resolveNeoTodoTarget(ref, async (name) => {
+            options.beforeLookup?.(todos);
+            const refs = options.refs ?? [{ ...ref, id: full }];
+            const exact = refs.find(
+              (candidate) =>
+                candidate.id === ref.id &&
+                candidate.adapter === ref.adapter &&
+                candidate.daemon === ref.daemon
+            );
+            const place = { machine: 'synthetic', name: 'Synthetic place' };
+            return {
+              kind: 'completed',
+              value:
+                name === 'work.status'
+                  ? exact
+                    ? { ok: true, value: { ref: exact } }
+                    : { ok: false, reason: 'not_found' }
+                  : {
+                      places: [
+                        {
+                          place,
+                          lastActivityAt: 1,
+                          openCount: refs.length,
+                          archivedCount: 0,
+                          adapters: [ref.adapter],
+                          work: refs.map((ref) => ({
+                            ref,
+                            title: 'Synthetic worker',
+                            place,
+                            status: 'running',
+                            lastActivityAt: 1,
+                          })),
+                        },
+                      ],
+                      unreachable: [],
+                      more: options.more ?? false,
+                    },
+            };
+          }),
         start: async () => {
           starts++;
           return { ok: false as const, reason: 'Unexpected dispatch' };
@@ -69,6 +112,23 @@ function fixture() {
 }
 
 describe('todo target identity at the MCP add door', () => {
+  test('does not add a todo if the ask settles during target lookup', async () => {
+    const f = fixture({
+      beforeLookup: (todos) => {
+        const ask = todos.getAsk('ask')!;
+        if (ask.status === 'open')
+          todos.settleAsk(ask, 'done', 'Settled during lookup', Date.now());
+      },
+    });
+    try {
+      const result = await f.add({ verb: 'send', ref: { adapter: 'hyperneo', id: full } });
+      expect(result.ok).toBe(true);
+      expect(result.records[0]).toMatch(/^ask_settled:/);
+      expect(f.todos.listTodos('ask')).toEqual([]);
+    } finally {
+      f.db.close();
+    }
+  });
   test.each(['send', 'bind'])('stores the resolved full id for a %s target', async (verb) => {
     const f = fixture();
     try {
@@ -92,7 +152,7 @@ describe('todo target identity at the MCP add door', () => {
           { verb: 'send', ref: { adapter: 'codex-desktop', id: 'missing' } },
           start
         );
-        expect(result).toEqual({ ok: false, reason: 'target_not_found: unknown work' });
+        expect(result).toEqual({ ok: false, reason: expect.stringMatching(/^target_not_found:/) });
         expect(f.todos.listTodos('ask')).toEqual([]);
         expect(f.starts()).toBe(0);
       } finally {
@@ -100,4 +160,39 @@ describe('todo target identity at the MCP add door', () => {
       }
     }
   );
+  test.each([
+    {
+      refs: [
+        { adapter: 'codex-desktop', id: full },
+        { adapter: 'codex-desktop', id: full.replace(/1$/, '2') },
+      ],
+    },
+    { more: true },
+    { refs: [{ adapter: 'hyperneo', id: full }] },
+    { refs: [{ adapter: 'codex-desktop', daemon: 'another-peer', id: full }] },
+  ])('rejects ambiguous, incomplete or differently owned matches: %j', async (options) => {
+    const f = fixture(options);
+    try {
+      const result = await f.add({
+        verb: 'send',
+        ref: { adapter: 'codex-desktop', id: full.slice(0, 8) },
+      });
+      expect(result.ok).toBe(false);
+      expect(f.todos.listTodos('ask')).toEqual([]);
+      expect(f.starts()).toBe(0);
+    } finally {
+      f.db.close();
+    }
+  });
+  test('keeps a verified exact id even when discovery would be incomplete', async () => {
+    const f = fixture({ more: true });
+    try {
+      const ref = { adapter: 'hyperneo', id: full };
+      const result = await f.add({ verb: 'send', ref });
+      expect(result.ok).toBe(true);
+      expect(f.sessions.get(result.todo.id)?.ref).toEqual(ref);
+    } finally {
+      f.db.close();
+    }
+  });
 });

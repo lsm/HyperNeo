@@ -110,7 +110,7 @@ describe('codex-desktop adapter against a Codex state database', () => {
     const db = new Database(statePath);
     try {
       const insert = db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-      for (let index = 0; index < 75; index++)
+      for (let index = 0; index < 600; index++)
         insert.run(`unrelated-${index}`, 'Recent', '', '', '/focus/dolmen', 'cli', 1, NOW + index);
       for (const id of ['10000000-first-full-thread', '10000000-second-full-thread'])
         insert.run(id, 'Old', '', '', '/focus/dolmen', 'cli', 1, NOW - 10_000_000);

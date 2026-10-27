@@ -17,6 +17,15 @@ import {
 } from './types.ts';
 
 export const FindWorkInputSchema = z.object({
+  idPrefix: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      'Find HyperNeo sessions or Codex threads by ID prefix, before history limits. Multiple matches remain explicit.'
+    ),
   text: z.string().trim().min(1).max(200).optional(),
   id: z.string().trim().min(1).max(200).optional(),
   session: z.string().trim().min(1).max(200).optional(),
@@ -95,6 +104,7 @@ export function selectFindAdapters(input: FindInput, deps: FindWorkDeps): WorkAd
     .filter(
       (adapter) =>
         adapter.capabilities.includes('find') &&
+        (!input.idPrefix || ['hyperneo', 'codex-desktop'].includes(adapter.id)) &&
         (!input.adapters || input.adapters.includes(adapter.id))
     );
 }
@@ -103,6 +113,7 @@ export function toFindQuery(input: FindInput): FindQuery {
   return input.id
     ? { folder: input.folder, spaceId: input.spaceId, includeClosed: true, limit: 50 }
     : {
+        ...(input.idPrefix ? { idPrefix: input.idPrefix } : {}),
         text: input.text,
         folder: input.folder,
         spaceId: input.spaceId,

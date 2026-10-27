@@ -72,6 +72,7 @@ import {
 } from './session-track.ts';
 import { createNeoQuestionOperations } from './question-operations.ts';
 import { createNeoTodoOperations, type NeoTodoControls } from './todo-operations.ts';
+import { resolveNeoTodoTarget } from './todo-target.ts';
 import { wireNeoTodoMutations } from './todo-mutation-operation.ts';
 import { createArtifactRefReader } from '../artifacts/read-operations.ts';
 import { createNeoAskRecordOperations } from './ask-record-operations.ts';
@@ -698,6 +699,13 @@ export function createNeoOperations(service: NeoService) {
       : { ok: true as const, pack: { id: pack.id, describe: pack.describe }, instructions };
   });
   const todoControls: NeoTodoControls = {
+    resolveTarget: (ref) =>
+      resolveNeoTodoTarget(ref, (name, input) =>
+        invokeOperation(service.sessions.getOperationRegistry(), name, input, {
+          source: 'internal',
+          role: 'neo',
+        })
+      ),
     recompute: (todo, patch) => service.todoRunner.recompute(todo, patch),
     start: (todoId) => service.todoRunner.start(todoId),
     proceed: (todoId, message) => service.todoRunner.proceed(todoId, message),
