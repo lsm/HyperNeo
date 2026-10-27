@@ -277,4 +277,12 @@ describe('a doing todo never sits idle without someone on it', () => {
     await w.at(61);
     expect(w.named('work.start')).toHaveLength(2);
   });
+
+  test('a sweep that starts before the last one ends cannot move a second todo the same minute', async () => {
+    const w = (current = world());
+    for (const todo of [w.add(), w.add(), w.add()]) await w.runner.start(todo.id);
+    await w.at(90);
+    await w.at(90.5);
+    expect(w.named('work.start')).toHaveLength(4);
+  });
 });
