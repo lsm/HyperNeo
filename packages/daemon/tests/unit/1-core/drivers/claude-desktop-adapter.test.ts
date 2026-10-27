@@ -981,6 +981,14 @@ describe('claude-desktop adapter against the app session records', () => {
       },
     };
 
+    test('an idle user-created session receives no HyperNeo worker instructions', async () => {
+      expect(await resumeAs('auto').send?.(ref, 'run the audit', context)).toEqual(delivered);
+      expect(spawned).toHaveLength(1);
+      expect(spawned[0].args).not.toContain('--settings');
+      expect(spawned[0].args).not.toContain('--append-system-prompt');
+      expect(spawned[0].args.join(' ')).not.toContain('HYPERNEO_');
+    });
+
     test('runs the message as a CLI turn on the session, in its own mode, and confirms it', async () => {
       expect(await resumeAs('auto').send?.(ref, 'run the audit', context)).toEqual(delivered);
       expect(spawned).toEqual(resumed('auto'));
