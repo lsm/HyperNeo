@@ -67,9 +67,9 @@ export function searchNeoCards(
   const rows = read(
     `SELECT c.source AS source, c.ask_id AS ask_id, c.entity_id AS entity_id,
         bm25(neo_card_search_fts, ${TITLE_WEIGHT}, ${META_WEIGHT}, ${BODY_WEIGHT}) AS score,
-        highlight(neo_card_search_fts, 0, '[', ']') IS NOT c.title AS title_match,
-        highlight(neo_card_search_fts, 1, '[', ']') IS NOT c.meta AS meta_match,
-        highlight(neo_card_search_fts, 2, '[', ']') IS NOT c.body AS body_match,
+        highlight(neo_card_search_fts, 0, char(1), char(2)) IS NOT c.title AS title_match,
+        highlight(neo_card_search_fts, 1, char(1), char(2)) IS NOT c.meta AS meta_match,
+        highlight(neo_card_search_fts, 2, char(1), char(2)) IS NOT c.body AS body_match,
         snippet(neo_card_search_fts, 0, '', '', '…', ${SNIPPET_TOKENS}) AS title_snippet,
         snippet(neo_card_search_fts, 1, '', '', '…', ${SNIPPET_TOKENS}) AS meta_snippet,
         snippet(neo_card_search_fts, 2, '', '', '…', ${SNIPPET_TOKENS}) AS body_snippet
