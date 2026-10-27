@@ -1,0 +1,47 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/coding-smoke-writer.test.ts:
+(pass) smoke admission reads and records on the writer with guarded main [8.21ms]
+(pass) smoke admission reads and records on the writer with read-only main [2.85ms]
+
+tests/unit/1-core/operations/neo-coding-delivery.test.ts:
+(pass) coding delivery evidence > requires a matching-head merge gate before recording smoke [165.99ms]
+(pass) coding delivery evidence > checks the exact target build and merge ancestry [160.40ms]
+(pass) coding delivery evidence > only the assigned independent QA actor can record smoke [123.60ms]
+(pass) coding delivery evidence > records failure after a pass, and an explicit non-deployable reason [117.41ms]
+(pass) coding delivery evidence > preserves the accepted gate and historical heads [120.05ms]
+(pass) a containing build for an ungated merged head cannot record smoke [178.43ms]
+(pass) stage facts preserve full refs while accepting historical unbound facts [0.51ms]
+(pass) a removed gate cannot acknowledge a smoke write [148.51ms]
+
+tests/unit/1-core/operations/neo-coding-delivery-completion.test.ts:
+(pass) coding delivery completion > unmarked legacy pr_merged still completes on its original condition [143.99ms]
+(pass) coding delivery completion > unmarked legacy issue_closed still completes on its original condition [122.77ms]
+(pass) coding delivery completion > a passed pr_merged check completes despite missing or failed delivery smoke [119.17ms]
+(pass) coding delivery completion > a passed issue_closed check completes despite missing or failed delivery smoke [115.61ms]
+(pass) coding delivery completion > smoke still requires an explicit non-deployable reason independently of a passed check [117.25ms]
+(pass) coding delivery completion > changed delivery heads do not add conditions to a passed merge check [119.43ms]
+(pass) coding delivery completion > smoke requires the assigned actor before reading deployment facts [119.94ms]
+(pass) coding delivery completion > invalidated QA does not change a passed merge check [117.59ms]
+(pass) coding delivery completion > judgement replays its captured receipt and facts without touching storage [118.45ms]
+(pass) new QA evidence does not change a passed merge check [121.00ms]
+(pass) smoke cannot acknowledge a receipt for a different acceptance contract [123.93ms]
+
+tests/unit/1-core/operations/neo-coding-merge-gates.test.ts:
+(pass) coding manual merge preparation > records matching gates, rereads head, and returns only a pinned manual command [117.18ms]
+(pass) coding manual merge preparation > missing merge prerequisites never record authorization [118.48ms]
+(pass) coding manual merge preparation > bot rejection has no fallback to a passing reviewer session fact [119.16ms]
+(pass) coding manual merge preparation > QA must pass for this PR, head, contract and independent assigned actor [120.48ms]
+(pass) coding manual merge preparation > a concurrent head push refuses authorization [120.86ms]
+(pass) coding manual merge preparation > a non-bot review uses its matching-head passing stage fact [117.51ms]
+(pass) unbound or colliding local identities cannot supply QA approval [119.53ms]
+(pass) a conflicting existing receipt never authorizes a different assignment [119.58ms]
+(pass) bot approval without a durable review evidence reference is insufficient [114.52ms]
+(pass) repeated preparation keeps the latest evidence while preserving assignment identity [113.26ms]
+(pass) an approved different bot cannot satisfy the configured review assignment [112.70ms]
+(pass) a configured bot cannot fall back to a passing reviewer session [112.76ms]
+
+ 33 pass
+ 0 fail
+ 121 expect() calls
+Ran 33 tests across 4 files. [3.87s]

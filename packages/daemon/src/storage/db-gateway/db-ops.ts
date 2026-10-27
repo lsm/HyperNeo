@@ -124,6 +124,10 @@ import { neoPublicationEditWrites } from '../repositories/neo-publication-edit-w
 import { neoProjectMoveWrites } from '../repositories/neo-project-move-writes.ts';
 import { codingPrEventReads } from '../../lib/neo/packs/coding/pr-event-routing-db.ts';
 import { codingMergeReceiptWrites } from '../../lib/neo/packs/coding/merge-receipt-db.ts';
+import {
+  codingSmokeReads,
+  codingSmokeWrites,
+} from '../../lib/neo/packs/coding/smoke-admission-db.ts';
 import { sessionScheduleCreateWrites } from '../repositories/session-schedule-create-write.ts';
 import { workflowRunPinWrites } from '../repositories/workflow-run-pin-write.ts';
 
@@ -231,6 +235,8 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     neoProjectMoveWrites,
     codingPrEventReads,
     codingMergeReceiptWrites,
+    codingSmokeReads,
+    codingSmokeWrites,
     sessionScheduleCreateWrites,
     workflowRunPinWrites,
   ].map((op) => [op.name, op])

@@ -1,3 +1,5 @@
+import { codingSmokeReads } from './smoke-admission-db.ts';
+import type { CodingSmokeRequest } from './smoke-operation.ts';
 import { z } from 'zod';
 import { isDeepStrictEqual } from 'node:util';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
@@ -38,6 +40,10 @@ const key = (url: string, head: string, stage: Stage) =>
 
 export class CodingAssignmentsRepository {
   constructor(private readonly db: Database) {}
+
+  smokeAssignmentCurrent(input: CodingSmokeRequest) {
+    return gatewayFor(this.db).call(codingSmokeReads, 'check', input);
+  }
 
   read(todoId: string, url: string, head: string): Partial<Record<Stage, CodingAssignment>> {
     const rows = this.db

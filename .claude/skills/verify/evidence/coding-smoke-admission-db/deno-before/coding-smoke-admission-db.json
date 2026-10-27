@@ -1,0 +1,88 @@
+{
+  "mode": "before",
+  "verified": true,
+  "consumer": "Actual neo.coding.smoke public WebSocket RPC",
+  "limitation": "Synthetic GitHub merge/build containment and QA assignment; no real deployment, merge, model, browser or live daemon. Other coding SQL is outside this slice.",
+  "largeEvidenceBytes": 60009,
+  "largeEvidenceSha256": "4b8e4247a2171abac9376e678c5c342b7e5dd4b09e4044a3dd8732a0a0b94a11",
+  "events": [
+    {
+      "verdict": "pass",
+      "result": {
+        "accepted": true
+      }
+    },
+    {
+      "verdict": "pass",
+      "result": {
+        "accepted": false,
+        "reason": "stage_assignment_mismatch"
+      }
+    },
+    {
+      "verdict": "pass",
+      "result": {
+        "accepted": false,
+        "reason": "matching_merge_commit_required"
+      }
+    },
+    {
+      "verdict": "pass",
+      "result": {
+        "accepted": false,
+        "reason": "running_build_must_contain_merge"
+      }
+    },
+    {
+      "verdict": "inapplicable",
+      "result": {
+        "accepted": false,
+        "reason": "inapplicability_reason_required"
+      }
+    },
+    {
+      "verdict": "inapplicable",
+      "result": {
+        "accepted": true
+      }
+    },
+    {
+      "verdict": "fail",
+      "result": {
+        "accepted": true
+      }
+    },
+    {
+      "verdict": "pass",
+      "result": {
+        "accepted": true
+      }
+    }
+  ],
+  "mainSql": [
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT gate_json AS gate, smoke_json AS smoke FROM pack_coding_delivery_facts\n        WHERE todo_id = ? AND url = ? AND head = ?",
+    "SELECT gate_json AS gate, smoke_json AS smoke FROM pack_coding_delivery_facts\n        WHERE todo_id = ? AND url = ? AND head = ?",
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT gate_json AS gate, smoke_json AS smoke FROM pack_coding_delivery_facts\n        WHERE todo_id = ? AND url = ? AND head = ?",
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT gate_json AS gate, smoke_json AS smoke FROM pack_coding_delivery_facts\n        WHERE todo_id = ? AND url = ? AND head = ?",
+    "SELECT gate_json AS gate, smoke_json AS smoke FROM pack_coding_delivery_facts\n        WHERE todo_id = ? AND url = ? AND head = ?",
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT gate_json AS gate, smoke_json AS smoke FROM pack_coding_delivery_facts\n        WHERE todo_id = ? AND url = ? AND head = ?",
+    "SELECT gate_json AS gate, smoke_json AS smoke FROM pack_coding_delivery_facts\n        WHERE todo_id = ? AND url = ? AND head = ?",
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT gate_json AS gate, smoke_json AS smoke FROM pack_coding_delivery_facts\n        WHERE todo_id = ? AND url = ? AND head = ?",
+    "SELECT gate_json AS gate, smoke_json AS smoke FROM pack_coding_delivery_facts\n        WHERE todo_id = ? AND url = ? AND head = ?",
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT gate_json AS gate, smoke_json AS smoke FROM pack_coding_delivery_facts\n        WHERE todo_id = ? AND url = ? AND head = ?",
+    "SELECT gate_json AS gate, smoke_json AS smoke FROM pack_coding_delivery_facts\n        WHERE todo_id = ? AND url = ? AND head = ?",
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT gate_json AS gate, smoke_json AS smoke FROM pack_coding_delivery_facts\n        WHERE todo_id = ? AND url = ? AND head = ?",
+    "SELECT gate_json AS gate, smoke_json AS smoke FROM pack_coding_delivery_facts\n        WHERE todo_id = ? AND url = ? AND head = ?",
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT gate_json AS gate, smoke_json AS smoke FROM pack_coding_delivery_facts\n        WHERE todo_id = ? AND url = ? AND head = ?",
+    "SELECT gate_json AS gate, smoke_json AS smoke FROM pack_coding_delivery_facts\n        WHERE todo_id = ? AND url = ? AND head = ?"
+  ],
+  "commands": []
+}
