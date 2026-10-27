@@ -1,0 +1,101 @@
+{
+  "regressionCommit": "624031b9f140ec5a80c23d6a38b724b5a3dfb08d",
+  "baseline": {
+    "run": "bun-verify-1",
+    "sourceCommit": "39d66363692878de0ca3299f831f38f32d368561",
+    "maxLagMs": 1200.798041,
+    "saveMs": 1212.8192919999997,
+    "clientDispatchDelayMs": 1180.8024999999998,
+    "healthSentRequestMs": 2.015625,
+    "targetMainSqlFirstCreate": 2,
+    "verified": false,
+    "failure": "Actual public save stalls the daemon loop under a held synthetic writer."
+  },
+  "historicalInconclusive": {
+    "run": "bun-verify",
+    "reason": "Helper correlation used response id before requestId and timed out. Corrected before observing and committing the loop-stall regression."
+  },
+  "proofs": {
+    "bun": {
+      "run": "bun-verify-2",
+      "targetMainSql": 0,
+      "contention": {
+        "healthMs": 2.4682910000001357,
+        "clientDispatchDelayMs": 2.7575839999999516,
+        "saveMs": 1209.0586249999997,
+        "maxLagMs": 3.026458000000275,
+        "affectedSaveUnder250ms": false
+      },
+      "maxLagMs": 3.026458000000275,
+      "maxCommandMs": 1197.3078330000003,
+      "maxArgsBytes": 36220,
+      "maxReplyBytes": 36263,
+      "fullTextSha256": "01835791f91945da5c831544582bbdc9bbd9991ab0339db45ffbf3967fe7f7ac",
+      "revisionWinners": 1,
+      "queuedBindingRechecked": true,
+      "reopened": true,
+      "temporaryDaemonDataRemoved": true
+    },
+    "deno": {
+      "run": "deno-verify",
+      "targetMainSql": 0,
+      "contention": {
+        "healthMs": 1.2883330000004207,
+        "clientDispatchDelayMs": 2.8397500000000946,
+        "saveMs": 1260.819167,
+        "maxLagMs": 2.3335830000000897,
+        "affectedSaveUnder250ms": false
+      },
+      "maxLagMs": 2.3335830000000897,
+      "maxCommandMs": 1254.0411670000003,
+      "maxArgsBytes": 36220,
+      "maxReplyBytes": 36263,
+      "fullTextSha256": "01835791f91945da5c831544582bbdc9bbd9991ab0339db45ffbf3967fe7f7ac",
+      "revisionWinners": 1,
+      "queuedBindingRechecked": true,
+      "reopened": true,
+      "temporaryDaemonDataRemoved": true
+    }
+  },
+  "productionLines": 169,
+  "coordinatorGrant": {
+    "branch": "codex/lane-a-project-save",
+    "commit": "8acd4c126ef8d27b2a08ca5ec8456909a03eec4e",
+    "file": "packages/daemon/src/lib/neo/operations.ts",
+    "changes": [
+      "Replace inline ID guard with re-export from project-save.ts",
+      "Replace whole save superpipe with saveProjectCurrent facade"
+    ],
+    "schemasOtherOperationsAndNotificationsUnchanged": true,
+    "dbOpsAndBaselineEdits": false
+  },
+  "ci": {
+    "runner": "Vitest",
+    "result": "6 passed across four project suites; full bun run check passed",
+    "consumer": "Separate read-only observer sees committed notification state; guarded main, one-winner revision, trigger rollback and caller refusal."
+  },
+  "limitations": [
+    "Affected project save still exceeds250ms under the held writer; this is not a complete latency pass.",
+    "Health timing measures the actual sent RPC; client dispatch delay is separate because helper and daemon share a process.",
+    "No identity alias/NUL codec, Home reservation, core ask/card-reply, GUI, filesystem/GitHub/model, whole-daemon SQL absence, RSS or WAL claim.",
+    "Gateway durations and JSON byte sizes do not separately attribute queue, SQL, clone and encoding cost."
+  ],
+  "proofBinding": {
+    "testedCodeCommit": "8acd4c126ef8d27b2a08ca5ec8456909a03eec4e",
+    "testedGitTree": "454be98b12447f6c72d1ae4aee62085d3d976127",
+    "applicationTrees": {
+      "packages": "1be4cfe8e3c9d43e5ea6488e3ed4f1d55f5c4d96",
+      "scripts": "283c993f2051fbb2a43096bb73713d45a1e5bbae"
+    },
+    "proofBlobs": {
+      ".claude/skills/verify/lane-a-project-save-db.ts": "3ca267348b3ddf40a1ee22b143959056fe847f22",
+      ".claude/skills/verify/lane-a-project-save-db-run.py": "0e192be9de107808961726580f5d92e9c5c1bd1c",
+      ".claude/skills/verify/lane-a-project-save-proof-binding.ts": "e84d4873071a72791078c499753a9902ea8f82ac"
+    },
+    "runs": {
+      "bun": "bun-verify-2",
+      "deno": "deno-verify"
+    },
+    "postProofChangePolicy": "evidence-and-journey-only"
+  }
+}

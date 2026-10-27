@@ -222,21 +222,7 @@ const Save = z.object({
 });
 type SaveRequest = z.infer<typeof Save>;
 
-export function requireNeoProjectSaveId(
-  input: Pick<SaveRequest, 'id' | 'expectedRevision'>,
-  caller: OperationCaller
-): { value: OperationCaller } | { reason: z.infer<typeof Failure> } {
-  if (input.id && input.expectedRevision === 0)
-    return {
-      reason: {
-        ok: false,
-        reason: 'Omit id to create a project; the daemon assigns its id and returns it.',
-      },
-    };
-  if (!input.id && input.expectedRevision > 0)
-    return { reason: { ok: false, reason: 'Pass the id of the project you are updating.' } };
-  return { value: caller };
-}
+export { requireNeoProjectSaveId } from './project-save.ts';
 const SessionMute = z.object({ key: z.string().trim().min(1).max(400), muted: z.boolean() });
 const SessionMuteResult = z.union([
   Failure,
@@ -629,55 +615,8 @@ export function createNeoOperations(service: NeoService) {
     );
     return { ...view, sessionId };
   });
-  const save = (superpipe({})('neo.project.save') as PipelineAPI)
-    .input(['input', 'caller'])
-    .pipe(
-      (input: SaveRequest, caller: OperationCaller) =>
-        admitNeoCaller(service, caller, 'neo.project.save'),
-      ['input', 'caller'],
-      'result:admission'
-    )
-    .pipe(
-      (input: SaveRequest, caller: OperationCaller) => requireNeoProjectSaveId(input, caller),
-      ['input', 'admission'],
-      'result:admission'
-    )
-    .pipe(
-      (input: SaveRequest) => ({
-        ...input,
-        id: input.id ?? crypto.randomUUID(),
-      }),
-      ['input', 'admission'],
-      'request'
-    )
-    .pipe(
-      (input: SaveRequest, request: SaveRequest & { id: string }, caller: OperationCaller) => {
-        const created = input.id ? null : service.repo.getProject(request.id);
-        return created ? { reason: { ok: true as const, project: created } } : { value: caller };
-      },
-      ['input', 'request', 'admission'],
-      'result:admission'
-    )
-    .pipe(
-      (input: SaveRequest & { id: string }) => {
-        const project = service.repo.saveProject(input, input.expectedRevision);
-        return project
-          ? { ok: true as const, project }
-          : {
-              ok: false as const,
-              reason: 'superseded: read the current project before saving again',
-            };
-      },
-      'request',
-      'admission'
-    )
-    .endAsync('admission') as (
-    input: SaveRequest,
-    caller: OperationCaller
-  ) => Promise<
-    | z.infer<typeof Failure>
-    | { ok: true; project: NonNullable<ReturnType<NeoService['repo']['getProject']>> }
-  >;
+  const save = (input: SaveRequest, caller: OperationCaller) =>
+    service.repo.saveProjectCurrent(input, caller);
   const readPack = path('neo.pack.read', ({ id }: z.infer<typeof PackRead>) => {
     const pack = service.pack(id);
     if (!pack)
