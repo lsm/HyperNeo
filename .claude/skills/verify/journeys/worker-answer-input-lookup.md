@@ -31,6 +31,12 @@ Repeat an absent Copilot marker against unchanged history, then append that inpu
 and observe it through RPC immediately. Unit I/O controls require no history
 bytes on repeated misses and fresh reads after append, same-size rewrite,
 replacement or adapter restart. A missing match always stays uncertain.
+Native records larger than the bounded history page remain unreadable and must
+stay uncertain; incomplete scans are never memoized, and older readable inputs
+must remain discoverable across such a record. The helper injects one oversized
+native event to exercise that limit. Worker-card sends use work.send's existing
+20,000-character body limit; this journey does not claim general oversized-event
+reconstruction or acceptance from missing evidence.
 
 Keep receipts.json, observed.json, proof.log and cleanup.json. Both daemons stop
 and their synthetic native files, HOME and DB data are removed after evidence is
