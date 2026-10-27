@@ -24,6 +24,9 @@ calls neo.ask.outcome with the decision, document and PR links, and adds an
 execution todo with the existing coding PR check. Leave the ask open: recording
 the discussion outcome does not settle its execution. Explicit settlement is
 covered by ask-bookkeeping-actions.md, where unfinished todos close unverified.
+The synthetic settled report uses message.send kind done; unstructured notes
+wait for a worker batch and do not promise immediate SDK delivery. Fixture
+delivery-input acceptance and outcome writes are awaited before using their ID.
 Restart the test daemon and assert the same
 outcome, source link, open ask and pending execution remain in neo.snapshot.
 
