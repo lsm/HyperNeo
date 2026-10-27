@@ -1,4 +1,8 @@
-import { neoTodoDependencyRefusal, planNeoTodoDependencies } from './todo-dependencies.ts';
+import {
+  neoTodoAfterRefusal,
+  neoTodoDependencyRefusal,
+  planNeoTodoDependencies,
+} from './todo-dependencies.ts';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -164,6 +168,13 @@ export async function recordNeoTodo(
   const accepted = planNeoTodoDraft(draft, packs, todos.listTodos(home.id));
   if ('reason' in accepted) return accepted.reason;
   const records = accepted.value.records ? { records: accepted.value.records } : {};
+  const refused = neoTodoAfterRefusal(
+    todos.listFamilyTodos(home.id),
+    null,
+    draft.after,
+    draft.start
+  );
+  if (refused) return { ok: false, reason: refused };
   const id = crypto.randomUUID();
   const dependsOn = draft.after
     ? planNeoTodoDependencies(todos.listFamilyTodos(home.id), id, draft.after.map(String))

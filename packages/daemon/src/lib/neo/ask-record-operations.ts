@@ -1,3 +1,4 @@
+import { neoTodoAfterRefusal } from './todo-dependencies.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -202,6 +203,13 @@ export function createNeoAskRecordOperations(
           .map((todo) => planNeoTodoDraft(todo, packs()))
           .find((planned) => 'reason' in planned);
         if (refused && 'reason' in refused) return refused.reason;
+        const existing = priorAsk ? store.listFamilyTodos(priorAsk.id) : [];
+        const badAfter = input.todos
+          .map((todo, index) =>
+            recordedRow(todo) ? null : neoTodoAfterRefusal(existing, index, todo.after, todo.start)
+          )
+          .find(Boolean);
+        if (badAfter) return { ok: false as const, reason: badAfter };
         const drafts: typeof input.todos = [];
         for (const todo of input.todos) {
           const repo = neoTodoRepo(todo, packs(), priorAsk ?? { repo: null });

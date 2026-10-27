@@ -40,6 +40,30 @@ export const planNeoTodoDependencies = (superpipe({})('neo.todo.plan-dependencie
   after: readonly string[]
 ) => string[] | DependencyRejection;
 
+export function neoTodoAfterRefusal(
+  existing: readonly NeoTodo[],
+  index: number | null,
+  after: readonly (string | number)[] | undefined,
+  start: boolean
+): string | null {
+  if (!after) return null;
+  const live = new Map(
+    existing.filter((todo) => todo.state !== 'removed').map((todo) => [todo.id, todo.state])
+  );
+  if (new Set(after).size !== after.length) return neoTodoDependencyRefusal('duplicate_dependency');
+  if (
+    after.some((ref) => (typeof ref === 'number' ? index === null || ref >= index : !live.has(ref)))
+  )
+    return neoTodoDependencyRefusal('dependency_not_found');
+  return start &&
+    after.some(
+      (ref) =>
+        typeof ref === 'number' || !['done', 'closed_unverified'].includes(live.get(ref) ?? '')
+    )
+    ? 'not_ready: this step waits for unfinished steps; add it without start and the daemon starts it once they are done.'
+    : null;
+}
+
 export function neoTodoDependencyRefusal(reason: DependencyRejection): string {
   return `${reason}: after must name other unremoved todos of this ask without a cycle.`;
 }
