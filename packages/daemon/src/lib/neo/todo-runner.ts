@@ -428,11 +428,26 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     todoId: string
   ) => Promise<{ ok: true; todo: NeoTodo; records?: string[] } | Rejection>;
 
-  const fill = async () => {
-    const queue = await sessions.read('queueFacts');
-    for (const todoId of planWorkQueue(queue.candidates, queue.running, deps.limits()).start)
-      await start(todoId);
-  };
+  const fillQueue = (superpipe({})('neo.todo.fill-queue') as PipelineAPI)
+    .input(['limits'])
+    .pipe(() => sessions.read('queueFacts'), 'limits', 'queue')
+    .pipe(
+      (
+        queue: Awaited<ReturnType<typeof sessions.queueFacts>>,
+        limits: ReturnType<NeoTodoRunnerDeps['limits']>
+      ) => planWorkQueue(queue.candidates, queue.running, limits).start,
+      ['queue', 'limits'],
+      'todoIds'
+    )
+    .pipe(
+      async (todoIds: readonly string[]) => {
+        for (const todoId of todoIds) await start(todoId);
+      },
+      'todoIds',
+      'started'
+    )
+    .endAsync('started') as (limits: ReturnType<NeoTodoRunnerDeps['limits']>) => Promise<void>;
+  const fill = () => fillQueue(deps.limits());
 
   const start = async (todoId: string) => {
     const tracked = starting.has(todoId);

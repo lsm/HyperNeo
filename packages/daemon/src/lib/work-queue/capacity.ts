@@ -1,6 +1,10 @@
+import type { TaskPriority } from '@hyperneo/shared/types/task-core';
+import { orderWork } from './order.ts';
+
 export interface WorkCandidate {
   id: string;
   group: string | null;
+  priority: TaskPriority;
   createdAt: number;
   worker: string | null;
 }
@@ -21,7 +25,7 @@ export function planWorkQueue(
   let total = running.length;
   const start: string[] = [];
   const queued: string[] = [];
-  for (const item of [...candidates].sort((a, b) => a.createdAt - b.createdAt)) {
+  for (const item of orderWork(candidates)) {
     const inGroup = perGroup.get(item.group) ?? 0;
     if (
       total >= limits.running ||
