@@ -22,7 +22,7 @@ export function createNeoWorkSearch(entries: readonly NeoAskEntry[]) {
       [
         entry.state,
         ...entry.todos.flatMap((todo) => [todo.status, todo.nextAction ?? '']),
-        ...entry.questions.map((question) => question.text),
+        ...entry.questions.flatMap((question) => [question.text, question.answer ?? '']),
       ].join(' '),
       [
         entry.ask.outcome ?? '',

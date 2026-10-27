@@ -26,7 +26,9 @@ must find their exact card even when the initial summary omitted that body.
 Search covers the loaded Work feed, including any history pages already loaded.
 Import verifySearchRequest from neo-search-request-web.mjs and run it at both
 widths with phase after. Words and CJK text present only in the original request
-must find the ask; preserve a separate before proof showing No matching work.
+or a question answer must find the ask. Preserve separate before proofs showing
+No matching work. For the answer-only baseline pass queries:['answercipher736','回答']
+to verifySearchRequest, because request matching was already fixed at that point.
 The useNeoWorkSearch result boundary can later use neo.ask.search without
 changing the search controls or ranked result rendering.
 
