@@ -287,31 +287,75 @@ describe('NeoAskTodos', () => {
     ).toBe('todo');
   });
 
-  it('keeps the focused session opener on the ask after its question is retired', () => {
+  it.each(['retired', 'start'])(
+    'keeps %s focused discussion navigation on the card without a header pill',
+    (state) => {
+      locale.value = 'en';
+      const onOpen = vi.fn();
+      const focusedSession = {
+        adapter: 'hyperneo',
+        id: 'discussion',
+        name: 'Positioning discussion',
+        label: 'HyperNeo · Positioning discussion',
+        provider: 'Anthropic',
+        link: '/session/discussion',
+      };
+      const original = entry({
+        questions: [
+          question(
+            'prepared',
+            state === 'retired'
+              ? { state: 'retired', retiredReason: 'Discuss directly' }
+              : { kind: 'start', startTodos: ['prepared-todo'] }
+          ),
+        ],
+        todos: state === 'start' ? [todo('prepared-todo', { link: focusedSession.link })] : [],
+      });
+      const app = render(
+        <NeoAskTodos
+          entry={{ ...original, ask: { ...original.ask, ...{ focusedSession } } }}
+          onOpen={onOpen}
+          onAnswer={vi.fn()}
+        />
+      );
+      expect(app.container.querySelector('[data-ask-question]') !== null).toBe(state === 'start');
+      expect(app.getByText('Positioning discussion · Anthropic')).toBeTruthy();
+      expect(app.container.querySelector('[data-ask-focused-session] button')).toBeNull();
+      const open = app.getByRole('button', { name: 'Open session: Positioning discussion' });
+      expect(open.textContent).toBe('Open');
+      expect(open.querySelector('svg')).toBeTruthy();
+      fireEvent.click(open);
+      expect(onOpen).toHaveBeenCalledWith('/session/discussion', focusedSession.label);
+    }
+  );
+
+  it.each(['question', 'todo'])('does not duplicate the visible %s session opener', (surface) => {
     locale.value = 'en';
-    const onOpen = vi.fn();
-    const focusedSession = {
+    const source = {
       adapter: 'hyperneo',
-      id: 'discussion',
-      name: 'Positioning discussion',
-      label: 'HyperNeo · Positioning discussion',
+      id: 'source',
+      name: 'Session source',
+      label: 'HyperNeo · Session source',
       provider: 'Anthropic',
-      link: '/session/discussion',
+      link: '/session/source',
     };
-    const original = entry({
-      questions: [question('prepared', { state: 'retired', retiredReason: 'Discuss directly' })],
+    const value = entry({
+      questions: surface === 'question' ? [question('q', { sourceSession: source })] : [],
+      todos: surface === 'todo' ? [todo('t', { link: source.link })] : [],
     });
+    const onOpen = vi.fn();
     const app = render(
       <NeoAskTodos
-        entry={{ ...original, ask: { ...original.ask, ...{ focusedSession } } }}
-        onOpen={onOpen}
+        entry={{ ...value, ask: { ...value.ask, focusedSession: source } }}
         onAnswer={vi.fn()}
+        onOpen={onOpen}
       />
     );
-    expect(app.container.querySelector('[data-ask-question]')).toBeNull();
-    expect(app.getByText('Positioning discussion · Anthropic')).toBeTruthy();
-    fireEvent.click(app.getByRole('button', { name: 'Open session: Positioning discussion' }));
-    expect(onOpen).toHaveBeenCalledWith('/session/discussion', focusedSession.label);
+    expect(app.container.querySelector('[data-ask-focused-session] button')).toBeNull();
+    const opens = app.getAllByRole('button', { name: /^Open / });
+    expect(opens).toHaveLength(1);
+    fireEvent.click(opens[0]);
+    expect(onOpen.mock.calls[0][0]).toBe('/session/source');
   });
 
   it.each(['codex://threads/worker', 'https://claude.ai/code/synthetic-bridge', '/session/worker'])(
@@ -349,7 +393,7 @@ describe('NeoAskTodos', () => {
       expect(body.textContent).not.toContain('Codex');
       const open = app.getByRole('button', { name: 'Open session: Review worker', exact: true });
       expect(open.textContent).toBe('Open');
-      expect(open.querySelector('svg')).toBeNull();
+      expect(open.querySelector('svg')).toBeTruthy();
       fireEvent.click(open);
       expect(onOpen).toHaveBeenCalledWith(link, 'Codex · Review worker');
       fireEvent.click(app.getByRole('button', { name: 'Approve', exact: true }));

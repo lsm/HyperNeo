@@ -339,6 +339,9 @@ function QuestionBox({
             })}
             onClick={() => onOpen(question.sourceSession!.link!, question.sourceSession!.label)}
           >
+            <NeoSessionMark
+              kind={neoSessionKind(question.sourceSession.adapter, question.sourceSession.link)}
+            />
             {t('question.open')}
           </button>
         </div>
@@ -649,6 +652,14 @@ export function NeoAskTodos({
     };
   }, [open, focusedItem, focusedQuestionState, focusedTodoState, knownDone.length]);
   const listed = live.filter((todo) => !inQuestion.has(todo.id));
+  const focused = ask.focusedSession;
+  const focusedFallback =
+    focused?.link &&
+    onOpen &&
+    !asked.some((question) => question.sourceSession?.link === focused.link) &&
+    !listed.some((todo) => todo.link === focused.link)
+      ? focused
+      : null;
   const removed = todos.filter((todo) => todo.state === 'removed');
   const itemCount = received.summary
     ? received.summary.todoCount +
@@ -749,21 +760,6 @@ export function NeoAskTodos({
           <span class="min-w-0 break-words text-right text-xs text-fg-muted">
             {ask.focusedSession.name ?? ask.focusedSession.id} · {ask.focusedSession.provider}
           </span>
-          {ask.focusedSession.link && onOpen && (
-            <button
-              type="button"
-              class={neoSecondaryClass}
-              aria-label={t('question.openSessionTitle', {
-                name: ask.focusedSession.name ?? ask.focusedSession.id,
-              })}
-              onClick={() => onOpen(ask.focusedSession!.link!, ask.focusedSession!.label)}
-            >
-              <NeoSessionMark
-                kind={neoSessionKind(ask.focusedSession.adapter, ask.focusedSession.link)}
-              />
-              {t('question.openSession')}
-            </button>
-          )}
         </div>
       )}
       {settleError && (
@@ -802,6 +798,21 @@ export function NeoAskTodos({
               }
             />
           ))}
+        </div>
+      )}
+      {focusedFallback && onOpen && (
+        <div class="mt-3 flex justify-end" data-ask-session-open>
+          <button
+            type="button"
+            class={neoSecondaryClass}
+            aria-label={t('question.openSessionTitle', {
+              name: focusedFallback.name ?? focusedFallback.id,
+            })}
+            onClick={() => onOpen(focusedFallback.link!, focusedFallback.label)}
+          >
+            <NeoSessionMark kind={neoSessionKind(focusedFallback.adapter, focusedFallback.link)} />
+            {t('question.open')}
+          </button>
         </div>
       )}
       {open && (
