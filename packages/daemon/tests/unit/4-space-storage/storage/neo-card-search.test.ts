@@ -77,6 +77,15 @@ describe('neo card search', () => {
     expect(results[0].snippet.toLowerCase()).toContain('catalog');
   });
 
+  test('literal title brackets do not mislabel a request-text match', () => {
+    db.exec(`UPDATE neo_asks SET title='[draft] release',request='Finish herbarium'
+      WHERE id='ask-1'`);
+    const { results } = searchNeoCards(db, 'herbarium');
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ askId: 'ask-1', field: 'meta' });
+    expect(results[0].snippet).toContain('herbarium');
+  });
+
   test('returns pointers with snippets for each card kind', () => {
     const { results } = searchNeoCards(db, 'upload');
     const todo = results.find((hit) => hit.todoId === 'todo-1');

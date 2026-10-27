@@ -4,13 +4,15 @@ import { join, resolve } from 'node:path';
 
 const run = resolve(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test');
+assert.equal(process.env.HOME, join(run, 'home'));
+assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
+assert(!existsSync(join(run, 'data/daemon.db')));
 for (const name of ['home', 'workspace', 'evidence']) mkdirSync(join(run, name), { recursive: true });
 const { createDaemonApp } = await import('../../../packages/daemon/src/app.ts');
 const { JobQueueProcessor } = await import('../../../packages/daemon/src/storage/job-queue-processor.ts');
 const { Database: SQLite } = await import('../../../packages/daemon/src/storage/sqlite-compat.ts');
 const { getConfig } = await import('../../../packages/daemon/src/config.ts');
 const { MessageHub, WebSocketClientTransport } = await import('../../../packages/shared/src/mod.ts');
-const NativeWorker = globalThis.Worker;
 const start = JobQueueProcessor.prototype.start;
 const prepare = SQLite.prototype.prepare;
 const processors = new Set<InstanceType<typeof JobQueueProcessor>>();
@@ -33,10 +35,6 @@ SQLite.prototype.prepare = function (...args) {
     },
   });
 };
-globalThis.Worker = function (url: string | URL, options?: WorkerOptions) {
-  const worker = new NativeWorker(url, options);
-  return worker;
-} as unknown as typeof Worker;
 const evidence: Record<string, unknown> = {};
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let transport: InstanceType<typeof WebSocketClientTransport> | undefined;
@@ -53,6 +51,7 @@ try {
     },
     verbose: false,
   });
+  assert.notEqual(app.server.port, 8399);
   await Promise.all([...processors].map((processor) => processor.stop()));
   const db = app.db.getDatabase();
   db.exec(`INSERT INTO neo_asks (id, session_id, title, request, outcome, created_at, updated_at)
@@ -63,6 +62,8 @@ try {
     VALUES ('todo-pack', 'ask-garden', 0, 'Pack the catalog', 'doing', 'Upload finished with exit 0', 'logs/upload.txt', 'waiting on review', 1, 2, 'catalog packed')`);
   db.exec(`INSERT INTO neo_questions (id, ask_id, text, kind, answer, created_at)
     VALUES ('q-first', 'ask-seeds', 'Catalog or seedlings first?', 'choice', '"Catalog finale"', 1)`);
+  db.exec(`INSERT INTO neo_asks(id,session_id,title,request,created_at,updated_at)
+    VALUES ('ask-bracket','neo:proof','[draft] collection','Finish herbarium',1,1)`);
   const hub = new MessageHub({ defaultSessionId: 'global' });
   transport = new WebSocketClientTransport({
     url: `ws://127.0.0.1:${app.server.port}/ws`,
@@ -100,6 +101,10 @@ try {
   const rest = await search({ query: 'catalog', limit: 2, cursor: paged.nextCursor! });
   assert.equal(rest.results.length, 1);
   assert.equal(rest.nextCursor, null);
+  const bracket = await search({ query: 'herbarium' });
+  evidence.bracketPage = bracket;
+  assert.equal(bracket.results.length, 1);
+  assert.equal(bracket.results[0].field, 'meta');
   assert.equal(mainCardSqlAttempts, 0);
   evidence.mainCardSqlAttempts = mainCardSqlAttempts;
 } finally {
@@ -109,7 +114,6 @@ try {
   await Promise.all([...processors].map((processor) => processor.stop()));
   await app?.cleanup();
   SQLite.prototype.prepare = prepare;
-  globalThis.Worker = NativeWorker;
   writeFileSync(
     join(run, 'evidence/card-search-rpc.json'),
     JSON.stringify(evidence, null, 2)
