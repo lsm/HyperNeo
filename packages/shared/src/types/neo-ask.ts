@@ -36,6 +36,8 @@ export type NeoTodoState =
   | 'failed'
   | 'removed';
 
+export type NeoTodoPriority = 'low' | 'normal' | 'high' | 'urgent';
+
 export type NeoTodoBlocker =
   | 'check'
   | 'worker'
@@ -61,6 +63,7 @@ export interface NeoTodo extends ArtifactProjection {
   blockedReason: string | null;
   nextAction: string | null;
   blockedBy: NeoTodoBlocker | null;
+  priority: NeoTodoPriority;
   replacedBy: string | null;
   addedAfterStart: boolean;
   report: string | null;

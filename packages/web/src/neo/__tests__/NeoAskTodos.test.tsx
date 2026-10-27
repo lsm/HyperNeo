@@ -22,6 +22,7 @@ const todo = (id: string, patch: Partial<NeoTodoEntry> = {}): NeoTodoEntry => ({
   id,
   askId: 'ask',
   position: 0,
+  priority: 'normal',
   title: `Todo ${id}`,
   doneWhen: 'PR 合进 main',
   check: null,
