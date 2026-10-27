@@ -718,4 +718,5 @@ env -i HOME="$HUMAN_CONFIRMED_RUN/home" PATH="$PATH" TMPDIR="$HUMAN_CONFIRMED_RU
 
 env -i HOME="$WORK_DIR/message-count-reader/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/message-count-reader/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-message-count-reader.ts" "$WORK_DIR/message-count-reader"
 env -i HOME="$WORK_DIR/session-export-reader/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/session-export-reader/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-export-reader.ts" "$WORK_DIR/session-export-reader"
+env -i HOME="$WORK_DIR/session-schedule-create/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/session-schedule-create/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-schedule-create.ts" "$WORK_DIR/session-schedule-create"
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"

@@ -1,5 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { createHash } from 'node:crypto';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { sessionScheduleCreateWrites } from '../../storage/repositories/session-schedule-create-write.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import {
   type NewSessionSchedule,
@@ -9,7 +11,8 @@ import {
 } from '../../storage/repositories/session-schedule-repository.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import { SESSION_SCHEDULE_FIRE } from '../job-queue-constants.ts';
-import { getNextRunAt, isValidCronExpression } from '../schedule/cron-utils.ts';
+import { isValidCronExpression } from '../schedule/cron-utils.ts';
+import { nextScheduleRun, requireNextRun } from './session-schedule-cadence.ts';
 
 export interface ScheduleSource {
   kind: string;
@@ -21,18 +24,6 @@ export interface ScheduleSource {
 type Gate<T> = { value: T } | { reason: string };
 
 const MIN_EVERY_MS = 60_000;
-
-export function nextScheduleRun(cadence: SessionScheduleCadence, after: number): number | null {
-  return cadence.kind === 'every'
-    ? after + cadence.everyMs
-    : getNextRunAt(cadence.cron, cadence.timezone, after);
-}
-
-function requireNextRun(cadence: SessionScheduleCadence, after: number): number {
-  const next = nextScheduleRun(cadence, after);
-  if (next === null) throw new Error('invalid_cadence: the cadence has no next run.');
-  return next;
-}
 
 export function requireValidCadence(cadence: SessionScheduleCadence): Gate<SessionScheduleCadence> {
   if (cadence.kind === 'every')
@@ -148,6 +139,10 @@ export class SessionScheduler {
   private enqueue(scheduleId: string, runAt: number): string {
     return this.jobQueue.enqueue({ queue: SESSION_SCHEDULE_FIRE, payload: { scheduleId }, runAt })
       .id;
+  }
+
+  createAsync(input: NewSessionSchedule, now = Date.now()): Promise<SessionSchedule> {
+    return gatewayFor(this.db).call(sessionScheduleCreateWrites, 'create', input, now);
   }
 
   create(input: NewSessionSchedule, now = Date.now()): SessionSchedule {
