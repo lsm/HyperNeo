@@ -31,3 +31,20 @@ rechecks parent, workspace and epic ownership before inserting atomically.
 Evidence records command duration and argument/reply bytes without separately
 attributing clone, queue or SQL cost. No GUI, whole-daemon SQL absence, held-writer
 latency or actual GitHub behavior is claimed.
+
+## Current Deno blocker
+
+The retained deno-verify run fails before insertion: Deno 2.9.4 node:sqlite
+returns `repo:synthetic/project` for a stored NUL-bearing alias even though
+hex(alias) retains the full bytes. This also affects the existing synchronous
+section implementation. Reproduce the underlying text boundary without a daemon:
+
+```sh
+"$DENO" run --cached-only -A .claude/skills/verify/neo-section-nul-text.ts
+```
+
+This must currently fail with a truncated actual alias. The SQLite adapter is
+outside lane A's ownership; route that repair to its owner. Do not count the
+failed Deno section proof as passing or replace it with a refusal-only proof.
+Bun verifies trigger rollback and the parent disappearing between advisory
+preflight and writer admission as well as the concurrent epic ownership race.
