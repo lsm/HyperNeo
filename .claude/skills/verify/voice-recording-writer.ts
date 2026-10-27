@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
@@ -44,6 +44,15 @@ try {
     pending.set(id,{done: value=>{clearTimeout(timer);done(value);},fail:error=>{clearTimeout(timer);fail(error);}});
     socket!.send(JSON.stringify({id,type:'REQ',sessionId:'global',method,data,timestamp:new Date().toISOString(),version:'1.0.0'}));
   });
+  const workspace = join(run, 'workspace');
+  mkdirSync(workspace, { recursive: true });
+  execFileSync('git', ['init', '-q', workspace]);
+  execFileSync('git', ['-C', workspace, '-c', 'user.name=Synthetic Proof', '-c', 'user.email=proof@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-qm', 'Synthetic fixture']);
+  const created = await rpc('session.create', { workspacePath: workspace, worktreeMode: 'worktree', config: { queryMode: 'manual' } }) as { session: { workspacePath: string } };
+  const worktrees = execFileSync('git', ['-C', workspace, 'worktree', 'list', '--porcelain'], { encoding: 'utf8' });
+  evidence.isolation = { requestedWorktree: true, workspace, actualWorkspacePath: created.session.workspacePath, worktrees };
+  assert.equal(created.session.workspacePath, workspace, 'Disabled worktrees must retain the original workspace');
+  assert.equal(worktrees.split('\n').filter(line => line.startsWith('worktree ')).length, 1);
   await rpc('settings.global.update', { updates: { voice: { enabled: true, endpoint: `http://127.0.0.1:${asr.port}/v1/audio/transcriptions`, model: 'fake', allowPrivateNetwork: true } } });
   probe = spawn(process.execPath, ['-e', `const ws=new WebSocket(${JSON.stringify(url)});let stop=false,id=0,at=0;const samples=[];const send=()=>{if(stop){console.log(JSON.stringify({samples}));ws.close();return;}at=performance.now();ws.send(JSON.stringify({id:String(++id),type:'REQ',method:'system.health',data:{},sessionId:'global',version:'1.0.0',timestamp:new Date().toISOString()}));};ws.onopen=()=>{console.log('READY');send();};ws.onmessage=e=>{const r=JSON.parse(e.data);if((r.requestId??r.id)!==String(id))return;if(r.error)throw new Error(JSON.stringify(r.error));samples.push(performance.now()-at);setTimeout(send,10);};process.stdin.on('data',()=>{stop=true;});setTimeout(()=>process.exit(2),20000).unref();`], { env:process.env, stdio:['pipe','pipe','pipe'] });
   let output='', errors='';
