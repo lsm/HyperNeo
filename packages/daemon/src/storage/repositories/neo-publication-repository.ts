@@ -1,3 +1,4 @@
+import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { NeoInputOrigin } from '@hyperneo/shared/types/neo-message';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import type {
@@ -391,3 +392,10 @@ export class NeoPublicationRepository {
     ).map(decode);
   }
 }
+
+export const neoPublicationWrites = defineRepositoryOp(
+  'neo.publications.write',
+  'write',
+  NeoPublicationRepository,
+  ['append']
+);

@@ -45,7 +45,7 @@ interface NeoPublicationRuntime {
   getBinding(id: string): NeoBinding | null;
   getRootBinding(): NeoBinding | null;
   hasProject(id: string): boolean;
-  append(input: NeoPublicationInput): Receipt;
+  append(input: NeoPublicationInput): Receipt | Promise<Receipt>;
   notify(): void;
   artifact: ArtifactRefReader;
 }
@@ -155,7 +155,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
       'publication',
       'publication'
     )
-    .end('publication') as (input: unknown, caller: OperationCaller) => Receipt;
+    .endAsync('publication') as (input: unknown, caller: OperationCaller) => Promise<Receipt>;
 }
 
 export function createNeoPublicationOperation(publish: ReturnType<typeof createNeoPublisher>) {

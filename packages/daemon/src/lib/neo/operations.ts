@@ -1,3 +1,4 @@
+import { createNeoCardSearchOperation } from './card-search-operation.ts';
 import { readNeoReply } from './intake.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { globalSettingsWrites } from '../../storage/repositories/global-settings-writes.ts';
@@ -772,6 +773,10 @@ export function createNeoOperations(service: NeoService) {
         changed: () => service.notifyChanged(),
         project: (todos) => service.todoWorkers(todos),
       }
+    ),
+    createNeoCardSearchOperation(
+      (query, cursor, limit) => service.db.searchNeoCardsAsync(query, cursor, limit),
+      (caller) => admitNeoCaller(service, caller, 'neo.ask.search')
     ),
     createNeoAskReadOperation(
       service.todos,
