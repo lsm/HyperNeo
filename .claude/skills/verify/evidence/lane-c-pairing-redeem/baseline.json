@@ -1,0 +1,11 @@
+{
+  "base": "4c6be2a5dae003cf19f624a3f99d40e331a05ef9",
+  "failedRegressions": 6,
+  "passingPreAdmissionControls": 2,
+  "realHttpStatus": 500,
+  "expectedHttpStatus": 200,
+  "targetMainSqlAttempts": 1,
+  "sourceProofExitCode": 1,
+  "fixtureSecretsSaved": false,
+  "scope": "POST /pair redemption, pending approval and its existing recovery transaction only."
+}
