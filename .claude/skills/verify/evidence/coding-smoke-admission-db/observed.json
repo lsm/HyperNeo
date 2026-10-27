@@ -19,8 +19,8 @@
   "checks": "Full checks and 35 focused Bun/Vitest tests passed, including immutable merge receipt one-winner regression.",
   "limitations": "Actual smoke RPC with synthetic GitHub merge/ancestry and QA fixtures; no actual deployment, native harness, model, GUI or latency claim. Failed startup attempt is retained separately and not counted as passing.",
   "proofBinding": {
-    "testedCodeCommit": "0bb01f1fe83b2ddd9593f188cfa0f00a92e86993",
-    "testedGitTree": "6c222bf06caa653115968ae0a2495dcd775a3860",
+    "testedCodeCommit": "5aef0a784d80da3ec5cb89d1473f8ea9368c4812",
+    "testedGitTree": "e21982b5b634aac1504cfbde612167f33558c85e",
     "applicationTrees": {
       "packages": "dc6322aa17752c1d7480fc4c520a00f8f8e4923f",
       "scripts": "487cc507bd2f08d51501069513ee20d79fdbac9a"
@@ -31,8 +31,8 @@
       ".claude/skills/verify/coding-smoke-admission-proof-binding.ts": "dc68b857c3837e9127314e57c5c2b33825ba3e5a"
     },
     "runs": {
-      "bun": "bun-verify-2",
-      "deno": "deno-verify-1"
+      "bun": "bun-verify-3",
+      "deno": "deno-verify-2"
     },
     "postProofChangePolicy": "evidence-and-journey-only"
   },
@@ -41,5 +41,14 @@
     "conflictResolution": "Retained smoke admission and session schedule registrations.",
     "bun": "Fresh real smoke RPC proof passed; zero target main SQL.",
     "deno": "Fresh real smoke RPC proof passed; zero target main SQL."
+  },
+  "reviewFixVerification": {
+    "reviewedHead": "8264dda866878a6f74dde6d962cec9777fc6226e",
+    "redCommit": "915b6acd0d",
+    "fixCommit": "5aef0a784d",
+    "reproduced": "Retired helper expected matching_merge_gate_required but received accepted:true on its restart phase.",
+    "repair": "Deleted retired helper; supported RPC journey already removes the receipt before writer admission.",
+    "productionTreesUnchangedFromFullCheckedHead": true,
+    "freshProofs": "Bun and Deno: zero target main SQL, vanished receipt refuses with matching_merge_gate_required; clean shutdown and temporary data removal."
   }
 }

@@ -1,0 +1,212 @@
+{
+  "mode": "verify",
+  "verified": true,
+  "consumer": "Actual neo.coding.smoke public WebSocket RPC",
+  "limitation": "Synthetic GitHub merge/build containment and QA assignment; no real deployment, merge, model, browser or live daemon. Other coding SQL is outside this slice.",
+  "largeEvidenceBytes": 60009,
+  "largeEvidenceSha256": "4b8e4247a2171abac9376e678c5c342b7e5dd4b09e4044a3dd8732a0a0b94a11",
+  "events": [
+    {
+      "verdict": "pass",
+      "result": {
+        "accepted": true
+      }
+    },
+    {
+      "verdict": "pass",
+      "result": {
+        "accepted": false,
+        "reason": "stage_assignment_mismatch"
+      }
+    },
+    {
+      "verdict": "pass",
+      "result": {
+        "accepted": false,
+        "reason": "matching_merge_commit_required"
+      }
+    },
+    {
+      "verdict": "pass",
+      "result": {
+        "accepted": false,
+        "reason": "running_build_must_contain_merge"
+      }
+    },
+    {
+      "verdict": "inapplicable",
+      "result": {
+        "accepted": false,
+        "reason": "inapplicability_reason_required"
+      }
+    },
+    {
+      "verdict": "inapplicable",
+      "result": {
+        "accepted": true
+      }
+    },
+    {
+      "verdict": "fail",
+      "result": {
+        "accepted": true
+      }
+    },
+    {
+      "verdict": "pass",
+      "result": {
+        "accepted": true
+      }
+    },
+    {
+      "verdict": "fail",
+      "result": {
+        "accepted": false,
+        "reason": "stage_assignment_mismatch"
+      }
+    },
+    {
+      "verdict": "fail",
+      "result": {
+        "accepted": false,
+        "reason": "matching_merge_gate_required"
+      }
+    }
+  ],
+  "mainSql": [],
+  "commands": [
+    {
+      "name": "coding.smoke.reads",
+      "method": "check",
+      "durationMs": 1.803042000000005,
+      "argsBytes": 60482,
+      "replyBytes": 14
+    },
+    {
+      "name": "coding.smoke.commands",
+      "method": "assignedRecord",
+      "durationMs": 1.0751659999999674,
+      "argsBytes": 60805,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.smoke.reads",
+      "method": "check",
+      "durationMs": 0.5889579999999341,
+      "argsBytes": 60466,
+      "replyBytes": 66
+    },
+    {
+      "name": "coding.smoke.reads",
+      "method": "check",
+      "durationMs": 0.18445899999994708,
+      "argsBytes": 60482,
+      "replyBytes": 14
+    },
+    {
+      "name": "coding.smoke.commands",
+      "method": "assignedRecord",
+      "durationMs": 0.36333299999989777,
+      "argsBytes": 60805,
+      "replyBytes": 60
+    },
+    {
+      "name": "coding.smoke.reads",
+      "method": "check",
+      "durationMs": 0.23391700000001947,
+      "argsBytes": 60477,
+      "replyBytes": 14
+    },
+    {
+      "name": "coding.smoke.commands",
+      "method": "assignedRecord",
+      "durationMs": 0.21629200000006676,
+      "argsBytes": 60800,
+      "replyBytes": 62
+    },
+    {
+      "name": "coding.smoke.reads",
+      "method": "check",
+      "durationMs": 0.20487500000001546,
+      "argsBytes": 60405,
+      "replyBytes": 14
+    },
+    {
+      "name": "coding.smoke.commands",
+      "method": "assignedRecord",
+      "durationMs": 0.21266700000001038,
+      "argsBytes": 60728,
+      "replyBytes": 61
+    },
+    {
+      "name": "coding.smoke.reads",
+      "method": "check",
+      "durationMs": 0.14058299999999235,
+      "argsBytes": 60449,
+      "replyBytes": 14
+    },
+    {
+      "name": "coding.smoke.commands",
+      "method": "assignedRecord",
+      "durationMs": 0.4062090000001035,
+      "argsBytes": 60772,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.smoke.reads",
+      "method": "check",
+      "durationMs": 0.1868330000000924,
+      "argsBytes": 60482,
+      "replyBytes": 14
+    },
+    {
+      "name": "coding.smoke.commands",
+      "method": "assignedRecord",
+      "durationMs": 0.52475000000004,
+      "argsBytes": 60805,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.smoke.reads",
+      "method": "check",
+      "durationMs": 69.59962500000006,
+      "argsBytes": 60482,
+      "replyBytes": 14
+    },
+    {
+      "name": "coding.smoke.commands",
+      "method": "assignedRecord",
+      "durationMs": 2.4291670000000067,
+      "argsBytes": 60805,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.smoke.reads",
+      "method": "check",
+      "durationMs": 0.2089579999999387,
+      "argsBytes": 60482,
+      "replyBytes": 14
+    },
+    {
+      "name": "coding.smoke.commands",
+      "method": "assignedRecord",
+      "durationMs": 0.15341600000010658,
+      "argsBytes": 60805,
+      "replyBytes": 55
+    },
+    {
+      "name": "coding.smoke.reads",
+      "method": "check",
+      "durationMs": 0.1785419999998794,
+      "argsBytes": 60482,
+      "replyBytes": 14
+    },
+    {
+      "name": "coding.smoke.commands",
+      "method": "assignedRecord",
+      "durationMs": 0.12654099999986101,
+      "argsBytes": 60805,
+      "replyBytes": 58
+    }
+  ]
+}
