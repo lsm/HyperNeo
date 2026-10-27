@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type {
   RPCHandlerDependencies,
   RPCHandlerSetupResult,
@@ -21,7 +21,7 @@ const IDLE_SINCE_MS = 2 * 60 * 60 * 1000;
 const CLAIM_LEASE_MS = 5 * 60 * 1000;
 
 function makeTempDbPath(): string {
-  return join(tmpdir(), `nag-probes-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
+  return join(mkdtempSync(join(tmpdir(), 'nag-probes-')), 'test.db');
 }
 
 function noopProxy(overrides: Record<string, unknown> = {}): unknown {
@@ -141,11 +141,15 @@ describe('inactivity nag probes reconciled with mailbox admissions', () => {
   });
 
   afterEach(async () => {
-    await setup.cleanup();
     try {
-      db.close();
-    } catch {}
-    rmSync(dbPath, { force: true });
+      await setup?.cleanup();
+    } finally {
+      try {
+        db?.close();
+      } finally {
+        rmSync(dirname(dbPath), { recursive: true, force: true });
+      }
+    }
   });
 
   function seedWatchedAgent(): Fixture {

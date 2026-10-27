@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { rmSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { Database } from '../../../../src/storage/index';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
@@ -11,7 +11,7 @@ import type { QueryDiff } from '../../../../src/storage/live-query';
 import type { Session, SessionConfig, SessionMetadata } from '@hyperneo/shared';
 
 function makeTempDbPath(): string {
-  return join(tmpdir(), `scoped-integ-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
+  return join(mkdtempSync(join(tmpdir(), 'scoped-integ-')), 'test.db');
 }
 
 function makeSession(id: string): Session {
@@ -67,15 +67,15 @@ describe('Scoped invalidation — sdk_messages integration', () => {
   });
 
   afterEach(() => {
-    engine.dispose();
     try {
-      db.close();
-    } catch {}
-    try {
-      rmSync(dbPath, { force: true });
-      rmSync(dbPath + '-wal', { force: true });
-      rmSync(dbPath + '-shm', { force: true });
-    } catch {}
+      engine?.dispose();
+    } finally {
+      try {
+        db?.close();
+      } finally {
+        rmSync(dirname(dbPath), { recursive: true, force: true });
+      }
+    }
   });
 
   test('writing message for sess-B does NOT trigger delta for sess-A subscription', async () => {

@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { existsSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import type { Session } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { Database } from '../../../../src/storage';
@@ -35,21 +37,17 @@ describe('Database Facade', () => {
   let dbPath: string;
 
   beforeEach(async () => {
-    const tmpBase = (process.env.TMPDIR || '/tmp').replace(/\/$/, '');
-    dbPath = `${tmpBase}/test-db-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`;
+    dbPath = join(mkdtempSync(join(tmpdir(), 'test-db-')), 'test.sqlite');
     db = new Database(dbPath);
     const reactiveDb = createReactiveDatabase(db);
     await db.initialize(reactiveDb);
   });
 
   afterEach(() => {
-    if (db) {
-      db.close();
-    }
-    for (const suffix of ['', '-wal', '-shm']) {
-      try {
-        unlinkSync(`${dbPath}${suffix}`);
-      } catch {}
+    try {
+      db?.close();
+    } finally {
+      rmSync(dirname(dbPath), { recursive: true, force: true });
     }
     expect(existsSync(`${dbPath}-wal`)).toBe(false);
     expect(existsSync(`${dbPath}-shm`)).toBe(false);
