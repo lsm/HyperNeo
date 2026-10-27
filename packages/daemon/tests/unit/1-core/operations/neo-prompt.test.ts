@@ -12,9 +12,12 @@ import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 describe('root Neo system prompt', () => {
   test.each([false, true])('limits worker messages with packs: %s', (enabled) => {
     const prompt = neoPrompt(enabled ? neoSettingsPackBriefs() : []);
-    expect(prompt).toContain('project and a number');
-    expect(prompt).toContain('never a task title');
-    expect(prompt).toContain('work.rename');
+    expect(prompt).toContain(
+      'Give a new item to an existing worker when it continues that worker'
+    );
+    expect(prompt).not.toContain('project and a number');
+    expect(prompt).not.toContain('never a task title');
+    if (enabled) expect(prompt).toContain('named for the project and a number');
     expect(prompt).toContain('Coordination questions');
     expect(prompt).toContain('never human cards');
     expect(prompt).toContain('Message Neo only at milestones');
