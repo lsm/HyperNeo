@@ -13,25 +13,47 @@ const sized = (scroll: number, client: number) => {
 };
 
 describe('NeoClampedText', () => {
-  it('clamps text that overflows ten lines and lets the human expand and collapse it', () => {
+  it('opens and folds by tapping the text, with no visible more/less label', () => {
     sized(500, 272);
     const { container } = render(
       <NeoClampedText text="long">
         <p>long</p>
       </NeoClampedText>
     );
-    const clamped = container.querySelector<HTMLElement>('[data-clamped]');
-    expect(clamped?.className).toBe('overflow-hidden');
-    expect(clamped?.style.maxHeight).toMatch(/^\d+px$/);
-    expect(
-      getComputedStyle(screen.getByRole('button', { name: 'Show more' })).getPropertyValue('float')
-    ).toBe('right');
-    fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+    expect(screen.queryByText(/^(more|less)$/i)).toBeNull();
+    expect(container.querySelector('[data-clamped]')).toBeTruthy();
+    fireEvent.click(screen.getByText('long'));
     expect(container.querySelector('[data-clamped]')).toBeNull();
-    expect(container.querySelector<HTMLElement>('div')?.style.maxHeight).toBe('');
-    expect(screen.getByRole('button', { name: 'Show less' }).getAttribute('aria-expanded')).toBe(
-      'true'
+    fireEvent.click(screen.getByText('long'));
+    expect(container.querySelector('[data-clamped]')).toBeTruthy();
+  });
+
+  it('supports keyboard folding while preserving link clicks and selected text', () => {
+    sized(500, 272);
+    const onLink = vi.fn();
+    const { container } = render(
+      <NeoClampedText text="long link">
+        <p>
+          <span>long</span>
+          <a href="#target" onClick={onLink}>
+            link
+          </a>
+        </p>
+      </NeoClampedText>
     );
+    fireEvent.click(screen.getByRole('link', { name: 'link' }));
+    expect(onLink).toHaveBeenCalledOnce();
+    expect(container.querySelector('[data-clamped]')).toBeTruthy();
+    const selected = vi
+      .spyOn(window, 'getSelection')
+      .mockReturnValue({ toString: () => 'long' } as Selection);
+    fireEvent.click(screen.getByText('long'));
+    expect(container.querySelector('[data-clamped]')).toBeTruthy();
+    selected.mockReturnValue(null);
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Show more' }), { key: 'Enter' });
+    expect(container.querySelector('[data-clamped]')).toBeNull();
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Show less' }), { key: ' ' });
+    expect(container.querySelector('[data-clamped]')).toBeTruthy();
   });
 
   it('shows text that fits without a toggle, however many newlines it has', () => {
