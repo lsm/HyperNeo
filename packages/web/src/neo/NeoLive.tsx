@@ -10,7 +10,7 @@ import type { NeoAskHistoryPage, NeoResult } from '@hyperneo/shared/types/neo-sn
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { NeoGoals } from './NeoGoals.tsx';
 import { SessionSchedules } from '../components/SessionSchedules.tsx';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useSignal } from '@preact/signals';
 import { getBannerLevel } from '../components/ConnectionOverlay.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
@@ -22,6 +22,8 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
 import { readNeoAskImages } from './conversation-ask-client.ts';
 import { NeoAskTodos } from './NeoAskTodos.tsx';
+import { NeoWorkSearch } from './NeoWorkSearch.tsx';
+import { useNeoWorkSearch } from './useNeoWorkSearch.ts';
 import { NeoComposer } from './NeoComposer.tsx';
 import { NeoConversation } from './NeoConversation.tsx';
 import { NeoDrawer } from './NeoDrawer.tsx';
@@ -152,24 +154,29 @@ export function NeoLive() {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const older = history?.scope === sceneScope ? history : null;
   const historyCursor = older ? older.nextCursor : view?.historyCursor;
-  const currentEntries = view?.todoAsks ?? [];
-  const loadedEntries = [
-    ...currentEntries,
-    ...(older?.entries ?? []).filter(
-      (entry) => !currentEntries.some((current) => current.ask.id === entry.ask.id)
-    ),
-  ];
+  const loadedEntries = useMemo(() => {
+    const current = view?.todoAsks ?? [];
+    return [
+      ...current,
+      ...(older?.entries ?? []).filter(
+        (entry) => !current.some((item) => item.ask.id === entry.ask.id)
+      ),
+    ];
+  }, [view?.todoAsks, older?.entries]);
   const workEntries = [...loadedEntries];
   if (
     referenced?.scope === sceneScope &&
     !workEntries.some((entry) => entry.ask.id === referenced.entry.ask.id)
   )
     workEntries.push(referenced.entry);
+  const [workQuery, setWorkQuery] = useState('');
+  const search = useNeoWorkSearch(workEntries, workQuery, loadNeoAskDetails);
   useEffect(() => {
     setHistory(null);
     setReferenced(null);
     referenceRequest.current = null;
     setCardOpening(false);
+    setWorkQuery('');
     setLoadingHistory(false);
     setChat(null);
     setCardTarget(null);
@@ -914,12 +921,27 @@ export function NeoLive() {
             </p>
           )}
           <NeoGoals sessionId={neo.sessionId} />
-          {publicConversation && workCount === 0 && (
+          {publicConversation && <NeoWorkSearch query={workQuery} onQuery={setWorkQuery} />}
+          {!!workQuery.trim() && (search.pending || search.failed || !search.results.length) && (
+            <p role="status" class="mt-4 text-sm text-fg-muted">
+              {t(
+                search.pending
+                  ? 'live.searching'
+                  : search.failed
+                    ? 'live.searchFailed'
+                    : 'live.noMatchingWork'
+              )}
+            </p>
+          )}
+          {publicConversation && !workQuery.trim() && workCount === 0 && (
             <p role="status" class="mt-6 text-sm text-fg-muted">
               {t('live.noWork')}
             </p>
           )}
-          {sceneGroups.map((group) =>
+          {(workQuery.trim()
+            ? [{ key: 'search', label: t('live.searchWork'), entries: search.results }]
+            : sceneGroups
+          ).map((group) =>
             group.entries.length === 0 ? null : (
               <section
                 key={group.key}
