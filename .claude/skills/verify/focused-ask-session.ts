@@ -30,7 +30,7 @@ process.stdout.write(JSON.stringify({url:'https://github.com/example/project/pul
 `, { mode: 0o700 });
 writeFileSync(join(run, 'bin/claude'), '#!/bin/sh\nprintf "[]\\n"\n', { mode: 0o700 });
 const modelRequests: unknown[] = [];
-const model = Bun.serve({ hostname: '127.0.0.1', port: 8000, async fetch(request) {
+const model = Bun.serve({ hostname: '127.0.0.1', port: Number(process.env.VERIFY_MOCK_PORT ?? 8000), async fetch(request) {
   if (new URL(request.url).pathname.endsWith('/models')) return Response.json({ data: [{ id: 'claude-sonnet-4-5-20250929', type: 'model', display_name: 'Synthetic Sonnet', created_at: '2025-09-29T00:00:00Z' }], has_more: false });
   if (request.url.includes('/v1/messages/count_tokens')) return Response.json({ input_tokens: 100 });
   if (!request.url.includes('/v1/messages')) return Response.json({});
@@ -49,7 +49,7 @@ const model = Bun.serve({ hostname: '127.0.0.1', port: 8000, async fetch(request
   ];
   return new Response(events.map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join(''), { headers: { 'content-type': 'text/event-stream' } });
 } });
-process.env.ANTHROPIC_BASE_URL = 'http://127.0.0.1:8000';
+process.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${process.env.VERIFY_MOCK_PORT ?? '8000'}`;
 process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
 
 const root = 'neo:10000000-0000-4000-8000-000000008410';

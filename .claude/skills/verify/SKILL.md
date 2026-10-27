@@ -18,7 +18,8 @@ root of your worktree.
   `env -i` with `NODE_ENV=test`, a temp `HOME`, and its own data dir and DB, so
   credential discovery is off and keys stay in that DB, never the keychain.
 - Model turns go to a local mock of the Anthropic API (`mock-api.ts`, the same
-  server CI's dev-proxy mode uses) on port 8000. Give the isolated daemon the
+  server CI's dev-proxy mode uses) on the mock port (8000 unless VERIFY_MOCK_PORT
+  overrides it). Give the isolated daemon the
   dev-proxy key over RPC (step 3 below), never through its environment.
 - GitHub is normally a stub: `gh` on the daemon's `PATH` answers `gh pr view` from
   `<run>/pr.json`, refuses everything else (including `gh auth token`) and logs
@@ -160,7 +161,7 @@ Some journeys provide a `PROOF` helper that owns its daemon and mock servers.
 Use this shared setup with the helper path named in that journey:
 
 ```bash
-for port in 8000 8001; do
+for port in "${VERIFY_MOCK_PORT:-8000}" 8001; do
   if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
     echo "verification port $port is busy"; exit 1
   fi

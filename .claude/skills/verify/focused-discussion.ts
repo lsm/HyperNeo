@@ -27,7 +27,7 @@ const entered = new Promise<void>((resolve) => { enter = resolve; });
 const prepared = new Promise<void>((resolve) => { release = resolve; });
 const modelRequests: unknown[] = [];
 const strings = (value: unknown): string => typeof value === 'string' ? value : JSON.stringify(value ?? '');
-const model = Bun.serve({ hostname: '127.0.0.1', port: 8000, async fetch(request) {
+const model = Bun.serve({ hostname: '127.0.0.1', port: Number(process.env.VERIFY_MOCK_PORT ?? 8000), async fetch(request) {
   if (new URL(request.url).pathname.endsWith('/models')) return Response.json({ data: [{ id: 'claude-sonnet-4-5-20250929', type: 'model', display_name: 'Synthetic Sonnet', created_at: '2025-09-29T00:00:00Z' }], has_more: false });
   if (request.url.includes('/v1/messages/count_tokens')) return Response.json({ input_tokens: 100 });
   if (!request.url.includes('/v1/messages')) return Response.json({});
@@ -51,7 +51,7 @@ const model = Bun.serve({ hostname: '127.0.0.1', port: 8000, async fetch(request
   ];
   return new Response(events.map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join(''), { headers: { 'content-type': 'text/event-stream' } });
 } });
-process.env.ANTHROPIC_BASE_URL = 'http://127.0.0.1:8000';
+process.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${process.env.VERIFY_MOCK_PORT ?? '8000'}`;
 process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
 const app = await createDaemonApp({ config: { ...getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db'), workspaceRoot: join(run, 'workspace') }), disableWorktrees: true, disableGoalProcessing: true }, verbose: false });
 app.server.stop();
