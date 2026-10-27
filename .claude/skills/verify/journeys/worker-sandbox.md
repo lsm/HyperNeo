@@ -119,8 +119,10 @@ root is also the Neo read-checkout tree, so it is exported as a location hint
 only: neither the Claude policy's `allowWrite` nor Codex `writable_roots` may
 include it, and resume replaces runtime-managed env keys (`TMPDIR`,
 `XDG_CACHE_HOME`, the `HYPERNEO_*` locations) so pre-upgrade workers adopt the
-data-root layout. The brief states the four paths only for workspaces carrying
-the worker-sandbox marker. The worker brief's
+data-root layout. Location guidance is independent of the sandbox marker. Unsandboxed workers
+receive the three HYPERNEO location hints without replacing their TMPDIR/cache
+or enabling sandbox permissions. SDK, Claude Desktop/CLI, Codex and owned
+Copilot launch paths supply the hints and brief. The worker brief's
 `## Runtime Location` section states the same four paths (unit-covered in
 `custom-agent.test.ts`).
 

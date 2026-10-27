@@ -31,6 +31,16 @@ const threadAccess = {
   approvalPolicy: 'never',
   sandbox: 'danger-full-access',
   projectId: 'project-1',
+  developerInstructions: expect.stringContaining('HYPERNEO_WORKTREES'),
+  config: {
+    shell_environment_policy: {
+      set: {
+        HYPERNEO_WORKTREES: expect.stringMatching(/worktrees$/),
+        HYPERNEO_EVIDENCE: expect.stringContaining('/work/evidence/'),
+        HYPERNEO_BUILDS: expect.stringContaining('/work/builds/'),
+      },
+    },
+  },
 };
 const turnAccess = { approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } };
 
@@ -444,7 +454,7 @@ describe('codex-desktop start', () => {
           ...threadAccess,
           cwd: '/focus/dolmen',
           model: model.model,
-          config: { model_reasoning_effort: 'medium' },
+          config: { ...threadAccess.config, model_reasoning_effort: 'medium' },
         },
       ],
       ['thread/name/set', { threadId: 'th1', name: request.title }],
@@ -672,6 +682,16 @@ describe('codex-desktop start', () => {
     expect(calls.find(([method]) => method === 'thread/start')?.[1]).toMatchObject({
       cwd: '/codex/worktrees/abcd1234/dolmen',
       projectId: 'project-1',
+      developerInstructions: expect.stringContaining('HYPERNEO_WORKTREES'),
+      config: {
+        shell_environment_policy: {
+          set: {
+            HYPERNEO_WORKTREES: expect.stringMatching(/worktrees$/),
+            HYPERNEO_EVIDENCE: expect.stringContaining('/work/evidence/'),
+            HYPERNEO_BUILDS: expect.stringContaining('/work/builds/'),
+          },
+        },
+      },
     });
   });
 

@@ -2000,6 +2000,8 @@ describe('QueryOptionsBuilder', () => {
       expect(options.systemPrompt).toEqual({
         type: 'preset',
         preset: 'claude_code',
+        append: expect.stringContaining('HYPERNEO_WORKTREES'),
+        snapshot: false,
       });
     });
 
@@ -2030,7 +2032,7 @@ describe('QueryOptionsBuilder', () => {
 
       expect(options.systemPrompt).toEqual({
         type: 'custom',
-        prompt: 'Custom system prompt',
+        prompt: expect.stringContaining('Custom system prompt\n\n## Runtime Location'),
         snapshot: false,
       });
     });
@@ -2129,12 +2131,12 @@ describe('QueryOptionsBuilder', () => {
 
       expect(options.systemPrompt).toEqual({
         type: 'custom',
-        prompt: 'Space briefing text',
+        prompt: expect.stringContaining('Space briefing text\n\n## Runtime Location'),
         snapshot: false,
       });
     });
 
-    it('leaves the system prompt untouched for a session outside any Space', async () => {
+    it('provides location guidance for a worker outside any Space', async () => {
       mockSession.config.tools = { useClaudeCodePreset: false };
       const newBuilder = new QueryOptionsBuilder({
         session: mockSession,
@@ -2142,7 +2144,10 @@ describe('QueryOptionsBuilder', () => {
       });
       const options = await newBuilder.build();
 
-      expect(options.systemPrompt).toBeUndefined();
+      expect(options.systemPrompt).toMatchObject({
+        type: 'custom',
+        prompt: expect.stringContaining('HYPERNEO_WORKTREES'),
+      });
     });
   });
 
@@ -2165,7 +2170,9 @@ describe('QueryOptionsBuilder', () => {
       expect(options.systemPrompt).toEqual({
         type: 'preset',
         preset: 'claude_code',
-        append: 'You are the Task Manager for this Space.',
+        append: expect.stringContaining(
+          'You are the Task Manager for this Space.\n\n## Runtime Location'
+        ),
         snapshot: false,
       });
     });
@@ -2182,14 +2189,16 @@ describe('QueryOptionsBuilder', () => {
       expect((options.systemPrompt as { snapshot?: boolean }).snapshot).toBe(false);
     });
 
-    it('leaves recording to the SDK when it contributes no prompt text of its own', async () => {
+    it('refreshes the location briefing when the worker resumes', async () => {
       const options = await builder.build();
 
       expect(options.systemPrompt).toEqual({
         type: 'preset',
         preset: 'claude_code',
+        append: expect.stringContaining('HYPERNEO_WORKTREES'),
+        snapshot: false,
       });
-      expect((options.systemPrompt as { snapshot?: boolean }).snapshot).toBeUndefined();
+      expect((options.systemPrompt as { snapshot?: boolean }).snapshot).toBe(false);
     });
   });
 
@@ -2265,7 +2274,16 @@ describe('QueryOptionsBuilder', () => {
             expect(options.permissionMode).toBe('acceptEdits');
             expect(options.allowedTools).toContain('AskUserQuestion');
           }
-          expect(options.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' });
+          expect(options.systemPrompt).toEqual(
+            kind === 'neo'
+              ? { type: 'preset', preset: 'claude_code' }
+              : {
+                  type: 'preset',
+                  preset: 'claude_code',
+                  append: expect.stringContaining('HYPERNEO_WORKTREES'),
+                  snapshot: false,
+                }
+          );
           if (kind === 'neo') {
             expect(options.disallowedTools).toEqual(neoSecretReadRules());
             expect(options.disallowedTools).toContain('Read(~/.ssh/**)');

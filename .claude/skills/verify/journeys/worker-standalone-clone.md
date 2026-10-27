@@ -48,3 +48,16 @@ synthetic CLI peer. It does not prove OS sandbox enforcement, native path denial
 real worker model behavior or Desktop rendering. Those belong to later slices of
 #8161. The helper stops its daemon in finally; preserve evidence outside the
 implementation worktree, then remove only this synthetic run directory.
+
+## Work locations with sandbox off (#9090)
+
+Run the helper through the shared proof-run.sh wrapper with VERIFY_CLAUDE set
+explicitly to the installed Claude CLI. The synthetic Desktop preparation records
+the generated inline environment-only settings and appended location brief.
+The installed CLI then loads those same settings against a loopback scripted
+model and runs real Git to create a worktree under HYPERNEO_WORKTREES. Its clone
+has no sandbox marker. A synthetic legacy worktree sentinel remains unchanged;
+legacy directories are accepted, not migrated. work-locations-native.log and
+observed.json retain the result. No Desktop UI or real provider is used.
+SDK/Codex/Copilot launch-envelope regressions cover the other adapters; this
+native proof specifically exercises Claude's shell environment, not those CLIs.

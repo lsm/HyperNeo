@@ -1,3 +1,4 @@
+import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
 import { releaseWorkerSandbox, workerSandboxOn } from './worker-sandbox.ts';
 import { createHash } from 'node:crypto';
 import { getDataDir } from '../data-dir.ts';
@@ -1252,7 +1253,12 @@ export async function resumeIdleClaudeSession(
       record.cliSessionId,
       '--permission-mode',
       mode,
-      ...(sandbox ? ['--settings', join(folder, '.claude/settings.local.json')] : []),
+      '--settings',
+      sandbox
+        ? join(folder, '.claude/settings.local.json')
+        : JSON.stringify({ env: workerWorkEnvironment(folder) }),
+      '--append-system-prompt',
+      workerWorkLocationsBrief(folder),
       '--',
       message,
     ],
@@ -1438,7 +1444,12 @@ export async function launchInClaudeDesktop(
         '--desktop',
         '--resume',
         cliSessionId,
-        ...(sandbox ? ['--settings', join(cwd, '.claude/settings.local.json')] : []),
+        '--settings',
+        sandbox
+          ? join(cwd, '.claude/settings.local.json')
+          : JSON.stringify({ env: workerWorkEnvironment(cwd) }),
+        '--append-system-prompt',
+        workerWorkLocationsBrief(cwd),
       ],
       {
         cwd,
@@ -1616,7 +1627,12 @@ export async function startClaudeSession(
       '--mcp-config',
       '{"mcpServers":{}}',
       ...(worktree ? ['--worktree', worktree] : []),
-      ...(sandboxed ? ['--settings', join(cwd, '.claude/settings.local.json')] : []),
+      '--settings',
+      sandboxed
+        ? join(cwd, '.claude/settings.local.json')
+        : JSON.stringify({ env: workerWorkEnvironment(cwd) }),
+      '--append-system-prompt',
+      workerWorkLocationsBrief(cwd),
       '--',
       CLAUDE_DESKTOP_PREPARE,
     ],

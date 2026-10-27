@@ -41,7 +41,7 @@ git(remote, 'commit', '-am', 'new base');
 const latest = git(remote, 'rev-parse', 'HEAD');
 writeFileSync(join(source, 'code.txt'), 'human dirty bytes');
 const fixture = fileURLToPath(new URL('../../../packages/daemon/tests/fixtures/claude-b1-cli.ts', import.meta.url));
-writeFileSync(join(run, 'bin/claude'), `#!/usr/bin/env bun\nimport { existsSync, writeFileSync } from 'node:fs';\nif (process.argv.includes('--session-id') && process.argv[process.argv.indexOf('-n') + 1] !== 'desktop-wake') writeFileSync(${JSON.stringify(join(run, 'evidence/worker-cwd'))}, process.cwd());\nif (existsSync(${JSON.stringify(join(run, 'fail-cli'))})) process.exit(1);\nawait import(${JSON.stringify(fixture)});\n`, { mode: 0o700 });
+writeFileSync(join(run, 'bin/claude'), `#!/usr/bin/env bun\nimport { existsSync, writeFileSync } from 'node:fs';\nif (process.argv.includes('--session-id') && process.argv[process.argv.indexOf('-n') + 1] !== 'desktop-wake') { writeFileSync(${JSON.stringify(join(run, 'evidence/worker-cwd'))}, process.cwd()); writeFileSync(${JSON.stringify(join(run, 'evidence/worker-launch.json'))}, JSON.stringify({ settings: process.argv[process.argv.indexOf('--settings') + 1], brief: process.argv[process.argv.indexOf('--append-system-prompt') + 1] })); }\nif (existsSync(${JSON.stringify(join(run, 'fail-cli'))})) process.exit(1);\nawait import(${JSON.stringify(fixture)});\n`, { mode: 0o700 });
 writeFileSync(join(run, 'bin/script'), `#!/usr/bin/env bun\nimport { existsSync, writeFileSync } from 'node:fs';\nimport { join } from 'node:path';\nif (existsSync(${JSON.stringify(join(run, 'fail-import'))})) { writeFileSync(join(process.cwd(), 'retained-human-note.txt'), 'Synthetic human bytes during handoff'); process.exit(1); }\nprocess.argv.push('--synthetic-desktop-import');\nawait import(${JSON.stringify(fixture)});\n`, { mode: 0o700 });
 for (const name of ['open', 'gh']) writeFileSync(join(run, 'bin', name), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 const evidence: unknown[] = [];
@@ -75,6 +75,25 @@ try {
   const started = await rpc('work.start', request) as Result<WorkStarted>;
   assert(started.ok, JSON.stringify(started));
   const worker = readFileSync(join(run, 'evidence/worker-cwd'), 'utf8');
+  const launch = JSON.parse(readFileSync(join(run, 'evidence/worker-launch.json'), 'utf8'));
+  const workerEnv = JSON.parse(launch.settings).env;
+  assert.equal(workerEnv.HYPERNEO_WORKTREES, join(run, 'data/worktrees'));
+  assert(launch.brief.includes(workerEnv.HYPERNEO_WORKTREES));
+  assert(!existsSync(join(worker, '.git/hyperneo-worker-sandbox')));
+  const legacy = join(run, 'home/focus/worktrees/legacy');
+  mkdirSync(legacy, { recursive: true });
+  writeFileSync(join(legacy, 'retained'), 'legacy worktree bytes');
+  if (process.env.VERIFY_CLAUDE) {
+    const command = 'test -n "$HYPERNEO_WORKTREES" && mkdir -p "$HYPERNEO_WORKTREES" && git worktree add --detach "$HYPERNEO_WORKTREES/worker-probe" HEAD && printf WORKTREE_HINT_CREATED';
+    const native = spawnSync('python3', [fileURLToPath(new URL('./worker-cli-probe.py', import.meta.url)), process.env.VERIFY_CLAUDE, launch.settings, worker, command], { encoding: 'utf8', timeout: 180000 });
+    writeFileSync(join(run, 'evidence/work-locations-native.log'), native.stdout + native.stderr);
+    assert.equal(native.status, 0, native.stdout + native.stderr);
+    assert(native.stdout.includes('WORKTREE_HINT_CREATED'), native.stdout);
+    assert(existsSync(join(workerEnv.HYPERNEO_WORKTREES, 'worker-probe/.git')));
+  }
+  assert.equal(readFileSync(join(legacy, 'retained'), 'utf8'), 'legacy worktree bytes');
+  evidence.push({ workLocations: workerEnv, brief: launch.brief, noSandbox: true, legacyUnchanged: true, nativeVerified: !!process.env.VERIFY_CLAUDE });
+
   assert.notEqual(worker, source);
   assert(statSync(join(worker, '.git')).isDirectory());
   assert.equal(git(worker, 'rev-parse', '--git-common-dir'), '.git');

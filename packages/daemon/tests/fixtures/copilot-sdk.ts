@@ -45,7 +45,7 @@ const event = (type: string, data: unknown, id = `event-${++eventId}`, agentId?:
 function receive(msg: { id?: number; method: string; params?: Record<string, unknown> }) {
   appendFileSync(
     join(process.cwd(), 'calls.jsonl'),
-    `${JSON.stringify({ ...msg, pid: process.pid, secretPresent: !!process.env.ANTHROPIC_API_KEY })}\n`
+    `${JSON.stringify({ ...msg, pid: process.pid, secretPresent: !!process.env.ANTHROPIC_API_KEY, worktrees: process.env.HYPERNEO_WORKTREES })}\n`
   );
   const reply = (result: unknown) => send({ jsonrpc: '2.0', id: msg.id, result });
   switch (msg.method) {

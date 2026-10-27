@@ -243,6 +243,10 @@ describe('claude-desktop start', () => {
       '--desktop',
       '--resume',
       'u1',
+      '--settings',
+      expect.stringContaining('HYPERNEO_WORKTREES'),
+      '--append-system-prompt',
+      expect.stringContaining('HYPERNEO_WORKTREES'),
     ]);
     expect(inbox).toEqual([]);
   });
@@ -390,7 +394,7 @@ describe('claude-desktop start', () => {
       ok: true,
     });
     expect(spawned[0].slice(6, 8)).toEqual(['--permission-mode', 'acceptEdits']);
-    expect(spawned[1].slice(4)).toEqual(['--desktop', '--resume', 'u1']);
+    expect(spawned[1].slice(4, 7)).toEqual(['--desktop', '--resume', 'u1']);
   });
 
   test('status finds the started session before Desktop registers it', async () => {

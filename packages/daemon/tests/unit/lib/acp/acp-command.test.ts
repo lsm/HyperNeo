@@ -6,6 +6,21 @@ import {
 } from '../../../../src/lib/acp/acp-command';
 
 describe('buildAcpSafeEnv', () => {
+  test('keeps worker location hints while stripping credentials from terminal children', () => {
+    expect(
+      buildAcpSafeEnv({
+        HYPERNEO_WORKTREES: '/synthetic/data/worktrees',
+        HYPERNEO_EVIDENCE: '/synthetic/data/work/evidence/worker',
+        HYPERNEO_BUILDS: '/synthetic/data/work/builds/worker',
+        GITHUB_TOKEN: 'synthetic-secret',
+      })
+    ).toEqual({
+      HYPERNEO_WORKTREES: '/synthetic/data/worktrees',
+      HYPERNEO_EVIDENCE: '/synthetic/data/work/evidence/worker',
+      HYPERNEO_BUILDS: '/synthetic/data/work/builds/worker',
+    });
+  });
+
   test('keeps only safe environment variables without unrelated secrets', () => {
     expect(
       buildAcpSafeEnv({

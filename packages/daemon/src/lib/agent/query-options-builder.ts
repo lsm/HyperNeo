@@ -1,3 +1,4 @@
+import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
 import { readClaudeWorkerSandbox } from '../drivers/claude-native-writes.ts';
 import { fillPrompt, MINIMAL_WORKTREE_PROMPT, WORKTREE_ISOLATION_PROMPT } from '@hyperneo/prompts';
 import type {
@@ -585,6 +586,7 @@ export class QueryOptionsBuilder {
         ...mergedEnv,
         ...compactEnv,
         HYPERNEO_HANDOFF_DIR: handoffDirectory,
+        ...(!neo && this.getCwd() ? workerWorkEnvironment(this.getCwd()!) : {}),
         ...workerSandbox?.env,
         ...readAccess?.env,
       },
@@ -885,7 +887,12 @@ export class QueryOptionsBuilder {
   }
 
   private joinSystemPromptAppendParts(parts: Array<string | undefined>): string {
-    return parts
+    return [
+      ...parts,
+      !neoCoordinatorBinding(this.ctx.db, this.ctx.session.id) && this.getCwd()
+        ? workerWorkLocationsBrief(this.getCwd()!)
+        : undefined,
+    ]
       .map((part) => part?.trim())
       .filter((part): part is string => !!part)
       .join('\n\n');
