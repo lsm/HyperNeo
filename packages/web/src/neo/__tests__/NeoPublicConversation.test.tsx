@@ -236,11 +236,13 @@ describe('durable public conversation presentation', () => {
       );
       const more = await screen.findByRole('button', { name: /more$/ });
       expect(getComputedStyle(more).getPropertyValue('float')).toBe('right');
+      expect(more.closest('.neo-markdown, p')).toBeNull();
       fireEvent.click(screen.getByText((value.shortText ?? '').trim()));
       expect(container.querySelector('[data-publication-details]')).toBeNull();
       fireEvent.click(more);
       const less = await screen.findByRole('button', { name: /less$/ });
       expect(getComputedStyle(less).getPropertyValue('float')).toBe('right');
+      expect(less.closest('.neo-markdown, p')).toBeNull();
       fireEvent.click(screen.getByText(ending.trim(), { exact: true }));
       expect(container.querySelector('[data-publication-details]')).toBeTruthy();
       expect(less.getAttribute('aria-expanded')).toBe('true');
@@ -254,7 +256,7 @@ describe('durable public conversation presentation', () => {
     );
     expect(container.querySelector('details')).toBeNull();
     const more = await screen.findByRole('button', { name: /^more$/ });
-    expect(more.closest('p')?.textContent).toContain(value.shortText);
+    expect(more.closest('p')).toBeNull();
     expect(more.getAttribute('aria-expanded')).toBe('false');
     expect(container.querySelector('table')).toBeNull();
     fireEvent.click(more);
