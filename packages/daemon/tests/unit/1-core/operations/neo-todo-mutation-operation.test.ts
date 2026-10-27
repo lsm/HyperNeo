@@ -93,7 +93,10 @@ describe('Writer-backed todo operation activation', () => {
         packs: () => packs,
         artifact: () => null,
         stop,
-        start,
+        start: async (id: string) => {
+          order.push(`direct:${id}`);
+        },
+        advance: () => start('peer'),
         changed: () => {
           order.push('announce');
         },
@@ -124,7 +127,7 @@ describe('Writer-backed todo operation activation', () => {
     expect(order.slice(0, 2)).toEqual(['commit', 'announce']);
   });
 
-  test('close stops first, commits before dispatch and returns refreshed successor state', async () => {
+  test('close stops first, commits, then lets the queue start the successor and returns its state', async () => {
     const result = await call('neo.todo.close', { todoId: 'first', reason: 'Finished' });
     expect(result).toMatchObject({ ok: true, todo: { state: 'done' } });
     expect(order).toEqual(['stop', 'commit', 'announce', 'start:peer']);
