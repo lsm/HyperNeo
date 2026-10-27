@@ -206,9 +206,18 @@ export class QueryLifecycleManager {
 
     if (queryObject && typeof queryObject.interrupt === 'function') {
       if (this.ctx.firstMessageReceived) {
+        let interruptTimeoutTimer: ReturnType<typeof setTimeout> | undefined;
         try {
-          await queryObject.interrupt();
-        } catch {}
+          await Promise.race([
+            queryObject.interrupt(),
+            new Promise<void>((resolve) => {
+              interruptTimeoutTimer = setTimeout(resolve, timeoutMs);
+            }),
+          ]);
+        } catch {
+        } finally {
+          if (interruptTimeoutTimer) clearTimeout(interruptTimeoutTimer);
+        }
       }
     }
 
