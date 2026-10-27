@@ -253,6 +253,45 @@ describe('Data-only atomic ask settlement', () => {
     expect(released.blockedBy).not.toBe('needs-human');
     expect(['todo', 'doing']).toContain(released.state);
   });
+  test('a pending child answer still holds needs-human work after the parent settles', async () => {
+    emptiedParent();
+    store.updateTodo(
+      store.getTodo('first')!,
+      { state: 'blocked', blockedBy: 'needs-human', blockedReason: 'Answer pending' },
+      5
+    );
+    const card = store.askQuestion(
+      'answer',
+      'child',
+      {
+        kind: 'choice',
+        todoId: 'first',
+        text: 'Go?',
+        options: ['Go', 'Stop'],
+        multiple: false,
+        yesLabel: null,
+        noLabel: null,
+      },
+      5
+    );
+    store.questionAnswers.bind(card.id, 'first', {
+      adapter: 'codex-desktop',
+      id: 'synthetic-thread',
+      daemon: null,
+    });
+    store.answerQuestion(card, { picked: ['Go'] } as never, 'button', 6);
+    await split();
+    const held = await store.recompute(
+      store.getTodo('first')!,
+      {},
+      20,
+      { state: 'no_opinion' },
+      async () => {}
+    );
+    expect(held).toMatchObject({ state: 'blocked', blockedBy: 'needs-human' });
+    expect(store.getQuestion(card.id)?.state).toBe('answered');
+  });
+
   test('a root that gained its own todo is not auto-settled', async () => {
     emptiedParent();
     store.addTodo(
@@ -301,13 +340,7 @@ describe('Data-only atomic ask settlement', () => {
     store.moveTodo(store.getTodo('first')!, 'child', 'github.com/synthetic/child', 4);
     sessions.bind('first', { adapter: 'hyperneo', id: 'adopted' }, 5);
     sessions.recordLive('first', 'done', undefined);
-    expect(
-      await gateway.call(
-        DB_OPS.get('neo.todoSessionReads') as never,
-        'stopContext' as never,
-        'first' as never
-      )
-    ).toMatchObject({
+    expect(await run('neo.todoSessionReads', 'stopContext', ['first'])).toMatchObject({
       todo: { id: 'first', askId: 'child' },
       ask: { id: 'child' },
       ref: { id: 'adopted' },
