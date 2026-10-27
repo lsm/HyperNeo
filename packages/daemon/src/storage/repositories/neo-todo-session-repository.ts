@@ -1,4 +1,4 @@
-import { neoTodoDependencyNodes, neoTodoReady } from '../../lib/neo/todo-dependencies.ts';
+import { neoTodoReady } from '../../lib/neo/todo-dependencies.ts';
 import { NeoTurnReportReceipts } from '../../lib/neo/turn-report-receipts.ts';
 import {
   advanceFollowThrough,
@@ -183,7 +183,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
           ]
         : []
     );
-    const candidates = asks.flatMap((ask) => {
+    const waiting = asks.flatMap((ask) => {
       const plan = todos.filter((todo) => todo.askId === ask.id);
       const asked = store.listQuestions(ask.id);
       if (
@@ -195,32 +195,36 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
         return [];
       const questions = asked.filter((question) => question.state === 'open');
       const family = store.listFamilyTodos(ask.id);
-      return neoTodoDependencyNodes(plan).flatMap((node) => {
-        const next = plan.find((todo) => todo.id === node.id)!;
-        const target = this.get(next.id);
-        return next.state === 'todo' &&
-          next.startedAt === null &&
-          next.instruction &&
-          neoTodoReady(family, next.id) &&
-          !questions.some(
-            (question) =>
-              (!question.todoId || question.todoId === next.id) &&
-              (question.kind !== 'start' || !!question.startTodos?.includes(next.id))
-          ) &&
-          (target?.verb === 'start' || target?.verb === 'send')
-          ? [
-              {
-                id: next.id,
-                group: ask.projectId ?? null,
-                priority: next.priority,
-                createdAt: next.createdAt,
-                worker: target.verb === 'send' ? worker(target.ref) : null,
-              },
-            ]
-          : [];
-      });
+      return plan.flatMap((next) =>
+        next.state === 'todo' &&
+        next.startedAt === null &&
+        neoTodoReady(family, next.id) &&
+        !questions.some(
+          (question) =>
+            (!question.todoId || question.todoId === next.id) &&
+            (question.kind !== 'start' || !!question.startTodos?.includes(next.id))
+        )
+          ? [{ ask, next, target: this.get(next.id) }]
+          : []
+      );
     });
-    return { candidates, running };
+    const candidates = waiting.flatMap(({ ask, next, target }) =>
+      next.instruction && (target?.verb === 'start' || target?.verb === 'send')
+        ? [
+            {
+              id: next.id,
+              group: ask.projectId ?? null,
+              priority: next.priority,
+              createdAt: next.createdAt,
+              worker: target.verb === 'send' ? worker(target.ref) : null,
+            },
+          ]
+        : []
+    );
+    const unworked = waiting.flatMap(({ next, target }) =>
+      !next.instruction && !target ? [next.id] : []
+    );
+    return { candidates, running, unworked };
   }
 
   claimNudge(
