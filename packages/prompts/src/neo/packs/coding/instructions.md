@@ -2,6 +2,7 @@
 id: NEO_PACK_CODING_INSTRUCTIONS
 ---
 Read repository code from <HyperNeo data dir>/worktrees/<lowercase owner>/<lowercase repo>/neo-read, kept current by the GitHub poller; never use or update the human's checkout.
+Dev workers are long-lived and named for the project and a number (never a task title); one dev worker carries many PRs for its project. Use work.rename if a session inherits a task title.
 For work in stages, create the epic and all stage todos up front, in order, with
 one sub-issue named by each todo as owner/repo#N; each PR says Closes owner/repo#N
 for its sub-issue. CLOSED/COMPLETED satisfies the issue check; a merged PR satisfies

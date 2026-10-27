@@ -4355,8 +4355,10 @@ describe('SDKMessageHandler', () => {
     it('stamps the 0-turn terminal success as the internal compaction turn when the boundary armed attribution', async () => {
       consumeInternalCompactionResultAttributionSpy.mockImplementation(() => true);
 
-      await handler.handleMessage(makeSuccessResult(0));
+      const message = makeSuccessResult(0);
+      await handler.handleMessage(message);
 
+      expect(message).toMatchObject({ internal_compaction_turn: 1 });
       expect(consumeInternalCompactionResultAttributionSpy).toHaveBeenCalledTimes(1);
       expectStampOptionTrue();
     });
@@ -6719,8 +6721,10 @@ describe('SDKMessageHandler', () => {
         () => ({ markResultRecoveryIntercepted: markRecoveryIntercepted }) as never
       ) as never;
 
-      await handler.handleMessage(makeApiErrorResult());
+      const message = makeApiErrorResult();
+      await handler.handleMessage(message);
 
+      expect(message).toMatchObject({ recovery_intercepted: 1, recovery_billing_terminal: 0 });
       expect(markRecoveryIntercepted).toHaveBeenCalledWith('test-session-id', 'result-uuid', false);
     });
 

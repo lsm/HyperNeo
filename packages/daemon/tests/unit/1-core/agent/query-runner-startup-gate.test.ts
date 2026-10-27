@@ -175,6 +175,7 @@ describe('QueryRunner startup gate', () => {
     const ctx: QueryRunnerContext = {
       session,
       db: {
+        getSession: () => session,
         saveSDKMessage: () => {},
         updateSession: () => {},
         getSDKMessages: () => ({ messages: [], hasMore: false }),
@@ -322,6 +323,91 @@ describe('QueryRunner startup gate', () => {
     ]);
     expect(JSON.stringify(result)).not.toMatch(/secret|private|config|error/);
     expect(spawned.length).toBe(1);
+    await completeQuery(controlled, waitFor);
+  });
+
+  it.each([
+    ['subagent error', true, { parent_tool_use_id: 'synthetic-child' }],
+    ['subagent auth error', true, { parent_tool_use_id: 'synthetic-child' }],
+    ['subagent success', false, { parent_tool_use_id: 'synthetic-child' }],
+    ['internal compaction error', true, { internal_compaction_turn: 1 }],
+    ['internal compaction success', false, { internal_compaction_turn: 1 }],
+    ['intercepted recovery error', true, { recovery_intercepted: 1, recovery_billing_terminal: 0 }],
+  ] as const)('does not spend or reset session failures for %s', async (_label, isError, flags) => {
+    const { controlled, ctx } = await startObservedRunner('non-session-result');
+    ctx.session.metadata.queryFailureEpisode!.failures = 1;
+    const received: SDKMessage[] = [];
+    ctx.onSDKMessage = async (message) => {
+      Object.assign(message, flags);
+      received.push(message);
+    };
+    for (let turn = 0; turn < 3; turn++) {
+      await waitFor(
+        () =>
+          controlled.pendingNexts.length > turn + 1 ||
+          !!ctx.session.metadata.queryFailureEpisode?.failed
+      );
+      if (ctx.session.metadata.queryFailureEpisode?.failed) break;
+      controlled.pendingNexts[turn + 1].resolve({
+        done: false,
+        value: {
+          type: 'result',
+          subtype: 'success',
+          is_error: isError,
+          result: _label.includes('auth')
+            ? '401 Claude authentication failed'
+            : 'Synthetic scoped result',
+          parent_tool_use_id: 'parent_tool_use_id' in flags ? flags.parent_tool_use_id : null,
+          usage: { input_tokens: 1, output_tokens: 1 },
+          uuid: `scoped-${turn}`,
+          session_id: 'non-session-result',
+        } as SDKMessage,
+      });
+    }
+    await waitFor(
+      () => received.length === 3 || !!ctx.session.metadata.queryFailureEpisode?.failed
+    );
+    expect(received).toHaveLength(3);
+    expect(ctx.session.metadata.queryFailureEpisode?.failures).toBe(1);
+    expect(ctx.session.metadata.queryFailureEpisode?.failed).toBe(false);
+    await completeQuery(controlled, waitFor);
+  });
+
+  it('delivers hollow notification results to their recovery owner without resetting the failure episode', async () => {
+    const { controlled, ctx } = await startObservedRunner('hollow-recovery');
+    ctx.session.metadata.queryFailureEpisode!.failures = 1;
+    const received: SDKMessage[] = [];
+    ctx.onSDKMessage = async (message) => {
+      received.push(message);
+    };
+    for (let turn = 0; turn < 6; turn++) {
+      await waitFor(
+        () =>
+          controlled.pendingNexts.length > turn + 1 ||
+          !!ctx.session.metadata.queryFailureEpisode?.failed
+      );
+      if (ctx.session.metadata.queryFailureEpisode?.failed) break;
+      controlled.pendingNexts[turn + 1].resolve({
+        done: false,
+        value: {
+          type: 'result',
+          subtype: 'success',
+          is_error: false,
+          result: '',
+          origin: { kind: 'task-notification' },
+          parent_tool_use_id: null,
+          usage: { input_tokens: 0, output_tokens: 0 },
+          uuid: `hollow-${turn}`,
+          session_id: 'hollow-recovery',
+        } as SDKMessage,
+      });
+    }
+    await waitFor(
+      () => received.length === 6 || !!ctx.session.metadata.queryFailureEpisode?.failed
+    );
+    expect(received).toHaveLength(6);
+    expect(ctx.session.metadata.queryFailureEpisode?.failures).toBe(1);
+    expect(ctx.session.metadata.queryFailureEpisode?.failed).toBe(false);
     await completeQuery(controlled, waitFor);
   });
 

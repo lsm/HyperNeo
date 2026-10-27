@@ -314,6 +314,40 @@ describe('QueryLifecycleManager', () => {
       expect(interruptCalled).toBe(true);
     });
 
+    test('finishes stopping when the SDK never answers interrupt', async () => {
+      let releaseInterrupt!: () => void;
+      const interruptReply = new Promise<void>((resolve) => {
+        releaseInterrupt = resolve;
+      });
+      let closed = false;
+      mockContext.queryObject = {
+        interrupt: () => interruptReply,
+        close: () => {
+          closed = true;
+        },
+      } as unknown as QueryLifecycleManagerContext['queryObject'];
+      mockContext.queryPromise = Promise.resolve();
+      mockContext.firstMessageReceived = true;
+      manager = new QueryLifecycleManager(mockContext);
+      const stopping = manager.stop({ timeoutMs: 20 });
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const stopped = await Promise.race([
+          stopping.then(() => true),
+          new Promise<boolean>((resolve) => {
+            deadline = setTimeout(() => resolve(false), 250);
+          }),
+        ]);
+        expect(stopped).toBe(true);
+        expect(closed).toBe(true);
+        expect(messageQueue.isRunning()).toBe(false);
+      } finally {
+        if (deadline) clearTimeout(deadline);
+        releaseInterrupt();
+        await stopping;
+      }
+    });
+
     test('skips interrupt when transport is not ready', async () => {
       let interruptCalled = false;
       mockContext.queryObject = {

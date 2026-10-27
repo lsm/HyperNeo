@@ -139,6 +139,7 @@ describe('QueryRunner stream silence watchdog', () => {
     const ctx: QueryRunnerContext = {
       session,
       db: {
+        getSession: () => session,
         saveSDKMessage: () => {},
         updateSession: () => {},
         getSDKMessages: () => ({ messages: [], hasMore: false }),

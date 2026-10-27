@@ -2158,7 +2158,8 @@ describe('SessionManager', () => {
         })
       );
       const updateSessionCalls = (mockDb.updateSession as ReturnType<typeof mock>).mock.calls;
-      expect(updateSessionCalls[0][1].metadata.costBaseline).toBeCloseTo(0.15, 10);
+      const costReset = updateSessionCalls.find((call) => call[1].metadata?.lastSdkCost === 0);
+      expect(costReset?.[1].metadata.costBaseline).toBeCloseTo(0.15, 10);
       expect(persistedSession.metadata.costBaseline).toBe(0.1);
       expect(persistedSession.metadata.lastSdkCost).toBe(0.05);
       expect(persistedSession.sdkSessionId).toBe('sdk-session-123');

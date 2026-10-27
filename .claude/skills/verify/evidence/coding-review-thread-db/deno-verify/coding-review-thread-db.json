@@ -1,0 +1,1438 @@
+{
+  "mode": "verify",
+  "verified": true,
+  "consumer": "neo.coding.merge.prepare RPC",
+  "limitation": "No assignments are seeded: merge admission refuses after reading GitHub facts; no merge or model turn is attempted.",
+  "cold": [
+    {
+      "accepted": false,
+      "reason": "Current Review and Verify assignments on a live linked coding todo are required."
+    },
+    {
+      "accepted": false,
+      "reason": "Current Review and Verify assignments on a live linked coding todo are required."
+    },
+    {
+      "accepted": false,
+      "reason": "Current Review and Verify assignments on a live linked coding todo are required."
+    },
+    {
+      "accepted": false,
+      "reason": "Current Review and Verify assignments on a live linked coding todo are required."
+    },
+    {
+      "accepted": false,
+      "reason": "Current Review and Verify assignments on a live linked coding todo are required."
+    }
+  ],
+  "failed": {
+    "accepted": false,
+    "reason": "Fresh complete GitHub merge facts are required."
+  },
+  "partial": {
+    "accepted": false,
+    "reason": "Fresh complete GitHub merge facts are required."
+  },
+  "head-change": {
+    "accepted": false,
+    "reason": "Fresh complete GitHub merge facts are required."
+  },
+  "late": {
+    "accepted": false,
+    "reason": "Fresh complete GitHub merge facts are required."
+  },
+  "fence": {
+    "winner": {
+      "accepted": true,
+      "facts": {
+        "subject": {
+          "credentialId": "github-connector",
+          "url": "https://github.com/synthetic/threads/pull/7",
+          "accept": "application/vnd.hyperneo.pr-review-threads+json",
+          "apiVersion": "v1"
+        },
+        "factRevision": 2,
+        "observationRevision": 9,
+        "page": {
+          "status": "known",
+          "http": null,
+          "value": {
+            "headOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "unresolvedThreadUrls": [
+              "winner"
+            ]
+          },
+          "etag": null,
+          "next": null,
+          "observedAt": 1792985208607
+        }
+      }
+    },
+    "loser": {
+      "accepted": false,
+      "facts": {
+        "subject": {
+          "credentialId": "github-connector",
+          "url": "https://github.com/synthetic/threads/pull/7",
+          "accept": "application/vnd.hyperneo.pr-review-threads+json",
+          "apiVersion": "v1"
+        },
+        "factRevision": 2,
+        "observationRevision": 9,
+        "page": {
+          "status": "known",
+          "http": null,
+          "value": {
+            "headOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "unresolvedThreadUrls": [
+              "winner"
+            ]
+          },
+          "etag": null,
+          "next": null,
+          "observedAt": 1792985208607
+        }
+      }
+    }
+  },
+  "health": {
+    "status": "ok",
+    "dataMigration": {
+      "name": "sdk_message_columns_backfill_v2",
+      "state": "complete",
+      "through": 0,
+      "total": 0
+    },
+    "version": "0.48.0",
+    "uptime": 5836,
+    "sessions": {
+      "active": 0,
+      "total": 0
+    }
+  },
+  "contention": {
+    "healthMs": 2.0227500000000873,
+    "affectedMs": 1249.437833,
+    "affectedOperationUnder250ms": false
+  },
+  "rows": [
+    {
+      "http_json": null,
+      "subject": "[\"github-connector\",\"https://github.com/synthetic/threads/pull/7\",\"application/vnd.hyperneo.pr-review-threads+json\",\"v1\",null,null]",
+      "fact_revision": 3,
+      "observation_revision": 10,
+      "value_json": "{\"headOid\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"unresolvedThreadUrls\":[\"https://github.com/synthetic/threads/pull/7#finding\"]}",
+      "etag": null,
+      "next_url": null,
+      "observed_at": 1792985209460,
+      "attempted_at": 1792985209460,
+      "reason": null
+    }
+  ],
+  "counts": {
+    "cold": 2,
+    "repeat": 2,
+    "failed": 1,
+    "partial": 1,
+    "head-change": 2,
+    "recovered": 2,
+    "alias": 2,
+    "reopen": 2,
+    "late": 2,
+    "held": 2
+  },
+  "mainSql": [],
+  "commands": [
+    {
+      "operation": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 379.7816249999996,
+      "argsBytes": 51,
+      "replyBytes": 19
+    },
+    {
+      "operation": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 358.48762499999975,
+      "argsBytes": 51,
+      "replyBytes": 19
+    },
+    {
+      "operation": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 344.297458,
+      "argsBytes": 51,
+      "replyBytes": 19
+    },
+    {
+      "operation": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 339.75424999999996,
+      "argsBytes": 51,
+      "replyBytes": 19
+    },
+    {
+      "operation": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 333.4079579999998,
+      "argsBytes": 51,
+      "replyBytes": 19
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 2.1196249999993597,
+      "argsBytes": 210,
+      "replyBytes": 301
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 3.6520420000006197,
+      "argsBytes": 210,
+      "replyBytes": 301
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 3.6680829999995694,
+      "argsBytes": 210,
+      "replyBytes": 301
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 3.658792000000176,
+      "argsBytes": 210,
+      "replyBytes": 301
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 3.6734579999993002,
+      "argsBytes": 210,
+      "replyBytes": 301
+    },
+    {
+      "operation": "coding.pollPage.observe",
+      "method": "observe",
+      "durationMs": 1.5239999999994325,
+      "argsBytes": 378,
+      "replyBytes": 474
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 1.107916999999361,
+      "argsBytes": 210,
+      "replyBytes": 448
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 1.0998749999998836,
+      "argsBytes": 210,
+      "replyBytes": 448
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 1.1242920000004233,
+      "argsBytes": 210,
+      "replyBytes": 448
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 2.9470830000000205,
+      "argsBytes": 210,
+      "replyBytes": 448
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 7.795665999999983,
+      "argsBytes": 210,
+      "replyBytes": 448
+    },
+    {
+      "operation": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.4291670000002341,
+      "argsBytes": 51,
+      "replyBytes": 19
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.49487500000032014,
+      "argsBytes": 210,
+      "replyBytes": 448
+    },
+    {
+      "operation": "coding.pollPage.observe",
+      "method": "observe",
+      "durationMs": 0.8757910000003903,
+      "argsBytes": 378,
+      "replyBytes": 474
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 2.317124999999578,
+      "argsBytes": 210,
+      "replyBytes": 448
+    },
+    {
+      "operation": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.5045419999996739,
+      "argsBytes": 51,
+      "replyBytes": 19
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.7694169999995211,
+      "argsBytes": 210,
+      "replyBytes": 448
+    },
+    {
+      "operation": "coding.pollPage.observe",
+      "method": "observe",
+      "durationMs": 0.7170839999998861,
+      "argsBytes": 230,
+      "replyBytes": 344
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.4595419999996011,
+      "argsBytes": 210,
+      "replyBytes": 318
+    },
+    {
+      "operation": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.36183400000027177,
+      "argsBytes": 51,
+      "replyBytes": 19
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.3662910000002739,
+      "argsBytes": 210,
+      "replyBytes": 318
+    },
+    {
+      "operation": "coding.pollPage.observe",
+      "method": "observe",
+      "durationMs": 1.350416000000223,
+      "argsBytes": 231,
+      "replyBytes": 345
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.4708330000003116,
+      "argsBytes": 210,
+      "replyBytes": 319
+    },
+    {
+      "operation": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.28175000000010186,
+      "argsBytes": 51,
+      "replyBytes": 19
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.2537080000001879,
+      "argsBytes": 210,
+      "replyBytes": 319
+    },
+    {
+      "operation": "coding.pollPage.observe",
+      "method": "observe",
+      "durationMs": 0.4543340000000171,
+      "argsBytes": 231,
+      "replyBytes": 345
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.2510419999998703,
+      "argsBytes": 210,
+      "replyBytes": 319
+    },
+    {
+      "operation": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.6183750000000146,
+      "argsBytes": 51,
+      "replyBytes": 19
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.2779580000005808,
+      "argsBytes": 210,
+      "replyBytes": 319
+    },
+    {
+      "operation": "coding.pollPage.observe",
+      "method": "observe",
+      "durationMs": 0.6805420000000595,
+      "argsBytes": 378,
+      "replyBytes": 474
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.5372090000000753,
+      "argsBytes": 210,
+      "replyBytes": 448
+    },
+    {
+      "operation": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.3931249999995998,
+      "argsBytes": 42,
+      "replyBytes": 19
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.3376250000001164,
+      "argsBytes": 210,
+      "replyBytes": 448
+    },
+    {
+      "operation": "coding.pollPage.observe",
+      "method": "observe",
+      "durationMs": 1.0087499999999636,
+      "argsBytes": 378,
+      "replyBytes": 474
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.6155829999997877,
+      "argsBytes": 210,
+      "replyBytes": 448
+    },
+    {
+      "operation": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 336.88454100000035,
+      "argsBytes": 51,
+      "replyBytes": 19
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 1.3575840000003154,
+      "argsBytes": 210,
+      "replyBytes": 448
+    },
+    {
+      "operation": "coding.pollPage.observe",
+      "method": "observe",
+      "durationMs": 2.759458999999879,
+      "argsBytes": 378,
+      "replyBytes": 474
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.7263750000001892,
+      "argsBytes": 210,
+      "replyBytes": 448
+    },
+    {
+      "operation": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.3547499999995125,
+      "argsBytes": 51,
+      "replyBytes": 19
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.7717500000007931,
+      "argsBytes": 210,
+      "replyBytes": 448
+    },
+    {
+      "operation": "coding.pollPage.observe",
+      "method": "observe",
+      "durationMs": 0.9162080000005517,
+      "argsBytes": 333,
+      "replyBytes": 429
+    },
+    {
+      "operation": "coding.pollPage.observe",
+      "method": "observe",
+      "durationMs": 1.2493329999997513,
+      "argsBytes": 378,
+      "replyBytes": 430
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.694707999999082,
+      "argsBytes": 210,
+      "replyBytes": 403
+    },
+    {
+      "operation": "coding.pollPage.observe",
+      "method": "observe",
+      "durationMs": 0.657999999999447,
+      "argsBytes": 230,
+      "replyBytes": 430
+    },
+    {
+      "operation": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.5024580000008427,
+      "argsBytes": 51,
+      "replyBytes": 19
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 0.4860000000007858,
+      "argsBytes": 210,
+      "replyBytes": 403
+    },
+    {
+      "operation": "coding.pollPage.observe",
+      "method": "observe",
+      "durationMs": 878.9376670000001,
+      "argsBytes": 378,
+      "replyBytes": 475
+    },
+    {
+      "operation": "coding.pollPage.snapshot",
+      "method": "read",
+      "durationMs": 1.4159169999984442,
+      "argsBytes": 210,
+      "replyBytes": 449
+    }
+  ],
+  "rpcMetrics": [
+    {
+      "health": false,
+      "durationMs": 772.5752920000004
+    },
+    {
+      "health": false,
+      "durationMs": 772.4460840000002
+    },
+    {
+      "health": false,
+      "durationMs": 772.4395839999997
+    },
+    {
+      "health": false,
+      "durationMs": 772.4436670000005
+    },
+    {
+      "health": false,
+      "durationMs": 772.4670409999999
+    },
+    {
+      "health": false,
+      "durationMs": 361.5286249999999
+    },
+    {
+      "health": false,
+      "durationMs": 188.13095900000008
+    },
+    {
+      "health": false,
+      "durationMs": 182.33283299999948
+    },
+    {
+      "health": false,
+      "durationMs": 359.15850000000046
+    },
+    {
+      "health": false,
+      "durationMs": 354.1912089999996
+    },
+    {
+      "health": false,
+      "durationMs": 359.74954100000014
+    },
+    {
+      "health": false,
+      "durationMs": 743.1119580000004
+    },
+    {
+      "health": false,
+      "durationMs": 379.73358299999927
+    },
+    {
+      "health": true,
+      "durationMs": 1.9737920000006852
+    },
+    {
+      "health": false,
+      "durationMs": 1249.4234590000015
+    }
+  ],
+  "maxLagMs": 66.44887500000004,
+  "requests": [
+    {
+      "phase": "cold",
+      "family": "reviews",
+      "args": [
+        "api",
+        "--hostname",
+        "github.com",
+        "--paginate",
+        "--slurp",
+        "repos/synthetic/threads/pulls/7/reviews"
+      ]
+    },
+    {
+      "phase": "cold",
+      "family": "view",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/threads/pull/7",
+        "--json",
+        "url,body,state,headRefOid,isDraft,mergeable,mergeStateStatus,author,changedFiles,files,labels"
+      ]
+    },
+    {
+      "phase": "cold",
+      "family": "checks",
+      "args": [
+        "pr",
+        "checks",
+        "https://github.com/synthetic/threads/pull/7",
+        "--required",
+        "--json",
+        "bucket,name,link"
+      ]
+    },
+    {
+      "phase": "cold",
+      "family": "reviews",
+      "args": [
+        "api",
+        "--hostname",
+        "github.com",
+        "--paginate",
+        "--slurp",
+        "repos/synthetic/threads/pulls/7/reviews"
+      ]
+    },
+    {
+      "phase": "cold",
+      "family": "reviews",
+      "args": [
+        "api",
+        "--hostname",
+        "github.com",
+        "--paginate",
+        "--slurp",
+        "repos/synthetic/threads/pulls/7/reviews"
+      ]
+    },
+    {
+      "phase": "cold",
+      "family": "reviews",
+      "args": [
+        "api",
+        "--hostname",
+        "github.com",
+        "--paginate",
+        "--slurp",
+        "repos/synthetic/threads/pulls/7/reviews"
+      ]
+    },
+    {
+      "phase": "cold",
+      "family": "reviews",
+      "args": [
+        "api",
+        "--hostname",
+        "github.com",
+        "--paginate",
+        "--slurp",
+        "repos/synthetic/threads/pulls/7/reviews"
+      ]
+    },
+    {
+      "phase": "cold",
+      "family": "checks",
+      "args": [
+        "pr",
+        "checks",
+        "https://github.com/synthetic/threads/pull/7",
+        "--required",
+        "--json",
+        "bucket,name,link"
+      ]
+    },
+    {
+      "phase": "cold",
+      "family": "view",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/threads/pull/7",
+        "--json",
+        "url,body,state,headRefOid,isDraft,mergeable,mergeStateStatus,author,changedFiles,files,labels"
+      ]
+    },
+    {
+      "phase": "cold",
+      "family": "checks",
+      "args": [
+        "pr",
+        "checks",
+        "https://github.com/synthetic/threads/pull/7",
+        "--required",
+        "--json",
+        "bucket,name,link"
+      ]
+    },
+    {
+      "phase": "cold",
+      "family": "view",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/threads/pull/7",
+        "--json",
+        "url,body,state,headRefOid,isDraft,mergeable,mergeStateStatus,author,changedFiles,files,labels"
+      ]
+    },
+    {
+      "phase": "cold",
+      "family": "view",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/threads/pull/7",
+        "--json",
+        "url,body,state,headRefOid,isDraft,mergeable,mergeStateStatus,author,changedFiles,files,labels"
+      ]
+    },
+    {
+      "phase": "cold",
+      "family": "view",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/threads/pull/7",
+        "--json",
+        "url,body,state,headRefOid,isDraft,mergeable,mergeStateStatus,author,changedFiles,files,labels"
+      ]
+    },
+    {
+      "phase": "cold",
+      "family": "checks",
+      "args": [
+        "pr",
+        "checks",
+        "https://github.com/synthetic/threads/pull/7",
+        "--required",
+        "--json",
+        "bucket,name,link"
+      ]
+    },
+    {
+      "phase": "cold",
+      "family": "checks",
+      "args": [
+        "pr",
+        "checks",
+        "https://github.com/synthetic/threads/pull/7",
+        "--required",
+        "--json",
+        "bucket,name,link"
+      ]
+    },
+    {
+      "phase": "cold",
+      "family": "threads",
+      "args": [
+        "api",
+        "graphql",
+        "--hostname",
+        "github.com",
+        "-f",
+        "owner=synthetic",
+        "-f",
+        "name=threads",
+        "-F",
+        "number=7",
+        "-f",
+        "query=query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){url headRefOid reviewThreads(first:100){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}",
+        "--include"
+      ]
+    },
+    {
+      "phase": "cold",
+      "family": "threads",
+      "args": [
+        "api",
+        "graphql",
+        "--hostname",
+        "github.com",
+        "-f",
+        "owner=synthetic",
+        "-f",
+        "name=threads",
+        "-F",
+        "number=7",
+        "-f",
+        "query=query($owner:String!,$name:String!,$number:Int!,$cursor:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){url headRefOid reviewThreads(first:100,after:$cursor){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}",
+        "-f",
+        "cursor=next",
+        "--include"
+      ]
+    },
+    {
+      "phase": "repeat",
+      "family": "reviews",
+      "args": [
+        "api",
+        "--hostname",
+        "github.com",
+        "--paginate",
+        "--slurp",
+        "repos/synthetic/threads/pulls/7/reviews"
+      ]
+    },
+    {
+      "phase": "repeat",
+      "family": "view",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/threads/pull/7",
+        "--json",
+        "url,body,state,headRefOid,isDraft,mergeable,mergeStateStatus,author,changedFiles,files,labels"
+      ]
+    },
+    {
+      "phase": "repeat",
+      "family": "checks",
+      "args": [
+        "pr",
+        "checks",
+        "https://github.com/synthetic/threads/pull/7",
+        "--required",
+        "--json",
+        "bucket,name,link"
+      ]
+    },
+    {
+      "phase": "repeat",
+      "family": "threads",
+      "args": [
+        "api",
+        "graphql",
+        "--hostname",
+        "github.com",
+        "-f",
+        "owner=synthetic",
+        "-f",
+        "name=threads",
+        "-F",
+        "number=7",
+        "-f",
+        "query=query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){url headRefOid reviewThreads(first:100){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}",
+        "--include"
+      ]
+    },
+    {
+      "phase": "repeat",
+      "family": "threads",
+      "args": [
+        "api",
+        "graphql",
+        "--hostname",
+        "github.com",
+        "-f",
+        "owner=synthetic",
+        "-f",
+        "name=threads",
+        "-F",
+        "number=7",
+        "-f",
+        "query=query($owner:String!,$name:String!,$number:Int!,$cursor:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){url headRefOid reviewThreads(first:100,after:$cursor){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}",
+        "-f",
+        "cursor=next",
+        "--include"
+      ]
+    },
+    {
+      "phase": "failed",
+      "family": "reviews",
+      "args": [
+        "api",
+        "--hostname",
+        "github.com",
+        "--paginate",
+        "--slurp",
+        "repos/synthetic/threads/pulls/7/reviews"
+      ]
+    },
+    {
+      "phase": "failed",
+      "family": "view",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/threads/pull/7",
+        "--json",
+        "url,body,state,headRefOid,isDraft,mergeable,mergeStateStatus,author,changedFiles,files,labels"
+      ]
+    },
+    {
+      "phase": "failed",
+      "family": "threads",
+      "args": [
+        "api",
+        "graphql",
+        "--hostname",
+        "github.com",
+        "-f",
+        "owner=synthetic",
+        "-f",
+        "name=threads",
+        "-F",
+        "number=7",
+        "-f",
+        "query=query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){url headRefOid reviewThreads(first:100){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}",
+        "--include"
+      ]
+    },
+    {
+      "phase": "failed",
+      "family": "checks",
+      "args": [
+        "pr",
+        "checks",
+        "https://github.com/synthetic/threads/pull/7",
+        "--required",
+        "--json",
+        "bucket,name,link"
+      ]
+    },
+    {
+      "phase": "partial",
+      "family": "view",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/threads/pull/7",
+        "--json",
+        "url,body,state,headRefOid,isDraft,mergeable,mergeStateStatus,author,changedFiles,files,labels"
+      ]
+    },
+    {
+      "phase": "partial",
+      "family": "reviews",
+      "args": [
+        "api",
+        "--hostname",
+        "github.com",
+        "--paginate",
+        "--slurp",
+        "repos/synthetic/threads/pulls/7/reviews"
+      ]
+    },
+    {
+      "phase": "partial",
+      "family": "checks",
+      "args": [
+        "pr",
+        "checks",
+        "https://github.com/synthetic/threads/pull/7",
+        "--required",
+        "--json",
+        "bucket,name,link"
+      ]
+    },
+    {
+      "phase": "partial",
+      "family": "threads",
+      "args": [
+        "api",
+        "graphql",
+        "--hostname",
+        "github.com",
+        "-f",
+        "owner=synthetic",
+        "-f",
+        "name=threads",
+        "-F",
+        "number=7",
+        "-f",
+        "query=query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){url headRefOid reviewThreads(first:100){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}",
+        "--include"
+      ]
+    },
+    {
+      "phase": "head-change",
+      "family": "view",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/threads/pull/7",
+        "--json",
+        "url,body,state,headRefOid,isDraft,mergeable,mergeStateStatus,author,changedFiles,files,labels"
+      ]
+    },
+    {
+      "phase": "head-change",
+      "family": "threads",
+      "args": [
+        "api",
+        "graphql",
+        "--hostname",
+        "github.com",
+        "-f",
+        "owner=synthetic",
+        "-f",
+        "name=threads",
+        "-F",
+        "number=7",
+        "-f",
+        "query=query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){url headRefOid reviewThreads(first:100){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}",
+        "--include"
+      ]
+    },
+    {
+      "phase": "head-change",
+      "family": "reviews",
+      "args": [
+        "api",
+        "--hostname",
+        "github.com",
+        "--paginate",
+        "--slurp",
+        "repos/synthetic/threads/pulls/7/reviews"
+      ]
+    },
+    {
+      "phase": "head-change",
+      "family": "checks",
+      "args": [
+        "pr",
+        "checks",
+        "https://github.com/synthetic/threads/pull/7",
+        "--required",
+        "--json",
+        "bucket,name,link"
+      ]
+    },
+    {
+      "phase": "head-change",
+      "family": "threads",
+      "args": [
+        "api",
+        "graphql",
+        "--hostname",
+        "github.com",
+        "-f",
+        "owner=synthetic",
+        "-f",
+        "name=threads",
+        "-F",
+        "number=7",
+        "-f",
+        "query=query($owner:String!,$name:String!,$number:Int!,$cursor:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){url headRefOid reviewThreads(first:100,after:$cursor){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}",
+        "-f",
+        "cursor=next",
+        "--include"
+      ]
+    },
+    {
+      "phase": "recovered",
+      "family": "view",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/threads/pull/7",
+        "--json",
+        "url,body,state,headRefOid,isDraft,mergeable,mergeStateStatus,author,changedFiles,files,labels"
+      ]
+    },
+    {
+      "phase": "recovered",
+      "family": "reviews",
+      "args": [
+        "api",
+        "--hostname",
+        "github.com",
+        "--paginate",
+        "--slurp",
+        "repos/synthetic/threads/pulls/7/reviews"
+      ]
+    },
+    {
+      "phase": "recovered",
+      "family": "checks",
+      "args": [
+        "pr",
+        "checks",
+        "https://github.com/synthetic/threads/pull/7",
+        "--required",
+        "--json",
+        "bucket,name,link"
+      ]
+    },
+    {
+      "phase": "recovered",
+      "family": "threads",
+      "args": [
+        "api",
+        "graphql",
+        "--hostname",
+        "github.com",
+        "-f",
+        "owner=synthetic",
+        "-f",
+        "name=threads",
+        "-F",
+        "number=7",
+        "-f",
+        "query=query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){url headRefOid reviewThreads(first:100){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}",
+        "--include"
+      ]
+    },
+    {
+      "phase": "recovered",
+      "family": "threads",
+      "args": [
+        "api",
+        "graphql",
+        "--hostname",
+        "github.com",
+        "-f",
+        "owner=synthetic",
+        "-f",
+        "name=threads",
+        "-F",
+        "number=7",
+        "-f",
+        "query=query($owner:String!,$name:String!,$number:Int!,$cursor:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){url headRefOid reviewThreads(first:100,after:$cursor){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}",
+        "-f",
+        "cursor=next",
+        "--include"
+      ]
+    },
+    {
+      "phase": "alias",
+      "family": "view",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/OLD/REPO/pull/7",
+        "--json",
+        "url,body,state,headRefOid,isDraft,mergeable,mergeStateStatus,author,changedFiles,files,labels"
+      ]
+    },
+    {
+      "phase": "alias",
+      "family": "reviews",
+      "args": [
+        "api",
+        "--hostname",
+        "github.com",
+        "--paginate",
+        "--slurp",
+        "repos/OLD/REPO/pulls/7/reviews"
+      ]
+    },
+    {
+      "phase": "alias",
+      "family": "threads",
+      "args": [
+        "api",
+        "graphql",
+        "--hostname",
+        "github.com",
+        "-f",
+        "owner=synthetic",
+        "-f",
+        "name=threads",
+        "-F",
+        "number=7",
+        "-f",
+        "query=query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){url headRefOid reviewThreads(first:100){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}",
+        "--include"
+      ]
+    },
+    {
+      "phase": "alias",
+      "family": "checks",
+      "args": [
+        "pr",
+        "checks",
+        "https://github.com/OLD/REPO/pull/7",
+        "--required",
+        "--json",
+        "bucket,name,link"
+      ]
+    },
+    {
+      "phase": "alias",
+      "family": "threads",
+      "args": [
+        "api",
+        "graphql",
+        "--hostname",
+        "github.com",
+        "-f",
+        "owner=synthetic",
+        "-f",
+        "name=threads",
+        "-F",
+        "number=7",
+        "-f",
+        "query=query($owner:String!,$name:String!,$number:Int!,$cursor:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){url headRefOid reviewThreads(first:100,after:$cursor){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}",
+        "-f",
+        "cursor=next",
+        "--include"
+      ]
+    },
+    {
+      "phase": "reopen",
+      "family": "view",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/threads/pull/7",
+        "--json",
+        "url,body,state,headRefOid,isDraft,mergeable,mergeStateStatus,author,changedFiles,files,labels"
+      ]
+    },
+    {
+      "phase": "reopen",
+      "family": "reviews",
+      "args": [
+        "api",
+        "--hostname",
+        "github.com",
+        "--paginate",
+        "--slurp",
+        "repos/synthetic/threads/pulls/7/reviews"
+      ]
+    },
+    {
+      "phase": "reopen",
+      "family": "checks",
+      "args": [
+        "pr",
+        "checks",
+        "https://github.com/synthetic/threads/pull/7",
+        "--required",
+        "--json",
+        "bucket,name,link"
+      ]
+    },
+    {
+      "phase": "reopen",
+      "family": "threads",
+      "args": [
+        "api",
+        "graphql",
+        "--hostname",
+        "github.com",
+        "-f",
+        "owner=synthetic",
+        "-f",
+        "name=threads",
+        "-F",
+        "number=7",
+        "-f",
+        "query=query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){url headRefOid reviewThreads(first:100){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}",
+        "--include"
+      ]
+    },
+    {
+      "phase": "reopen",
+      "family": "threads",
+      "args": [
+        "api",
+        "graphql",
+        "--hostname",
+        "github.com",
+        "-f",
+        "owner=synthetic",
+        "-f",
+        "name=threads",
+        "-F",
+        "number=7",
+        "-f",
+        "query=query($owner:String!,$name:String!,$number:Int!,$cursor:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){url headRefOid reviewThreads(first:100,after:$cursor){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}",
+        "-f",
+        "cursor=next",
+        "--include"
+      ]
+    },
+    {
+      "phase": "late",
+      "family": "view",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/threads/pull/7",
+        "--json",
+        "url,body,state,headRefOid,isDraft,mergeable,mergeStateStatus,author,changedFiles,files,labels"
+      ]
+    },
+    {
+      "phase": "late",
+      "family": "reviews",
+      "args": [
+        "api",
+        "--hostname",
+        "github.com",
+        "--paginate",
+        "--slurp",
+        "repos/synthetic/threads/pulls/7/reviews"
+      ]
+    },
+    {
+      "phase": "late",
+      "family": "checks",
+      "args": [
+        "pr",
+        "checks",
+        "https://github.com/synthetic/threads/pull/7",
+        "--required",
+        "--json",
+        "bucket,name,link"
+      ]
+    },
+    {
+      "phase": "late",
+      "family": "threads",
+      "args": [
+        "api",
+        "graphql",
+        "--hostname",
+        "github.com",
+        "-f",
+        "owner=synthetic",
+        "-f",
+        "name=threads",
+        "-F",
+        "number=7",
+        "-f",
+        "query=query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){url headRefOid reviewThreads(first:100){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}",
+        "--include"
+      ]
+    },
+    {
+      "phase": "late",
+      "family": "threads",
+      "args": [
+        "api",
+        "graphql",
+        "--hostname",
+        "github.com",
+        "-f",
+        "owner=synthetic",
+        "-f",
+        "name=threads",
+        "-F",
+        "number=7",
+        "-f",
+        "query=query($owner:String!,$name:String!,$number:Int!,$cursor:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){url headRefOid reviewThreads(first:100,after:$cursor){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}",
+        "-f",
+        "cursor=next",
+        "--include"
+      ]
+    },
+    {
+      "phase": "held",
+      "family": "checks",
+      "args": [
+        "pr",
+        "checks",
+        "https://github.com/synthetic/threads/pull/7",
+        "--required",
+        "--json",
+        "bucket,name,link"
+      ]
+    },
+    {
+      "phase": "held",
+      "family": "view",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/threads/pull/7",
+        "--json",
+        "url,body,state,headRefOid,isDraft,mergeable,mergeStateStatus,author,changedFiles,files,labels"
+      ]
+    },
+    {
+      "phase": "held",
+      "family": "reviews",
+      "args": [
+        "api",
+        "--hostname",
+        "github.com",
+        "--paginate",
+        "--slurp",
+        "repos/synthetic/threads/pulls/7/reviews"
+      ]
+    },
+    {
+      "phase": "held",
+      "family": "threads",
+      "args": [
+        "api",
+        "graphql",
+        "--hostname",
+        "github.com",
+        "-f",
+        "owner=synthetic",
+        "-f",
+        "name=threads",
+        "-F",
+        "number=7",
+        "-f",
+        "query=query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){url headRefOid reviewThreads(first:100){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}",
+        "--include"
+      ]
+    },
+    {
+      "phase": "held",
+      "family": "threads",
+      "args": [
+        "api",
+        "graphql",
+        "--hostname",
+        "github.com",
+        "-f",
+        "owner=synthetic",
+        "-f",
+        "name=threads",
+        "-F",
+        "number=7",
+        "-f",
+        "query=query($owner:String!,$name:String!,$number:Int!,$cursor:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){url headRefOid reviewThreads(first:100,after:$cursor){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}",
+        "-f",
+        "cursor=next",
+        "--include"
+      ]
+    }
+  ]
+}
