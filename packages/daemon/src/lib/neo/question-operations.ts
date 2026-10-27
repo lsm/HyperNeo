@@ -1,4 +1,4 @@
-import { neoTodoReady } from './todo-dependencies.ts';
+import { neoTodoDependencyNodes, neoTodoReady } from './todo-dependencies.ts';
 import { neoTodoStalledCard } from './todo-runner.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
@@ -732,7 +732,9 @@ export function createNeoQuestionOperations(
               : []),
             ...waiting.flatMap((id) => {
               const family = store.listFamilyTodos(answered.ask.id);
-              const held = (store.getTodo(id)?.dependsOn ?? [])
+              const held = (
+                neoTodoDependencyNodes(family).find((node) => node.id === id)?.dependsOn ?? []
+              )
                 .map((dep) => family.find((todo) => todo.id === dep))
                 .filter((todo) => todo?.blockedBy === 'held')
                 .map((todo) => todo!.title);

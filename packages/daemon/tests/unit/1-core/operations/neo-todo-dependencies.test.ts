@@ -28,6 +28,7 @@ function setup() {
   const sessions = new NeoTodoSessionRepository(db);
   const packs = createTodoCheckPacks(db);
   const runner = createNeoTodoRunner({
+    limits: () => ({ running: 99, perGroup: 99 }),
     write: gatewayFor(db).run.bind(gatewayFor(db)),
     store,
     sessions,
@@ -55,7 +56,7 @@ function setup() {
         stop: async () => null,
         advance: () => runner.advance(),
         changed: () => {},
-        project: async (todos) => todos,
+        project: async (todos) => [...todos],
       }
     ),
     ...createNeoAskRecordOperations(
