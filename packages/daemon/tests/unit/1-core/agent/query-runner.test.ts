@@ -332,6 +332,29 @@ describe('QueryRunner', () => {
       }));
     });
 
+    it('keeps an arbitrary query-start failure distinct from a user interrupt for bounded job retries', async () => {
+      const failure = new Error('Synthetic unclassified query start exploded');
+      (query as unknown as ReturnType<typeof mock>).mockImplementation(() => {
+        throw failure;
+      });
+      const ctx = createContext({
+        session: {
+          ...mockSession,
+          workspacePath: null,
+          config: { model: 'unit', provider: providerId },
+        },
+        messageQueue: queue,
+      });
+      const rejection = queue
+        .enqueueWithId('startup-failure', 'Synthetic prompt', false, { durable: true })
+        .catch((error) => error);
+      runner = new QueryRunner(ctx);
+      await runner.start();
+      await ctx.queryPromise;
+      expect(await rejection).toBe(failure);
+      expect(queue.isRunning()).toBe(false);
+    });
+
     it.each(['neo', 'worker', 'ordinary', 'unknown-system'] as const)(
       'delivers successive %s inputs through the same continuous prompt iterator',
       async (variant) => {
