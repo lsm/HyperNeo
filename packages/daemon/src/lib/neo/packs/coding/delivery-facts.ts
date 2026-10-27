@@ -1,3 +1,4 @@
+import { codingMergeReceiptWrites } from './merge-receipt-db.ts';
 import { WorkRefSchema, type WorkRef } from '../../../drivers/types.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -45,6 +46,9 @@ export class CodingDeliveryFactsRepository {
           smoke: row.smoke ? CodingSmoke.parse(JSON.parse(row.smoke)) : null,
         }
       : null;
+  }
+  recordGateCurrent(todoId: string, gate: CodingMergeGate): Promise<boolean> {
+    return gatewayFor(this.db).call(codingMergeReceiptWrites, 'record', todoId, gate);
   }
   recordGate(todoId: string, input: CodingMergeGate): void {
     const gate = CodingMergeGate.parse(input);

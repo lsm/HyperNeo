@@ -1,0 +1,10 @@
+{
+  "runtime": "bun",
+  "mode": "verify",
+  "exitCode": 0,
+  "baselineFilesFrom": null,
+  "head": "58f9cb1920ef5de86fd7789966a4d323e3dad377",
+  "temporaryDaemonDataRemoved": true,
+  "freeGiBBefore": 212.57369232177734,
+  "freeMemoryPercentBefore": 52
+}

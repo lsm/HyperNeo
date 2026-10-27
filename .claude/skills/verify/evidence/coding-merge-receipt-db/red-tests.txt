@@ -1,0 +1,34 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/coding-merge-receipt-writer.test.ts:
+19 |     const prepare = main.prepare.bind(main),
+20 |       fault = readOnly
+21 |         ? null
+22 |         : spyOn(main, 'prepare').mockImplementation(((sql: string) => {
+23 |             if (/pack_coding_delivery_facts/.test(sql))
+24 |               throw new Error('Merge receipt SQL on main');
+                             ^
+error: Merge receipt SQL on main
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/coding-merge-receipt-writer.test.ts:24:25)
+      at read (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/src/lib/neo/packs/coding/delivery-facts.ts:39:8)
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/src/lib/neo/packs/coding/merge-gates.ts:121:27)
+(fail) manual merge receipt records and validates on the writer with guarded main [4.73ms]
+61 |         async () => candidate.head
+62 |       );
+63 |     };
+64 |     try {
+65 |       const results = await Promise.all([invoke('qa-one'), invoke('qa-two')]);
+66 |       expect(results.filter((r) => r.accepted)).toHaveLength(1);
+                                                     ^
+error: expect(received).toHaveLength(expected)
+
+Expected length: 1
+Received length: 0
+
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/coding-merge-receipt-writer.test.ts:66:49)
+(fail) manual merge receipt records and validates on the writer with read-only main [1.96ms]
+
+ 0 pass
+ 2 fail
+ 1 expect() calls
+Ran 2 tests across 1 file. [31.00ms]
