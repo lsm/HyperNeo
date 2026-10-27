@@ -166,6 +166,13 @@ for port in "${VERIFY_MOCK_PORT:-8000}" 8001; do
     echo "verification port $port is busy"; exit 1
   fi
 done
+# The proof helpers below bind fixed ports and never read VERIFY_MOCK_PORT, so the
+# preflight must always cover 8000 even when a parallel session uses an override.
+if [ -n "${VERIFY_MOCK_PORT:-}" ]; then
+  if lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "proof helper port 8000 is busy"; exit 1
+  fi
+fi
 RUN=$(mktemp -d /private/tmp/hyperneo-rpc-proof-XXXXXX)
 mkdir -p "$RUN/home" "$RUN/tmp"
 env -i HOME="$RUN/home" PATH="$PATH" TMPDIR="$RUN/tmp" NODE_ENV=test HYPERNEO_USE_DEV_PROXY=1 \
