@@ -10,7 +10,7 @@ import type {
   NeoTodoPatch,
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
-import type { WorkRef } from '../drivers/types.ts';
+import type { Place, WorkRef } from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import { dispatchNeoInput } from './dispatch-input.ts';
@@ -185,6 +185,12 @@ export function planNeoTodoAwaitingStart(todo: NeoTodo): NeoTodoPatch | null {
     'The human answers the start question.'
   );
 }
+
+const neoTodoHandoff = (todo: Pick<NeoTodo, 'title' | 'doneWhen'>) =>
+  `Take over the todo "${todo.title}". It is done when: ${todo.doneWhen}. Its previous worker stopped making progress; read what it did, then finish the work.`;
+
+const neoTodoStalledCard = (todo: Pick<NeoTodo, 'title'>) =>
+  `"${todo.title}" has nobody working on it, and HyperNeo cannot restart it on its own. Where should it continue, or should it close?`;
 
 export function neoTodoIdleReminder(todo: Pick<NeoTodo, 'title' | 'doneWhen'>, minutes: number) {
   return `Todo "${todo.title}" is not done yet (done when: ${todo.doneWhen}), and your session has been stopped for ${minutes} min. Continue it, or report what blocks you.`;
@@ -815,6 +821,127 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
     .endAsync('admission') as (todoId: string, now: number) => Promise<void | null>;
 
+  type Stalled = { todo: NeoTodo; ask: NeoAsk; ref: WorkRef };
+  const cardTodo = ({ todo, ask }: Stalled, now: number) => {
+    if (store.listQuestions(ask.id).some((q) => q.state === 'open' && q.todoId === todo.id)) return;
+    store.askQuestion(
+      crypto.randomUUID(),
+      ask.id,
+      {
+        text: neoTodoStalledCard(todo),
+        kind: 'reply',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+        todoId: todo.id,
+      },
+      now
+    );
+    deps.changed();
+  };
+
+  const findPlace = async ({ ask, ref }: Stalled) => {
+    const found = await deps.invoke(caller(ask), 'work.find', {
+      id: ref.id,
+      adapters: [ref.adapter],
+      includeClosed: true,
+    });
+    const groups =
+      found.kind === 'completed'
+        ? ((found.value as { groups?: { work?: { ref: WorkRef; place?: Place }[] }[] }).groups ??
+          [])
+        : [];
+    return groups.flatMap((group) => group.work ?? []).find((work) => work.ref.id === ref.id)
+      ?.place;
+  };
+
+  const rescueTodo = (superpipe({})('neo.todo.rescue-stalled') as PipelineAPI)
+    .input(['todo', 'now'])
+    .pipe(
+      (todo: NeoTodo): { value: Stalled } | { reason: null } => {
+        const ask = store.getAsk(todo.askId);
+        const ref = sessions.readRef(todo.id);
+        return todo.state === 'blocked' &&
+          todo.blockedBy === 'stalled' &&
+          ask?.status === 'open' &&
+          ref
+          ? { value: { todo, ask, ref } }
+          : { reason: null };
+      },
+      'todo',
+      'result:stalled'
+    )
+    .pipe(
+      async (stalled: Stalled) =>
+        stalled.ask.originMessageId?.startsWith('neo-track:') ||
+        sessions.readNudge(stalled.todo.id)?.redispatched
+          ? null
+          : await findPlace(stalled),
+      'stalled',
+      'place'
+    )
+    .pipe(
+      (stalled: Stalled, place: Place | null | undefined, now: number) => {
+        if (!place) return { reason: cardTodo(stalled, now) ?? null };
+        return { value: place };
+      },
+      ['stalled', 'place', 'now'],
+      'result:place'
+    )
+    .pipe(
+      async (now: number) =>
+        mayRedispatch(
+          (await store.read('listCheckable')).filter(
+            (other) =>
+              other.state === 'doing' &&
+              !['done', 'stopped', 'failed', 'needs_you'].includes(
+                sessions.readLiveStatus(other.id) ?? ''
+              )
+          ).length,
+          sweep.movedAt,
+          now
+        )
+          ? { value: null }
+          : { reason: null },
+      'now',
+      'result:room'
+    )
+    .pipe(
+      ({ todo }: Stalled, now: number) => {
+        sweep.movedAt = now;
+        sessions.recordNudge(todo.id, { since: now, nudges: 0, redispatched: true });
+        return store.updateTodo(todo, { state: 'doing', startedAt: now, finishedAt: null }, now);
+      },
+      ['stalled', 'now'],
+      'reopened'
+    )
+    .pipe(
+      ({ ask, ref }: Stalled, reopened: NeoTodo, place: Place) =>
+        dispatch({
+          todo: { ...reopened, instruction: reopened.instruction ?? neoTodoHandoff(reopened) },
+          ask,
+          target: { verb: 'start', adapter: ref.adapter, place },
+        }),
+      ['stalled', 'reopened', 'place'],
+      'dispatched'
+    )
+    .pipe(
+      ({ ask, todo, ref }: Stalled) =>
+        store.getTodo(todo.id)?.state === 'doing' && sessions.readRef(todo.id)?.id !== ref.id
+          ? deps.tell(
+              ask,
+              todo,
+              `Todo "${todo.title}" was stalled, so the daemon started a fresh worker for it where its last worker ran.`,
+              `neo-todo-rescue:${todo.id}`
+            )
+          : undefined,
+      ['stalled', 'dispatched'],
+      'rescued'
+    )
+    .endAsync('rescued') as (todo: NeoTodo, now: number) => Promise<void | null>;
+
   const read = (todoId: string) => {
     const todo = store.getTodo(todoId);
     return {
@@ -958,6 +1085,9 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           warn('Todo check pending', error)
         );
         await nudge(todo.id, Date.now()).catch((error) => warn('Todo nudge pending', error));
+        await rescueTodo(todo, Date.now()).catch((error) =>
+          warn('Stalled todo rescue pending', error)
+        );
       }
       const asks = await store.read('listOpenAsks');
       const todos = await store.read(
