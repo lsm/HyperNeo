@@ -13,6 +13,12 @@ real manual-mode recipient AgentSession. It persists the governor's agreed
 queryFailureEpisode terminal shape, then emits ErrorManager's session.error.
 No governor retry policy is implemented or tested here; that belongs to #9093.
 
+The helper first saturates ErrorManager's recoverable SYSTEM/UNKNOWN throttle
+bucket, then reports the terminal episode with MessageDeliveryTerminalTurnError,
+the base class used by the governor's QueryFailureCapError. Terminal identity must
+survive structured error creation so throttling cannot suppress the Neo wake.
+The original consumer-only baseline also fails this saturated-throttle schedule.
+
 Observe failed status and the original error, one wake for repeated notifications
 of the same episode, and the original error in Neo's stored incoming message.
 After a hard-reset-shaped episode replacement, the old terminal event must not

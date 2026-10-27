@@ -7,6 +7,7 @@ import { createReactiveDatabase } from '../../../packages/daemon/src/storage/rea
 import { sdkNeoWakeQueue } from '../../../packages/daemon/src/storage/repositories/sdk-message-transactions.ts';
 import { sdkMessageBodyAt } from '../../../packages/daemon/src/storage/repositories/sdk-message-body-read.ts';
 import { AgentSession } from '../../../packages/daemon/src/lib/agent/agent-session.ts';
+import { MessageDeliveryTerminalTurnError } from '../../../packages/daemon/src/lib/agent/message-delivery.ts';
 import { createHyperneoAdapter } from '../../../packages/daemon/src/lib/drivers/hyperneo-adapter.ts';
 import { createWorkVerbOperations } from '../../../packages/daemon/src/lib/drivers/work-operations.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
@@ -55,10 +56,14 @@ const agent = new AgentSession(db.getSession(root)!, db, hub, events, async () =
   undefined, undefined, undefined, undefined, { autoReplayPendingMessages: false });
 const evidence: Record<string, unknown> = { surface: 'work.status operation and Neo recipient mailbox storage', governorSimulated: true, networkTransportVerified: false, modelConsumptionVerified: false };
 const errors = new ErrorManager(hub, events);
-const emit = () => errors.handleError(worker, error, ErrorCategory.SYSTEM, error, undefined,
+const emit = () => errors.handleError(worker, new MessageDeliveryTerminalTurnError(error), ErrorCategory.SYSTEM, error, undefined,
   { queryFailureEpisode: episode });
 const mailbox = () => db.getJobQueueRepo().listJobs({ queue: 'mailbox' });
 try {
+  for (let attempt = 0; attempt < 5; attempt++)
+    await errors.handleError(worker, error, ErrorCategory.SYSTEM, error);
+  evidence.throttleSaturated = true;
+  assert.equal(mailbox().length, 0);
   await db.updateSession(worker, { metadata: { ...seed(worker).metadata, queryFailureEpisode: episode } } as never);
   evidence.status = await invokeOperation(registry, 'work.status', { ref: { adapter: 'hyperneo', id: worker } },
     { source: 'rpc', principal: 'local' });
