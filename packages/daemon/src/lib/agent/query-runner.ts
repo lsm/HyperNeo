@@ -1486,7 +1486,8 @@ export class QueryRunner {
             ErrorCategory.SYSTEM,
             terminal.message,
             stateManager.getState(),
-            { queryFailureEpisode: episode }
+            { queryFailureEpisode: episode },
+            () => owns() && session.metadata.queryFailureEpisode?.id === episode.id
           );
           return;
         }

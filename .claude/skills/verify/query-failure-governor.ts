@@ -44,6 +44,7 @@ try{
  const read=async()=>(await hub.request<{session:Session}>('session.get',{sessionId})).session;
  if(phase==='before'){
   await until(()=>attempts.length>=5,'baseline did not reproduce repeated fake failures',45000);
+  const jobs=app.db.getDatabase().prepare("SELECT retry_count AS retryCount,json_extract(payload,'$.__parkCount') AS parks FROM job_queue WHERE queue='message_delivery' AND json_extract(payload,'$.sessionId')=?").all(sessionId) as {retryCount:number;parks:number}[];assert(jobs.some(job=>job.retryCount===0 && job.parks>=4));evidence.jobs=jobs;
   evidence.baselineReproduced=true;evidence.attempts=[...attempts];
  }else{
   await until(async()=>(await read()).metadata.queryFailureEpisode?.failed===true,'failure cap never became public');
