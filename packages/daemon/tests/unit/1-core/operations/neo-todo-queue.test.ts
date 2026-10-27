@@ -105,7 +105,7 @@ function world(limits = { running: 6, perGroup: 3 }) {
     await runner.recompute(store.getTodo(id)!, { state: 'done', finishedAt: Date.now() });
   };
   const tick = () => runner.refresh(() => {});
-  return { db, store, clock, started, ask, approved, add, state, finish, tick };
+  return { db, store, runner, clock, started, ask, approved, add, state, finish, tick };
 }
 
 let current: ReturnType<typeof world> | null = null;
@@ -194,5 +194,13 @@ describe('queued todos start themselves', () => {
     const todos = [w.add(w.approved(null)), w.add(w.approved(null)), w.add(w.approved(null))];
     await w.tick();
     expect(todos.map(w.state)).toEqual(['doing', 'doing', 'doing']);
+  });
+
+  test('overlapping fills never start more than the cap', async () => {
+    const w = (current = world({ running: 1, perGroup: 1 }));
+    w.add(w.approved());
+    w.add(w.approved());
+    await Promise.all([w.runner.fill(), w.runner.fill()]);
+    expect(w.started).toHaveLength(1);
   });
 });

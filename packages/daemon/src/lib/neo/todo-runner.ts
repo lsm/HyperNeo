@@ -447,7 +447,9 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'started'
     )
     .endAsync('started') as (limits: ReturnType<NeoTodoRunnerDeps['limits']>) => Promise<void>;
-  const fill = () => fillQueue(deps.limits());
+  let filling: Promise<void> = Promise.resolve();
+  const fill = () =>
+    (filling = filling.catch(() => undefined).then(() => fillQueue(deps.limits())));
 
   const start = async (todoId: string) => {
     const tracked = starting.has(todoId);
