@@ -1,3 +1,4 @@
+import type { BeforeVoiceDispatch } from './transcribe-fetch.ts';
 import { VOICE_MAX_AUDIO_BYTES } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
@@ -50,7 +51,7 @@ export function createVoiceTranscribeLimiters(): VoiceTranscribeLimiters {
 }
 
 export interface VoiceTranscribeDeps {
-  beforeDispatch?: () => void | Promise<void>;
+  beforeDispatch?: BeforeVoiceDispatch;
   settingsManager: Pick<SettingsManager, 'getGlobalSettings'>;
   credentialManager?: Pick<ProviderCredentialManager, 'getCredentials'>;
   limiters: VoiceTranscribeLimiters;

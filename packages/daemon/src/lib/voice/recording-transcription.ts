@@ -1,3 +1,4 @@
+import type { BeforeVoiceDispatch } from './transcribe-fetch.ts';
 import { createHash } from 'node:crypto';
 import { VOICE_MAX_AUDIO_BYTES } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -5,7 +6,7 @@ import { VoiceRecordingRepository } from '../../storage/repositories/voice-recor
 import type { VoiceTranscribeOutcome } from './transcribe-pipeline.ts';
 
 type Recording = { owner: string; id: string; hash: string };
-type Submit = (beforeDispatch: () => Promise<void>) => Promise<VoiceTranscribeOutcome>;
+type Submit = (beforeDispatch: BeforeVoiceDispatch) => Promise<VoiceTranscribeOutcome>;
 type Request = { recordingId?: string; audioBase64: string; mimeType: string };
 
 export class VoiceRecordingTranscription {
@@ -40,12 +41,16 @@ export class VoiceRecordingTranscription {
       );
     if (!saved && !(await this.repository.reserveAsync(owner, id, hash)))
       return this.transcribe(recording, submit);
+    let claimed = false;
     let dispatched = false;
     const beforeDispatch = async () => {
-      if (dispatched) return;
+      if (claimed) return;
       if (!(await this.repository.markDispatchedAsync(owner, id)))
         throw new Error('Recording submission is already dispatched; retry for its saved result');
-      dispatched = true;
+      claimed = true;
+      return () => {
+        dispatched = true;
+      };
     };
     return Promise.resolve()
       .then(() => submit(beforeDispatch))
@@ -56,6 +61,7 @@ export class VoiceRecordingTranscription {
         })
       )
       .then(async (outcome) => {
+        if (claimed && !dispatched) await this.repository.releaseUnsentAsync(owner, id);
         await this.repository.finishAsync(owner, id, outcome, dispatched);
         return outcome;
       });

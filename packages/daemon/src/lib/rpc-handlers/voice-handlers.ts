@@ -1,3 +1,4 @@
+import type { BeforeVoiceDispatch } from '../voice/transcribe-fetch.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { VoiceRecordingRepository } from '../../storage/repositories/voice-recording-repository.ts';
 import type { UpgradeIdentity } from '../pairing/upgrade-auth.ts';
@@ -213,7 +214,7 @@ async function transcribeViaPipeline(
   recordings?: VoiceRecordingTranscription,
   owner = 'local'
 ): Promise<VoiceTranscribeResponse> {
-  const submit = (beforeDispatch?: () => void | Promise<void>) =>
+  const submit = (beforeDispatch?: BeforeVoiceDispatch) =>
     runVoiceTranscribe({
       data,
       context,

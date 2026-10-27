@@ -18,6 +18,18 @@ export class VoiceRecordingRepository {
     return gatewayFor(this.db).call(voiceRecordingWrites, 'markDispatched', owner, id);
   }
 
+  releaseUnsentAsync(owner: string, id: string) {
+    return gatewayFor(this.db).call(voiceRecordingWrites, 'releaseUnsent', owner, id);
+  }
+
+  releaseUnsent(owner: string, id: string): void {
+    this.db
+      .prepare(
+        'UPDATE voice_recordings SET dispatched_at = NULL WHERE owner = ? AND recording_id = ?'
+      )
+      .run(owner, id);
+  }
+
   finishAsync(owner: string, id: string, outcome: VoiceTranscribeOutcome, dispatched: boolean) {
     return gatewayFor(this.db).call(voiceRecordingWrites, 'finish', owner, id, outcome, dispatched);
   }
@@ -85,5 +97,5 @@ export const voiceRecordingWrites = defineRepositoryOp(
   'voice.recording.write',
   'write',
   VoiceRecordingRepository,
-  ['reserve', 'markDispatched', 'finish'] as const
+  ['reserve', 'markDispatched', 'releaseUnsent', 'finish'] as const
 );

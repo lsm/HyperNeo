@@ -31,7 +31,7 @@ const asr = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let socket: WebSocket | undefined;
 let probe: ReturnType<typeof spawn> | undefined;
-const evidence: Record<string, unknown> = { runtime: Bun.version, modeledWaitMs: 1200 };
+const evidence: Record<string, unknown> = { runtime: Bun.version, modeledWaitMs: 1200, cancelDispatch, cancellationDeadlineMs: cancelDispatch ? 200 : null };
 try {
   app = await createDaemonApp({ config: { ...getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db'), workspaceRoot: run }), disableWorktrees: true }, verbose: false });
   await app.jobProcessor.stop();
@@ -88,6 +88,7 @@ try {
   assert.deepEqual(first,{text:'Synthetic retained voice transcript'});
   assert.deepEqual(concurrent,first); assert.deepEqual(replay,first); assert.equal(calls,1);
   assert(writes.some(row=>row.operation==='run' && row.sql.startsWith('INSERT')));
+  assert.equal(writes.filter(row => row.modeledWaitMs === 1200).length, 1, 'Storage wait must execute exactly once');
   assert(writes.every(row=>row.thread==='worker'),'Recording SQL still runs on main');
   assert(Number(evidence.maxHealthMs)<250, 'health delayed by recording storage');
   evidence.passed=true;
