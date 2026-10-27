@@ -78,6 +78,7 @@ describe('Neo preferences', () => {
     const icon = container.querySelector('[data-thinking-level]')!;
     expect(icon.querySelector('circle')).toBeNull();
     expect(icon.querySelectorAll('svg')).toHaveLength(1);
+    expect(icon.querySelector('svg')?.style.filter.includes('drop-shadow')).toBe(step === 6);
     if (step === 0) expect(icon.querySelector('clipPath')).toBeNull();
     else {
       const fill = icon.querySelector('clipPath rect')!;
