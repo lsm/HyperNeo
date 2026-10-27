@@ -9,6 +9,8 @@ const hubRequest = vi.fn(
   async (method: string, payload?: unknown): Promise<Record<string, unknown>> => {
     if (method === 'operation.invoke') {
       const invocation = payload as IntakeInvocation;
+      if (invocation.name === 'message.send')
+        return { kind: 'accepted', messageId: 'session-message', mailboxId: 'session-mailbox' };
       if (invocation.name !== 'neo.message.send')
         throw new Error(`Unknown operation: ${invocation.name}`);
       const { requestId } = invocation.input;
@@ -105,29 +107,41 @@ describe('voice send-intent recovery', () => {
     expect(rawMethods()).not.toContain('neo.message.send');
   });
 
-  it('sends a session pane recording to its session through message.send', async () => {
+  it('sends a session pane recording through the idempotent operation door', async () => {
     seedEntry({ intent: 'send', door: 'session' });
     await flushPendingVoiceAudio();
 
     expect(asks()).toHaveLength(0);
-    expect(hubRequest).toHaveBeenCalledWith('message.send', {
-      sessionId: 's1',
-      content: 'hello world',
+    expect(hubRequest).toHaveBeenCalledWith('operation.invoke', {
+      name: 'message.send',
+      input: {
+        sessionId: 's1',
+        idempotencyKey: 'voice:rec-1',
+        message: {
+          type: 'user',
+          inputKind: 'human',
+          parent_tool_use_id: null,
+          message: { role: 'user', content: 'hello world' },
+        },
+      },
     });
     expect(store.records).toHaveLength(0);
   });
 
   it('parks an unconfirmed session send in the draft instead of replaying it', async () => {
     seedEntry({ intent: 'send', door: 'session' });
-    hubRequest.mockImplementation(async (method: string) => {
+    hubRequest.mockImplementation(async (method: string, payload?: unknown) => {
       if (method === 'voice.transcribe') return { text: 'hello world' };
-      if (method === 'message.send') throw new Error('Request timeout');
+      if (method === 'operation.invoke' && (payload as { name: string }).name === 'message.send')
+        throw new Error('Request timeout');
       return { success: true };
     });
     await flushPendingVoiceAudio();
     await flushPendingVoiceAudio();
 
-    expect(rawMethods().filter((method) => method === 'message.send')).toHaveLength(1);
+    expect(intakes().filter(([, invocation]) => invocation.name === 'message.send')).toHaveLength(
+      1
+    );
     expect(enqueueTranscript).toHaveBeenCalledWith('s1', 'hello world', 'rec-1');
   });
 

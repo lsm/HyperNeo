@@ -34,3 +34,15 @@ Resend control. Hold final ASR and inspect the re-persisted record: all accepted
 context must remain. Release ASR and observe exactly one operation carrying the
 original recording ID, photo bytes, reply target and file words. File text must
 match the ordinary typed-send format without an extra `Attached files` line.
+
+Session-chat retry proof: with the isolated daemon still running, run
+`VERIFY_PORT=<port> bun .claude/skills/verify/transcript-session-retry.ts "$RUN"`.
+It creates an isolated session, sends a human SDK envelope through the existing
+`message.send` operation with key `voice:<recording UUID>`, deliberately discards
+an accepted response, and replays through fresh WebSocket connections. All
+receipts must name the same message and mailbox entry; read-only SQLite confirms
+one mailbox job. Reusing the key for changed words must reject. Open the emitted
+`/session/<id>` URL and confirm the synthetic user message appears once. The web
+lost-response regression calls the production voice submit function twice and
+checks that both attempts use this exact operation/key/envelope; there is no
+fallback to the non-idempotent legacy RPC.

@@ -4,6 +4,7 @@ import { effect, signal } from '@preact/signals';
 import { connectionManager } from '../connection-manager';
 import { NEO_UNCONFIRMED_RECEIPT, submitNeoDraft } from '../../neo/neo-intake.ts';
 import { connectionState } from '../state';
+import { invokeOperation } from '../operations.ts';
 import { t } from '../i18n/index.ts';
 import {
   deleteVoiceRecord,
@@ -107,12 +108,37 @@ async function sendSessionVoice(
   record: VoiceRecordEntry
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   try {
-    await hub.request('message.send', {
-      sessionId,
-      content: text,
-      ...(record.sendContext?.images?.length ? { images: record.sendContext.images } : {}),
-    });
-    return { ok: true };
+    const images = record.sendContext?.images ?? [];
+    const receipt = await invokeOperation<{ kind: string; messageId?: string; reason?: string }>(
+      hub,
+      'message.send',
+      {
+        sessionId,
+        idempotencyKey: `voice:${record.id}`,
+        message: {
+          type: 'user',
+          inputKind: 'human',
+          parent_tool_use_id: null,
+          message: {
+            role: 'user',
+            content: images.length
+              ? [
+                  { type: 'text', text },
+                  ...images.map((image) => ({
+                    type: 'image',
+                    source: { type: 'base64', data: image.data, media_type: image.media_type },
+                  })),
+                ]
+              : text,
+          },
+        },
+      }
+    );
+    return receipt?.kind === 'accepted' &&
+      typeof receipt.messageId === 'string' &&
+      receipt.messageId
+      ? { ok: true }
+      : { ok: false, reason: receipt?.reason ?? t('session.voiceUnconfirmed') };
   } catch (cause) {
     return {
       ok: false,
