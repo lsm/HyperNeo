@@ -19,6 +19,9 @@ It uses no real keys. The synthetic loopback provider credential is registered
 through RPC and retained only in the isolated database, never exported to the daemon.
 Real SDK download uses public npm. Pairing codes and client credentials stay in memory.
 
+The helper reads the expected version from this checkout’s root package.json;
+it must match both installed CLI output and system.build, without a fixed release number.
+
 steps.json and daemon.log must show installation version/hash, healthy exact-commit
 system.build, first-start SDK download, compiled pair producing an approved code,
 a real client claiming it and appearing in compiled devices, a Neo chat input whose

@@ -4,6 +4,26 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.50.0] - 2026-10-27
+
+### Added
+
+- **Work cards**: Index asks, todos and questions for search; page older outcomes (#9061, #9010).
+- **Session tools**: Apply saved tool choices through one session picker, including Space tasks (#8914, #9011, #9025).
+- **Voice**: Choose the transcription language and reach voice settings directly (#8984, #9073).
+
+### Fixed
+
+- **Responsiveness**: Read transcript pages, message counts and todo turn completions off the daemon main thread; relay voice on a dedicated worker so main-loop stalls do not cut the stream (#8992, #9121, #9124, #9075).
+- **Todo completion**: Honor passing checks across recorded states, recover interrupted starts atomically, bound repeated worker failures and stop SDK queries without an unbounded interrupt wait (#9117, #9074, #9108, #9109).
+- **Worker startup**: Refresh existing Codex policies, repair scratch permissions, preserve GitHub CLI configuration reads and accept worktrees with local settings (#9114, #9104, #9106, #9059).
+- **Neo conversations**: Render full publications, copy whole messages as Markdown, keep settled question previews readable and distinguish generated notices (#9048, #9094, #9099, #9101).
+- **Operations**: Accept common input variants, advertise schema-derived call shapes and keep worker operation catalogs scoped (#8856, #9030, #9047).
+- **Desktop delivery**: Deliver through the owning Codex Desktop instance and retain the full handoff window during slow ownership discovery (#9006, #9057).
+- **Local work**: Allow worker Unix sockets, keep worker sandboxing optional and default it off, preserve safe Neo home writes and explicit consent for standing rules (#9022, #9024, #9018, #8877).
+- **Browser reconnect**: Resume a suspended web client when it becomes visible again (#9023).
+- **Verification**: Support an isolated mock API port while retaining checks for helpers that use fixed ports (#9066).
+
 ## [0.49.0] - 2026-10-26
 
 ### Added
