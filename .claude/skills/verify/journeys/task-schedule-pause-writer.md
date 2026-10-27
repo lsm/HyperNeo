@@ -11,6 +11,8 @@ task schedules, pauses them, and reads the paused results back. Each pending
 fire job must disappear. Schedule identity, timing, complete Unicode description,
 priority and ordered labels survive. Wrong-Space, missing and already-paused
 requests must fail without altering the schedule or its job.
+An injected SQL failure during the pause must roll back its paired job deletion
+and return an RPC error while the original active schedule stays intact.
 
 The main connection must prepare neither the pause UPDATE nor its paired job
 DELETE. Commit the baseline reproduction before fixing the RPC: all behavior
