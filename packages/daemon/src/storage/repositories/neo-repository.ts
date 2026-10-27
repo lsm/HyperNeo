@@ -1,3 +1,4 @@
+import type { NeoProjectSaveRequest } from '../../lib/neo/project-save.ts';
 import { neoProjectMoveWrites } from './neo-project-move-writes.ts';
 import type { OperationCaller } from '../../lib/operations/registry.ts';
 import { neoProjectForgetWrites } from './neo-project-forget-writes.ts';
@@ -134,6 +135,16 @@ export class NeoRepository {
     return this.db
       .prepare(`SELECT ${concernColumns} FROM neo_concerns WHERE id = ?`)
       .get(id) as NeoProject | null;
+  }
+
+  async saveProjectCurrent(input: NeoProjectSaveRequest, caller: OperationCaller) {
+    const reply = await gatewayFor(this.db).call(neoProjectMoveWrites, 'save', input, {
+      source: caller.source,
+      principal: caller.principal,
+      sessionId: caller.sessionId,
+    });
+    if (reply.changed) this.notify();
+    return reply.result;
   }
 
   saveProject(input: NeoProjectInput, expectedRevision: number): NeoProject | null {

@@ -1,3 +1,5 @@
+import { saveNeoProjectCommand, type NeoProjectSaveRequest } from '../../lib/neo/project-save.ts';
+import type { OperationCaller } from '../../lib/operations/registry.ts';
 import { neoProjectMoveReason } from '@hyperneo/shared/types/neo-project-tree';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
@@ -5,6 +7,14 @@ import { NeoRepository } from './neo-repository.ts';
 
 class NeoProjectMoveCommands {
   constructor(private readonly db: Database) {}
+
+  save(input: NeoProjectSaveRequest, caller: OperationCaller) {
+    let changed = false;
+    const repo = new NeoRepository(this.db, () => {
+      changed = true;
+    });
+    return { result: saveNeoProjectCommand(input, caller, repo), changed };
+  }
 
   move(id: string, parentId: string | null, expectedRevision: number) {
     const repo = new NeoRepository(this.db);
@@ -19,5 +29,5 @@ export const neoProjectMoveWrites = defineRepositoryOp(
   'neo.project.move',
   'write',
   NeoProjectMoveCommands,
-  ['move']
+  ['move', 'save']
 );
