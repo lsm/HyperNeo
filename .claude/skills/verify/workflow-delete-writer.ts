@@ -1,0 +1,61 @@
+import assert from 'node:assert/strict';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { SpaceRepository } from '../../../packages/daemon/src/storage/repositories/space-repository.ts';
+import { SpaceWorkflowRepository } from '../../../packages/daemon/src/storage/repositories/space-workflow-repository.ts';
+import { SpaceWorkflowRunRepository } from '../../../packages/daemon/src/storage/repositories/space-workflow-run-repository.ts';
+
+const [mode, directory] = process.argv.slice(2), run = resolve(directory);
+assert.equal(mode, 'verify');
+assert.equal(process.env.NODE_ENV, 'test');
+assert.equal(process.env.HOME, join(run, 'home'));
+assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
+assert(!existsSync(join(run, 'data')));
+mkdirSync(join(run, 'evidence'), { recursive: true });
+const originalFetch = globalThis.fetch;
+globalThis.fetch = (() => { throw new Error('External HTTP forbidden'); }) as typeof fetch;
+const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
+let ws: WebSocket | undefined;
+const replies: unknown[] = [], mainSql: string[] = [];
+let measuring = false;
+const raw = app.db.getDatabase(), prepare = raw.prepare.bind(raw);
+raw.prepare = ((sql: string) => { if (measuring && /DELETE FROM space_workflows|FROM space_workflow_runs r/.test(sql)) mainSql.push(sql); return prepare(sql); }) as typeof raw.prepare;
+try {
+  await app.spaceRuntimeService.ready(); await app.jobProcessor.stop();
+  assert.notEqual(app.server.port, 8399);
+  const spaces = new SpaceRepository(raw), workflows = new SpaceWorkflowRepository(raw);
+  const space = spaces.createSpace({ slug: 'delete-fixture', name: 'Delete fixture', workspacePath: join(run, 'workspace') });
+  const other = spaces.createSpace({ slug: 'other-fixture', name: 'Other fixture', workspacePath: join(run, 'other') });
+  const create = (name: string) => workflows.createWorkflow({ spaceId: space.id, name, nodes: [{ id: crypto.randomUUID(), name: 'Start', agents: [] }] });
+  const disposable = create('Disposable'), blocked = create('Executable'), protectedWorkflow = create('Other-space refusal');
+  const active = new SpaceWorkflowRunRepository(raw).createRun({ spaceId: space.id, workflowId: blocked.id, title: 'Taskless executable run' });
+  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });
+  const rpc = (method: string, data: unknown) => new Promise<Record<string, unknown>>((done, fail) => {
+    const id = crypto.randomUUID(), timer = setTimeout(() => fail(new Error(`RPC timeout: ${method}`)), 15000);
+    ws!.onmessage = event => { const reply = JSON.parse(String(event.data)); if (reply.id !== id && reply.requestId !== id) return; clearTimeout(timer); replies.push({ method, input: data, reply }); done(reply); };
+    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method, data, timestamp: new Date().toISOString(), version: '1.0.0' }));
+  });
+  measuring = true;
+  const denied = await rpc('spaceWorkflow.delete', { id: protectedWorkflow.id, spaceId: other.id });
+  assert(denied.error); assert.match(JSON.stringify(denied.error), /Workflow not found/);
+  const live = await rpc('spaceWorkflow.delete', { id: blocked.id, spaceId: space.id });
+  assert(live.error); assert.match(JSON.stringify(live.error), /still executable/);
+  const deleted = await rpc('spaceWorkflow.delete', { id: disposable.id, spaceId: space.id });
+  assert.deepEqual(deleted.data, { success: true });
+  const missing = await rpc('spaceWorkflow.delete', { id: disposable.id });
+  assert(missing.error); assert.match(JSON.stringify(missing.error), /Workflow not found/);
+  measuring = false;
+  assert.equal(workflows.getWorkflow(disposable.id), null);
+  assert(workflows.getWorkflow(blocked.id)); assert(workflows.getWorkflow(protectedWorkflow.id));
+  assert(new SpaceWorkflowRunRepository(raw).getRun(active.id));
+  assert.equal((raw.prepare('SELECT count(*) AS n FROM space_workflow_nodes WHERE workflow_id = ?').get(disposable.id) as { n: number }).n, 0);
+  assert.equal((raw.prepare('SELECT count(*) AS n FROM space_workflow_definition_versions WHERE workflow_id = ?').get(disposable.id) as { n: number }).n, 1, 'Immutable definition history must survive deletion');
+  assert.deepEqual(mainSql, [], 'Workflow deletion and its executable-run guard must leave the main connection');
+  console.log('ok: real workflow RPC deletes an unused definition, retains immutable history and rejects executable/cross-space targets off main');
+} finally {
+  measuring = false; ws?.close(); await app.cleanup(); globalThis.fetch = originalFetch;
+  writeFileSync(join(run, 'evidence/workflow-delete-writer.json'), JSON.stringify({ mode, replies, mainSql }, null, 2));
+}
