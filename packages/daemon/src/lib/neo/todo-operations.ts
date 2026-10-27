@@ -62,7 +62,10 @@ const TodoDraft = z.object({
   after: z
     .array(z.union([Text, z.number().int().min(0)]))
     .max(20)
-    .optional(),
+    .optional()
+    .describe(
+      'Earlier steps of this ask this todo waits for: indexes of earlier todos in the same neo.ask.open call, or todo ids. [] lets it run alongside the others; omit it to wait for the step before it. The daemon starts each step once everything it waits for is done.'
+    ),
 });
 
 function refineNeoTodoDraft(
@@ -246,7 +249,11 @@ const Edit = z.object({
   artifacts: z.array(ArtifactRefSchema).min(1).max(16).optional(),
   priority: TodoPriority.optional(),
   hold: Text.nullable().optional(),
-  after: z.array(Text).max(20).optional(),
+  after: z
+    .array(Text)
+    .max(20)
+    .optional()
+    .describe('Replace the todo ids this todo waits for; [] lets it run alongside the others.'),
 });
 
 const Remove = z.object({

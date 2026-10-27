@@ -1,3 +1,4 @@
+import { neoTodoDependencyNodes } from '../../lib/neo/todo-dependencies.ts';
 import { NeoTurnReportReceipts } from '../../lib/neo/turn-report-receipts.ts';
 import {
   continuesIncident,
@@ -174,39 +175,42 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
           ]
         : []
     );
+    const states = new Map(todos.map((todo) => [todo.id, todo.state]));
+    const ready = (id: string) =>
+      ['done', 'closed_unverified', 'removed', undefined].includes(states.get(id));
     const candidates = asks.flatMap((ask) => {
-      const plan = todos
-        .filter((todo) => todo.askId === ask.id)
-        .sort((a, b) => a.position - b.position);
-      const next = plan.find(
-        (todo) => !['done', 'closed_unverified', 'removed'].includes(todo.state)
-      );
-      const target = next && this.get(next.id);
-      return next?.state === 'todo' &&
-        next.startedAt === null &&
-        next.instruction &&
-        plan.some(
+      const plan = todos.filter((todo) => todo.askId === ask.id);
+      if (
+        !plan.some(
           (todo) => todo.startedAt !== null || ['done', 'closed_unverified'].includes(todo.state)
-        ) &&
-        !store
-          .listQuestions(ask.id)
-          .some(
+        )
+      )
+        return [];
+      const questions = store.listQuestions(ask.id).filter((question) => question.state === 'open');
+      return neoTodoDependencyNodes(plan).flatMap((node) => {
+        const next = plan.find((todo) => todo.id === node.id)!;
+        const target = this.get(next.id);
+        return next.state === 'todo' &&
+          next.startedAt === null &&
+          next.instruction &&
+          (node.dependsOn ?? []).every(ready) &&
+          !questions.some(
             (question) =>
-              question.state === 'open' &&
               (!question.todoId || question.todoId === next.id) &&
               (question.kind !== 'start' || !!question.startTodos?.includes(next.id))
           ) &&
-        (target?.verb === 'start' || target?.verb === 'send')
-        ? [
-            {
-              id: next.id,
-              group: ask.projectId ?? null,
-              priority: next.priority,
-              createdAt: next.createdAt,
-              worker: target.verb === 'send' ? worker(target.ref) : null,
-            },
-          ]
-        : [];
+          (target?.verb === 'start' || target?.verb === 'send')
+          ? [
+              {
+                id: next.id,
+                group: ask.projectId ?? null,
+                priority: next.priority,
+                createdAt: next.createdAt,
+                worker: target.verb === 'send' ? worker(target.ref) : null,
+              },
+            ]
+          : [];
+      });
     });
     return { candidates, running };
   }
