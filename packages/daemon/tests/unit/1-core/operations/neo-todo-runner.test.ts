@@ -1784,6 +1784,19 @@ describe('stopped worker ladder', () => {
     }
   });
 
+  test('a reminder whose delivery is uncertain keeps the todo going and tells Neo', async () => {
+    const h = await stopped(null);
+    try {
+      h.setSend({ ok: false, reason: 'unreachable', detail: 'remote send timed out' });
+      await h.at(20);
+      expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
+      expect(h.told).toEqual([expect.stringContaining('could not be reached')]);
+    } finally {
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
+
   test('an unreachable worker is reminded once, then the todo stalls instead of being reminded again', async () => {
     const h = await stopped(null);
     try {
