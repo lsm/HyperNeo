@@ -22,7 +22,7 @@ import {
   NeoSessionMark,
 } from './NeoCardParts.tsx';
 import { neoSessionKind } from './work-driver.ts';
-import { NEO_DONE_SHOWN, type NeoDoneTodosPage, neoDonePageMerge } from './neo-asks.ts';
+import { type NeoDoneTodosPage, neoDonePageMerge } from './neo-asks.ts';
 import { messageTime } from './NeoMessage.tsx';
 import { t } from '../lib/i18n/index.ts';
 import { neoQuestionText, neoTodoDetail, neoTodoHasMore, neoTodoStatus } from './todo-status.ts';
@@ -108,10 +108,12 @@ function TodoRow({
   onCheck,
   onOpen,
   expanded = false,
+  anchorPrefix = '',
   onToggle,
 }: {
   todo: NeoTodoEntry;
   expanded?: boolean;
+  anchorPrefix?: string;
   onToggle?: () => void;
   number?: number;
   checked?: boolean;
@@ -119,7 +121,7 @@ function TodoRow({
   onOpen?: (link: string, title: string) => void;
 }) {
   const [mark, color] = marks[todo.state];
-  const detailId = `neo-todo-detail-${todo.id}`;
+  const detailId = `${anchorPrefix}neo-todo-detail-${todo.id}`;
   const detail = neoTodoDetail(todo);
   const head = (
     <>
@@ -150,7 +152,7 @@ function TodoRow({
   );
   return (
     <div
-      id={`neo-ref-todo-${todo.id}`}
+      id={`${anchorPrefix}neo-ref-todo-${todo.id}`}
       data-ask-todo={todo.id}
       data-todo-state={todo.state}
       class={`grid min-w-0 grid-cols-[1rem_minmax(0,1fr)_auto] items-start gap-x-2.5 text-sm ${number === undefined ? 'border-t border-line py-2 first:border-t-0' : 'py-1'}`}
@@ -491,33 +493,15 @@ export function NeoAskTodos({
       : received;
   const [detailError, setDetailError] = useState('');
   const cardRef = useRef<HTMLElement>(null);
+  const allButton = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const focusedQuestionId = focusedQuestion?.questionId;
+  const focusedQuestionState = entry.questions.find(
+    (question) => question.id === focusedQuestionId
+  )?.state;
   useEffect(() => {
-    if (focusedQuestionId) setOpen(true);
-  }, [focusedQuestion]);
-  useEffect(() => {
-    if (!open || !focusedQuestionId) return;
-    const target = document.getElementById(`neo-ref-question-${focusedQuestionId}`);
-    if (!target || !cardRef.current?.contains(target)) return;
-    const tabIndex = target.getAttribute('tabindex');
-    target.tabIndex = -1;
-    target.dataset.cardReplyFocus = 'true';
-    target.classList.add('ring-2', 'ring-accent');
-    target.focus({ preventScroll: true });
-    target.scrollIntoView?.({ block: 'center' });
-    return () => {
-      delete target.dataset.cardReplyFocus;
-      target.classList.remove('ring-2', 'ring-accent');
-      if (tabIndex === null) target.removeAttribute('tabindex');
-      else target.setAttribute('tabindex', tabIndex);
-    };
-  }, [
-    open,
-    focusedQuestion,
-    entry.questions.find((question) => question.id === focusedQuestionId)?.state,
-  ]);
-  const [doneOpen, setDoneOpen] = useState<boolean | null>(null);
+    if (focusedQuestionId && focusedQuestionState !== 'open') setOpen(true);
+  }, [focusedQuestion, focusedQuestionState]);
   const [paged, setPaged] = useState<NeoTodoEntry[]>([]);
   const [stalled, setStalled] = useState(false);
   const [paging, setPaging] = useState(false);
@@ -584,19 +568,19 @@ export function NeoAskTodos({
   const inQuestion = new Set(
     asked.flatMap((question) => (question.kind === 'start' ? (question.startTodos ?? []) : []))
   );
-  const sent = todos.filter((todo) => todo.state === 'done');
+  const knownIds = new Set(
+    [...received.todos.filter((todo) => todo.state === 'done'), ...paged].map((todo) => todo.id)
+  );
+  const sent = todos.filter(
+    (todo) => todo.state === 'done' && (!received.summary || !onLoadDone || knownIds.has(todo.id))
+  );
   const knownDone = [
     ...sent,
     ...paged.filter((todo) => !todos.some((other) => other.id === todo.id)),
   ];
-  const shownDone = (doneOpen ?? entry.doneCount <= NEO_DONE_SHOWN) ? knownDone : [];
-  const hiddenDone = entry.doneCount - shownDone.length;
-  const live = [
-    ...todos.filter((todo) => todo.state !== 'removed' && todo.state !== 'done'),
-    ...shownDone,
-  ];
+  const hiddenDone = entry.doneCount - knownDone.length;
+  const live = todos.filter((todo) => todo.state !== 'removed' && todo.state !== 'done');
   const showMoreDone = () => {
-    setDoneOpen(true);
     if (knownDone.length >= entry.doneCount || !onLoadDone || paging) return;
     setPaging(true);
     setDoneError(null);
@@ -610,30 +594,66 @@ export function NeoAskTodos({
       .catch(() => setDoneError(t('ask.moreDoneFailed')))
       .finally(() => setPaging(false));
   };
+  useEffect(() => {
+    if (open && !paging && !stalled && !doneError && hiddenDone > 0 && knownDone.length === 0)
+      showMoreDone();
+  }, [open, paging, stalled, doneError, knownDone.length]);
+  useEffect(() => {
+    const anchor = focusedQuestionId ? `neo-ref-question-${focusedQuestionId}` : null;
+    const target = anchor && document.getElementById(anchor);
+    if (
+      !target ||
+      (!cardRef.current?.contains(target) &&
+        target.closest('[role="dialog"]')?.getAttribute('data-testid') !==
+          `neo-ask-all-${received.ask.id}`)
+    )
+      return;
+    const prior = target.getAttribute('tabindex');
+    target.tabIndex = -1;
+    target.dataset.cardReplyFocus = 'true';
+    target.classList.add('ring-2', 'ring-accent');
+    target.focus({ preventScroll: true });
+    target.scrollIntoView?.({ block: 'center' });
+    return () => {
+      delete target.dataset.cardReplyFocus;
+      target.classList.remove('ring-2', 'ring-accent');
+      if (prior === null) target.removeAttribute('tabindex');
+      else target.setAttribute('tabindex', prior);
+    };
+  }, [open, focusedQuestion, focusedQuestionState, knownDone.length]);
   const listed = live.filter((todo) => !inQuestion.has(todo.id));
-  const expandable = listed.filter(neoTodoHasMore);
-  const allExpanded = expandable.every((todo) => expanded.includes(todo.id));
-  const removed = todos.filter((todo) => todo.state === 'removed' && !inQuestion.has(todo.id));
-  const hasDetails =
-    !!entry.summary ||
-    answered.length > 0 ||
-    retired.length > 0 ||
-    !!ask.outcome ||
-    removed.length > 0;
-  const everything = allExpanded && (open || !hasDetails);
-  const toggleEverything = () => {
-    setExpanded(
-      everything
-        ? []
-        : listed.filter((todo) => entry.summary || neoTodoHasMore(todo)).map((todo) => todo.id)
-    );
-    setOpen(!everything);
-    if (everything)
-      requestAnimationFrame(() => {
-        const card = cardRef.current;
-        if (card && card.getBoundingClientRect().top < 0) card.scrollIntoView({ block: 'start' });
-      });
+  const removed = todos.filter((todo) => todo.state === 'removed');
+  const itemCount = received.summary
+    ? received.summary.todoCount +
+      received.summary.questionCount -
+      received.summary.openQuestionCount
+    : todos.filter((todo) => todo.state !== 'done').length +
+      entry.doneCount +
+      answered.length +
+      retired.length;
+  const closeAll = () => {
+    setOpen(false);
+    requestAnimationFrame(() => allButton.current?.focus());
   };
+  const renderTodo = (todo: NeoTodoEntry, anchorPrefix = '') => (
+    <TodoRow
+      key={todo.id}
+      todo={todo}
+      anchorPrefix={anchorPrefix}
+      onOpen={onOpen}
+      expanded={expanded.includes(todo.id)}
+      onToggle={
+        entry.summary || neoTodoHasMore(todo)
+          ? () =>
+              setExpanded(
+                expanded.includes(todo.id)
+                  ? expanded.filter((id) => id !== todo.id)
+                  : [...expanded, todo.id]
+              )
+          : undefined
+      }
+    />
+  );
   const [label, tone] = states[entry.state];
   return (
     <article
@@ -751,35 +771,51 @@ export function NeoAskTodos({
           ))}
         </div>
       )}
-      {hiddenDone > 0 && (
-        <button
-          type="button"
-          class="mt-2 text-xs font-medium text-fg-muted hover:text-fg-soft disabled:opacity-60"
-          disabled={paging}
-          onClick={showMoreDone}
+      {open && (
+        <Modal
+          isOpen
+          onClose={closeAll}
+          title={ask.title}
+          size="xl"
+          data-testid={`neo-ask-all-${ask.id}`}
         >
-          {t('ask.moreDone', { count: hiddenDone })}
-        </button>
-      )}
-      {shownDone.length > 0 && (
-        <button
-          type="button"
-          class="ml-3 mt-2 text-xs font-medium text-fg-muted hover:text-fg-soft"
-          aria-expanded="true"
-          onClick={() => setDoneOpen(false)}
-        >
-          {t('ask.lessDone')}
-        </button>
-      )}
-      {doneError && (
-        <p role="alert" class="mt-1 text-xs text-danger">
-          {doneError}
-        </p>
-      )}
-      {open && hasDetails && (
-        <div data-ask-details class="mt-3 space-y-3 text-sm text-fg-muted">
+          {detailError && (
+            <p role="alert" class="text-sm text-danger">
+              {detailError}
+            </p>
+          )}
+          {[
+            { label: t('ask.inProgress'), todos: live, count: live.length, prefix: 'all-' },
+            { label: t('ask.completed'), todos: knownDone, count: entry.doneCount, prefix: '' },
+          ].map(
+            (group) =>
+              group.count > 0 && (
+                <section key={group.label} aria-label={group.label} class="mt-4 first:mt-0">
+                  <h3 class="text-xs font-medium text-fg-muted">
+                    {group.label} · {group.count}
+                  </h3>
+                  {group.todos.map((todo) => renderTodo(todo, group.prefix))}
+                </section>
+              )
+          )}
+          {hiddenDone > 0 && (
+            <button
+              type="button"
+              class="mt-2 text-xs font-medium text-fg-muted hover:text-fg-soft disabled:opacity-60"
+              disabled={paging}
+              onClick={showMoreDone}
+            >
+              {t('ask.moreDone', { count: hiddenDone })}
+            </button>
+          )}
+          {doneError && (
+            <p role="alert" class="mt-1 text-xs text-danger">
+              {doneError}
+            </p>
+          )}
+
           {removed.length > 0 && (
-            <div>
+            <div class="mt-4">
               <p class="text-xs font-medium text-fg-faint">{t('ask.removed')}</p>
               <ul class="mt-1.5 space-y-1.5" aria-label={t('ask.removed')}>
                 {removed.map((todo) => (
@@ -798,7 +834,7 @@ export function NeoAskTodos({
             </div>
           )}
           {answered.length > 0 && (
-            <div>
+            <div class="mt-4">
               <p class="text-xs font-medium text-fg-faint">{t('ask.answered')}</p>
               <ul class="mt-1.5 space-y-1.5" aria-label={t('ask.answered')}>
                 {answered.map((question) => (
@@ -816,7 +852,7 @@ export function NeoAskTodos({
             </div>
           )}
           {retired.length > 0 && (
-            <div>
+            <div class="mt-4">
               <p class="text-xs font-medium text-fg-faint">{t('ask.retired')}</p>
               <ul class="mt-1.5 space-y-1.5" aria-label={t('ask.retired')}>
                 {retired.map((question) => (
@@ -832,7 +868,7 @@ export function NeoAskTodos({
             </div>
           )}
           {ask.outcome && (
-            <div>
+            <div class="mt-4">
               <p class="text-xs font-medium text-fg-faint">{t('ask.outcome')}</p>
               <MarkdownRenderer
                 content={ask.outcome}
@@ -840,17 +876,22 @@ export function NeoAskTodos({
               />
             </div>
           )}
-        </div>
+        </Modal>
       )}
-      {(hasDetails || expandable.length > 1) && (
+      {(itemCount > 0 || received.summary || ask.outcome) && (
         <div class={neoFooterClass}>
-          <span class="flex-1" />
-          <ContentDisclosureControl
+          <button
+            ref={allButton}
+            type="button"
             data-ask-details-toggle
-            expanded={everything}
-            onToggle={toggleEverything}
-            aria-label={t('ask.details')}
-          />
+            aria-haspopup="dialog"
+            aria-expanded={open}
+            onClick={() => setOpen(true)}
+            class="flex min-h-11 w-full items-center justify-center gap-2 text-sm font-medium text-accent hover:bg-fill-soft"
+          >
+            <span aria-hidden="true">≡</span>
+            {t('ask.all', { count: itemCount })}
+          </button>
         </div>
       )}
     </article>

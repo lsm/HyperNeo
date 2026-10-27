@@ -30,7 +30,8 @@ The script checks real `/neo` at desktop 1280×900 and mobile 390×900:
 
 - Three rows start collapsed, each with title and one status line.
 - Enter expands only the focused row, showing its report/evidence. Space closes it.
-- Expand all shows all three; Collapse all closes every row, including the first.
+- Each row expands independently. The old bulk footer has been replaced by All;
+  use neo-all-items-dialog.md for the current footer and history journey.
 - The other card stays unchanged. Reload preserves the first card's chosen state.
 - Collapsed status stays one line and neither viewport overflows horizontally.
 
@@ -45,5 +46,5 @@ match iOS, and start-question checkbox rows keep their behavior.
 
 ## Cleanup
 
-Close the browser contexts and run `.claude/skills/verify/stop.sh "$RUN"`. Retain
-the synthetic database and evidence for review. Do not delete user data.
+Close the browser contexts and run `.claude/skills/verify/stop.sh "$RUN"`. Save
+evidence outside the run, then remove the disposable synthetic HOME/data.
