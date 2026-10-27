@@ -64,6 +64,7 @@ export interface NeoTodo extends ArtifactProjection {
   nextAction: string | null;
   blockedBy: NeoTodoBlocker | null;
   priority: NeoTodoPriority;
+  dependsOn: string[] | null;
   replacedBy: string | null;
   addedAfterStart: boolean;
   report: string | null;

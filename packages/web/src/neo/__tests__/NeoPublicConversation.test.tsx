@@ -236,14 +236,36 @@ describe('durable public conversation presentation', () => {
       );
       const more = await screen.findByRole('button', { name: /more$/ });
       expect(getComputedStyle(more).getPropertyValue('float')).toBe('right');
-      fireEvent.click(screen.getByText((value.shortText ?? '').trim()));
+      expect(more.closest('.neo-markdown, p')).toBeNull();
+      fireEvent.click(await screen.findByText((value.shortText ?? '').trim()));
       expect(container.querySelector('[data-publication-details]')).toBeNull();
       fireEvent.click(more);
       const less = await screen.findByRole('button', { name: /less$/ });
       expect(getComputedStyle(less).getPropertyValue('float')).toBe('right');
-      fireEvent.click(screen.getByText(ending.trim(), { exact: true }));
+      expect(less.closest('.neo-markdown, p')).toBeNull();
+      fireEvent.click(await screen.findByText(ending.trim(), { exact: true }));
       expect(container.querySelector('[data-publication-details]')).toBeTruthy();
       expect(less.getAttribute('aria-expanded')).toBe('true');
+    }
+  );
+
+  it.each(['7', '7.', '7)'])(
+    'keeps numeric reply %s readable with disclosure on a separate row',
+    async (shortText) => {
+      const value = publication({ shortText, fullText: 'Full numeric reply details.' });
+      const { container } = render(
+        <NeoPublicConversation conversation={conversation([], [value])} />
+      );
+      const body = await screen.findByText(shortText, { exact: true });
+      expect(body.tagName).toBe('P');
+      const more = screen.getByRole('button', { name: 'more', exact: true });
+      expect(more.closest('p')).toBeNull();
+      expect(body.textContent).toBe(shortText);
+      fireEvent.click(more);
+      expect(await screen.findByText(value.fullText!)).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'less', exact: true }));
+      expect(container.querySelector('[data-publication-details]')).toBeNull();
+      expect(screen.getByText(shortText, { exact: true }).textContent).toBe(shortText);
     }
   );
 
@@ -254,7 +276,7 @@ describe('durable public conversation presentation', () => {
     );
     expect(container.querySelector('details')).toBeNull();
     const more = await screen.findByRole('button', { name: /^more$/ });
-    expect(more.closest('p')?.textContent).toContain(value.shortText);
+    expect(more.closest('p')).toBeNull();
     expect(more.getAttribute('aria-expanded')).toBe('false');
     expect(container.querySelector('table')).toBeNull();
     fireEvent.click(more);

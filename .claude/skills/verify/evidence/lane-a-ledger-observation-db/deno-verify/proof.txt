@@ -1,0 +1,7 @@
+[0m[1m[31merror[0m: Uncaught (in promise) AssertionError: Expected values to be strictly equal:
+
+0 !== 2
+
+  const facts = ledger.list(); assert.equal(facts.length, 2);
+[0m[31m                                      ^[0m
+    at [0m[36mfile:///Users/lsm/.codex/worktrees/lane-a-ledger-observation/neokai/.claude/skills/verify/lane-a-ledger-observation-db.ts[0m:[0m[33m71[0m:[0m[33m39[0m

@@ -517,7 +517,7 @@ export function NeoAskTodos({
     focusedQuestion,
     entry.questions.find((question) => question.id === focusedQuestionId)?.state,
   ]);
-  const [doneOpen, setDoneOpen] = useState(false);
+  const [doneOpen, setDoneOpen] = useState<boolean | null>(null);
   const [paged, setPaged] = useState<NeoTodoEntry[]>([]);
   const [stalled, setStalled] = useState(false);
   const [paging, setPaging] = useState(false);
@@ -589,7 +589,7 @@ export function NeoAskTodos({
     ...sent,
     ...paged.filter((todo) => !todos.some((other) => other.id === todo.id)),
   ];
-  const shownDone = doneOpen || entry.doneCount <= NEO_DONE_SHOWN ? knownDone : [];
+  const shownDone = (doneOpen ?? entry.doneCount <= NEO_DONE_SHOWN) ? knownDone : [];
   const hiddenDone = entry.doneCount - shownDone.length;
   const live = [
     ...todos.filter((todo) => todo.state !== 'removed' && todo.state !== 'done'),
@@ -759,6 +759,16 @@ export function NeoAskTodos({
           onClick={showMoreDone}
         >
           {t('ask.moreDone', { count: hiddenDone })}
+        </button>
+      )}
+      {shownDone.length > 0 && (
+        <button
+          type="button"
+          class="ml-3 mt-2 text-xs font-medium text-fg-muted hover:text-fg-soft"
+          aria-expanded="true"
+          onClick={() => setDoneOpen(false)}
+        >
+          {t('ask.lessDone')}
         </button>
       )}
       {doneError && (

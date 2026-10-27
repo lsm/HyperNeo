@@ -1,3 +1,4 @@
+import { neoSessionTrackRootRead } from '../../storage/repositories/neo-session-track-write.ts';
 import { createNeoCardSearchOperation } from './card-search-operation.ts';
 import { readNeoReply } from './intake.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
@@ -66,11 +67,7 @@ import {
   neoSessionNoticeLine,
   type NeoSessionNotice,
 } from './session-watch.ts';
-import {
-  findNeoSessionNotice,
-  requireNeoTrackRoot,
-  requireNeoTrackableSession,
-} from './session-track.ts';
+import { findNeoSessionNotice } from './session-track.ts';
 import { createNeoQuestionOperations } from './question-operations.ts';
 import { createNeoTodoOperations, type NeoTodoControls } from './todo-operations.ts';
 import { resolveNeoTodoTarget } from './todo-target.ts';
@@ -528,18 +525,12 @@ export function createNeoOperations(service: NeoService) {
       'caller',
       'result:track'
     )
-    .pipe(() => requireNeoTrackRoot(service.defaultSessionId()), 'caller', 'result:track')
+    .pipe(() => service.runDbOp(neoSessionTrackRootRead, null), 'caller', 'result:track')
     .pipe((root: string) => root, 'track', 'root')
     .pipe(
       (input: z.infer<typeof SessionTrack>) =>
         findNeoSessionNotice(service.trackableNotices, input.key),
       'input',
-      'result:track'
-    )
-    .pipe(
-      (notice: NeoSessionNotice) =>
-        requireNeoTrackableSession(notice, service.todos.followedRefs()),
-      'track',
       'result:track'
     )
     .pipe(
@@ -950,7 +941,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.snapshot',
       description:
-        'Read durable project summaries and todo asks. Pass projectId to load that project’s full context. RPC includes every open/attention-needed ask plus the ten most recently updated finished/dropped asks; historyCursor pages older outcomes through neo.ask.history. RPC todoAsks are summaries with counts, todo states and one-line statuses; instructions, reports and question text load through neo.ask.read when the card is opened. MCP todoAsks retain full todo details, ordered blocked, failed, doing, not started, done, then removed, and open questions; doneCount is how many of its todos are done, and an ask with more than 3 done todos (20 for RPC clients) lists none of its done todos, so read them with neo.ask.doneTodos; packRows holds pack facts, such as the coding pack’s pull request ledger with each PR’s state and owner. A list that does not hold every ask says so in omitted ({asks}: how many were left out), so never answer all or none from it. MCP snapshots over 40 KB are trimmed and carry a trimmed note saying what was cut. Every snapshot carries rev; pass it back as sinceRev and an unchanged snapshot answers only {unchanged: true, rev}, so read again only after something happened.',
+        'Read durable project summaries and todo asks. Pass projectId to load that project’s full context. RPC includes every open/attention-needed ask plus the ten most recently updated finished/dropped asks; historyCursor pages older outcomes through neo.ask.history. RPC todoAsks are summaries with counts, todo states, one-line statuses and open questions with full text and answer metadata; question documents carry up to 2000 preview characters plus a truncation notice, and neo.ask.read returns the full document. Todo instructions, reports and answered or retired question details load through neo.ask.read when the card is opened. MCP todoAsks retain full todo details, ordered blocked, failed, doing, not started, done, then removed, and open questions; doneCount is how many of its todos are done, and an ask with more than 3 done todos (20 for RPC clients) lists none of its done todos, so read them with neo.ask.doneTodos; packRows holds pack facts, such as the coding pack’s pull request ledger with each PR’s state and owner. A list that does not hold every ask says so in omitted ({asks}: how many were left out), so never answer all or none from it. MCP snapshots over 40 KB are trimmed and carry a trimmed note saying what was cut. Every snapshot carries rev; pass it back as sinceRev and an unchanged snapshot answers only {unchanged: true, rev}, so read again only after something happened.',
       inputSchema: Scope,
       resultSchema: Snapshot,
       policy: { safetyClass: 'read', roles: ['neo'] },
