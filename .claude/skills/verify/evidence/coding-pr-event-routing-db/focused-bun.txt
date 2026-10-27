@@ -1,0 +1,47 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/coding-pr-event-routing-db.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+2 | import { CodingPrEventRepository } from './pr-events.ts';
+3 | 
+4 | export const codingPrEventReads = defineRepositoryOp(
+5 |   'coding.prEvent.reads',
+6 |   'read',
+7 |   CodingPrEventRepository,
+      ^
+ReferenceError: Cannot access 'CodingPrEventRepository' before initialization.
+      at /Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/src/lib/neo/packs/coding/pr-event-routing-db.ts:7:3
+-------------------------------
+
+
+tests/unit/1-core/operations/neo-coding-pr-events.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+2 | import { CodingPrEventRepository } from './pr-events.ts';
+3 | 
+4 | export const codingPrEventReads = defineRepositoryOp(
+5 |   'coding.prEvent.reads',
+6 |   'read',
+7 |   CodingPrEventRepository,
+      ^
+ReferenceError: Cannot access 'CodingPrEventRepository' before initialization.
+      at /Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/src/lib/neo/packs/coding/pr-event-routing-db.ts:7:3
+-------------------------------
+
+
+tests/unit/1-core/operations/coding-watched-repos.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+ReferenceError: Cannot access 'CodingPrEventRepository' before initialization.
+      at /Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/src/lib/neo/packs/coding/pr-event-routing-db.ts:7:3
+-------------------------------
+
+
+ 0 pass
+ 3 fail
+ 3 errors
+Ran 3 tests across 3 files. [73.00ms]

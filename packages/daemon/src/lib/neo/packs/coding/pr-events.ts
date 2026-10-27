@@ -1,3 +1,4 @@
+import { codingPrEventReads } from './pr-event-routing-db.ts';
 import { codingRepoWatched } from './watched-repos.ts';
 import type { WorkRef } from '../../../drivers/types.ts';
 import { Logger } from '../../../logger.ts';
@@ -54,6 +55,17 @@ export class CodingPrEventRepository {
     const run = this.delivery.then(deliver, deliver);
     this.delivery = run.catch(() => {});
     return run;
+  }
+
+  pendingEventsLater(): Promise<CodingPrTransition[]> {
+    return gatewayFor(this.db).call(codingPrEventReads, 'pendingEvents');
+  }
+
+  routeLater(row: Pick<CodingPrTransition, 'repo' | 'number'>) {
+    return gatewayFor(this.db).call(codingPrEventReads, 'route', {
+      repo: row.repo,
+      number: row.number,
+    });
   }
 
   pendingEvents(): CodingPrTransition[] {
@@ -147,7 +159,7 @@ export class CodingPrEventRepository {
       .run(key);
   }
 
-  route(row: CodingPrTransition): { owner: WorkRef | null } {
+  route(row: Pick<CodingPrTransition, 'repo' | 'number'>): { owner: WorkRef | null } {
     const found = this.db
       .prepare(
         `SELECT owner
@@ -171,12 +183,12 @@ export async function deliverCodingPrEvents(
   return repo.exclusive(async () => {
     for (const row of transitions) {
       const event = planCodingPrEvent(row);
-      if (event && !repo.route(row).owner)
+      if (event && !(await repo.routeLater(row)).owner)
         log.warn(`PR event ${event.key} skipped: ${row.repo}#${row.number} has no owner`);
     }
-    for (const row of repo.pendingEvents()) {
+    for (const row of await repo.pendingEventsLater()) {
       const event = planCodingPrEvent(row);
-      const owner = repo.route(row).owner;
+      const owner = (await repo.routeLater(row)).owner;
       if (!owner) continue;
       const told = event ? await deps.tell(owner, event.key, event.text).catch(() => false) : true;
       if (told) await repo.acceptEvent(row, owner);
