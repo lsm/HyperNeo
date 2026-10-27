@@ -90,6 +90,7 @@ function setup(
   } satisfies NeoPack;
   const packs: NeoPack[] = [pack];
   const runner = createNeoTodoRunner({
+    limits: () => ({ running: 99, perGroup: 99 }),
     write: gatewayFor(db).run.bind(gatewayFor(db)),
     store,
     sessions,
@@ -889,6 +890,7 @@ describe('neo todo runner', () => {
     sessions.create(todo.id, { verb: 'send', ref });
     const calls: string[] = [];
     const runner = createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
       write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions,
@@ -986,6 +988,7 @@ describe('neo todo runner', () => {
     const { db, store, add, told } = setup();
     const todo = add();
     const failing = createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
       write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions: new NeoTodoSessionRepository(db),
@@ -1009,6 +1012,7 @@ describe('neo todo runner', () => {
     const todo = h.add();
     try {
       const runner = createNeoTodoRunner({
+        limits: () => ({ running: 99, perGroup: 99 }),
         write: gatewayFor(h.db).run.bind(gatewayFor(h.db)),
         store: h.store,
         sessions: h.sessions,
@@ -1034,6 +1038,7 @@ describe('neo todo runner', () => {
     const { db, store, add } = setup();
     const todo = add();
     const accepted = createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
       write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions: new NeoTodoSessionRepository(db),
@@ -1066,6 +1071,7 @@ describe('neo todo runner', () => {
     const hint =
       'Claude Desktop did not import the new session. The task was not started. Open Claude Desktop, then ask Neo to start it again.';
     const waiting = createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
       write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions: new NeoTodoSessionRepository(db),
@@ -1193,6 +1199,7 @@ describe('neo todo runner uncertainty', () => {
     const todo = add();
     const sessions = new NeoTodoSessionRepository(db);
     const flaky = createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
       write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions,
@@ -1225,6 +1232,7 @@ describe('neo todo runner uncertainty', () => {
     await flaky.stop(store.updateTodo(resumed, { state: 'doing' }, 7));
     expect(calls.at(-1)).toMatchObject({ name: 'work.stop', input: { ref } });
     const unsupported = createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
       write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions,
@@ -1236,6 +1244,7 @@ describe('neo todo runner uncertainty', () => {
     });
     expect(await unsupported.stop(store.getTodo(resumed.id)!)).toBeNull();
     const refusing = createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
       write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions,
@@ -1428,6 +1437,7 @@ describe('a todo sent to an existing session', () => {
     const lastActivity = Date.parse('2026-10-17T20:14:36Z');
     let confirmedAt = 0;
     const runner = createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
       write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions,
@@ -1577,6 +1587,7 @@ describe('blocked todos', () => {
     const { db, store, runner, add, told } = setup();
     const todo = add();
     const failing = createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
       write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions: new NeoTodoSessionRepository(db),
@@ -2001,6 +2012,7 @@ describe('current explicit removal behavior before recompute', () => {
           sessions = new NeoTodoSessionRepository(db);
         const effects: string[] = [];
         const runner = createNeoTodoRunner({
+          limits: () => ({ running: 99, perGroup: 99 }),
           write: gatewayFor(db).run.bind(gatewayFor(db)),
           store,
           sessions,

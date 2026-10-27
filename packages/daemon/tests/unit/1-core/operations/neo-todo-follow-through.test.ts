@@ -47,6 +47,7 @@ function world() {
   const told: string[] = [];
   let started = 0;
   const runner = createNeoTodoRunner({
+    limits: () => ({ running: 99, perGroup: 99 }),
     write: gatewayFor(db).run.bind(gatewayFor(db)),
     store,
     sessions,

@@ -32,6 +32,7 @@ import {
 import type { NeoPack, NeoTodoCheckResult, NeoTodoJudgement } from './pack-contract.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
 import { sameNeoTodoCheck } from './todo-completion.ts';
+import { planWorkQueue } from '../work-queue/capacity.ts';
 import { neoMoveTodo, neoTodoRepo } from './todo-repo.ts';
 import { deliverNeoTurnReport } from './turn-report.ts';
 
@@ -67,6 +68,7 @@ export interface NeoTodoRunnerDeps {
     kind?: 'focused_status' | 'quiet_heartbeat' | 'event'
   ): Promise<void>;
   changed(): void;
+  limits(): { running: number; perGroup: number };
 }
 
 const CARD_STATUS: Record<NeoTodo['state'], NeoWork['status']> = {
@@ -307,7 +309,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         todo: NeoTodo
       ) => {
         if (receipt.changed) deps.changed();
-        if (receipt.startNext) await start(receipt.startNext);
+        if (receipt.startNext) await advance();
         return receipt.todo ?? todo;
       },
       ['receipt', 'todo'],
@@ -444,6 +446,30 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     .endAsync('outcome') as (
     todoId: string
   ) => Promise<{ ok: true; todo: NeoTodo; records?: string[] } | Rejection>;
+
+  const fillQueue = (superpipe({})('neo.todo.fill-queue') as PipelineAPI)
+    .input(['limits'])
+    .pipe(() => sessions.read('queueFacts'), 'limits', 'queue')
+    .pipe(
+      (
+        queue: Awaited<ReturnType<typeof sessions.queueFacts>>,
+        limits: ReturnType<NeoTodoRunnerDeps['limits']>
+      ) => planWorkQueue(queue.candidates, queue.running, limits).start,
+      ['queue', 'limits'],
+      'todoIds'
+    )
+    .pipe(
+      async (todoIds: readonly string[]) => {
+        for (const todoId of todoIds) await start(todoId);
+      },
+      'todoIds',
+      'started'
+    )
+    .endAsync('started') as (limits: ReturnType<NeoTodoRunnerDeps['limits']>) => Promise<void>;
+  let filling: Promise<void> = Promise.resolve();
+  const fill = () =>
+    (filling = filling.catch(() => undefined).then(() => fillQueue(deps.limits())));
+  const advance = () => fill().catch(() => undefined);
 
   const start = async (todoId: string) => {
     const tracked = starting.has(todoId);
@@ -997,6 +1023,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
 
   return {
     start,
+    fill,
+    advance,
     recompute,
     proceed,
     stop,
@@ -1044,18 +1072,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         );
         await nudge(todo.id, Date.now()).catch((error) => warn('Todo nudge pending', error));
       }
-      const asks = await store.read('listOpenAsks');
-      const todos = await store.read(
-        'listTodosForAsks',
-        asks.map((ask) => ask.id)
-      );
-      for (const ask of asks) {
-        const completed = todos.find(
-          (todo) => todo.askId === ask.id && ['done', 'closed_unverified'].includes(todo.state)
-        );
-        if (completed)
-          await recompute(completed).catch((error) => warn('Todo plan advancement pending', error));
-      }
+      await fill().catch((error) => warn('Queued todo start pending', error));
     },
   };
 }

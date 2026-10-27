@@ -27,6 +27,7 @@ function world() {
   const sessions = new NeoTodoSessionRepository(db);
   const started: string[] = [];
   const runner = createNeoTodoRunner({
+    limits: () => ({ running: 99, perGroup: 99 }),
     write: gatewayFor(db).run.bind(gatewayFor(db)),
     store,
     sessions,
@@ -141,7 +142,9 @@ describe('a held todo', () => {
     const w = (current = world());
     const id = w.add('first');
     await w.edit(id, 'Wait for the human.');
-    expect(planNeoTodoCheck(w.todo(id), { done: false, failed: 'CI failed' }, 5, false)).toBe(null);
+    expect(
+      planNeoTodoCheck(w.todo(id), { done: false, failed: 'CI failed', evidence: null }, 5, false)
+    ).toBe(null);
   });
 
   test('can hold a todo still waiting on its start card', async () => {
