@@ -37,10 +37,9 @@ await call('settings.global.update', {
   updates: {
     voice: {
       enabled: true,
-      endpoint: `http://127.0.0.1:${asrPort}/v1/audio/transcriptions`,
+      endpoint: `http://127.0.0.1:${asrPort}/speech/v1`,
       model: 'stub',
       mode: 'streaming',
-      streamEndpoint: `ws://127.0.0.1:${asrPort}/v1/listen`,
       streamProtocol: 'deepgram',
       allowPrivateNetwork: true,
     },

@@ -1,5 +1,19 @@
 import type { VoiceStreamProtocol } from '@hyperneo/shared';
 
+export const BATCH_TRANSCRIPTIONS_PATH = '/audio/transcriptions';
+
+export function serviceBaseEndpoint(endpoint: URL): boolean {
+  const path = endpoint.pathname.replace(/\/+$/, '');
+  return path === '' || /\/v\d+$/.test(path);
+}
+
+export function batchTranscriptionUrl(endpoint: URL): URL {
+  if (!serviceBaseEndpoint(endpoint)) return endpoint;
+  const derived = new URL(endpoint);
+  derived.pathname = `${endpoint.pathname.replace(/\/+$/, '')}${BATCH_TRANSCRIPTIONS_PATH}`;
+  return derived;
+}
+
 export interface AsrText {
   text: string;
   isFinal: boolean;
