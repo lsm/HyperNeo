@@ -482,7 +482,10 @@ export class Database {
       return Promise.resolve(
         searchNeoCards(
           (sql, bindings) =>
-            this.core.getDb().prepare(sql).all(...bindings) as unknown[],
+            this.core
+              .getDb()
+              .prepare(sql)
+              .all(...bindings) as unknown[],
           query,
           cursor,
           limit

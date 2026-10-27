@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { searchNeoCards as readCards } from '../../../../src/storage/neo-card-search.ts';
 import { runMigration461 } from '../../../../src/storage/schema/m461-neo-card-search-fts.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { createTestDb } from '../../../helpers/database.ts';
 
 function searchNeoCards(db: Database, query: string, cursor?: string, limit?: number) {
   return readCards((sql, bindings) => db.prepare(sql).all(...bindings), query, cursor, limit);
@@ -88,6 +89,33 @@ describe('neo card search', () => {
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({ askId: 'ask-1', field: 'meta' });
     expect(results[0].snippet).toContain('herbarium');
+  });
+
+  test('a bracket-wrapped title match retains its field and a string snippet without an outcome', () => {
+    db.exec(`UPDATE neo_asks SET title='[draft] release',outcome=NULL WHERE id='ask-1'`);
+    const { results } = searchNeoCards(db, 'draft');
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      askId: 'ask-1',
+      field: 'title',
+      snippet: expect.stringContaining('draft'),
+    });
+  });
+
+  test('the supported in-memory facade returns indexed card pointers', async () => {
+    const facade = await createTestDb();
+    try {
+      facade
+        .getDatabase()
+        .exec(
+          `INSERT INTO neo_asks(id,session_id,title,request,created_at,updated_at) VALUES ('memory-ask','neo:memory','Garden catalog','Synthetic catalog',1,1)`
+        );
+      const page = await facade.searchNeoCardsAsync('catalog');
+      expect(page.results).toHaveLength(1);
+      expect(page.results[0]).toMatchObject({ askId: 'memory-ask', field: 'title' });
+    } finally {
+      facade.close();
+    }
   });
 
   test('returns pointers with snippets for each card kind', () => {

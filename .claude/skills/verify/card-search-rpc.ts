@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
-const run = resolve(process.argv[2]);
+const run = resolve(process.argv.at(-1)!);
+const inMemory = process.argv.includes('memory');
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -28,7 +29,7 @@ SQLite.prototype.prepare = function (...args) {
       return (...values: unknown[]) => {
         if (measuring && ['get', 'all', 'iterate', 'run', 'values'].includes(String(key))) {
           mainCardSqlAttempts++;
-          throw new Error('card search SQL reached the main thread');
+          if (!inMemory) throw new Error('card search SQL reached the main thread');
         }
         return Reflect.apply(value, target, values);
       };
@@ -45,7 +46,7 @@ try {
   };
   app = await createDaemonApp({
     config: {
-      ...getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db'), workspaceRoot: join(run, 'workspace') }),
+      ...getConfig({ host: '127.0.0.1', port: 0, dbPath: inMemory ? ':memory:' : join(run, 'data/daemon.db'), workspaceRoot: join(run, 'workspace') }),
       disableWorktrees: true,
       disableGoalProcessing: true,
     },
@@ -105,7 +106,16 @@ try {
   evidence.bracketPage = bracket;
   assert.equal(bracket.results.length, 1);
   assert.equal(bracket.results[0].field, 'meta');
-  assert.equal(mainCardSqlAttempts, 0);
+  const bracketTitle = await search({ query: 'draft' });
+  evidence.bracketTitlePage = bracketTitle;
+  assert.equal(bracketTitle.results.length, 1);
+  assert.equal(bracketTitle.results[0].field, 'title');
+  assert.equal(typeof bracketTitle.results[0].snippet, 'string');
+  await assert.rejects(search({ query: 'ab' }), /query_too_short/);
+  evidence.shortQueryRejected = 'query_too_short';
+  evidence.backend = inMemory ? 'memory' : 'file';
+  if (inMemory) assert(mainCardSqlAttempts > 0);
+  else assert.equal(mainCardSqlAttempts, 0);
   evidence.mainCardSqlAttempts = mainCardSqlAttempts;
 } finally {
   measuring = false;
@@ -121,4 +131,4 @@ try {
   for (const name of ['data', 'home', 'workspace']) rmSync(join(run, name), { recursive: true, force: true });
   assert.equal(existsSync(join(run, 'evidence/card-search-rpc.json')), true);
 }
-console.log('ok card search answers over the operations door with no card SQL on the main thread');
+console.log(`ok card search answers over the operations door (${inMemory ? 'explicit in-memory fallback' : 'no card SQL on main'}), with bracketed fields and short-query rejection`);

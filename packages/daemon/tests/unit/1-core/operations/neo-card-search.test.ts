@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { createNeoCardSearchOperation } from '../../../../src/lib/neo/card-search-operation.ts';
-import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
+import {
+  createOperationRegistry,
+  type OperationCaller,
+} from '../../../../src/lib/operations/registry.ts';
+import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import type { NeoCardSearchPage } from '../../../../src/storage/neo-card-search.ts';
 
 const neoCaller: OperationCaller = { source: 'mcp', sessionId: 'neo:c', role: 'neo' };
@@ -40,6 +44,44 @@ describe('neo.ask.search operation', () => {
       ok: false,
       reason: 'This operation belongs to Neo.',
     });
+  });
+
+  test.each(['a', 'ab', 'a bc', '中文', '!?'])(
+    'rejects an unsearchable query %s before reading cards',
+    async (query) => {
+      let reads = 0;
+      const op = createNeoCardSearchOperation(async () => {
+        reads++;
+        return { results: [], nextCursor: null };
+      }, admitAll);
+      const result = await invokeOperation(
+        createOperationRegistry([op]),
+        'neo.ask.search',
+        { query },
+        neoCaller
+      );
+      expect(result).toMatchObject({
+        kind: 'failed',
+        code: 'invalid_input',
+        message: expect.stringContaining('query_too_short'),
+      });
+      expect(reads).toBe(0);
+    }
+  );
+
+  test('accepts a searchable term beside short words', async () => {
+    const op = createNeoCardSearchOperation(
+      async () => ({ results: [], nextCursor: null }),
+      admitAll
+    );
+    expect(
+      await invokeOperation(
+        createOperationRegistry([op]),
+        'neo.ask.search',
+        { query: 'a catalog' },
+        neoCaller
+      )
+    ).toMatchObject({ kind: 'completed', value: { ok: true } });
   });
 
   test('rejects blank and oversized queries at the schema', async () => {
