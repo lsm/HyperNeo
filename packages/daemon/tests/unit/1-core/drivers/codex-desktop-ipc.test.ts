@@ -406,6 +406,149 @@ describe('withCodexDesktopIpc', () => {
     });
   });
 
+  describe('Desktop-owned concurrent work.send', () => {
+    async function operations(path: string, reportUncertain = async (_report: unknown) => {}) {
+      const statePath = join(directory, 'overlap-state.sqlite');
+      const db = new Database(statePath);
+      db.exec(`CREATE TABLE threads (id TEXT, name TEXT, title TEXT, first_user_message TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT);
+        CREATE TABLE projects (id TEXT, name TEXT);
+        CREATE TABLE project_roots (project_id TEXT, path TEXT);`);
+      for (const id of ['one', 'two']) {
+        db.prepare(
+          `INSERT INTO threads VALUES (?, 'Worker', '', '', '/synthetic', 'desktop', 0, 1, ?)`
+        ).run(id, join(directory, 'rollout.jsonl'));
+      }
+      writeFileSync(
+        join(directory, 'rollout.jsonl'),
+        JSON.stringify({
+          type: 'event_msg',
+          timestamp: '2026-10-26T22:49:22.453Z',
+          payload: { type: 'task_complete', turn_id: 'completed', last_agent_message: 'Done' },
+        }) + '\n'
+      );
+      db.close();
+      let nextId = 0;
+      const driver = createCodexDesktopAdapter({
+        statePath,
+        desktopSocketPath: path,
+        desktopRunning: async () => true,
+        worktreesDir: directory,
+        machine: 'test',
+        now: Date.now,
+        spawn: noDesktopOpen,
+        appServer: async () => {
+          throw new Error('Alternate writer forbidden');
+        },
+        bootstrapServer: async () => {
+          throw new Error('Bootstrap forbidden');
+        },
+        prepareDesktopProject: async () => {
+          throw new Error('Project creation forbidden');
+        },
+        startDesktopTurn: async () => {
+          throw new Error('New-thread route forbidden');
+        },
+        folderExists: () => true,
+        makeFolder: () => {},
+        homeDir: directory,
+        gitCheckout: async () => null,
+        newId: () => `input-${++nextId}`,
+      });
+      const registry = createOperationRegistry(
+        createWorkVerbOperations({
+          adapters: () => [driver],
+          daemonName: 'test',
+          reportUncertain,
+          remote: { list: () => [], invoke: async () => ({}) },
+        })
+      );
+      return (id = 'one') =>
+        invokeOperation(
+          registry,
+          'work.send',
+          {
+            ref: { adapter: driver.id, id },
+            message: 'Identical input',
+          },
+          { source: 'mcp', role: 'neo', sessionId: 'neo' }
+        );
+    }
+
+    test.each([false, true])(
+      'serializes only the same thread (separate threads: %s)',
+      async (separate) => {
+        let active = 0;
+        let maximum = 0;
+        const f = await fixture((message, _socket, send) => {
+          const reply = (result: object) =>
+            send({ type: 'response', requestId: message.requestId, ...result });
+          if (message.method === 'thread-owner-discovery')
+            return reply({ resultType: 'success', handledByClientId: 'owner' });
+          if (message.method === 'thread-follower-steer-turn')
+            return reply({ resultType: 'error', error: 'active turn already ended' });
+          if (message.method === 'thread-follower-start-turn') {
+            active++;
+            maximum = Math.max(maximum, active);
+            const start = message.params?.turnStart as { clientUserMessageId?: string };
+            setTimeout(() => {
+              active--;
+              reply({
+                resultType: 'success',
+                result: { result: { turn: { id: start.clientUserMessageId ?? 'missing-id' } } },
+              });
+            }, 40);
+          }
+        });
+        const send = await operations(f.path);
+        const results = await Promise.all([send(), send(separate ? 'two' : 'one')]);
+        expect(maximum).toBe(separate ? 2 : 1);
+        const inputs = f.seen
+          .filter((m) => m.method === 'thread-follower-steer-turn')
+          .map((m) => m.params?.clientUserMessageId);
+        const starts = f.seen
+          .filter((m) => m.method === 'thread-follower-start-turn')
+          .map(
+            (m) => (m.params?.turnStart as { clientUserMessageId?: string }).clientUserMessageId
+          );
+        expect(starts).toEqual(inputs);
+        expect(new Set(starts).size).toBe(2);
+        expect(results.map((r) => (r.kind === 'completed' ? r.value : null))).toEqual(
+          inputs.map((id) => ({ ok: true, value: { delivered: true, startedTurnId: id } }))
+        );
+      }
+    );
+
+    test.each([
+      'thread-follower-steer-turn-timeout',
+      'Cannot steer conversation one without an active turn id',
+    ])('reports one uncertainty without replay: %s', async (error) => {
+      const reports: unknown[] = [];
+      const f = await fixture((message, _socket, send) => {
+        const result =
+          message.method === 'thread-owner-discovery'
+            ? { resultType: 'success', handledByClientId: 'owner' }
+            : { resultType: 'error', error };
+        send({ type: 'response', requestId: message.requestId, ...result });
+      });
+      const send = await operations(f.path, async (report) => {
+        reports.push(report);
+      });
+      const result = await send();
+      expect(result).toMatchObject({
+        kind: 'completed',
+        value: { ok: false, reason: 'not_delivered' },
+      });
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).toMatchObject({
+        ref: { adapter: 'codex-desktop', id: 'one' },
+        from: 'session:neo',
+        lastCompletion: Date.parse('2026-10-26T22:49:22.453Z'),
+      });
+      expect(f.seen.filter((m) => m.method === 'thread-follower-steer-turn')).toHaveLength(1);
+      expect(f.seen.some((m) => m.method === 'thread-follower-start-turn')).toBe(false);
+    });
+  });
+
   describe('existing-thread work.send without a Desktop owner', () => {
     const buildDriver = async (options: {
       desktopSocketPath: string;
