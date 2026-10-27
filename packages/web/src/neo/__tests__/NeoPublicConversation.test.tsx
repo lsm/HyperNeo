@@ -333,14 +333,36 @@ describe('durable public conversation presentation', () => {
     expect(container.querySelector('[data-publication-details]')).toBeNull();
   });
 
-  it('offers select, copy and reply on a right-click, and copying flips the footer icon', async () => {
+  it.each(['ask', 'publication'])(
+    'preserves native right-click on a text %s and the Reply button',
+    (kind) => {
+      const quote = vi.fn();
+      const { container } = render(
+        <NeoPublicConversation
+          conversation={
+            kind === 'ask' ? conversation([ask()], []) : conversation([], [publication()])
+          }
+          onQuote={quote}
+        />
+      );
+      const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+      fireEvent(container.querySelector('[data-public-entry]')!, event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(screen.queryByRole('menu')).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: /Reply to .*message/ }));
+      expect(quote).toHaveBeenCalledOnce();
+    }
+  );
+
+  it('offers select, copy and reply on a touch long press, and copying flips the footer icon', async () => {
     const quote = vi.fn();
     const value = publication({ shortText: 'Short.', links: [] });
     const { container } = render(
       <NeoPublicConversation conversation={conversation([], [value])} onQuote={quote} />
     );
     const entry = container.querySelector('[data-public-entry]')!;
-    fireEvent.contextMenu(entry, { clientX: 10, clientY: 10 });
+    fireEvent.touchStart(entry, { touches: [{ clientX: 10, clientY: 10 }] });
+    await screen.findByRole('menu', { name: 'Message actions' }, { timeout: 3000 });
     const menu = screen.getByRole('menu', { name: 'Message actions' });
     expect(
       within(menu)
@@ -353,7 +375,8 @@ describe('durable public conversation presentation', () => {
     );
     await waitFor(() => expect(screen.getByTitle('Copied!')).toBeTruthy());
     expect(screen.queryByRole('menu')).toBeNull();
-    fireEvent.contextMenu(entry, { clientX: 10, clientY: 10 });
+    fireEvent.touchStart(entry, { touches: [{ clientX: 10, clientY: 10 }] });
+    await screen.findByRole('menu', { name: 'Message actions' }, { timeout: 3000 });
     fireEvent.click(screen.getByRole('menuitem', { name: 'Reply' }));
     expect(quote).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ author: 'Neo', text: value.shortText })

@@ -1,6 +1,6 @@
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import { planTaskDependencies } from '../../lib/tasks/dependency-plan.ts';
-import type { TaskDependencyNode } from '../../lib/tasks/dependency-graph.ts';
+import type { DependencyNode } from '../../lib/work-queue/dependency-graph.ts';
 import { defineDbOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { applyStandaloneTaskEdit, type EditStandaloneTaskInput } from './edit-task.ts';
@@ -14,7 +14,7 @@ export interface SetTaskDependenciesInput {
 function selectDependencyScope(
   db: Database,
   input: SetTaskDependenciesInput
-): { value: TaskDependencyNode[] } | { reason: null } {
+): { value: DependencyNode[] } | { reason: null } {
   const target = db
     .prepare('SELECT id FROM space_tasks WHERE id = ? AND space_id IS NULL')
     .get(input.taskId);
@@ -32,7 +32,7 @@ function selectDependencyScope(
 }
 
 export function decideTaskDependencyReplacement(
-  tasks: readonly TaskDependencyNode[],
+  tasks: readonly DependencyNode[],
   input: SetTaskDependenciesInput
 ): { value: string[] } | { reason: Rejection } {
   const result = planTaskDependencies(tasks, input.taskId, input.dependsOn);

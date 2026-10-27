@@ -1,11 +1,11 @@
-export interface TaskDependencyNode {
+export interface DependencyNode {
   id: string;
   dependsOn?: readonly string[];
   status?: string;
 }
 
-export function buildTaskDependencyGraph(
-  tasks: readonly TaskDependencyNode[],
+export function buildDependencyGraph(
+  tasks: readonly DependencyNode[],
   taskId: string,
   dependsOn: readonly string[]
 ): Map<string, string[]> {
@@ -20,7 +20,7 @@ export function buildTaskDependencyGraph(
   return adj;
 }
 
-export function hasTaskDependencyCycle(adj: ReadonlyMap<string, readonly string[]>): boolean {
+export function hasDependencyCycle(adj: ReadonlyMap<string, readonly string[]>): boolean {
   const WHITE = 0;
   const GRAY = 1;
   const BLACK = 2;

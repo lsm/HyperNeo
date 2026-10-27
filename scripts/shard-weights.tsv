@@ -361,7 +361,7 @@
 4	packages/daemon/tests/unit/1-core/session/tools-config.test.ts
 4	packages/daemon/tests/unit/1-core/startup-phase-timer.test.ts
 1094	packages/daemon/tests/unit/1-core/tasks/create-task.test.ts
-5	packages/daemon/tests/unit/1-core/tasks/dependency-graph.test.ts
+5	packages/daemon/tests/unit/1-core/work-queue/dependency-graph.test.ts
 11	packages/daemon/tests/unit/1-core/tasks/dependency-plan.test.ts
 1091	packages/daemon/tests/unit/1-core/tasks/edit-task.test.ts
 232	packages/daemon/tests/unit/1-core/tasks/list-tasks.test.ts

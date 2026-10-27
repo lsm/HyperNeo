@@ -615,6 +615,15 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     }
   };
 
+  const restartLadder = (todoId: string, now: number) => {
+    const prior = sessions.readNudge(todoId);
+    sessions.recordNudge(todoId, {
+      since: now,
+      nudges: 0,
+      ...(prior?.redispatched ? { redispatched: true } : {}),
+    });
+  };
+
   const follow = (superpipe({})('neo-todo-follow') as PipelineAPI)
     .input(['todo', 'now'])
     .pipe(
@@ -622,7 +631,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         const ref = sessions.readRef(todo.id);
         const ask = store.getAsk(todo.askId);
         return ((todo.state === 'doing' && todo.report) ||
-          (todo.state === 'blocked' && todo.blockedBy === 'worker')) &&
+          (todo.state === 'blocked' && ['worker', 'stalled'].includes(todo.blockedBy ?? ''))) &&
           ref &&
           ask?.status === 'open'
           ? { value: { ref, ask } }
@@ -657,6 +666,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         ) {
           const current = store.getTodo(todo.id);
           if (current?.state !== todo.state || current.updatedAt !== todo.updatedAt) return;
+          if (todo.blockedBy === 'stalled') restartLadder(todo.id, now);
           todo = store.updateTodo(todo, { state: 'doing' }, now);
         }
         deps.changed();
@@ -664,6 +674,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         if (report && report !== todo.report) {
           const current = store.getTodo(todo.id);
           if (current?.state !== todo.state || current.updatedAt !== todo.updatedAt) return;
+          if (todo.blockedBy === 'stalled') restartLadder(todo.id, now);
           store.updateTodo(
             todo,
             {
@@ -723,33 +734,64 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         now: number
       ) => {
         const minutes = Math.round((now - incident.since) / 60_000);
-        const sent =
-          plan.kind === 'remind' &&
-          (await deps
-            .invoke(caller(ask), 'work.send', { ref, message: neoTodoIdleReminder(todo, minutes) })
-            .catch(() => null));
-        const delivered =
-          sent && sent.kind === 'completed' && (sent.value as { ok?: boolean } | null)?.ok;
-        if (!delivered) {
+        const release = async (error: unknown) => {
+          await sessions.write(
+            'finishNudge',
+            todo.id,
+            incident.since,
+            plan.nudges,
+            incident.nudges
+          );
+          throw error;
+        };
+        const stall = async (reason: string) => {
+          const next = 'Continue it with new direction, reassign it, or close it.';
           await deps
             .tell(
               ask,
               todo,
-              `Todo "${todo.title}" has made no progress for ${minutes} min; ${plan.kind === 'escalate' ? 'the reminder window elapsed without progress' : 'its worker could not be reached'}. Decide how to continue.`,
+              `Todo "${todo.title}" is stalled: ${reason}\nNext: ${next}`,
+              `neo-todo-stall:${todo.id}:${incident.since}`
+            )
+            .catch(release);
+          const current = store.getTodo(todo.id) ?? todo;
+          await recompute(current, planNeoTodoBlocked(current, 'stalled', reason, next) ?? {}, now);
+        };
+        const idle = `its worker has been idle with no progress for ${minutes} min.`;
+        if (plan.kind === 'stall') return stall(idle);
+        if (plan.kind === 'redispatch') {
+          const refused = await stop(todo);
+          if (refused)
+            return stall(
+              `${idle} It could not be stopped (${refused}), so no fresh worker took it.`
+            );
+          store.updateTodo(todo, { state: 'todo', startedAt: null, finishedAt: null }, now);
+          await start(todo.id);
+          const moved = store.getTodo(todo.id);
+          if (moved?.state === 'todo') return stall(`${idle} No fresh worker could take it.`);
+          if (moved?.state === 'doing')
+            await deps.tell(
+              ask,
+              todo,
+              `Todo "${todo.title}" sat idle ${minutes} min with no progress, so the daemon moved it to a fresh worker.`,
+              `neo-todo-redispatch:${todo.id}`
+            );
+          return;
+        }
+        const sent = await deps
+          .invoke(caller(ask), 'work.send', { ref, message: neoTodoIdleReminder(todo, minutes) })
+          .catch(() => null);
+        const delivered =
+          sent && sent.kind === 'completed' && (sent.value as { ok?: boolean } | null)?.ok;
+        if (!delivered)
+          await deps
+            .tell(
+              ask,
+              todo,
+              `Todo "${todo.title}" has made no progress for ${minutes} min, and its worker could not be reached.`,
               `neo-todo-remind:${todo.id}:${incident.since}:${plan.nudges}`
             )
-            .catch(async (error) => {
-              await sessions.write(
-                'finishNudge',
-                todo.id,
-                incident.since,
-                plan.nudges,
-                incident.nudges
-              );
-              throw error;
-            });
-          await sessions.write('finishNudge', todo.id, incident.since, plan.nudges, 3);
-        }
+            .catch(release);
       },
       ['admission', 'now'],
       'admission'
@@ -802,6 +844,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       todo.id,
       sent && { ...sent, receipt: delivered.receipt, delivery: delivered.delivery }
     );
+    restartLadder(todo.id, Date.now());
     const next = store.updateTodo(
       todo,
       { state: 'doing', report: null, evidence: null, finishedAt: null },

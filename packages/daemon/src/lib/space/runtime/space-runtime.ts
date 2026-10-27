@@ -22,6 +22,7 @@ import { createDirectOutcomeRequester } from '../../tasks/direct-outcome-jobs.ts
 import { prepareSpaceTaskStatusUpdate } from '../../tasks/status-preparation.ts';
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
 import { TASK_SLOT_STATUSES, availableTaskSlots } from '../../tasks/capacity.ts';
+import { orderWork } from '../../work-queue/order.ts';
 import { selectOrphanedInProgressTasks } from '../../tasks/orphaned-task-recovery.ts';
 import { DirectTaskExecutionRepository } from '../../../storage/repositories/direct-task-execution-repository.ts';
 import { PendingCompletionSupersededError } from '../../tasks/pending-completion-guard.ts';
@@ -31,7 +32,6 @@ import type {
   Space,
   SpaceApprovalSource,
   SpaceTask,
-  SpaceTaskPriority,
   SpaceTaskStatus,
   SpaceWorkflow,
   SpaceWorkflowRun,
@@ -225,12 +225,6 @@ import {
 } from '../../workflows/run-spawn-decisions.ts';
 
 const log = new Logger('space-runtime');
-const PRIORITY_ORDER: Record<SpaceTaskPriority, number> = {
-  urgent: 0,
-  high: 1,
-  normal: 2,
-  low: 3,
-};
 const TASK_BLOCKABLE_FROM_STATUSES: readonly SpaceTaskStatus[] = (
   Object.keys(VALID_SPACE_TASK_TRANSITIONS) as SpaceTaskStatus[]
 ).filter((status) => VALID_SPACE_TASK_TRANSITIONS[status].includes('blocked'));
@@ -8602,15 +8596,6 @@ export class SpaceRuntime {
     );
   }
 
-  private sortTasksByPriority(tasks: SpaceTask[]): SpaceTask[] {
-    return [...tasks].sort((a, b) => {
-      const priorityDelta = PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority];
-      if (priorityDelta !== 0) return priorityDelta;
-      if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
-      return a.id.localeCompare(b.id);
-    });
-  }
-
   private pruneAttachBackoff(spaceId: string, candidateTaskIds: Set<string>): void {
     for (const [taskId, state] of this.attachBackoff)
       if (state.spaceId === spaceId && !candidateTaskIds.has(taskId))
@@ -8664,7 +8649,7 @@ export class SpaceRuntime {
       const directTaskIds = new Set(
         new DirectTaskExecutionRepository(this.config.db).listSelectedTaskIds(space.id)
       );
-      const standaloneOpenTasks = this.sortTasksByPriority(
+      const standaloneOpenTasks = orderWork(
         this.config.taskRepo
           .listStandaloneBySpace(space.id, false)
           .filter((task) => task.status === 'open' && !directTaskIds.has(task.id))
