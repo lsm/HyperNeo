@@ -3,6 +3,7 @@ import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createNeoAskRecordOperations } from '../../../../src/lib/neo/ask-record-operations.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
+import { wireNeoTodoMutations } from '../../../../src/lib/neo/todo-mutation-operation.ts';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
@@ -36,13 +37,26 @@ function setup() {
     invoke: async () => ({ kind: 'completed', value: { ok: true, value: {} } }),
   });
   const controls = { ...runner, resolveTarget: existingTodoTarget };
+  const gateway = gatewayFor(db);
   const operations = [
-    ...createNeoTodoOperations(
-      store,
-      sessions,
-      controls,
-      () => packs,
-      () => null
+    ...wireNeoTodoMutations(
+      createNeoTodoOperations(
+        store,
+        sessions,
+        controls,
+        () => packs,
+        () => null
+      ),
+      {
+        gateway,
+        write: gateway.run.bind(gateway),
+        packs: () => packs,
+        artifact: () => null,
+        stop: async () => null,
+        start: (id) => runner.start(id),
+        changed: () => {},
+        project: async (todos) => todos,
+      }
     ),
     ...createNeoAskRecordOperations(
       store,

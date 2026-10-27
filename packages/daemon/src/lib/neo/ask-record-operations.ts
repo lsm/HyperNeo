@@ -238,15 +238,19 @@ export function createNeoAskRecordOperations(
           store.listChildAsks(ask.id).length > 0 ||
           new Set(drafts.map((todo) => neoTodoRepo(todo, packs(), ask)).filter(Boolean)).size > 1;
         const records: string[] = [];
-        for (const todo of drafts) {
+        const ids: (string | undefined)[] = [];
+        for (const [index, todo] of drafts.entries()) {
           const row = recordedRow(todo, ask);
+          const after = todo.after?.map((ref) =>
+            typeof ref === 'number' ? (ref < index ? (ids[ref] ?? `#${ref}`) : `#${ref}`) : ref
+          );
           const added = !row
             ? await recordNeoTodo(
                 store,
                 sessions,
                 controls,
                 store.getAsk(ask.id)!,
-                todo,
+                { ...todo, ...(after ? { after } : {}) },
                 packs(),
                 split
               )
@@ -254,6 +258,7 @@ export function createNeoAskRecordOperations(
               ? await controls.start(row.id)
               : { ok: true as const };
           if (!added.ok) return added;
+          ids.push(row?.id ?? ('todo' in added ? added.todo?.id : undefined));
           if ('records' in added && added.records) records.push(...added.records);
         }
         const settled = split

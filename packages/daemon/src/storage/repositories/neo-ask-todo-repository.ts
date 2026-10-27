@@ -23,7 +23,8 @@ import type {
 import { neoStartQuestionTitle } from '../../lib/neo/start-question.ts';
 import type { Database } from '../sqlite-compat.ts';
 
-export type NeoTodoDraft = Pick<NeoTodo, 'title' | 'doneWhen' | 'check' | 'instruction' | 'named'>;
+export type NeoTodoDraft = Pick<NeoTodo, 'title' | 'doneWhen' | 'check' | 'instruction' | 'named'> &
+  Partial<Pick<NeoTodo, 'dependsOn'>>;
 
 export type NeoTodoPatch = Partial<
   Pick<
@@ -42,6 +43,7 @@ export type NeoTodoPatch = Partial<
     | 'blockedReason'
     | 'nextAction'
     | 'blockedBy'
+    | 'dependsOn'
   >
 >;
 
@@ -60,6 +62,7 @@ const TODO_COLUMNS: Record<keyof NeoTodoPatch, string> = {
   blockedReason: 'blocked_reason',
   nextAction: 'next_action',
   blockedBy: 'blocked_by',
+  dependsOn: 'depends_on',
 };
 
 const ASK_SELECT = `SELECT id, goal_id AS goalId, project_id AS projectId, repo, parent_id AS parentId, session_id AS sessionId,
@@ -83,7 +86,7 @@ const foundAsk = (row: AskRow | null): NeoAsk | null => (row ? toAsk(row) : null
 const TODO_SELECT = `SELECT id, ask_id AS askId, position, title, done_when AS doneWhen,
   check_json AS checkJson, instruction, named, repo, state, reason, blocked_reason AS blockedReason,
   next_action AS nextAction, blocked_by AS blockedBy, replaced_by AS replacedBy,
-  added_after_start AS addedAfterStart, report, evidence, artifacts_json AS artifactsJson, created_at AS createdAt,
+  added_after_start AS addedAfterStart, report, evidence, artifacts_json AS artifactsJson, depends_on AS dependsOnJson, created_at AS createdAt,
   updated_at AS updatedAt, started_at AS startedAt, finished_at AS finishedAt FROM neo_todos`;
 
 export type NeoQuestionDraft = Pick<
@@ -153,8 +156,9 @@ const toQuestion = ({
   answer: parsed<NeoQuestionAnswer>(row.answer),
 });
 
-type TodoRow = Omit<NeoTodo, 'check' | 'named' | 'addedAfterStart' | 'artifacts'> & {
+type TodoRow = Omit<NeoTodo, 'check' | 'named' | 'addedAfterStart' | 'artifacts' | 'dependsOn'> & {
   checkJson: string | null;
+  dependsOnJson: string | null;
   artifactsJson: string | null;
   named: string | null;
   addedAfterStart: number;
@@ -163,11 +167,13 @@ type TodoRow = Omit<NeoTodo, 'check' | 'named' | 'addedAfterStart' | 'artifacts'
 const toTodo = ({
   checkJson,
   artifactsJson,
+  dependsOnJson,
   named,
   addedAfterStart,
   ...row
 }: TodoRow): NeoTodo => ({
   ...row,
+  dependsOn: parsed<string[]>(dependsOnJson),
   ...(artifactsJson ? { artifacts: JSON.parse(artifactsJson) as NeoTodo['artifacts'] } : {}),
   check: parsed<NeoTodoCheck>(checkJson),
   named: parsed<Record<string, unknown>>(named),
@@ -544,6 +550,11 @@ export class NeoAskTodoRepository {
     ).map(toTodo);
   }
 
+  listFamilyTodos(askId: string): NeoTodo[] {
+    const root = this.getAsk(askId)?.parentId ?? askId;
+    return this.listTodosForAsks([root, ...this.listChildAsks(root).map((ask) => ask.id)]);
+  }
+
   listTodosForAsks(askIds: readonly string[]): NeoTodo[] {
     return (
       this.db
@@ -566,9 +577,9 @@ export class NeoAskTodoRepository {
     this.db
       .prepare(
         `INSERT INTO neo_todos (id, ask_id, position, title, done_when, check_json, instruction, named,
-           repo, added_after_start, created_at, updated_at)
+           repo, added_after_start, depends_on, created_at, updated_at)
          VALUES (?, ?, (SELECT COALESCE(MAX(position) + 1, 0) FROM neo_todos WHERE ask_id = ?), ?, ?, ?, ?, ?, ?,
-           EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = ? AND started_at IS NOT NULL), ?, ?)`
+           EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = ? AND started_at IS NOT NULL), ?, ?, ?)`
       )
       .run(
         id,
@@ -581,6 +592,7 @@ export class NeoAskTodoRepository {
         draft.named ? JSON.stringify(draft.named) : null,
         repo,
         askId,
+        draft.dependsOn ? JSON.stringify(draft.dependsOn) : null,
         now,
         now
       );
@@ -716,7 +728,7 @@ export class NeoAskTodoRepository {
         )
         .run(
           ...keys.map((key) =>
-            key === 'check' || key === 'artifacts'
+            key === 'check' || key === 'artifacts' || key === 'dependsOn'
               ? JSON.stringify(patch[key] ?? null)
               : (patch[key] ?? null)
           ),

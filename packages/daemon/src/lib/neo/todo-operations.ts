@@ -1,3 +1,4 @@
+import { neoTodoDependencyRefusal, planNeoTodoDependencies } from './todo-dependencies.ts';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -55,6 +56,10 @@ const TodoDraft = z.object({
   target: NeoTodoTargetSchema.optional(),
   named: z.record(z.string(), z.unknown()).nullable().default(null),
   start: z.boolean().default(false),
+  after: z
+    .array(z.union([Text, z.number().int().min(0)]))
+    .max(20)
+    .optional(),
 });
 
 function refineNeoTodoDraft(
@@ -153,7 +158,13 @@ export async function recordNeoTodo(
   const accepted = planNeoTodoDraft(draft, packs, todos.listTodos(home.id));
   if ('reason' in accepted) return accepted.reason;
   const records = accepted.value.records ? { records: accepted.value.records } : {};
-  const added = todos.addTodo(crypto.randomUUID(), home.id, draft, Date.now(), repo);
+  const id = crypto.randomUUID();
+  const dependsOn = draft.after
+    ? planNeoTodoDependencies(todos.listFamilyTodos(home.id), id, draft.after.map(String))
+    : null;
+  if (typeof dependsOn === 'string')
+    return { ok: false, reason: neoTodoDependencyRefusal(dependsOn) };
+  const added = todos.addTodo(id, home.id, { ...draft, dependsOn }, Date.now(), repo);
   if (draft.target?.verb === 'bind')
     return { ...bindNeoTodo(todos, sessions, added, draft.target.ref), ...records };
   if (draft.target) sessions.create(added.id, draft.target);
@@ -228,6 +239,7 @@ const Edit = z.object({
   done: z.enum(['met', 'reported']).optional(),
   evidence: Text.optional(),
   artifacts: z.array(ArtifactRefSchema).min(1).max(16).optional(),
+  after: z.array(Text).max(20).optional(),
 });
 
 const Remove = z.object({
@@ -252,6 +264,7 @@ export const NeoTodoSchema = z.object({
   blockedReason: z.string().nullable(),
   nextAction: z.string().nullable(),
   blockedBy: z.enum(['check', 'worker', 'failure', 'question', 'needs-human']).nullable(),
+  dependsOn: z.array(z.string()).nullable(),
   replacedBy: z.string().nullable(),
   addedAfterStart: z.boolean(),
   report: z.string().nullable(),
@@ -305,6 +318,7 @@ export function planNeoTodoEdit(
         ...(input.done === 'met' ? { evidence: input.evidence } : {}),
         ...(input.done === 'reported' ? { report: input.evidence } : {}),
         ...(input.artifacts ? { artifacts: input.artifacts } : {}),
+        ...(input.after ? { dependsOn: input.after } : {}),
       },
     },
   };
