@@ -1,30 +1,30 @@
 {
   "verified": true,
-  "productionLines": 103,
+  "productionLines": 106,
   "redRegressionCommit": "766639142540a05cc222a3661c2ec20276b787af",
   "baselineMainSql": 330,
   "fixedMainSql": {
     "bun": 0,
     "deno": 0
   },
-  "checks": "Full bun run check passed. 36 focused manual-merge operation and gate tests passed.",
+  "checks": "Full bun run check passed. All 40 merge-operation, gate and writer tests passed under the CI Vitest runner.",
   "observableRegression": "A todo closed after the final head/local-state check was admitted; fixed writer admission refuses it and stores no receipt.",
   "limitations": "Real RPC and persisted receipt race job with synthetic GitHub/assignment/QA facts. No real merge, model, actor harness, GUI, deployment, whole-daemon SQL absence or latency proof.",
   "proofBinding": {
-    "testedCodeCommit": "9696e22d37e3b47bb0189cdbee4673696aec87da",
-    "testedGitTree": "f6edeff24f7c641c01f8ec8ac6fc7de900321362",
+    "testedCodeCommit": "4fc655284d1ac51a35f1ffa841fb1d2566b3e303",
+    "testedGitTree": "5ae61558d135f0d46e3cebe3cd64705e5a29daff",
     "applicationTrees": {
-      "packages": "9b1ad955d3035cc63878c2286b3b6037d2beecbf",
+      "packages": "8acee21e46550caafbfc21bfc83fce6f5e8e78b6",
       "scripts": "b6047bc712b3726c2f338147a1860e6052883883"
     },
     "proofBlobs": {
       ".claude/skills/verify/lane-a-merge-local-db.ts": "9bbebc16bace6b9f3c5c5dae740bbe968729a723",
-      ".claude/skills/verify/lane-a-merge-local-db-run.py": "52a831cbac81fe3d806035fe84b120416abab0e0",
+      ".claude/skills/verify/lane-a-merge-local-db-run.py": "860d2f569e5ec32cbf299701fad21e281feaf241",
       ".claude/skills/verify/lane-a-merge-local-proof-binding.ts": "653f109e08c250f1ded6761ea0f9ba3fb0e58647"
     },
     "runs": {
-      "bun": "bun-verify-3",
-      "deno": "deno-verify-1"
+      "bun": "bun-verify-5",
+      "deno": "deno-verify-2"
     },
     "postProofChangePolicy": "evidence-and-journey-only"
   },
@@ -40,5 +40,11 @@
     "mutation": "Temporarily deleting the production stale-state comparison makes both new tests fail; original production file restored.",
     "productionUnchanged": true,
     "proofs": "Fresh Bun/Deno merge RPC and receipt job proofs pass with zero target main SQL."
+  },
+  "unusedDependencyReviewFix": {
+    "reviewedHead": "f1920bbb526855a22f37d4c9d25a328822457c19",
+    "change": "Removed unused merge operation ledger type/input and its runtime/test injection; other ledger consumers remain.",
+    "baselineRunner": "Restores matching runtime wiring with the old merge files; before mode passes.",
+    "proofs": "Fresh Bun/Deno merge RPC and receipt race jobs pass with zero target main SQL."
   }
 }

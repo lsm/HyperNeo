@@ -56,3 +56,7 @@ ci-cas-mutation.txt records that sensitivity check with production restored.
 ```sh
 (cd packages/daemon && bunx vitest run tests/unit/1-core/operations/coding-merge-receipt-writer.test.ts)
 ```
+
+The merge operation no longer injects an unused main-thread ledger instance.
+Before mode restores the matching runtime construction as well as the old merge
+files, so that historical comparison retains the old dependency contract.
