@@ -57,6 +57,22 @@ describe('NeoClampedText', () => {
     expect(container.querySelector('[data-clamped]')).toBeTruthy();
   });
 
+  it('keeps expanded text visible when a double-click selects a word', async () => {
+    sized(500, 272);
+    const { container } = render(
+      <NeoClampedText text="long">
+        <p>long</p>
+      </NeoClampedText>
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+    fireEvent.click(screen.getByText('long'), { detail: 1 });
+    vi.spyOn(window, 'getSelection').mockReturnValue({ toString: () => 'long' } as Selection);
+    fireEvent.click(screen.getByText('long'), { detail: 2 });
+    await new Promise((resolve) => setTimeout(resolve, 550));
+    expect(container.querySelector('[data-clamped]')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Show less' })).toBeTruthy();
+  });
+
   it.each([
     [7, 164, false],
     [6, 236, true],
