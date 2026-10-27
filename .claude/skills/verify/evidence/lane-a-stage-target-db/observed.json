@@ -7,14 +7,14 @@
     "bun": 0,
     "deno": 0
   },
-  "checks": "Full bun run check passed. 27 actor/selector tests pass under Bun and Vitest; both review mutations fail four cases.",
+  "checks": "Full bun run check passed after base merge. All 27 actor/selector tests pass under the CI Vitest runner.",
   "limitations": "Actual Write-plan RPC and preference restart proof. Review/Verify target dispatch is covered by focused operation tests, not a native actor journey. Other assignment admission SQL, real model/harness availability, full-daemon SQL absence, GUI and latency are unverified.",
   "proofBinding": {
-    "testedCodeCommit": "8cf8314b1757897623ceb81ed91ac0f9a37873cb",
-    "testedGitTree": "3cd9d35a06c8c94892880f562fd8eb2b6e74648c",
+    "testedCodeCommit": "127ec9200564ec15a956b5690e9bd4b9ff78c90e",
+    "testedGitTree": "4422b08d38cf881ba569290fa16b0ebb731da786",
     "applicationTrees": {
-      "packages": "80159c3776b576128fd5f666b69845c25ff2c35a",
-      "scripts": "c09b4b6751dfe35b025b71f7df2ce83f02653973"
+      "packages": "590ade177ceafa954fc6557c0c37213225372831",
+      "scripts": "0a5b6270476461af99216a9faa7d2c48db0d2966"
     },
     "proofBlobs": {
       ".claude/skills/verify/lane-a-stage-target-db.ts": "f160fbe31c7ad71e54e827c4cc638351d89a50f3",
@@ -22,8 +22,8 @@
       ".claude/skills/verify/lane-a-stage-target-proof-binding.ts": "c8f0436c5739e84cb58ba4c5bc8c184390326afe"
     },
     "runs": {
-      "bun": "bun-verify-3",
-      "deno": "deno-verify-1"
+      "bun": "bun-verify-4",
+      "deno": "deno-verify-2"
     },
     "postProofChangePolicy": "evidence-and-journey-only"
   },
@@ -44,5 +44,14 @@
     "conclusion": "success",
     "initialFailure": "Windows compiled-worker temporary directory cleanup EBUSY; runtime assertions had passed.",
     "sourceChangeForCI": false
+  },
+  "baseMergeVerification": {
+    "base": "7b69fbc1023e3cef9cea593d2db202c852990acb",
+    "codeCommit": "127ec9200564ec15a956b5690e9bd4b9ff78c90e",
+    "resolution": "Kept workflowDeleteWrites and codingStageTargetReads imports and registrations.",
+    "grantAudit": "Against updated dev, exactly the two authorized stage-target insertions; zero removals.",
+    "proofs": "Fresh Bun/Deno Write-plan RPCs pass while a synthetic writer lock is held; zero target SQL on main; restart state retained; temporary daemon data removed.",
+    "tests": "27 actor/selector tests pass under Vitest after merge.",
+    "fullCheck": "bun run check passed"
   }
 }
