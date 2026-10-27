@@ -179,6 +179,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
             {
               group: asks.find((ask) => ask.id === todo.askId)?.projectId ?? null,
               worker: worker(this.readRef(todo.id)),
+              idle: this.workerIdle(todo.id),
             },
           ]
         : []
@@ -255,7 +256,12 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       todoId,
       plan?.kind === 'redispatch'
         ? { since: now, nudges: 0, redispatched: true }
-        : { ...incident, nudges: plan?.nudges ?? incident.nudges, ...(plan ? { at: now } : {}) }
+        : {
+            ...incident,
+            live: live.status,
+            nudges: plan?.nudges ?? incident.nudges,
+            ...(plan ? { at: now } : {}),
+          }
     );
     return plan ? { ...context, incident, plan } : null;
   }
@@ -264,6 +270,19 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     const current = this.readNudge(todoId);
     if (current?.since === since && current.nudges === expectedNudges)
       this.recordNudge(todoId, { ...current, nudges });
+  }
+
+  noteWorkerStatus(todoId: string, status: string): void {
+    const prior = this.readNudge(todoId);
+    if (prior?.live !== status)
+      this.recordNudge(
+        todoId,
+        prior ? { ...prior, live: status } : { since: 0, nudges: 0, live: status }
+      );
+  }
+
+  workerIdle(todoId: string): boolean {
+    return ['done', 'stopped', 'failed', 'needs_you'].includes(this.readNudge(todoId)?.live ?? '');
   }
 
   readNudge(todoId: string): FollowThroughIncident | null {
@@ -384,5 +403,13 @@ export const neoTodoSessionWrites = defineRepositoryOp(
   'neo.todoSessionWrites',
   'write',
   NeoTodoSessionRepository,
-  ['recordLive', 'recordDispatch', 'recordProgress', 'claimNeedsYou', 'claimNudge', 'finishNudge']
+  [
+    'recordLive',
+    'recordDispatch',
+    'recordProgress',
+    'claimNeedsYou',
+    'claimNudge',
+    'finishNudge',
+    'noteWorkerStatus',
+  ]
 );
