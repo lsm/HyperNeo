@@ -496,12 +496,13 @@ describe('neo.question operations', () => {
   });
 
   test('a ticked todo whose prerequisite is not done waits for the queue instead of starting', async () => {
-    const { store, call, daemonStart, started, fix, rows } = setup();
+    const { store, call, daemonStart, started, told, fix, rows } = setup();
     store.updateTodo(store.getTodo(rows.id)!, { dependsOn: [fix.id] }, 2);
     const start = daemonStart([fix.id, rows.id], 'Start these?');
     await call('neo.question.answer', { questionId: start.id, answer: [fix.id, rows.id] }, human);
     expect(started).toEqual([fix.id]);
     expect(store.getTodo(rows.id)?.state).toBe('todo');
+    expect(told.at(-1)).toContain('Waiting for earlier steps: Todo rows.');
   });
 
   test('tells Neo which ticked todos did not start', async () => {

@@ -174,4 +174,19 @@ describe('todo dependencies', () => {
       db.close();
     }
   });
+
+  test('a repeated plan that changes what a recorded step waits for says to use edit', async () => {
+    const { db, invoke, step } = setup();
+    try {
+      const plan = { title: 'Plan', request: 'Plan' };
+      await invoke('neo.ask.open', { ...plan, todos: [step('A'), step('B')] });
+      const again = (await invoke('neo.ask.open', {
+        ...plan,
+        todos: [step('A'), step('B', [])],
+      })) as unknown as { records?: string[] };
+      expect(again.records).toEqual([expect.stringContaining('neo.todo.edit')]);
+    } finally {
+      db.close();
+    }
+  });
 });
