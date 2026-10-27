@@ -703,7 +703,27 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'result:admission'
     )
     .pipe(
-      async (context: NonNullable<ReturnType<typeof sessions.nudgeContext>>, now: number) => {
+      async (now: number) =>
+        mayRedispatch(
+          (await store.read('listCheckable')).filter(
+            (other) =>
+              other.state === 'doing' &&
+              !['done', 'stopped', 'failed', 'needs_you'].includes(
+                sessions.readLiveStatus(other.id) ?? ''
+              )
+          ).length,
+          sweep.movedAt,
+          now
+        ),
+      'now',
+      'move'
+    )
+    .pipe(
+      async (
+        context: NonNullable<ReturnType<typeof sessions.nudgeContext>>,
+        now: number,
+        move: boolean
+      ) => {
         const live = readDriverLive(
           await deps.invoke(caller(context.ask), 'work.status', { ref: context.ref })
         );
@@ -715,11 +735,12 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
             context.ref,
             live,
             now,
-            context.todo.updatedAt
+            context.todo.updatedAt,
+            move
           ));
         return claim ? { value: claim } : { reason: null };
       },
-      ['admission', 'now'],
+      ['admission', 'now', 'move'],
       'result:admission'
     )
     .pipe(
@@ -754,11 +775,6 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         const idle = `its worker has been idle with no progress for ${minutes} min.`;
         if (plan.kind === 'stall') return stall(idle);
         if (plan.kind === 'redispatch') {
-          const running = (await store.read('listCheckable')).filter(
-            (other) => other.state === 'doing' && sessions.readLiveStatus(other.id) === 'running'
-          ).length;
-          if (!mayRedispatch(running, sweep.movedAt, now))
-            return sessions.recordNudge(todo.id, incident);
           sweep.movedAt = now;
           const refused = await stop(todo);
           if (refused)
