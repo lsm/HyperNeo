@@ -852,6 +852,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
 
   return {
     start,
+    fill,
     recompute,
     proceed,
     stop,

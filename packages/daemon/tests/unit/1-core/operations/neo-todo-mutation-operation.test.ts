@@ -93,9 +93,6 @@ describe('Writer-backed todo operation activation', () => {
         packs: () => packs,
         artifact: () => null,
         stop,
-        start: async (id: string) => {
-          order.push(`direct:${id}`);
-        },
         advance: () => start('peer'),
         changed: () => {
           order.push('announce');

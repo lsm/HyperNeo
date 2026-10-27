@@ -24,7 +24,7 @@ interface Dependencies {
   packs(): readonly NeoPack[];
   artifact: ArtifactRefReader;
   stop(todo: NeoTodo): Promise<string | null>;
-  start(todoId: string): Promise<unknown>;
+  advance(): Promise<unknown>;
   changed(): void;
   project<T extends NeoTodo>(todos: readonly T[]): Promise<T[]>;
 }
@@ -130,7 +130,7 @@ export function wireNeoTodoMutations(
         if ('startNext' in receipt) {
           deps.changed();
           if (receipt.startNext) {
-            await deps.start(receipt.startNext);
+            await deps.advance();
             receipt = {
               ...receipt,
               todos: await deps.gateway.call(neoTodoReads, 'listTodosForAsks', [
