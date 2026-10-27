@@ -597,18 +597,19 @@ function PublicEntry({
               </button>
             );
           const fold = (
-            <ContentDisclosureControl expanded={expanded} onToggle={() => setExpanded(!expanded)} />
+            <div class="mt-1 flow-root">
+              <ContentDisclosureControl
+                expanded={expanded}
+                onToggle={() => setExpanded(!expanded)}
+              />
+            </div>
           );
           const more = hasDetails && !expanded ? fold : undefined;
           const body = /^[\s]*\d+[.)]?[\s]*$/.test(text) ? (
-            <p class="whitespace-pre-wrap text-base leading-relaxed">
-              {text}
-              {more}
-            </p>
+            <p class="whitespace-pre-wrap text-base leading-relaxed">{text}</p>
           ) : (
             <MarkdownRenderer
               content={text}
-              trailing={more}
               references={references.text}
               onReference={openReference}
               class={`neo-markdown neo-markdown-${ask ? 'user' : 'assistant'} text-base leading-relaxed`}
@@ -619,6 +620,7 @@ function PublicEntry({
               <div ref={bubbleText}>
                 {ask ? <NeoClampedText text={text}>{body}</NeoClampedText> : body}
               </div>
+              {more}
               {hasDetails && expanded && (
                 <div
                   data-publication-details
@@ -631,11 +633,11 @@ function PublicEntry({
                   </div>
                   <MarkdownRenderer
                     content={full}
-                    trailing={fold}
                     references={references.full}
                     onReference={openReference}
                     class="neo-markdown neo-markdown-assistant text-sm leading-relaxed"
                   />
+                  {fold}
                 </div>
               )}
               {publication && <ArtifactCards artifacts={publication.artifacts} />}

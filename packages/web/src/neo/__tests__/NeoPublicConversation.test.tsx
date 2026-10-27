@@ -237,13 +237,13 @@ describe('durable public conversation presentation', () => {
       const more = await screen.findByRole('button', { name: /more$/ });
       expect(getComputedStyle(more).getPropertyValue('float')).toBe('right');
       expect(more.closest('.neo-markdown, p')).toBeNull();
-      fireEvent.click(screen.getByText((value.shortText ?? '').trim()));
+      fireEvent.click(await screen.findByText((value.shortText ?? '').trim()));
       expect(container.querySelector('[data-publication-details]')).toBeNull();
       fireEvent.click(more);
       const less = await screen.findByRole('button', { name: /less$/ });
       expect(getComputedStyle(less).getPropertyValue('float')).toBe('right');
       expect(less.closest('.neo-markdown, p')).toBeNull();
-      fireEvent.click(screen.getByText(ending.trim(), { exact: true }));
+      fireEvent.click(await screen.findByText(ending.trim(), { exact: true }));
       expect(container.querySelector('[data-publication-details]')).toBeTruthy();
       expect(less.getAttribute('aria-expanded')).toBe('true');
     }

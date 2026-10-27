@@ -8,6 +8,7 @@ export async function verifyReplyFold(page, fixture, { phase, evidence, touch = 
   const observations = [];
   for (const state of ['collapsed', 'expanded', 'folded', 'reopened']) {
     const expanded = state === 'expanded' || state === 'reopened';
+    if (expanded) await entry.locator('[data-publication-details] pre code').waitFor();
     const control = entry.getByRole('button', { name: expanded ? 'less' : 'more', exact: true });
     await control.scrollIntoViewIfNeeded();
     await entry.evaluate(async element => {
