@@ -37,3 +37,11 @@ After merge confirm the served web build contains the squash, then repeat the
 same browser checks using its actual assets and synthetic publications. Never
 restart the live daemon. If no containing live build is available, report
 live deployment smoke pending; isolated proof does not satisfy that gate.
+
+For an explicitly authorized read-only deployment smoke, use an existing live
+publication with Details instead of creating a fixture on the live daemon.
+Pin its article by the rendered message ID before opening it, because the more
+selector no longer matches after expansion. Repeat collapsed, expanded, folded
+and reopened, measuring the control against the last visible Markdown text and
+saving settled screenshots. Read-only UI disclosure is enough; never seed the
+live DB, send a message or invoke a live RPC directly.
