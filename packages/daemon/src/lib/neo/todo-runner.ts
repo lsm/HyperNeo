@@ -222,7 +222,8 @@ export function planNeoTodoCheck(
   if (!result || todo.state === 'done') return null;
   if (result.done && !result.failed)
     return { state: 'done', evidence: result.evidence, finishedAt: now };
-  if (todo.state === 'failed' || todo.state === 'closed_unverified') return null;
+  if (todo.state === 'failed' || todo.state === 'closed_unverified' || todo.blockedBy === 'held')
+    return null;
   if (result.failed) return planNeoTodoFailure(todo, result.failed, now);
   if (result.blocked)
     return todo.state === 'blocked' && todo.blockedBy !== 'check'
