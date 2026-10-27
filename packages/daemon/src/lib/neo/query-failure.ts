@@ -43,4 +43,4 @@ export const wakeFailedHyperneoSession = (superpipe({})('neo-query-failure-wake'
   db: Database,
   wake: NeoService['wakeNeo'],
   event: DaemonInternalEventMap['session.error']
-) => Promise<boolean>;
+) => Promise<boolean | undefined>;
