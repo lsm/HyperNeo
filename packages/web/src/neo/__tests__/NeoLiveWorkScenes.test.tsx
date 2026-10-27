@@ -335,6 +335,104 @@ function mountCard(state: NeoQuestionEntry['state'] = 'open', replacement = fals
 }
 
 describe('card reply notice navigation', () => {
+  it.each([true, false])('opens the exact paged done todo with owner loaded=%s', async (loaded) => {
+    const { model } = mount();
+    const todos = Array.from({ length: 25 }, (_, index) =>
+      testTodo(`d${index + 1}`, { state: 'done' })
+    );
+    const full = testAskEntry('finished', 'Completed reference card', {
+      state: 'done',
+      todos,
+      doneCount: 25,
+    });
+    const request = vi.fn(
+      async (_method: string, params: { name: string; input: { offset?: number } }) => {
+        if (params.name === 'neo.ask.read') return { ok: true, entry: full };
+        if (params.name === 'neo.ask.doneTodos') {
+          const offset = params.input.offset ?? 0;
+          return {
+            ok: true,
+            todos: todos.slice(offset, offset + 20),
+            doneCount: 25,
+            nextOffset: offset === 0 ? 20 : null,
+          };
+        }
+        return { schedules: [] };
+      }
+    );
+    const hub = vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
+    try {
+      act(() => {
+        model.value = {
+          ...model.value,
+          snapshot: {
+            ...model.value.snapshot,
+            todoAsks: loaded
+              ? [
+                  {
+                    ...full,
+                    todos: [],
+                    summary: { todoCount: 25, questionCount: 0, openQuestionCount: 0 },
+                  },
+                ]
+              : [],
+          },
+          viewPublicConversation: {
+            ...model.value.viewPublicConversation!,
+            entries: [
+              {
+                kind: 'ask',
+                key: 'done-quote',
+                ask: {
+                  conversationId: root.slice(4),
+                  requestId: '20000000-0000-4000-8000-000000000006',
+                  askOrigin: { sessionId: root, messageId: 'quoted-done' },
+                  content: 'Discuss this completed work',
+                  replyTo: { kind: 'todo', id: 'd25', excerpt: 'Completed target quote' },
+                  sequence: 1,
+                  createdAt: '2026-10-24T12:00:00Z',
+                },
+              },
+            ],
+          },
+        };
+      });
+      fireEvent.click(screen.getByRole('button', { name: /Completed target quote/ }));
+      const dialog = await screen.findByRole('dialog', { name: 'Completed reference card' });
+      await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-todo-d25'));
+      expect(dialog.contains(document.activeElement)).toBe(true);
+      expect(
+        request.mock.calls
+          .filter(([, params]) => params.name === 'neo.ask.doneTodos')
+          .map(([, params]) => params.input.offset)
+      ).toEqual([0, 20]);
+    } finally {
+      hub.mockRestore();
+    }
+  });
+
+  it.each(['answered', 'retired'] as const)(
+    'loads an off-window %s question into All',
+    async (state) => {
+      const { model } = mountCard(state);
+      const full = model.value.snapshot.todoAsks[0];
+      const request = vi.fn(async () => ({ ok: true, entry: full }));
+      const hub = vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
+      try {
+        act(() => {
+          model.value = { ...model.value, snapshot: { ...model.value.snapshot, todoAsks: [] } };
+        });
+        fireEvent.click(screen.getByRole('button', { name: /I replied · View card/ }));
+        const dialog = await screen.findByRole('dialog', { name: 'Sign-off card' });
+        await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-question-q1'));
+        expect(dialog.contains(document.activeElement)).toBe(true);
+        expect(screen.queryByRole('button', { name: /^A.*Approve/ })).toBeNull();
+      } finally {
+        hub.mockRestore();
+      }
+    }
+  );
+
   it.each(['pending', 'failed'])(
     'keeps a %s card read stable while editing the draft',
     async (state) => {
