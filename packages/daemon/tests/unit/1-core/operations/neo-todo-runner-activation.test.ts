@@ -177,6 +177,60 @@ describe('Runtime runner commits before external effects', () => {
     }
   });
 
+  test('a refused recovery commit preserves the interruption flag and cards without notices', async () => {
+    store.updateTodo(store.getTodo('first')!, { state: 'doing', report: 'Keep full work' }, 2);
+    startCard();
+    const before = snapshot();
+    db.exec(
+      "CREATE TRIGGER refuse_stamp BEFORE UPDATE ON neo_asks BEGIN SELECT RAISE(ABORT, 'synthetic recovery rollback'); END"
+    );
+    const warnings: string[] = [];
+    await runner.refresh((_message, error) => {
+      warnings.push(String(error));
+    });
+    expect(warnings.some((warning) => warning.includes('synthetic recovery rollback'))).toBe(true);
+    expect(snapshot()).toEqual(before);
+    expect(sessions.readStartInterrupted('first')).toBe(false);
+    expect(effects).toEqual([]);
+  });
+
+  test('a recovery notice waits for the committed receipt and is sent once', async () => {
+    store.updateTodo(store.getTodo('first')!, { state: 'doing', report: 'Full prior report' }, 2);
+    let committed!: () => void;
+    let release!: () => void;
+    const reached = new Promise<void>((resolve) => {
+      committed = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    afterWrite = async () => {
+      committed();
+      await gate;
+    };
+    const pending = runner.refresh((_message, error) => {
+      throw error;
+    });
+    await reached;
+    try {
+      expect(store.getTodo('first')).toMatchObject({
+        state: 'failed',
+        report: 'Full prior report',
+      });
+      expect(sessions.readStartInterrupted('first')).toBe(true);
+      expect(effects).toEqual([]);
+    } finally {
+      release();
+      await pending;
+    }
+    expect(effects).toEqual(['changed', 'tell']);
+    afterWrite = () => {};
+    await runner.refresh((_message, error) => {
+      throw error;
+    });
+    expect(effects).toEqual(['changed', 'tell']);
+  });
+
   test('a completion queued behind a changed check cannot advance the todo', async () => {
     store.updateTodo(store.getTodo('first')!, { state: 'doing' }, 2);
     const checked = store.getTodo('first')!;
