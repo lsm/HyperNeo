@@ -515,8 +515,8 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
     expect(sandboxOff).toMatchObject({
       success: true,
       sandboxEnabled: false,
-      error: undefined,
     });
+    expect(sandboxOff).not.toHaveProperty('error');
     await hub.request('session.update', {
       sessionId: root,
       config: {
