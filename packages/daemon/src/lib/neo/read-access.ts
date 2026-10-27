@@ -2,7 +2,6 @@ import { existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getDataDir } from '../data-dir.ts';
-import { neoFolderPath } from './folder.ts';
 import { getNeoReadCheckoutPath } from './read-checkout-path.ts';
 
 function directories(path: string) {
@@ -40,10 +39,6 @@ export async function neoReadAccess(
     (await readToken().catch(() => null)) ||
     (process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? null);
   return {
-    filesystem: {
-      allowWrite: [temp, ...neoReadCheckoutPaths()],
-      denyWrite: [cwd ?? neoFolderPath()],
-    },
     env: {
       TMPDIR: temp,
       ZDOTDIR: temp,

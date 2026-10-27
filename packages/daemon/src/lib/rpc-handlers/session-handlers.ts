@@ -726,13 +726,6 @@ export function setupSessionHandlers(
       throw new Error('Session not found');
     }
 
-    if (!sandboxEnabled && neoCoordinatorBinding(sessionManager.getDatabase(), targetSessionId))
-      return {
-        success: false,
-        sandboxEnabled: true,
-        error: 'Neo requires its Bash sandbox to remain enabled.',
-      };
-
     const session = agentSession.getSessionData();
     const previousMode = session.config.sandbox?.enabled ?? false;
 

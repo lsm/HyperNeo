@@ -23,9 +23,7 @@ Through session.get and Neo message/publication RPC, verify the stored and model
 prompt is neoPrompt(packBriefs), native Read/Bash tools are present, the prior marker still
 reaches the model, SDK session identity is unchanged, the shared lifecycle copied the
 transcript to the new cwd, and the human-visible publication is readable. The resumed fixture uses dontAsk with
-Read/Grep/Glob/web/Bash approved and native mutation tools unavailable. Follow
-[Neo read sandbox](neo-read-sandbox.md) for its actual OS write-denial and explicit
-tool-error checks. The scripted reply proves transport/config/publication
+Read/Grep/Glob/web/Bash approved and native mutation tools unavailable. The scripted reply proves transport/config/publication
 plumbing; it is not evidence of a real model's spontaneous decision to publish.
 Missing transcript data cannot be reconstructed by this
 config refresh and is not claimed recovered.
