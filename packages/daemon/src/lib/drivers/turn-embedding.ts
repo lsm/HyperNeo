@@ -1,8 +1,9 @@
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { AgentMemoryEmbedder } from '../../storage/repositories/agent-memory-repository.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { Database } from '../../storage/index.ts';
-import { saveTurnVector } from '../../storage/turn-vectors.ts';
+import { turnVectorWrites } from '../../storage/turn-vectors.ts';
 
 type TurnVectorStorage = Pick<
   Database,
@@ -39,7 +40,12 @@ export async function embedPendingTurns(
     for (const turn of pending) {
       tried.add(turn.id);
       const vector = Float32Array.from(await embedder.embedPassage(turn.text));
-      saveTurnVector(db.getDatabase(), turn, embedder.model, vector, Date.now());
+      await gatewayFor(db.getDatabase()).run(turnVectorWrites, {
+        turn,
+        model: embedder.model,
+        vector,
+        now: Date.now(),
+      });
     }
     embedded += pending.length;
     if (pending.length === 0 || Date.now() - started >= budgetMs) break;

@@ -37,7 +37,7 @@ globalThis.Worker = function (url: string | URL, options?: WorkerOptions) {
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let timer: ReturnType<typeof setInterval> | undefined;
 let probe: ReturnType<typeof spawn> | undefined;
-const evidence: Record<string, unknown> = { runtime: Bun.version, waitMs, bridge, writer, surface: 'app-wired work.turns.embed job / independent system.health RPC', limitation: 'Executing-thread wait models slow MIN/MAX storage; not a physical-disk reproduction or a <=250ms affected-job pass.' };
+const evidence: Record<string, unknown> = { runtime: Bun.version, waitMs, bridge, writer, surface: 'app-wired work.turns.embed job / independent system.health RPC', limitation: 'Executing-thread wait models slow storage SQL; not a physical-disk reproduction or a <=250ms affected-job pass.' };
 try {
   app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db'), workspaceRoot: run }), disableWorktrees: true, disableGoalProcessing: true, verbose: false });
   await app.jobProcessor.stop();

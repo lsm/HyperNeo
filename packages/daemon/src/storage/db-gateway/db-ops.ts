@@ -1,3 +1,4 @@
+import { turnVectorWrites } from '../turn-vectors.ts';
 import { neoPublicationWrites } from '../repositories/neo-publication-repository.ts';
 import {
   neoAskSettlementReads,
@@ -134,6 +135,7 @@ import { workflowDeleteWrites } from '../repositories/workflow-delete-write.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    turnVectorWrites,
     neoPublicationWrites,
     neoAskSettlementReads,
     neoAskSettlementWrites,
