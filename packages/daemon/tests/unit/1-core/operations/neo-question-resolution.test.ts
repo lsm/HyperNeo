@@ -202,7 +202,7 @@ test('a cited saved rule retires the worker card and delivers once without human
       answeredByHuman: false,
       resolvedByAgent: true,
       question: { retiredReason: expect.stringContaining(rule) },
-      answerDelivery: [{ answeredBy: 'rule', state: 'accepted' }],
+      answerDelivery: [{ answeredBy: 'agent', state: 'accepted' }],
     });
     expect(f.store.getTodo('todo')).toMatchObject({ state: 'doing', blockedBy: null });
     expect([...f.messages.values()][0]).toContain('Neo resolved');
@@ -223,6 +223,9 @@ test('an earlier human answer can be cited, while a retired agent resolution can
     const prior = f.prior();
     expect(await f.resolve({ kind: 'answer', questionId: prior.id })).toMatchObject({ ok: true });
     expect(f.store.getQuestion(f.question.id)?.retiredReason).toContain(prior.id);
+    expect(await f.call('neo.question.get', { questionId: f.question.id })).toMatchObject({
+      answerDelivery: [{ answeredBy: 'agent', state: 'accepted' }],
+    });
     expect(readNeoQuestion(f.store.getQuestion(prior.id))).toMatchObject({
       answeredByHuman: true,
       resolvedByAgent: false,
@@ -347,7 +350,7 @@ test('failed delivery retains its hold and durable citation through restart', as
         question: { retiredReason: expect.stringContaining(rule) },
       });
       expect(store.questionAnswers.list(f.question.id)).toMatchObject([
-        { answeredBy: 'rule', state: 'accepted' },
+        { answeredBy: 'agent', state: 'accepted' },
       ]);
     } finally {
       reopened.close();

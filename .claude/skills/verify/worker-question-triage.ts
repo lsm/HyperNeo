@@ -109,6 +109,7 @@ try {
   assert.equal((await rpc('neo.question.resolve', { questionId: next.id, answer: ['Staging'], source: { kind: 'answer', questionId: first.id } })).ok, false, 'an agent resolution cannot be recited as human approval');
   assert.equal((await rpc('neo.question.resolve', { questionId: next.id, answer: ['Staging'], source: { kind: 'answer', questionId: prior.id } })).ok, true);
   const priorRead = await rpc('neo.question.get', { questionId: next.id });
+  assert.equal(priorRead.answerDelivery[0].answeredBy, 'agent');
   assert.equal(priorRead.answeredByHuman, false); assert(priorRead.question.retiredReason.includes(prior.id));
   app.jobProcessor.start();
   await until(() => app!.db.getSDKMessageRepo().getUserSendStatus('synthetic-worker', priorRead.answerDelivery[0].receipt) === 'consumed', 'the cited prior answer must reach the worker SDK');
