@@ -28,6 +28,7 @@ const {MessageHub,WebSocketClientTransport}=await import('../../../packages/shar
 const app=await createDaemonApp({config:{...getConfig({port:0,host:'127.0.0.1',dbPath:join(run,'data/daemon.db'),workspaceRoot:join(run,'workspace')}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});assert.notEqual(app.server.port,8399);
 const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);
 const evidence:Record<string,unknown>={phase,passed:false,scriptedSdk:true,syntheticOnly:true};
+const errors:{sessionId:string;error:string;details?:unknown}[]=[];const stopErrors=app.internalEventBus.subscribe('session.error',event=>{errors.push(event);},{subscriberName:'query-failure-governor-proof'});
 const until=async(check:()=>boolean|Promise<boolean>,label:string,ms=20000)=>{const end=Date.now()+ms;while(!await check()){assert(Date.now()<end,label);await new Promise(done=>setTimeout(done,25));}};
 try{
  await transport.initialize();
@@ -48,6 +49,8 @@ try{
   evidence.baselineReproduced=true;evidence.attempts=[...attempts];
  }else{
   await until(async()=>(await read()).metadata.queryFailureEpisode?.failed===true,'failure cap never became public');
+  await until(()=>errors.some(event=>event.error.includes('Query stopped after 3 failures')),'terminal error was not published');
+  const terminal=errors.find(event=>event.sessionId===sessionId && event.error.includes('Query stopped after 3 failures'))!;assert((terminal.details as {metadata:{queryFailureEpisode:{failed:boolean}}}).metadata.queryFailureEpisode.failed);evidence.terminalEvent=terminal;
   const failed=await read();assert.equal(failed.metadata.queryFailureEpisode?.failures,3);assert(failed.metadata.queryFailureEpisode?.error.includes(failure));assert.equal(attempts.length,phase==='deadline'?0:3);
   if(phase!=='deadline')assert(attempts[1]-attempts[0]>=950 && attempts[2]-attempts[1]>=1950);
   const beforeCount=attempts.length;await new Promise(done=>setTimeout(done,2200));assert.equal(attempts.length,beforeCount);
@@ -62,7 +65,7 @@ try{
  }
  evidence.passed=true;
 }finally{
- finish();await transport.close();await app.cleanup();globalThis.fetch=network;evidence.resourcesStopped=true;
+ stopErrors();finish();await transport.close();await app.cleanup();globalThis.fetch=network;evidence.resourcesStopped=true;
  writeFileSync(join(run,'evidence/query-failure-governor.json'),JSON.stringify(evidence,null,2).replaceAll(run,'<synthetic-run>'));
 }
 console.log(JSON.stringify(evidence).replaceAll(run,'<synthetic-run>'));
