@@ -715,19 +715,40 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         now: number
       ) => {
         const minutes = Math.round((now - incident.since) / 60_000);
-        const sent =
-          plan.kind === 'remind' &&
-          (await deps
-            .invoke(caller(ask), 'work.send', { ref, message: neoTodoIdleReminder(todo, minutes) })
-            .catch(() => null));
+        if (plan.kind === 'stall')
+          return void (await finish(
+            todo,
+            ask,
+            planNeoTodoBlocked(
+              todo,
+              'stalled',
+              `Its worker has been idle with no progress for ${minutes} min; the todo is stalled.`,
+              'Continue it with new direction, reassign it, or close it.'
+            ),
+            now
+          ));
+        if (plan.kind === 'redispatch') {
+          await deps.invoke(caller(ask), 'work.stop', { ref }).catch(() => null);
+          store.updateTodo(todo, { state: 'todo', startedAt: null, finishedAt: null }, now);
+          await start(todo.id);
+          return void (await deps.tell(
+            ask,
+            todo,
+            `Todo "${todo.title}" sat idle ${minutes} min with no progress, so the daemon moved it to a fresh worker.`,
+            `neo-todo-redispatch:${todo.id}`
+          ));
+        }
+        const sent = await deps
+          .invoke(caller(ask), 'work.send', { ref, message: neoTodoIdleReminder(todo, minutes) })
+          .catch(() => null);
         const delivered =
           sent && sent.kind === 'completed' && (sent.value as { ok?: boolean } | null)?.ok;
-        if (!delivered) {
+        if (!delivered)
           await deps
             .tell(
               ask,
               todo,
-              `Todo "${todo.title}" has made no progress for ${minutes} min; ${plan.kind === 'escalate' ? 'the reminder window elapsed without progress' : 'its worker could not be reached'}. Decide how to continue.`,
+              `Todo "${todo.title}" has made no progress for ${minutes} min, and its worker could not be reached.`,
               `neo-todo-remind:${todo.id}:${incident.since}:${plan.nudges}`
             )
             .catch(async (error) => {
@@ -740,8 +761,6 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
               );
               throw error;
             });
-          await sessions.write('finishNudge', todo.id, incident.since, plan.nudges, 3);
-        }
       },
       ['admission', 'now'],
       'admission'
@@ -794,6 +813,12 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       todo.id,
       sent && { ...sent, receipt: delivered.receipt, delivery: delivered.delivery }
     );
+    const prior = sessions.readNudge(todo.id);
+    sessions.recordNudge(todo.id, {
+      since: Date.now(),
+      nudges: 0,
+      ...(prior?.redispatched ? { redispatched: true } : {}),
+    });
     const next = store.updateTodo(
       todo,
       { state: 'doing', report: null, evidence: null, finishedAt: null },
