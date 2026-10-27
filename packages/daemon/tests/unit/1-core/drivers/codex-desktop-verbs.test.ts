@@ -66,10 +66,12 @@ const saidAt = (text: string, at = '2026-10-04T11:00:05.000Z') =>
 
 let workerDataDir: string;
 beforeEach(() => {
+  sandbox.configureWorkerSandbox(() => 'always');
   workerDataDir = mkdtempSync(join(tmpdir(), 'worker-data-'));
   process.env.HYPERNEO_DATA_DIR = workerDataDir;
 });
 afterEach(() => {
+  sandbox.configureWorkerSandbox(() => 'off');
   rmSync(workerDataDir, { recursive: true, force: true });
   delete process.env.HYPERNEO_DATA_DIR;
 });

@@ -31,6 +31,8 @@ These checks use a real app-server and worker; do not run this journey inside an
 already sandboxed worker. Neo runs it after deployment on the host.
 Prepared workers
 must not fall back to offline CLI queueing when the required policy refresh cannot
-run; unprepared chats keep their existing queue behavior. Policy updates apply to
+run. With the preference off, every queued turn also requires a confirmed full-access
+policy refresh, so an unreachable app-server cannot be bypassed through an offline
+CLI submission. Policy updates apply to
 future turns, so an already running restricted turn must finish before the next
 queued turn can use the restored policy.

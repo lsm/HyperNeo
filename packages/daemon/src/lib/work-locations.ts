@@ -8,6 +8,7 @@ interface WorkerWorkLocations {
   builds: string;
   scratch: string;
   cache: string;
+  ghConfig: string;
 }
 
 export function workerWorkLocations(root: string): WorkerWorkLocations {
@@ -20,5 +21,6 @@ export function workerWorkLocations(root: string): WorkerWorkLocations {
     builds: join(dataDir, 'work', 'builds', key),
     scratch,
     cache: join(scratch, 'cache'),
+    ghConfig: join(dataDir, 'work', 'gh-config', key),
   };
 }
