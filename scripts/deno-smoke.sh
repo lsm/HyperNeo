@@ -704,4 +704,10 @@ env -i HOME="$ASK_SETTLEMENT_ACTIVATION_RUN/home" PATH="$PATH" TMPDIR="$ASK_SETT
 	HYPERNEO_DATA_DIR="$ASK_SETTLEMENT_ACTIVATION_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/ask-settlement-activation.ts" verify "$ASK_SETTLEMENT_ACTIVATION_RUN"
 
+HUMAN_CONFIRMED_RUN="$WORK_DIR/human-confirmed-todos"
+mkdir -p "$HUMAN_CONFIRMED_RUN/home" "$HUMAN_CONFIRMED_RUN/tmp"
+env -i HOME="$HUMAN_CONFIRMED_RUN/home" PATH="$PATH" TMPDIR="$HUMAN_CONFIRMED_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$HUMAN_CONFIRMED_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/human-confirmed-todos.ts" verify "$HUMAN_CONFIRMED_RUN"
+
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"
