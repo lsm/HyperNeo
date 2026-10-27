@@ -65,3 +65,9 @@ bun --no-install --no-env-file .claude/skills/verify/lane-a-ledger-observation-p
 
 No health/affected RPC latency, RSS or WAL benchmark is claimed. Gateway command
 durations and JSON byte sizes do not separately measure queue, SQL or clone time.
+
+The current binding was refreshed after merging dev with the approved stage-target
+reader. Both runtime proofs identify that merged code head. Only the registry
+append conflicted; the resolution preserves the base reader and this slice's
+reader. Against the base, the shared-file diff remains exactly the granted import
+and DB_OPS entry. Prior successful proof bindings remain historical.

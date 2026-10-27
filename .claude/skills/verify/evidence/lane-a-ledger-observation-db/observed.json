@@ -9,26 +9,26 @@
   },
   "proofs": {
     "bun": {
-      "run": "bun-verify-2",
+      "run": "bun-verify-3",
       "verified": true,
       "targetMainSql": 0,
       "atomicRollback": true,
       "snapshotReadUnderWriterLock": true,
       "gatewayCommands": 58,
-      "maxCommandMs": 76.23970800000006,
+      "maxCommandMs": 73.89470800000004,
       "maxArgsBytes": 645,
       "maxReplyBytes": 744,
       "cooldownReads": 0,
       "temporaryDaemonDataRemoved": true
     },
     "deno": {
-      "run": "deno-verify-1",
+      "run": "deno-verify-2",
       "verified": true,
       "targetMainSql": 0,
       "atomicRollback": true,
       "snapshotReadUnderWriterLock": true,
       "gatewayCommands": 58,
-      "maxCommandMs": 138.5670409999998,
+      "maxCommandMs": 172.78762499999993,
       "maxArgsBytes": 645,
       "maxReplyBytes": 744,
       "cooldownReads": 0,
@@ -65,11 +65,11 @@
     "Command durations and serialized sizes do not separate queue, SQL and cloning cost; no health/affected RPC latency, RSS or WAL benchmark."
   ],
   "proofBinding": {
-    "testedCodeCommit": "5142cbf777a2b7a206bb6c82d5d0968f780a1fbc",
-    "testedGitTree": "ffde903d42c97b1cc6e6d516f1e4d4fa847f1200",
+    "testedCodeCommit": "06146bd436a9ba68c61ed2416117824b2007c695",
+    "testedGitTree": "0b5de6c375443dc42cfea944d5834d540a3c544e",
     "applicationTrees": {
-      "packages": "f784e27e62c6caecd81c6ea05be44d7b03998673",
-      "scripts": "7c9d4b5b33560923315e74a7ca941a0ea1956f3b"
+      "packages": "d4c3dccdab5a9614b9d07fe049fb62e9083418cc",
+      "scripts": "4e747be6d40c26bb59d7f8fbb7683c92537893eb"
     },
     "proofBlobs": {
       ".claude/skills/verify/lane-a-ledger-observation-db.ts": "2d5df598089aae24c52caf19301024a7b7a225eb",
@@ -77,9 +77,34 @@
       ".claude/skills/verify/lane-a-ledger-observation-proof-binding.ts": "ae455bdf4406629a39d2ff7b1df1925e48c63723"
     },
     "runs": {
-      "bun": "bun-verify-2",
-      "deno": "deno-verify-1"
+      "bun": "bun-verify-3",
+      "deno": "deno-verify-2"
     },
     "postProofChangePolicy": "evidence-and-journey-only"
+  },
+  "proofBindingHistory": [
+    {
+      "testedCodeCommit": "5142cbf777a2b7a206bb6c82d5d0968f780a1fbc",
+      "testedGitTree": "ffde903d42c97b1cc6e6d516f1e4d4fa847f1200",
+      "applicationTrees": {
+        "packages": "f784e27e62c6caecd81c6ea05be44d7b03998673",
+        "scripts": "7c9d4b5b33560923315e74a7ca941a0ea1956f3b"
+      },
+      "proofBlobs": {
+        ".claude/skills/verify/lane-a-ledger-observation-db.ts": "2d5df598089aae24c52caf19301024a7b7a225eb",
+        ".claude/skills/verify/lane-a-ledger-observation-db-run.py": "baa6c586b5082b2176d99f011333766b98aa884e",
+        ".claude/skills/verify/lane-a-ledger-observation-proof-binding.ts": "ae455bdf4406629a39d2ff7b1df1925e48c63723"
+      },
+      "runs": {
+        "bun": "bun-verify-2",
+        "deno": "deno-verify-1"
+      },
+      "postProofChangePolicy": "evidence-and-journey-only"
+    }
+  ],
+  "baseMerge": {
+    "commit": "06146bd436a9ba68c61ed2416117824b2007c695",
+    "base": "46d61761c1ea2af16868025777953751112e90ac",
+    "conflict": "Only DB_OPS append: retained codingStageTargetReads from dev and own codingLedgerPollReads. Against base, shared diff remains exactly the granted import and entry."
   }
 }
