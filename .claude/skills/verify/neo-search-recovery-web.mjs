@@ -15,6 +15,7 @@ export async function verifySearchRecovery(page, fixture, {phase,evidence,touch=
     });
   });
   const use=control=>touch?control.tap():control.click();
+  const settle=()=>page.evaluate(async()=>{await Promise.all(document.getAnimations().filter(a=>a.effect?.getComputedTiming().iterations!==Infinity).map(a=>a.finished));});
   await page.goto(fixture.url);
   if(touch) await use(page.getByRole('button',{name:/^Your work/}));
   const work=page.locator('.neo-scene-list:visible');
@@ -23,14 +24,17 @@ export async function verifySearchRecovery(page, fixture, {phase,evidence,touch=
   const input=work.getByRole('searchbox',{name:'Search work',exact:true});
   const failure=work.getByText('Could not search work. Close and reopen search to retry.',{exact:true});
   await input.fill('needle');await failure.waitFor();
-  await input.press('Escape');
+  await use(work.getByRole('button',{name:'Close work search',exact:true}));
   await input.waitFor({state:'detached'});
   hold=true;
   await use(work.getByRole('button',{name:'Search work',exact:true}));
+  await input.waitFor();
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
   await input.fill('needle');
   await page.waitForTimeout(150);
   const staleError=await failure.isVisible(),searching=await work.getByText('Searching work…',{exact:true}).isVisible();
   assert.equal(staleError,phase==='before');assert.equal(searching,phase==='after');
+  await settle();
   await page.screenshot({path:`${evidence}/${touch?'mobile':'desktop'}-retry-${phase}.png`,scale:'css'});
   assert(held.length>0);hold=false;for(const release of held)release();
   await work.locator('[data-scene-group="search"] [data-ask]').nth(3).waitFor();
@@ -41,6 +45,7 @@ export async function verifySearchRecovery(page, fixture, {phase,evidence,touch=
   const retained=await input.count()===1;
   assert.equal(retained,phase==='after');
   if(retained)assert((await input.inputValue()).includes('数据'));
+  await settle();
   await page.screenshot({path:`${evidence}/${touch?'mobile':'desktop'}-ime-${phase}.png`,scale:'css'});
   await cdp.send('Input.imeSetComposition',{text:'',selectionStart:0,selectionEnd:0});
   await cdp.detach();

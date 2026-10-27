@@ -60,6 +60,7 @@ export async function verifyWorkSearch(page, fixture, { evidence, touch = false 
   await work.getByText('Could not search work. Close and reopen search to retry.',{exact:true}).waitFor();
   assert.equal(await work.getByText('No matching work',{exact:true}).count(),0);
   await input.press('Escape');
+  await input.waitFor({state:'detached'});
   await use(work.getByRole('button',{name:'Search work',exact:true}));
   await input.fill('needle');
   await results.nth(3).waitFor();
