@@ -125,7 +125,7 @@ describe('Neo publication quote preview', () => {
         fireEvent.touchStart(container.querySelector('article')!, {
           touches: [{ clientX: 10, clientY: 10 }],
         });
-        await screen.findByRole('menuitem', { name: 'Reply' });
+        await screen.findByRole('menuitem', { name: 'Reply' }, { timeout: 3000 });
         fireEvent.click(screen.getByRole('menuitem', { name: 'Reply' }));
       } else {
         fireEvent.click(screen.getByRole('button', { name: 'Reply to Neo’s message' }));

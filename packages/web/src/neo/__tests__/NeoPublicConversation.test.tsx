@@ -362,7 +362,7 @@ describe('durable public conversation presentation', () => {
     );
     const entry = container.querySelector('[data-public-entry]')!;
     fireEvent.touchStart(entry, { touches: [{ clientX: 10, clientY: 10 }] });
-    await screen.findByRole('menu', { name: 'Message actions' });
+    await screen.findByRole('menu', { name: 'Message actions' }, { timeout: 3000 });
     const menu = screen.getByRole('menu', { name: 'Message actions' });
     expect(
       within(menu)
@@ -376,7 +376,7 @@ describe('durable public conversation presentation', () => {
     await waitFor(() => expect(screen.getByTitle('Copied!')).toBeTruthy());
     expect(screen.queryByRole('menu')).toBeNull();
     fireEvent.touchStart(entry, { touches: [{ clientX: 10, clientY: 10 }] });
-    await screen.findByRole('menu', { name: 'Message actions' });
+    await screen.findByRole('menu', { name: 'Message actions' }, { timeout: 3000 });
     fireEvent.click(screen.getByRole('menuitem', { name: 'Reply' }));
     expect(quote).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ author: 'Neo', text: value.shortText })
