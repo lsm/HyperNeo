@@ -19,7 +19,7 @@ stop_and_wait() {
   pid=$(cat "$RUN/daemon.pid")
   "$NEW/.claude/skills/verify/stop.sh" "$RUN" >/dev/null
   while kill -0 "$pid" 2>/dev/null; do sleep 1; done
-  while lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; do sleep 1; done
+  while lsof -nP -iTCP:"${VERIFY_MOCK_PORT:-8000}" -sTCP:LISTEN >/dev/null 2>&1; do sleep 1; done
 }
 [ -e "$OLD/packages/web/dist" ] || ln -s "$NEW/packages/web/dist" "$OLD/packages/web/dist"
 VERIFY_REPO="$OLD" "$NEW/.claude/skills/verify/launch.sh" "$PORT" "$RUN"
