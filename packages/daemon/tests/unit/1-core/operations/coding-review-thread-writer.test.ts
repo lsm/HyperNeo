@@ -1,4 +1,5 @@
 import { expect, spyOn, test } from 'bun:test';
+import { codingConnectorIdentityReads } from '../../../../src/lib/neo/packs/coding/connector-identity-db.ts';
 import { createCodingReviewThreadReader } from '../../../../src/lib/neo/packs/coding/connector-review-thread-reader.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -70,6 +71,27 @@ for (const readOnly of [false, true]) {
       await gateway.close();
       main.close();
       writer.close();
+    }
+  });
+}
+
+for (const [input, expected] of [
+  ['OLD/REPO', 'synthetic/threads'],
+  ['NEW/REPO', 'new/repo'],
+]) {
+  test(`connector identity canonicalizes mixed-case ${input}`, async () => {
+    const db = new Database(':memory:');
+    createCodingPackTables(db);
+    db.prepare('INSERT INTO pack_coding_repo_aliases(alias,canonical) VALUES(?,?)').run(
+      'old/repo',
+      'Synthetic/Threads'
+    );
+    const gateway = new DbGateway(':memory:', db);
+    try {
+      expect(await gateway.call(codingConnectorIdentityReads, 'canonical', input)).toBe(expected);
+    } finally {
+      await gateway.close();
+      db.close();
     }
   });
 }
