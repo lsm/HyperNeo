@@ -6,6 +6,7 @@ const entry = (
   id: string,
   patch: {
     title?: string;
+    request?: string;
     todo?: string;
     status?: string;
     next?: string;
@@ -16,7 +17,12 @@ const entry = (
   } = {}
 ) =>
   ({
-    ask: { id, title: patch.title ?? 'ask', outcome: patch.outcome ?? 'outcome' },
+    ask: {
+      id,
+      title: patch.title ?? 'ask',
+      request: patch.request ?? '',
+      outcome: patch.outcome ?? 'outcome',
+    },
     state: 'todo',
     todos: [
       {
@@ -40,6 +46,14 @@ describe('Work search ranking', () => {
       entry('ask', { title: 'needle' }),
     ]);
     expect(ids(search('needle'))).toEqual(['ask', 'todo', 'status', 'report']);
+  });
+  it('finds work using text present only in the original request', () => {
+    const search = createNeoWorkSearch([
+      entry('request', { request: 'requestsigil735 请求原文' }),
+      entry('other'),
+    ]);
+    for (const query of ['requestsigil735', '请求'])
+      expect(ids(search(query))).toEqual(['request']);
   });
   it('finds next actions, questions, evidence and outcomes', () => {
     const search = createNeoWorkSearch([

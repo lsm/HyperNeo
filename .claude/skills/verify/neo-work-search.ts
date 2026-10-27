@@ -26,7 +26,7 @@ try{
  const store=new NeoAskTodoRepository(db),now=Date.now();
  const cases=[{id:'ask-match',title:'Needle ask'},{id:'todo-match',title:'Todo field'},{id:'status-match',title:'Status field'},{id:'report-match',title:'Report field'},{id:'cjk-match',title:'接口数据修复'}];
  for(const item of cases){
-  store.openAsk({id:item.id,title:item.title,sessionId:root,projectId:null,originMessageId:null,request:'Synthetic search corpus only',createdAt:now});
+  store.openAsk({id:item.id,title:item.title,sessionId:root,projectId:null,originMessageId:null,request:item.id==='ask-match'?'requestsigil735 请求原文':'Synthetic search corpus only',createdAt:now});
   const todo=store.addTodo(`${item.id}-todo`,item.id,{title:item.id==='todo-match'?'Needle step':'Ordinary step',doneWhen:'Observed fixture result',check:null,instruction:null,named:null},now);
   if(item.id==='status-match')store.updateTodo(todo,{state:'blocked',blockedReason:'Needle status'},now+1);
   if(item.id==='report-match')store.updateTodo(todo,{report:'Needle microcipher731'},now+1);
