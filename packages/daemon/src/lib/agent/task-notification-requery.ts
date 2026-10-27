@@ -9,7 +9,6 @@ const DEFAULT_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = 500;
 const TASK_NOTIFICATION_REQUERY_DELAY_CAP_MS = 8000;
 
 export function taskNotificationRequeryDelayMs(attempt: number): number {
-  if (attempt <= 0) return 0;
   const raw = Number.parseInt(
     process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS ?? '',
     10
@@ -17,7 +16,7 @@ export function taskNotificationRequeryDelayMs(attempt: number): number {
   const base =
     Number.isFinite(raw) && raw >= 0 ? raw : DEFAULT_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS;
   if (base === 0) return 0;
-  return Math.min(base * 2 ** (attempt - 1), TASK_NOTIFICATION_REQUERY_DELAY_CAP_MS);
+  return Math.min(base * 2 ** (Math.max(1, attempt) - 1), TASK_NOTIFICATION_REQUERY_DELAY_CAP_MS);
 }
 
 export const TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE = AGENT_TASK_NOTIFICATION_CONTINUE;

@@ -30,6 +30,13 @@ suite isolates the new governor while preserving existing retry-route decisions;
 it does not independently prove the new budget. Run both plus the repository
 check. Repeat the helper with deadline for an actual hung options build, zero SDK starts, late completion and recovery. Repeat with startup, auth, transient, provider and resume to check the common budget across known retry routes.
 
+Repeat with hollow: six hollow task-notification results must reach the existing
+five-continuation exhaustion owner, with a delayed first continuation. Hollow
+results must neither spend nor reset prior query failures; the startup-gate test
+checks this through the real governor. Repeat with large for oversized SDK error
+results: public persisted metadata and the terminal event retain at most 4096
+error characters. Keep both proof directories and their wrapper exit status.
+
 Keep query-failure-governor.json, proof.log and run-status.json. Require wrapper
 exit zero. The helper closes its scripted query, WebSocket and daemon in finally;
 the wrapper saves evidence and removes temporary HOME/data immediately.

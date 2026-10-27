@@ -9,7 +9,7 @@ for(const name of ['workspace','bin','evidence'])mkdirSync(join(run,name),{recur
 writeFileSync(join(run,'bin/gh'),'#!/bin/sh\nexit 1\n',{mode:0o700});
 const sdk=await import('../../../packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs');
 const failures:Record<string,string>={startup:'SDK startup timeout - query aborted',auth:'401 Claude authentication failed',transient:'ECONNRESET connection closed',provider:'503 service unavailable',resume:'No message found with message.uuid of: synthetic',deadline:'Query preparation timed out'};
-const attempts:number[]=[],failure=failures[phase]??'Synthetic unknown query start failure 9093';const hollowResults:number[]=[];let healthy=phase==='hollow',finish=()=>{};
+const attempts:number[]=[],failure=failures[phase]??'Synthetic unknown query start failure 9093';const hollowResults:number[]=[];let healthy=phase==='hollow'||phase==='large',finish=()=>{};
 mock.module('@anthropic-ai/claude-agent-sdk',()=>({...sdk,query:({prompt}:{prompt:AsyncIterable<unknown>|string})=>{
  if(typeof prompt!=='string'){attempts.push(Date.now());if(!healthy)throw new Error(failure);}
  const ended=new Promise<void>(resolve=>{finish=resolve;});
@@ -17,6 +17,10 @@ mock.module('@anthropic-ai/claude-agent-sdk',()=>({...sdk,query:({prompt}:{promp
   if(typeof prompt==='string'){yield {type:'assistant',message:{role:'assistant',content:[{type:'text',text:'Synthetic title'}]}};return;}
   const feed=prompt[Symbol.asyncIterator]();await feed.next();let nextInput=feed.next();void nextInput.catch(()=>{});
   yield {type:'system',subtype:'init',uuid:crypto.randomUUID(),session_id:crypto.randomUUID(),cwd:join(run,'workspace'),model:'claude-haiku-4-5-20251001',permissionMode:'default',apiKeySource:'user',claude_code_version:'synthetic',tools:[],skills:[],plugins:[],mcp_servers:[],slash_commands:[],output_style:'default'};
+  if(phase==='large'){
+   for(let turn=0;turn<3;turn++)yield {type:'result',subtype:'error_during_execution',uuid:crypto.randomUUID(),session_id:crypto.randomUUID(),parent_tool_use_id:null,is_error:true,errors:['Synthetic huge error: '+ 'x'.repeat(100_000)],duration_ms:1,duration_api_ms:1,num_turns:1,total_cost_usd:0,usage:{input_tokens:0,output_tokens:0},modelUsage:{},permission_denials:[]};
+   await ended;return;
+  }
   if(phase==='hollow'){
    for(let turn=0;turn<6;turn++){
     hollowResults.push(Date.now());
@@ -52,7 +56,13 @@ try{
  }
  await hub.request('message.send',{sessionId,content:'Synthetic fake-start regression'});
  const read=async()=>(await hub.request<{session:Session}>('session.get',{sessionId})).session;
- if(phase==='hollow'){
+ if(phase==='large'){
+  await until(async()=>(await read()).metadata.queryFailureEpisode?.failed===true,'large result did not reach the cap');
+  const episode=(await read()).metadata.queryFailureEpisode!;assert(episode.error.includes('Synthetic huge error'));assert(episode.error.length<=4096);
+  await until(()=>errors.some(event=>(event.details as {metadata?:{queryFailureEpisode?:{failed:boolean}}})?.metadata?.queryFailureEpisode?.failed),'large result terminal event missing');
+  const terminal=errors.find(event=>(event.details as {metadata?:{queryFailureEpisode?:{failed:boolean}}})?.metadata?.queryFailureEpisode?.failed)!;assert(((terminal.details as {metadata:{queryFailureEpisode:{error:string}}}).metadata.queryFailureEpisode.error).length<=4096);evidence.episode=episode;evidence.errorLength=episode.error.length;
+ }else if(phase==='hollow'){
+  evidence.hollowResults=hollowResults;evidence.errors=errors;
   await until(()=>errors.some(event=>JSON.stringify(event).includes('re-query budget exhausted')),'hollow recovery did not reach its existing exhaustion owner');
   assert.equal(hollowResults.length,6);assert(hollowResults[1]-hollowResults[0]>=450);
   const state=(await read()).metadata.queryFailureEpisode;assert.equal(state?.failures,0);assert.equal(state?.failed,false);

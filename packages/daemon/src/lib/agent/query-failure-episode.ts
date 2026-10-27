@@ -77,7 +77,7 @@ export class QueryFailureGovernor {
   }
 
   failure(error: string, id: string) {
-    return this.change((prior) => advance(prior, error, Date.now()), id);
+    return this.change((prior) => advance(prior, error.slice(0, 4096), Date.now()), id);
   }
   success(id: string) {
     return this.change(() => empty(id), id);

@@ -514,7 +514,7 @@ describe('AgentSession task-notification requery (incident replay)', () => {
   it('stands down when the query is replaced after a continuation is scheduled', async () => {
     process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '500';
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
-    await settleRequery();
+    await new Promise((resolve) => setTimeout(resolve, 650));
     expect(continueCalls()).toBe(1);
 
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
@@ -1702,7 +1702,7 @@ describe('AgentSession task-notification requery (incident replay)', () => {
   it('clears a pending re-query timer when the user interrupts', async () => {
     process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '500';
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
-    await settleRequery();
+    await new Promise((resolve) => setTimeout(resolve, 650));
     expect(continueCalls()).toBe(1);
 
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());

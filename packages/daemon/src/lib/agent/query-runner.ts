@@ -1356,13 +1356,10 @@ export class QueryRunner {
             }
           }
           if (isSDKResultMessage(message)) {
-            if (message.is_error === true || isTopLevelHollowTaskNotificationResult(message)) {
-              await this.failures.failure(
-                message.is_error ? JSON.stringify(message) : 'Turn ended without a reply',
-                episodeId
-              );
+            if (message.is_error === true) {
+              await this.failures.failure(JSON.stringify(message), episodeId);
               this.failures.assertOpen();
-            } else {
+            } else if (!isTopLevelHollowTaskNotificationResult(message)) {
               retryAttempt = 0;
               await this.failures.success(episodeId);
             }
