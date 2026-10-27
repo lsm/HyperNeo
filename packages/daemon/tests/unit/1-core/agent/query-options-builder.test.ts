@@ -205,6 +205,7 @@ describe('QueryOptionsBuilder', () => {
       expect(options.env?.HYPERNEO_BUILDS).toContain(join(handoffDataDir, 'work/builds'));
       expect(options.sandbox?.enabled).not.toBe(true);
       expect(JSON.stringify(options.systemPrompt)).toContain('HYPERNEO_WORKTREES');
+      expect(JSON.stringify(options.systemPrompt)).not.toContain('(sandbox TMPDIR)');
     });
 
     it('should build basic query options', async () => {
@@ -2136,7 +2137,7 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
-    it('provides location guidance for a worker outside any Space', async () => {
+    it('preserves the SDK default prompt when only location hints are available', async () => {
       mockSession.config.tools = { useClaudeCodePreset: false };
       const newBuilder = new QueryOptionsBuilder({
         session: mockSession,
@@ -2144,10 +2145,8 @@ describe('QueryOptionsBuilder', () => {
       });
       const options = await newBuilder.build();
 
-      expect(options.systemPrompt).toMatchObject({
-        type: 'custom',
-        prompt: expect.stringContaining('HYPERNEO_WORKTREES'),
-      });
+      expect(options.systemPrompt).toBeUndefined();
+      expect(options.env?.HYPERNEO_WORKTREES).toBe(join(handoffDataDir, 'worktrees'));
     });
   });
 
