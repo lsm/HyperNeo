@@ -76,8 +76,8 @@ try {
     } finally { ws?.close(); await app.cleanup(); }
   }
   if(mode==='verify'){assert.deepEqual(mainSql,[],'Stage target preference reads must leave main');assert(commands.length>=6);}else assert(mainSql.length>0);verified=true;
-  console.log(`PASS: real RPC plans preferred/default Write targets, explains unavailable settings, rejects invalid values and preserves all nine human preferences across restart. Evidence: ${run}/evidence/stage-preferences.json`);
+  console.log(`PASS: real RPC plans preferred/default Write targets, explains unavailable settings, rejects invalid values and preserves all nine human preferences across restart. Evidence: ${run}/evidence/lane-a-stage-target-db.json`);
 } finally {
-  writeFileSync(join(run, 'evidence/stage-preferences.json'), JSON.stringify({mode,verified,events:evidence,mainSql,commands}, null, 2));
+  writeFileSync(join(run, 'evidence/lane-a-stage-target-db.json'), JSON.stringify({mode,verified,events:evidence,mainSql,commands}, null, 2));
   globalThis.fetch = network;
 }
