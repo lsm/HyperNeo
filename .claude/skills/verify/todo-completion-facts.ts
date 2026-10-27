@@ -22,8 +22,9 @@ fs.appendFileSync(root+'/evidence/gh.log', JSON.stringify(args)+'\\n');
 if (args[0] === 'pr' && args[1] === 'view') {
   const url = args.find(x => x.startsWith('https://'));
   if (!url || !url.startsWith('https://github.com/synthetic/facts/pull/')) process.exit(2);
-  process.stdout.write(JSON.stringify({ url, state: url.endsWith('/6') ? 'OPEN' : 'MERGED', headRefOid: 'a'.repeat(40),
-    mergeCommit: { oid: 'b'.repeat(40) }, reviews: [], statusCheckRollup: [], createdAt: '2026-10-20T00:00:00Z', mergedAt: '2026-10-21T00:00:00Z' }));
+  const closed = url.endsWith('/9') || url.endsWith('/10');
+  process.stdout.write(JSON.stringify({ url, state: closed ? 'CLOSED' : url.endsWith('/6') ? 'OPEN' : 'MERGED', headRefOid: 'a'.repeat(40),
+    mergeCommit: closed ? null : { oid: 'b'.repeat(40) }, reviews: [], statusCheckRollup: [], createdAt: '2026-10-20T00:00:00Z', closedAt: '2026-10-21T00:00:00Z', mergedAt: closed ? null : '2026-10-21T00:00:00Z' }));
 } else if (args[0] === 'api' && args[1] === 'graphql' && args.includes('o=synthetic') && args.includes('n=facts')) {
   const closed = args.includes('p=219');
   process.stdout.write(JSON.stringify({ data: { repository: { defaultBranchRef: { name: 'dev' }, issueOrPullRequest: {
@@ -46,6 +47,10 @@ const cases = [
   { id: 'open-human', kind: 'pr_merged', state: 'blocked', blocker: 'needs-human', done: false },
   { id: 'removed', kind: 'pr_merged', state: 'removed', done: false },
   { id: 'legacy-conflict', kind: 'conflicting', state: 'doing', expected: 'failed', done: false },
+  { id: 'closed-unverified', kind: 'pr_merged', state: 'closed_unverified', done: false },
+  { id: 'failed-preserved', kind: 'pr_merged', state: 'failed', done: false },
+  { id: 'merged-unverified', kind: 'pr_merged', state: 'closed_unverified', done: true },
+  { id: 'merged-failed', kind: 'pr_merged', state: 'failed', done: true },
 ];
 const evidence: unknown[] = [];
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
