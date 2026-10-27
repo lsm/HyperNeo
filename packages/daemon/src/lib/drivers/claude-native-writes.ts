@@ -2,7 +2,7 @@ import { lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'no
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
-import { resolveSettingsTarget } from '../settings-target.ts';
+import { queueSettingsWrite, resolveSettingsTarget } from '../settings-target.ts';
 import { workerWorkEnvironment } from '../work-locations.ts';
 import { secretNamePatterns } from '../neo/secret-read-rules.ts';
 import {
@@ -13,6 +13,7 @@ import {
   workerWritableRoots,
 } from './worker-sandbox.ts';
 
+const WorkSettings = z.object({ env: z.record(z.string(), z.unknown()).optional() }).loose();
 const Marker = z.object({ roots: z.array(z.string().refine(isAbsolute)).min(1) });
 const RUNTIME_MANAGED_ENV_KEYS = [
   'TMPDIR',
@@ -210,17 +211,24 @@ async function readClaudeWorkSettings(directory: string) {
     throw error;
   });
   if (entry && !entry.isFile()) throw new Error('Claude settings must be a regular file');
-  return { folder, path, existing: entry ? JSON.parse(await readFile(path, 'utf8')) : {} };
+  return {
+    folder,
+    path,
+    existing: WorkSettings.parse(entry ? JSON.parse(await readFile(path, 'utf8')) : {}),
+  };
 }
 
 export async function prepareClaudeWorkEnvironment(directory: string) {
   await readClaudeWorkSettings(directory);
   return async () => {
-    const { folder, path, existing } = await readClaudeWorkSettings(directory);
-    await mkdir(folder, { recursive: true });
-    await writeAtomic(path, {
-      ...existing,
-      env: { ...existing.env, ...workerWorkEnvironment(directory) },
+    const { path } = await readClaudeWorkSettings(directory);
+    await queueSettingsWrite(path, async () => {
+      const { folder, existing } = await readClaudeWorkSettings(directory);
+      await mkdir(folder, { recursive: true });
+      await writeAtomic(path, {
+        ...existing,
+        env: { ...existing.env, ...workerWorkEnvironment(directory) },
+      });
     });
   };
 }

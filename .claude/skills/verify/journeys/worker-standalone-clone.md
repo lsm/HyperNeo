@@ -110,3 +110,12 @@ must remain free of generated settings. Marked prepared-worker resume regression
 still require their policy file; unsandboxed workers retain locations through
 the persisted project settings and recorded creation brief, verified by the
 native resumed-shell leg. No human Desktop record or real transcript is read.
+
+Malformed top-level settings values and non-object env values must return typed
+preparation_failed through work.start before any child launch, preserving the
+original settings bytes. The helper covers arrays, strings, numbers and null in
+both positions. Settings-manager regressions also overlap a native location write
+with an SDK settings write against direct and symlinked targets; both deltas and
+custom settings must survive through the shared per-target write queue. This
+concurrency check exercises real file writes but does not claim cross-process
+locking between independent daemon processes.

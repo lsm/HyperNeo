@@ -13,10 +13,8 @@ import type { McpServerConfig } from '@hyperneo/shared/types/sdk-config';
 
 import type { Database } from '../storage/database.ts';
 import { Logger } from './logger.ts';
-import { resolveSettingsTarget } from './settings-target.ts';
+import { queueSettingsWrite, resolveSettingsTarget } from './settings-target.ts';
 import { runLagPhase } from './event-loop-activity.ts';
-
-const settingsWrites = new Map<string, Promise<void>>();
 
 export class SettingsManager {
   private logger = new Logger('SettingsManager');
@@ -52,15 +50,9 @@ export class SettingsManager {
       const directory = join(this.workspacePath, '.claude');
       await mkdir(directory, { recursive: true });
       const path = await resolveSettingsTarget(join(directory, 'settings.local.json'));
-      const write = (settingsWrites.get(path) ?? Promise.resolve())
-        .catch(() => {})
-        .then(() => this.writeFileOnlySettings(path, this.getGlobalSettings()));
-      settingsWrites.set(path, write);
-      try {
-        await write;
-      } finally {
-        if (settingsWrites.get(path) === write) settingsWrites.delete(path);
-      }
+      await queueSettingsWrite(path, () =>
+        this.writeFileOnlySettings(path, this.getGlobalSettings())
+      );
     });
   }
 

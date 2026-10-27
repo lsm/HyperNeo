@@ -19,3 +19,15 @@ export async function resolveSettingsTarget(candidate: string): Promise<string> 
   }
   return resolveSettingsTarget(resolve(directory, target));
 }
+
+const settingsWrites = new Map<string, Promise<void>>();
+
+export async function queueSettingsWrite(path: string, action: () => Promise<void>): Promise<void> {
+  const write = (settingsWrites.get(path) ?? Promise.resolve()).catch(() => {}).then(action);
+  settingsWrites.set(path, write);
+  try {
+    await write;
+  } finally {
+    if (settingsWrites.get(path) === write) settingsWrites.delete(path);
+  }
+}
