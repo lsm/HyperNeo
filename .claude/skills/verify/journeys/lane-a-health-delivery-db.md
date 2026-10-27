@@ -37,3 +37,12 @@ duration and argument/reply sizes are retained without separate queue, clone
 or SQL attribution. This proves job delivery with a synthetic receiver, not an
 actual Neo mailbox, recipient consumption, a full coding sweep, GUI, GitHub,
 provider turn, whole-daemon SQL absence or a latency target.
+
+Bind both passing runtime runs to one committed application/helper tree:
+
+```sh
+bun --no-install --no-env-file .claude/skills/verify/lane-a-health-delivery-proof-binding.ts HEAD
+```
+
+Only this journey and its evidence directory may change after the bound proof
+commit; application or helper changes require fresh runs on a new commit.
