@@ -285,6 +285,19 @@ describe('activated ask settlement', () => {
     expect(effects).toEqual([]);
   });
 
+  test('a failed stop cannot claim an already-settled ask is still open', async () => {
+    onStop = async () => {
+      store.settleAsk(store.getAsk('ask')!, 'dropped', 'Other actor ended it', 3);
+      return 'stop_failed: offline';
+    };
+    expect(await settle()).toMatchObject({
+      ok: false,
+      reason: 'ask_settled: this ask is dropped.',
+    });
+    expect(store.getAsk('ask')!.outcome).toBe('Other actor ended it');
+    expect(effects).toEqual(['stop:first']);
+  });
+
   test('split-parent settlement retains child reports and cards and announces once', async () => {
     makeSplit();
     const child = store.getTodo('child-work'),
