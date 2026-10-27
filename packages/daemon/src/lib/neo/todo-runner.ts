@@ -735,6 +735,16 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   const stallTodo = (superpipe({})('neo.todo.stall') as PipelineAPI)
     .input(['claim', 'reason', 'now'])
     .pipe(
+      (claim: NudgeClaim) =>
+        ['done', 'closed_unverified', 'failed', 'removed'].includes(
+          store.getTodo(claim.todo.id)?.state ?? 'removed'
+        )
+          ? { reason: null }
+          : { value: claim },
+      'claim',
+      'result:claim'
+    )
+    .pipe(
       (claim: NudgeClaim, reason: string) =>
         deps
           .tell(
