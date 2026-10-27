@@ -1598,6 +1598,15 @@ export async function startClaudeSession(
     placement.kind === 'worktree' && worktree
       ? join(placement.repo, '.claude', 'worktrees', worktree)
       : (prepared?.value.directory ?? folder);
+  if (!worktree) {
+    try {
+      await persistClaudeWorkEnvironment(cwd);
+    } catch (error) {
+      await prepared?.value.release();
+      if (prepared) await releaseWorkerSandbox(prepared.value.directory);
+      return reject('preparation_failed', `Could not persist work locations: ${String(error)}`);
+    }
+  }
   const opened = await runToExit(
     deps,
     [
@@ -1655,8 +1664,11 @@ export async function startClaudeSession(
     permissionMode,
   };
   cache.set(`${STARTED_KEY}${sessionId}`, { modifiedAt: 0, records: [record] });
-  await persistClaudeWorkEnvironment(cwd);
-  const imported = await importClaudeDesktopSession(cliSessionId, cwd, deps);
+  const imported = await (worktree ? persistClaudeWorkEnvironment(cwd) : Promise.resolve())
+    .then(() => importClaudeDesktopSession(cliSessionId, cwd, deps))
+    .catch((error: unknown) =>
+      reject('not_delivered', `Could not open prepared worker: ${String(error)}`)
+    );
   if (!imported.ok)
     return {
       ...imported,

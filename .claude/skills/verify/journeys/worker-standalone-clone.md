@@ -84,3 +84,11 @@ SDK system/user input de-duplication has its own real-SDK journey in
 worker-work-locations-sdk.md. The native Codex request-field contract is checked
 separately by codex-work-locations-schema.md; schema acceptance is not a native
 Codex shell or Desktop UI proof.
+
+The unsupported-settings leg commits deliberately invalid local settings into the
+synthetic remote, then calls work.start again. It must return preparation_failed
+before a child starts, release the unlaunched private clone and preserve source
+bytes. Unit cases also cover symlinked settings, a symlinked .claude directory and
+a regular file in its place. These layouts receive a typed pre-launch refusal;
+the proof does not claim they can be adopted. A confirmed CLI-created worktree is
+retained with a typed not_delivered if later settings/import work fails.
