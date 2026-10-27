@@ -1,5 +1,6 @@
 import { buildWorkflowOptionsPatch } from './workflow-options-patch.ts';
 import { buildWorkflowNodeConfig, type WorkflowNodeConfig } from './workflow-node-config.ts';
+import { buildWorkflowNodeView } from './workflow-node-view.ts';
 import type {
   CreateSpaceWorkflowParams,
   PostApprovalRoute,
@@ -10,7 +11,6 @@ import type {
   WorkflowChannel,
   WorkflowHook,
   WorkflowNode,
-  WorkflowNodeAgent,
   WorkflowNodeInput,
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
@@ -86,25 +86,13 @@ interface NodeMigrationContext {
 
 function rowToNode(row: NodeRow, ctx?: NodeMigrationContext): WorkflowNode {
   const cfg = parseJson<NodeConfigJson>(row.config, {});
-  const agents: WorkflowNodeAgent[] =
-    cfg.agents && cfg.agents.length > 0
-      ? cfg.agents.map((a: WorkflowNodeAgent) => ({
-          ...a,
-          name: a.name?.trim() ? a.name : a.agentId,
-        }))
-      : [];
+  const node = buildWorkflowNodeView(row, cfg);
 
   if (cfg.completionActions !== undefined && ctx) {
     ctx.strippedFields.add('completionActions');
   }
 
-  return {
-    id: row.id,
-    name: row.name,
-    agents,
-    ...(cfg.postApproval ? { postApproval: cfg.postApproval } : {}),
-    ...(cfg.transitions && cfg.transitions.length > 0 ? { transitions: cfg.transitions } : {}),
-  };
+  return node;
 }
 
 function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
