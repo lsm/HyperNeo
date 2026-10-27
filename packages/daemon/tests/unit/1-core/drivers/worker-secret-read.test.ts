@@ -282,7 +282,9 @@ test('workers deny every established home credential path in both engines', asyn
     string
   >;
   await installClaudeNativeWrites(root, [join(fixture, 'source')]);
-  for (const path of secretHomePaths(home).filter((path) => path !== join(home, 'Library'))) {
+  for (const path of secretHomePaths(home).filter(
+    (path) => path !== join(home, 'Library') && path !== join(home, '.config/gh')
+  )) {
     expect(fs[path], path).toBe('deny');
     expect(settings().sandbox.filesystem.denyRead, path).toContain(path);
   }

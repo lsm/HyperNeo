@@ -36,7 +36,7 @@ Unsupported app-servers must refuse prepared startup without a confirmed active
 profile and refuse queue admission when their profile catalog is absent or
 disallows the worker profile. A repo tracking `.codex/config.toml` is refused
 without changing its bytes. Library toolchain paths remain readable; Keychains
-and 1Password are denied. The broader `.config` denial is intentional.
+and 1Password are denied. Other credential config directories remain denied; worker gh configuration is readable.
 Both policy writers must refuse symlinked `.git`, `.git/info` or `exclude`,
 leaving synthetic host files unchanged during policy installation. Swapping
 config files must not copy synthetic host TOML into the protected profile;
@@ -67,3 +67,39 @@ and immediate children; tracked examples and key fixtures in nested private clon
 remain readable. Known credential directories are denied recursively.
 Workers intentionally allow Unix sockets; this journey proves file isolation
 and does not test socket-mediated credential access.
+
+
+## gh configuration regression (#9092)
+
+Use the shared isolated setup/resource check in SKILL.md with this narrow native
+proof. Supply the Desktop-bundled Codex executable and installed gh executable:
+
+```bash
+bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
+  .claude/skills/verify/worker-gh-config.ts /absolute/codex-executable /absolute/gh
+```
+
+No credentials, real home, live daemon, provider, model reasoning or GitHub
+request is used. The disposable home contains only `git_protocol: https` in
+`.config/gh/config.yml`, plus synthetic Keychains and Git-credential fixtures.
+The actual Codex native sandbox loads production worker permissions and runs
+`gh config get git_protocol`. The actual SDK Bash tool runs the same command
+against a production Claude policy refreshed from obsolete gh read denials,
+using a scripted loopback model with a literal synthetic key only in the SDK
+child. Both must return https with status zero. Both protected-file cats must
+return nonzero with empty output; ordinary repository output must remain writable.
+
+Before the fix, both engines record `failed to read configuration: operation
+not permitted`. Signed failing-first commit 129108241 also covers fresh grants
+and legacy Claude resume. The upgrade removes only the exact generated gh
+Read/denyRead entries; custom denials and credential rules survive. Codex profile
+refresh regenerates its managed profile from the corrected shared worker paths.
+Neo's separate read restrictions are unchanged.
+
+Keep result.json, codex-stderr.log, claude-stderr.log and claude-events.jsonl.
+The helper closes its query/model listener and removes its worker runtime roots;
+the shared wrapper saves evidence before deleting the disposable home/data.
+This proves native configuration reads and file denials on the running host;
+it does not prove live GitHub authentication, a push/merge, Linux enforcement,
+or that an already-running turn has reloaded its policy. Existing workers need
+the normal policy refresh on a subsequent turn; do not restart the live daemon.

@@ -132,6 +132,10 @@ function withSecretDenials(
   existing: Partial<ReturnType<typeof policy>>,
   resetFilesystem = false
 ) {
+  const ghConfig = join(homedir(), '.config/gh');
+  const obsoleteGhRules = [editRule(ghConfig), editRule(ghConfig, true)].map((rule) =>
+    rule.replace(/^Edit\(/, 'Read(')
+  );
   return {
     ...computed,
     ...existing,
@@ -139,7 +143,9 @@ function withSecretDenials(
     permissions: {
       ...computed.permissions,
       ...existing?.permissions,
-      deny: [...new Set([...computed.permissions.deny, ...(existing?.permissions?.deny ?? [])])],
+      deny: [
+        ...new Set([...computed.permissions.deny, ...(existing?.permissions?.deny ?? [])]),
+      ].filter((rule) => !obsoleteGhRules.includes(rule)),
     },
     sandbox: {
       ...computed.sandbox,
@@ -156,7 +162,7 @@ function withSecretDenials(
         denyRead: [
           ...new Set([
             ...computed.sandbox.filesystem.denyRead,
-            ...(existing?.sandbox?.filesystem?.denyRead ?? []),
+            ...(existing?.sandbox?.filesystem?.denyRead ?? []).filter((path) => path !== ghConfig),
           ]),
         ],
       },

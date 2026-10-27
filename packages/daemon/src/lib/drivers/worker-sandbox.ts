@@ -144,7 +144,9 @@ export function workerSecretPaths() {
   const home = homedir();
   return [
     ...new Set([
-      ...secretHomePaths(home).filter((path) => path !== join(home, 'Library')),
+      ...secretHomePaths(home).filter(
+        (path) => path !== join(home, 'Library') && path !== join(home, '.config/gh')
+      ),
       ...[
         '.zlogin',
         '.bash_login',
