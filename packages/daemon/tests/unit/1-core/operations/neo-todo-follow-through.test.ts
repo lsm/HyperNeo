@@ -285,4 +285,33 @@ describe('a doing todo never sits idle without someone on it', () => {
     await w.at(90.5);
     expect(w.named('work.start')).toHaveLength(4);
   });
+
+  test('workers just started or still queued count toward the six-worker cap', async () => {
+    const w = (current = world());
+    for (let index = 0; index < 6; index++) {
+      const busy = w.add();
+      await w.runner.start(busy.id);
+      w.workers.get(`worker-${index + 1}`)!.status = index % 2 ? 'queued' : 'running';
+    }
+    const idle = w.add();
+    await w.runner.start(idle.id);
+    for (const minutes of [20, 40, 60, 61]) await w.at(minutes);
+    expect(w.named('work.start')).toHaveLength(7);
+  });
+
+  test('a deferred re-dispatch leaves a ladder the human just restarted alone', async () => {
+    const w = (current = world());
+    for (let index = 0; index < 6; index++) {
+      const busy = w.add();
+      await w.runner.start(busy.id);
+      w.sessions.recordLive(busy.id, 'running', undefined);
+      w.workers.get(`worker-${index + 1}`)!.status = 'running';
+    }
+    const idle = w.add();
+    await w.runner.start(idle.id);
+    for (const minutes of [20, 40]) await w.at(minutes);
+    const before = w.sessions.readNudge(idle.id);
+    await w.at(60);
+    expect(w.sessions.readNudge(idle.id)).toEqual(before);
+  });
 });
