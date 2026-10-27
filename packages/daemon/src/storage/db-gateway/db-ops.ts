@@ -148,6 +148,7 @@ import { codingStageTargetReads } from '../../lib/neo/packs/coding/stage-target-
 import { codingLedgerPollReads } from '../../lib/neo/packs/coding/ledger-poll-db.ts';
 import { neoPublicationPageWrites } from '../repositories/neo-publication-page-db.ts';
 import { pairingApproveWrite } from '../repositories/pairing-approve-write.ts';
+import { pairingRedeemWrite } from '../repositories/pairing-redeem-write.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -273,5 +274,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     codingLedgerPollReads,
     neoPublicationPageWrites,
     pairingApproveWrite,
+    pairingRedeemWrite,
   ].map((op) => [op.name, op])
 );

@@ -1,5 +1,8 @@
 # HTTP pairing redemption commits on the DB writer
 
+Remeasure local bodies with `bun .claude/skills/verify/lane-c-pairing-redeem-measure.cjs`;
+the route, repository, command and limiter must stay within 200 lines.
+
 Run `lane-c-pairing-redeem.ts` through `proof-run.sh` with Bun, then with
 `VERIFY_PROOF_RUNTIME=deno` and the cached runtime on PATH. Use fresh evidence
 folders. The helper owns an isolated daemon, ephemeral non-8399 port, synthetic

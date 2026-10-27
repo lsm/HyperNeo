@@ -1,0 +1,102 @@
+{
+  "units": [
+    {
+      "file": "packages/daemon/src/lib/pairing/pairing-limiter.ts",
+      "name": "createPairingLimiter",
+      "start": 16,
+      "end": 39,
+      "lines": 24
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/pair-route.ts",
+      "name": "readBoundedText",
+      "start": 19,
+      "end": 36,
+      "lines": 18
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/pair-route.ts",
+      "name": "parseJson",
+      "start": 38,
+      "end": 44,
+      "lines": 7
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/pair-route.ts",
+      "name": "answer",
+      "start": 46,
+      "end": 50,
+      "lines": 5
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/pair-route.ts",
+      "name": "deviceCookie",
+      "start": 54,
+      "end": 63,
+      "lines": 10
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/pair-route.ts",
+      "name": "answerPaired",
+      "start": 65,
+      "end": 75,
+      "lines": 11
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/pair-route.ts",
+      "name": "createPairRoute",
+      "start": 77,
+      "end": 104,
+      "lines": 28
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/device-pairing-repository.ts",
+      "name": "hash",
+      "start": 23,
+      "end": 23,
+      "lines": 1
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/device-pairing-repository.ts",
+      "name": "normalizePairingCode",
+      "start": 25,
+      "end": 27,
+      "lines": 3
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/device-pairing-repository.ts",
+      "name": "isAwaitingApproval",
+      "start": 255,
+      "end": 262,
+      "lines": 8
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/device-pairing-repository.ts",
+      "name": "humanRecoveryOpen",
+      "start": 264,
+      "end": 270,
+      "lines": 7
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/device-pairing-repository.ts",
+      "name": "redeemAsync",
+      "start": 272,
+      "end": 274,
+      "lines": 3
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/device-pairing-repository.ts",
+      "name": "redeem",
+      "start": 276,
+      "end": 310,
+      "lines": 35
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/pairing-redeem-write.ts",
+      "name": "whole typed writer command",
+      "lines": 20
+    }
+  ],
+  "totalLines": 180,
+  "sharedGateway": "Unchanged transaction executor and typed .call plumbing are reused; not moved or edited."
+}
