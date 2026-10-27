@@ -51,7 +51,7 @@ export function createVoiceTranscribeLimiters(): VoiceTranscribeLimiters {
 }
 
 export interface VoiceTranscribeDeps {
-  beforeDispatch?: () => void;
+  beforeDispatch?: () => void | Promise<void>;
   settingsManager: Pick<SettingsManager, 'getGlobalSettings'>;
   credentialManager?: Pick<ProviderCredentialManager, 'getCredentials'>;
   limiters: VoiceTranscribeLimiters;

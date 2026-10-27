@@ -13,7 +13,7 @@ export async function fetchTranscriptionWithRedirects(
   allowInsecureTls: boolean,
   signal: AbortSignal,
   tlsCaPem?: string,
-  beforeDispatch?: () => void
+  beforeDispatch?: () => void | Promise<void>
 ): Promise<Response> {
   let logicalEndpoint = endpoint;
   let candidates = await resolveTranscriptionEndpoint(
@@ -31,7 +31,8 @@ export async function fetchTranscriptionWithRedirects(
     let fetchError: unknown;
     for (const candidate of candidates) {
       signal.throwIfAborted();
-      beforeDispatch?.();
+      await beforeDispatch?.();
+      signal.throwIfAborted();
       try {
         response = await fetch(candidate.toString(), {
           method: requestMethod,

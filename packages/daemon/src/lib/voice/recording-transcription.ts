@@ -5,26 +5,31 @@ import { VoiceRecordingRepository } from '../../storage/repositories/voice-recor
 import type { VoiceTranscribeOutcome } from './transcribe-pipeline.ts';
 
 type Recording = { owner: string; id: string; hash: string };
-type Submit = (beforeDispatch: () => void) => Promise<VoiceTranscribeOutcome>;
+type Submit = (beforeDispatch: () => Promise<void>) => Promise<VoiceTranscribeOutcome>;
 type Request = { recordingId?: string; audioBase64: string; mimeType: string };
 
 export class VoiceRecordingTranscription {
-  private readonly active = new Map<string, Promise<VoiceTranscribeOutcome>>();
+  private readonly active = new Map<
+    string,
+    { hash: string; promise: Promise<VoiceTranscribeOutcome> }
+  >();
 
   constructor(private readonly repository: VoiceRecordingRepository) {}
 
   run(recording: Recording, submit: Submit): Promise<VoiceTranscribeOutcome> {
-    const { owner, id, hash } = recording;
-    const key = JSON.stringify([owner, id]);
-    const saved = this.repository.get(owner, id);
-    if (saved && saved.hash !== hash)
-      return Promise.resolve({
-        action: 'denied',
-        message:
-          'recordingId already belongs to different audio; keep the original recording id for identical retries only',
-      });
+    const key = JSON.stringify([recording.owner, recording.id]);
     const running = this.active.get(key);
-    if (running) return running;
+    if (running)
+      return running.hash === recording.hash ? running.promise : Promise.resolve(differentAudio());
+    const pending = this.transcribe(recording, submit).finally(() => this.active.delete(key));
+    this.active.set(key, { hash: recording.hash, promise: pending });
+    return pending;
+  }
+
+  private async transcribe(recording: Recording, submit: Submit): Promise<VoiceTranscribeOutcome> {
+    const { owner, id, hash } = recording;
+    const saved = await this.repository.getAsync(owner, id);
+    if (saved && saved.hash !== hash) return differentAudio();
     if (saved?.dispatched)
       return Promise.resolve(
         saved.outcome ?? {
@@ -33,15 +38,16 @@ export class VoiceRecordingTranscription {
             'Recording submission is unconfirmed after interruption; it will not be submitted again automatically',
         }
       );
-    if (!saved && !this.repository.reserve(owner, id, hash)) return this.run(recording, submit);
+    if (!saved && !(await this.repository.reserveAsync(owner, id, hash)))
+      return this.transcribe(recording, submit);
     let dispatched = false;
-    const beforeDispatch = () => {
+    const beforeDispatch = async () => {
       if (dispatched) return;
-      if (!this.repository.markDispatched(owner, id))
+      if (!(await this.repository.markDispatchedAsync(owner, id)))
         throw new Error('Recording submission is already dispatched; retry for its saved result');
       dispatched = true;
     };
-    const pending = Promise.resolve()
+    return Promise.resolve()
       .then(() => submit(beforeDispatch))
       .catch(
         (error: unknown): VoiceTranscribeOutcome => ({
@@ -49,14 +55,19 @@ export class VoiceRecordingTranscription {
           error: error instanceof Error ? error.message : 'Voice transcription failed',
         })
       )
-      .then((outcome) => {
-        this.repository.finish(owner, id, outcome, dispatched);
+      .then(async (outcome) => {
+        await this.repository.finishAsync(owner, id, outcome, dispatched);
         return outcome;
-      })
-      .finally(() => this.active.delete(key));
-    this.active.set(key, pending);
-    return pending;
+      });
   }
+}
+
+function differentAudio(): VoiceTranscribeOutcome {
+  return {
+    action: 'denied',
+    message:
+      'recordingId already belongs to different audio; keep the original recording id for identical retries only',
+  };
 }
 
 function prepareRecording(

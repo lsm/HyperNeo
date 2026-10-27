@@ -1,8 +1,26 @@
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { VoiceTranscribeOutcome } from '../../lib/voice/transcribe-pipeline.ts';
 
 export class VoiceRecordingRepository {
   constructor(private readonly db: Database) {}
+
+  getAsync(owner: string, id: string) {
+    return gatewayFor(this.db).call(voiceRecordingReads, 'get', owner, id);
+  }
+
+  reserveAsync(owner: string, id: string, hash: string) {
+    return gatewayFor(this.db).call(voiceRecordingWrites, 'reserve', owner, id, hash);
+  }
+
+  markDispatchedAsync(owner: string, id: string) {
+    return gatewayFor(this.db).call(voiceRecordingWrites, 'markDispatched', owner, id);
+  }
+
+  finishAsync(owner: string, id: string, outcome: VoiceTranscribeOutcome, dispatched: boolean) {
+    return gatewayFor(this.db).call(voiceRecordingWrites, 'finish', owner, id, outcome, dispatched);
+  }
 
   get(
     owner: string,
@@ -56,3 +74,16 @@ export class VoiceRecordingRepository {
       .run(JSON.stringify(outcome), Date.now(), owner, id, Number(dispatched));
   }
 }
+
+export const voiceRecordingReads = defineRepositoryOp(
+  'voice.recording.read',
+  'read',
+  VoiceRecordingRepository,
+  ['get'] as const
+);
+export const voiceRecordingWrites = defineRepositoryOp(
+  'voice.recording.write',
+  'write',
+  VoiceRecordingRepository,
+  ['reserve', 'markDispatched', 'finish'] as const
+);

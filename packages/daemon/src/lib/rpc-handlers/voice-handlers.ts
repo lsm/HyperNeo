@@ -213,7 +213,7 @@ async function transcribeViaPipeline(
   recordings?: VoiceRecordingTranscription,
   owner = 'local'
 ): Promise<VoiceTranscribeResponse> {
-  const submit = (beforeDispatch?: () => void) =>
+  const submit = (beforeDispatch?: () => void | Promise<void>) =>
     runVoiceTranscribe({
       data,
       context,
