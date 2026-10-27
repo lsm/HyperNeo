@@ -37,6 +37,14 @@ preserve link handlers and selected text, short-message behavior and the exact
 three-row boundary. Shared disclosure's old human-control expectations are
 historical only; use this journey for current proof.
 
+Import verifyFadeWordSelection from neo-fade-selection-web.mjs and run it in
+separate contexts at both layouts with phase after. A mouse double-click must
+select the word wrapping and keep the message expanded. Preserve the before
+proof where selection succeeds but the message folds. Mouse single-click folding
+waits 500ms to distinguish selection; opening, touch taps and the dedicated
+keyboard control stay immediate. This is a mouse gesture in both layouts, not
+physical mobile text selection.
+
 Save browser.json with phase after, passed true and both observations after
 visual review. Close contexts/browser and signal the helper PID with SIGUSR1.
 Require wrapper exit zero; it saves evidence and deletes synthetic HOME/data.

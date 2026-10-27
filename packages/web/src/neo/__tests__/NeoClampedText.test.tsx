@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NeoClampedText } from '../NeoClampedText.tsx';
 
@@ -13,7 +13,7 @@ const sized = (scroll: number, client: number) => {
 };
 
 describe('NeoClampedText', () => {
-  it('opens and folds by tapping the text, with no visible more/less label', () => {
+  it('opens and folds by tapping the text, with no visible more/less label', async () => {
     sized(500, 272);
     const { container } = render(
       <NeoClampedText text="long">
@@ -25,7 +25,7 @@ describe('NeoClampedText', () => {
     fireEvent.click(screen.getByText('long'));
     expect(container.querySelector('[data-clamped]')).toBeNull();
     fireEvent.click(screen.getByText('long'));
-    expect(container.querySelector('[data-clamped]')).toBeTruthy();
+    await waitFor(() => expect(container.querySelector('[data-clamped]')).toBeTruthy());
   });
 
   it('provides an accessible control while preserving link clicks and selected text', () => {
@@ -71,6 +71,20 @@ describe('NeoClampedText', () => {
     await new Promise((resolve) => setTimeout(resolve, 550));
     expect(container.querySelector('[data-clamped]')).toBeNull();
     expect(screen.getByRole('button', { name: 'Show less' })).toBeTruthy();
+  });
+
+  it('opens and folds immediately for successive touch taps', () => {
+    sized(500, 272);
+    const { container } = render(
+      <NeoClampedText text="long">
+        <p>long</p>
+      </NeoClampedText>
+    );
+    const text = screen.getByText('long');
+    fireEvent(text, new PointerEvent('click', { bubbles: true, pointerType: 'touch', detail: 1 }));
+    expect(container.querySelector('[data-clamped]')).toBeNull();
+    fireEvent(text, new PointerEvent('click', { bubbles: true, pointerType: 'touch', detail: 2 }));
+    expect(container.querySelector('[data-clamped]')).toBeTruthy();
   });
 
   it.each([

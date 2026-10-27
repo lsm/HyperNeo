@@ -46,9 +46,11 @@ function neoClampHeight(element: HTMLElement, lines = CLAMP_LINES) {
 export function NeoClampedText({ text, children }: { text: string; children: ComponentChildren }) {
   const contentId = useId();
   const box = useRef<HTMLDivElement>(null);
+  const fold = useRef<number | undefined>(undefined);
   const [open, setOpen] = useState(false);
   const [long, setLong] = useState(false);
   const [marked, setMarked] = useState(false);
+  useLayoutEffect(() => () => window.clearTimeout(fold.current), [text, open]);
   useLayoutEffect(() => {
     const element = box.current;
     if (!element) return;
@@ -72,13 +74,20 @@ export function NeoClampedText({ text, children }: { text: string; children: Com
     <div
       class={`neo-clamped-text relative flow-root ${long ? 'cursor-pointer' : ''}`}
       onClick={(event) => {
+        window.clearTimeout(fold.current);
         if (!long || event.defaultPrevented || window.getSelection()?.toString()) return;
         if (
           event.target instanceof Element &&
           event.target.closest('a,button,input,select,textarea')
         )
           return;
-        setOpen(!open);
+        const touch = 'pointerType' in event && event.pointerType === 'touch';
+        if (!touch && event.detail > 1) return;
+        if (!open || touch) setOpen(!open);
+        else
+          fold.current = window.setTimeout(() => {
+            if (!window.getSelection()?.toString()) setOpen(false);
+          }, 500);
       }}
     >
       <div

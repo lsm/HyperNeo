@@ -39,6 +39,7 @@ export async function verifyMessageFade(page, fixture, { phase, evidence, touch 
       await tapText();
       assert.equal(await article.locator('[data-clamped]').count(), 0);
       await tapText();
+      if(touch) assert.equal(await article.locator('[data-clamped]').count(),1);
       await article.locator('[data-clamped]').waitFor();
       const links = article.getByRole('link', { name: 'Safe link', exact: true });
       if (await links.count()) {
