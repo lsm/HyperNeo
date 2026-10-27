@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
-import { rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { Session, SessionConfig, SessionMetadata } from '@hyperneo/shared';
 import type { RoomGoal } from '@hyperneo/shared/types/neo';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
@@ -5210,10 +5210,7 @@ describe('sessions.list reactive scope filter', () => {
   }
 
   beforeEach(async () => {
-    dbPath = join(
-      tmpdir(),
-      `sessions-list-${Date.now()}-${Math.random().toString(36).slice(2)}.db`
-    );
+    dbPath = join(mkdtempSync(join(tmpdir(), 'sessions-list-')), 'test.db');
     db = new Database(dbPath);
     reactiveDb = createReactiveDatabase(db);
     await db.initialize(reactiveDb);
@@ -5221,15 +5218,15 @@ describe('sessions.list reactive scope filter', () => {
   });
 
   afterEach(() => {
-    engine.dispose();
     try {
-      db.close();
-    } catch {}
-    try {
-      rmSync(dbPath, { force: true });
-      rmSync(dbPath + '-wal', { force: true });
-      rmSync(dbPath + '-shm', { force: true });
-    } catch {}
+      engine?.dispose();
+    } finally {
+      try {
+        db?.close();
+      } finally {
+        rmSync(dirname(dbPath), { recursive: true, force: true });
+      }
+    }
   });
 
   async function flush(): Promise<void> {
