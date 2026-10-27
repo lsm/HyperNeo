@@ -1,24 +1,24 @@
 {
-  "coldMs": 5.65320799999995,
+  "coldMs": 5.678208000000041,
   "firstReceipt": {
     "ok": true,
     "schedule": {
-      "id": "6a364810-2c7a-4d69-9ef1-720d37b2eed0",
+      "id": "047be376-3f04-462e-88da-0c8e88195a98",
       "status": "active",
       "target": {
         "adapter": "hyperneo",
         "id": "schedule-recipient"
       },
       "sourceKind": "reminder",
-      "sourceId": "2af40978-3d30-40c8-ba27-ff25e6270b63",
+      "sourceId": "14dca52c-b8dc-4cb1-828a-8af08ddae087",
       "note": "cold reminder",
       "cadence": {
         "kind": "every",
         "everyMs": 3600000
       },
       "nudgeEvery": 1,
-      "nextRunAt": 1793095559215,
-      "pendingJobId": "1bd0cf0c-66c3-4436-a28c-a0be3b0a3866",
+      "nextRunAt": 1793096494546,
+      "pendingJobId": "3bd99e27-5faa-44f1-baf2-81554650c745",
       "dueCount": 0,
       "factsDigest": null,
       "lastRunAt": null,
@@ -26,32 +26,32 @@
       "lastSkipReason": null,
       "lastMessageId": null,
       "createdBySession": null,
-      "createdAt": 1793091959215,
-      "updatedAt": 1793091959215
+      "createdAt": 1793092894546,
+      "updatedAt": 1793092894546
     }
   },
   "firstCommittedPair": {
     "schedule": {
-      "id": "6a364810-2c7a-4d69-9ef1-720d37b2eed0",
-      "pending_job_id": "1bd0cf0c-66c3-4436-a28c-a0be3b0a3866",
-      "next_run_at": 1793095559215
+      "id": "047be376-3f04-462e-88da-0c8e88195a98",
+      "pending_job_id": "3bd99e27-5faa-44f1-baf2-81554650c745",
+      "next_run_at": 1793096494546
     },
     "job": {
       "status": "pending",
-      "run_at": 1793095559215,
+      "run_at": 1793096494546,
       "payload": {
-        "scheduleId": "6a364810-2c7a-4d69-9ef1-720d37b2eed0"
+        "scheduleId": "047be376-3f04-462e-88da-0c8e88195a98"
       }
     }
   },
-  "concurrentWarmMs": 1.509666000000152,
+  "concurrentWarmMs": 1.314875000000029,
   "invalidCadenceRefused": true,
-  "healthWhileHeldMs": 2.67512499999998,
+  "healthWhileHeldMs": 2.651500000000169,
   "writerIsolation": {
     "outside": 0,
     "inside": 1
   },
-  "heldWriteMs": 29.53054199999997,
+  "heldWriteMs": 29.674333999999817,
   "rollbackFailure": "MessageHubResponseError: synthetic schedule enqueue failure",
   "beforeCommitFailure": "MessageHubResponseError: synthetic schedule admission rejected before commit",
   "lostReceiptFailure": "MessageHubResponseError: synthetic committed schedule reply lost; outcome unknown",
@@ -63,64 +63,64 @@
   },
   "committedPairs": 9,
   "mainSqlAttempts": 0,
-  "maxLoopLagMs": 2.8120000000001255,
+  "maxLoopLagMs": 3.5711670000000595,
   "latencyUnder250ms": true,
-  "rssBytes": 518733824,
+  "rssBytes": 518520832,
   "walBytes": 4124152,
   "timings": [
     {
-      "roundTripMs": 0.4492079999999987,
+      "roundTripMs": 0.4417909999999665,
       "requestBytes": 283,
       "replyBytes": 545,
-      "encodeMs": 0.009250000000065484
+      "encodeMs": 0.008792000000084954
     },
     {
-      "roundTripMs": 0.17512499999998,
+      "roundTripMs": 0.17316699999992125,
       "requestBytes": 285,
       "replyBytes": 547,
-      "encodeMs": 0.005791000000044733
+      "encodeMs": 0.005791999999928521
     },
     {
-      "roundTripMs": 0.2970829999999296,
+      "roundTripMs": 0.29466600000000653,
       "requestBytes": 285,
       "replyBytes": 547,
-      "encodeMs": 0.00204200000007404
+      "encodeMs": 0.003917000000001281
     },
     {
-      "roundTripMs": 0.3742500000000746,
+      "roundTripMs": 0.37245899999993526,
       "requestBytes": 285,
       "replyBytes": 547,
-      "encodeMs": 0.002416999999923064
+      "encodeMs": 0.0013750000000527507
     },
     {
-      "roundTripMs": 0.44974999999999454,
+      "roundTripMs": 0.44308299999988776,
       "requestBytes": 285,
       "replyBytes": 547,
-      "encodeMs": 0.0011669999998957792
+      "encodeMs": 0.0012500000000272848
     },
     {
-      "roundTripMs": 0.5841250000000855,
+      "roundTripMs": 0.5125839999998334,
       "requestBytes": 285,
       "replyBytes": 547,
-      "encodeMs": 0.0017089999998916028
+      "encodeMs": 0.0010000000002037268
     },
     {
-      "roundTripMs": 29.12866699999995,
+      "roundTripMs": 29.24333300000012,
       "requestBytes": 290,
       "replyBytes": 552,
-      "encodeMs": 0.0037500000000818545
+      "encodeMs": 0.0038749999998799467
     },
     {
-      "roundTripMs": 2.684750000000122,
+      "roundTripMs": 2.6806249999999636,
       "requestBytes": 282,
       "replyBytes": 544,
-      "encodeMs": 0.00874999999996362
+      "encodeMs": 0.003250000000207365
     },
     {
-      "roundTripMs": 2.6943750000000364,
+      "roundTripMs": 2.7037920000002487,
       "requestBytes": 286,
       "replyBytes": 548,
-      "encodeMs": 0.0038749999998799467
+      "encodeMs": 0.003290999999990163
     }
   ]
 }

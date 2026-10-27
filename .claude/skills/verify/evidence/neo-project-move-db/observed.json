@@ -1,0 +1,37 @@
+{
+  "verified": true,
+  "productionLines": 50,
+  "redRegressionCommit": "fc0aab144468a3d233fe886b215e2bf6deb7795d",
+  "baselineMainSql": {
+    "bun": 24,
+    "deno": 24
+  },
+  "fixedMainSql": {
+    "bun": 0,
+    "deno": 0
+  },
+  "fixedCommands": {
+    "bun": 8,
+    "deno": 8
+  },
+  "checks": "Full check passed; 10 focused tests passed in Bun and Vitest.",
+  "limitations": "RPC and durable public state only; no GUI, section creation or held-writer latency proof. Failed setup attempts retained separately, not counted as passes.",
+  "proofBinding": {
+    "testedCodeCommit": "274d4cbdf984dc8c0360c2f61bec0bbb84cd0e0b",
+    "testedGitTree": "1a96abc89940236090bc3e3b23147603899e9de9",
+    "applicationTrees": {
+      "packages": "582902afd861b78abfa3b0c1eedf95cc1003de18",
+      "scripts": "586a99d85998c27fffeb05673dad08e51048e25c"
+    },
+    "proofBlobs": {
+      ".claude/skills/verify/neo-project-move-db.ts": "f24075edfe5fcd19e0fc7dc705e77cdc2b54894d",
+      ".claude/skills/verify/neo-project-move-db-run.py": "726dae96147a087ae973a2406d3652f06aad1fdd",
+      ".claude/skills/verify/neo-project-move-proof-binding.ts": "ea80f34f80f1469afa98fce967b79f6273da4eff"
+    },
+    "runs": {
+      "bun": "bun-verify",
+      "deno": "deno-verify"
+    },
+    "postProofChangePolicy": "evidence-and-journey-only"
+  }
+}

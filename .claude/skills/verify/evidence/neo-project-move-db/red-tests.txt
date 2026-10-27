@@ -1,0 +1,36 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/neo-project-move-writer.test.ts:
+55 |       const results = await Promise.all([move('a'), move('b')]);
+56 |       expect(
+57 |         results.filter(
+58 |           (result) => result.kind === 'completed' && (result.value as { ok: boolean }).ok
+59 |         )
+60 |       ).toHaveLength(1);
+             ^
+error: expect(received).toHaveLength(expected)
+
+Expected length: 1
+Received length: 0
+
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/neo-project-move-writer.test.ts:60:9)
+(fail) project move reads and updates the bound writer with guarded main [3.71ms]
+55 |       const results = await Promise.all([move('a'), move('b')]);
+56 |       expect(
+57 |         results.filter(
+58 |           (result) => result.kind === 'completed' && (result.value as { ok: boolean }).ok
+59 |         )
+60 |       ).toHaveLength(1);
+             ^
+error: expect(received).toHaveLength(expected)
+
+Expected length: 1
+Received length: 0
+
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/neo-project-move-writer.test.ts:60:9)
+(fail) project move reads and updates the bound writer with read-only main [1.04ms]
+
+ 0 pass
+ 2 fail
+ 2 expect() calls
+Ran 2 tests across 1 file. [29.00ms]

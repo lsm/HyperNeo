@@ -2,7 +2,6 @@ import { requireLocalTreeAuthor } from '../../project-author.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoProject } from '@hyperneo/shared/types/neo-context';
-import { neoProjectMoveReason } from '@hyperneo/shared/types/neo-project-tree';
 import { parseGitHubRefUrl } from '../../../github/parse-pr-url.ts';
 import { defineOperation, type OperationCaller } from '../../../operations/registry.ts';
 import type { NeoRepository } from '../../../../storage/repositories/neo-repository.ts';
@@ -48,18 +47,9 @@ export function createNeoProjectTreeOperations(repo: NeoRepository, read: NeoRef
   const move = (superpipe({})('neo.project.move') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(authorize, 'caller', 'result:outcome')
-    .pipe(() => repo.listProjects(), 'input', 'projects')
-    .pipe(
-      (input: z.infer<typeof Move>, projects: readonly NeoProject[]): Gate<true> => {
-        const reason = neoProjectMoveReason(projects, input.id, input.parentId);
-        return reason ? { reason: { ok: false, reason } } : { value: true };
-      },
-      ['input', 'projects'],
-      'result:outcome'
-    )
     .pipe(
       (input: z.infer<typeof Move>) =>
-        repo.moveProject(input.id, input.parentId, input.expectedRevision),
+        repo.moveProjectLater(input.id, input.parentId, input.expectedRevision),
       'input',
       'outcome'
     )

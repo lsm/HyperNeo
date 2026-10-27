@@ -28,8 +28,9 @@
   "repositoryCheck": "passed",
   "hermeticProof": "Fresh HOME/data, refusing GitHub stub, direct HTTP refused; temporary daemon data removed after evidence saved.",
   "baseSync": {
-    "dev": "a10e2df5d388cfdffcd7ba1f2a26210215651d40",
-    "conflict": "Append-only DB-op import/entry; retain both commands",
+    "dev": "92ae805c4e03e59da39b9a09857bdcc62d6ae9c7",
+    "previousPrHead": "08908153f85da93d494f1f817e9baac1c1689834",
+    "conflict": "Append-only project-move and session-schedule registrations; retain both",
     "productionChangedLines": 54,
     "vitestPassed": 77,
     "repositoryCheck": "passed",
