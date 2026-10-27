@@ -64,6 +64,71 @@ afterEach(() => {
 });
 
 const root = 'neo:550e8400-e29b-41d4-a716-446655440000';
+
+describe('Work search input and retry', () => {
+  it.each([{ isComposing: true }, { keyCode: 229 }])(
+    'keeps the CJK query when Escape dismisses composition: %j',
+    (composition) => {
+      locale.value = 'en';
+      mount();
+      fireEvent.click(screen.getByRole('button', { name: 'Search work', exact: true }));
+      const input = screen.getByRole('searchbox', { name: 'Search work', exact: true });
+      fireEvent.input(input, { target: { value: '数据' } });
+      fireEvent.keyDown(input, { key: 'Escape', ...composition });
+      expect(screen.getByRole('searchbox')).toHaveProperty('value', '数据');
+      fireEvent.keyDown(input, { key: 'Escape' });
+      expect(screen.queryByRole('searchbox')).toBeNull();
+    }
+  );
+
+  it('shows searching instead of the previous error while retry reads are pending', async () => {
+    locale.value = 'en';
+    const full = testAskEntry('retry', 'Fictional retry work');
+    let release!: (value: unknown) => void;
+    const pending = new Promise((resolve) => {
+      release = resolve;
+    });
+    const read = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Synthetic unavailable'))
+      .mockReturnValue(pending);
+    const request = vi.fn((_method: string, input: { name: string }) =>
+      input.name === 'neo.ask.read' ? read() : Promise.resolve({ schedules: [] })
+    );
+    const hub = vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
+    try {
+      const { model } = mount(true, true);
+      act(() => {
+        model.value = {
+          ...model.value,
+          snapshot: {
+            ...model.value.snapshot,
+            todoAsks: [
+              { ...full, summary: { todoCount: 0, questionCount: 0, openQuestionCount: 0 } },
+            ],
+          },
+        };
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Search work', exact: true }));
+      fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'Fictional' } });
+      await screen.findByText('Could not search work. Close and reopen search to retry.');
+      fireEvent.click(screen.getByRole('button', { name: 'Close work search', exact: true }));
+      fireEvent.click(screen.getByRole('button', { name: 'Search work', exact: true }));
+      fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'Fictional' } });
+      await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+      expect(screen.getByText('Searching work…')).toBeTruthy();
+      expect(
+        screen.queryByText('Could not search work. Close and reopen search to retry.')
+      ).toBeNull();
+      release({ ok: true, entry: full });
+      await screen.findByRole('heading', { name: 'Fictional retry work' });
+    } finally {
+      release({ ok: true, entry: full });
+      hub.mockRestore();
+    }
+  });
+});
+
 function mount(publicMode = true, empty = false) {
   const snapshot = {
     historyCursor: undefined as NeoSnapshot['historyCursor'],
