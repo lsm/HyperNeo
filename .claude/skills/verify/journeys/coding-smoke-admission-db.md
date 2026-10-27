@@ -66,3 +66,8 @@ it is not a successful proof. The assignment gate now lives in its own helper
 with type-only repository dependencies so daemon import order cannot read an
 uninitialized smoke schema. Successful bound runs must boot, serve RPC and
 close the daemon normally.
+
+The retired coding-delivery-gates helper has been deleted after reproducing its
+inert interception on a fresh daemon. Its failure is retained in
+evidence/coding-smoke-admission-db/retired-helper-red. The supported RPC helper
+above owns the receipt-removal regression at the writer admission boundary.

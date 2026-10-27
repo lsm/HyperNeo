@@ -23,9 +23,9 @@ historical head receipts and zero-row update refusal.
 The receipt snapshot, independence checks and update now execute in one writer
 transaction. The current helper pauses before dispatch and removes the queued
 request's receipt, verifying matching_merge_gate_required without recording
-smoke. Revoking the assignment also refuses and preserves prior evidence. The
-older helper's interception between snapshot and write no longer represents this
-atomic command boundary, so use the current helper above.
+smoke. Revoking the assignment also refuses and preserves prior evidence. The obsolete helper has been removed: its interception between snapshot and
+write no longer represented this atomic command boundary. Use the current helper
+above for the receipt-removal regression.
 
 Evidence lives under evidence/coding-smoke-admission-db. The regression commit
 71b407faf5 characterized the original wrong-head storage bug. Merge preparation
