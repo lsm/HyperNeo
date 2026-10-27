@@ -31,6 +31,7 @@ function world(limits = { running: 6, perGroup: 3 }, broken = false) {
   const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
   const started: string[] = [];
   const idle = new Set<string>();
+  const unreadable = new Set<string>();
   let workers = 0;
   const runner = createNeoTodoRunner({
     write: gatewayFor(db).run.bind(gatewayFor(db)),
@@ -46,6 +47,8 @@ function world(limits = { running: 6, perGroup: 3 }, broken = false) {
         started.push(String((input.ref as { id: string }).id));
         return completed({ ok: true, value: { delivered: true } });
       }
+      if (unreadable.has(String((input.ref as { id?: string } | undefined)?.id)))
+        return completed({ ok: false, reason: 'unreachable', detail: 'synthetic status failure' });
       return completed({
         ok: true,
         value: {
@@ -122,6 +125,7 @@ function world(limits = { running: 6, perGroup: 3 }, broken = false) {
     store,
     sessions,
     idle,
+    unreadable,
     runner,
     clock,
     started,
@@ -307,5 +311,20 @@ describe('queued todos start themselves', () => {
     const waiting = w.add(w.approved());
     await w.tick();
     expect(w.state(waiting)).toBe('doing');
+  });
+
+  test('a worker whose status cannot be read counts as busy again', async () => {
+    const w = (current = world({ running: 1, perGroup: 1 }));
+    const first = w.add(w.approved());
+    await w.tick();
+    w.idle.add('worker-1');
+    await w.tick();
+    expect(w.sessions.workerIdle(first)).toBe(true);
+    w.idle.delete('worker-1');
+    w.unreadable.add('worker-1');
+    const waiting = w.add(w.approved());
+    await w.tick();
+    expect(w.sessions.workerIdle(first)).toBe(false);
+    expect(w.state(waiting)).toBe('todo');
   });
 });

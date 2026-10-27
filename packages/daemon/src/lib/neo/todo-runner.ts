@@ -915,7 +915,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         const live = readDriverLive(
           await deps.invoke(caller(context.ask), 'work.status', { ref: context.ref })
         );
-        if (live) await sessions.write('noteWorkerStatus', context.todo.id, live.status);
+        await sessions.write('noteWorkerStatus', context.todo.id, live?.status ?? 'unknown');
         return live;
       },
       ['admission'],
