@@ -31,6 +31,7 @@ import {
   isCuratedOutModel,
   markRefreshAttemptedFor,
 } from '../model-service.js';
+import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { getProviderRegistry, inferProviderForModel } from '../providers/registry.js';
 import {
   type CloneCascadeDependencies,
@@ -724,6 +725,13 @@ export function setupSessionHandlers(
     if (!agentSession) {
       throw new Error('Session not found');
     }
+
+    if (neoCoordinatorBinding(sessionManager.getDatabase(), targetSessionId))
+      return {
+        success: false,
+        sandboxEnabled: false,
+        error: 'Neo runs without its own OS sandbox; the sandbox toggle does not apply.',
+      };
 
     const session = agentSession.getSessionData();
     const previousMode = session.config.sandbox?.enabled ?? false;

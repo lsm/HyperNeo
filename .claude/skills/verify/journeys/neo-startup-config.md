@@ -36,7 +36,12 @@ Read/Bash in sdkToolsPreset and publication invoke in allowedTools. Do not deplo
 or edit the live DB from this journey. Keep rollout/live-config confirmation pending until
 those actual readbacks exist.
 
-The sandbox-update RPC must report success with sandboxEnabled false and no
-error property. JSON omits undefined properties: an expected `error: undefined`
-key incorrectly rejects that successful wire response. This journey exercises
-both synthetic credential sources through the real SDK, not an OS sandbox.
+The sandbox-toggle RPC must refuse both ON and OFF for a bound Neo, reporting
+sandboxEnabled false with the explicit reason that the control does not apply.
+It must neither persist a misleading enabled flag nor reset a running query.
+The focused handler test covers the running-query case; this real SDK journey
+covers both wire receipts and retained startup/history/publication behavior.
+JSON omits undefined properties, so successful replies elsewhere must not be
+required to contain an `error: undefined` key. This journey exercises both
+synthetic credential sources through the real SDK, not an OS sandbox. Evidence
+contains no vacuous OS-containment fields or disabled proof branches.

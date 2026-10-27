@@ -18,8 +18,6 @@ empty and tracked documents written before save, plus unchanged retries.
 Inspect `evidence/neo-home-ownership.json` for the reply, commit and bytes.
 Save that evidence outside the run directory and immediately remove the run.
 
-The SDK sandbox journey `neo-read-sandbox.md` additionally checks that Neo's
-actual Bash can write its home worktree while .git metadata, worker siblings and daemon data stay denied. In particular, it must not plant Git filter drivers or hooks for the daemon to execute. Commits use neo.home.save; preserving .git integrity is the human-authorized exception to home ownership.
 Human confirmation on mandate/direction saves remains an approval receipt, not
 a filesystem write restriction on documents. Ordinary document edits need no
-questionId; sandboxed Bash cannot repair Git metadata. Remote Git publication through RPC retains its lease against replacing history.
+questionId. Remote Git publication through RPC retains its lease against replacing history.
