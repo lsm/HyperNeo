@@ -56,7 +56,7 @@ try {
   assert.equal(app.sessionManager.getCachedSession(attempt.sessionId), null);
   results.push({ phase: 'registered-handler-paused-space', job: parked });
   spaces.resumeSpace(space.id);
-  const waitingHandler = createDirectStartJobHandler(raw, async () => ({ started: false, reason: 'awaiting_capacity' }), app.jobQueue, app.sessionManager);
+  const waitingHandler = createDirectStartJobHandler(raw, async () => ({ started: false, reason: 'awaiting_capacity' }), app.sessionManager);
   app.jobProcessor.register(DIRECT_TASK_START, waitingHandler);
   app.jobQueue.reschedulePending(jobId, Date.now() - 1);
   const waiting = await processUntil(jobId, job => job.status === 'pending' && job.payload.__parkCount === undefined);
@@ -68,7 +68,7 @@ try {
   const replacement = app.jobQueue.dequeue(DIRECT_TASK_START)[0];
   assert(replacement.claimToken); assert.notEqual(replacement.claimToken, waiting.claimToken);
   for (const reason of ['awaiting_dependencies', 'direct_start_unavailable']) {
-    const handler = createDirectStartJobHandler(raw, async () => ({ started: false, reason }), app.jobQueue, app.sessionManager);
+    const handler = createDirectStartJobHandler(raw, async () => ({ started: false, reason }), app.sessionManager);
     measuring = true;
     const stale = await handler(waiting);
     measuring = false;
@@ -77,7 +77,7 @@ try {
     assert.equal(app.jobQueue.getJob(jobId)?.claimToken, replacement.claimToken);
     results.push({ phase: 'stale-claim', startReason: reason, result: stale });
   }
-  const ownedHandler = createDirectStartJobHandler(raw, async () => ({ started: false, reason: 'awaiting_dependencies' }), app.jobQueue, app.sessionManager);
+  const ownedHandler = createDirectStartJobHandler(raw, async () => ({ started: false, reason: 'awaiting_dependencies' }), app.sessionManager);
   measuring = true;
   const owned = await ownedHandler(replacement);
   measuring = false;
