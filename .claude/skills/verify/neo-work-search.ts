@@ -36,7 +36,8 @@ try{
  }
  const dist=resolve('packages/web/dist');assert(existsSync(join(dist,'neo/index.html')));
  front=Bun.serve({hostname:'127.0.0.1',port:0,async fetch(request,server){
-  const path=new URL(request.url).pathname;
+  const target=new URL(request.url),path=target.pathname;
+  if(path==='/__verify-refresh'){if(target.searchParams.get('changed')==='1')store.updateTodo(store.getTodo('report-match-todo')!,{report:'Needle refreshedsigil737'},Date.now());await app.messageHub.event('neo.changed',{});return Response.json({syntheticOnly:true});}
   if(path==='/ws'){if(server.upgrade(request,{data:{connectionSessionId:'global',device:await app.authenticateUpgrade(request,'127.0.0.1')}}))return;return new Response('Upgrade failed',{status:500});}
   const file=Bun.file(join(dist,path==='/neo'?'neo/index.html':path));return await file.exists()?new Response(file):new Response('Not found',{status:404});
  },websocket:createWebSocketHandlers(app.transport,app.sessionManager)});assert.notEqual(front.port,8399);

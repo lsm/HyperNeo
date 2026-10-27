@@ -41,4 +41,33 @@ describe('Work search source', () => {
     await waitFor(() => expect(view.result.current.failed).toBe(true));
     expect(view.result.current.pending).toBe(false);
   });
+
+  it('keeps results across fresh snapshots and reads only changed card bodies', async () => {
+    const other = { ...full, ask: { ...full.ask, id: 'b' } };
+    const source = [entries[0], { ...entries[0], ask: other.ask }];
+    let finish!: (entry: typeof full) => void;
+    const read = vi.fn(async (id: string) => (id === 'a' ? full : other));
+    const view = renderHook(({ values }) => useNeoWorkSearch(values, 'needle', read), {
+      initialProps: { values: source },
+    });
+    await waitFor(() => expect(view.result.current.results).toHaveLength(2));
+    view.rerender({ values: source.map((entry) => ({ ...entry, ask: { ...entry.ask } })) });
+    expect(view.result.current.results).toHaveLength(2);
+    expect(view.result.current.pending).toBe(false);
+    expect(read).toHaveBeenCalledTimes(2);
+    read.mockImplementation((id) =>
+      id === 'a'
+        ? new Promise((resolve) => {
+            finish = resolve;
+          })
+        : Promise.resolve(other)
+    );
+    view.rerender({ values: [{ ...source[0], ask: { ...full.ask, updatedAt: 2 } }, source[1]] });
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(3));
+    expect(view.result.current.results).toHaveLength(2);
+    expect(view.result.current.pending).toBe(true);
+    finish({ ...full, ask: { ...full.ask, updatedAt: 2 } });
+    await waitFor(() => expect(view.result.current.pending).toBe(false));
+    expect(view.result.current.results).toHaveLength(2);
+  });
 });
