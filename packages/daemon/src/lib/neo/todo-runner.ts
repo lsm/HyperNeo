@@ -31,6 +31,7 @@ import {
 import type { NeoPack, NeoTodoCheckResult, NeoTodoJudgement } from './pack-contract.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
 import { sameNeoTodoCheck } from './todo-completion.ts';
+import { planWorkQueue } from '../work-queue/capacity.ts';
 import { neoMoveTodo, neoTodoRepo } from './todo-repo.ts';
 import { deliverNeoTurnReport } from './turn-report.ts';
 
@@ -66,6 +67,7 @@ export interface NeoTodoRunnerDeps {
     kind?: 'focused_status' | 'quiet_heartbeat' | 'event'
   ): Promise<void>;
   changed(): void;
+  limits(): { running: number; perGroup: number };
 }
 
 const CARD_STATUS: Record<NeoTodo['state'], NeoWork['status']> = {
@@ -288,7 +290,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         todo: NeoTodo
       ) => {
         if (receipt.changed) deps.changed();
-        if (receipt.startNext) await start(receipt.startNext);
+        if (receipt.startNext) await fill();
         return receipt.todo ?? todo;
       },
       ['receipt', 'todo'],
@@ -425,6 +427,12 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     .endAsync('outcome') as (
     todoId: string
   ) => Promise<{ ok: true; todo: NeoTodo; records?: string[] } | Rejection>;
+
+  const fill = async () => {
+    const queue = await sessions.read('queueFacts');
+    for (const todoId of planWorkQueue(queue.candidates, queue.running, deps.limits()).start)
+      await start(todoId);
+  };
 
   const start = async (todoId: string) => {
     const tracked = starting.has(todoId);
@@ -903,6 +911,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         if (completed)
           await recompute(completed).catch((error) => warn('Todo plan advancement pending', error));
       }
+      await fill().catch((error) => warn('Queued todo start pending', error));
     },
   };
 }

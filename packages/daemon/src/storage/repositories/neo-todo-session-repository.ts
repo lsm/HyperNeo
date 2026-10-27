@@ -59,6 +59,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     method: 'stopContext',
     todoId: string
   ): Promise<ReturnType<NeoTodoSessionRepository['stopContext']>>;
+  read(method: 'queueFacts'): Promise<ReturnType<NeoTodoSessionRepository['queueFacts']>>;
   read(method: (typeof neoTodoSessionReads.methods)[number], todoId?: string) {
     return gatewayFor(this.db).call(
       neoTodoSessionReads,
@@ -146,6 +147,58 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       ask?.status === 'open'
       ? { todo, ask, ref }
       : null;
+  }
+
+  queueFacts() {
+    const store = new NeoAskTodoRepository(this.db);
+    const asks = store.listOpenAsks();
+    const todos = store.listTodosForAsks(asks.map((ask) => ask.id));
+    const worker = (ref: WorkRef | null | undefined) =>
+      ref ? `${ref.adapter}:${ref.id}${ref.daemon ? `@${ref.daemon}` : ''}` : null;
+    const running = todos.flatMap((todo) =>
+      todo.state === 'doing'
+        ? [
+            {
+              group: asks.find((ask) => ask.id === todo.askId)?.projectId ?? null,
+              worker: worker(this.readRef(todo.id)),
+            },
+          ]
+        : []
+    );
+    const candidates = asks.flatMap((ask) => {
+      const plan = todos
+        .filter((todo) => todo.askId === ask.id)
+        .sort((a, b) => a.position - b.position);
+      const next = plan.find(
+        (todo) => !['done', 'closed_unverified', 'removed'].includes(todo.state)
+      );
+      const target = next && this.get(next.id);
+      return next?.state === 'todo' &&
+        next.startedAt === null &&
+        next.instruction &&
+        plan.some(
+          (todo) => todo.startedAt !== null || ['done', 'closed_unverified'].includes(todo.state)
+        ) &&
+        !store
+          .listQuestions(ask.id)
+          .some(
+            (question) =>
+              question.state === 'open' &&
+              (question.todoId === null || question.todoId === next.id) &&
+              (question.kind !== 'start' || !!question.startTodos?.includes(next.id))
+          ) &&
+        (target?.verb === 'start' || target?.verb === 'send')
+        ? [
+            {
+              id: next.id,
+              group: ask.projectId ?? null,
+              createdAt: next.createdAt,
+              worker: target.verb === 'send' ? worker(target.ref) : null,
+            },
+          ]
+        : [];
+    });
+    return { candidates, running };
   }
 
   claimNudge(
@@ -292,7 +345,7 @@ export const neoTodoSessionReads = defineRepositoryOp(
   'neo.todoSessionReads',
   'read',
   NeoTodoSessionRepository,
-  ['unrecordedStarts', 'awaitingReports', 'nudgeContext', 'stopContext']
+  ['unrecordedStarts', 'awaitingReports', 'nudgeContext', 'stopContext', 'queueFacts']
 );
 export const neoTodoSessionWrites = defineRepositoryOp(
   'neo.todoSessionWrites',

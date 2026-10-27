@@ -267,6 +267,7 @@ test('a queued confirmation starts its successor exactly once when the answer ar
   sessions.create('next', { verb: 'send', ref: { adapter: 'hyperneo', id: 'synthetic-worker' } });
   const dispatches: unknown[] = [];
   const runner = createNeoTodoRunner({
+    limits: () => ({ running: 99, perGroup: 99 }),
     store,
     sessions,
     write: gateway.run.bind(gateway),

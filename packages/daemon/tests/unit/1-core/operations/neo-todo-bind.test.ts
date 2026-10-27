@@ -25,6 +25,7 @@ function setup() {
   const packs = createTodoCheckPacks(db);
   const calls: string[] = [];
   const runner = createNeoTodoRunner({
+    limits: () => ({ running: 99, perGroup: 99 }),
     write: gatewayFor(db).run.bind(gatewayFor(db)),
     store,
     sessions,

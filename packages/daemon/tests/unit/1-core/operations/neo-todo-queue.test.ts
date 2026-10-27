@@ -14,7 +14,7 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 const completed = (value: unknown): OperationOutcome =>
   ({ kind: 'completed', value }) as OperationOutcome;
 
-function world(limits = { running: 6, perProject: 3 }) {
+function world(limits = { running: 6, perGroup: 3 }) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -117,7 +117,7 @@ afterEach(() => {
 
 describe('queued todos start themselves', () => {
   test('free slots start waiting todos first come, first served, and a finished one makes room', async () => {
-    const w = (current = world({ running: 2, perProject: 2 }));
+    const w = (current = world({ running: 2, perGroup: 2 }));
     const [a, b, c] = [w.add(w.approved()), w.add(w.approved()), w.add(w.approved())];
     await w.tick();
     expect(w.started).toEqual([a, b]);
@@ -128,7 +128,7 @@ describe('queued todos start themselves', () => {
   });
 
   test('never more running than the overall cap or a project cap', async () => {
-    const w = (current = world({ running: 3, perProject: 2 }));
+    const w = (current = world({ running: 3, perGroup: 2 }));
     const p = [w.add(w.approved('p')), w.add(w.approved('p')), w.add(w.approved('p'))];
     const q = [w.add(w.approved('q')), w.add(w.approved('q'))];
     await w.tick();

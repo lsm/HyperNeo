@@ -395,6 +395,7 @@ test('a hold arriving during the runner status lookup prevents a stale reminder'
         'todo'
       );
     const runner = createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
       write: gatewayFor(db.getDatabase()).run.bind(gatewayFor(db.getDatabase())),
       store: service.todos,
       sessions: service.todoSessions,

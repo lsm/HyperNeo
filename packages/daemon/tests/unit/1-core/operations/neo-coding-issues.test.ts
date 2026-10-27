@@ -83,6 +83,7 @@ function fixture() {
     });
     pack.todos!.schema(db);
     runner = createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
       write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions,

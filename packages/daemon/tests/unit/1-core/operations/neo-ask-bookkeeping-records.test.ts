@@ -54,6 +54,7 @@ function setup(overrides: Partial<Pick<NeoTodoControls, 'resolveTarget' | 'start
   );
   const calls: string[] = [];
   const runner = createNeoTodoRunner({
+    limits: () => ({ running: 99, perGroup: 99 }),
     write: gatewayFor(db).run.bind(gatewayFor(db)),
     store,
     sessions,
