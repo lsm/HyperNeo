@@ -773,8 +773,6 @@ export class QueryRunner {
     const owns = () =>
       this.ctx.getQueryGeneration() === queryGeneration && !this.ctx.isCleaningUp();
     const live = () => attemptToken.isLive() && owns();
-    const deadline = Date.now() + Math.min(inactivityBackstopMs, 60_000);
-    const prepare = <T>(run: () => Promise<T>) => this.failures.prepare(run, deadline, live);
 
     try {
       episodeId = await this.failures.admit(live);
@@ -893,6 +891,7 @@ export class QueryRunner {
         provider = providerRegistry.get(resolvedProviderId) ?? provider;
       }
 
+      const deadline = Date.now() + Math.min(inactivityBackstopMs, 60_000);
       const pendingOptions = runLagPhase('sdk:options_build', () =>
         optionsBuilder.build({
           askUserQuestionHook: attemptHook,
@@ -902,7 +901,7 @@ export class QueryRunner {
         })
       );
 
-      let queryOptions = await prepare(() => pendingOptions);
+      let queryOptions = await this.failures.bound(() => pendingOptions, deadline, live);
 
       queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
       const mcpServerNames = Object.keys(queryOptions.mcpServers ?? {}).sort();

@@ -62,7 +62,7 @@ vi.mock('../../../../src/lib/agent/query-failure-episode.ts', () => ({
     }
     async success() {}
     async reset() {}
-    prepare<T>(run: () => Promise<T>) {
+    bound<T>(run: () => Promise<T>) {
       return run();
     }
   },

@@ -8,7 +8,8 @@ assert.equal(process.env.NODE_ENV,'test');assert.equal(process.env.HOME,join(run
 for(const name of ['workspace','bin','evidence'])mkdirSync(join(run,name),{recursive:true});
 writeFileSync(join(run,'bin/gh'),'#!/bin/sh\nexit 1\n',{mode:0o700});
 const sdk=await import('../../../packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs');
-const attempts:number[]=[],failure='Synthetic unknown query start failure 9093';let healthy=false,finish=()=>{};
+const failures:Record<string,string>={startup:'SDK startup timeout - query aborted',auth:'401 Claude authentication failed',transient:'ECONNRESET connection closed',provider:'503 service unavailable',resume:'No message found with message.uuid of: synthetic',deadline:'Query preparation timed out'};
+const attempts:number[]=[],failure=failures[phase]??'Synthetic unknown query start failure 9093';let healthy=false,finish=()=>{};
 mock.module('@anthropic-ai/claude-agent-sdk',()=>({...sdk,query:({prompt}:{prompt:AsyncIterable<unknown>|string})=>{
  if(typeof prompt!=='string'){attempts.push(Date.now());if(!healthy)throw new Error(failure);}
  const ended=new Promise<void>(resolve=>{finish=resolve;});
@@ -33,19 +34,26 @@ try{
  await hub.request('providers.create',{params:{providerId:'anthropic',displayName:'Synthetic only',kind:'built_in',authType:'api_key',isEnabled:true,isDefault:true,sortOrder:0},credentials:{apiKey:'synthetic-never-sent'}});
  const registry=await hub.request<{servers:{id:string}[]}>('mcp.registry.list',{});for(const server of registry.servers)await hub.request('mcp.registry.setEnabled',{id:server.id,enabled:false});
  const {sessionId}=await hub.request<{sessionId:string}>('session.create',{workspacePath:join(run,'workspace'),title:'Synthetic failure governor',config:{model:'haiku',provider:'anthropic'}});
+ let releaseLate=()=>{};
+ if(phase==='deadline'){
+  const agent=app.sessionManager.getSession(sessionId)!;const options=await agent.optionsBuilder.build();
+  agent.optionsBuilder.build=()=>new Promise(resolve=>{releaseLate=()=>resolve(options);});
+  process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS='100';
+ }
  await hub.request('message.send',{sessionId,content:'Synthetic fake-start regression'});
  const read=async()=>(await hub.request<{session:Session}>('session.get',{sessionId})).session;
  if(phase==='before'){
-  await until(()=>attempts.length>=5,'baseline did not reproduce repeated fake failures',15000);
+  await until(()=>attempts.length>=5,'baseline did not reproduce repeated fake failures',45000);
   evidence.baselineReproduced=true;evidence.attempts=[...attempts];
  }else{
   await until(async()=>(await read()).metadata.queryFailureEpisode?.failed===true,'failure cap never became public');
-  const failed=await read();assert.equal(failed.metadata.queryFailureEpisode?.failures,3);assert(failed.metadata.queryFailureEpisode?.error.includes(failure));assert.equal(attempts.length,3);
-  assert(attempts[1]-attempts[0]>=950 && attempts[2]-attempts[1]>=1950);
+  const failed=await read();assert.equal(failed.metadata.queryFailureEpisode?.failures,3);assert(failed.metadata.queryFailureEpisode?.error.includes(failure));assert.equal(attempts.length,phase==='deadline'?0:3);
+  if(phase!=='deadline')assert(attempts[1]-attempts[0]>=950 && attempts[2]-attempts[1]>=1950);
   const beforeCount=attempts.length;await new Promise(done=>setTimeout(done,2200));assert.equal(attempts.length,beforeCount);
   evidence.failed=failed.metadata.queryFailureEpisode;evidence.attempts=[...attempts];
   const row=app.db.getDatabase().prepare('SELECT metadata FROM sessions WHERE id=?').get(sessionId) as {metadata:string};assert.deepEqual(JSON.parse(row.metadata).queryFailureEpisode,failed.metadata.queryFailureEpisode);evidence.persisted=true;
   const old=failed.metadata.queryFailureEpisode!.id;healthy=true;
+  releaseLate();await new Promise(done=>setTimeout(done,150));assert.equal(attempts.length,beforeCount);delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
   const reset=await hub.request<{success:boolean}>('session.resetQuery',{sessionId,restartQuery:false});assert(reset.success);
   await hub.request('message.send',{sessionId,content:'Explicit recovery after fixing the cause'});
   await until(async()=>{const state=(await read()).metadata.queryFailureEpisode;return !!state && state.id!==old && state.failures===0 && attempts.length>beforeCount;},'explicit recovery did not start a fresh successful episode');

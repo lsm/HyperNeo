@@ -55,7 +55,7 @@ describe('Query failure episode', () => {
     );
     vi.useFakeTimers();
     try {
-      const pending = governor.prepare(
+      const pending = governor.bound(
         () => new Promise(() => {}),
         Date.now() + 100,
         () => true
@@ -64,7 +64,7 @@ describe('Query failure episode', () => {
       await vi.advanceTimersByTimeAsync(100);
       await checked;
       await expect(
-        governor.prepare(
+        governor.bound(
           async () => 'late',
           Date.now() + 100,
           () => false

@@ -86,7 +86,7 @@ export class QueryFailureGovernor {
     return this.change(() => empty());
   }
 
-  async prepare<T>(run: () => Promise<T>, deadline: number, live: () => boolean): Promise<T> {
+  async bound<T>(run: () => Promise<T>, deadline: number, live: () => boolean): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const value = await Promise.race([
