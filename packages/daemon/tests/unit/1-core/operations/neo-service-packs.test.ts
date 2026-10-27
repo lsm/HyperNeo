@@ -193,7 +193,12 @@ test.each([
       1
     );
     expect(todo.state).toBe('todo');
-    service.todos.answerQuestion(question, answer, via, 2);
+    service.todos.answerQuestion(
+      question,
+      typeof answer === 'string' ? answer : [...answer],
+      via,
+      2
+    );
     await service.deliverQuestionAnswers(question.id);
     expect(service.todos.getTodo(todo.id)?.state).toBe('done');
   }
@@ -278,13 +283,13 @@ test('a queued confirmation starts its successor exactly once when the answer ar
     },
   });
   store.answerQuestion(card, 'The synthetic plan is approved.', 'chat', 3);
-  await runner.checkQuestion('card', (_message, error) => {
+  await runner.checkNow({ questionId: 'card' }, (_message, error) => {
     throw error;
   });
   expect(store.getTodo('first')?.state).toBe('done');
   expect(store.getTodo('next')?.state).toBe('doing');
   expect(dispatches).toEqual([{ adapter: 'hyperneo', id: 'synthetic-worker' }]);
-  await runner.checkQuestion('card', (_message, error) => {
+  await runner.checkNow({ questionId: 'card' }, (_message, error) => {
     throw error;
   });
   expect(dispatches).toHaveLength(1);

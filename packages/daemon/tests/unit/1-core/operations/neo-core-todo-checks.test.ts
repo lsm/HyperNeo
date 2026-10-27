@@ -127,7 +127,7 @@ test.each([
     );
     const todo = checked('human_confirmed', { questionId: card.id });
     expect(await pack.todos!.check(todo)).toMatchObject({ done: false });
-    store.answerQuestion(card, answer, via, 2);
+    store.answerQuestion(card, typeof answer === 'string' ? answer : [...answer], via, 2);
     expect(await pack.todos!.check(todo)).toMatchObject({ done });
     expect(await pack.todos!.check({ ...todo, askId: 'foreign' })).toMatchObject({ done: false });
   }
