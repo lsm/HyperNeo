@@ -345,6 +345,10 @@ export function planNeoTodoEdit(
     return fail('evidence_missing: ticking a todo needs evidence.');
   if (input.artifacts && !input.done)
     return fail('evidence_missing: artifacts are evidence; pass them with done.');
+  if (input.after && todo.startedAt !== null)
+    return fail(
+      'already_started: what a started todo waits for cannot change; its worker is already running.'
+    );
   const held = todo.state === 'blocked' && todo.blockedBy === 'held';
   if (input.hold !== undefined && (input.done || input.artifacts))
     return fail('hold_with_done: hold or release a todo separately from ticking it done.');
