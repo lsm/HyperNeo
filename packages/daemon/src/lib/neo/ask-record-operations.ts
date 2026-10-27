@@ -18,8 +18,14 @@ import {
 } from './todo-operations.ts';
 import { isNeoTodoStartable } from './todo-runner.ts';
 import type { NeoPack } from './pack-contract.ts';
-import { neoSplitOutcome, neoTodoRepo } from './todo-repo.ts';
+import { neoTodoRepo } from './todo-repo.ts';
 import type { SessionGoal } from '@hyperneo/shared/types/session-goal';
+import type { DbGateway } from '../../storage/db-gateway/db-gateway.ts';
+import {
+  neoAskSettlementReads,
+  neoAskSettlementWrites,
+} from '../../storage/repositories/neo-ask-settlement.ts';
+import type { WorkRef } from '../drivers/types.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -111,7 +117,8 @@ export function createNeoAskRecordOperations(
   knownProjects: () => readonly { id: string; title: string }[],
   packs: () => readonly NeoPack[] = () => [],
   readGoal: (id: string) => SessionGoal | null = () => null,
-  project: <T extends NeoTodo>(todos: readonly T[]) => Promise<T[]> = async (todos) => [...todos]
+  project: <T extends NeoTodo>(todos: readonly T[]) => Promise<T[]> = async (todos) => [...todos],
+  settlement: { gateway: DbGateway; changed(): void }
 ) {
   const present = async (result: AskReceipt | Rejection) =>
     result.ok ? { ...result, todos: await project(result.todos) } : result;
@@ -221,13 +228,13 @@ export function createNeoAskRecordOperations(
           if (!added.ok) return added;
           if ('records' in added && added.records) records.push(...added.records);
         }
-        const parent = store.getAsk(ask.id) ?? ask;
-        const children = store.listChildAsks(ask.id);
-        if (split && parent.status === 'open' && !store.listTodos(ask.id).length && children.length)
-          store.settleAsk(parent, 'done', neoSplitOutcome(children, family().length), Date.now());
+        const settled = split
+          ? await settlement.gateway.call(neoAskSettlementWrites, 'splitParent', ask.id, Date.now())
+          : null;
+        if (settled?.ok) settlement.changed();
         return {
           ok: true,
-          ask: store.getAsk(ask.id) ?? ask,
+          ask: settled?.ok ? settled.ask : (store.getAsk(ask.id) ?? ask),
           todos: family(),
           ...(records.length ? { records } : {}),
         };
@@ -290,61 +297,65 @@ export function createNeoAskRecordOperations(
     caller: OperationCaller
   ) => AskReceipt | Rejection;
 
+  const refKey = (ref: WorkRef | null) =>
+    ref ? JSON.stringify([ref.adapter, ref.id, ref.daemon ?? null]) : null;
   const settle = (superpipe({})('neo.ask.settle') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      (input: z.infer<typeof Settle>) => requireNeoOpenAsk(store.getAsk(input.askId)),
+      async (input: z.infer<typeof Settle>) => {
+        const snapshot = await settlement.gateway.call(
+          neoAskSettlementReads,
+          'snapshot',
+          input.askId
+        );
+        return 'ok' in snapshot ? { reason: snapshot } : { value: snapshot };
+      },
       'input',
       'result:outcome'
     )
     .pipe(
-      async (ask: NeoAsk, input: z.infer<typeof Settle>): Promise<AskReceipt | Rejection> => {
+      async (
+        { todos }: { todos: NeoTodo[] },
+        input: z.infer<typeof Settle>
+      ): Promise<AskReceipt | Rejection> => {
         const failed: string[] = [];
         const stopped: string[] = [];
-        const swept = new Set<string>();
-        for (const todo of store.listTodos(ask.id)) {
-          if (sessions.readRef(todo.id)) swept.add(todo.id);
+        const swept = new Map<string, string | null>();
+        for (const todo of todos) {
+          const context = await sessions.read('stopContext', todo.id);
+          swept.set(todo.id, refKey(context?.ref ?? null));
           const failure = await controls.stop(todo);
           if (failure) failed.push(`${todo.title}: ${failure}`);
-          else if (swept.has(todo.id)) stopped.push(todo.title);
+          else if (context?.ref && !context.adopted) stopped.push(todo.title);
         }
-        if (failed.length)
+        if (failed.length) {
+          const current = await settlement.gateway.call(
+            neoAskSettlementReads,
+            'snapshot',
+            input.askId
+          );
+          if ('ok' in current) return current;
           return {
             ok: false,
             reason: `${failed.join(' ')}; the ask is still open${
               stopped.length ? ` (stopped: ${stopped.join(', ')})` : ''
             }, and those sessions may still run.`,
           };
-        const unfinished =
-          input.status === 'done'
-            ? store
-                .listTodos(ask.id)
-                .filter(
-                  (todo) =>
-                    !['done', 'closed_unverified'].includes(todo.state) &&
-                    !(todo.state === 'removed' && todo.reason)
-                )
-            : [];
-        const records = unfinished.length
-          ? [
-              `todos_unfinished: closed unverified: ${unfinished.map((todo) => `${todo.title} (${todo.id}): ${todo.doneWhen}`).join('; ')}`,
-            ]
-          : [];
-        const settled = store.settleAsk(
-          ask,
-          input.status,
-          input.outcome,
-          Date.now(),
-          unfinished.map((todo) => todo.id)
+        }
+        const committed = await settlement.gateway.call(
+          neoAskSettlementWrites,
+          'settle',
+          input,
+          Date.now()
         );
-        for (const todo of store.listTodos(ask.id))
-          if (!swept.has(todo.id) && sessions.readRef(todo.id)) await controls.stop(todo);
-        return {
-          ok: true,
-          ask: settled,
-          todos: store.listTodos(ask.id),
-          ...(records.length ? { records } : {}),
-        };
+        if (!committed.ok) return committed;
+        const { refs, ...receipt } = committed;
+        settlement.changed();
+        for (const { todoId, ref } of refs) {
+          const todo = receipt.todos.find((todo) => todo.id === todoId);
+          if (todo && ref && swept.get(todoId) !== refKey(ref)) await controls.stop(todo);
+        }
+        return receipt;
       },
       ['outcome', 'input'],
       'outcome'

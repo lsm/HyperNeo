@@ -798,7 +798,8 @@ export function createNeoOperations(service: NeoService) {
       () => service.repo.listProjects(),
       () => service.installedPacks(),
       (id) => new SessionGoalRepository(service.db.getDatabase()).get(id),
-      (todos) => service.todoWorkers(todos)
+      (todos) => service.todoWorkers(todos),
+      { gateway: mutationGateway, changed: () => service.notifyChanged() }
     ),
     ...createNeoQuestionOperations(
       service.todos,

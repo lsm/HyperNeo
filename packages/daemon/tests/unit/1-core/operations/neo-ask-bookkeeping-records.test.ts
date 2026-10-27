@@ -76,7 +76,11 @@ function setup() {
       { ...runner, stop: async () => null },
       () => null,
       () => true,
-      () => []
+      () => [],
+      undefined,
+      undefined,
+      undefined,
+      { gateway: gatewayFor(db), changed: () => {} }
     ),
     ...createNeoQuestionOperations(
       store,
