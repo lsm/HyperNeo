@@ -195,6 +195,9 @@ const idleMinutes = (incident: { since: number }, now: number) =>
 const neoTodoIdleReason = (minutes: number) =>
   `its worker has been idle with no progress for ${minutes} min.`;
 
+const neoTodoUnworkedNote = (todo: Pick<NeoTodo, 'id' | 'title' | 'doneWhen'>) =>
+  `Todo "${todo.title}" (${todo.id}) is approved and ready, but nothing runs it: it has no instruction or target, so it only waits for its check (${todo.doneWhen}). If someone must do the work, give it an instruction and target with neo.todo.edit, or do it yourself.`;
+
 const neoTodoStallNote = (todo: Pick<NeoTodo, 'title'>, reason: string) =>
   `Todo "${todo.title}" is stalled: ${reason}\nNext: ${NEO_TODO_STALL_NEXT}`;
 
@@ -460,6 +463,29 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     deps.limits
   );
   const fill = () => queue.fill();
+  const noted = new Set<string>();
+  const noteUnworked = (superpipe({})('neo.todo.note-unworked') as PipelineAPI)
+    .input(['facts'])
+    .pipe(
+      (facts: { unworked: readonly string[] }) =>
+        facts.unworked.filter((todoId) => !noted.has(todoId)),
+      'facts',
+      'todoIds'
+    )
+    .pipe(
+      async (todoIds: readonly string[]) => {
+        for (const todoId of todoIds) {
+          const todo = store.getTodo(todoId);
+          const ask = todo && store.getAsk(todo.askId);
+          if (!todo || !ask) continue;
+          await deps.tell(ask, todo, neoTodoUnworkedNote(todo), `neo-todo-unworked:${todo.id}`);
+          noted.add(todoId);
+        }
+      },
+      'todoIds',
+      'told'
+    )
+    .endAsync('told') as (facts: { unworked: readonly string[] }) => Promise<void>;
   const advance = () => fill().catch(() => undefined);
 
   const start = async (todoId: string) => {
@@ -1238,6 +1264,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         );
       }
       await fill().catch((error) => warn('Queued todo start pending', error));
+      await sessions
+        .read('queueFacts')
+        .then(noteUnworked)
+        .catch((error) => warn('Unworked todo note pending', error));
     },
   };
 }

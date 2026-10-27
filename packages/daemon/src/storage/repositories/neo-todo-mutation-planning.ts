@@ -20,6 +20,7 @@ import {
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoAskTodoRepository, type NeoTodoPatch } from './neo-ask-todo-repository.ts';
+import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 
 type Input =
   | ({ kind: 'edit' } & Parameters<typeof planNeoTodoEdit>[1])
@@ -33,7 +34,7 @@ type Outcome =
 class NeoTodoMutationPlanner {
   private readonly todos: NeoAskTodoRepository;
   private readonly policies: readonly NeoTodoPolicy[];
-  constructor(db: Database) {
+  constructor(private readonly db: Database) {
     this.todos = new NeoAskTodoRepository(db);
     this.policies = neoTodoPolicies(db);
   }
@@ -126,6 +127,22 @@ class NeoTodoMutationPlanner {
         'result:outcome'
       )
       .pipe(requireNeoTodoArtifacts, ['outcome', 'registered'], 'result:outcome')
+      .pipe(
+        (plan: Plan, input: Input) =>
+          input.kind === 'edit' &&
+          input.target &&
+          new NeoTodoSessionRepository(this.db).get(plan.todo.id)
+            ? {
+                reason: {
+                  ok: false as const,
+                  reason:
+                    'has_work: this todo already has a worker target; it cannot be given new work.',
+                },
+              }
+            : { value: plan },
+        ['outcome', 'input'],
+        'result:outcome'
+      )
       .pipe(
         (plan: Plan) => {
           const after = plan.patch.dependsOn;

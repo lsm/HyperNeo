@@ -45,6 +45,7 @@ export type NeoTodoPatch = Partial<
     | 'blockedBy'
     | 'priority'
     | 'dependsOn'
+    | 'instruction'
   >
 >;
 
@@ -65,6 +66,7 @@ const TODO_COLUMNS: Record<keyof NeoTodoPatch, string> = {
   blockedBy: 'blocked_by',
   priority: 'priority',
   dependsOn: 'depends_on',
+  instruction: 'instruction',
 };
 
 const ASK_SELECT = `SELECT id, goal_id AS goalId, project_id AS projectId, repo, parent_id AS parentId, session_id AS sessionId,
