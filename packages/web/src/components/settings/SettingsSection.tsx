@@ -88,6 +88,7 @@ export interface SettingsToggleProps {
   onChange: (checked: boolean) => void;
   disabled?: boolean;
   'data-testid'?: string;
+  'aria-label'?: string;
 }
 
 export function SettingsToggle({
@@ -95,12 +96,14 @@ export function SettingsToggle({
   onChange,
   disabled,
   'data-testid': testId,
+  'aria-label': label,
 }: SettingsToggleProps) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
+      aria-label={label}
       disabled={disabled}
       onClick={() => onChange(!checked)}
       class={cn('st-switch', checked && 'st-switch-on')}

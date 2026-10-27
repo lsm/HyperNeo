@@ -1,3 +1,4 @@
+import { turnVectorWrites } from '../turn-vectors.ts';
 import { taskSchedulePauseWrites } from '../repositories/task-schedule-pause-write.ts';
 import { neoPublicationWrites } from '../repositories/neo-publication-repository.ts';
 import {
@@ -48,9 +49,9 @@ import {
 } from '../../lib/external-events/session-external-event-store.ts';
 import { sdkMessageWrites } from '../repositories/sdk-message-writes.ts';
 import { claudeDesktopOutboxWrites } from '../repositories/claude-desktop-outbox-repository.ts';
-import { codingLedgerWrites } from '../../lib/neo/packs/coding/pr-ledger.ts';
+import { codingLedgerReads, codingLedgerWrites } from '../../lib/neo/packs/coding/pr-ledger.ts';
 import { codingAssignmentWrites } from '../../lib/neo/packs/coding/assignments.ts';
-import { codingSweepWrites } from '../../lib/neo/packs/coding/pr-sweep.ts';
+import { codingSweepReads, codingSweepWrites } from '../../lib/neo/packs/coding/pr-sweep.ts';
 import { codingTodoPrWrites } from '../../lib/neo/packs/coding/todo-prs.ts';
 import { codingDeliveryWrites } from '../../lib/neo/packs/coding/delivery-facts.ts';
 import {
@@ -133,9 +134,11 @@ import {
 import { sessionScheduleCreateWrites } from '../repositories/session-schedule-create-write.ts';
 import { workflowRunPinWrites } from '../repositories/workflow-run-pin-write.ts';
 import { workflowDeleteWrites } from '../repositories/workflow-delete-write.ts';
+import { codingStageTargetReads } from '../../lib/neo/packs/coding/stage-target-db.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    turnVectorWrites,
     neoPublicationWrites,
     neoAskSettlementReads,
     neoAskSettlementWrites,
@@ -191,10 +194,12 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     createStandaloneTask,
     transitionStandaloneTask,
     editStandaloneTaskWithDependencies,
+    codingLedgerReads,
     codingLedgerWrites,
     codingAssignmentWrites,
     codingTodoPrWrites,
     codingDeliveryWrites,
+    codingSweepReads,
     codingSweepWrites,
     claudeDesktopOutboxWrites,
     recordOperationRefusal,
@@ -245,5 +250,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     workflowRunPinWrites,
     workflowDeleteWrites,
     taskSchedulePauseWrites,
+    codingStageTargetReads,
   ].map((op) => [op.name, op])
 );

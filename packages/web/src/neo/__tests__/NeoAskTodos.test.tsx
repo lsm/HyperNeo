@@ -23,6 +23,7 @@ const todo = (id: string, patch: Partial<NeoTodoEntry> = {}): NeoTodoEntry => ({
   askId: 'ask',
   position: 0,
   priority: 'normal',
+  dependsOn: null,
   title: `Todo ${id}`,
   doneWhen: 'PR 合进 main',
   check: null,
@@ -1147,6 +1148,31 @@ describe('done todos on a card', () => {
     [...app.container.querySelectorAll('[data-ask-todo]')].map((row) =>
       row.getAttribute('data-ask-todo')
     );
+
+  it.each([2, 5])(
+    'folds %i completed todos back down and reopens the cached rows',
+    async (count) => {
+      const onLoadDone = vi.fn();
+      const app = render(
+        <NeoAskTodos
+          entry={entry({
+            todos: [todo('a'), ...Array.from({ length: count }, (_, i) => done(`d${i}`))],
+            doneCount: count,
+          })}
+          onAnswer={vi.fn()}
+          onLoadDone={onLoadDone}
+        />
+      );
+      if (count > 3)
+        fireEvent.click(app.getByRole('button', { name: `${count} done — show more` }));
+      expect(rows(app)).toHaveLength(count + 1);
+      fireEvent.click(app.getByRole('button', { name: 'Hide done todos' }));
+      expect(rows(app)).toEqual(['a']);
+      fireEvent.click(app.getByRole('button', { name: `${count} done — show more` }));
+      expect(rows(app)).toHaveLength(count + 1);
+      expect(onLoadDone).not.toHaveBeenCalled();
+    }
+  );
 
   it('shows up to three done todos and folds more behind one control', () => {
     const few = render(

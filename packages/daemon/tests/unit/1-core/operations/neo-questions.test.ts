@@ -495,8 +495,48 @@ describe('neo.question operations', () => {
     });
   });
 
+  test('a ticked todo whose prerequisite is not done waits for the queue instead of starting', async () => {
+    const { store, call, daemonStart, started, told, fix, rows } = setup();
+    store.updateTodo(store.getTodo(rows.id)!, { dependsOn: [fix.id] }, 2);
+    const start = daemonStart([fix.id, rows.id], 'Start these?');
+    await call('neo.question.answer', { questionId: start.id, answer: [fix.id, rows.id] }, human);
+    expect(started).toEqual([fix.id]);
+    expect(store.getTodo(rows.id)?.state).toBe('todo');
+    expect(told.at(-1)).toContain('Waiting for earlier steps: Todo rows.');
+  });
+
+  test('ticking only a step whose prerequisite was left unticked names the held prerequisite', async () => {
+    const { store, call, daemonStart, started, told, fix, rows } = setup();
+    store.updateTodo(store.getTodo(rows.id)!, { dependsOn: [fix.id] }, 2);
+    for (const todo of [fix, rows])
+      store.updateTodo(
+        store.getTodo(todo.id)!,
+        { state: 'blocked', blockedBy: 'question', blockedReason: 'Waiting for the human.' },
+        2
+      );
+    const start = daemonStart([fix.id, rows.id], 'Start these?');
+    await call('neo.question.answer', { questionId: start.id, answer: [rows.id] }, human);
+    expect(started).toEqual([]);
+    expect(store.getTodo(fix.id)?.blockedBy).toBe('held');
+    expect(told.at(-1)).toContain(`waits for held steps: ${fix.title}`);
+  });
+
+  test('a step that waits for the one before it names that step when it is held', async () => {
+    const { store, call, daemonStart, told, fix, rows } = setup();
+    for (const todo of [fix, rows])
+      store.updateTodo(
+        store.getTodo(todo.id)!,
+        { state: 'blocked', blockedBy: 'question', blockedReason: 'Waiting for the human.' },
+        2
+      );
+    const start = daemonStart([fix.id, rows.id], 'Start these?');
+    await call('neo.question.answer', { questionId: start.id, answer: [rows.id] }, human);
+    expect(told.at(-1)).toContain(`waits for held steps: ${fix.title}`);
+  });
+
   test('tells Neo which ticked todos did not start', async () => {
-    const { call, daemonStart, told, refused, fix, rows } = setup();
+    const { store, call, daemonStart, told, refused, fix, rows } = setup();
+    store.updateTodo(store.getTodo(rows.id)!, { dependsOn: [] }, 2);
     refused.add(rows.id);
     const start = daemonStart([fix.id, rows.id], 'Start these?');
     await call('neo.question.answer', { questionId: start.id, answer: [fix.id, rows.id] }, human);
