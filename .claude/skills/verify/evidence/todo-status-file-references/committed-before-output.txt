@@ -1,0 +1,19 @@
+2026-10-27T04:47:57.589Z [hyperneo:daemon:database] SDK body startup mode selected: {"mode":"dual-write","reason":"copy_incomplete"} +0ms
+83 |       observed.exactBytesRead = true; observed.retryStable = true;
+84 |     }
+85 |   }
+86 |   evidence.unmentioned = await call('artifact.reference.resolve', { sourceMessageOrCard: { kind: 'todo', id: 'source-title' }, reference: '~/unmentioned.md', requestId: randomUUID() });
+87 |   assert.equal(evidence.unmentioned.accepted, false);
+88 |   assert(evidence.cases.every(item => (item.receipt as Reply).accepted), JSON.stringify(evidence.cases));
+       ^
+AssertionError: [{"field":"title","reference":"~/ordinary-source.md","receipt":{"accepted":true,"artifact":{"daemonId":"b95cef70-ca98-4df2-a4a6-d89c4eb09284","artifactId":"0779e648-31aa-415e-b91a-61627a2e3ad1","title":"ordinary-source.md","kind":"markdown","byteLength":43}},"exactBytesRead":true,"retryStable":true},{"field":"blockedReason","reference":"~/blocked-source.md","receipt":{"accepted":false,"reason":"unavailable"}},{"field":"nextAction","reference":"~/next-source.md","receipt":{"accepted":false,"reason":"unavailable"}}]
+ generatedMessage: false,
+     actual: false,
+   expected: true,
+   operator: "==",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at <worktree>/.claude/skills/verify/todo-status-file-references.ts:88:3
+
+Bun v1.4.3 (macOS arm64)

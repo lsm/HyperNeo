@@ -814,9 +814,10 @@ export async function queueCodexMessage(
   deps: CodexDesktopAdapterDeps,
   mode: 'auto' | 'queue' = 'auto'
 ): Promise<Result<WorkDelivery>> {
+  const sandboxEnabled = workerSandboxOn(true);
   let sandbox: Awaited<ReturnType<typeof resumeWorkerSandbox>> = null;
   try {
-    sandbox = await resumeWorkerSandbox(detail.thread.folder);
+    sandbox = sandboxEnabled ? await resumeWorkerSandbox(detail.thread.folder) : null;
   } catch (error) {
     return reject(
       'not_delivered',
@@ -862,14 +863,20 @@ export async function queueCodexMessage(
         step = 'thread/resume';
         await server.call(step, {
           threadId: detail.thread.id,
-          ...(sandbox ? { permissions: sandbox.permissions } : {}),
+          ...(sandbox
+            ? { permissions: sandbox.permissions }
+            : !sandboxEnabled
+              ? { sandbox: 'danger-full-access' }
+              : {}),
         });
       }
-      if (sandbox) {
+      if (sandbox || !sandboxEnabled) {
         step = 'thread/settings/update';
         await server.call(step, {
           threadId: detail.thread.id,
-          permissions: sandbox.permissions,
+          ...(sandbox
+            ? { permissions: sandbox.permissions }
+            : { sandboxPolicy: { type: 'dangerFullAccess' } }),
         });
       }
     } catch (error) {
@@ -930,7 +937,7 @@ export async function queueCodexMessage(
     };
   });
   sendLog.warn('work.send queue result', { threadId: detail.thread.id, result: queued });
-  return !sandbox && !queued.ok && queued.reason === 'unreachable'
+  return sandboxEnabled && !sandbox && !queued.ok && queued.reason === 'unreachable'
     ? queueCodexCliMessage(detail, message, deps)
     : queued;
 }
@@ -969,7 +976,7 @@ async function tryDesktopCodexSend(
   mode: 'steer'
 ): Promise<CodexSendGate<'app-server'>> {
   try {
-    await resumeWorkerSandbox(detail.thread.folder);
+    if (workerSandboxOn(true)) await resumeWorkerSandbox(detail.thread.folder);
   } catch (error) {
     return {
       reason: reject(

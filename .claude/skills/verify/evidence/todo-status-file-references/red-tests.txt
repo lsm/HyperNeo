@@ -1,0 +1,118 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:7:14). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 <worktree>/packages/daemon
+
+83 |       observed.exactBytesRead = true; observed.retryStable = true;
+84 |     }
+85 |   }
+86 |   evidence.unmentioned = await call('artifact.reference.resolve', { sourceMessageOrCard: { kind: 'todo', id: 'source-title' }, reference: '~/unmentioned.md', requestId: randomUUID() });
+87 |   assert.equal(evidence.unmentioned.accepted, false);
+88 |   assert(evidence.cases.every(item => (item.receipt as Reply).accepted), JSON.stringify(evidence.cases));
+       ^
+AssertionError: [{"field":"title","reference":"~/ordinary-source.md","receipt":{"accepted":true,"artifact":{"daemonId":"9b12be75-5bb2-4ab1-8110-ba72b587992f","artifactId":"caeac794-6ad2-4dbf-b78d-89f7e4c83ba3","title":"ordinary-source.md","kind":"markdown","byteLength":43}},"exactBytesRead":true,"retryStable":true},{"field":"blockedReason","reference":"~/blocked-source.md","receipt":{"accepted":false,"reason":"unavailable"}}]
+ generatedMessage: false,
+     actual: false,
+   expected: true,
+   operator: "==",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at <worktree>/.claude/skills/verify/todo-status-file-references.ts:88:3
+
+Bun v1.4.3 (macOS arm64)
+83 |       observed.exactBytesRead = true; observed.retryStable = true;
+84 |     }
+85 |   }
+86 |   evidence.unmentioned = await call('artifact.reference.resolve', { sourceMessageOrCard: { kind: 'todo', id: 'source-title' }, reference: '~/unmentioned.md', requestId: randomUUID() });
+87 |   assert.equal(evidence.unmentioned.accepted, false);
+88 |   assert(evidence.cases.every(item => (item.receipt as Reply).accepted), JSON.stringify(evidence.cases));
+       ^
+AssertionError: [{"field":"title","reference":"~/ordinary-source.md","receipt":{"accepted":true,"artifact":{"daemonId":"d425771a-7cc5-4689-a53f-1af1f3b644a6","artifactId":"5d358d6a-b034-4c04-929c-7ebb23b70b6c","title":"ordinary-source.md","kind":"markdown","byteLength":43}},"exactBytesRead":true,"retryStable":true},{"field":"nextAction","reference":"~/next-source.md","receipt":{"accepted":false,"reason":"unavailable"}}]
+ generatedMessage: false,
+     actual: false,
+   expected: true,
+   operator: "==",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at <worktree>/.claude/skills/verify/todo-status-file-references.ts:88:3
+
+Bun v1.4.3 (macOS arm64)
+ ❯ tests/unit/1-core/operations/artifact-todo-status-reference.test.ts (2 tests | 2 failed) 2498ms
+   × resolves a home file mentioned only in the todo blockedReason 505ms
+   × resolves a home file mentioned only in the todo nextAction 1993ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/1-core/operations/artifact-todo-status-reference.test.ts > resolves a home file mentioned only in the todo blockedReason
+Error: Command failed: bun <worktree>/.claude/skills/verify/todo-status-file-references.ts native blockedReason /private/tmp/todo-status-reference-psZ2Ua
+83 |       observed.exactBytesRead = true; observed.retryStable = true;
+84 |     }
+85 |   }
+86 |   evidence.unmentioned = await call('artifact.reference.resolve', { sourceMessageOrCard: { kind: 'todo', id: 'source-title' }, reference: '~/unmentioned.md', requestId: randomUUID() });
+87 |   assert.equal(evidence.unmentioned.accepted, false);
+88 |   assert(evidence.cases.every(item => (item.receipt as Reply).accepted), JSON.stringify(evidence.cases));
+       ^
+AssertionError: [{"field":"title","reference":"~/ordinary-source.md","receipt":{"accepted":true,"artifact":{"daemonId":"9b12be75-5bb2-4ab1-8110-ba72b587992f","artifactId":"caeac794-6ad2-4dbf-b78d-89f7e4c83ba3","title":"ordinary-source.md","kind":"markdown","byteLength":43}},"exactBytesRead":true,"retryStable":true},{"field":"blockedReason","reference":"~/blocked-source.md","receipt":{"accepted":false,"reason":"unavailable"}}]
+ generatedMessage: false,
+     actual: false,
+   expected: true,
+   operator: "==",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at <worktree>/.claude/skills/verify/todo-status-file-references.ts:88:3
+
+Bun v1.4.3 (macOS arm64)
+
+ ❯ ../../.claude/skills/verify/todo-status-file-references.ts:88:3
+ ❯ tests/unit/1-core/operations/artifact-todo-status-reference.test.ts:13:22
+     11|     mkdirSync(join(run, 'home'));
+     12|     try {
+     13|       const output = execFileSync(
+       |                      ^
+     14|         'bun',
+     15|         [
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/unit/1-core/operations/artifact-todo-status-reference.test.ts > resolves a home file mentioned only in the todo nextAction
+Error: Command failed: bun <worktree>/.claude/skills/verify/todo-status-file-references.ts native nextAction /private/tmp/todo-status-reference-EMBYwt
+83 |       observed.exactBytesRead = true; observed.retryStable = true;
+84 |     }
+85 |   }
+86 |   evidence.unmentioned = await call('artifact.reference.resolve', { sourceMessageOrCard: { kind: 'todo', id: 'source-title' }, reference: '~/unmentioned.md', requestId: randomUUID() });
+87 |   assert.equal(evidence.unmentioned.accepted, false);
+88 |   assert(evidence.cases.every(item => (item.receipt as Reply).accepted), JSON.stringify(evidence.cases));
+       ^
+AssertionError: [{"field":"title","reference":"~/ordinary-source.md","receipt":{"accepted":true,"artifact":{"daemonId":"d425771a-7cc5-4689-a53f-1af1f3b644a6","artifactId":"5d358d6a-b034-4c04-929c-7ebb23b70b6c","title":"ordinary-source.md","kind":"markdown","byteLength":43}},"exactBytesRead":true,"retryStable":true},{"field":"nextAction","reference":"~/next-source.md","receipt":{"accepted":false,"reason":"unavailable"}}]
+ generatedMessage: false,
+     actual: false,
+   expected: true,
+   operator: "==",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at <worktree>/.claude/skills/verify/todo-status-file-references.ts:88:3
+
+Bun v1.4.3 (macOS arm64)
+
+ ❯ ../../.claude/skills/verify/todo-status-file-references.ts:88:3
+ ❯ tests/unit/1-core/operations/artifact-todo-status-reference.test.ts:13:22
+     11|     mkdirSync(join(run, 'home'));
+     12|     try {
+     13|       const output = execFileSync(
+       |                      ^
+     14|         'bun',
+     15|         [
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  00:43:52
+   Duration  2.85s (tests 90%, transform 9%, setup 1%)
+
