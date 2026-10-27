@@ -185,6 +185,7 @@ export const en = {
   'chat.copied': 'Copied',
   'chat.foldLess': 'less',
   'chat.cardReply': 'I replied · View card',
+  'chat.cardOpening': 'Opening work…',
   'chat.cardUnavailable': 'This card is no longer available.',
   'chat.backToChat': 'Back to chat',
   'chat.scenes': 'Related Neo scenes',

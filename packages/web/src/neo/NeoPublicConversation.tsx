@@ -379,8 +379,10 @@ function ReplyQuote({
   replyTo,
   labels,
   onSeek,
+  onOpenWork,
 }: {
   replyTo: NeoReplyTo;
+  onOpenWork?: (anchor: string) => void;
   labels?: ReadonlyMap<string, { label: string; askId: string }>;
   onSeek?: (messageId: string) => void;
 }) {
@@ -392,10 +394,12 @@ function ReplyQuote({
         author={excerpt === undefined ? undefined : 'Neo'}
         excerpt={excerpt}
         onOpen={() =>
-          (
-            document.getElementById(`neo-ref-${replyTo.kind}-${replyTo.id}`) ??
-            document.querySelector(`[data-ask="${label?.askId}"]`)
-          )?.scrollIntoView({ block: 'center' })
+          onOpenWork
+            ? onOpenWork(`neo-ref-${replyTo.kind}-${replyTo.id}`)
+            : (
+                document.getElementById(`neo-ref-${replyTo.kind}-${replyTo.id}`) ??
+                document.querySelector(`[data-ask="${label?.askId}"]`)
+              )?.scrollIntoView({ block: 'center' })
         }
       />
     );
@@ -549,7 +553,12 @@ function PublicEntry({
         <NeoPreviewReference reference={ask?.previewContext} />
         {ask?.replyTo && (
           <div data-reply-to={`${ask.replyTo.kind}:${ask.replyTo.id}`}>
-            <ReplyQuote replyTo={ask.replyTo} labels={replyLabels} onSeek={onSeek} />
+            <ReplyQuote
+              replyTo={ask.replyTo}
+              labels={replyLabels}
+              onSeek={onSeek}
+              onOpenWork={onOpenWork}
+            />
           </div>
         )}
         {photos.length > 0 && (

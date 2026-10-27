@@ -457,7 +457,7 @@ function QuestionBox({
 
 export function NeoAskTodos({
   entry: received,
-  focusedQuestion,
+  focusedItem,
   disabled,
   onAnswer,
   onReply,
@@ -468,7 +468,7 @@ export function NeoAskTodos({
   onLoadDetails,
 }: {
   entry: NeoAskEntry;
-  focusedQuestion?: { questionId: string };
+  focusedItem?: { questionId?: string; todoId?: string };
   disabled?: boolean;
   onAnswer: (questionId: string, answer: NeoQuestionAnswer) => void;
   onReply?: (question: NeoQuestionEntry) => void;
@@ -494,13 +494,19 @@ export function NeoAskTodos({
   const cardRef = useRef<HTMLElement>(null);
   const allButton = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
-  const focusedQuestionId = focusedQuestion?.questionId;
+  const focusedQuestionId = focusedItem?.questionId;
   const focusedQuestionState = entry.questions.find(
     (question) => question.id === focusedQuestionId
   )?.state;
+  const focusedTodoId = focusedItem?.todoId;
+  const focusedTodoState = entry.todos.find((todo) => todo.id === focusedTodoId)?.state;
   useEffect(() => {
-    if (focusedQuestionId && focusedQuestionState !== 'open') setOpen(true);
-  }, [focusedQuestion, focusedQuestionState]);
+    if (
+      (focusedQuestionId && focusedQuestionState && focusedQuestionState !== 'open') ||
+      (focusedTodoId && (focusedTodoState === 'done' || focusedTodoState === 'removed'))
+    )
+      setOpen(true);
+  }, [focusedItem, focusedQuestionState, focusedTodoState]);
   const [paged, setPaged] = useState<NeoTodoEntry[]>([]);
   const [stalled, setStalled] = useState(false);
   const [paging, setPaging] = useState(false);
@@ -518,6 +524,7 @@ export function NeoAskTodos({
   const { expanded, setExpanded } = useExpandedTodos(ask.sessionId, ask.id);
   const readingDetails =
     open ||
+    !!focusedItem ||
     expanded.length > 0 ||
     (received.summary?.openQuestionCount ?? 0) > 0 ||
     !!details?.questions.some((question) => question.state === 'open');
@@ -594,32 +601,53 @@ export function NeoAskTodos({
       .finally(() => setPaging(false));
   };
   useEffect(() => {
-    if (open && !paging && !stalled && !doneError && hiddenDone > 0 && knownDone.length === 0)
-      showMoreDone();
-  }, [open, paging, stalled, doneError, knownDone.length]);
-  useEffect(() => {
-    const anchor = focusedQuestionId ? `neo-ref-question-${focusedQuestionId}` : null;
-    const target = anchor && document.getElementById(anchor);
     if (
-      !target ||
-      (!cardRef.current?.contains(target) &&
-        target.closest('[role="dialog"]')?.getAttribute('data-testid') !==
-          `neo-ask-all-${received.ask.id}`)
+      open &&
+      !paging &&
+      !stalled &&
+      !doneError &&
+      hiddenDone > 0 &&
+      (knownDone.length === 0 ||
+        (focusedTodoState === 'done' && !knownDone.some((todo) => todo.id === focusedTodoId)))
     )
-      return;
-    const prior = target.getAttribute('tabindex');
-    target.tabIndex = -1;
-    target.dataset.cardReplyFocus = 'true';
-    target.classList.add('ring-2', 'ring-accent');
-    target.focus({ preventScroll: true });
-    target.scrollIntoView?.({ block: 'center' });
+      showMoreDone();
+  }, [open, paging, stalled, doneError, knownDone.length, focusedTodoId, focusedTodoState]);
+  useEffect(() => {
+    let restore = () => {};
+    const frame = requestAnimationFrame(() => {
+      const anchor = focusedQuestionId
+        ? `neo-ref-question-${focusedQuestionId}`
+        : focusedTodoId
+          ? `neo-ref-todo-${focusedTodoId}`
+          : null;
+      const target =
+        anchor &&
+        ((open && document.getElementById(`all-${anchor}`)) || document.getElementById(anchor));
+      if (
+        !target ||
+        (!cardRef.current?.contains(target) &&
+          target.closest('[role="dialog"]')?.getAttribute('data-testid') !==
+            `neo-ask-all-${received.ask.id}`)
+      )
+        return;
+      const prior = target.getAttribute('tabindex');
+      target.tabIndex = -1;
+      target.dataset.cardReplyFocus = 'true';
+      target.classList.add('ring-2', 'ring-accent');
+      target.focus({ preventScroll: true });
+      target.scrollIntoView?.({ block: 'center' });
+      restore = () => {
+        delete target.dataset.cardReplyFocus;
+        target.classList.remove('ring-2', 'ring-accent');
+        if (prior === null) target.removeAttribute('tabindex');
+        else target.setAttribute('tabindex', prior);
+      };
+    });
     return () => {
-      delete target.dataset.cardReplyFocus;
-      target.classList.remove('ring-2', 'ring-accent');
-      if (prior === null) target.removeAttribute('tabindex');
-      else target.setAttribute('tabindex', prior);
+      cancelAnimationFrame(frame);
+      restore();
     };
-  }, [open, focusedQuestion, focusedQuestionState, knownDone.length]);
+  }, [open, focusedItem, focusedQuestionState, focusedTodoState, knownDone.length]);
   const listed = live.filter((todo) => !inQuestion.has(todo.id));
   const removed = todos.filter((todo) => todo.state === 'removed');
   const itemCount = received.summary

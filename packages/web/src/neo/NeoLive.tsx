@@ -1,4 +1,10 @@
 import { resolveNeoCardReply } from './public-conversation.ts';
+import {
+  neoWorkReferenceEntry,
+  resolveNeoWorkReference,
+  type NeoWorkFocus,
+  type NeoWorkSelector,
+} from './neo-work-reference.ts';
 import type { NeoAskEntry } from '@hyperneo/shared/types/neo-ask';
 import type { NeoAskHistoryPage, NeoResult } from '@hyperneo/shared/types/neo-snapshot';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
@@ -56,11 +62,11 @@ import { artifactTabIds, artifactWorkTabId } from '../components/artifacts/Artif
 import { NeoPreviewResize } from './NeoPreviewResize.tsx';
 import { neoQuestionText } from './todo-status.ts';
 
-async function loadNeoAskDetails(askId: string): Promise<NeoAskEntry> {
+async function loadNeoAskDetails(input: string | NeoWorkSelector): Promise<NeoAskEntry> {
   const hub = await connectionManager.getHub();
   const result = await invokeOperation<
     { ok: true; entry: NeoAskEntry } | { ok: false; reason: string }
-  >(hub, 'neo.ask.read', { askId });
+  >(hub, 'neo.ask.read', typeof input === 'string' ? { askId: input } : input);
   if (!result.ok) throw new Error(result.reason);
   return result.entry;
 }
@@ -78,8 +84,13 @@ export function NeoLive() {
     () => window.matchMedia('(min-width: 720px)').matches
   );
   const [roomy, setRoomy] = useState(() => window.matchMedia('(min-width: 1440px)').matches);
-  const [cardTarget, setCardTarget] = useState<{ askId: string; questionId: string } | null>(null);
+  const [cardTarget, setCardTarget] = useState<NeoWorkFocus | null>(null);
   const [cardUnavailable, setCardUnavailable] = useState(false);
+  const [cardOpening, setCardOpening] = useState(false);
+  const referenceRequest = useRef<object | null>(null);
+  const [referenced, setReferenced] = useState<{ scope: string | null; entry: NeoAskEntry } | null>(
+    null
+  );
   const returnToChat = useRef<{
     element: HTMLElement;
     top: number;
@@ -91,6 +102,8 @@ export function NeoLive() {
     returnToChat.current = null;
     saved.element.scrollTop = saved.top;
     saved.focus?.focus({ preventScroll: true });
+    referenceRequest.current = null;
+    setCardOpening(false);
     setCardTarget(null);
     setCardUnavailable(false);
   }, [scenesOpen]);
@@ -141,7 +154,7 @@ export function NeoLive() {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const older = history?.scope === sceneScope ? history : null;
   const historyCursor = older ? older.nextCursor : view?.historyCursor;
-  const workEntries = useMemo(() => {
+  const loadedEntries = useMemo(() => {
     const current = view?.todoAsks ?? [];
     return [
       ...current,
@@ -150,10 +163,19 @@ export function NeoLive() {
       ),
     ];
   }, [view?.todoAsks, older?.entries]);
+  const workEntries = [...loadedEntries];
+  if (
+    referenced?.scope === sceneScope &&
+    !workEntries.some((entry) => entry.ask.id === referenced.entry.ask.id)
+  )
+    workEntries.push(referenced.entry);
   const [workQuery, setWorkQuery] = useState('');
   const search = useNeoWorkSearch(workEntries, workQuery, loadNeoAskDetails);
   useEffect(() => {
     setHistory(null);
+    setReferenced(null);
+    referenceRequest.current = null;
+    setCardOpening(false);
     setWorkQuery('');
     setLoadingHistory(false);
     setChat(null);
@@ -208,13 +230,16 @@ export function NeoLive() {
     ])
   );
   useEffect(() => {
-    if (!cardTarget) return;
-    const target = resolveNeoCardReply(cardTarget, workEntries);
+    if (!cardTarget?.questionId) return;
+    const target = resolveNeoCardReply(
+      { askId: cardTarget.askId, questionId: cardTarget.questionId },
+      workEntries
+    );
     if (target === 'unavailable') {
       setCardTarget(null);
       setCardUnavailable(true);
     } else if (target.questionId !== cardTarget.questionId) setCardTarget(target);
-  }, [view?.todoAsks, history, cardTarget]);
+  }, [view?.todoAsks, history, referenced, cardTarget]);
   const sceneGroups = [
     { key: 'attention', label: t('live.group.attention') },
     { key: 'running', label: t('live.group.running') },
@@ -683,49 +708,53 @@ export function NeoLive() {
               replyLabels={replyLabels}
               publicConversation={publicConversation}
               onOpenWork={(anchor, cardReply) => {
-                if (cardReply) {
-                  const element = scroll.current ?? mainScroll.current;
-                  if (element && !returnToChat.current)
-                    returnToChat.current = {
-                      element,
-                      top: element.scrollTop,
-                      focus:
-                        document.activeElement instanceof HTMLElement
-                          ? document.activeElement
-                          : null,
-                    };
-                  nearBottom.current = false;
-                  const target = resolveNeoCardReply(cardReply, workEntries);
-                  setCardTarget(target === 'unavailable' ? null : target);
-                  setCardUnavailable(target === 'unavailable');
-                  setChat(null);
-                  setScenesOpen(true);
-                  return;
-                }
+                const element = scroll.current ?? mainScroll.current;
+                if (element && !returnToChat.current)
+                  returnToChat.current = {
+                    element,
+                    top: element.scrollTop,
+                    focus:
+                      document.activeElement instanceof HTMLElement ? document.activeElement : null,
+                  };
+                nearBottom.current = false;
+                const ticket = {};
+                referenceRequest.current = ticket;
+                setWorkQuery('');
+                setCardTarget(null);
+                setCardUnavailable(false);
+                setCardOpening(true);
                 setChat(null);
                 setScenesOpen(true);
-                requestAnimationFrame(() => {
-                  const owner = workEntries.find(
-                    ({ ask, todos, questions, summary }) =>
-                      anchor === `neo-ref-ask-${ask.id}` ||
-                      todos.some((todo) => anchor === `neo-ref-todo-${todo.id}`) ||
-                      [...questions, ...(summary?.questionRefs ?? [])].some(
-                        (question) => anchor === `neo-ref-question-${question.id}`
-                      )
-                  );
-                  const card = owner && document.getElementById(`neo-ref-ask-${owner.ask.id}`);
-                  const question =
-                    owner &&
-                    [...owner.questions, ...(owner.summary?.questionRefs ?? [])].find(
-                      (question) => anchor === `neo-ref-question-${question.id}`
-                    );
-                  if (question) setCardTarget({ askId: owner!.ask.id, questionId: question.id });
-                  else if (!document.getElementById(anchor))
-                    card?.querySelector<HTMLButtonElement>('[data-ask-details-toggle]')?.click();
-                  requestAnimationFrame(() =>
-                    (document.getElementById(anchor) ?? card)?.scrollIntoView({ block: 'center' })
-                  );
-                });
+                void resolveNeoWorkReference(
+                  cardReply ? `neo-ref-question-${cardReply.questionId}` : anchor,
+                  workEntries,
+                  loadNeoAskDetails
+                ).then(
+                  (result) => {
+                    if (referenceRequest.current !== ticket) return;
+                    setCardOpening(false);
+                    if (result === 'unavailable') return setCardUnavailable(true);
+                    if (!loadedEntries.some((entry) => entry.ask.id === result.entry.ask.id))
+                      setReferenced({
+                        scope: sceneScope,
+                        entry: neoWorkReferenceEntry(result.entry),
+                      });
+                    requestAnimationFrame(() => {
+                      if (referenceRequest.current === ticket) setCardTarget(result.target);
+                    });
+                    if (!result.target.questionId && !result.target.todoId)
+                      requestAnimationFrame(() =>
+                        document
+                          .getElementById(`neo-ref-ask-${result.target.askId}`)
+                          ?.scrollIntoView({ block: 'center' })
+                      );
+                  },
+                  () => {
+                    if (referenceRequest.current !== ticket) return;
+                    setCardOpening(false);
+                    setCardUnavailable(true);
+                  }
+                );
               }}
               onRetryPublic={retryPublicConversation}
               pendingAsks={neo.pendingAsks}
@@ -882,6 +911,11 @@ export function NeoLive() {
               {t('chat.backToChat')}
             </button>
           )}
+          {cardOpening && (
+            <p role="status" class="mt-3 text-sm text-fg-muted">
+              {t('chat.cardOpening')}
+            </p>
+          )}
           {cardUnavailable && (
             <p role="status" class="mt-3 text-sm text-fg-muted">
               {t('chat.cardUnavailable')}
@@ -923,7 +957,7 @@ export function NeoLive() {
                   <NeoAskTodos
                     key={entry.ask.id}
                     entry={entry}
-                    focusedQuestion={cardTarget?.askId === entry.ask.id ? cardTarget : undefined}
+                    focusedItem={cardTarget?.askId === entry.ask.id ? cardTarget : undefined}
                     disabled={!connected || !!neo.busyWork}
                     onAnswer={(questionId, answer) => void neo.answerQuestion(questionId, answer)}
                     onReply={

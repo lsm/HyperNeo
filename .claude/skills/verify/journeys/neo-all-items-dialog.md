@@ -36,7 +36,8 @@ Exploratory checks: repeatedly open/close using keyboard and touch; open a neste
 question dialog after scrolling to the outcome, then close it and confirm the All
 dialog remains. Component tests cover failed/refused/stalled pages, refreshed
 summaries, Chinese labels and settled-question reference focus. Exact done-todo
-reference navigation is a separate follow-up slice.
+reference navigation and older off-window question links use the
+neo-work-item-navigation.md journey.
 
 Save browser.json with phase after and passed true only after inspecting the
 screenshots and completing both viewports. Close owned browser contexts and
