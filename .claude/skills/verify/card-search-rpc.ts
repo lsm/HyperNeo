@@ -67,6 +67,9 @@ try {
     VALUES ('ask-bracket','neo:proof','[draft] collection','Finish herbarium',1,1)`);
   db.exec(`INSERT INTO neo_asks(id,session_id,title,request,created_at,updated_at)
     VALUES ('old-chinese','neo:proof','历史记录','旧记录里的构建版本已完成',1,1)`);
+  db.exec(`INSERT INTO message_search_content(kind,source_id,message_id,session_id,message_type,title,body,timestamp)
+    VALUES ('message','old-chinese-title','old-chinese-title','synthetic-old','assistant','历史构建版本','Unrelated body',1),
+      ('message','old-chinese-body','old-chinese-body','synthetic-old','assistant','Archive','历史构建版本',1)`);
   const hub = new MessageHub({ defaultSessionId: 'global' });
   transport = new WebSocketClientTransport({
     url: `ws://127.0.0.1:${app.server.port}/ws`,
@@ -117,6 +120,9 @@ try {
   assert.deepEqual(chinese.results.map((hit) => [hit.askId, hit.field]), [['old-chinese', 'meta']]);
   const short = await search({ query: '构建' });
   assert.deepEqual(short.results.map((hit) => [hit.askId, hit.field]), [['old-chinese', 'meta']]);
+  const shortMessages = await hub.request<{ results: { messageId: string }[] }>('message.search', { query: '构建' });
+  assert.deepEqual(shortMessages.results.map((hit) => hit.messageId), ['old-chinese-title']);
+  evidence.shortMessageTitles = shortMessages;
   evidence.oldChineseCard = { threeCharacters: chinese, twoCharacters: short, noPriorCardRead: true };
   await assert.rejects(search({ query: 'a bc' }), /query_too_short/);
   evidence.backend = inMemory ? 'memory' : 'file';
