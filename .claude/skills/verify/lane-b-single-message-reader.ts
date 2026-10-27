@@ -95,6 +95,13 @@ try {
   transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false }); hub.registerTransport(transport); await transport.initialize();
   const read = (extra: Record<string, unknown> = {}) => hub.request<{ sdkMessage: SDKMessage }>('message.sdkMessage', { sessionId: 'single-history', messageUuid: 'single-full-output', ...extra });
   releaseBodyCopy?.(); evidence.startupCopyDeferred = Boolean(releaseBodyCopy);
+  const copyDone = raw.prepare('SELECT 1 FROM migration_markers WHERE key IN (?,?)');
+  const copyDeadline = performance.now() + 30_000;
+  while (!copyDone.get('sdk_message_bodies_copy_v1:complete', 'sdk_message_bodies_copy_v1:reversed')) {
+    assert(performance.now() < copyDeadline, 'Startup SDK body copy did not settle before reader measurement');
+    await new Promise((done) => setTimeout(done, 10));
+  }
+  evidence.startupBodyCopyComplete = true;
   writer = new SQLite(app.db.getDbPath()); writer.exec('PRAGMA busy_timeout=5000'); writer.exec('BEGIN IMMEDIATE'); writer.prepare('UPDATE synthetic_single_writer SET value=value+1').run();
   const counters = () => ({ outside: (raw.prepare('SELECT value FROM synthetic_single_writer').get() as { value: number }).value, inside: (writer!.prepare('SELECT value FROM synthetic_single_writer').get() as { value: number }).value });
   evidence.writerBefore = counters(); assert.deepEqual(evidence.writerBefore, { outside: 0, inside: 1 });
