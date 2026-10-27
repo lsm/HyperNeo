@@ -8,8 +8,8 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/reminder-delete-evidence
 The helper starts a fresh synthetic daemon and paused fixture agents, then creates
 future reminders through real WebSocket RPC. It deletes through
 spaceAgentReminder.delete and checks the common agent.reminder.list operation
-and spaceAgentReminder.listCounts. The deleted reminder disappears before the
-reply is observed; unrelated reminders retain their complete Unicode bodies.
+and spaceAgentReminder.listCounts. Reading immediately after the delete reply no longer lists the reminder;
+unrelated reminders retain their complete Unicode bodies.
 Missing and required-ID errors remain unchanged. Two concurrent deletes have
 exactly one success and one missing-reminder error.
 

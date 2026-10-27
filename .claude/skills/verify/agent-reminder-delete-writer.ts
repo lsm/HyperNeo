@@ -74,6 +74,8 @@ try {
   assert.deepEqual(await list(agent.id), beforeFailure);
   assert.deepEqual(await list(other.id), controlView);
   assert.deepEqual(await counts(), { [agent.id]: 1, [other.id]: 1 });
+  const errors = replies.map(item => (item as { reply: { error?: string; errorCode?: string } }).reply).filter(reply => reply.error);
+  assert.deepEqual(errors.map(reply => reply.errorCode), Array(4).fill('HANDLER_ERROR'));
   assert.deepEqual(mainSql, [], 'Reminder existence admission and deletion SQL must leave the main connection together');
   console.log('ok: real reminder delete/list/count RPCs preserve one concurrent winner, missing-ID errors, unrelated full bodies and rollback, with zero admission/delete SQL on main');
 } finally {

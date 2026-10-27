@@ -76,9 +76,7 @@ export function setupSpaceAgentReminderHandlers(
   messageHub.onRequest(method('delete'), async (data) => {
     const params = data as { reminderId: string };
     if (!params.reminderId) throw new Error('reminderId is required');
-    const existing = deps.reminders.getReminder(params.reminderId);
-    if (!existing) throw new Error(`Reminder not found: ${params.reminderId}`);
-    deps.reminders.deleteReminder(params.reminderId);
+    await deps.reminders.deleteReminderAsync(params.reminderId);
     return { success: true };
   });
 }

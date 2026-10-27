@@ -133,6 +133,7 @@ import {
 } from '../../lib/neo/packs/coding/smoke-admission-db.ts';
 import { sessionScheduleCreateWrites } from '../repositories/session-schedule-create-write.ts';
 import { workflowRunPinWrites } from '../repositories/workflow-run-pin-write.ts';
+import { agentReminderDeleteWrites } from '../repositories/agent-reminder-delete-write.ts';
 import { workflowDeleteWrites } from '../repositories/workflow-delete-write.ts';
 import { codingStageTargetReads } from '../../lib/neo/packs/coding/stage-target-db.ts';
 
@@ -248,6 +249,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     codingSmokeWrites,
     sessionScheduleCreateWrites,
     workflowRunPinWrites,
+    agentReminderDeleteWrites,
     workflowDeleteWrites,
     taskSchedulePauseWrites,
     codingStageTargetReads,
