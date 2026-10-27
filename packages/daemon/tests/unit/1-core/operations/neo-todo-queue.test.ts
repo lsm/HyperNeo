@@ -208,7 +208,14 @@ describe('queued todos start themselves', () => {
     const w = (current = world());
     const ask = w.approved();
     const [ticked, unticked] = [w.add(ask), w.add(ask)];
-    for (const id of [ticked, unticked]) w.store.joinStartQuestion(w.store.getTodo(id)!, 2);
+    for (const id of [ticked, unticked]) {
+      w.store.joinStartQuestion(w.store.getTodo(id)!, 2);
+      w.store.updateTodo(
+        w.store.getTodo(id)!,
+        { state: 'blocked', blockedBy: 'question', blockedReason: 'Waiting for the human.' },
+        2
+      );
+    }
     const question = w.store.listQuestions(ask).find((item) => item.kind === 'start')!;
     w.store.answerQuestion(question, [ticked], 'button', 3);
     expect(w.store.getTodo(unticked)).toMatchObject({

@@ -895,7 +895,11 @@ export class NeoAskTodoRepository {
         'open'
       );
       if (answered) {
-        this.releaseStartTodos(question.id, now);
+        this.releaseStartTodos(
+          question.id,
+          now,
+          question.kind === 'start' ? [answer].flat().map(String) : undefined
+        );
         if (answer === 'yes') {
           applyPackPreferenceAnswer(this.db, question.id);
           const rules = applyNeoRuleAnswer(this.db, question.id, approval);
@@ -988,11 +992,22 @@ export class NeoAskTodoRepository {
     }
   }
 
-  private releaseStartTodos(questionId: string, now: number): void {
+  private releaseStartTodos(questionId: string, now: number, ticked?: readonly string[]): void {
     for (const id of this.getQuestion(questionId)?.startTodos ?? []) {
       const todo = this.getTodo(id);
       if (todo?.state === 'blocked' && todo.blockedBy === 'question')
-        this.updateTodo(todo, { state: 'todo' }, now);
+        this.updateTodo(
+          todo,
+          ticked && !ticked.includes(id)
+            ? {
+                state: 'blocked',
+                blockedBy: 'held',
+                blockedReason: 'Not ticked in the start answer.',
+                nextAction: 'The human releases it.',
+              }
+            : { state: 'todo' },
+          now
+        );
     }
   }
 
