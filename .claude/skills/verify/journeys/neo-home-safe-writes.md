@@ -34,5 +34,6 @@ Inspect `evidence/neo-home-write-races.json`. No model, provider, real remote or
 credentials are used. Stop the owned daemon and preserve evidence before cleanup.
 
 Directory-handle enforcement applies on macOS/Linux, including WSL2, under Bun
-and Deno. Native Windows keeps its existing human RPC path; Neo's required SDK
-sandbox is unavailable there, so it has no sandboxed-Neo escape path to test.
+and Deno. Native Windows keeps its existing human RPC path. Neo runs without an
+additional SDK OS sandbox; this journey verifies the daemon's home-write boundary,
+not an SDK filesystem policy.

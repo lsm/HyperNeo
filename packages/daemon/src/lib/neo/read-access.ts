@@ -1,32 +1,6 @@
-import { existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getDataDir } from '../data-dir.ts';
-import { getNeoReadCheckoutPath } from './read-checkout-path.ts';
-
-function directories(path: string) {
-  try {
-    return readdirSync(path, { withFileTypes: true }).filter((entry) => entry.isDirectory());
-  } catch (error) {
-    if (['ENOENT', 'ENOTDIR'].includes(String((error as NodeJS.ErrnoException).code))) return [];
-    throw error;
-  }
-}
-
-export function neoReadCheckoutPaths(dataDir = getDataDir()): string[] {
-  const root = join(dataDir, 'worktrees');
-  return directories(root).flatMap((owner) =>
-    directories(join(root, owner.name)).flatMap((repo) => {
-      let path: string;
-      try {
-        path = getNeoReadCheckoutPath(owner.name, repo.name, dataDir);
-      } catch {
-        return [];
-      }
-      return existsSync(path) ? [path] : [];
-    })
-  );
-}
 
 export async function neoReadAccess(
   sessionId: string,
