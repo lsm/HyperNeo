@@ -78,3 +78,9 @@ reconciliation conflict uses this slice's whole polling snapshot/context; its
 per-response writer remains atomic. Both runtimes were refreshed on that merged
 commit, and the neighboring sweep/daily-count contracts were included in checks.
 This merge does not claim a fresh execution of #9218's separate full-pack journeys.
+
+A subsequent dev advance added the turn-vector writer (#9208). Its import and
+registration are preserved. This slice's granted import now follows the existing
+imports, avoiding first-line insertion conflicts; its DB_OPS entry remains
+appended. Against the base the shared diff is exactly two added lines. Final
+runtime runs identify the new committed code; earlier pairs remain historical.

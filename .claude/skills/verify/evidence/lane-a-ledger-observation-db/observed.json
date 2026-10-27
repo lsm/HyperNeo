@@ -9,26 +9,26 @@
   },
   "proofs": {
     "bun": {
-      "run": "bun-verify-4",
+      "run": "bun-verify-6",
       "verified": true,
       "targetMainSql": 0,
       "atomicRollback": true,
       "snapshotReadUnderWriterLock": true,
       "gatewayCommands": 58,
-      "maxCommandMs": 72.9866669999999,
+      "maxCommandMs": 71.95012500000007,
       "maxArgsBytes": 645,
       "maxReplyBytes": 744,
       "cooldownReads": 0,
       "temporaryDaemonDataRemoved": true
     },
     "deno": {
-      "run": "deno-verify-3",
+      "run": "deno-verify-4",
       "verified": true,
       "targetMainSql": 0,
       "atomicRollback": true,
       "snapshotReadUnderWriterLock": true,
       "gatewayCommands": 58,
-      "maxCommandMs": 157.12350000000015,
+      "maxCommandMs": 141.7941249999999,
       "maxArgsBytes": 645,
       "maxReplyBytes": 744,
       "cooldownReads": 0,
@@ -66,10 +66,10 @@
     "Command durations and serialized sizes do not separate queue, SQL and cloning cost; no health/affected RPC latency, RSS or WAL benchmark."
   ],
   "proofBinding": {
-    "testedCodeCommit": "cd135b2988ad12f6a6a7d54dcdd95507cf28cde0",
-    "testedGitTree": "ee5a7649956249208baac9d29e55b3dba170b888",
+    "testedCodeCommit": "0faf2c75fd218517c89a8f789929d73acaa5292f",
+    "testedGitTree": "b4805891ea8e3f5e2ece0d2f6b341197c5ec2393",
     "applicationTrees": {
-      "packages": "8e3182fe1b1bc6b2fbaf1f2074ab7940a439f2a0",
+      "packages": "8afa7d7cd3d4b901783c72fd7b3670f94d2548f3",
       "scripts": "4e747be6d40c26bb59d7f8fbb7683c92537893eb"
     },
     "proofBlobs": {
@@ -78,8 +78,8 @@
       ".claude/skills/verify/lane-a-ledger-observation-proof-binding.ts": "ae455bdf4406629a39d2ff7b1df1925e48c63723"
     },
     "runs": {
-      "bun": "bun-verify-4",
-      "deno": "deno-verify-3"
+      "bun": "bun-verify-6",
+      "deno": "deno-verify-4"
     },
     "postProofChangePolicy": "evidence-and-journey-only"
   },
@@ -119,19 +119,44 @@
         "deno": "deno-verify-2"
       },
       "postProofChangePolicy": "evidence-and-journey-only"
+    },
+    {
+      "testedCodeCommit": "cd135b2988ad12f6a6a7d54dcdd95507cf28cde0",
+      "testedGitTree": "ee5a7649956249208baac9d29e55b3dba170b888",
+      "applicationTrees": {
+        "packages": "8e3182fe1b1bc6b2fbaf1f2074ab7940a439f2a0",
+        "scripts": "4e747be6d40c26bb59d7f8fbb7683c92537893eb"
+      },
+      "proofBlobs": {
+        ".claude/skills/verify/lane-a-ledger-observation-db.ts": "2d5df598089aae24c52caf19301024a7b7a225eb",
+        ".claude/skills/verify/lane-a-ledger-observation-db-run.py": "baa6c586b5082b2176d99f011333766b98aa884e",
+        ".claude/skills/verify/lane-a-ledger-observation-proof-binding.ts": "ae455bdf4406629a39d2ff7b1df1925e48c63723"
+      },
+      "runs": {
+        "bun": "bun-verify-4",
+        "deno": "deno-verify-3"
+      },
+      "postProofChangePolicy": "evidence-and-journey-only"
     }
   ],
   "baseMerge": {
-    "commit": "cd135b2988ad12f6a6a7d54dcdd95507cf28cde0",
-    "base": "f3dae6274d7b8ded6e2cf5df0d6422dbd4aa5156",
-    "incomingPr": 9218,
-    "resolution": "Preserved incoming CodingPrLedgerRepository.read inventory facade and codingLedgerReads export/registration. Reconciliation uses this slice's whole poll snapshot/context and atomic observation. No operations.ts edit; shared diff remains exactly granted import/entry."
+    "commit": "bc9d5aaf4b98b9ac18e27ce5d392be789747aee2",
+    "testedCode": "0faf2c75fd218517c89a8f789929d73acaa5292f",
+    "base": "ea86c3348eab1241b67e84d45e77f69b4d304165",
+    "incomingPr": 9208,
+    "resolution": "Preserved turnVectorWrites import/registration. Own import is last in import block to avoid first-line insertion conflicts; own DB_OPS entry remains appended. Shared diff is exactly two additions."
   },
   "baseMergeHistory": [
     {
       "commit": "06146bd436a9ba68c61ed2416117824b2007c695",
       "base": "46d61761c1ea2af16868025777953751112e90ac",
       "conflict": "Only DB_OPS append: retained codingStageTargetReads from dev and own codingLedgerPollReads. Against base, shared diff remains exactly the granted import and entry."
+    },
+    {
+      "commit": "cd135b2988ad12f6a6a7d54dcdd95507cf28cde0",
+      "base": "f3dae6274d7b8ded6e2cf5df0d6422dbd4aa5156",
+      "incomingPr": 9218,
+      "resolution": "Preserved incoming CodingPrLedgerRepository.read inventory facade and codingLedgerReads export/registration. Reconciliation uses this slice's whole poll snapshot/context and atomic observation. No operations.ts edit; shared diff remains exactly granted import/entry."
     }
   ]
 }

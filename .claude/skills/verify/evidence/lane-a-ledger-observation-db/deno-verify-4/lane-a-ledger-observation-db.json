@@ -1,0 +1,703 @@
+{
+  "verified": true,
+  "realGithub": false,
+  "neoConcernDeliveryWired": false,
+  "runtime": {
+    "commit": "0faf2c75fd218517c89a8f789929d73acaa5292f",
+    "pid": 66129,
+    "port": 50023
+  },
+  "snapshotReadUnderWriterLock": true,
+  "atomicRollback": true,
+  "result": {
+    "beforeRestart": [
+      {
+        "lastError": "rate_limited",
+        "lastErrorAt": 1793129528235,
+        "cycleAt": 1793129528235,
+        "attemptedAt": 1793129528235,
+        "completeAt": 1793129527835,
+        "misses": 4,
+        "firstMissAt": 1793129527935,
+        "reason": "failed",
+        "nextRetryAt": 1793133128235,
+        "incident": {
+          "key": "github-health:synthetic/first:1793129527935",
+          "raisedAt": 1793129528135,
+          "resolvedAt": null
+        },
+        "quota": {
+          "status": 429,
+          "resource": "core",
+          "remaining": null,
+          "resetAt": null,
+          "retryAfterMs": 3600000,
+          "requestId": null,
+          "credentialBucket": "api.github.com:user:1",
+          "retryAt": 1793133128235
+        },
+        "notices": [
+          {
+            "key": "github-health:synthetic/first:1793129527935",
+            "text": "GitHub coverage stalled for synthetic/first. Incident github-health:synthetic/first:1793129527935.",
+            "acceptedAt": null
+          }
+        ]
+      },
+      {
+        "lastError": "rate_limited",
+        "lastErrorAt": 1793129528235,
+        "cycleAt": 1793129528235,
+        "attemptedAt": 1793129528135,
+        "completeAt": 1793129527835,
+        "misses": 3,
+        "firstMissAt": 1793129527935,
+        "reason": "cooldown",
+        "nextRetryAt": 1793133128235,
+        "incident": {
+          "key": "github-health:synthetic/tail:1793129527935",
+          "raisedAt": 1793129528135,
+          "resolvedAt": null
+        },
+        "quota": {
+          "status": 429,
+          "resource": "core",
+          "remaining": null,
+          "resetAt": null,
+          "retryAfterMs": 3600000,
+          "requestId": null,
+          "credentialBucket": "api.github.com:user:1",
+          "retryAt": 1793133128235,
+          "deferred": true
+        },
+        "notices": [
+          {
+            "key": "github-health:synthetic/tail:1793129527935",
+            "text": "GitHub coverage stalled for synthetic/tail. Incident github-health:synthetic/tail:1793129527935.",
+            "acceptedAt": null
+          }
+        ]
+      }
+    ],
+    "recovered": [
+      {
+        "lastError": "rate_limited",
+        "lastErrorAt": 1793129528235,
+        "cycleAt": 1793133128236,
+        "attemptedAt": 1793133128236,
+        "completeAt": 1793133128236,
+        "misses": 0,
+        "firstMissAt": null,
+        "reason": "complete",
+        "nextRetryAt": null,
+        "incident": {
+          "key": "github-health:synthetic/first:1793129527935",
+          "raisedAt": 1793129528135,
+          "resolvedAt": 1793133128236
+        },
+        "notices": [
+          {
+            "key": "github-health:synthetic/first:1793129527935",
+            "text": "GitHub coverage stalled for synthetic/first. Incident github-health:synthetic/first:1793129527935.",
+            "acceptedAt": null
+          },
+          {
+            "key": "github-health:synthetic/first:1793129527935:recovery",
+            "text": "GitHub coverage recovered for synthetic/first. Incident github-health:synthetic/first:1793129527935.",
+            "acceptedAt": null
+          }
+        ]
+      },
+      {
+        "lastError": "rate_limited",
+        "lastErrorAt": 1793129528235,
+        "cycleAt": 1793133128236,
+        "attemptedAt": 1793133128236,
+        "completeAt": 1793133128236,
+        "misses": 0,
+        "firstMissAt": null,
+        "reason": "complete",
+        "nextRetryAt": null,
+        "incident": {
+          "key": "github-health:synthetic/tail:1793129527935",
+          "raisedAt": 1793129528135,
+          "resolvedAt": 1793133128236
+        },
+        "notices": [
+          {
+            "key": "github-health:synthetic/tail:1793129527935",
+            "text": "GitHub coverage stalled for synthetic/tail. Incident github-health:synthetic/tail:1793129527935.",
+            "acceptedAt": null
+          },
+          {
+            "key": "github-health:synthetic/tail:1793129527935:recovery",
+            "text": "GitHub coverage recovered for synthetic/tail. Incident github-health:synthetic/tail:1793129527935.",
+            "acceptedAt": null
+          }
+        ]
+      }
+    ],
+    "requests": [
+      {
+        "phase": "seed",
+        "repo": "synthetic/first"
+      },
+      {
+        "phase": "seed",
+        "repo": "synthetic/first"
+      },
+      {
+        "phase": "seed",
+        "repo": "synthetic/first"
+      },
+      {
+        "phase": "seed",
+        "repo": "synthetic/tail"
+      },
+      {
+        "phase": "seed",
+        "repo": "synthetic/tail"
+      },
+      {
+        "phase": "seed",
+        "repo": "synthetic/tail"
+      },
+      {
+        "phase": "seed",
+        "repo": "synthetic/first"
+      },
+      {
+        "phase": "seed",
+        "repo": "synthetic/first"
+      },
+      {
+        "phase": "partial",
+        "repo": "synthetic/first"
+      },
+      {
+        "phase": "partial",
+        "repo": "synthetic/tail"
+      },
+      {
+        "phase": "partial",
+        "repo": "synthetic/first"
+      },
+      {
+        "phase": "partial",
+        "repo": "synthetic/tail"
+      },
+      {
+        "phase": "partial",
+        "repo": "synthetic/first"
+      },
+      {
+        "phase": "partial",
+        "repo": "synthetic/tail"
+      },
+      {
+        "phase": "rate",
+        "repo": "synthetic/first"
+      },
+      {
+        "phase": "empty",
+        "repo": "synthetic/tail"
+      },
+      {
+        "phase": "empty",
+        "repo": "synthetic/tail"
+      },
+      {
+        "phase": "empty",
+        "repo": "synthetic/first"
+      },
+      {
+        "phase": "empty",
+        "repo": "synthetic/first"
+      }
+    ],
+    "cooldownReads": 0,
+    "protectedHistory": [
+      {
+        "http_json": null,
+        "subject": "[\"protected-history\"]",
+        "fact_revision": 3,
+        "observation_revision": 5,
+        "value_json": "[]",
+        "etag": null,
+        "next_url": null,
+        "observed_at": null,
+        "attempted_at": 1,
+        "reason": null
+      }
+    ]
+  },
+  "resourcesStopped": true,
+  "mode": "verify",
+  "mainSql": [],
+  "commands": [
+    {
+      "name": "coding.ledger.pollReads",
+      "method": "snapshot",
+      "mode": "read",
+      "durationMs": 0.27387499999986176,
+      "argsBytes": 67,
+      "replyBytes": 59
+    },
+    {
+      "name": "coding.ledger.pollReads",
+      "method": "context",
+      "mode": "read",
+      "durationMs": 0.14495799999986048,
+      "argsBytes": 47,
+      "replyBytes": 30
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "observePoll",
+      "mode": "write",
+      "durationMs": 2.809332999999924,
+      "argsBytes": 630,
+      "replyBytes": 63
+    },
+    {
+      "name": "coding.ledger.pollReads",
+      "method": "context",
+      "mode": "read",
+      "durationMs": 0.2086659999999938,
+      "argsBytes": 46,
+      "replyBytes": 30
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "observePoll",
+      "mode": "write",
+      "durationMs": 0.5073749999999109,
+      "argsBytes": 645,
+      "replyBytes": 62
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "prune",
+      "mode": "write",
+      "durationMs": 0.0976669999997739,
+      "argsBytes": 113,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "pruneSessions",
+      "mode": "write",
+      "durationMs": 0.0650829999999587,
+      "argsBytes": 49,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "assignOwners",
+      "mode": "write",
+      "durationMs": 0.1507090000000062,
+      "argsBytes": 35,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledger.pollReads",
+      "method": "snapshot",
+      "mode": "read",
+      "durationMs": 2.0442500000001473,
+      "argsBytes": 67,
+      "replyBytes": 59
+    },
+    {
+      "name": "coding.ledger.pollReads",
+      "method": "context",
+      "mode": "read",
+      "durationMs": 0.11766699999998309,
+      "argsBytes": 47,
+      "replyBytes": 240
+    },
+    {
+      "name": "coding.ledger.pollReads",
+      "method": "snapshot",
+      "mode": "read",
+      "durationMs": 2.0670829999999114,
+      "argsBytes": 67,
+      "replyBytes": 59
+    },
+    {
+      "name": "coding.ledger.pollReads",
+      "method": "context",
+      "mode": "read",
+      "durationMs": 0.10483400000020993,
+      "argsBytes": 47,
+      "replyBytes": 240
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "observePoll",
+      "mode": "write",
+      "durationMs": 0.4591249999998581,
+      "argsBytes": 263,
+      "replyBytes": 50
+    },
+    {
+      "name": "coding.ledger.pollReads",
+      "method": "context",
+      "mode": "read",
+      "durationMs": 0.15416600000025937,
+      "argsBytes": 46,
+      "replyBytes": 240
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "observePoll",
+      "mode": "write",
+      "durationMs": 0.3096250000000964,
+      "argsBytes": 262,
+      "replyBytes": 50
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "prune",
+      "mode": "write",
+      "durationMs": 0.14454200000000128,
+      "argsBytes": 78,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "pruneSessions",
+      "mode": "write",
+      "durationMs": 0.060833999999886146,
+      "argsBytes": 49,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "assignOwners",
+      "mode": "write",
+      "durationMs": 0.1249159999999847,
+      "argsBytes": 35,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledger.pollReads",
+      "method": "snapshot",
+      "mode": "read",
+      "durationMs": 0.15837499999997817,
+      "argsBytes": 67,
+      "replyBytes": 59
+    },
+    {
+      "name": "coding.ledger.pollReads",
+      "method": "context",
+      "mode": "read",
+      "durationMs": 0.07266699999991033,
+      "argsBytes": 47,
+      "replyBytes": 267
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "observePoll",
+      "mode": "write",
+      "durationMs": 0.2837910000002921,
+      "argsBytes": 263,
+      "replyBytes": 50
+    },
+    {
+      "name": "coding.ledger.pollReads",
+      "method": "context",
+      "mode": "read",
+      "durationMs": 0.11720800000011877,
+      "argsBytes": 46,
+      "replyBytes": 267
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "observePoll",
+      "mode": "write",
+      "durationMs": 0.23604099999988648,
+      "argsBytes": 262,
+      "replyBytes": 50
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "prune",
+      "mode": "write",
+      "durationMs": 0.09266699999989214,
+      "argsBytes": 78,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "pruneSessions",
+      "mode": "write",
+      "durationMs": 0.03558300000008785,
+      "argsBytes": 49,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "assignOwners",
+      "mode": "write",
+      "durationMs": 0.07341700000006313,
+      "argsBytes": 35,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledger.pollReads",
+      "method": "snapshot",
+      "mode": "read",
+      "durationMs": 0.1451670000001286,
+      "argsBytes": 67,
+      "replyBytes": 59
+    },
+    {
+      "name": "coding.ledger.pollReads",
+      "method": "context",
+      "mode": "read",
+      "durationMs": 0.07716699999991761,
+      "argsBytes": 47,
+      "replyBytes": 267
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "observePoll",
+      "mode": "write",
+      "durationMs": 0.2870419999999285,
+      "argsBytes": 263,
+      "replyBytes": 54
+    },
+    {
+      "name": "coding.ledger.pollReads",
+      "method": "context",
+      "mode": "read",
+      "durationMs": 0.11570899999992434,
+      "argsBytes": 46,
+      "replyBytes": 267
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "observePoll",
+      "mode": "write",
+      "durationMs": 0.2857080000001133,
+      "argsBytes": 262,
+      "replyBytes": 54
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "prune",
+      "mode": "write",
+      "durationMs": 0.10304099999984828,
+      "argsBytes": 78,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "pruneSessions",
+      "mode": "write",
+      "durationMs": 0.06154199999991761,
+      "argsBytes": 49,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "assignOwners",
+      "mode": "write",
+      "durationMs": 0.07512500000007094,
+      "argsBytes": 35,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledger.pollReads",
+      "method": "snapshot",
+      "mode": "read",
+      "durationMs": 0.14570899999989706,
+      "argsBytes": 67,
+      "replyBytes": 59
+    },
+    {
+      "name": "coding.ledger.pollReads",
+      "method": "context",
+      "mode": "read",
+      "durationMs": 0.08004099999993741,
+      "argsBytes": 47,
+      "replyBytes": 538
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "observePoll",
+      "mode": "write",
+      "durationMs": 0.31987499999991087,
+      "argsBytes": 329,
+      "replyBytes": 50
+    },
+    {
+      "name": "coding.ledger.pollReads",
+      "method": "context",
+      "mode": "read",
+      "durationMs": 0.13458300000002055,
+      "argsBytes": 46,
+      "replyBytes": 534
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "observePoll",
+      "mode": "write",
+      "durationMs": 0.14245800000003328,
+      "argsBytes": 344,
+      "replyBytes": 50
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "prune",
+      "mode": "write",
+      "durationMs": 0.09874999999988177,
+      "argsBytes": 78,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "pruneSessions",
+      "mode": "write",
+      "durationMs": 0.05074999999987995,
+      "argsBytes": 49,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "assignOwners",
+      "mode": "write",
+      "durationMs": 0.07837500000005093,
+      "argsBytes": 35,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledger.pollReads",
+      "method": "snapshot",
+      "mode": "read",
+      "durationMs": 141.7941249999999,
+      "argsBytes": 67,
+      "replyBytes": 59
+    },
+    {
+      "name": "coding.ledger.pollReads",
+      "method": "context",
+      "mode": "read",
+      "durationMs": 0.22816699999975754,
+      "argsBytes": 46,
+      "replyBytes": 740
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "observePoll",
+      "mode": "write",
+      "durationMs": 1.689082999999755,
+      "argsBytes": 344,
+      "replyBytes": 50
+    },
+    {
+      "name": "coding.ledger.pollReads",
+      "method": "context",
+      "mode": "read",
+      "durationMs": 0.17599999999993088,
+      "argsBytes": 47,
+      "replyBytes": 726
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "observePoll",
+      "mode": "write",
+      "durationMs": 0.22404199999982666,
+      "argsBytes": 345,
+      "replyBytes": 50
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "prune",
+      "mode": "write",
+      "durationMs": 0.14187500000025466,
+      "argsBytes": 78,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "pruneSessions",
+      "mode": "write",
+      "durationMs": 0.09625000000005457,
+      "argsBytes": 49,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "assignOwners",
+      "mode": "write",
+      "durationMs": 0.19666700000016135,
+      "argsBytes": 35,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledger.pollReads",
+      "method": "snapshot",
+      "mode": "read",
+      "durationMs": 0.15079199999991033,
+      "argsBytes": 67,
+      "replyBytes": 59
+    },
+    {
+      "name": "coding.ledger.pollReads",
+      "method": "context",
+      "mode": "read",
+      "durationMs": 0.09774999999990541,
+      "argsBytes": 46,
+      "replyBytes": 740
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "observePoll",
+      "mode": "write",
+      "durationMs": 1.286707999999635,
+      "argsBytes": 271,
+      "replyBytes": 62
+    },
+    {
+      "name": "coding.ledger.pollReads",
+      "method": "context",
+      "mode": "read",
+      "durationMs": 0.17345800000020972,
+      "argsBytes": 47,
+      "replyBytes": 744
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "observePoll",
+      "mode": "write",
+      "durationMs": 0.39354199999979755,
+      "argsBytes": 289,
+      "replyBytes": 63
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "prune",
+      "mode": "write",
+      "durationMs": 0.10366599999997561,
+      "argsBytes": 113,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "pruneSessions",
+      "mode": "write",
+      "durationMs": 0.056125000000065484,
+      "argsBytes": 49,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "assignOwners",
+      "mode": "write",
+      "durationMs": 0.05195900000035181,
+      "argsBytes": 35,
+      "replyBytes": 4
+    }
+  ]
+}
