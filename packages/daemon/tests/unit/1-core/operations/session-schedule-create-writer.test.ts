@@ -5,7 +5,10 @@ import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
-import { SessionScheduleRepository } from '../../../../src/storage/repositories/session-schedule-repository';
+import {
+  type SessionScheduleCadence,
+  SessionScheduleRepository,
+} from '../../../../src/storage/repositories/session-schedule-repository';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { Database as SQLite } from '../../../../src/storage/sqlite-compat';
 
@@ -141,4 +144,47 @@ describe('ordinary session reminder writer', () => {
     );
     expect(mainSql).toBe(0);
   });
+
+  const cadenceCases: { label: string; cadence: SessionScheduleCadence; next: string }[] = [
+    {
+      label: 'interval',
+      cadence: { kind: 'every', everyMs: 3_600_000 },
+      next: '2026-03-08T07:30:00Z',
+    },
+    {
+      label: 'UTC cron',
+      cadence: { kind: 'cron', cron: '0 9 * * *', timezone: 'UTC' },
+      next: '2026-03-08T09:00:00Z',
+    },
+    {
+      label: 'DST cron',
+      cadence: { kind: 'cron', cron: '0 9 * * *', timezone: 'America/New_York' },
+      next: '2026-03-08T13:00:00Z',
+    },
+  ];
+
+  for (const { label, cadence, next } of cadenceCases) {
+    test(`sync and writer creation commit the same ${label} due time`, async () => {
+      const now = Date.parse('2026-03-08T06:30:00Z');
+      const draft = {
+        ...input,
+        cadence,
+        sourceKind: 'reminder',
+        nudgeEvery: 1,
+        createdBySession: null,
+      };
+      const sync = new SessionScheduler(writer, new JobQueueRepository(writer)).create(
+        { ...draft, sourceId: `sync-${label}` },
+        now
+      );
+      const async = await scheduler.createAsync({ ...draft, sourceId: `async-${label}` }, now);
+      for (const schedule of [sync, async]) {
+        expect(schedule.nextRunAt).toBe(Date.parse(next));
+        expect(new JobQueueRepository(writer).getJob(schedule.pendingJobId!)?.runAt).toBe(
+          Date.parse(next)
+        );
+      }
+      expect(mainSql).toBe(0);
+    });
+  }
 });
