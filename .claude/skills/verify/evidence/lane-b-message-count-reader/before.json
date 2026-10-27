@@ -1,0 +1,10 @@
+{
+  "expectedCount": 3,
+  "writerBefore": {
+    "outside": 0,
+    "inside": 1
+  },
+  "coldError": "MessageHubResponseError: Session not found",
+  "mainSqlAttempts": 1,
+  "workerTimings": []
+}

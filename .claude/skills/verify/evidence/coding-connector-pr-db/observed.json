@@ -1,0 +1,34 @@
+{
+  "verified": true,
+  "redRegressionCommit": "fbe97e07412bc7af289289cbc3a306c8734e165f",
+  "baselineMainSql": {
+    "bun": 49,
+    "deno": 49
+  },
+  "productionLines": 18,
+  "runtimes": [
+    "bun",
+    "deno"
+  ],
+  "targetMainSql": 0,
+  "consumer": "Production HookExecutor/pr_merged invoked by persisted synthetic job on an isolated daemon",
+  "limitation": "Synthetic job wrapper; no real workflow dispatch, model turn, GitHub merge, GUI or deployed-owner proof",
+  "proofBinding": {
+    "testedCodeCommit": "4efcfbd83125e699cdd49fea5d2f39f00108be75",
+    "testedGitTree": "da257ae190ee4ce75a17f1ea4809d95b5fa767f2",
+    "applicationTrees": {
+      "packages": "50920e82b582635d89c41233500732373bba713d",
+      "scripts": "06e378f1145671c3ac2a5223ff148a466b38bcf9"
+    },
+    "proofBlobs": {
+      ".claude/skills/verify/coding-connector-pr-db.ts": "141bf1298dd6d5e45b85cb88b9b0ce0a847d79a9",
+      ".claude/skills/verify/coding-connector-pr-db-run.py": "1771d611b5096ea023d7e70d1bc7b6f5439e90b3",
+      ".claude/skills/verify/coding-connector-pr-proof-binding.ts": "18fa3cca38a8a391c28fbfd245fb6f7746973f13"
+    },
+    "runs": {
+      "bun": "bun-verify",
+      "deno": "deno-verify"
+    },
+    "postProofChangePolicy": "evidence-and-journey-only"
+  }
+}

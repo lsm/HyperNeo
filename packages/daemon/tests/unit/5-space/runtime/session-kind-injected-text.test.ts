@@ -612,9 +612,10 @@ describe('session kind injected text', () => {
             'card-agent-instructions',
             'owner-review-contract',
             'scheduling-guardrail',
+            'runtime-location',
           ],
         },
-        { kind: 'unowned_space', shape: 'claude-code-preset', says: [] },
+        { kind: 'unowned_space', shape: 'claude-code-preset+append', says: ['runtime-location'] },
         {
           kind: 'workflow_worker',
           shape: 'claude-code-preset+append',
@@ -625,6 +626,7 @@ describe('session kind injected text', () => {
             'operations-discovery',
             'space-standing-instructions',
             'worker-agent-instructions',
+            'runtime-location',
           ],
         },
         {
@@ -636,9 +638,10 @@ describe('session kind injected text', () => {
             'operations-door-tool',
             'operations-discovery',
             'space-standing-instructions',
+            'runtime-location',
           ],
         },
-        { kind: 'non_space', shape: 'claude-code-preset', says: [] },
+        { kind: 'non_space', shape: 'claude-code-preset+append', says: ['runtime-location'] },
       ]);
     });
 
@@ -658,10 +661,10 @@ describe('session kind injected text', () => {
 
       expect(recording).toEqual([
         { kind: 'agent_card', recorded: false },
-        { kind: 'unowned_space', recorded: true },
+        { kind: 'unowned_space', recorded: false },
         { kind: 'workflow_worker', recorded: false },
         { kind: 'direct_task_worker', recorded: false },
-        { kind: 'non_space', recorded: true },
+        { kind: 'non_space', recorded: false },
       ]);
     });
 

@@ -16,7 +16,8 @@ export const AttachDaemonInputSchema = z.object({
     .refine(
       (url) => url.startsWith('ws://') || url.startsWith('wss://'),
       'URL must be a ws:// or wss:// MessageHub endpoint'
-    ),
+    )
+    .meta({ examples: ['wss://example.com/ws'] }),
   code: z.string().trim().min(1).max(40).optional(),
 });
 

@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, mock, jest } from 'bun:test';
+import { vi } from 'vitest';
 import { tmpdir } from 'node:os';
 import {
   QueryRunner,
@@ -47,6 +48,24 @@ import {
 
 mock.module('@anthropic-ai/claude-agent-sdk', () => ({
   query: mock(async () => ({ interrupt: () => {} })),
+}));
+
+vi.mock('../../../../src/lib/agent/query-failure-episode.ts', () => ({
+  QueryFailureCapError: class extends Error {},
+  QueryFailureGovernor: class {
+    assertOpen() {}
+    async admit() {
+      return 'retry-routing-fixture';
+    }
+    async failure() {
+      return { failed: false };
+    }
+    async success() {}
+    async reset() {}
+    bound<T>(run: () => Promise<T>) {
+      return run();
+    }
+  },
 }));
 
 describe('QueryRunner', () => {
@@ -136,6 +155,7 @@ describe('QueryRunner', () => {
     getSDKMessagesSpy = mock(() => ({ messages: [], hasMore: false }));
     updateMessageStatusSpy = mock(() => {});
     mockDb = {
+      getSession: () => mockSession,
       saveSDKMessage: saveSDKMessageSpy,
       updateSession: updateSessionSpy,
       getSDKMessages: getSDKMessagesSpy,
@@ -330,6 +350,29 @@ describe('QueryRunner', () => {
       (query as unknown as ReturnType<typeof mock>).mockImplementation(async () => ({
         interrupt: () => {},
       }));
+    });
+
+    it('keeps an arbitrary query-start failure distinct from a user interrupt for bounded job retries', async () => {
+      const failure = new Error('Synthetic unclassified query start exploded');
+      (query as unknown as ReturnType<typeof mock>).mockImplementation(() => {
+        throw failure;
+      });
+      const ctx = createContext({
+        session: {
+          ...mockSession,
+          workspacePath: null,
+          config: { model: 'unit', provider: providerId },
+        },
+        messageQueue: queue,
+      });
+      const rejection = queue
+        .enqueueWithId('startup-failure', 'Synthetic prompt', false, { durable: true })
+        .catch((error) => error);
+      runner = new QueryRunner(ctx);
+      await runner.start();
+      await ctx.queryPromise;
+      expect(await rejection).toBe(failure);
+      expect(queue.isRunning()).toBe(false);
     });
 
     it.each(['neo', 'worker', 'ordinary', 'unknown-system'] as const)(
@@ -1217,6 +1260,32 @@ describe('QueryRunner', () => {
   });
 
   describe('createMessageGeneratorWrapper', () => {
+    it('keeps a delayed prompt bound to its original query attempt', async () => {
+      const onSent = mock(() => {});
+      async function* messages() {
+        yield { message: { uuid: 'old-attempt', message: { content: 'task' } }, onSent };
+      }
+      runner = createRunner({
+        messageQueue: {
+          ...mockMessageQueue,
+          messageGenerator: mock(() => messages()),
+        } as unknown as MessageQueue,
+      });
+      const internals = runner as unknown as {
+        failures: { admit: (live: () => boolean) => Promise<string> };
+        toolInventoryOwner: { isLive: () => boolean };
+      };
+      internals.toolInventoryOwner = { isLive: () => true };
+      vi.spyOn(internals.failures, 'admit').mockImplementation(async (live) => {
+        await Promise.resolve();
+        if (!live()) throw Object.assign(new Error('Old attempt ended'), { name: 'AbortError' });
+        return 'fixture';
+      });
+      const feed = runner.createMessageGeneratorWrapper(0, undefined, undefined, () => false);
+      await expect(feed.next()).rejects.toMatchObject({ name: 'AbortError' });
+      expect(onSent).not.toHaveBeenCalled();
+    });
+
     it('rechecks ownership after processing setup before yielding a prompt', async () => {
       let allowed = true;
       const onSent = mock(() => {});

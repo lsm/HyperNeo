@@ -165,6 +165,7 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
     const ctx: QueryRunnerContext = {
       session,
       db: {
+        getSession: () => session,
         saveSDKMessage: () => {},
         updateSession: () => {},
         getSDKMessages: () => ({ messages: [], hasMore: false }),

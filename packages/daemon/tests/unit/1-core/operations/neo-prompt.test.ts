@@ -1,20 +1,29 @@
-import { neoSettingsPackBriefs } from '../../../../src/lib/neo/packs/index.ts';
 import { describe, expect, test } from 'bun:test';
 import {
+  NEO_FOCUSED_DISCUSSION,
+  NEO_GOAL_CYCLE,
   NEO_PACK_CODING_INSTRUCTIONS,
   NEO_PACK_CODING_WORKER_RULES,
-  NEO_GOAL_CYCLE,
   NEO_ROOT_PROMPT,
-  NEO_FOCUSED_DISCUSSION,
   NEO_ROOT_TURN_END,
 } from '@hyperneo/prompts';
+import { neoSettingsPackBriefs } from '../../../../src/lib/neo/packs/index.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
+
 describe('root Neo system prompt', () => {
   test.each([false, true])('limits worker messages with packs: %s', (enabled) => {
     const prompt = neoPrompt(enabled ? neoSettingsPackBriefs() : []);
-    expect(prompt).toContain('project and a number');
-    expect(prompt).toContain('never a task title');
-    expect(prompt).toContain('work.rename');
+    expect(prompt).toContain(
+      'otherwise start a new worker there, named for the matter, never across projects'
+    );
+    if (enabled) {
+      expect(prompt).toContain('named for the project and a number');
+      expect(prompt).toContain('work.rename');
+    } else {
+      expect(prompt).not.toContain('project and a number');
+      expect(prompt).not.toContain('never a task title');
+      expect(prompt).not.toContain('work.rename');
+    }
     expect(prompt).toContain('Coordination questions');
     expect(prompt).toContain('never human cards');
     expect(prompt).toContain('Message Neo only at milestones');

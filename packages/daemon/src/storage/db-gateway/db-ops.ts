@@ -115,6 +115,8 @@ import { readLiveSessionList } from '../repositories/session-list-live-read.ts';
 import { healthSessionCountReads } from '../repositories/health-session-count-read.ts';
 import { sessionProjectionReads } from '../repositories/session-projection-read.ts';
 import { singleMessageReads } from '../repositories/sdk-single-message-read.ts';
+import { messageCountReads } from '../repositories/sdk-message-count-read.ts';
+import { codingUnownedWrites } from '../../lib/neo/packs/coding/unowned-db.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -211,5 +213,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     healthSessionCountReads,
     sessionProjectionReads,
     singleMessageReads,
+    messageCountReads,
+    codingUnownedWrites,
   ].map((op) => [op.name, op])
 );

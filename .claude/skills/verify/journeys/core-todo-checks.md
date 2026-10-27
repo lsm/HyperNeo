@@ -14,7 +14,10 @@ The real WebSocket operation door adds todos while only life-admin is enabled.
 Every completion sentence comes from the check. A missing file and missing
 artifact close unverified; creating the file or registering the artifact lets
 the same completion door mark them done. Two synthetic cards answered through
-the human RPC door prove that no does not complete a todo and yes does.
+the human RPC door prove that both no and yes satisfy the recorded-answer check.
+For queued choice and text confirmations plus automatic successor dispatch,
+run `human-confirmed-todos.md`; a human reply satisfies its decision card
+without requiring a separate expected-answer parameter.
 
 The deployed check reads `system.build`: the exact running commit passes without
 GitHub, an ancestor passes, and a diverged commit does not. A refusing GitHub stub

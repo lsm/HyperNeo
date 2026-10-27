@@ -7,5 +7,5 @@ check "test mode" "grep -q 'HyperNeo Test Server' '$RUN/daemon.log'"
 check "database inside the run dir" "grep -q 'Database: $RUN/' '$RUN/daemon.log'"
 check "web UI served" "curl -fs -o /dev/null http://127.0.0.1:$PORT/"
 check "RPC answers" "VERIFY_PORT=$PORT bun '$(dirname "$0")/rpc.ts' rpc:auth.providers"
-check "mock model API on 8000" "curl -fs -o /dev/null -X POST http://127.0.0.1:8000/v1/messages -d '{}'"
+check "mock model API on ${VERIFY_MOCK_PORT:-8000}" "curl -fs -o /dev/null -X POST http://127.0.0.1:${VERIFY_MOCK_PORT:-8000}/v1/messages -d '{}'"
 [ "$ok" = 1 ] && echo "usable" || { echo "not usable"; exit 1; }

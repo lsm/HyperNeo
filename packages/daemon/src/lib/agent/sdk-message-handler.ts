@@ -1111,6 +1111,7 @@ export class SDKMessageHandler {
       }
 
       if (stampsInternalCompactionTurn) {
+        Object.assign(message, { internal_compaction_turn: 1 });
         this.logger.info(
           `attributed the 0-turn terminal success to the internal compaction turn for ` +
             `session ${session.id}; it cannot satisfy a work delivery`
@@ -1222,6 +1223,10 @@ export class SDKMessageHandler {
       }
 
       if (limitEngaged) {
+        Object.assign(message, {
+          recovery_intercepted: 1,
+          recovery_billing_terminal: Number(limitBillingTerminal),
+        });
         const resultUuid = (message as SDKResultMessage).uuid;
         if (resultUuid) {
           try {

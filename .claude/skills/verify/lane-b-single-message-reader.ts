@@ -4,8 +4,10 @@ import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path';
 import type { Session } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { waitForSdkBodyCopy } from './wait-for-sdk-body-copy.ts';
 
-const run = resolve(process.argv[2]);
+const run = resolve(process.argv.at(-1)!);
+const deferBodyCopy = process.argv.includes('--defer-body-copy');
 assert.equal(process.env.NODE_ENV, 'test'); assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data')); assert(!existsSync(join(run, 'data')));
 for (const key of ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'OPENAI_API_KEY', 'GITHUB_TOKEN']) assert.equal(process.env[key], undefined);
@@ -13,11 +15,17 @@ for (const name of ['home', 'workspace', 'evidence']) mkdirSync(join(run, name),
 const { createDaemonApp } = await import('../../../packages/daemon/src/app.ts');
 const { JobQueueProcessor } = await import('../../../packages/daemon/src/storage/job-queue-processor.ts');
 const { Database: SQLite } = await import('../../../packages/daemon/src/storage/sqlite-compat.ts');
+const { DatabaseCore } = await import('../../../packages/daemon/src/storage/database-core.ts');
 const { getConfig } = await import('../../../packages/daemon/src/config.ts');
 const { capSdkMessage } = await import('../../../packages/daemon/src/lib/rpc-handlers/message-output-cap.ts');
 const { MessageHub, WebSocketClientTransport } = await import('../../../packages/shared/src/mod.ts');
 const NativeWorker = globalThis.Worker; const fetch = globalThis.fetch;
 const start = JobQueueProcessor.prototype.start; const prepare = SQLite.prototype.prepare;
+const startBodyCopy = DatabaseCore.prototype.startSdkMessageBodyCopy;
+let releaseBodyCopy: (() => void) | undefined;
+if (deferBodyCopy) DatabaseCore.prototype.startSdkMessageBodyCopy = function () {
+  releaseBodyCopy = () => startBodyCopy.call(this);
+};
 const processors = new Set<InstanceType<typeof JobQueueProcessor>>();
 let measuring = false; let mainSqlAttempts = 0; let rejectNextRead = false;
 const workerTimings: { roundTripMs: number; replyBytes: number; encodeMs: number }[] = [];
@@ -87,6 +95,9 @@ try {
   const hub = new MessageHub({ defaultSessionId: 'global' });
   transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false }); hub.registerTransport(transport); await transport.initialize();
   const read = (extra: Record<string, unknown> = {}) => hub.request<{ sdkMessage: SDKMessage }>('message.sdkMessage', { sessionId: 'single-history', messageUuid: 'single-full-output', ...extra });
+  releaseBodyCopy?.(); evidence.startupCopyDeferred = Boolean(releaseBodyCopy);
+  await waitForSdkBodyCopy(raw);
+  evidence.startupBodyCopyComplete = true;
   writer = new SQLite(app.db.getDbPath()); writer.exec('PRAGMA busy_timeout=5000'); writer.exec('BEGIN IMMEDIATE'); writer.prepare('UPDATE synthetic_single_writer SET value=value+1').run();
   const counters = () => ({ outside: (raw.prepare('SELECT value FROM synthetic_single_writer').get() as { value: number }).value, inside: (writer!.prepare('SELECT value FROM synthetic_single_writer').get() as { value: number }).value });
   evidence.writerBefore = counters(); assert.deepEqual(evidence.writerBefore, { outside: 0, inside: 1 });
@@ -94,6 +105,7 @@ try {
   timer = setInterval(() => { const now = performance.now(); maxLoopLagMs = Math.max(maxLoopLagMs, now - previous - 5); previous = now; }, 5);
   measuring = true;
   try {
+    if (deferBodyCopy) await new Promise((done) => setTimeout(done, 10));
     const coldAt = performance.now();
     try { const cold = await read(); evidence.coldMs = performance.now() - coldAt; assert.deepEqual(cold, { sdkMessage: expected }); }
     catch (error) { evidence.coldError = String(error); throw error; }
@@ -127,6 +139,7 @@ try {
   evidence.rssBytes = process.memoryUsage().rss; evidence.walBytes = statSync(`${app.db.getDbPath()}-wal`).size; assert.equal(mainSqlAttempts, 0);
 } finally {
   measuring = false; if (timer) clearInterval(timer); writer?.close(); JobQueueProcessor.prototype.start = start;
+  DatabaseCore.prototype.startSdkMessageBodyCopy = startBodyCopy;
   await transport?.close(); await Promise.all([...processors].map((processor) => processor.stop())); await app?.cleanup();
   SQLite.prototype.prepare = prepare; globalThis.Worker = NativeWorker; globalThis.fetch = fetch;
   evidence.mainSqlAttempts = mainSqlAttempts; evidence.workerTimings = workerTimings;

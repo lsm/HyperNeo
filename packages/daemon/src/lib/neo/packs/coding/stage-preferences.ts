@@ -19,7 +19,11 @@ const Plan = z.object({
     .trim()
     .regex(/^[\w.-]+\/[\w.-]+$/),
   stage: z.enum(['write', 'review', 'verify']),
-  candidates: z.array(CodingStageTarget).min(1).max(30),
+  candidates: z
+    .array(CodingStageTarget)
+    .min(1)
+    .max(30)
+    .meta({ aliases: ['targets'] }),
   body: z.string().default(''),
 });
 type Plan = z.infer<typeof Plan>;

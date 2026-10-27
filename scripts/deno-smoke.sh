@@ -605,7 +605,7 @@ TRANSCRIPT_SESSION_READER_RUN="$WORK_DIR/transcript-session-reader"
 mkdir -p "$TRANSCRIPT_SESSION_READER_RUN/home" "$TRANSCRIPT_SESSION_READER_RUN/tmp"
 env -i HOME="$TRANSCRIPT_SESSION_READER_RUN/home" PATH="$PATH" TMPDIR="$TRANSCRIPT_SESSION_READER_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$TRANSCRIPT_SESSION_READER_RUN/data" LOG_LEVEL=warn \
-	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-transcript-session-reader.ts" "$TRANSCRIPT_SESSION_READER_RUN"
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-transcript-session-reader.ts" --defer-body-copy "$TRANSCRIPT_SESSION_READER_RUN"
 
 SESSION_LIST_READER_RUN="$WORK_DIR/session-list-reader"
 mkdir -p "$SESSION_LIST_READER_RUN/home" "$SESSION_LIST_READER_RUN/tmp"
@@ -649,7 +649,7 @@ env -i HOME="$TODO_MUTATION_PLANNING_RUN/home" PATH="$PATH" TMPDIR="$TODO_MUTATI
 	HYPERNEO_DATA_DIR="$TODO_MUTATION_PLANNING_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-mutation-planning.ts" verify "$TODO_MUTATION_PLANNING_RUN"
 
-env -i HOME="$WORK_DIR/single-message-reader/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/single-message-reader/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-single-message-reader.ts" "$WORK_DIR/single-message-reader"
+env -i HOME="$WORK_DIR/single-message-reader/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/single-message-reader/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-single-message-reader.ts" --defer-body-copy "$WORK_DIR/single-message-reader"
 TODO_MUTATION_COMMIT_RUN="$WORK_DIR/todo-mutation-commit"
 mkdir -p "$TODO_MUTATION_COMMIT_RUN/home" "$TODO_MUTATION_COMMIT_RUN/tmp"
 env -i HOME="$TODO_MUTATION_COMMIT_RUN/home" PATH="$PATH" TMPDIR="$TODO_MUTATION_COMMIT_RUN/tmp" NODE_ENV=test \
@@ -704,4 +704,11 @@ env -i HOME="$ASK_SETTLEMENT_ACTIVATION_RUN/home" PATH="$PATH" TMPDIR="$ASK_SETT
 	HYPERNEO_DATA_DIR="$ASK_SETTLEMENT_ACTIVATION_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/ask-settlement-activation.ts" verify "$ASK_SETTLEMENT_ACTIVATION_RUN"
 
+HUMAN_CONFIRMED_RUN="$WORK_DIR/human-confirmed-todos"
+mkdir -p "$HUMAN_CONFIRMED_RUN/home" "$HUMAN_CONFIRMED_RUN/tmp"
+env -i HOME="$HUMAN_CONFIRMED_RUN/home" PATH="$PATH" TMPDIR="$HUMAN_CONFIRMED_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$HUMAN_CONFIRMED_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/human-confirmed-todos.ts" verify "$HUMAN_CONFIRMED_RUN"
+
+env -i HOME="$WORK_DIR/message-count-reader/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/message-count-reader/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-message-count-reader.ts" "$WORK_DIR/message-count-reader"
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"

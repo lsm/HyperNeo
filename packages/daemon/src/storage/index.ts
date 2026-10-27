@@ -1,3 +1,4 @@
+import { readHyperneoTurnEnds } from './hyperneo-turn-ends-read.ts';
 import { bindGateway, bindSpaceTaskLane, DbGateway } from './db-gateway/db-gateway.ts';
 import type { RunDbOp, TableChange } from './db-gateway/db-op.ts';
 import { countPendingTurns, readPendingTurns } from './turn-vectors.ts';
@@ -505,6 +506,12 @@ export class Database {
     return this.getSDKReader().countPendingTurns(model, dimensions);
   }
 
+  async readHyperneoTurnEndsAsync(sessionId: string, since: number) {
+    if (this.getDbPath() === ':memory:')
+      return readHyperneoTurnEnds(this.getDatabase(), sessionId, since);
+    return this.getSDKReader().readHyperneoTurnEnds(sessionId, since);
+  }
+
   readCodexSnapshotAsync(statePath: string, includeClosed: boolean) {
     return this.getSDKReader().readCodexSnapshot(statePath, includeClosed);
   }
@@ -527,7 +534,11 @@ export class Database {
         'codexSnapshot' in args
           ? Promise.resolve()
           : this.core.waitForSdkMessageColumns(
-              'sessionId' in args ? args.sessionId : undefined,
+              'sessionId' in args
+                ? args.sessionId
+                : 'hyperneoTurnEnds' in args
+                  ? args.hyperneoTurnEnds.sessionId
+                  : undefined,
               false
             )
     ));

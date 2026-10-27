@@ -1,0 +1,32 @@
+[
+  {
+    "operation": "neo.publication.publish",
+    "input": {},
+    "source": "Reconstructed from operation_refusals invalid_input and the operation schema"
+  },
+  {
+    "operation": "neo.question.ask",
+    "input": {},
+    "source": "Reconstructed from operation_refusals invalid_input and the operation schema"
+  },
+  {
+    "operation": "message.send",
+    "input": { "to": "synthetic-session", "text": "Report", "files": ["invalid-reference"] },
+    "source": "Sanitized historical attachment shape"
+  },
+  {
+    "operation": "work.send",
+    "input": { "ref": { "adapter": "hyperneo", "id": "synthetic-worker" }, "message": false },
+    "source": "Reconstructed from operation_refusals invalid_input and the operation schema"
+  },
+  {
+    "operation": "neo.todo.add",
+    "input": {
+      "askId": "synthetic-ask",
+      "title": "Synthetic task",
+      "instruction": "Perform work",
+      "check": { "pack": "coding", "kind": "pr_merged", "params": {} }
+    },
+    "source": "Neo-supplied instruction-without-target refusal, adapted to the current schema"
+  }
+]

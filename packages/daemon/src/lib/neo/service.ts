@@ -1,4 +1,5 @@
 import { createNeoQuestionAnswerDelivery } from './question-answer-delivery.ts';
+import { wakeFailedHyperneoSession } from './query-failure.ts';
 import type { UUID } from 'node:crypto';
 import { WORKER_BATCH_SENDER } from '../../storage/repositories/neo-session-message-repository.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
@@ -253,9 +254,18 @@ export class NeoService {
       },
       { subscriberName: 'neo-session-forget' }
     );
+    const offQueryFailure = events.subscribe(
+      'session.error',
+      async (event) => {
+        if (await wakeFailedHyperneoSession(db.getDatabase(), this.wakeNeo.bind(this), event))
+          this.notifyChanged();
+      },
+      { subscriberName: 'neo-query-failure' }
+    );
     const offHumanReset = onHumanDevicesReset(this.notifyPublicationsChanged);
     this.unsubscribe = () => {
       offHumanReset();
+      offQueryFailure();
       offUpdated();
       offModelSwitch();
       offStatus();
@@ -700,9 +710,9 @@ export class NeoService {
     this.notifyChanged();
   }
 
-  deliverQuestionAnswers(questionId?: string): Promise<void> {
+  async deliverQuestionAnswers(questionId?: string): Promise<void> {
     const warn = (error: unknown) => this.log.warn('Worker answer delivery pending', error);
-    return createNeoQuestionAnswerDelivery(
+    await createNeoQuestionAnswerDelivery(
       this.todos,
       this.todoSessions,
       (caller, name, input) =>
@@ -711,6 +721,10 @@ export class NeoService {
       this.todoRunner.recompute,
       warn
     )(questionId).catch(warn);
+    if (questionId)
+      await this.todoRunner.checkNow({ questionId }, (message, error) =>
+        this.log.warn(message, error)
+      );
   }
 
   async refreshDriverWork(): Promise<void> {

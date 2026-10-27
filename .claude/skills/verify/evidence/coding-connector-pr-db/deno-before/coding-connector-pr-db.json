@@ -1,0 +1,385 @@
+{
+  "mode": "before",
+  "verified": true,
+  "consumer": "Persisted synthetic job invoking production HookExecutor/pr_merged with the same reader wiring as TaskAgentManager",
+  "limitation": "Synthetic job wrapper; no real workflow run, model, GitHub or merge is started.",
+  "cold": [
+    {
+      "result": {
+        "type": "allow"
+      }
+    },
+    {
+      "result": {
+        "type": "allow"
+      }
+    },
+    {
+      "result": {
+        "type": "allow"
+      }
+    },
+    {
+      "result": {
+        "type": "allow"
+      }
+    },
+    {
+      "result": {
+        "type": "allow"
+      }
+    }
+  ],
+  "open": [
+    {
+      "result": {
+        "type": "retryable_block",
+        "reason": "PR is not merged: pending external state",
+        "retryAfterMs": 30000,
+        "data": {
+          "externalStatePending": true
+        }
+      }
+    }
+  ],
+  "failed": [
+    {
+      "result": {
+        "type": "block",
+        "reason": "PR is not merged: Synthetic GitHub unavailable"
+      }
+    }
+  ],
+  "partial": [
+    {
+      "result": {
+        "type": "block",
+        "reason": "PR is not merged: GitHub connector PR facts unavailable: partial"
+      }
+    }
+  ],
+  "wrong-identity": [
+    {
+      "result": {
+        "type": "block",
+        "reason": "PR is not merged: GitHub connector PR facts unavailable: partial"
+      }
+    }
+  ],
+  "alias": [
+    {
+      "result": {
+        "type": "allow"
+      }
+    },
+    {
+      "result": {
+        "type": "allow"
+      }
+    },
+    {
+      "result": {
+        "type": "allow"
+      }
+    },
+    {
+      "result": {
+        "type": "allow"
+      }
+    },
+    {
+      "result": {
+        "type": "allow"
+      }
+    }
+  ],
+  "rows": [
+    {
+      "http_json": null,
+      "subject": "[\"github-connector\",\"https://github.com/synthetic/basic/pull/7\",\"application/vnd.hyperneo.pr-basic+json\",\"v1\",null,null]",
+      "fact_revision": 3,
+      "observation_revision": 9,
+      "value_json": "{\"mergeStateStatus\":\"CLEAN\",\"mergeable\":\"MERGEABLE\",\"state\":\"MERGED\",\"url\":\"https://github.com/synthetic/basic/pull/7\"}",
+      "etag": null,
+      "next_url": null,
+      "observed_at": 1793082669006,
+      "attempted_at": 1793082669006,
+      "reason": null
+    }
+  ],
+  "counts": {
+    "cold": 1,
+    "repeat": 1,
+    "open": 1,
+    "failed": 1,
+    "partial": 1,
+    "wrong-identity": 1,
+    "recovered": 1,
+    "alias": 1,
+    "reopen": 1
+  },
+  "mainSql": [
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "INSERT INTO pack_coding_poll_facts\n        (subject,fact_revision,observation_revision,value_json,etag,next_url,observed_at,attempted_at,reason,http_json)\n        VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET\n        fact_revision=excluded.fact_revision, observation_revision=excluded.observation_revision,\n        value_json=excluded.value_json, etag=excluded.etag, next_url=excluded.next_url,\n        observed_at=excluded.observed_at, attempted_at=excluded.attempted_at, reason=excluded.reason, http_json=excluded.http_json",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "INSERT INTO pack_coding_poll_facts\n        (subject,fact_revision,observation_revision,value_json,etag,next_url,observed_at,attempted_at,reason,http_json)\n        VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET\n        fact_revision=excluded.fact_revision, observation_revision=excluded.observation_revision,\n        value_json=excluded.value_json, etag=excluded.etag, next_url=excluded.next_url,\n        observed_at=excluded.observed_at, attempted_at=excluded.attempted_at, reason=excluded.reason, http_json=excluded.http_json",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "INSERT INTO pack_coding_poll_facts\n        (subject,fact_revision,observation_revision,value_json,etag,next_url,observed_at,attempted_at,reason,http_json)\n        VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET\n        fact_revision=excluded.fact_revision, observation_revision=excluded.observation_revision,\n        value_json=excluded.value_json, etag=excluded.etag, next_url=excluded.next_url,\n        observed_at=excluded.observed_at, attempted_at=excluded.attempted_at, reason=excluded.reason, http_json=excluded.http_json",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "INSERT INTO pack_coding_poll_facts\n        (subject,fact_revision,observation_revision,value_json,etag,next_url,observed_at,attempted_at,reason,http_json)\n        VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET\n        fact_revision=excluded.fact_revision, observation_revision=excluded.observation_revision,\n        value_json=excluded.value_json, etag=excluded.etag, next_url=excluded.next_url,\n        observed_at=excluded.observed_at, attempted_at=excluded.attempted_at, reason=excluded.reason, http_json=excluded.http_json",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "INSERT INTO pack_coding_poll_facts\n        (subject,fact_revision,observation_revision,value_json,etag,next_url,observed_at,attempted_at,reason,http_json)\n        VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET\n        fact_revision=excluded.fact_revision, observation_revision=excluded.observation_revision,\n        value_json=excluded.value_json, etag=excluded.etag, next_url=excluded.next_url,\n        observed_at=excluded.observed_at, attempted_at=excluded.attempted_at, reason=excluded.reason, http_json=excluded.http_json",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "INSERT INTO pack_coding_poll_facts\n        (subject,fact_revision,observation_revision,value_json,etag,next_url,observed_at,attempted_at,reason,http_json)\n        VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET\n        fact_revision=excluded.fact_revision, observation_revision=excluded.observation_revision,\n        value_json=excluded.value_json, etag=excluded.etag, next_url=excluded.next_url,\n        observed_at=excluded.observed_at, attempted_at=excluded.attempted_at, reason=excluded.reason, http_json=excluded.http_json",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "INSERT INTO pack_coding_poll_facts\n        (subject,fact_revision,observation_revision,value_json,etag,next_url,observed_at,attempted_at,reason,http_json)\n        VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET\n        fact_revision=excluded.fact_revision, observation_revision=excluded.observation_revision,\n        value_json=excluded.value_json, etag=excluded.etag, next_url=excluded.next_url,\n        observed_at=excluded.observed_at, attempted_at=excluded.attempted_at, reason=excluded.reason, http_json=excluded.http_json",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "INSERT INTO pack_coding_poll_facts\n        (subject,fact_revision,observation_revision,value_json,etag,next_url,observed_at,attempted_at,reason,http_json)\n        VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET\n        fact_revision=excluded.fact_revision, observation_revision=excluded.observation_revision,\n        value_json=excluded.value_json, etag=excluded.etag, next_url=excluded.next_url,\n        observed_at=excluded.observed_at, attempted_at=excluded.attempted_at, reason=excluded.reason, http_json=excluded.http_json",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?",
+    "INSERT INTO pack_coding_poll_facts\n        (subject,fact_revision,observation_revision,value_json,etag,next_url,observed_at,attempted_at,reason,http_json)\n        VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET\n        fact_revision=excluded.fact_revision, observation_revision=excluded.observation_revision,\n        value_json=excluded.value_json, etag=excluded.etag, next_url=excluded.next_url,\n        observed_at=excluded.observed_at, attempted_at=excluded.attempted_at, reason=excluded.reason, http_json=excluded.http_json",
+    "SELECT * FROM pack_coding_poll_facts WHERE subject=?"
+  ],
+  "commands": [
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 196.99470799999995,
+      "argsBytes": 49,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 202.37070800000015,
+      "argsBytes": 49,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 202.40762499999983,
+      "argsBytes": 49,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 202.52283399999988,
+      "argsBytes": 49,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 202.5690830000001,
+      "argsBytes": 49,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.16541599999982282,
+      "argsBytes": 49,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.14329199999974662,
+      "argsBytes": 49,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.12824999999975262,
+      "argsBytes": 49,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.1481669999998303,
+      "argsBytes": 49,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.11262500000020736,
+      "argsBytes": 49,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.11958300000014788,
+      "argsBytes": 49,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.42570900000009715,
+      "argsBytes": 42,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 0.39879100000007384,
+      "argsBytes": 42,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 1.7752089999999043,
+      "argsBytes": 42,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 1.8572500000000218,
+      "argsBytes": 42,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 1.8976670000001832,
+      "argsBytes": 42,
+      "replyBytes": 17
+    },
+    {
+      "name": "coding.connector.identity",
+      "method": "canonical",
+      "durationMs": 125.93245800000022,
+      "argsBytes": 49,
+      "replyBytes": 17
+    }
+  ],
+  "requests": [
+    {
+      "phase": "cold",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/basic/pull/7",
+        "--json",
+        "url,state,mergeable,mergeStateStatus"
+      ]
+    },
+    {
+      "phase": "repeat",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/basic/pull/7",
+        "--json",
+        "url,state,mergeable,mergeStateStatus"
+      ]
+    },
+    {
+      "phase": "open",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/basic/pull/7",
+        "--json",
+        "url,state,mergeable,mergeStateStatus"
+      ]
+    },
+    {
+      "phase": "failed",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/basic/pull/7",
+        "--json",
+        "url,state,mergeable,mergeStateStatus"
+      ]
+    },
+    {
+      "phase": "partial",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/basic/pull/7",
+        "--json",
+        "url,state,mergeable,mergeStateStatus"
+      ]
+    },
+    {
+      "phase": "wrong-identity",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/basic/pull/7",
+        "--json",
+        "url,state,mergeable,mergeStateStatus"
+      ]
+    },
+    {
+      "phase": "recovered",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/basic/pull/7",
+        "--json",
+        "url,state,mergeable,mergeStateStatus"
+      ]
+    },
+    {
+      "phase": "alias",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/basic/pull/7",
+        "--json",
+        "url,state,mergeable,mergeStateStatus"
+      ]
+    },
+    {
+      "phase": "reopen",
+      "args": [
+        "pr",
+        "view",
+        "https://github.com/synthetic/basic/pull/7",
+        "--json",
+        "url,state,mergeable,mergeStateStatus"
+      ]
+    }
+  ]
+}

@@ -59,11 +59,17 @@ describe('generic operation RPC adapter', () => {
 
   test.each([
     { name: 'missing', input: 'hello', code: ErrorCode.METHOD_NOT_FOUND },
-    { name: 'example', input: 42, code: ErrorCode.INVALID_PARAMS },
+    { name: 'example', input: true, code: ErrorCode.INVALID_PARAMS },
   ])('maps $code without executing', async ({ name, input, code }) => {
     const { handler, execute } = fixture();
     await expectCode(handler({ name, input }, context), code);
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  test('accepts a number where the operation expects a string', async () => {
+    const { handler, execute } = fixture();
+    expect(await handler({ name: 'example', input: 42 }, context)).toEqual({ text: '42' });
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 
   test('maps execution and output validation failures to handler errors', async () => {
