@@ -1,0 +1,30 @@
+{
+  "verified": true,
+  "productionLines": 8,
+  "redRegressionCommit": "c2fad9ff2453fa33fd6521441d51bedab095242f",
+  "baselineMainSql": 14,
+  "fixedMainSql": {
+    "bun": 0,
+    "deno": 0
+  },
+  "checks": "Full bun run check passed. 24 focused health-state, health-wire and health-delivery tests passed.",
+  "limitations": "Persisted daemon delivery job with a synthetic keyed receiver; no actual Neo mailbox, full coding sweep, GUI, GitHub, provider, whole-daemon SQL absence or latency proof.",
+  "proofBinding": {
+    "testedCodeCommit": "0b282ad89f47d41fd7d7482310b417d5510fd03b",
+    "testedGitTree": "8776f6ff2dbd944ddda0957b0650424e418f7a2d",
+    "applicationTrees": {
+      "packages": "8fc654dca9bc86df4ce32bf45403e1bce1b076bb",
+      "scripts": "487cc507bd2f08d51501069513ee20d79fdbac9a"
+    },
+    "proofBlobs": {
+      ".claude/skills/verify/lane-a-health-delivery-db.ts": "9bfd5cd93fb578fb1bd5104d59c14ae408d9879a",
+      ".claude/skills/verify/lane-a-health-delivery-run.py": "ea8848e745d47c270b3342d82fc328779b6140d4",
+      ".claude/skills/verify/lane-a-health-delivery-proof-binding.ts": "bbf12595eefa0e3a07007b4924edd86b6380b710"
+    },
+    "runs": {
+      "bun": "bun-verify-2",
+      "deno": "deno-verify"
+    },
+    "postProofChangePolicy": "evidence-and-journey-only"
+  }
+}

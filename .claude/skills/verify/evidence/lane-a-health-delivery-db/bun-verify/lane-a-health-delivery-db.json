@@ -1,0 +1,64 @@
+{
+  "mode": "verify",
+  "verified": false,
+  "consumer": "Persisted daemon jobs invoke production health delivery with a synthetic keyed receiver",
+  "limitation": "No actual Neo mailbox, recipient consumption, full coding sweep, model, GitHub, GUI, whole-daemon SQL absence or latency claim.",
+  "rejected": {
+    "status": "completed",
+    "result": {
+      "completed": true
+    }
+  },
+  "accepted": {
+    "status": "completed",
+    "result": {
+      "completed": true
+    }
+  },
+  "mainSql": [
+    "SELECT health_json FROM pack_coding_repo_health\n        WHERE repo = ?1 OR repo IN\n          (SELECT alias FROM pack_coding_repo_aliases WHERE canonical = ?1)\n        ORDER BY json_extract(health_json, '$.cycleAt') DESC, repo = ?1 DESC LIMIT 1",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT health_json FROM pack_coding_repo_health\n        WHERE repo = ?1 OR repo IN\n          (SELECT alias FROM pack_coding_repo_aliases WHERE canonical = ?1)\n        ORDER BY json_extract(health_json, '$.cycleAt') DESC, repo = ?1 DESC LIMIT 1",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT health_json FROM pack_coding_repo_health\n        WHERE repo = ?1 OR repo IN\n          (SELECT alias FROM pack_coding_repo_aliases WHERE canonical = ?1)\n        ORDER BY json_extract(health_json, '$.cycleAt') DESC, repo = ?1 DESC LIMIT 1",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT health_json FROM pack_coding_repo_health\n        WHERE repo = ?1 OR repo IN\n          (SELECT alias FROM pack_coding_repo_aliases WHERE canonical = ?1)\n        ORDER BY json_extract(health_json, '$.cycleAt') DESC, repo = ?1 DESC LIMIT 1",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT health_json FROM pack_coding_repo_health\n        WHERE repo = ?1 OR repo IN\n          (SELECT alias FROM pack_coding_repo_aliases WHERE canonical = ?1)\n        ORDER BY json_extract(health_json, '$.cycleAt') DESC, repo = ?1 DESC LIMIT 1",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT health_json FROM pack_coding_repo_health\n        WHERE repo = ?1 OR repo IN\n          (SELECT alias FROM pack_coding_repo_aliases WHERE canonical = ?1)\n        ORDER BY json_extract(health_json, '$.cycleAt') DESC, repo = ?1 DESC LIMIT 1",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT health_json FROM pack_coding_repo_health\n        WHERE repo = ?1 OR repo IN\n          (SELECT alias FROM pack_coding_repo_aliases WHERE canonical = ?1)\n        ORDER BY json_extract(health_json, '$.cycleAt') DESC, repo = ?1 DESC LIMIT 1",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?"
+  ],
+  "commands": [
+    {
+      "name": "coding.ledgerWrites",
+      "method": "acceptHealthNotice",
+      "durationMs": 0.15366599999993014,
+      "argsBytes": 95,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "acceptHealthNotice",
+      "durationMs": 0.21095800000011877,
+      "argsBytes": 95,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "acceptHealthNotice",
+      "durationMs": 0.07454200000006495,
+      "argsBytes": 104,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "acceptHealthNotice",
+      "durationMs": 0.06795800000008967,
+      "argsBytes": 104,
+      "replyBytes": 4
+    }
+  ]
+}
