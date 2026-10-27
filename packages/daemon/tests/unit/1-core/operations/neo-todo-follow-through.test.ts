@@ -68,7 +68,8 @@ function world() {
       }
       if (name === 'work.find')
         return completed({
-          groups: knobs.placeKnown
+          unreachable: [],
+          places: knobs.placeKnown
             ? [
                 {
                   place: { machine: 'laptop', name: 'repo', folder: '/repo' },
@@ -185,6 +186,7 @@ describe('a doing todo never sits idle without someone on it', () => {
   for (const instruction of [null, 'Keep an eye on it.'])
     test(`an adopted worker ${instruction ? 'with' : 'without'} an instruction is reminded, then stalls with no fresh worker to take it`, async () => {
       const w = (current = world());
+      w.knobs.placeKnown = false;
       const todo = w.adopt(instruction);
       for (const minutes of [20, 40, 60]) await w.at(minutes);
       expect(w.named('work.send')).toHaveLength(2);
@@ -211,6 +213,7 @@ describe('a doing todo never sits idle without someone on it', () => {
 
   test('a started todo without an instruction stalls instead of staying doing', async () => {
     const w = (current = world());
+    w.knobs.placeKnown = false;
     const todo = w.add();
     await w.runner.start(todo.id);
     w.db.prepare('UPDATE neo_todos SET instruction = NULL WHERE id = ?').run(todo.id);
@@ -334,9 +337,7 @@ describe('a doing todo never sits idle without someone on it', () => {
   test('a stalled todo whose worker place is known gets a fresh worker there', async () => {
     const w = (current = world());
     const todo = w.adopt(null);
-    for (const minutes of [20, 40, 60]) await w.at(minutes);
-    expect(w.todo(todo.id).blockedBy).toBe('stalled');
-    await w.at(62);
+    for (const minutes of [20, 40, 60, 62]) await w.at(minutes);
     expect(w.named('work.start').map((call) => call.input.place)).toEqual([
       { machine: 'laptop', name: 'repo', folder: '/repo' },
     ]);
@@ -362,5 +363,39 @@ describe('a doing todo never sits idle without someone on it', () => {
     expect(
       w.store.listQuestions('tracked').filter((question) => question.todoId === todo.id)
     ).toHaveLength(1);
+  });
+
+  test('an answered stalled card is not asked again while the todo is unchanged', async () => {
+    const w = (current = world());
+    w.knobs.placeKnown = false;
+    const todo = w.adopt(null);
+    for (const minutes of [20, 40, 60]) await w.at(minutes);
+    const card = w.store.listQuestions('ask').find((question) => question.todoId === todo.id)!;
+    w.store.answerQuestion(card, 'Leave it for now.', 'chat', Date.now());
+    for (const minutes of [62, 64]) await w.at(minutes);
+    expect(
+      w.store.listQuestions('ask').filter((question) => question.todoId === todo.id)
+    ).toHaveLength(1);
+  });
+
+  test('a stalled todo whose worker comes back is neither carded nor doubled', async () => {
+    const w = (current = world());
+    w.knobs.placeKnown = false;
+    const todo = w.adopt(null, 'tracked');
+    for (const minutes of [20, 40]) await w.at(minutes);
+    w.store.updateTodo(
+      w.todo(todo.id),
+      {
+        state: 'blocked',
+        blockedBy: 'stalled',
+        blockedReason: 'Idle.',
+        nextAction: 'Continue it.',
+      },
+      Date.now()
+    );
+    Object.assign(w.workers.get('adopted-session')!, { status: 'running' });
+    await w.at(41);
+    expect(w.todo(todo.id).state).toBe('doing');
+    expect(w.store.listQuestions('tracked')).toEqual([]);
   });
 });

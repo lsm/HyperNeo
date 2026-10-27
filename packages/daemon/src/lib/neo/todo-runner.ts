@@ -908,7 +908,12 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
 
   type Stalled = { todo: NeoTodo; ask: NeoAsk; ref: WorkRef };
   const cardTodo = ({ todo, ask }: Stalled, now: number) => {
-    if (store.listQuestions(ask.id).some((q) => q.state === 'open' && q.todoId === todo.id)) return;
+    if (
+      store
+        .listQuestions(ask.id)
+        .some((q) => q.todoId === todo.id && (q.state === 'open' || q.createdAt >= todo.updatedAt))
+    )
+      return;
     store.askQuestion(
       crypto.randomUUID(),
       ask.id,
@@ -935,17 +940,19 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     });
     const groups =
       found.kind === 'completed'
-        ? ((found.value as { groups?: { work?: { ref: WorkRef; place?: Place }[] }[] }).groups ??
+        ? ((found.value as { places?: { work?: { ref: WorkRef; place?: Place }[] }[] }).places ??
           [])
         : [];
     return groups.flatMap((group) => group.work ?? []).find((work) => work.ref.id === ref.id)
       ?.place;
   };
 
+  type Rescue = Stalled & { place: Place };
   const rescueTodo = (superpipe({})('neo.todo.rescue-stalled') as PipelineAPI)
     .input(['todo', 'now'])
     .pipe(
-      (todo: NeoTodo): { value: Stalled } | { reason: null } => {
+      (listed: NeoTodo): { value: Stalled } | { reason: null } => {
+        const todo = store.getTodo(listed.id) ?? listed;
         const ask = store.getAsk(todo.askId);
         const ref = sessions.readRef(todo.id);
         return todo.state === 'blocked' &&
@@ -956,27 +963,24 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           : { reason: null };
       },
       'todo',
-      'result:stalled'
+      'result:rescue'
     )
     .pipe(
-      async (stalled: Stalled) =>
-        stalled.ask.originMessageId?.startsWith('neo-track:') ||
-        sessions.readNudge(stalled.todo.id)?.redispatched
-          ? null
-          : await findPlace(stalled),
-      'stalled',
-      'place'
-    )
-    .pipe(
-      (stalled: Stalled, place: Place | null | undefined, now: number) => {
-        if (!place) return { reason: cardTodo(stalled, now) ?? null };
-        return { value: place };
+      async (stalled: Stalled, now: number): Promise<{ value: Rescue } | { reason: null }> => {
+        const place =
+          stalled.ask.originMessageId?.startsWith('neo-track:') ||
+          sessions.readNudge(stalled.todo.id)?.redispatched
+            ? undefined
+            : await findPlace(stalled);
+        if (place) return { value: { ...stalled, place } };
+        cardTodo(stalled, now);
+        return { reason: null };
       },
-      ['stalled', 'place', 'now'],
-      'result:place'
+      ['rescue', 'now'],
+      'result:rescue'
     )
     .pipe(
-      async (now: number) =>
+      async (rescue: Rescue, now: number) =>
         mayRedispatch(
           (await store.read('listCheckable')).filter(
             (other) =>
@@ -988,32 +992,32 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           sweep.movedAt,
           now
         )
-          ? { value: null }
+          ? { value: rescue }
           : { reason: null },
-      'now',
-      'result:room'
+      ['rescue', 'now'],
+      'result:rescue'
     )
     .pipe(
-      ({ todo }: Stalled, now: number) => {
+      ({ todo }: Rescue, now: number) => {
         sweep.movedAt = now;
         sessions.recordNudge(todo.id, { since: now, nudges: 0, redispatched: true });
         return store.updateTodo(todo, { state: 'doing', startedAt: now, finishedAt: null }, now);
       },
-      ['stalled', 'now'],
+      ['rescue', 'now'],
       'reopened'
     )
     .pipe(
-      ({ ask, ref }: Stalled, reopened: NeoTodo, place: Place) =>
+      ({ ask, ref, place }: Rescue, reopened: NeoTodo) =>
         dispatch({
           todo: { ...reopened, instruction: reopened.instruction ?? neoTodoHandoff(reopened) },
           ask,
           target: { verb: 'start', adapter: ref.adapter, place },
         }),
-      ['stalled', 'reopened', 'place'],
+      ['rescue', 'reopened'],
       'dispatched'
     )
     .pipe(
-      ({ ask, todo, ref }: Stalled) =>
+      ({ ask, todo, ref }: Rescue) =>
         store.getTodo(todo.id)?.state === 'doing' && sessions.readRef(todo.id)?.id !== ref.id
           ? deps.tell(
               ask,
@@ -1022,7 +1026,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
               `neo-todo-rescue:${todo.id}`
             )
           : undefined,
-      ['stalled', 'dispatched'],
+      ['rescue', 'dispatched'],
       'rescued'
     )
     .endAsync('rescued') as (todo: NeoTodo, now: number) => Promise<void | null>;
