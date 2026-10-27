@@ -536,6 +536,11 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           : null);
       const live = store.getCheckable(todo.id);
       if (!live?.check || !sameNeoTodoCheck(todo, live)) continue;
+      if (
+        (live.state === 'failed' || live.state === 'closed_unverified') &&
+        completion?.state !== 'done'
+      )
+        continue;
       const next = completion
         ? await recompute(live, {}, now, completion)
         : await finish(
