@@ -393,7 +393,11 @@ function acpAgentAdapters(
 }
 
 function codexDesktopAdapters(
-  readSnapshot: (statePath: string, includeClosed: boolean) => Promise<CodexSnapshot>,
+  readSnapshot: (
+    statePath: string,
+    includeClosed: boolean,
+    idPrefix?: string
+  ) => Promise<CodexSnapshot>,
   searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>,
   prepareExecution: WorkExecutionPreparer
 ): WorkAdapter[] {
@@ -574,6 +578,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
   const ownChats = (text: string) => searchChats(text, ['message', 'task']);
   const adapters = [
     createHyperneoAdapter({
+      readTurnEnds: (sessionId, since) =>
+        context.deps.db.readHyperneoTurnEndsAsync(sessionId, since),
       prepareExecution,
       projects: () => context.deps.db.workspaceHistory.projects(),
       db,
@@ -599,14 +605,16 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       homeDir: homedir(),
     }),
     createSpaceAdapter({
+      readTurnEnds: (sessionId, since) =>
+        context.deps.db.readHyperneoTurnEndsAsync(sessionId, since),
       db,
       machine,
       searchChats: ownChats,
       tasks: spaceTaskControl(context),
     }),
     ...codexDesktopAdapters(
-      (statePath, includeClosed) =>
-        context.deps.db.readCodexSnapshotAsync(statePath, includeClosed),
+      (statePath, includeClosed, idPrefix) =>
+        context.deps.db.readCodexSnapshotAsync(statePath, includeClosed, idPrefix),
       searchChats,
       prepareExecution
     ),

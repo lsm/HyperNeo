@@ -106,6 +106,24 @@ describe('codex-desktop adapter against a Codex state database', () => {
     });
   }
 
+  test('prefix discovery finds older matching threads before history limits', async () => {
+    const db = new Database(statePath);
+    try {
+      const insert = db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+      for (let index = 0; index < 600; index++)
+        insert.run(`unrelated-${index}`, 'Recent', '', '', '/focus/dolmen', 'cli', 1, NOW + index);
+      for (const id of ['10000000-first-full-thread', '10000000-second-full-thread'])
+        insert.run(id, 'Old', '', '', '/focus/dolmen', 'cli', 1, NOW - 10_000_000);
+    } finally {
+      db.close();
+    }
+    const groups = await adapter().find({ includeClosed: true, limit: 50, idPrefix: '10000000' });
+    expect(groups.flatMap((group) => group.work.map((work) => work.ref.id)).sort()).toEqual([
+      '10000000-first-full-thread',
+      '10000000-second-full-thread',
+    ]);
+  });
+
   test('async snapshot preserves discovery and a rejected reader never falls back to disk on main', async () => {
     const query = { includeClosed: true, limit: 20 };
     const expected = await adapter().find(query);

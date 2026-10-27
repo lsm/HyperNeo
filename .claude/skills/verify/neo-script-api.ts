@@ -98,4 +98,6 @@ createServer(async (req, res) => {
   });
   event('message_stop', { type: 'message_stop' });
   res.end();
-}).listen(8000, '127.0.0.1', () => console.log('scripted Neo model ready on 127.0.0.1:8000'));
+}).listen(Number(process.env.VERIFY_MOCK_PORT ?? 8000), '127.0.0.1', () =>
+  console.log(`scripted Neo model ready on 127.0.0.1:${process.env.VERIFY_MOCK_PORT ?? 8000}`)
+);

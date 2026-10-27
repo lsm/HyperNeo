@@ -1,3 +1,4 @@
+import { readHyperneoTurnEnds } from '../../../../src/storage/hyperneo-turn-ends-read.ts';
 import {
   chmodSync,
   existsSync,
@@ -151,6 +152,7 @@ describe('hyperneo adapter send and status', () => {
   ) {
     fillSdkMessageFixtureColumns(db);
     return createHyperneoAdapter({
+      readTurnEnds: async (id, since) => readHyperneoTurnEnds(db, id, since),
       prepareExecution,
       worktreeBaseDir: () => projectBase,
       db: () => db,
@@ -169,6 +171,22 @@ describe('hyperneo adapter send and status', () => {
       ...control(db, events, withdraw),
     });
   }
+
+  test('prefix discovery finds older sessions before history limits', async () => {
+    db.exec('CREATE TABLE workspace_history (path TEXT, last_used_at INTEGER)');
+    const insert = db.prepare(
+      "INSERT INTO sessions (id,title,workspace_path,status,last_active_at,type) VALUES (?, 'Synthetic', '/focus/dolmen', 'archived', ?, 'worker')"
+    );
+    for (let index = 0; index < 600; index++)
+      insert.run(`unrelated-${index}`, '2026-10-26T00:00:00Z');
+    for (const id of ['10000000-first-full-session', '10000000-second-full-session'])
+      insert.run(id, '2026-01-01T00:00:00Z');
+    const groups = await adapter().find({ includeClosed: true, limit: 50, idPrefix: '10000000' });
+    expect(groups.flatMap((group) => group.work.map((work) => work.ref.id)).sort()).toEqual([
+      '10000000-first-full-session',
+      '10000000-second-full-session',
+    ]);
+  });
 
   const ref = (id: string) => ({ adapter: 'hyperneo', id });
 
@@ -709,6 +727,7 @@ describe('hyperneo adapter start and stop', () => {
   function adapter(overrides: Partial<HyperneoSessionControl> = {}) {
     const controls = control(db, events);
     return createHyperneoAdapter({
+      readTurnEnds: async (id, since) => readHyperneoTurnEnds(db, id, since),
       db: () => db,
       machine: 'imac',
       searchChats: async () => [],

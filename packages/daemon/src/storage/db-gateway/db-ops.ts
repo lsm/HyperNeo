@@ -1,3 +1,4 @@
+import { neoPublicationWrites } from '../repositories/neo-publication-repository.ts';
 import {
   neoAskSettlementReads,
   neoAskSettlementWrites,
@@ -117,9 +118,13 @@ import { healthSessionCountReads } from '../repositories/health-session-count-re
 import { sessionProjectionReads } from '../repositories/session-projection-read.ts';
 import { singleMessageReads } from '../repositories/sdk-single-message-read.ts';
 import { messageCountReads } from '../repositories/sdk-message-count-read.ts';
+import { codingUnownedWrites } from '../../lib/neo/packs/coding/unowned-db.ts';
+import { sessionExportReads } from '../repositories/session-export-read.ts';
+import { neoPublicationEditWrites } from '../repositories/neo-publication-edit-writes.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    neoPublicationWrites,
     neoAskSettlementReads,
     neoAskSettlementWrites,
     neoTodoMutationReads,
@@ -215,5 +220,8 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     sessionProjectionReads,
     singleMessageReads,
     messageCountReads,
+    codingUnownedWrites,
+    sessionExportReads,
+    neoPublicationEditWrites,
   ].map((op) => [op.name, op])
 );

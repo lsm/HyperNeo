@@ -114,7 +114,11 @@ const sendLog = new Logger('codex-send');
 export interface CodexDesktopAdapterDeps {
   prepareExecution?: WorkExecutionPreparer;
   statePath: string;
-  readSnapshot?: (statePath: string, includeClosed: boolean) => Promise<CodexSnapshot>;
+  readSnapshot?: (
+    statePath: string,
+    includeClosed: boolean,
+    idPrefix?: string
+  ) => Promise<CodexSnapshot>;
   desktopSocketPath?: string;
   desktopRunning?: () => Promise<boolean>;
   worktreesDir: string;
@@ -242,6 +246,7 @@ export function buildCodexGroups(
       const linked = { ...where, ...(toolProject ? { toolProject } : {}) };
       const work: WorkSummary[] = snapshot.threads
         .filter((thread) => folders.get(thread.folder) === place.folder)
+        .filter((thread) => !query.idPrefix || thread.id.startsWith(query.idPrefix))
         .filter(
           (thread) =>
             placeMatches ||
@@ -263,7 +268,7 @@ export function buildCodexGroups(
         )
         .sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
         .slice(0, THREADS_PER_PLACE);
-      if (!placeMatches && work.length === 0) return [];
+      if ((query.idPrefix || !placeMatches) && work.length === 0) return [];
       return [
         {
           place: linked,
@@ -283,8 +288,8 @@ export async function loadCodexSnapshot(
 ): Promise<CodexSnapshot> {
   return runLagPhase('scanner:codex_desktop', () =>
     deps.readSnapshot
-      ? deps.readSnapshot(deps.statePath, query.includeClosed)
-      : readCodexSnapshot(deps.statePath, query.includeClosed)
+      ? deps.readSnapshot(deps.statePath, query.includeClosed, query.idPrefix)
+      : readCodexSnapshot(deps.statePath, query.includeClosed, query.idPrefix)
   );
 }
 

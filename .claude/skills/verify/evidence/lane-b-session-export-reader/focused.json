@@ -1,0 +1,44 @@
+{
+  "baseline": {
+    "unitPassed": 0,
+    "unitFailed": 8,
+    "daemonMainSqlAttempts": 1,
+    "daemonRpcError": "Session not found"
+  },
+  "fixed": {
+    "passed": 66,
+    "failed": 0,
+    "files": 5,
+    "repositoryCheck": "passed"
+  },
+  "base": "0431e1a7fa42462daedb047060ae9620049ca8cb",
+  "productionChangedLines": 42,
+  "contract": [
+    "complete JSON messages and session metadata",
+    "cached runtime metadata retained",
+    "existing Markdown formatter",
+    "existing 10000-message selection limit",
+    "nonwaiting preparation gate",
+    "missing-session errors"
+  ],
+  "proofReferenceCorrection": "The wire comparison serializes the existing repository reference through JSON, omitting undefined optional fields exactly as the RPC does. The first fixed run is retained separately as a proof failure with zero main SQL.",
+  "unverified": [
+    "deployed build",
+    "browser UI",
+    "separate SQL queue and clone timing",
+    "migration-in-progress SQL relocation",
+    "10000-message real-RPC and oversized transport latency"
+  ],
+  "initialRepositoryCheckFailure": "Direct gateway run was included in the lexical run counter (613 against 612); the standard repository command API retains the existing 612 baseline.",
+  "baseSync": {
+    "mergedDev": "280d11546d4384b5fa3d4f87f82777344ae934bb",
+    "previousPrHead": "a16e7ba1d3d1ed6d9c3b3f5d6db290252275d988",
+    "conflict": "Append-only operation registrations; retain both entries",
+    "productionChangedLines": 42,
+    "focusedTestsPassed": 66,
+    "repositoryCheck": "passed",
+    "bunDenoMainSql": 0,
+    "proofSetup": "Use shared body-copy completion wait before expected bodies and hashes",
+    "mergeHold": "Queued after 0.50.0; no PR merge authorized"
+  }
+}

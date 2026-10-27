@@ -1,0 +1,165 @@
+{
+  "mode": "before",
+  "verified": false,
+  "consumer": "Actual daemon registered MCP edit operation followed by public WebSocket publication read",
+  "limitation": "No model, GUI, card-reply mutation, live daemon or external service is involved.",
+  "first": {
+    "accepted": true,
+    "created": false,
+    "publication": {
+      "conversationId": "10000000-0000-4000-8000-000000009144",
+      "publicationId": "20000000-0000-4000-8000-000000009144",
+      "shortText": "First.",
+      "fullText": "Original detail.",
+      "links": [],
+      "editedAt": "2026-10-27T07:54:05.246Z",
+      "editedBy": "neo:10000000-0000-4000-8000-000000009144",
+      "revisionId": "58a8de8b-f0da-84b0-b120-03e3bc80c15a",
+      "revisions": [
+        {
+          "revisionId": "20000000-0000-4000-8000-000000009144",
+          "shortText": "Original.",
+          "fullText": "Original detail.",
+          "createdAt": "2026-10-27T07:54:05.242Z"
+        }
+      ],
+      "sequence": 1,
+      "createdAt": "2026-10-27T07:54:05.242Z"
+    }
+  },
+  "second": {
+    "accepted": true,
+    "created": false,
+    "publication": {
+      "conversationId": "10000000-0000-4000-8000-000000009144",
+      "publicationId": "20000000-0000-4000-8000-000000009144",
+      "shortText": "Second.",
+      "fullText": "Original detail.",
+      "links": [],
+      "editedAt": "2026-10-27T07:54:05.247Z",
+      "editedBy": "neo:10000000-0000-4000-8000-000000009144",
+      "revisionId": "9fb3ce21-ceb4-84cb-84fa-81a18a5a791e",
+      "revisions": [
+        {
+          "revisionId": "20000000-0000-4000-8000-000000009144",
+          "shortText": "Original.",
+          "fullText": "Original detail.",
+          "createdAt": "2026-10-27T07:54:05.242Z"
+        },
+        {
+          "revisionId": "58a8de8b-f0da-84b0-b120-03e3bc80c15a",
+          "shortText": "First.",
+          "fullText": "Original detail.",
+          "createdAt": "2026-10-27T07:54:05.246Z"
+        }
+      ],
+      "sequence": 1,
+      "createdAt": "2026-10-27T07:54:05.242Z"
+    }
+  },
+  "replay": {
+    "accepted": true,
+    "created": false,
+    "publication": {
+      "conversationId": "10000000-0000-4000-8000-000000009144",
+      "publicationId": "20000000-0000-4000-8000-000000009144",
+      "shortText": "Second.",
+      "fullText": "Original detail.",
+      "links": [],
+      "editedAt": "2026-10-27T07:54:05.247Z",
+      "editedBy": "neo:10000000-0000-4000-8000-000000009144",
+      "revisionId": "9fb3ce21-ceb4-84cb-84fa-81a18a5a791e",
+      "revisions": [
+        {
+          "revisionId": "20000000-0000-4000-8000-000000009144",
+          "shortText": "Original.",
+          "fullText": "Original detail.",
+          "createdAt": "2026-10-27T07:54:05.242Z"
+        },
+        {
+          "revisionId": "58a8de8b-f0da-84b0-b120-03e3bc80c15a",
+          "shortText": "First.",
+          "fullText": "Original detail.",
+          "createdAt": "2026-10-27T07:54:05.246Z"
+        }
+      ],
+      "sequence": 1,
+      "createdAt": "2026-10-27T07:54:05.242Z"
+    }
+  },
+  "conflict": {
+    "accepted": false,
+    "reason": "publication_conflict"
+  },
+  "reuse": {
+    "accepted": false,
+    "reason": "publication_conflict"
+  },
+  "foreign": {
+    "accepted": false,
+    "reason": "not_found",
+    "detail": "No Neo reply in this conversation has that publicationId. Use one of the recent replies: 50000000-0000-4000-8000-000000009144 \"Full verbatim.\"; 30000000-0000-4000-8000-000000009144 \"Original.\"; 20000000-0000-4000-8000-000000009144 \"Second.\"."
+  },
+  "verbatim": {
+    "accepted": false,
+    "reason": "invalid_publication: The reply does not match the publication schema. Fix the fields and publish again."
+  },
+  "mainSql": [
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE session_id = ?",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE kind = 'neo'",
+    "SELECT sequence, payload_json AS payloadJson, created_at AS createdAt FROM neo_publications WHERE conversation_id = ? AND publication_id = ?",
+    "SELECT sequence, payload_json AS payloadJson, created_at AS createdAt FROM neo_publications WHERE conversation_id = ?\n          ORDER BY sequence DESC LIMIT ?",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE session_id = ?",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE kind = 'neo'",
+    "SELECT publication_id AS id FROM neo_publications\n        WHERE conversation_id = ? AND (json_extract(payload_json, '$.revisionId') = ?\n          OR EXISTS (SELECT 1 FROM json_each(payload_json, '$.revisions') r\n            WHERE json_extract(r.value, '$.revisionId') = ?)) LIMIT 1",
+    "SELECT sequence, payload_json AS payloadJson, created_at AS createdAt FROM neo_publications WHERE conversation_id = ? AND publication_id = ?",
+    "UPDATE neo_publications SET payload_json = ? WHERE conversation_id = ? AND publication_id = ?",
+    "SELECT sequence, payload_json AS payloadJson, created_at AS createdAt FROM neo_publications WHERE conversation_id = ? AND publication_id = ?",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE session_id = ?",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE kind = 'neo'",
+    "SELECT sequence, payload_json AS payloadJson, created_at AS createdAt FROM neo_publications WHERE conversation_id = ? AND publication_id = ?",
+    "SELECT sequence, payload_json AS payloadJson, created_at AS createdAt FROM neo_publications WHERE conversation_id = ?\n          ORDER BY sequence DESC LIMIT ?",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE session_id = ?",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE kind = 'neo'",
+    "SELECT publication_id AS id FROM neo_publications\n        WHERE conversation_id = ? AND (json_extract(payload_json, '$.revisionId') = ?\n          OR EXISTS (SELECT 1 FROM json_each(payload_json, '$.revisions') r\n            WHERE json_extract(r.value, '$.revisionId') = ?)) LIMIT 1",
+    "SELECT sequence, payload_json AS payloadJson, created_at AS createdAt FROM neo_publications WHERE conversation_id = ? AND publication_id = ?",
+    "UPDATE neo_publications SET payload_json = ? WHERE conversation_id = ? AND publication_id = ?",
+    "SELECT sequence, payload_json AS payloadJson, created_at AS createdAt FROM neo_publications WHERE conversation_id = ? AND publication_id = ?",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE session_id = ?",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE kind = 'neo'",
+    "SELECT sequence, payload_json AS payloadJson, created_at AS createdAt FROM neo_publications WHERE conversation_id = ? AND publication_id = ?",
+    "SELECT sequence, payload_json AS payloadJson, created_at AS createdAt FROM neo_publications WHERE conversation_id = ?\n          ORDER BY sequence DESC LIMIT ?",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE session_id = ?",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE kind = 'neo'",
+    "SELECT publication_id AS id FROM neo_publications\n        WHERE conversation_id = ? AND (json_extract(payload_json, '$.revisionId') = ?\n          OR EXISTS (SELECT 1 FROM json_each(payload_json, '$.revisions') r\n            WHERE json_extract(r.value, '$.revisionId') = ?)) LIMIT 1",
+    "SELECT sequence, payload_json AS payloadJson, created_at AS createdAt FROM neo_publications WHERE conversation_id = ? AND publication_id = ?",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE session_id = ?",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE kind = 'neo'",
+    "SELECT sequence, payload_json AS payloadJson, created_at AS createdAt FROM neo_publications WHERE conversation_id = ? AND publication_id = ?",
+    "SELECT sequence, payload_json AS payloadJson, created_at AS createdAt FROM neo_publications WHERE conversation_id = ?\n          ORDER BY sequence DESC LIMIT ?",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE session_id = ?",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE kind = 'neo'",
+    "SELECT publication_id AS id FROM neo_publications\n        WHERE conversation_id = ? AND (json_extract(payload_json, '$.revisionId') = ?\n          OR EXISTS (SELECT 1 FROM json_each(payload_json, '$.revisions') r\n            WHERE json_extract(r.value, '$.revisionId') = ?)) LIMIT 1",
+    "SELECT sequence, payload_json AS payloadJson, created_at AS createdAt FROM neo_publications WHERE conversation_id = ? AND publication_id = ?",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE session_id = ?",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE kind = 'neo'",
+    "SELECT sequence, payload_json AS payloadJson, created_at AS createdAt FROM neo_publications WHERE conversation_id = ? AND publication_id = ?",
+    "SELECT sequence, payload_json AS payloadJson, created_at AS createdAt FROM neo_publications WHERE conversation_id = ?\n          ORDER BY sequence DESC LIMIT ?",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE session_id = ?",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE kind = 'neo'",
+    "SELECT publication_id AS id FROM neo_publications\n        WHERE conversation_id = ? AND (json_extract(payload_json, '$.revisionId') = ?\n          OR EXISTS (SELECT 1 FROM json_each(payload_json, '$.revisions') r\n            WHERE json_extract(r.value, '$.revisionId') = ?)) LIMIT 1",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE session_id = ?",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE kind = 'neo'",
+    "SELECT sequence, payload_json AS payloadJson, created_at AS createdAt FROM neo_publications WHERE conversation_id = ? AND publication_id = ?",
+    "SELECT sequence, payload_json AS payloadJson, created_at AS createdAt FROM neo_publications WHERE conversation_id = ?\n          ORDER BY sequence DESC LIMIT ?",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE session_id = ?",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE kind = 'neo'",
+    "SELECT sequence, payload_json AS payloadJson, created_at AS createdAt FROM neo_publications WHERE conversation_id = ? AND publication_id = ?",
+    "SELECT sequence, payload_json AS payloadJson, created_at AS createdAt FROM neo_publications WHERE conversation_id = ?\n          ORDER BY sequence DESC LIMIT ?",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE session_id = ?",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE kind = 'neo'",
+    "SELECT publication_id AS id FROM neo_publications\n        WHERE conversation_id = ? AND (json_extract(payload_json, '$.revisionId') = ?\n          OR EXISTS (SELECT 1 FROM json_each(payload_json, '$.revisions') r\n            WHERE json_extract(r.value, '$.revisionId') = ?)) LIMIT 1",
+    "SELECT sequence, payload_json AS payloadJson, created_at AS createdAt FROM neo_publications WHERE conversation_id = ? AND publication_id = ?"
+  ],
+  "commands": []
+}

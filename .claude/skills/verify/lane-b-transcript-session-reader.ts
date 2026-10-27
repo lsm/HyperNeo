@@ -3,8 +3,10 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { waitForSdkBodyCopy } from './wait-for-sdk-body-copy.ts';
 
-const run = resolve(process.argv[2]);
+const run = resolve(process.argv.at(-1)!);
+const deferBodyCopy = process.argv.includes('--defer-body-copy');
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -13,12 +15,18 @@ for (const key of ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'OPENAI_API_K
 for (const name of ['home', 'workspace', 'evidence']) mkdirSync(join(run, name), { recursive: true });
 const { createDaemonApp } = await import('../../../packages/daemon/src/app.ts');
 const { JobQueueProcessor } = await import('../../../packages/daemon/src/storage/job-queue-processor.ts');
+const { DatabaseCore } = await import('../../../packages/daemon/src/storage/database-core.ts');
 const { getConfig } = await import('../../../packages/daemon/src/config.ts');
 const { capSdkMessage } = await import('../../../packages/daemon/src/lib/rpc-handlers/message-output-cap.ts');
 const { MessageHub, WebSocketClientTransport } = await import('../../../packages/shared/src/mod.ts');
 const NativeWorker = globalThis.Worker;
 const fetch = globalThis.fetch;
 const start = JobQueueProcessor.prototype.start;
+const startBodyCopy = DatabaseCore.prototype.startSdkMessageBodyCopy;
+let releaseBodyCopy: (() => void) | undefined;
+if (deferBodyCopy) DatabaseCore.prototype.startSdkMessageBodyCopy = function () {
+  releaseBodyCopy = () => startBodyCopy.call(this);
+};
 const processors = new Set<InstanceType<typeof JobQueueProcessor>>();
 let rejectNextPage = false;
 let pageRequests = 0;
@@ -86,6 +94,10 @@ try {
     { limit: 3, since: first.timestamp, sinceRowid: first.rowid },
   ];
   const expected = await Promise.all(queries.map(reference));
+  if (releaseBodyCopy) queueMicrotask(releaseBodyCopy);
+  evidence.startupCopyDeferred = Boolean(releaseBodyCopy);
+  await waitForSdkBodyCopy(raw);
+  evidence.startupBodyCopyComplete = true;
   const bodyHash = () => {
     const hash = createHash('sha256');
     for (const row of raw.prepare('SELECT sdk_message FROM sdk_message_bodies ORDER BY seq').all() as { sdk_message: string }[]) hash.update(row.sdk_message);
@@ -159,6 +171,7 @@ try {
   evidence.bodyHashUnchanged = bodyHash() === beforeHash;
   assert.equal(evidence.bodyHashUnchanged, true);
 } finally {
+  DatabaseCore.prototype.startSdkMessageBodyCopy = startBodyCopy;
   JobQueueProcessor.prototype.start = start;
   await transport?.close();
   await Promise.all([...processors].map((processor) => processor.stop()));

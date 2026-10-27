@@ -1,4 +1,5 @@
 import { createNeoQuestionAnswerDelivery } from './question-answer-delivery.ts';
+import { wakeFailedHyperneoSession } from './query-failure.ts';
 import type { UUID } from 'node:crypto';
 import { WORKER_BATCH_SENDER } from '../../storage/repositories/neo-session-message-repository.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
@@ -39,7 +40,10 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
-import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
+import {
+  NeoPublicationRepository,
+  neoPublicationWrites,
+} from '../../storage/repositories/neo-publication-repository.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
 import {
@@ -210,7 +214,7 @@ export class NeoService {
       getBinding: (id) => this.repo.getBindingBySession(id),
       getRootBinding: () => this.repo.defaultBinding(),
       hasProject: (id) => !!this.repo.getProject(id),
-      append: (input) => this.appendPublication(input),
+      append: (input) => this.db.gateway.call(neoPublicationWrites, 'append', input),
       notify: notifyPublication,
       artifact: createArtifactRefReader(() => this.db.getDatabase()),
     });
@@ -253,9 +257,18 @@ export class NeoService {
       },
       { subscriberName: 'neo-session-forget' }
     );
+    const offQueryFailure = events.subscribe(
+      'session.error',
+      async (event) => {
+        if (await wakeFailedHyperneoSession(db.getDatabase(), this.wakeNeo.bind(this), event))
+          this.notifyChanged();
+      },
+      { subscriberName: 'neo-query-failure' }
+    );
     const offHumanReset = onHumanDevicesReset(this.notifyPublicationsChanged);
     this.unsubscribe = () => {
       offHumanReset();
+      offQueryFailure();
       offUpdated();
       offModelSwitch();
       offStatus();

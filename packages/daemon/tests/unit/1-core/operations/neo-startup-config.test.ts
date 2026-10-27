@@ -2,13 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { MessageHub, Session } from '@hyperneo/shared';
 import { vi } from 'vitest';
 import {
-  InternalEventBus,
   type DaemonInternalEventMap,
+  InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
-import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
+import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import type { CreateSessionParams } from '../../../../src/lib/session/session-lifecycle.ts';
+import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 const root = 'neo:synthetic-startup';
@@ -91,7 +91,7 @@ describe('Neo startup configuration', () => {
     }
   );
 
-  test('refreshing tools approves reading and sandboxed Bash without native mutation', async () => {
+  test('refreshing tools approves reading and unsandboxed Bash without native mutation', async () => {
     const session = createTestSession(root);
     session.config = { ...session.config, permissionMode: 'acceptEdits', allowedTools: ['Read'] };
     await db.createSession(session);
@@ -130,7 +130,7 @@ describe('Neo startup configuration', () => {
     expect(updateSession).not.toHaveBeenCalled();
   });
 
-  test('a recovered root can read with a strict Bash sandbox and cannot approve native writes', async () => {
+  test('a recovered root runs without its own OS sandbox and cannot approve native writes', async () => {
     const session = createTestSession(root);
     session.config.allowedTools = ['Write', 'Edit', 'NotebookEdit'];
     session.config.coordinatorMode = true;
@@ -141,12 +141,6 @@ describe('Neo startup configuration', () => {
     expect(config.allowedTools).toEqual(allowed);
     expect(config.permissionMode).toBe('dontAsk');
     expect(config.coordinatorMode).toBe(false);
-    expect(config.sandbox).toMatchObject({
-      enabled: true,
-      failIfUnavailable: true,
-      allowUnsandboxedCommands: false,
-      enableWeakerNetworkIsolation: true,
-      excludedCommands: [],
-    });
+    expect(config.sandbox).toBeUndefined();
   });
 });

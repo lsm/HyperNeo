@@ -23,8 +23,8 @@ export function planCodingUnownedNotice(
 export const wakeCodingUnownedPrs = (superpipe({})('coding-unowned-pr-wake') as PipelineAPI)
   .input(['repo', 'wake', 'now'])
   .pipe(
-    (repo: CodingPrEventRepository, now: number) => {
-      const notice = repo.pendingUnowned(now);
+    async (repo: CodingPrEventRepository, now: number) => {
+      const notice = await repo.pendingUnownedLater(now);
       return notice ? { value: notice } : { reason: 'no_unowned_prs' };
     },
     ['repo', 'now'],
@@ -37,8 +37,8 @@ export const wakeCodingUnownedPrs = (superpipe({})('coding-unowned-pr-wake') as 
     'accepted'
   )
   .pipe(
-    (repo: CodingPrEventRepository, notice: CodingUnownedNotice, accepted: boolean) => {
-      if (accepted) repo.unownedDelivered(notice.key);
+    async (repo: CodingPrEventRepository, notice: CodingUnownedNotice, accepted: boolean) => {
+      if (accepted) await repo.unownedDeliveredLater(notice.key);
     },
     ['repo', 'notice', 'accepted']
   )

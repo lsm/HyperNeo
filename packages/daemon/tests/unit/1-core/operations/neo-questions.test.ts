@@ -255,7 +255,10 @@ describe('neo.question operations', () => {
           const result = await addNeoTodo(
             store,
             new NeoTodoSessionRepository(db),
-            async () => ({ ok: false, reason: 'not started' }),
+            {
+              start: async () => ({ ok: false, reason: 'not started' }),
+              resolveTarget: async (ref) => ({ value: ref }),
+            },
             store.getAsk('ask')!,
             draft,
             createTodoCheckPacks(db)

@@ -58,7 +58,10 @@ const PROCESSING = `CASE WHEN json_valid(processing_state) THEN CASE
     AND json_extract(processing_state, '$.reason') = 'restart' THEN 'interrupted_by_restart'
   ELSE json_extract(processing_state, '$.status') END END`;
 const SESSION_COLUMNS = `id, title, status, ${FOLDER} AS folder, last_active_at AS lastActiveAt,
-  ${PROCESSING} AS processing`;
+  ${PROCESSING} AS processing,
+  CASE WHEN json_extract(metadata, '$.queryFailureEpisode.failed') = 1
+    THEN json_extract(metadata, '$.queryFailureEpisode.id') END AS queryFailureId,
+  json_extract(metadata, '$.queryFailureEpisode.error') AS queryFailureError`;
 const SESSIONS_PER_PLACE = 20;
 const CLOSED_SESSIONS = 500;
 const REPLY_LIMIT = 4_000;
@@ -86,6 +89,8 @@ export interface HyperneoSessionRow {
   lastActiveAt: string | null;
   branch?: string | null;
   directory?: string | null;
+  queryFailureId?: string | null;
+  queryFailureError?: string | null;
 }
 
 export interface HyperneoSessionControl {
@@ -114,6 +119,7 @@ export interface HyperneoSessionControl {
 }
 
 export interface HyperneoAdapterDeps {
+  readTurnEnds: (sessionId: string, since: number) => Promise<NonNullable<WorkDetail['turnEnds']>>;
   prepareExecution?: WorkExecutionPreparer;
   worktreeBaseDir?: (projectPath: string) => string;
   projects?: () => NonNullable<WorkspaceHistoryEntry['project']>[];
@@ -181,19 +187,22 @@ export function readHyperneoPlaces(db: BunDatabase): HyperneoPlaceRow[] {
 
 export function readHyperneoSessions(
   db: BunDatabase,
-  includeClosed: boolean
+  includeClosed: boolean,
+  idPrefix = ''
 ): HyperneoSessionRow[] {
   return db
     .prepare(
       `SELECT * FROM (
          SELECT ${SESSION_COLUMNS} FROM sessions WHERE ${OWN_SESSIONS} AND ${OPEN}
+           AND substr(id, 1, length(?2)) = ?2
          UNION ALL
          SELECT * FROM (SELECT ${SESSION_COLUMNS} FROM sessions
-           WHERE ${OWN_SESSIONS} AND ? = 1 AND NOT ${OPEN}
+           WHERE ${OWN_SESSIONS} AND ?1 = 1 AND NOT ${OPEN}
+             AND substr(id, 1, length(?2)) = ?2
            ORDER BY lastActiveAt DESC LIMIT ${CLOSED_SESSIONS}))
        ORDER BY lastActiveAt DESC`
     )
-    .all(includeClosed ? 1 : 0) as HyperneoSessionRow[];
+    .all(includeClosed ? 1 : 0, idPrefix) as HyperneoSessionRow[];
 }
 
 export function withSessionLoad(work: WorkSummary): WorkSummary {
@@ -202,11 +211,12 @@ export function withSessionLoad(work: WorkSummary): WorkSummary {
 }
 
 function toWork(row: HyperneoSessionRow, machine: string): WorkSummary {
+  const status = hyperneoWorkStatus(row.status, row.processing);
   return {
     ref: { adapter: 'hyperneo', id: row.id },
     title: row.title,
     place: { machine, ...(row.folder ? { folder: row.folder } : {}), name: placeName(row.folder) },
-    status: hyperneoWorkStatus(row.status, row.processing),
+    status: row.queryFailureId && status !== 'stopped' ? 'failed' : status,
     lastActivityAt: timestamp(row.lastActiveAt),
     link: `/session/${row.id}`,
   };
@@ -237,6 +247,7 @@ export function buildHyperneoGroups(
           .includes(text);
       const work = sessions
         .filter((session) => session.folder === place.folder)
+        .filter((session) => !query.idPrefix || session.id.startsWith(query.idPrefix))
         .filter(
           (session) =>
             placeMatches ||
@@ -248,7 +259,7 @@ export function buildHyperneoGroups(
         )
         .sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
         .slice(0, SESSIONS_PER_PLACE);
-      if (!placeMatches && work.length === 0) return [];
+      if ((query.idPrefix || !placeMatches) && work.length === 0) return [];
       return [
         {
           place: {
@@ -278,7 +289,7 @@ export function loadHyperneoSessions(
   query: FindQuery,
   deps: HyperneoAdapterDeps
 ): HyperneoSessionRow[] {
-  return readHyperneoSessions(deps.db(), query.includeClosed);
+  return readHyperneoSessions(deps.db(), query.includeClosed, query.idPrefix);
 }
 
 export function matchHyperneoSessions(
@@ -360,54 +371,12 @@ export function hyperneoSessionBusy(row: HyperneoSessionRow): boolean {
 export function readHyperneoSession(db: BunDatabase, id: string): HyperneoSessionRow | null {
   const row = db
     .prepare(
-      `SELECT id, title, status, ${FOLDER} AS folder, last_active_at AS lastActiveAt,
-         ${PROCESSING} AS processing, COALESCE(worktree_branch, git_branch) AS branch,
+      `SELECT ${SESSION_COLUMNS}, COALESCE(worktree_branch, git_branch) AS branch,
          COALESCE(worktree_path, workspace_path) AS directory
          FROM sessions WHERE id = ? AND ${OWN_SESSIONS}`
     )
     .get(id) as HyperneoSessionRow | null | undefined;
   return row ?? null;
-}
-
-export function readHyperneoTurnEnds(
-  db: BunDatabase,
-  sessionId: string,
-  since?: number
-): NonNullable<WorkDetail['turnEnds']> {
-  if (since === undefined) return [];
-  const rows = db
-    .prepare(`SELECT CAST(m.rowid AS TEXT) AS id, m.timestamp,
-    (SELECT p.timestamp FROM sdk_messages p WHERE p.session_id=m.session_id
-      AND p.parent_tool_use_id IS NULL AND p.rowid<m.rowid
-      AND p.message_type IN ('user','result') AND COALESCE(p.internal_compaction_turn,0)=0
-      AND COALESCE(p.tool_result_only,0)=0 ORDER BY p.rowid DESC LIMIT 1) AS started_at,
-    COALESCE(NULLIF(json_extract(${sdkMessageBodyAt('m.rowid')}, '$.result'), ''),
-      (SELECT group_concat(json_extract(block.value, '$.text'), char(10)) FROM json_each((
-        SELECT CASE json_type(${sdkMessageBodyAt('a.rowid')}, '$.message.content')
-          WHEN 'array' THEN json_extract(${sdkMessageBodyAt('a.rowid')}, '$.message.content') ELSE '[]' END
-        FROM sdk_messages a WHERE a.session_id=m.session_id AND a.message_type='assistant'
-          AND a.parent_tool_use_id IS NULL AND a.rowid<m.rowid AND COALESCE(a.internal_compaction_turn,0)=0
-          AND a.rowid>COALESCE((SELECT MAX(p.rowid) FROM sdk_messages p
-            WHERE p.session_id=m.session_id AND p.message_type='result' AND p.parent_tool_use_id IS NULL
-              AND COALESCE(p.internal_compaction_turn,0)=0 AND p.rowid<m.rowid
-              AND NOT (COALESCE(p.recovery_intercepted,0)=1 AND COALESCE(p.recovery_billing_terminal,0)=0)),0)
-        ORDER BY a.rowid DESC LIMIT 1
-      )) block WHERE json_extract(block.value, '$.type')='text'), '') AS message
-    FROM sdk_messages m WHERE m.session_id=? AND m.message_type='result' AND m.parent_tool_use_id IS NULL
-      AND COALESCE(m.internal_compaction_turn,0)=0
-      AND NOT (COALESCE(m.recovery_intercepted,0)=1 AND COALESCE(m.recovery_billing_terminal,0)=0)
-      AND m.timestamp>? ORDER BY m.rowid`)
-    .all(sessionId, new Date(since).toISOString()) as {
-    id: string;
-    timestamp: string;
-    started_at: string | null;
-    message: string;
-  }[];
-  return rows.flatMap((row) => {
-    const at = workEntryTime(row.timestamp);
-    const startedAt = workEntryTime(row.started_at);
-    return at === undefined ? [] : [{ id: row.id, at, startedAt, message: row.message }];
-  });
 }
 
 export function readHyperneoLastResult(db: BunDatabase, id: string): HyperneoLastResult | null {
@@ -514,14 +483,16 @@ export function requireOpenHyperneoSession(row: HyperneoSessionRow): Gate<Hypern
     : { value: row };
 }
 
-export function describeHyperneoWork(
+export async function describeHyperneoWork(
   row: HyperneoSessionRow,
   deps: HyperneoAdapterDeps,
   since?: number
-): Result<WorkDetail> {
+): Promise<Result<WorkDetail>> {
   const work = toWork(row, deps.machine);
-  const turnEnds = readHyperneoTurnEnds(deps.db(), row.id, since);
-  const last = readHyperneoLastResult(deps.db(), row.id);
+  const turnEnds = since === undefined ? [] : await deps.readTurnEnds(row.id, since);
+  const last = row.queryFailureId
+    ? { reply: row.queryFailureError, failed: 1, at: row.lastActiveAt }
+    : readHyperneoLastResult(deps.db(), row.id);
   return {
     ok: true,
     value: {

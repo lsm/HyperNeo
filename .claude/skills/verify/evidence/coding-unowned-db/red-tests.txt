@@ -1,0 +1,40 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/coding-unowned-writer.test.ts:
+24 |     const prepare = main.prepare.bind(main);
+25 |     const fault = readOnly
+26 |       ? null
+27 |       : spyOn(main, 'prepare').mockImplementation(((sql: string) => {
+28 |           if (/pack_coding_|neo_pack_preferences/.test(sql))
+29 |             throw new Error('Unowned PR SQL on main');
+                           ^
+error: Unowned PR SQL on main
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/coding-unowned-writer.test.ts:29:23)
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/src/lib/neo/packs/coding/pr-events.ts:80:10)
+      at transaction (bun:sqlite:401:27)
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/src/lib/neo/packs/coding/pr-unowned.ts:27:27)
+      at executePipe (/Users/lsm/focus/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:574:16)
+      at continuePipeline (/Users/lsm/focus/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:730:34)
+      at next (/Users/lsm/focus/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:687:5)
+      at runPipeline (/Users/lsm/focus/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:762:2)
+      at <anonymous> (/Users/lsm/focus/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:823:4)
+(fail) unowned PR wake commits its reservation on the writer with guarded main [3.79ms]
+44 |         ).toEqual({ key });
+45 |         attempts.push(key);
+46 |         return accept;
+47 |       };
+48 |       await wakeCodingUnownedPrs(repo, wake, 10);
+49 |       expect(attempts).toHaveLength(1);
+                            ^
+error: expect(received).toHaveLength(expected)
+
+Expected length: 1
+Received length: 0
+
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/coding-unowned-writer.test.ts:49:24)
+(fail) unowned PR wake commits its reservation on the writer with read-only main [1.73ms]
+
+ 0 pass
+ 2 fail
+ 1 expect() calls
+Ran 2 tests across 1 file. [74.00ms]

@@ -2331,7 +2331,7 @@ describe('QueryRunner', () => {
           message: expect.objectContaining({
             content: expect.arrayContaining([
               expect.objectContaining({
-                text: expect.stringContaining('Retrying once'),
+                text: expect.stringContaining('Retrying…'),
               }),
             ]),
           }),
@@ -2352,7 +2352,7 @@ describe('QueryRunner', () => {
           message: expect.objectContaining({
             content: expect.arrayContaining([
               expect.objectContaining({
-                text: expect.stringContaining('Retrying once'),
+                text: expect.stringContaining('Retrying…'),
               }),
             ]),
           }),
@@ -2387,7 +2387,7 @@ describe('QueryRunner', () => {
           message: expect.objectContaining({
             content: expect.arrayContaining([
               expect.objectContaining({
-                text: expect.stringContaining('Retrying once'),
+                text: expect.stringContaining('Retrying…'),
               }),
             ]),
           }),
@@ -2711,7 +2711,7 @@ describe('QueryRunner', () => {
             message: expect.objectContaining({
               content: expect.arrayContaining([
                 expect.objectContaining({
-                  text: expect.stringContaining('Retrying once'),
+                  text: expect.stringContaining('Retrying…'),
                 }),
               ]),
             }),
@@ -4359,7 +4359,7 @@ describe('QueryRunner', () => {
       ]);
       expect(notices.length).toBe(1);
       expect(notices[0]?.markAsError).toBe(false);
-      expect(notices[0]?.text).toContain('Retrying once');
+      expect(notices[0]?.text).toContain('Retrying…');
     });
 
     it('message-not-found arm consumes resume point without replay or notice', async () => {
@@ -6909,7 +6909,7 @@ describe('QueryRunner', () => {
           message: expect.objectContaining({
             content: expect.arrayContaining([
               expect.objectContaining({
-                text: expect.stringContaining('Retrying once'),
+                text: expect.stringContaining('Retrying…'),
               }),
             ]),
           }),
@@ -6938,7 +6938,7 @@ describe('QueryRunner', () => {
           message: expect.objectContaining({
             content: expect.arrayContaining([
               expect.objectContaining({
-                text: expect.stringContaining('Retrying once'),
+                text: expect.stringContaining('Retrying…'),
               }),
             ]),
           }),

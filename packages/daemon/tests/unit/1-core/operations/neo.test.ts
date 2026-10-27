@@ -341,6 +341,7 @@ describe('Neo MVP', () => {
       'neo.todo.continue',
       'neo.todo.retry',
       'neo.todo.close',
+      'neo.ask.search',
       'neo.ask.read',
       'neo.ask.doneTodos',
       'neo.ask.open',
