@@ -1,0 +1,354 @@
+$ bun run check:no-comments && bun run format:check && bun run lint && bun run typecheck && bun run knip && bun run check:session-guards && bun run check:operation-names && bun run check:db-schema-parity && bun run check:test-quality && bun run check:test-matrix && bun run check:online-shards && bun run check:raw-palette && bun run check:neo-strings && bun run check:neo-pack-imports && bun run check:db-main-thread
+$ bun scripts/strip-comments.ts --check
+files with comments: 0, comments removed: 0
+$ biome format .
+Checked 4407 files in 314ms. No fixes applied.
+$ oxlint .
+
+  ! unicorn(prefer-string-starts-ends-with): Prefer String#startsWith over a regex with a caret.
+     ,-[packages/web/src/components/sdk/SDKAssistantMessage.tsx:298:20]
+ 297 | ): { status: string; text: string; running: boolean; failed: boolean } | null {
+ 298 |   const launched = /^Async agent launched successfully/.test(replyText);
+     :                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 299 |   if (!input.run_in_background && !launched && !notification) return null;
+     `----
+  help: Replace `/^Async agent launched successfully/.test(replyText)` with `replyText.startsWith('Async agent launched successfully')`.
+
+  ! unicorn(prefer-string-starts-ends-with): Prefer String#startsWith over a regex with a caret.
+    ,-[packages/web/src/neo/work-driver.ts:29:7]
+ 28 |   if (!link) return null;
+ 29 |   if (/^claude:\/\//.test(link) || /^https:\/\/claude\.ai\//.test(link)) return 'claude';
+    :       ^^^^^^^^^^^^^^^^^^^
+ 30 |   if (/^codex:\/\//.test(link)) return 'codex';
+    `----
+  help: Replace `/^claude:\/\//.test(link)` with `link.startsWith('claude://')`.
+
+  ! unicorn(prefer-string-starts-ends-with): Prefer String#startsWith over a regex with a caret.
+    ,-[packages/web/src/neo/work-driver.ts:29:36]
+ 28 |   if (!link) return null;
+ 29 |   if (/^claude:\/\//.test(link) || /^https:\/\/claude\.ai\//.test(link)) return 'claude';
+    :                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 30 |   if (/^codex:\/\//.test(link)) return 'codex';
+    `----
+  help: Replace `/^https:\/\/claude\.ai\//.test(link)` with `link.startsWith('https://claude.ai/')`.
+
+  ! unicorn(prefer-string-starts-ends-with): Prefer String#startsWith over a regex with a caret.
+    ,-[packages/web/src/neo/work-driver.ts:30:7]
+ 29 |   if (/^claude:\/\//.test(link) || /^https:\/\/claude\.ai\//.test(link)) return 'claude';
+ 30 |   if (/^codex:\/\//.test(link)) return 'codex';
+    :       ^^^^^^^^^^^^^^^^^^
+ 31 |   if (/^ghapp:\/\//.test(link)) return 'copilot';
+    `----
+  help: Replace `/^codex:\/\//.test(link)` with `link.startsWith('codex://')`.
+
+  ! unicorn(prefer-string-starts-ends-with): Prefer String#startsWith over a regex with a caret.
+    ,-[packages/web/src/neo/work-driver.ts:31:7]
+ 30 |   if (/^codex:\/\//.test(link)) return 'codex';
+ 31 |   if (/^ghapp:\/\//.test(link)) return 'copilot';
+    :       ^^^^^^^^^^^^^^^^^^
+ 32 |   if (/^\/session\//.test(link)) return 'hyperneo';
+    `----
+  help: Replace `/^ghapp:\/\//.test(link)` with `link.startsWith('ghapp://')`.
+
+  ! unicorn(prefer-string-starts-ends-with): Prefer String#startsWith over a regex with a caret.
+    ,-[packages/web/src/neo/work-driver.ts:32:7]
+ 31 |   if (/^ghapp:\/\//.test(link)) return 'copilot';
+ 32 |   if (/^\/session\//.test(link)) return 'hyperneo';
+    :       ^^^^^^^^^^^^^^^^^^^
+ 33 |   return null;
+    `----
+  help: Replace `/^\/session\//.test(link)` with `link.startsWith('/session/')`.
+
+  ! typescript(no-this-alias): Unexpected aliasing of 'this' to local variable.
+    ,-[packages/daemon/src/lib/event-loop-activity.ts:21:5]
+ 20 |   activate(): () => void {
+ 21 |     active = this;
+    :     ^^^^^^
+ 22 |     return () => {
+    `----
+  help: Assigning a variable to this instead of properly using arrow lambdas may be a symptom of pre-ES2015 practices or not managing scope well.
+
+  ! unicorn(no-useless-fallback-in-spread): Empty fallbacks in spreads are unnecessary
+     ,-[packages/daemon/src/lib/agent/query-options-builder.ts:781:19]
+ 780 |     const { thinking: thinkingConfig, effort } = this.resolveThinkingOptions();
+ 781 |     const env = { ...(result.env ?? {}) };
+     :                   ^^^^^^^^^^^^^^^^^^^^^
+ 782 |     delete env[DISABLE_THINKING_ENV];
+     `----
+  help: Spreading falsy values in object literals won't add any unexpected properties, so it's unnecessary to add an empty object as fallback.
+
+  ! eslint(no-control-regex): Unexpected control characters
+    ,-[packages/daemon/src/lib/worktree-manager.ts:39:30]
+ 38 | const MAX_PATCH_CHARS = 24_000;
+ 39 | const GIT_QUOTED_PATH = /["\\\x00-\x1f\x7f]/;
+    :                              ^^|^ ^^|^
+    :                                |    `-- 'U+001F' is a control character.
+    :                                `-- 'U+0000' is a control character.
+ 40 | 
+    `----
+  help: Avoid matching control characters in regular expressions. If intentional, disable this rule for the expression.
+
+  ! eslint(no-control-regex): Unexpected control characters
+    ,-[packages/daemon/claude-desktop-bridge/hooks/register.ts:61:20]
+ 60 |             typeof config.socketPath !== 'string' ||
+ 61 |             !/^\/[^\x00-\x1f]{1,98}\.sock$/.test(config.socketPath) ||
+    :                    ^^|^ ^^|^
+    :                      |    `-- 'U+001F' is a control character.
+    :                      `-- 'U+0000' is a control character.
+ 62 |             typeof config.token !== 'string' ||
+    `----
+  help: Avoid matching control characters in regular expressions. If intentional, disable this rule for the expression.
+
+  ! eslint(no-unsafe-finally): Unsafe `finally` block.
+     ,-[packages/web/src/components/space/GoalDetailPanel.tsx:191:60]
+ 190 |     } finally {
+ 191 |       if (ownerMutationTokenRef.current !== mutationToken) return;
+     :                                                            ^^^^^^^
+ 192 |       setOwnerBusy(false);
+     `----
+  help: Control flow inside `try` or `catch` blocks will be overwritten by this statement.
+
+  ! eslint(no-control-regex): Unexpected control characters
+    ,-[packages/daemon/src/lib/artifacts/html-preview.ts:53:41]
+ 52 | function resource(target: unknown, assets: Assets, base = '') {
+ 53 |   if (typeof target !== 'string' || /[\\\u0000-\u001f\u007f]/.test(target)) return null;
+    :                                         ^^^|^^ ^^^|^^
+    :                                            |      `-- 'U+001F' is a control character.
+    :                                            `-- 'U+0000' is a control character.
+ 54 |   const href = target.trim();
+    `----
+  help: Avoid matching control characters in regular expressions. If intentional, disable this rule for the expression.
+
+  ! eslint(no-control-regex): Unexpected control characters
+    ,-[packages/daemon/src/lib/artifacts/file-policy.ts:86:7]
+ 85 |     !path ||
+ 86 |     /[\u0000-\u001f\u007f\\:]/.test(path) ||
+    :       ^^^|^^ ^^^|^^
+    :          |      `-- 'U+001F' is a control character.
+    :          `-- 'U+0000' is a control character.
+ 87 |     /%(?:25)*[0-9a-f]{2}/i.test(path) ||
+    `----
+  help: Avoid matching control characters in regular expressions. If intentional, disable this rule for the expression.
+
+  ! eslint(no-control-regex): Unexpected control characters
+    ,-[packages/daemon/src/lib/artifacts/bundle.ts:19:12]
+ 18 |     (path) =>
+ 19 |       !/[\\\u0000-\u001f\u007f:%?#]/.test(path) &&
+    :            ^^^|^^ ^^^|^^
+    :               |      `-- 'U+001F' is a control character.
+    :               `-- 'U+0000' is a control character.
+ 20 |       path.split('/').every((part) => part !== '' && part !== '.' && part !== '..')
+    `----
+  help: Avoid matching control characters in regular expressions. If intentional, disable this rule for the expression.
+
+  ! eslint(no-control-regex): Unexpected control characters
+    ,-[packages/daemon/src/lib/artifacts/pr-summary.ts:16:10]
+ 15 |     (value) =>
+ 16 |       !/[\u0000-\u001f\u007f\\]/.test(value) &&
+    :          ^^^|^^ ^^^|^^
+    :             |      `-- 'U+001F' is a control character.
+    :             `-- 'U+0000' is a control character.
+ 17 |       value.split('/').every((part) => !!part && part !== '.' && part !== '..')
+    `----
+  help: Avoid matching control characters in regular expressions. If intentional, disable this rule for the expression.
+
+  ! unicorn(no-useless-fallback-in-spread): Empty fallbacks in spreads are unnecessary
+    ,-[packages/daemon/src/storage/schema/m275-link-agent-owned-sessions.ts:46:7]
+ 45 |     metadata.promptProvenance = {
+ 46 |       ...(provenance ?? {}),
+    :       ^^^^^^^^^^^^^^^^^^^^^
+ 47 |       source: (provenance as { source?: unknown } | undefined)?.source ?? 'linked_session',
+    `----
+  help: Spreading falsy values in object literals won't add any unexpected properties, so it's unnecessary to add an empty object as fallback.
+
+  ! unicorn(no-useless-spread): Using a spread operator here creates a new array unnecessarily.
+     ,-[packages/daemon/src/lib/neo/session-watcher.ts:240:30]
+ 239 |         if (listed.complete)
+ 240 |           for (const key of [...this.sessionsSeen.keys()])
+     :                              ^^^
+ 241 |             if (!keep.has(key)) this.sessionsSeen.delete(key);
+     `----
+  help: `for…of` can iterate over iterable, it's unnecessary to convert to an array.
+
+  ! unicorn(no-useless-spread): Using a spread operator here creates a new array unnecessarily.
+     ,-[packages/daemon/src/lib/neo/session-watcher.ts:251:28]
+ 250 |         for (const key of read.found.keys()) this.sessionPrsCheckedAt.set(key, now);
+ 251 |         for (const key of [...this.sessionPrsCheckedAt.keys()])
+     :                            ^^^
+ 252 |           if (!this.sessionsSeen.has(key)) this.sessionPrsCheckedAt.delete(key);
+     `----
+  help: `for…of` can iterate over iterable, it's unnecessary to convert to an array.
+
+  ! eslint(no-control-regex): Unexpected control characters
+    ,-[packages/daemon/src/lib/neo/packs/coding/prepare-execution.ts:47:9]
+ 46 |     target === '@' ||
+ 47 |     /[\s\x00-\x1f\x7f~^:?*\[\\]/.test(target) ||
+    :         ^^|^ ^^|^
+    :           |    `-- 'U+001F' is a control character.
+    :           `-- 'U+0000' is a control character.
+ 48 |     target.includes('..') ||
+    `----
+  help: Avoid matching control characters in regular expressions. If intentional, disable this rule for the expression.
+
+  ! eslint(no-useless-escape): Unnecessary escape character '['
+    ,-[packages/daemon/src/lib/neo/packs/coding/prepare-execution.ts:47:27]
+ 46 |     target === '@' ||
+ 47 |     /[\s\x00-\x1f\x7f~^:?*\[\\]/.test(target) ||
+    :                           ^^
+ 48 |     target.includes('..') ||
+    `----
+  help: Replace `\[` with `[`.
+
+  ! eslint(no-misleading-character-class): Unexpected combining class in character class.
+    ,-[packages/daemon/src/lib/agents/template-field-validation.ts:23:54]
+ 22 | const DEFAULT_IGNORABLE =
+ 23 |   /[\u034F\u115F\u1160\u17B4\u17B5\u180B-\u180D\u180F\u3164\uFE00-\uFE0F\uFFA0\u{E0100}-\u{E01EF}]/u;
+    :                                                      ^^^^^^^^^^^^
+ 24 | 
+    `----
+  help: Replace the character with its normalized form (NFC) or use Unicode code point escapes instead of combining sequences.
+
+  ! eslint(no-misleading-character-class): Unexpected combining class in character class.
+    ,-[packages/daemon/src/lib/agents/template-field-validation.ts:23:73]
+ 22 | const DEFAULT_IGNORABLE =
+ 23 |   /[\u034F\u115F\u1160\u17B4\u17B5\u180B-\u180D\u180F\u3164\uFE00-\uFE0F\uFFA0\u{E0100}-\u{E01EF}]/u;
+    :                                                                         ^^^^^^^^^^^^^^^
+ 24 | 
+    `----
+  help: Replace the character with its normalized form (NFC) or use Unicode code point escapes instead of combining sequences.
+
+  ! typescript(triple-slash-reference): Do not use a triple slash reference for ./markdown.d.ts, use `import` style instead.
+   ,-[packages/prompts/src/mod.ts:1:1]
+ 1 | /// <reference path="./markdown.d.ts" />
+   : ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 2 | 
+   `----
+  help: Use of triple-slash reference type directives is generally discouraged in favor of ECMAScript Module imports.
+
+  ! unicorn(no-useless-spread): Using a spread operator here creates a new array unnecessarily.
+    ,-[packages/daemon/src/lib/agent/processing-state-manager.ts:89:54]
+ 88 |     const keys =
+ 89 |       generation !== undefined ? [generation] : [-1, ...[...this.pendingTerminalIdleArms.keys()]];
+    :                                                      ^^^
+ 90 |     for (const key of keys) {
+    `----
+  help: Consider removing the spread operator.
+
+  ! eslint(no-control-regex): Unexpected control characters
+    ,-[packages/web/src/lib/artifact-link-policy.ts:17:19]
+ 16 | const normalize = (href: string) =>
+ 17 |   href.replace(/^[\u0000-\x20]+|[\u0000-\x20]+$/g, '').replace(/[\t\n\r]/g, '');
+    :                   ^^^|^^         ^^^|^^
+    :                      |              `-- 'U+0000' is a control character.
+    :                      `-- 'U+0000' is a control character.
+ 18 | 
+    `----
+  help: Avoid matching control characters in regular expressions. If intentional, disable this rule for the expression.
+
+  ! eslint(no-control-regex): Unexpected control characters
+    ,-[packages/web/src/components/chat/markdown-image.ts:30:25]
+ 29 | function normalizeUri(uri: string) {
+ 30 |   return uri.replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, '').replace(/[\t\n\r]/g, '');
+    :                         ^^^|^^           ^^^|^^
+    :                            |                `-- 'U+0000' is a control character.
+    :                            `-- 'U+0000' is a control character.
+ 31 | }
+    `----
+  help: Avoid matching control characters in regular expressions. If intentional, disable this rule for the expression.
+
+  ! unicorn(no-useless-spread): `Promise.allSettled` accepts an iterable, so it's unnecessary to convert the iterable to an array.
+    ,-[packages/daemon/src/lib/drivers/claude-inbox-conversations.ts:92:35]
+ 91 |         const results = await Promise.allSettled(opened.map((item) => item?.close()));
+ 92 |         await Promise.allSettled([...events]);
+    :                                   ^^^
+ 93 |         const failures = results.flatMap((result) =>
+    `----
+  help: Consider removing the spread operator.
+
+  ! eslint(no-control-regex): Unexpected control characters
+    ,-[packages/shared/src/types/artifact-reference.ts:22:23]
+ 21 | function candidate(reference: string, explicit: boolean): PreviewReferenceCandidate | null {
+ 22 |   if (!reference || /[\u0000-\u001f\u007f\\]/.test(reference)) return null;
+    :                       ^^^|^^ ^^^|^^
+    :                          |      `-- 'U+001F' is a control character.
+    :                          `-- 'U+0000' is a control character.
+ 23 |   if (/(?:^|\/)\.{1,2}(?:\/|$)/.test(reference) && reference.includes('://')) return null;
+    `----
+  help: Avoid matching control characters in regular expressions. If intentional, disable this rule for the expression.
+
+  ! unicorn(no-useless-spread): Using a spread operator here creates a new array unnecessarily.
+    ,-[packages/daemon/src/lib/providers/provider-key-bridge.ts:80:31]
+ 79 |   thinkingOffSessions.delete(sessionId);
+ 80 |   for (const [scope, key] of [...scopeBridgeKeys]) {
+    :                               ^^^
+ 81 |     if (!scope.endsWith(`:${sessionId}`)) continue;
+    `----
+  help: `for…of` can iterate over iterable, it's unnecessary to convert to an array.
+
+  ! unicorn(no-useless-fallback-in-spread): Empty fallbacks in spreads are unnecessary
+    ,-[packages/daemon/src/lib/providers/anthropic-non-streaming.ts:61:31]
+ 60 |     if (event.type === 'message_delta') {
+ 61 |       message = { ...message, ...(event.delta ?? {}) };
+    :                               ^^^^^^^^^^^^^^^^^^^^^^
+ 62 |       if (event.usage)
+    `----
+  help: Spreading falsy values in object literals won't add any unexpected properties, so it's unnecessary to add an empty object as fallback.
+
+  ! unicorn(no-useless-fallback-in-spread): Empty fallbacks in spreads are unnecessary
+    ,-[packages/daemon/src/lib/providers/anthropic-non-streaming.ts:63:27]
+ 62 |       if (event.usage)
+ 63 |         message.usage = { ...((message.usage as object | undefined) ?? {}), ...event.usage };
+    :                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 64 |     }
+    `----
+  help: Spreading falsy values in object literals won't add any unexpected properties, so it's unnecessary to add an empty object as fallback.
+
+Found 31 warnings and 0 errors.
+Finished in 57ms on 2228 files with 98 rules using 18 threads.
+$ bun node_modules/typescript7/bin/tsc --build --noEmit
+$ knip --include files,dependencies,exports --no-config-hints
+$ ./scripts/check-session-deletion-callers.sh
+Task #85 guard passed: only allow-listed files call the UI-only session primitives.
+$ bun run scripts/check-operation-names.ts
+operation names: 203 defined, all declared.
+$ bun scripts/check-db-schema-parity.ts
+DB schema parity check passed.
+$ bun scripts/check-test-quality.ts
+Test-quality audit passed.
+$ bash scripts/validate-test-matrix.sh
+daemon unit: 1431 file(s) on disk, 1431 covered
+web: 424 test file(s) in packages/web/ (1 exempt outside src/)
+
+All test files are covered by the CI matrices (unit + web + online).
+Exempt (intentionally disabled) online dirs: benchmark glm providers sandbox cross-provider deno
+$ scripts/test-online.sh --verify
+Verifying daemon online module configuration...
+  weights: 3/3 file(s) duration-weighted, 0 hash-fallback
+  space        2-way split, 3 files (duration-weighted via scripts/shard-weights.tsv):
+      bucket 0: 1 file(s), 67.2s weighted
+      bucket 1: 2 file(s), 87.3s weighted
+  weights: 17/17 file(s) duration-weighted, 0 hash-fallback
+  rpc          4-way split, 17 files (duration-weighted via scripts/shard-weights.tsv):
+      bucket 0: 4 file(s), 85.9s weighted
+      bucket 1: 4 file(s), 85.5s weighted
+      bucket 2: 5 file(s), 85.2s weighted
+      bucket 3: 4 file(s), 85.0s weighted
+
+Online module configuration OK.
+$ bun scripts/check-raw-palette.ts
+raw palette utilities: 180 (baseline 180)
+$ bun scripts/check-neo-strings.ts
+neo strings: all non-allowlisted files use t()
+$ bun scripts/check-neo-pack-imports.ts
+Neo core imports no pack implementations.
+$ bun scripts/check-db-main-thread.ts
+prepare: 1415 (baseline 1415)
+baseline prepare may only decrease (1413 -> 1415)
+transaction: 151 (baseline 151)
+exec: 116 (baseline 118)
+baseline exec may only decrease (116 -> 118)
+query: 13 (baseline 13)
+run: 612 (baseline 612)
+open: 4 (baseline 4)
+error: script "check:db-main-thread" exited with code 1
+error: script "check" exited with code 1

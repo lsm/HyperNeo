@@ -1,0 +1,17 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:7:14). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 <worktree>/packages/daemon
+
+ ✓ tests/unit/5-space/runtime/connectors/connector-pr-ledger.test.ts (6 tests) 1879ms
+   ✓ ledger connector PR acquisition preserves payload, freshness and failure history 1867ms
+ ✓ tests/unit/5-space/runtime/connectors/review-thread-wire.test.ts (4 tests) 22ms
+ ✓ tests/unit/5-space/runtime/connectors/connector-review-thread-ledger.test.ts (12 tests) 27ms
+ ✓ tests/unit/1-core/operations/coding-review-thread-writer.test.ts (4 tests) 20ms
+
+ Test Files  4 passed (4)
+      Tests  26 passed (26)
+   Start at  01:01:28
+   Duration  3.49s (tests 60%, transform 24%, import 14%, setup 2%)
+

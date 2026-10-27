@@ -1,0 +1,10 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/coding-review-thread-writer.test.ts:
+(pass) review-thread commands use the bound gateway with guarded main [6.14ms]
+(pass) review-thread commands use the bound gateway with read-only main [1.88ms]
+
+ 2 pass
+ 0 fail
+ 6 expect() calls
+Ran 2 tests across 1 file. [37.00ms]

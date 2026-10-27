@@ -1,0 +1,52 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:7:14). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 <worktree>/packages/daemon
+
+ ❯ tests/unit/1-core/operations/coding-review-thread-writer.test.ts (4 tests | 2 failed) 24ms
+   ✓ review-thread commands use the bound gateway with guarded main 16ms
+   ✓ review-thread commands use the bound gateway with read-only main 3ms
+   × connector identity canonicalizes mixed-case OLD/REPO 3ms
+   × connector identity canonicalizes mixed-case NEW/REPO 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/1-core/operations/coding-review-thread-writer.test.ts > connector identity canonicalizes mixed-case OLD/REPO
+AssertionError: expected 'OLD/REPO' to be 'synthetic/threads' // Object.is equality
+
+Expected: "synthetic/threads"
+Received: "OLD/REPO"
+
+ ❯ tests/unit/1-core/operations/coding-review-thread-writer.test.ts:91:84
+     89|     const gateway = new DbGateway(':memory:', db);
+     90|     try {
+     91|       expect(await gateway.call(codingConnectorIdentityReads, 'canonic…
+       |                                                                                    ^
+     92|     } finally {
+     93|       await gateway.close();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/unit/1-core/operations/coding-review-thread-writer.test.ts > connector identity canonicalizes mixed-case NEW/REPO
+AssertionError: expected 'NEW/REPO' to be 'new/repo' // Object.is equality
+
+Expected: "new/repo"
+Received: "NEW/REPO"
+
+ ❯ tests/unit/1-core/operations/coding-review-thread-writer.test.ts:91:84
+     89|     const gateway = new DbGateway(':memory:', db);
+     90|     try {
+     91|       expect(await gateway.call(codingConnectorIdentityReads, 'canonic…
+       |                                                                                    ^
+     92|     } finally {
+     93|       await gateway.close();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 2 passed (4)
+   Start at  00:54:42
+   Duration  341ms (transform 61%, import 23%, tests 9%, setup 6%, worker 1%)
+
