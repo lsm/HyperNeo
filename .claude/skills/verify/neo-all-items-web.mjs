@@ -13,7 +13,7 @@ export async function verifyAllItems(page, fixture, { touch = false, evidence })
   const card = page.locator('[data-ask="all-items"]:visible');
   const footer = card.getByRole('button', {name:'All · 30',exact:true});
   await footer.waitFor();
-  assert.equal(await card.locator('[data-ask-todo]').count(),1);
+  assert.equal(await card.locator('[data-ask-todo]').count(),2);
   assert.equal(await card.getByRole('button',{name:/done — show more|more — Details/}).count(),0);
   const dimensions = await footer.evaluate(element => ({button:element.getBoundingClientRect().width,parent:element.parentElement.getBoundingClientRect().width,height:element.getBoundingClientRect().height}));
   assert(dimensions.height >=44 && Math.abs(dimensions.button-dimensions.parent)<1);

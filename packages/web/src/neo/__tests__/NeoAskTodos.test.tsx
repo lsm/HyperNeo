@@ -1000,7 +1000,7 @@ describe('NeoAskTodos', () => {
     expect(line.id).toBe('neo-ref-todo-d');
   });
 
-  it('keeps a removed todo still listed in an open start question out of Details', async () => {
+  it('shows removed start-question work in All with unique anchors', async () => {
     const app = render(
       <NeoAskTodos
         entry={entry({
@@ -1012,6 +1012,12 @@ describe('NeoAskTodos', () => {
     );
     expect(app.queryByRole('button', { name: /^全部 ·/ })).toBeTruthy();
     expect(app.container.querySelectorAll('[data-ask-todo="d"]')).toHaveLength(1);
+    toggleAll(app);
+    expect(app.getByRole('list', { name: '已移除' }).textContent).toContain('Todo d');
+    expect(app.baseElement.querySelectorAll('#neo-ref-todo-d')).toHaveLength(1);
+    expect(app.baseElement.querySelector('#all-neo-ref-todo-d')).toBeTruthy();
+    const ids = [...app.baseElement.querySelectorAll('[id]')].map((element) => element.id);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it('shows All for active work without closed history', () => {
