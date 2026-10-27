@@ -12,11 +12,12 @@ const failures:Record<string,string>={startup:'SDK startup timeout - query abort
 const attempts:number[]=[],failure=failures[phase]??'Synthetic unknown query start failure 9093';const hollowResults:number[]=[];let healthy=phase==='hollow'||phase==='large'||phase==='scoped',finish=()=>{};
 let scopedCount=0,releaseParent=()=>{},armCompaction=()=>{};
 mock.module('@anthropic-ai/claude-agent-sdk',()=>({...sdk,query:({prompt}:{prompt:AsyncIterable<unknown>|string})=>{
- if(typeof prompt!=='string'){attempts.push(Date.now());if(phase==='scoped'&&attempts.length===1)throw new Error(failure);if(!healthy)throw new Error(failure);}
+ if(typeof prompt!=='string'){attempts.push(Date.now());if(phase==='scoped'&&attempts.length===1)throw new Error(failure);if(!healthy&&!phase.startsWith('consumed'))throw new Error(failure);}
  const ended=new Promise<void>(resolve=>{finish=resolve;});
  return {async *[Symbol.asyncIterator](){
   if(typeof prompt==='string'){yield {type:'assistant',message:{role:'assistant',content:[{type:'text',text:'Synthetic title'}]}};return;}
   const feed=prompt[Symbol.asyncIterator]();await feed.next();let nextInput=feed.next();void nextInput.catch(()=>{});
+  if(phase.startsWith('consumed')&&!healthy)throw new Error(failure);
   yield {type:'system',subtype:'init',uuid:crypto.randomUUID(),session_id:crypto.randomUUID(),cwd:join(run,'workspace'),model:'claude-haiku-4-5-20251001',permissionMode:'default',apiKeySource:'user',claude_code_version:'synthetic',tools:[],skills:[],plugins:[],mcp_servers:[],slash_commands:[],output_style:'default'};
   if(phase==='scoped'){
    const parentGate=new Promise<void>(resolve=>{releaseParent=resolve;});
@@ -96,6 +97,7 @@ try{
   const failed=await read();assert.equal(failed.metadata.queryFailureEpisode?.failures,3);assert(failed.metadata.queryFailureEpisode?.error.includes(failure));assert.equal(attempts.length,phase==='deadline'?0:3);
   if(phase!=='deadline')assert(attempts[1]-attempts[0]>=950 && attempts[2]-attempts[1]>=1950);
   const beforeCount=attempts.length;await new Promise(done=>setTimeout(done,2200));assert.equal(attempts.length,beforeCount);
+  if(phase==='consumed'){const rows=await hub.request<{messages:{type:string;deliveryStatus?:string}[]}>('message.sdkMessages',{sessionId});assert(rows.messages.some(row=>row.type==='user'&&row.deliveryStatus==='delivered'));evidence.consumedDelivery=true;}
   evidence.failed=failed.metadata.queryFailureEpisode;evidence.attempts=[...attempts];
   const row=app.db.getDatabase().prepare('SELECT metadata FROM sessions WHERE id=?').get(sessionId) as {metadata:string};assert.deepEqual(JSON.parse(row.metadata).queryFailureEpisode,failed.metadata.queryFailureEpisode);evidence.persisted=true;
   const old=failed.metadata.queryFailureEpisode!.id;healthy=true;
