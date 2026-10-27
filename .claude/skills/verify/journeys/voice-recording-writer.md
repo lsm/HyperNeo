@@ -27,3 +27,15 @@ and allow pre-dispatch refusals to retry. Before each heavy helper run use the
 shared resource check; stop owned processes and save evidence before deleting
 the fresh run directory. This proves synthetic storage isolation and retry
 semantics, not production lock attribution or a day of phone reliability.
+
+The helper configures `disableWorktrees` on the daemon Config and awaits the job
+processor's stop before creating fixtures. It does not rely on the unused
+`disableGoalProcessing` setting. A disposable Git repo and explicit worktree
+request through session.create must retain the original workspace and exactly
+one Git worktree. observed.json records that RPC/Git evidence; the tests-first
+reproduction instead created a second worktree inside the synthetic data dir.
+Only after this isolation check does the voice/health proof begin.
+
+The daemon must forward Config.disableWorktrees into SessionLifecycleConfig.
+Moving the helper option alone is insufficient: the real session.create check
+also reproduced a worktree when that forwarding was missing.
