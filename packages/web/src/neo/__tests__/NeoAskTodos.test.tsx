@@ -1138,6 +1138,37 @@ describe('neoDonePageMerge', () => {
   });
 });
 
+describe('All items dialog', () => {
+  it('keeps only unfinished todos on the card and opens held items with one full-width control', async () => {
+    locale.value = 'en';
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          todos: [
+            todo('active'),
+            todo('done', { state: 'done' }),
+            todo('removed', { state: 'removed' }),
+          ],
+          doneCount: 1,
+          questions: [
+            question('answered', { state: 'answered', answer: 'Yes', answeredBy: 'chat' }),
+          ],
+        })}
+        onAnswer={vi.fn()}
+      />
+    );
+    expect(app.container.querySelector('[data-ask-todo="done"]')).toBeNull();
+    expect(app.container.querySelector('[data-ask-todo="active"]')).toBeTruthy();
+    fireEvent.click(app.getByRole('button', { name: 'All · 4' }));
+    expect(await app.findByRole('dialog')).toBeTruthy();
+    expect(app.getByRole('dialog').querySelector('[data-ask-todo="done"]')).toBeTruthy();
+    expect(app.getByRole('dialog').querySelector('[data-ask-todo="removed"]')).toBeTruthy();
+    fireEvent.click(app.getByRole('button', { name: 'Close modal' }));
+    expect(app.queryByRole('dialog')).toBeNull();
+    expect(app.getByRole('button', { name: 'All · 4' })).toBeTruthy();
+  });
+});
+
 describe('done todos on a card', () => {
   beforeEach(() => {
     locale.value = 'en';
