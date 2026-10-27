@@ -7,8 +7,8 @@ class CodingConnectorIdentityCommands {
   canonical(repo: string) {
     const alias = this.db
       .prepare('SELECT canonical FROM pack_coding_repo_aliases WHERE alias=?')
-      .get(repo) as { canonical: string } | null;
-    return alias?.canonical.toLowerCase() ?? repo;
+      .get(repo.toLowerCase()) as { canonical: string } | null;
+    return alias?.canonical.toLowerCase() ?? repo.toLowerCase();
   }
 }
 

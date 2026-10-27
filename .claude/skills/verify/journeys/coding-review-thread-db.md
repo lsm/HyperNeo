@@ -72,3 +72,11 @@ commit the merge before refreshing proofs. The latest proof binding and runtime
 folders identify that committed merged application. Prior proof bindings and
 measurements remain in the evidence history. Re-run focused tests and the full
 check, then keep the final post-proof commit limited to evidence and this journey.
+
+
+The registered connector identity command normalizes mixed-case input before
+alias lookup and in the no-alias fallback, matching the sibling coding readers.
+The review regression calls that gateway command directly with a mixed-case
+known alias and a mixed-case unknown repository; both must return lowercase
+canonical identity without fragmenting subjects. Existing RPC pagination,
+coalescing and fencing proofs still run after the committed review fix.
