@@ -2078,6 +2078,8 @@ export class AgentSession
     _queuedMessages?: Array<import('@hyperneo/shared/sdk').SDKMessage>,
     runnerGeneration?: number
   ): Promise<void> {
+    if (this.startFailures.count > 0 || this.startFailures.until > 0)
+      this.startFailures = { count: 0, until: 0 };
     const queryGeneration = runnerGeneration ?? this.getQueryGeneration();
     if (
       this.session.config.provider !== 'acp' &&
