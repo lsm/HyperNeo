@@ -1,0 +1,117 @@
+{
+  "mode": "verify",
+  "verified": true,
+  "consumer": "Real daemon public WebSocket neo.project.move and neo.snapshot",
+  "limitation": "Synthetic fixtures; no GUI, model, live daemon or GitHub. No held-writer latency claim.",
+  "race": [
+    {
+      "ok": true
+    },
+    {
+      "ok": false,
+      "reason": "superseded"
+    }
+  ],
+  "snapshot": [
+    {
+      "id": "child",
+      "title": "child",
+      "summary": "Retained summary.",
+      "context": "Retained context.",
+      "parentId": "a",
+      "epicUrl": null,
+      "homePath": null,
+      "revision": 2,
+      "createdAt": 1793091875081,
+      "updatedAt": 1793091875092
+    }
+  ],
+  "noop": {
+    "ok": true
+  },
+  "stale": {
+    "ok": false,
+    "reason": "superseded"
+  },
+  "cycle": {
+    "ok": false,
+    "reason": "project_cycle"
+  },
+  "workspace": {
+    "ok": false,
+    "reason": "section_workspace_mismatch"
+  },
+  "orphan": {
+    "ok": false,
+    "reason": "section_needs_parent"
+  },
+  "missing": {
+    "ok": false,
+    "reason": "unknown_project"
+  },
+  "reopened": [
+    {
+      "id": "child",
+      "title": "child",
+      "summary": "Retained summary.",
+      "context": "Retained context.",
+      "parentId": "a",
+      "epicUrl": null,
+      "homePath": null,
+      "revision": 2,
+      "createdAt": 1793091875081,
+      "updatedAt": 1793091875092
+    }
+  ],
+  "mainSql": [],
+  "commands": [
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.39495899999997164,
+      "argsBytes": 40,
+      "replyBytes": 11
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 1.180708999999979,
+      "argsBytes": 40,
+      "replyBytes": 34
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.1405409999999847,
+      "argsBytes": 40,
+      "replyBytes": 11
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.09166700000014316,
+      "argsBytes": 41,
+      "replyBytes": 34
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.07212500000014188,
+      "argsBytes": 44,
+      "replyBytes": 37
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.1829579999998714,
+      "argsBytes": 40,
+      "replyBytes": 50
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.566124999999829,
+      "argsBytes": 43,
+      "replyBytes": 44
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.06966599999987011,
+      "argsBytes": 45,
+      "replyBytes": 39
+    }
+  ]
+}
