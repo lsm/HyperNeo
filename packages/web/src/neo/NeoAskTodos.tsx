@@ -229,6 +229,47 @@ function TodoRow({
   );
 }
 
+function SettledQuestionBody({ question }: { question: NeoQuestionEntry }) {
+  const text = neoQuestionText(question);
+  const preview = text.match(/^.{0,300}/su)?.[0] ?? '';
+  const clipped = preview.length < text.length;
+  const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const close = () => {
+    setOpen(false);
+    trigger.current?.focus();
+  };
+  return (
+    <>
+      <MarkdownRenderer
+        content={clipped ? `${preview.trimEnd()} …` : text}
+        class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
+      />
+      {clipped && (
+        <button
+          ref={trigger}
+          type="button"
+          class={neoPlainClass}
+          aria-haspopup="dialog"
+          onClick={() => setOpen(true)}
+        >
+          {t('question.readAll')}
+        </button>
+      )}
+      {open && (
+        <Modal isOpen onClose={close} title={t('question.readAll')} size="xl">
+          <MarkdownRenderer
+            content={text}
+            class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
+          />
+        </Modal>
+      )}
+      <QuestionDocument question={question} />
+      <ArtifactCards artifacts={question.artifacts} />
+    </>
+  );
+}
+
 function QuestionDocument({ question }: { question: NeoQuestionEntry }) {
   const [open, setOpen] = useState(false);
   if (!question.document) return null;
@@ -748,12 +789,7 @@ export function NeoAskTodos({
               <ul class="mt-1.5 space-y-1.5" aria-label={t('ask.answered')}>
                 {answered.map((question) => (
                   <li key={question.id} id={`neo-ref-question-${question.id}`}>
-                    <MarkdownRenderer
-                      content={neoQuestionText(question)}
-                      class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
-                    />
-                    <QuestionDocument question={question} />
-                    <ArtifactCards artifacts={question.artifacts} />
+                    <SettledQuestionBody question={question} />
                     <p>
                       — {neoQuestionAnswerLabel(question, todos)}
                       {question.answeredAt
@@ -771,12 +807,7 @@ export function NeoAskTodos({
               <ul class="mt-1.5 space-y-1.5" aria-label={t('ask.retired')}>
                 {retired.map((question) => (
                   <li key={question.id} id={`neo-ref-question-${question.id}`}>
-                    <MarkdownRenderer
-                      content={neoQuestionText(question)}
-                      class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
-                    />
-                    <QuestionDocument question={question} />
-                    <ArtifactCards artifacts={question.artifacts} />
+                    <SettledQuestionBody question={question} />
                     <p>
                       {t('question.retired', { question: '' })}
                       {question.retiredReason ? `: ${question.retiredReason}` : ''}

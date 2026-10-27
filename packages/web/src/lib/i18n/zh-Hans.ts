@@ -85,6 +85,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'question.openSession': '打开会话',
   'question.openSessionTitle': '打开会话：{name}',
   'question.document': '查看完整版本',
+  'question.readAll': '阅读全文',
   'question.reply': '在聊天里回复',
   'question.confirm': '确定',
   'question.start': '开始',
