@@ -364,7 +364,11 @@ describe('claude-desktop start', () => {
         .ok
     ).toBe(true);
     expect(existsSync(join(directory, '.claude/settings.local.json'))).toBe(false);
-    expect(spawned.some((args) => args.includes('--settings'))).toBe(false);
+    const opening = spawned.find((args) => args.includes('--session-id'))!;
+    const inline = JSON.parse(opening[opening.indexOf('--settings') + 1]);
+    expect(inline.env.HYPERNEO_WORKTREES).toMatch(/worktrees$/);
+    expect(inline.sandbox).toBeUndefined();
+    expect(opening[opening.indexOf('--append-system-prompt') + 1]).toContain('HYPERNEO_WORKTREES');
   });
 
   test('B1 accepts and reports the actual imported acceptEdits mode', async () => {

@@ -396,7 +396,7 @@ describe('buildCustomAgentTaskMessage', () => {
     }
   });
 
-  it('omits the work locations when the workspace is not a sandboxed worker', () => {
+  it('states the work locations even when the worker has no sandbox marker', () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'hyperneo-brief-'));
     process.env.HYPERNEO_DATA_DIR = dataDir;
     try {
@@ -405,8 +405,10 @@ describe('buildCustomAgentTaskMessage', () => {
       );
       expect(message).toContain('## Runtime Location');
       expect(message).toContain(`- Worktree: ${join(dataDir, 'plain-workspace')}`);
-      expect(message).not.toContain('HYPERNEO_WORKTREES');
-      expect(message).not.toContain('TMPDIR');
+      expect(message).toContain('HYPERNEO_WORKTREES');
+      expect(message).toContain(join(dataDir, 'worktrees'));
+      expect(message).toContain('HYPERNEO_EVIDENCE');
+      expect(message).toContain('HYPERNEO_BUILDS');
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
       delete process.env.HYPERNEO_DATA_DIR;
