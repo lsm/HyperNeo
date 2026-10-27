@@ -95,12 +95,14 @@ vi.mock('../../lib/voice/voice-transcript-outbox.ts', async (importOriginal) => 
 
 const store = vi.hoisted(() => ({
   records: new Map<string, Record<string, unknown>>(),
+  failUpgrade: false,
   puts: [] as Array<Record<string, unknown>>,
 }));
 vi.mock('../../lib/voice/voice-audio-store.ts', () => ({
   listVoiceRecords: async () => [...store.records.values()].map((r) => ({ ...r })),
   getVoiceRecord: async (id: string) => store.records.get(id) ?? null,
   putVoiceRecord: async (entry: Record<string, unknown>) => {
+    if (store.failUpgrade && entry.intent === 'send') return false;
     store.puts.push({ ...entry });
     store.records.set(entry.id as string, { ...entry });
     return true;
@@ -187,6 +189,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   hubRequest.mockReset().mockImplementation(defaultHub);
   store.records.clear();
+  store.failUpgrade = false;
   store.puts.length = 0;
   parked.entries.length = 0;
   parked.fail = false;
@@ -716,3 +719,226 @@ describe('NeoComposer and NeoVoice send integration', () => {
     expect(store.records.size).toBe(0);
   });
 });
+
+describe('Send accepted while final transcription is pending', () => {
+  it.each(['plain', 'empty', 'attachment', 'reply', 'preview', 'photo'] as const)(
+    'sends the completed %s composition once without another tap',
+    async (staged) => {
+      let release: (value: Record<string, unknown>) => void = () => {};
+      hubRequest.mockImplementation(async (method: string, payload?: unknown) => {
+        if (method === 'voice.transcribe')
+          return new Promise((resolve) => {
+            release = resolve;
+          });
+        return defaultHub(method, payload);
+      });
+      if (staged === 'attachment')
+        attachmentFiles.current = [
+          { id: 'file1', kind: 'text', name: 'notes.txt', text: 'original attachment' },
+        ];
+      if (staged === 'photo')
+        attachmentFiles.current = [
+          {
+            id: 'photo1',
+            kind: 'image',
+            name: 'photo.png',
+            image: { data: 'aGk=', media_type: 'image/png' },
+          },
+        ];
+      const quote =
+        staged === 'reply'
+          ? {
+              author: 'Neo' as const,
+              text: 'quoted words',
+              anchor: 'source',
+              replyTo: {
+                kind: 'message' as const,
+                id: 'source',
+                author: 'neo' as const,
+                excerpt: 'quoted words',
+              },
+            }
+          : undefined;
+      const preview =
+        staged === 'preview'
+          ? {
+              artifactId: 'saved',
+              snapshot: 'a'.repeat(64),
+              displayName: 'Saved',
+              state: 'available' as const,
+            }
+          : undefined;
+      const view = renderComposer(staged === 'empty' ? '' : 'typed first', quote, preview);
+      await waitFor(() => expect(stopControl().disabled).toBe(false));
+      fireEvent.click(stopControl());
+      await waitFor(() =>
+        expect(hubRequest.mock.calls.some(([method]) => method === 'voice.transcribe')).toBe(true)
+      );
+      fireEvent.click(buttonNamed('Send message'));
+      fireEvent.click(buttonNamed('Send message'));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(asks()).toHaveLength(0);
+      release({ text: 'spoken second' });
+      await waitFor(() => expect(asks()).toHaveLength(1));
+      const input = asks()[0][1].input;
+      expect(JSON.stringify(input.content)).toContain(
+        (staged === 'empty' ? 'spoken second' : 'typed first\nspoken second').replaceAll(
+          '\n',
+          '\\n'
+        )
+      );
+      if (staged === 'attachment')
+        expect(input.content).toBe(
+          'typed first\nspoken second\n\n### Attached file: notes.txt\n\n```text\noriginal attachment\n```'
+        );
+      if (staged === 'reply') expect(input).toHaveProperty('replyTo', quote?.replyTo);
+      if (staged === 'preview')
+        expect(input.previewContext).toEqual({ artifactId: 'saved', snapshot: 'a'.repeat(64) });
+      if (staged === 'photo') expect(JSON.stringify(input.content)).toContain('aGk=');
+      expect(view.onTranscript).not.toHaveBeenCalled();
+      expect(view.onSend).not.toHaveBeenCalled();
+      await waitFor(() => expect(store.records.size).toBe(0));
+    }
+  );
+});
+
+it('keeps a pending Send snapshot when later text or quote changes', async () => {
+  let release: (value: Record<string, unknown>) => void = () => {};
+  hubRequest.mockImplementation(async (method, payload) =>
+    method === 'voice.transcribe'
+      ? new Promise((resolve) => {
+          release = resolve;
+        })
+      : defaultHub(method, payload)
+  );
+  const view = renderComposer('accepted words');
+  await waitFor(() => expect(stopControl().disabled).toBe(false));
+  fireEvent.click(stopControl());
+  await waitFor(() =>
+    expect(hubRequest.mock.calls.some(([method]) => method === 'voice.transcribe')).toBe(true)
+  );
+  fireEvent.click(buttonNamed('Send message'));
+  await waitFor(() => expect([...store.records.values()][0]?.intent).toBe('send'));
+  view.current.value = 'later words';
+  view.rerender({ author: 'Neo', anchor: 'later', text: 'later quote' });
+  release({ text: 'final words' });
+  await waitFor(() => expect(asks()).toHaveLength(1));
+  expect(asks()[0][1].input.content).toBe('accepted words\nfinal words');
+  expect(view.current.value).toBe('later words');
+  expect(view.onCancelQuote).not.toHaveBeenCalled();
+});
+
+it('keeps typed text and reports an ASR failure after a pending Send tap', async () => {
+  let reject: (cause: Error) => void = () => {};
+  hubRequest.mockImplementation(async (method, payload) =>
+    method === 'voice.transcribe'
+      ? new Promise((_resolve, refuse) => {
+          reject = refuse;
+        })
+      : defaultHub(method, payload)
+  );
+  const view = renderComposer('keep typed words');
+  await waitFor(() => expect(stopControl().disabled).toBe(false));
+  fireEvent.click(stopControl());
+  await waitFor(() =>
+    expect(hubRequest.mock.calls.some(([method]) => method === 'voice.transcribe')).toBe(true)
+  );
+  fireEvent.click(buttonNamed('Send message'));
+  await waitFor(() => expect([...store.records.values()][0]?.intent).toBe('send'));
+  reject(new Error('Voice transcription failed with HTTP 401'));
+  await waitFor(() => expect(reportedErrors(view.onError).length).toBeGreaterThan(0));
+  expect(asks()).toHaveLength(0);
+  expect(view.current.value).toBe('keep typed words');
+  expect(view.onTranscript).not.toHaveBeenCalled();
+});
+
+it('keeps the audio and reports a failed durable pending Send upgrade', async () => {
+  let release: (value: Record<string, unknown>) => void = () => {};
+  hubRequest.mockImplementation(async (method, payload) =>
+    method === 'voice.transcribe'
+      ? new Promise((resolve) => {
+          release = resolve;
+        })
+      : defaultHub(method, payload)
+  );
+  const view = renderComposer('keep these words');
+  await waitFor(() => expect(stopControl().disabled).toBe(false));
+  fireEvent.click(stopControl());
+  await waitFor(() =>
+    expect(hubRequest.mock.calls.some(([method]) => method === 'voice.transcribe')).toBe(true)
+  );
+  store.failUpgrade = true;
+  fireEvent.click(buttonNamed('Send message'));
+  release({ text: 'final words' });
+  await waitFor(() =>
+    expect(
+      reportedErrors(view.onError).some((text) => text.includes('Could not save the send request'))
+    ).toBe(true)
+  );
+  expect(asks()).toHaveLength(0);
+  expect(store.records.size).toBe(1);
+  expect(view.current.value).toBe('keep these words');
+});
+
+it.each([false, true])(
+  'tray retry preserves the accepted full composition before sendText exists (Preview: %s)',
+  async (bound) => {
+    voice.recording = false;
+    const quote: NeoQuote = {
+      author: 'Neo',
+      text: 'accepted quote',
+      anchor: 'accepted-source',
+      replyTo: { kind: 'message', id: 'accepted-source', author: 'neo', excerpt: 'accepted quote' },
+    };
+    const preview: NeoPreviewReference = {
+      artifactId: 'accepted-preview',
+      snapshot: 'a'.repeat(64),
+      displayName: 'Accepted Preview',
+      state: 'available',
+    };
+    const context = {
+      suffix: '### Attached file: accepted.txt\n\n```text\naccepted file words\n```',
+      attachmentIds: ['accepted-file', 'accepted-photo'],
+      images: [{ data: 'aGk=', media_type: 'image/png' }],
+      quote,
+    };
+    store.records.set('retry-context', {
+      id: 'retry-context',
+      sessionId: 'neo-1',
+      audioBase64: 'aGk=',
+      mimeType: 'audio/wav',
+      peakLevel: 0.5,
+      createdAt: Date.now(),
+      intent: 'send',
+      sendDraft: 'accepted typed words',
+      sendContext: context,
+      ...(bound ? { previewContext: preview } : {}),
+    });
+    attachmentFiles.current = [
+      { id: 'accepted-file', kind: 'text', name: 'accepted.txt', text: 'accepted file words' },
+    ];
+    const view = renderComposer(
+      'newer draft',
+      { author: 'Neo', text: 'newer quote', anchor: 'newer-source' },
+      bound ? { ...preview, artifactId: 'newer-preview' } : undefined
+    );
+    fireEvent.click(await screen.findByTestId('resend-voice-audio'));
+    await waitFor(() => expect(asks()).toHaveLength(1));
+    const input = asks()[0][1].input;
+    expect(input.requestId).toBe('retry-context');
+    expect(input.content).toEqual([
+      { type: 'text', text: 'accepted typed words\nspoken second\n\n' + context.suffix },
+      { type: 'image', source: { type: 'base64', data: 'aGk=', media_type: 'image/png' } },
+    ]);
+    expect(input).toHaveProperty('replyTo', quote.replyTo);
+    if (bound)
+      expect(input.previewContext).toEqual({
+        artifactId: preview.artifactId,
+        snapshot: preview.snapshot,
+      });
+    expect(store.puts[0].sendContext).toEqual(context);
+    await waitFor(() => expect(store.records.size).toBe(0));
+    expect(view.current.value).toBe('newer draft');
+    expect(view.onCancelQuote).not.toHaveBeenCalled();
+  }
+);
