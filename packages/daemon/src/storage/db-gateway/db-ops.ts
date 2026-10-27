@@ -1,3 +1,4 @@
+import { toolRecoveryWrites } from '../repositories/tool-continuation-recovery-repository.ts';
 import { neoPublicationWrites } from '../repositories/neo-publication-repository.ts';
 import {
   neoAskSettlementReads,
@@ -134,6 +135,7 @@ import { workflowDeleteWrites } from '../repositories/workflow-delete-write.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    toolRecoveryWrites,
     neoPublicationWrites,
     neoAskSettlementReads,
     neoAskSettlementWrites,

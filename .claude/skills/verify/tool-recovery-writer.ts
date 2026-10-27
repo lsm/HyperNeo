@@ -45,6 +45,7 @@ try {
   const exited=new Promise((done,fail)=>{probe!.once('exit',done);probe!.once('error',fail);});
   for(let n=0;!output.includes('READY') && n<500;n++) await Bun.sleep(10);
   assert(output.includes('READY'),errors);
+  const fixturePrepare = app.db.getDatabase().prepare.bind(app.db.getDatabase());
   installRecoveryWait(run, 'main');
   const toolUseId = crypto.randomUUID();
   const created = await app.internalEventBus.publish('sdk.toolUse.created', { sessionId, toolUseId, toolName: 'Bash', timestamp: Date.now() });
@@ -54,6 +55,12 @@ try {
   const consumed = await app.internalEventBus.publish('sdk.toolUse.consumed', { sessionId, toolUseId, timestamp: Date.now() });
   assert.deepEqual(consumed.failures, []); assert(consumed.delivered > 0);
   assert.deepEqual(row(), { status: 'consumed', sessionId });
+  const expiredTool = crypto.randomUUID();
+  const due = await app.internalEventBus.publish('sdk.toolUse.created', { sessionId, toolUseId: expiredTool, toolName: 'Bash', timestamp: Date.now() });
+  assert.deepEqual(due.failures, []);
+  fixturePrepare('UPDATE tool_continuation_recovery SET expires_at=0 WHERE tool_use_id=?').run(expiredTool);
+  await app.spaceRuntimeService.getSpaceRuntime().executeTick();
+  assert.deepEqual(fixturePrepare('SELECT status FROM tool_continuation_recovery WHERE tool_use_id=?').get(expiredTool), { status: 'expired' });
   probe.stdin!.end('stop'); assert.equal(await exited,0,errors);
   const health=JSON.parse(output.trim().split('\n').at(-1)!).samples as number[];
   const writes=readFileSync(join(run,'evidence/recovery-sql.jsonl'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
