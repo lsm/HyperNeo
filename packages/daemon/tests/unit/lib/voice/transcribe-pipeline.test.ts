@@ -149,7 +149,7 @@ describe('voice transcribe pipeline', () => {
     });
   });
 
-  it('derives the batch transcription URL from a service base link', async () => {
+  it('sends the configured batch URL verbatim including version paths', async () => {
     let requested: string | undefined;
     globalThis.fetch = mock(async (url: string | URL | Request, requestInit?: RequestInit) => {
       requested = String(url);
@@ -158,7 +158,7 @@ describe('voice transcribe pipeline', () => {
     await expect(
       transcribe(createDeps({ endpoint: 'https://ai0:8090/speech/v1' }))
     ).resolves.toEqual({ action: 'transcribed', text: 'hello world' });
-    expect(requested).toBe('https://ai0:8090/speech/v1/audio/transcriptions');
+    expect(requested).toBe('https://ai0:8090/speech/v1');
     await expect(
       transcribe(createDeps({ endpoint: 'https://ai0:8090/inference' }))
     ).resolves.toEqual({ action: 'transcribed', text: 'hello world' });
@@ -352,7 +352,7 @@ describe('voice transcribe pipeline', () => {
     expect((init?.headers as Record<string, string>)?.Authorization).toBe('Bearer stored-key');
   });
 
-  it('resolves the stored key for a base-URL endpoint without the appended path', async () => {
+  it('resolves the stored key scoped to the configured endpoint', async () => {
     const getCredentials = mock(async () => ({
       type: 'api_key' as const,
       apiKey: 'stored-key',
