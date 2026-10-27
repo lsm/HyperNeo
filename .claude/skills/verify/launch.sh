@@ -5,6 +5,11 @@ RUN=${2:-$(mktemp -d "${TMPDIR:-/tmp}/hyperneo-verify.XXXXXX")}
 REPO=${VERIFY_REPO:-$(cd "$(dirname "$0")/../../.." && pwd)}
 [ "$PORT" = 8399 ] && { echo "refusing 8399: that is the real daemon's port"; exit 1; }
 MOCK_PORT=${VERIFY_MOCK_PORT:-8000}
+if ! [[ "$MOCK_PORT" =~ ^[1-9][0-9]{0,4}$ ]] || [ "$MOCK_PORT" -gt 65535 ] ||
+  [ "$MOCK_PORT" = 8399 ] || [ "$MOCK_PORT" = "$PORT" ]; then
+  echo "invalid mock port: choose 1-65535, excluding 8399 and the daemon port"
+  exit 1
+fi
 for p in "$PORT" "$MOCK_PORT"; do
   if lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1; then echo "port $p is busy"; exit 1; fi
 done

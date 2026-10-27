@@ -1,7 +1,11 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { devProxyBaseUrl } from '../../../../src/lib/provider-service.ts';
 
 describe('dev proxy base url', () => {
+  beforeEach(() => {
+    delete process.env.VERIFY_MOCK_PORT;
+  });
+
   afterEach(() => {
     delete process.env.VERIFY_MOCK_PORT;
   });
