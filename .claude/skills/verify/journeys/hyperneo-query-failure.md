@@ -28,3 +28,25 @@ Retain observed.json, proof.log and the wrapper exit status. Cleanup closes the
 service, recipient and database; the wrapper removes the disposable home/data.
 This proves operation output and durable recipient input. It does not verify
 network transport, browser rendering, provider failures or model consumption.
+
+## Real governor-to-Neo integration
+
+After the #9093 producer has landed, run the shared governor helper's consumer
+mode through the same isolated wrapper:
+
+```sh
+bash .claude/skills/verify/proof-run.sh <absolute-fresh-evidence-dir> \
+  .claude/skills/verify/query-failure-governor.ts consumer
+```
+
+This starts a real daemon on an ephemeral non-8399 port and throws a fake error
+from SDK query start through the real message.send RPC. It first saturates that
+worker's actual ErrorManager throttle bucket. The real governor must start only
+three failed queries with its existing backoff, persist failed and the original
+error together, and emit matching terminal evidence. The public work.status RPC
+must report failed with that error, and the real mailbox processor must store
+exactly one Neo input containing it. The scripted SDK distinguishes the worker
+from Neo by their separate fixture workspaces and confirms one recipient start.
+Explicit recovery through session.resetQuery must not add another failure wake.
+External model behavior and browser rendering remain unverified. Preserve query-failure-governor.json,
+proof.log and the wrapper exit status, including daemon cleanup.

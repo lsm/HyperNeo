@@ -52,6 +52,9 @@ The durable HyperNeo work.status/Neo-wake projection is independently owned by
 #9095. Its integration seam is persisted metadata.queryFailureEpisode and the
 cap's session.error details.metadata.queryFailureEpisode. Record that consumer's
 verification separately; a public failed episode is not proof of a Neo wake.
+The consumer mode now exercises that complete path with the landed #9095
+projection. See journeys/hyperneo-query-failure.md for its saturated-throttle,
+real work.status RPC, persisted-error and single consumed Neo-input assertions.
 Scratch remediation belongs to the parallel #9093 A owner. After merge, confirm
 the served daemon build contains the squash; never restart it. If rollout is
 pending, retain that applicable deployment gate as pending with the observed
