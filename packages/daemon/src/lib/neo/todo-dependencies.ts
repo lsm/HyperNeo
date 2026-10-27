@@ -19,6 +19,14 @@ export function neoTodoDependencyNodes(todos: readonly NeoTodo[]): DependencyNod
   });
 }
 
+export function neoTodoReady(todos: readonly NeoTodo[], todoId: string): boolean {
+  const states = new Map(todos.map((todo) => [todo.id, todo.state]));
+  const node = neoTodoDependencyNodes(todos).find((item) => item.id === todoId);
+  return (node?.dependsOn ?? []).every((id) =>
+    ['done', 'closed_unverified', 'removed', undefined].includes(states.get(id))
+  );
+}
+
 export const planNeoTodoDependencies = (superpipe({})('neo.todo.plan-dependencies') as PipelineAPI)
   .input(['todos', 'todoId', 'after'])
   .pipe(neoTodoDependencyNodes, 'todos', 'nodes')

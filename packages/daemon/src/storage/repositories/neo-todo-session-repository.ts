@@ -1,4 +1,4 @@
-import { neoTodoDependencyNodes } from '../../lib/neo/todo-dependencies.ts';
+import { neoTodoDependencyNodes, neoTodoReady } from '../../lib/neo/todo-dependencies.ts';
 import { NeoTurnReportReceipts } from '../../lib/neo/turn-report-receipts.ts';
 import {
   continuesIncident,
@@ -175,9 +175,6 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
           ]
         : []
     );
-    const states = new Map(todos.map((todo) => [todo.id, todo.state]));
-    const ready = (id: string) =>
-      ['done', 'closed_unverified', 'removed', undefined].includes(states.get(id));
     const candidates = asks.flatMap((ask) => {
       const plan = todos.filter((todo) => todo.askId === ask.id);
       if (
@@ -193,7 +190,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
         return next.state === 'todo' &&
           next.startedAt === null &&
           next.instruction &&
-          (node.dependsOn ?? []).every(ready) &&
+          neoTodoReady(todos, next.id) &&
           !questions.some(
             (question) =>
               (!question.todoId || question.todoId === next.id) &&

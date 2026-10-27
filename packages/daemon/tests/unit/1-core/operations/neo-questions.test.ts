@@ -505,7 +505,8 @@ describe('neo.question operations', () => {
   });
 
   test('tells Neo which ticked todos did not start', async () => {
-    const { call, daemonStart, told, refused, fix, rows } = setup();
+    const { store, call, daemonStart, told, refused, fix, rows } = setup();
+    store.updateTodo(store.getTodo(rows.id)!, { dependsOn: [] }, 2);
     refused.add(rows.id);
     const start = daemonStart([fix.id, rows.id], 'Start these?');
     await call('neo.question.answer', { questionId: start.id, answer: [fix.id, rows.id] }, human);

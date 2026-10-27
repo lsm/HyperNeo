@@ -1,3 +1,4 @@
+import { neoTodoReady } from './todo-dependencies.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { WorkRefSchema, type WorkRef } from '../drivers/types.ts';
@@ -704,7 +705,9 @@ export function createNeoQuestionOperations(
       async (answered: { question: NeoQuestion; ask: NeoAsk }): Promise<QuestionReceipt> => {
         const refused: string[] = [];
         if (answered.question.kind === 'start')
-          for (const todoId of [answered.question.answer ?? []].flat()) {
+          for (const todoId of [answered.question.answer ?? []]
+            .flat()
+            .filter((id) => neoTodoReady(store.listFamilyTodos(answered.ask.id), id))) {
             const started = await start(todoId);
             if (!started.ok)
               refused.push(`${store.getTodo(todoId)?.title ?? todoId}: ${started.reason}`);
