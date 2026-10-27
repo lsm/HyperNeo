@@ -716,3 +716,70 @@ describe('NeoComposer and NeoVoice send integration', () => {
     expect(store.records.size).toBe(0);
   });
 });
+
+describe('Send accepted while final transcription is pending', () => {
+  it.each(['plain', 'attachment', 'reply', 'preview', 'photo'] as const)(
+    'sends the completed %s composition once without another tap',
+    async (staged) => {
+      let release: (value: Record<string, unknown>) => void = () => {};
+      hubRequest.mockImplementation(async (method: string, payload?: unknown) => {
+        if (method === 'voice.transcribe')
+          return new Promise((resolve) => {
+            release = resolve;
+          });
+        return defaultHub(method, payload);
+      });
+      if (staged === 'attachment')
+        attachmentFiles.current = [
+          { id: 'file1', kind: 'text', name: 'notes.txt', text: 'original attachment' },
+        ];
+      if (staged === 'photo')
+        attachmentFiles.current = [
+          {
+            id: 'photo1',
+            kind: 'image',
+            name: 'photo.png',
+            image: { data: 'aGk=', media_type: 'image/png' },
+          },
+        ];
+      const quote =
+        staged === 'reply'
+          ? { author: 'Neo' as const, text: 'quoted words', anchor: 'source' }
+          : undefined;
+      const preview =
+        staged === 'preview'
+          ? {
+              artifactId: 'saved',
+              snapshot: 'a'.repeat(64),
+              displayName: 'Saved',
+              state: 'available' as const,
+            }
+          : undefined;
+      const view = renderComposer('typed first', quote, preview);
+      await waitFor(() => expect(stopControl().disabled).toBe(false));
+      fireEvent.click(stopControl());
+      await waitFor(() =>
+        expect(hubRequest.mock.calls.some(([method]) => method === 'voice.transcribe')).toBe(true)
+      );
+      fireEvent.click(buttonNamed('Send message'));
+      fireEvent.click(buttonNamed('Send message'));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(asks()).toHaveLength(0);
+      release({ text: 'spoken second' });
+      await waitFor(() => expect(asks()).toHaveLength(1));
+      const input = asks()[0][1].input;
+      expect(JSON.stringify(input.content)).toContain(
+        'typed first\nspoken second'.replaceAll('\n', '\\n')
+      );
+      if (staged === 'attachment')
+        expect(JSON.stringify(input.content)).toContain('original attachment');
+      if (staged === 'reply') expect(JSON.stringify(input.content)).toContain('quoted words');
+      if (staged === 'preview')
+        expect(input.previewContext).toEqual({ artifactId: 'saved', snapshot: 'a'.repeat(64) });
+      if (staged === 'photo') expect(JSON.stringify(input.content)).toContain('aGk=');
+      expect(view.onTranscript).not.toHaveBeenCalled();
+      expect(view.onSend).not.toHaveBeenCalled();
+      await waitFor(() => expect(store.records.size).toBe(0));
+    }
+  );
+});
