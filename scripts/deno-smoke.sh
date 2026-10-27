@@ -752,4 +752,7 @@ env -i HOME="$JOB_REQUEUE_WRITER_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_
 TASK_SCHEDULE_PAUSE_RUN="$WORK_DIR/task-schedule-pause-writer"
 mkdir -p "$TASK_SCHEDULE_PAUSE_RUN/home"
 env -i HOME="$TASK_SCHEDULE_PAUSE_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$TASK_SCHEDULE_PAUSE_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/task-schedule-pause-writer.ts" verify "$TASK_SCHEDULE_PAUSE_RUN"
+WORKFLOW_OPTIONS_CONTRACT_RUN="$WORK_DIR/workflow-options-contract"
+mkdir -p "$WORKFLOW_OPTIONS_CONTRACT_RUN/home"
+env -i HOME="$WORKFLOW_OPTIONS_CONTRACT_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_OPTIONS_CONTRACT_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-options-contract.ts" verify "$WORKFLOW_OPTIONS_CONTRACT_RUN"
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"
