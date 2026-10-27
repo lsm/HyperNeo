@@ -46,3 +46,13 @@ bun --no-install --no-env-file .claude/skills/verify/lane-a-merge-local-proof-bi
 
 Only this journey and its evidence directory may change after the bound proof
 commit. Source, test or helper changes require new committed runtime proofs.
+
+The CI-discovered writer suite also snapshots through the gateway, closes the
+todo, and requires a refused receipt with no stored row under guarded and
+read-only main connections. Restoring the todo must permit the original snapshot
+again. Both new tests fail if the stale-state comparison is temporarily removed;
+ci-cas-mutation.txt records that sensitivity check with production restored.
+
+```sh
+(cd packages/daemon && bunx vitest run tests/unit/1-core/operations/coding-merge-receipt-writer.test.ts)
+```

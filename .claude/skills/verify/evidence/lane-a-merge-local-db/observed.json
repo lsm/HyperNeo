@@ -11,10 +11,10 @@
   "observableRegression": "A todo closed after the final head/local-state check was admitted; fixed writer admission refuses it and stores no receipt.",
   "limitations": "Real RPC and persisted receipt race job with synthetic GitHub/assignment/QA facts. No real merge, model, actor harness, GUI, deployment, whole-daemon SQL absence or latency proof.",
   "proofBinding": {
-    "testedCodeCommit": "17b48282558a941ea8fe8c99ab0434a2f2bdd7cd",
-    "testedGitTree": "90a502e490cbf79a448b6d8f8dd625ebca82f7cb",
+    "testedCodeCommit": "9696e22d37e3b47bb0189cdbee4673696aec87da",
+    "testedGitTree": "f6edeff24f7c641c01f8ec8ac6fc7de900321362",
     "applicationTrees": {
-      "packages": "294386dc7ac1c4427b7af150befa6698c95398e6",
+      "packages": "9b1ad955d3035cc63878c2286b3b6037d2beecbf",
       "scripts": "b6047bc712b3726c2f338147a1860e6052883883"
     },
     "proofBlobs": {
@@ -23,9 +23,22 @@
       ".claude/skills/verify/lane-a-merge-local-proof-binding.ts": "653f109e08c250f1ded6761ea0f9ba3fb0e58647"
     },
     "runs": {
-      "bun": "bun-verify-2",
-      "deno": "deno-verify"
+      "bun": "bun-verify-3",
+      "deno": "deno-verify-1"
     },
     "postProofChangePolicy": "evidence-and-journey-only"
+  },
+  "reviewFixVerification": {
+    "reviewedHead": "00e461f1313f85a2d0fc266d450b1f364b336139",
+    "ciTestCommit": "9696e22d37e3b47bb0189cdbee4673696aec87da",
+    "newCIRegressions": [
+      "closed todo refuses queued receipt with guarded main",
+      "closed todo refuses queued receipt with read-only main"
+    ],
+    "bunTests": "4 pass",
+    "vitestTests": "4 pass",
+    "mutation": "Temporarily deleting the production stale-state comparison makes both new tests fail; original production file restored.",
+    "productionUnchanged": true,
+    "proofs": "Fresh Bun/Deno merge RPC and receipt job proofs pass with zero target main SQL."
   }
 }
