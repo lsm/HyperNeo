@@ -18,7 +18,12 @@ Repeat with touch:true on a mobile context. Use desktop 1280x900 light and mobil
 be revealed, including the 25-item paged list, but there is no way to fold them.
 Preserve the baseline and the signed failing component reproduction first.
 
-Rebuild the fix and repeat after with fresh evidence/READY paths. Small lists
+The All dialog supersedes the inline done controls. On current web, the same
+after helper opens All, pages all rows, closes it to hide them and reopens the
+cached rows for all three list sizes. See neo-all-items-dialog.md for the full
+history surface. Preserve the original inline-fold evidence as historical proof.
+
+On the original #9239 build, rebuild and repeat after with fresh evidence. Small lists
 keep their initial visible rows. Larger lists reveal and page through the real
 neo.ask.doneTodos operation. Hide done todos must remove every completed row
 while leaving the unfinished row. Reveal again must restore all cached rows,
