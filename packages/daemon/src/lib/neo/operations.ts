@@ -1,3 +1,4 @@
+import { neoSessionTrackRootRead } from '../../storage/repositories/neo-session-track-write.ts';
 import { createNeoCardSearchOperation } from './card-search-operation.ts';
 import { readNeoReply } from './intake.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
@@ -66,11 +67,7 @@ import {
   neoSessionNoticeLine,
   type NeoSessionNotice,
 } from './session-watch.ts';
-import {
-  findNeoSessionNotice,
-  requireNeoTrackRoot,
-  requireNeoTrackableSession,
-} from './session-track.ts';
+import { findNeoSessionNotice } from './session-track.ts';
 import { createNeoQuestionOperations } from './question-operations.ts';
 import { createNeoTodoOperations, type NeoTodoControls } from './todo-operations.ts';
 import { resolveNeoTodoTarget } from './todo-target.ts';
@@ -528,18 +525,12 @@ export function createNeoOperations(service: NeoService) {
       'caller',
       'result:track'
     )
-    .pipe(() => requireNeoTrackRoot(service.defaultSessionId()), 'caller', 'result:track')
+    .pipe(() => service.runDbOp(neoSessionTrackRootRead, null), 'caller', 'result:track')
     .pipe((root: string) => root, 'track', 'root')
     .pipe(
       (input: z.infer<typeof SessionTrack>) =>
         findNeoSessionNotice(service.trackableNotices, input.key),
       'input',
-      'result:track'
-    )
-    .pipe(
-      (notice: NeoSessionNotice) =>
-        requireNeoTrackableSession(notice, service.todos.followedRefs()),
-      'track',
       'result:track'
     )
     .pipe(

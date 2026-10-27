@@ -713,6 +713,12 @@ env -i HOME="$TRACK_ADMISSION_RUN/home" PATH="$PATH" TMPDIR="$TRACK_ADMISSION_RU
 	HYPERNEO_DATA_DIR="$TRACK_ADMISSION_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/neo-track-admission-build.ts" verify "$TRACK_ADMISSION_RUN"
 
+TRACK_ACTIVATION_RUN="$WORK_DIR/neo-track-admission-activation"
+mkdir -p "$TRACK_ACTIVATION_RUN/home" "$TRACK_ACTIVATION_RUN/tmp"
+env -i HOME="$TRACK_ACTIVATION_RUN/home" PATH="$PATH" TMPDIR="$TRACK_ACTIVATION_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$TRACK_ACTIVATION_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/neo-track-admission-activation.ts" verify "$TRACK_ACTIVATION_RUN"
+
 TODO_ADD_BUILD_RUN="$WORK_DIR/todo-add-build"
 mkdir -p "$TODO_ADD_BUILD_RUN/home" "$TODO_ADD_BUILD_RUN/tmp"
 env -i HOME="$TODO_ADD_BUILD_RUN/home" PATH="$PATH" TMPDIR="$TODO_ADD_BUILD_RUN/tmp" NODE_ENV=test \
@@ -755,6 +761,9 @@ env -i HOME="$DIRECT_START_REQUEUE_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NOD
 JOB_REQUEUE_WRITER_RUN="$WORK_DIR/job-requeue-writer"
 mkdir -p "$JOB_REQUEUE_WRITER_RUN/home"
 env -i HOME="$JOB_REQUEUE_WRITER_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$JOB_REQUEUE_WRITER_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/job-requeue-writer.ts" verify "$JOB_REQUEUE_WRITER_RUN"
+TASK_SCHEDULE_DELETE_RUN="$WORK_DIR/task-schedule-delete-writer"
+mkdir -p "$TASK_SCHEDULE_DELETE_RUN/home"
+env -i HOME="$TASK_SCHEDULE_DELETE_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$TASK_SCHEDULE_DELETE_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/task-schedule-delete-writer.ts" verify "$TASK_SCHEDULE_DELETE_RUN"
 TASK_SCHEDULE_PAUSE_RUN="$WORK_DIR/task-schedule-pause-writer"
 mkdir -p "$TASK_SCHEDULE_PAUSE_RUN/home"
 env -i HOME="$TASK_SCHEDULE_PAUSE_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$TASK_SCHEDULE_PAUSE_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/task-schedule-pause-writer.ts" verify "$TASK_SCHEDULE_PAUSE_RUN"

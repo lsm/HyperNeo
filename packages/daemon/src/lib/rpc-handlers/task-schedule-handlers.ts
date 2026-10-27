@@ -92,7 +92,7 @@ export function setupTaskScheduleHandlers(
   messageHub.onRequest('taskSchedule.delete', async (data) => {
     const params = data as { scheduleId: string; spaceId: string };
     requireScheduleInSpace(params.scheduleId, params.spaceId);
-    const ok = scheduleService.deleteSchedule(params.scheduleId);
+    const ok = await scheduleService.deleteScheduleAsync(params.scheduleId);
     if (!ok) throw new Error(`Schedule not found: ${params.scheduleId}`);
     log.debug('taskSchedule.delete', { scheduleId: params.scheduleId });
     return { success: true };
