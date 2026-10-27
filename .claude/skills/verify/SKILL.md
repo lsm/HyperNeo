@@ -18,7 +18,8 @@ root of your worktree.
   `env -i` with `NODE_ENV=test`, a temp `HOME`, and its own data dir and DB, so
   credential discovery is off and keys stay in that DB, never the keychain.
 - Model turns go to a local mock of the Anthropic API (`mock-api.ts`, the same
-  server CI's dev-proxy mode uses) on port 8000. Give the isolated daemon the
+  server CI's dev-proxy mode uses) on the mock port (8000 unless VERIFY_MOCK_PORT
+  overrides it). Give the isolated daemon the
   dev-proxy key over RPC (step 3 below), never through its environment.
 - GitHub is normally a stub: `gh` on the daemon's `PATH` answers `gh pr view` from
   `<run>/pr.json`, refuses everything else (including `gh auth token`) and logs
@@ -36,7 +37,9 @@ cd packages/web && bun run build && cd ../..
 ```
 
 - Pick any free port except 8399. `launch.sh` refuses a busy port, and refuses
-  if 8000 (the mock API) is taken.
+  if the mock API's port is taken. The mock defaults to 8000; set
+  `VERIFY_MOCK_PORT` to run parallel isolated sessions beside each other (the
+  daemon's dev-proxy base URL follows it).
 - If the host denies `taskpolicy` or `nice` priority changes, set
   `VERIFY_NORMAL_PRIORITY=1`; isolation is unchanged. `VERIFY_REPO` selects
   the source checkout for shared upgrade tooling only.
@@ -158,11 +161,18 @@ Some journeys provide a `PROOF` helper that owns its daemon and mock servers.
 Use this shared setup with the helper path named in that journey:
 
 ```bash
-for port in 8000 8001; do
+for port in "${VERIFY_MOCK_PORT:-8000}" 8001; do
   if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
     echo "verification port $port is busy"; exit 1
   fi
 done
+# The proof helpers below bind fixed ports and never read VERIFY_MOCK_PORT, so the
+# preflight must always cover 8000 even when a parallel session uses an override.
+if [ -n "${VERIFY_MOCK_PORT:-}" ]; then
+  if lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "proof helper port 8000 is busy"; exit 1
+  fi
+fi
 RUN=$(mktemp -d /private/tmp/hyperneo-rpc-proof-XXXXXX)
 mkdir -p "$RUN/home" "$RUN/tmp"
 env -i HOME="$RUN/home" PATH="$PATH" TMPDIR="$RUN/tmp" NODE_ENV=test HYPERNEO_USE_DEV_PROXY=1 \
