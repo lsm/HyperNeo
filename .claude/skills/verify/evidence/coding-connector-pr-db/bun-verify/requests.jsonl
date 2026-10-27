@@ -1,0 +1,10 @@
+{"phase":"cold","args":["pr","view","https://github.com/synthetic/basic/pull/7","--json","url,state,mergeable,mergeStateStatus"]}
+{"phase":"repeat","args":["pr","view","https://github.com/synthetic/basic/pull/7","--json","url,state,mergeable,mergeStateStatus"]}
+{"phase":"open","args":["pr","view","https://github.com/synthetic/basic/pull/7","--json","url,state,mergeable,mergeStateStatus"]}
+{"phase":"failed","args":["pr","view","https://github.com/synthetic/basic/pull/7","--json","url,state,mergeable,mergeStateStatus"]}
+{"phase":"partial","args":["pr","view","https://github.com/synthetic/basic/pull/7","--json","url,state,mergeable,mergeStateStatus"]}
+{"phase":"wrong-identity","args":["pr","view","https://github.com/synthetic/basic/pull/7","--json","url,state,mergeable,mergeStateStatus"]}
+{"phase":"recovered","args":["pr","view","https://github.com/synthetic/basic/pull/7","--json","url,state,mergeable,mergeStateStatus"]}
+{"phase":"alias","args":["pr","view","https://github.com/synthetic/basic/pull/7","--json","url,state,mergeable,mergeStateStatus"]}
+{"phase":"reopen","args":["pr","view","https://github.com/synthetic/basic/pull/7","--json","url,state,mergeable,mergeStateStatus"]}
+{"phase":"late","args":["pr","view","https://github.com/synthetic/basic/pull/7","--json","url,state,mergeable,mergeStateStatus"]}
