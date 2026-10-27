@@ -38,3 +38,13 @@ It does not drive native Desktop or add outcome integration (#8411).
 Run neo-questions, neo-todo-runner, neo-ask-record, neo-ask-entries, neo-reply-to and
 neo-prompt unit contracts, NeoAskTodos web contracts, and bun run check. The helper
 owns and closes its daemons, server and browser in finally; keep cleanup.json.
+
+Regression recipe for the Open dedup: run both ordinary and outcome modes. The
+fixture's Human-led discussion todo remains doing and linked to the focused
+session after its questions retire. Its todo Open must be the sole opener; the
+card fallback must be absent. The old browser step instead waits for Open
+session: Positioning discussion and times out. Preserve that before failure,
+then verify the todo opener enters the session and Back restores the same card.
+Await asynchronous delivery-input fixture writes before using the dispatch ID;
+an unawaited ID is a Promise that cannot cross the DB-worker boundary and fails
+before the browser surface is reached.
