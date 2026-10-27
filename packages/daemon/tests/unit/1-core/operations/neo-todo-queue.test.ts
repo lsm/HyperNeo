@@ -295,4 +295,16 @@ describe('queued todos start themselves', () => {
     await w.tick();
     expect(w.state(join)).toBe('doing');
   });
+
+  test('an ask whose start question the human answered may start released steps', async () => {
+    const w = (current = world());
+    const ask = w.ask();
+    const todo = w.add(ask);
+    w.store.joinStartQuestion(w.store.getTodo(todo)!, 2);
+    const question = w.store.listQuestions(ask).find((item) => item.kind === 'start')!;
+    w.store.answerQuestion(question, [], 'button', 3);
+    w.store.updateTodo(w.store.getTodo(todo)!, { state: 'todo' }, 4);
+    await w.tick();
+    expect(w.state(todo)).toBe('doing');
+  });
 });
