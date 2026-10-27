@@ -39,3 +39,29 @@ before mode requires target SQL. Evidence retains command duration and argument/
 reply sizes without separate SQL, queue or cloning attribution. This proves
 reconciliation jobs with synthetic external data, not a full pack sweep, actual
 GitHub quota savings, Neo delivery, GUI, whole-daemon SQL absence or latency goals.
+
+The fixed helper also holds a synthetic writer lock while reading the polling
+snapshot and context. Both finish before release; the reader needs no writer
+reservation. CI uses cloned gateway arguments/replies, read-only reader commands
+and a main connection that refuses SQL. Competing observations produce one state
+transition; unwatching during collection rejects the response without updating
+coverage or stored PR state.
+
+The original `bun-verify` directory is the deliberately failing pre-fix run,
+committed in the regression commit despite its mode name. It records 53 target
+main SQL statements and coverage advancing after rejected PR persistence.
+`deno-verify` is an inconclusive fixture launch failure: its synthetic gh used
+Deno as a bare shebang interpreter. The corrected fixture uses existing Bun for
+only that stub; the daemon and worker proof still runs under the selected runtime.
+`observed.json.proofBinding.runs` identifies the final passing Bun and Deno pair.
+
+After the bound proof commit, change only this journey and its evidence directory.
+Check the committed application trees, helper blobs, run heads and post-proof
+change list before pushing:
+
+```sh
+bun --no-install --no-env-file .claude/skills/verify/lane-a-ledger-observation-proof-binding.ts HEAD
+```
+
+No health/affected RPC latency, RSS or WAL benchmark is claimed. Gateway command
+durations and JSON byte sizes do not separately measure queue, SQL or clone time.

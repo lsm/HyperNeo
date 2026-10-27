@@ -1,0 +1,85 @@
+{
+  "regressionCommit": "09673f5e0234f866ad62e044b09509d456ec8f3d",
+  "baseline": {
+    "run": "bun-verify",
+    "verified": false,
+    "targetMainSql": 53,
+    "failure": "Failed PR persistence advanced completed coverage. Run mode verify intentionally exposed the regression before application changes.",
+    "sourceCommit": "2ef2e844a5b2910dfc162c4d9b304952b77bc18b"
+  },
+  "proofs": {
+    "bun": {
+      "run": "bun-verify-2",
+      "verified": true,
+      "targetMainSql": 0,
+      "atomicRollback": true,
+      "snapshotReadUnderWriterLock": true,
+      "gatewayCommands": 58,
+      "maxCommandMs": 76.23970800000006,
+      "maxArgsBytes": 645,
+      "maxReplyBytes": 744,
+      "cooldownReads": 0,
+      "temporaryDaemonDataRemoved": true
+    },
+    "deno": {
+      "run": "deno-verify-1",
+      "verified": true,
+      "targetMainSql": 0,
+      "atomicRollback": true,
+      "snapshotReadUnderWriterLock": true,
+      "gatewayCommands": 58,
+      "maxCommandMs": 138.5670409999998,
+      "maxArgsBytes": 645,
+      "maxReplyBytes": 744,
+      "cooldownReads": 0,
+      "temporaryDaemonDataRemoved": true
+    }
+  },
+  "historicalFailures": [
+    {
+      "run": "deno-verify",
+      "cause": "Synthetic gh script used the Deno executable as its interpreter without run; no requests were executed and no seed PR rows were created. Changed fixture shebang to existing Bun, then reran both runtimes.",
+      "applicationFailure": false
+    }
+  ],
+  "ci": {
+    "runner": "Vitest",
+    "result": "66 passed across four ledger/health suites",
+    "regression": "CI red: 10 pass, one failed coverage rollback assertion, committed before fix",
+    "additionalBehavior": "Cloned gateway replies, read-only snapshots, guarded main connection, one winning state transition, unwatched response rejected without stored row changes."
+  },
+  "productionLines": 140,
+  "coordinatorGrant": {
+    "branch": "codex/lane-a-ledger-observation",
+    "file": "packages/daemon/src/storage/db-gateway/db-ops.ts",
+    "changes": [
+      "codingLedgerPollReads import",
+      "codingLedgerPollReads DB_OPS entry"
+    ],
+    "commit": "bfac1816976b3debd20453da0d7093a4be76ba23"
+  },
+  "limitations": [
+    "Synthetic persisted daemon reconciliation jobs with production GitHub collector, no real GitHub quota or provider turns.",
+    "Final pruning and owner assignment remain existing separate writer commands.",
+    "No full coding-pack sweep, Neo concern delivery, GUI or whole-daemon SQL absence claim.",
+    "Command durations and serialized sizes do not separate queue, SQL and cloning cost; no health/affected RPC latency, RSS or WAL benchmark."
+  ],
+  "proofBinding": {
+    "testedCodeCommit": "5142cbf777a2b7a206bb6c82d5d0968f780a1fbc",
+    "testedGitTree": "ffde903d42c97b1cc6e6d516f1e4d4fa847f1200",
+    "applicationTrees": {
+      "packages": "f784e27e62c6caecd81c6ea05be44d7b03998673",
+      "scripts": "7c9d4b5b33560923315e74a7ca941a0ea1956f3b"
+    },
+    "proofBlobs": {
+      ".claude/skills/verify/lane-a-ledger-observation-db.ts": "2d5df598089aae24c52caf19301024a7b7a225eb",
+      ".claude/skills/verify/lane-a-ledger-observation-db-run.py": "baa6c586b5082b2176d99f011333766b98aa884e",
+      ".claude/skills/verify/lane-a-ledger-observation-proof-binding.ts": "ae455bdf4406629a39d2ff7b1df1925e48c63723"
+    },
+    "runs": {
+      "bun": "bun-verify-2",
+      "deno": "deno-verify-1"
+    },
+    "postProofChangePolicy": "evidence-and-journey-only"
+  }
+}
