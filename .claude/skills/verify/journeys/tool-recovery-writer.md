@@ -24,3 +24,16 @@ not run a model tool or reproduce production physical-lock ownership. Concurrent
 client health is the observable responsiveness surface. Preserve the repository
 and tick-loop tests for expiry, inbox retention and restart/rebind behavior.
 The shared wrapper saves evidence and deletes synthetic data after cleanup.
+
+Run the same helper with `whitespace` before the final run-directory argument
+(the wrapper supplies that directory) in a separate fresh evidence directory:
+
+```bash
+TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/padded-evidence .claude/skills/verify/tool-recovery-writer.ts whitespace
+```
+
+This mode adds a leading newline and spaces to actual recovery SQL before it
+reaches SQLite. Both modes must identify the INSERT after trimming and record
+exactly one 1200 ms wait, with measured elapsed wait at least 1100 ms. Otherwise
+the proof fails even if health is fast. The unpadded repository query starts
+with INSERT already; the padded case guards formatting changes in this helper.

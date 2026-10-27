@@ -12,9 +12,12 @@ export function installRecoveryWait(run: string, thread: string, whitespace = fa
       const value=Reflect.get(target,property,target);
       if(property!=='run') return typeof value==='function' ? value.bind(target) : value;
       return (...args: unknown[])=>{
-        if(first && sql.startsWith('INSERT')) { first=false; Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,1200); }
+        const modeledWaitMs = first && sql.trimStart().startsWith('INSERT') ? 1200 : 0;
+        const started = performance.now();
+        if (modeledWaitMs) { first=false; Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,modeledWaitMs); }
+        const waitElapsedMs = performance.now() - started;
         const result=Reflect.apply(value,target,args);
-        appendFileSync(joinPath(run),JSON.stringify({thread,sql,operation:property})+'\n');
+        appendFileSync(joinPath(run),JSON.stringify({thread,sql,operation:property,modeledWaitMs,waitElapsedMs})+'\n');
         return result;
       };
     }});

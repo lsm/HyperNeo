@@ -66,7 +66,11 @@ try {
   const health=JSON.parse(output.trim().split('\n').at(-1)!).samples as number[];
   const writes=readFileSync(join(run,'evidence/recovery-sql.jsonl'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
   Object.assign(evidence,{created,consumed,maxHealthMs:Math.max(...health),healthReplies:health.length,writes});
-  assert(writes.some(row=>row.operation==='run' && row.sql.startsWith('INSERT')));
+  assert(writes.some(row=>row.operation==='run' && row.sql.trimStart().startsWith('INSERT')));
+  const delayed = writes.filter(row => row.modeledWaitMs > 0);
+  assert.equal(delayed.length, 1, 'Exactly one recovery insert must exercise the storage wait');
+  assert.equal(delayed[0].modeledWaitMs, 1200);
+  assert(delayed[0].waitElapsedMs >= 1100, 'The modeled wait did not execute');
   assert(writes.every(row=>row.thread==='worker'),'Tool recovery writes still run on main');
   assert(Number(evidence.maxHealthMs)<250, 'health delayed by recovery writes');
   evidence.passed=true;
