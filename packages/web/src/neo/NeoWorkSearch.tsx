@@ -43,7 +43,7 @@ export function NeoWorkSearch({
           placeholder={t('live.searchWork')}
           onInput={(event) => onQuery(event.currentTarget.value)}
           onKeyDown={(event) => {
-            if (event.key === 'Escape') {
+            if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) {
               event.stopPropagation();
               close();
             }

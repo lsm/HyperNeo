@@ -1,5 +1,5 @@
 import type { NeoAskEntry } from '@hyperneo/shared/types/neo-ask';
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
 import { createNeoWorkSearch } from './neo-work-search.ts';
 
 export function useNeoWorkSearch(
@@ -13,8 +13,11 @@ export function useNeoWorkSearch(
     full: NeoAskEntry[];
     failed: boolean;
   } | null>(null);
-  useEffect(() => {
-    if (!active) return;
+  useLayoutEffect(() => {
+    if (!active) {
+      setIndex(null);
+      return;
+    }
     let current = true;
     void Promise.all(entries.map((entry) => (entry.summary ? read(entry.ask.id) : entry))).then(
       (full) => {

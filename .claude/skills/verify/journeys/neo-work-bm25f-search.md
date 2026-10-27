@@ -31,7 +31,14 @@ Require No matching work for an unmatched query, with no stale cards. Escape
 clears search and restores all cards without closing the mobile Work sheet.
 The helper injects one controlled neo.ask.read WebSocket refusal; that must show
 a distinct read error, never a false No matching work. Closing and reopening
-search must recover. All other RPC reaches the real isolated daemon. Inspect
+search must recover. For the review regressions, also import verifySearchRecovery
+from neo-search-recovery-web.mjs and run it with phase after in separate contexts
+at both widths. It holds retry reads to prove Searching work… replaces the old
+error, then releases them and checks results. Chromium controlled IME composition
+plus keyboard Escape must preserve the CJK query; an ordinary Escape still closes.
+This exercises real browser composition events, not a physical OS IME candidate
+window. Preserve the separate before evidence reproducing both bugs.
+All other RPC reaches the real isolated daemon. Inspect
 closed, ranked, ranked-tail, empty and recovered screenshots for settled
 animations, readable cards, a usable field and horizontal fit at both widths.
 Scroll is intentional when ranked cards exceed the viewport.
