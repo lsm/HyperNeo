@@ -1,0 +1,95 @@
+[
+  {
+    "wrongHead": {
+      "accepted": false,
+      "reason": "matching_merge_commit_required"
+    }
+  },
+  {
+    "absent": {
+      "accepted": false,
+      "reason": "running_build_must_contain_merge"
+    }
+  },
+  {
+    "self": {
+      "accepted": false,
+      "reason": "independent_qa_required"
+    }
+  },
+  {
+    "phase": "initial",
+    "daemonPort": 52690,
+    "deploys": {
+      "prs": [
+        {
+          "url": "https://github.com/synthetic/delivery/pull/7",
+          "mergeCommit": "merge-a",
+          "head": "head-a"
+        }
+      ],
+      "daemons": [
+        {
+          "daemon": "target",
+          "commit": "build-a",
+          "contains": [
+            "merge-a"
+          ]
+        }
+      ]
+    },
+    "stored": {
+      "gate": {
+        "url": "https://github.com/synthetic/delivery/pull/7",
+        "head": "head-a",
+        "acceptanceContract": "artifact:acceptance",
+        "write": {
+          "adapter": "codex",
+          "daemon": "author-daemon",
+          "id": "same-local-id"
+        },
+        "reviewer": "review-bot",
+        "qa": {
+          "adapter": "codex",
+          "daemon": "qa-daemon",
+          "id": "same-local-id"
+        },
+        "evidence": [
+          "artifact:qa",
+          "ci:synthetic-run"
+        ]
+      },
+      "smoke": {
+        "actor": {
+          "kind": "agent",
+          "id": "same-local-id",
+          "model": "gpt-6",
+          "harness": "codex"
+        },
+        "ref": {
+          "adapter": "codex",
+          "daemon": "qa-daemon",
+          "id": "same-local-id"
+        },
+        "mergeCommit": "merge-a",
+        "verdict": "fail",
+        "evidence": [
+          "artifact:smoke"
+        ],
+        "build": {
+          "daemon": "target",
+          "commit": "build-a"
+        }
+      }
+    },
+    "todoState": "doing"
+  },
+  {
+    "vanishedGate": {
+      "accepted": true
+    }
+  },
+  {
+    "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   accepted: true\n-   accepted: false,\n-   reason: 'matching_merge_gate_required'\n  }\n"
+  }
+]

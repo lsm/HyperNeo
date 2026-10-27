@@ -91,12 +91,20 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     observed: Pick<NeoWorkDriverReceipt, 'model' | 'effort'>;
     sent: DriverSent | null;
     keepIdentity: boolean;
+    target?: NeoDriverTarget;
   }) {
     const recorded = input.keepIdentity ? this.readCard(input.todoId) : null;
-    this.recordRef(input.todoId, input.ref, input.startedAt, input.link, {
-      model: input.observed.model ?? recorded?.model ?? undefined,
-      effort: input.observed.effort ?? recorded?.effort ?? undefined,
-    });
+    this.recordRef(
+      input.todoId,
+      input.ref,
+      input.startedAt,
+      input.link,
+      {
+        model: input.observed.model ?? recorded?.model ?? undefined,
+        effort: input.observed.effort ?? recorded?.effort ?? undefined,
+      },
+      input.target
+    );
     this.recordSent(input.todoId, input.sent);
     const todos = new NeoAskTodoRepository(this.db);
     return {

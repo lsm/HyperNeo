@@ -368,4 +368,11 @@ export class SpaceWorkflowManager {
     }
     return this.repo.deleteWorkflow(id);
   }
+
+  async deleteWorkflowAsync(id: string): Promise<boolean> {
+    const result = await this.repo.deleteWorkflowAsync(id);
+    if ('blocked' in result)
+      throw new WorkflowDeletionBlockedError(result.blocked.message, result.blocked.workflowId);
+    return result.deleted;
+  }
 }

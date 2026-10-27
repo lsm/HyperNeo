@@ -220,10 +220,10 @@ export class SpaceWorkflowRunRepository {
     }));
   }
 
-  migrateSnapshotlessPins(
+  async migrateSnapshotlessPins(
     resolveTemplateFor: AgentTemplateResolverFactory,
     loadWorkflow: (workflowId: string) => SpaceWorkflow | null
-  ): number {
+  ): Promise<number> {
     let count = 0;
     for (const run of this.listSnapshotlessPinnedRuns()) {
       try {
@@ -244,7 +244,7 @@ export class SpaceWorkflowRunRepository {
               `snapshotting the live definition it was already resolving`
           );
         }
-        if (this.applyRunSnapshotMigration(outcome)) count += 1;
+        if (await this.applyRunSnapshotMigration(outcome)) count += 1;
       } catch (err) {
         log.warn(`migrateSnapshotlessPins: skipped run ${run.id} (non-fatal):`, err);
       }
@@ -252,22 +252,8 @@ export class SpaceWorkflowRunRepository {
     return count;
   }
 
-  private applyRunSnapshotMigration(plan: RunSnapshotMigrationPlan): boolean {
-    const appendVersion = new SpaceWorkflowDefinitionVersionRepository(this.db);
-    const migrated = this.db.transaction(() => {
-      appendVersion.appendVersion({
-        workflowId: plan.workflowId,
-        spaceId: plan.spaceId,
-        versionHash: plan.versionHash,
-        payload: plan.payload,
-        source: 'backfill',
-        createdAt: Date.now(),
-      });
-      return this.db
-        .prepare(`UPDATE space_workflow_runs SET definition_version = ? WHERE id = ?`)
-        .run(plan.versionHash, plan.runId).changes;
-    })();
-    return migrated > 0;
+  private applyRunSnapshotMigration(plan: RunSnapshotMigrationPlan): Promise<boolean> {
+    return gatewayFor(this.db).call(workflowRunPinWrites, 'migrateSnapshot', plan);
   }
 
   async backfillDefinitionPins(

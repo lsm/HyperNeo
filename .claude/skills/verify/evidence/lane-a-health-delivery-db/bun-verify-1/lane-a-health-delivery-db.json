@@ -1,0 +1,166 @@
+{
+  "mode": "verify",
+  "verified": true,
+  "consumer": "Persisted daemon jobs invoke production health delivery with a synthetic keyed receiver",
+  "limitation": "No actual Neo mailbox, recipient consumption, full coding sweep, model, GitHub, GUI, whole-daemon SQL absence or latency claim.",
+  "rejected": {
+    "status": "completed",
+    "result": {
+      "completed": true
+    }
+  },
+  "accepted": {
+    "status": "completed",
+    "result": {
+      "completed": true
+    }
+  },
+  "finalState": {
+    "lastError": null,
+    "lastErrorAt": null,
+    "cycleAt": 4,
+    "attemptedAt": 4,
+    "completeAt": 4,
+    "misses": 0,
+    "firstMissAt": null,
+    "reason": "complete",
+    "nextRetryAt": null,
+    "incident": {
+      "key": "github-health:synthetic/health:1",
+      "raisedAt": 3,
+      "resolvedAt": 4
+    },
+    "notices": [
+      {
+        "key": "github-health:synthetic/health:1",
+        "text": "GitHub coverage stalled for synthetic/health. Incident github-health:synthetic/health:1.",
+        "acceptedAt": 6
+      },
+      {
+        "key": "github-health:synthetic/health:1:recovery",
+        "text": "GitHub coverage recovered for synthetic/health. Incident github-health:synthetic/health:1.",
+        "acceptedAt": 6
+      }
+    ]
+  },
+  "attempts": [
+    {
+      "key": "github-health:synthetic/health:1",
+      "text": "GitHub coverage stalled for synthetic/health. Incident github-health:synthetic/health:1."
+    },
+    {
+      "key": "github-health:synthetic/health:1",
+      "text": "GitHub coverage stalled for synthetic/health. Incident github-health:synthetic/health:1."
+    },
+    {
+      "key": "github-health:synthetic/health:1",
+      "text": "GitHub coverage stalled for synthetic/health. Incident github-health:synthetic/health:1."
+    },
+    {
+      "key": "github-health:synthetic/health:1",
+      "text": "GitHub coverage stalled for synthetic/health. Incident github-health:synthetic/health:1."
+    },
+    {
+      "key": "github-health:synthetic/health:1",
+      "text": "GitHub coverage stalled for synthetic/health. Incident github-health:synthetic/health:1."
+    },
+    {
+      "key": "github-health:synthetic/health:1:recovery",
+      "text": "GitHub coverage recovered for synthetic/health. Incident github-health:synthetic/health:1."
+    },
+    {
+      "key": "github-health:synthetic/health:1:recovery",
+      "text": "GitHub coverage recovered for synthetic/health. Incident github-health:synthetic/health:1."
+    }
+  ],
+  "received": [
+    [
+      "github-health:synthetic/health:1",
+      "GitHub coverage stalled for synthetic/health. Incident github-health:synthetic/health:1."
+    ],
+    [
+      "github-health:synthetic/health:1:recovery",
+      "GitHub coverage recovered for synthetic/health. Incident github-health:synthetic/health:1."
+    ]
+  ],
+  "mainSql": [],
+  "commands": [
+    {
+      "name": "coding.ledgerWrites",
+      "method": "readHealth",
+      "durationMs": 0.08845800000005966,
+      "argsBytes": 50,
+      "replyBytes": 403
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "readHealth",
+      "durationMs": 0.09391699999991943,
+      "argsBytes": 50,
+      "replyBytes": 572
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "readHealth",
+      "durationMs": 0.216542000000004,
+      "argsBytes": 50,
+      "replyBytes": 572
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "readHealth",
+      "durationMs": 0.13350000000002638,
+      "argsBytes": 50,
+      "replyBytes": 572
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "readHealth",
+      "durationMs": 0.22991700000000037,
+      "argsBytes": 50,
+      "replyBytes": 572
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "acceptHealthNotice",
+      "durationMs": 0.09500000000002728,
+      "argsBytes": 95,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "acceptHealthNotice",
+      "durationMs": 0.11808300000006966,
+      "argsBytes": 95,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "acceptHealthNotice",
+      "durationMs": 0.07058300000005602,
+      "argsBytes": 104,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "acceptHealthNotice",
+      "durationMs": 0.054832999999916865,
+      "argsBytes": 104,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "readHealth",
+      "durationMs": 0.06370800000001964,
+      "argsBytes": 50,
+      "replyBytes": 566
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "readHealth",
+      "durationMs": 0.2502079999999296,
+      "argsBytes": 50,
+      "replyBytes": 566
+    }
+  ]
+}
