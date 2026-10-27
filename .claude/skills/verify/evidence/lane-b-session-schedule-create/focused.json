@@ -26,5 +26,14 @@
     "separate SQL queue and clone timings"
   ],
   "repositoryCheck": "passed",
-  "hermeticProof": "Fresh HOME/data, refusing GitHub stub, direct HTTP refused; temporary daemon data removed after evidence saved."
+  "hermeticProof": "Fresh HOME/data, refusing GitHub stub, direct HTTP refused; temporary daemon data removed after evidence saved.",
+  "baseSync": {
+    "dev": "a10e2df5d388cfdffcd7ba1f2a26210215651d40",
+    "conflict": "Append-only DB-op import/entry; retain both commands",
+    "productionChangedLines": 54,
+    "vitestPassed": 77,
+    "repositoryCheck": "passed",
+    "bunDenoMainSql": 0,
+    "unknownOutcomeNotReplayed": true
+  }
 }

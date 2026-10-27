@@ -1,0 +1,36 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/neo-publication-edit-writer.test.ts:
+ 96 |       });
+ 97 |       const receipt =
+ 98 |         changed.kind === 'completed'
+ 99 |           ? (changed.value as { publication: { editedAt: string } })
+100 |           : null;
+101 |       expect(Date.parse(receipt!.publication.editedAt)).toBeGreaterThanOrEqual(releasedAt);
+                                                              ^
+error: expect(received).toBeGreaterThanOrEqual(expected)
+
+Expected: >= 1793088961248
+Received: 1793088961221
+
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/neo-publication-edit-writer.test.ts:101:57)
+(fail) publication revision admits and commits on the bound writer with guarded main [32.87ms]
+ 96 |       });
+ 97 |       const receipt =
+ 98 |         changed.kind === 'completed'
+ 99 |           ? (changed.value as { publication: { editedAt: string } })
+100 |           : null;
+101 |       expect(Date.parse(receipt!.publication.editedAt)).toBeGreaterThanOrEqual(releasedAt);
+                                                              ^
+error: expect(received).toBeGreaterThanOrEqual(expected)
+
+Expected: >= 1793088961278
+Received: 1793088961251
+
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/neo-publication-edit-writer.test.ts:101:57)
+(fail) publication revision admits and commits on the bound writer with read-only main [28.11ms]
+
+ 0 pass
+ 2 fail
+ 8 expect() calls
+Ran 2 tests across 1 file. [90.00ms]

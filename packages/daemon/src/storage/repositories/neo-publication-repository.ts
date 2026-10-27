@@ -12,6 +12,9 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { admitNeoPublication } from '../../lib/neo/publication.ts';
 import type { Database } from '../sqlite-compat.ts';
+import type { OperationCaller } from '../../lib/operations/registry.ts';
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { neoPublicationEditWrites } from './neo-publication-edit-writes.ts';
 
 type Row = { sequence: number; payloadJson: string; createdAt: string };
 const columns = 'sequence, payload_json AS payloadJson, created_at AS createdAt';
@@ -224,6 +227,13 @@ const readPage = (superpipe({})('neo-publication-page') as PipelineAPI)
 
 export class NeoPublicationRepository {
   constructor(private readonly db: Database) {}
+
+  reviseCurrent(input: unknown, caller: OperationCaller) {
+    return gatewayFor(this.db).call(neoPublicationEditWrites, 'revise', input, {
+      source: caller.source,
+      sessionId: caller.sessionId,
+    });
+  }
 
   append(input: unknown): NeoPublicationAppendResult {
     const result = append(input, this.db);
