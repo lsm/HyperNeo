@@ -18,20 +18,22 @@ export class VoiceRecordingRepository {
     return gatewayFor(this.db).call(voiceRecordingWrites, 'markDispatched', owner, id);
   }
 
-  releaseUnsentAsync(owner: string, id: string) {
-    return gatewayFor(this.db).call(voiceRecordingWrites, 'releaseUnsent', owner, id);
-  }
-
-  releaseUnsent(owner: string, id: string): void {
-    this.db
-      .prepare(
-        'UPDATE voice_recordings SET dispatched_at = NULL WHERE owner = ? AND recording_id = ?'
-      )
-      .run(owner, id);
-  }
-
-  finishAsync(owner: string, id: string, outcome: VoiceTranscribeOutcome, dispatched: boolean) {
-    return gatewayFor(this.db).call(voiceRecordingWrites, 'finish', owner, id, outcome, dispatched);
+  finishAsync(
+    owner: string,
+    id: string,
+    outcome: VoiceTranscribeOutcome,
+    dispatched: boolean,
+    releaseUnsent = false
+  ) {
+    return gatewayFor(this.db).call(
+      voiceRecordingWrites,
+      'finish',
+      owner,
+      id,
+      outcome,
+      dispatched,
+      releaseUnsent
+    );
   }
 
   get(
@@ -78,12 +80,25 @@ export class VoiceRecordingRepository {
     );
   }
 
-  finish(owner: string, id: string, outcome: VoiceTranscribeOutcome, dispatched: boolean): void {
+  finish(
+    owner: string,
+    id: string,
+    outcome: VoiceTranscribeOutcome,
+    dispatched: boolean,
+    releaseUnsent = false
+  ): void {
     this.db
       .prepare(
-        'UPDATE voice_recordings SET outcome_json = ?, completed_at = ? WHERE owner = ? AND recording_id = ? AND (dispatched_at IS NOT NULL) = ?'
+        'UPDATE voice_recordings SET outcome_json = ?, completed_at = ?, dispatched_at = CASE WHEN ? THEN NULL ELSE dispatched_at END WHERE owner = ? AND recording_id = ? AND (dispatched_at IS NOT NULL) = ?'
       )
-      .run(JSON.stringify(outcome), Date.now(), owner, id, Number(dispatched));
+      .run(
+        JSON.stringify(outcome),
+        Date.now(),
+        Number(releaseUnsent),
+        owner,
+        id,
+        Number(dispatched || releaseUnsent)
+      );
   }
 }
 
@@ -97,5 +112,5 @@ export const voiceRecordingWrites = defineRepositoryOp(
   'voice.recording.write',
   'write',
   VoiceRecordingRepository,
-  ['reserve', 'markDispatched', 'releaseUnsent', 'finish'] as const
+  ['reserve', 'markDispatched', 'finish'] as const
 );

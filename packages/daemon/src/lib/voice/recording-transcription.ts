@@ -61,8 +61,7 @@ export class VoiceRecordingTranscription {
         })
       )
       .then(async (outcome) => {
-        if (claimed && !dispatched) await this.repository.releaseUnsentAsync(owner, id);
-        await this.repository.finishAsync(owner, id, outcome, dispatched);
+        await this.repository.finishAsync(owner, id, outcome, dispatched, claimed && !dispatched);
         return outcome;
       });
   }
