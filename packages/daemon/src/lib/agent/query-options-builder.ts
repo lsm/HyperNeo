@@ -846,10 +846,11 @@ export class QueryOptionsBuilder {
       return presetConfig;
     }
 
-    const plain = this.joinSystemPromptAppendParts([
+    const parts = [
       this.ctx.getSpaceBriefing?.(),
       this.ctx.session.worktree ? this.getMinimalWorktreePrompt() : undefined,
-    ]);
+    ];
+    const plain = parts.some((part) => part?.trim()) ? this.joinSystemPromptAppendParts(parts) : '';
     return plain ? buildHostAuthoredPrompt(plain) : undefined;
   }
 

@@ -43,7 +43,7 @@ export function workerWorkLocationsBrief(root: string) {
     `- New worktrees: ${locations.worktrees} (HYPERNEO_WORKTREES)`,
     `- Verification evidence: ${locations.evidence} (HYPERNEO_EVIDENCE)`,
     `- Build output: ${locations.builds} (HYPERNEO_BUILDS)`,
-    `- Scratch: ${locations.scratch} (sandbox TMPDIR)`,
+    `- Scratch: ${locations.scratch} (used for TMPDIR only when sandboxing is on)`,
     'Create output directories as needed. Existing worktrees stay in place.',
   ].join('\n');
 }

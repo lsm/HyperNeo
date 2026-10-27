@@ -61,3 +61,10 @@ legacy directories are accepted, not migrated. work-locations-native.log and
 observed.json retain the result. No Desktop UI or real provider is used.
 SDK/Codex/Copilot launch-envelope regressions cover the other adapters; this
 native proof specifically exercises Claude's shell environment, not those CLIs.
+
+The focused SDK prompt tests preserve its default prompt when the preset is off
+and there is no other host-authored instruction; location environment hints still
+arrive. With an existing prompt or the preset, the brief is appended. Scratch is
+only described as TMPDIR when sandboxing is on; unsandboxed temp behavior stays
+unchanged. Include the existing-turn Codex policy tests when rebasing this change
+so policy refresh remains enforced before queueing an input.
