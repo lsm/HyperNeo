@@ -344,6 +344,7 @@ describe('a doing todo never sits idle without someone on it', () => {
       { machine: 'laptop', name: 'repo', folder: '/repo' },
     ]);
     expect(w.todo(todo.id).state).toBe('doing');
+    expect(w.sessions.get(todo.id)).toMatchObject({ verb: 'start', adapter: 'hyperneo' });
   });
 
   test('a stalled todo with no known place puts one card in front of the human', async () => {
