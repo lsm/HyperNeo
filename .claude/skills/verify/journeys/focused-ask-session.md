@@ -1,4 +1,4 @@
-# Reopen a focused discussion after its preparation card is retired
+# Retain focused discussion context after its preparation card is retired
 
 Read shared isolation rules. Build web, pick a fresh RUN, and run this proof. Preflight port 8000 for its owned loopback model; never stop another
 process. The daemon and web server use ephemeral ports:
@@ -22,8 +22,9 @@ An ordinary source card must not bind the ask. A prepared card with focused:true
 must save ask.focusedSession; a missing source is refused. After retiring all
 questions and restarting only this test daemon, neo.snapshot retains the captured
 session identity, provider and safe opener on the ask, with no question present.
-Headless 1440px/390px checks reopen the correct session through the existing opener
-and return to the ask. Retain screenshots, observed.json, web.json and receipts.
+Headless 1440px/390px checks retain the captured session context without the
+duplicate header Open session pill. Question-card and per-todo openers are
+covered by neo-open-controls.md, including both light and dark themes. Retain screenshots, observed.json, web.json and receipts.
 
 A synthetic tracked dispatch and work.status turn end exercise the actual daemon
 refresh job and relay delivery into Neo's stored input. Its report names ask, todo

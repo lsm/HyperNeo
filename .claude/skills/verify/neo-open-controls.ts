@@ -39,7 +39,8 @@ try{
   store.focusAsk(askId,session,now);
   store.askQuestion(`question-${source.id}`,askId,{kind:'yesno',text:`Review the ${source.name} decision?`,options:null,multiple:false,noLabel:'Wait',yesLabel:'Continue',startTodos:null,sourceSession:session},now);
   const todo=store.addTodo(`todo-${source.id}`,askId,{title:`Follow ${source.name}`,doneWhen:'Observed result',check:null,instruction:null,named:null},now);
-  links.recordRef(todo,{adapter:source.adapter,id:source.id},now,source.link);
+  links.bind(todo.id,{adapter:source.adapter,id:source.id},now);
+  links.recordRef(todo.id,{adapter:source.adapter,id:source.id},now,source.link);
  }
  const entry=await hub.request<{ok:boolean;entry:{questions:{sourceSession?:unknown}[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId:'open-codex-worker'}});assert(entry.ok && entry.entry.questions[0].sourceSession);
  const dist=resolve('packages/web/dist');assert(existsSync(join(dist,'neo/index.html')));
@@ -57,6 +58,6 @@ try{
  evidence.browser=browser;evidence.sourceSeedReadable=true;evidence.passed=true;
 }finally{
  front?.stop(true);await transport.close();await app.cleanup();globalThis.fetch=network;evidence.resourcesStopped=true;
- writeFileSync(join(run,'evidence/settled-question-preview.json'),JSON.stringify(evidence,null,2).replaceAll(run,'<synthetic-run>'));
+ writeFileSync(join(run,'evidence/open-controls.json'),JSON.stringify(evidence,null,2).replaceAll(run,'<synthetic-run>'));
 }
 console.log(JSON.stringify(evidence).replaceAll(run,'<synthetic-run>'));

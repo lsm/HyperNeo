@@ -35,13 +35,8 @@ try {
         assert.equal(await execution.getAttribute('data-todo-state'), 'todo');
       }
       await page.screenshot({ path: `${run}/evidence/ask-${width}.png`, fullPage: true, animations: 'disabled' });
-      await header.getByRole('button', { name: 'Open session: Positioning discussion', exact: true }).click();
-      const pane = page.locator('.neo-session-pane');
-      await pane.getByRole('heading', { name: saved.source.label, exact: true }).waitFor();
-      await page.screenshot({ path: `${run}/evidence/session-${width}.png`, fullPage: true, animations: 'disabled' });
-      await pane.getByRole('button', { name: 'Back to Neo', exact: true }).click();
-      await header.getByRole('button', { name: 'Open session: Positioning discussion', exact: true }).waitFor();
-      observed.push({ width, outcomeLinksVisible: !!saved.outcomeMode, questionRetired: true, reopened: saved.source.link, survivesBack: true });
+      assert.equal(await header.getByRole('button').count(), 0);
+      observed.push({ width, outcomeLinksVisible: !!saved.outcomeMode, questionRetired: true, sourceRetained: saved.source.link, duplicateHeaderOpenerAbsent: true });
     } finally { await page.close(); }
   }
   writeFileSync(`${run}/evidence/web.json`, JSON.stringify(observed, null, 2));
