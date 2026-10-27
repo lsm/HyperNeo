@@ -214,4 +214,24 @@ describe('todo dependencies', () => {
       db.close();
     }
   });
+
+  test('what a started todo waits for cannot change under its running worker', async () => {
+    const { db, store, invoke, step } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Plan',
+        request: 'Plan',
+        todos: [step('A'), step('B', [])],
+      });
+      const [a, b] = opened.todos;
+      store.updateTodo(b, { state: 'doing', startedAt: 5 }, 5);
+      expect(await invoke('neo.todo.edit', { todoId: b.id, after: [a.id] })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('already_started'),
+      });
+      expect(store.getTodo(b.id)?.dependsOn).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
 });
