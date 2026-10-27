@@ -1,4 +1,3 @@
-import { ContentDisclosureControl } from '../components/ui/ContentDisclosureControl.tsx';
 import { ChevronRightGlyph } from '../components/icons/common-glyphs.tsx';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { ArtifactCards } from '../components/artifacts/ArtifactCards.tsx';
