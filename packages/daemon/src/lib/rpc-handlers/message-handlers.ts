@@ -17,6 +17,7 @@ import {
 } from '../../storage/message-search.ts';
 import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
 import { singleMessageReads } from '../../storage/repositories/sdk-single-message-read.ts';
+import { messageCountReads } from '../../storage/repositories/sdk-message-count-read.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { MessageSearchWorkerService } from '../message-search-worker-service.ts';
 import { sessionSdkPath } from '../session/sdk-path.ts';
@@ -159,19 +160,14 @@ export function setupMessageHandlers(
 
   messageHub.onRequest('message.count', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
-
-    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
-
-    if (!agentSession) {
-      if (targetSessionId.startsWith('conv:') && db) {
-        const sdkMessageRepo = new SDKMessageRepository(db.getDatabase());
-        const count = sdkMessageRepo.getSDKMessageCount(targetSessionId);
-        return { count };
-      }
-      throw new Error('Session not found');
-    }
-
-    const count = agentSession.getSDKMessageCount();
+    const store = db ?? sessionManager.getDatabase();
+    await store.waitForSdkMessageColumns(targetSessionId, false);
+    const count = await gatewayFor(store.getDatabase()).call(
+      messageCountReads,
+      'count',
+      targetSessionId,
+      !(targetSessionId.startsWith('conv:') && db)
+    );
     return { count };
   });
 

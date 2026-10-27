@@ -1,0 +1,28 @@
+{
+  "baseline": {
+    "unitPassed": 0,
+    "unitFailed": 6,
+    "daemonMainSqlAttempts": 1,
+    "daemonRpcError": "Session not found"
+  },
+  "fixed": {
+    "passed": 58,
+    "failed": 0,
+    "files": 4,
+    "repositoryCheck": "passed"
+  },
+  "base": "09cadac37b",
+  "productionChangedLines": 40,
+  "scope": [
+    "message.count RPC",
+    "new count reader",
+    "append-only op import and registration",
+    "one-line Deno proof registration"
+  ],
+  "unverified": [
+    "deployed build",
+    "browser UI",
+    "separate queue SQL cloning breakdown",
+    "migration-in-progress main SQL relocation"
+  ]
+}
