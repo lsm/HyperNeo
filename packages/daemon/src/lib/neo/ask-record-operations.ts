@@ -266,6 +266,10 @@ export function createNeoAskRecordOperations(
               ? await controls.start(row.id)
               : { ok: true as const };
           if (!added.ok) return added;
+          if (row && todo.after)
+            records.push(
+              `after_ignored: "${row.title}" already exists; change what it waits for with neo.todo.edit.`
+            );
           ids.push(row?.id ?? ('todo' in added ? added.todo?.id : undefined));
           if ('records' in added && added.records) records.push(...added.records);
         }

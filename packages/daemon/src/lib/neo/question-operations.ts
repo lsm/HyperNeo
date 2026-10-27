@@ -704,20 +704,27 @@ export function createNeoQuestionOperations(
     .pipe(
       async (answered: { question: NeoQuestion; ask: NeoAsk }): Promise<QuestionReceipt> => {
         const refused: string[] = [];
-        if (answered.question.kind === 'start')
-          for (const todoId of [answered.question.answer ?? []]
-            .flat()
-            .filter((id) => neoTodoReady(store.listFamilyTodos(answered.ask.id), id))) {
-            const started = await start(todoId);
-            if (!started.ok)
-              refused.push(`${store.getTodo(todoId)?.title ?? todoId}: ${started.reason}`);
-          }
+        const ticked =
+          answered.question.kind === 'start' ? [answered.question.answer ?? []].flat() : [];
+        const waiting = ticked.filter(
+          (id) => !neoTodoReady(store.listFamilyTodos(answered.ask.id), id)
+        );
+        for (const todoId of ticked.filter((id) => !waiting.includes(id))) {
+          const started = await start(todoId);
+          if (!started.ok)
+            refused.push(`${store.getTodo(todoId)?.title ?? todoId}: ${started.reason}`);
+        }
         await told(
           answered.ask,
           answered.question,
           [
             neoQuestionAnsweredNote(answered.question, store.listTodos(answered.ask.id)),
             ...(refused.length ? [`These did not start: ${refused.join(' ')}`] : []),
+            ...(waiting.length
+              ? [
+                  `Waiting for earlier steps: ${waiting.map((id) => store.getTodo(id)?.title ?? id).join(', ')}.`,
+                ]
+              : []),
           ].join('\n')
         );
         await deliverAnswers(answered.question.id);
