@@ -19,6 +19,7 @@ writeFileSync(join(run, 'bin/gh'), `#!/bin/sh\ncase "$*" in *graphql*synthetic*p
 const network = globalThis.fetch;
 globalThis.fetch = (() => { throw new Error('Real HTTP refused'); }) as typeof fetch;
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined, measuring = 0;
+let beforeSection: (() => void) | undefined;
 const mainSql: string[] = [], commands: unknown[] = [];
 const evidence: Record<string, any> = { mode, verified: false, consumer: 'Real daemon public WebSocket neo.project.section and neo.snapshot', limitation: 'Synthetic fixtures; no GUI, model, live daemon or GitHub. No held-writer latency claim.' };
 async function open() {
@@ -27,6 +28,10 @@ async function open() {
   const db = app.db.getDatabase(), prepare = db.prepare.bind(db), send = app.db.gateway.run.bind(app.db.gateway);
   db.prepare = ((sql: string) => { if (measuring && /neo_concerns|neo_project_workspaces|neo_project_merges/.test(sql)) mainSql.push(sql); return prepare(sql); }) as typeof db.prepare;
   app.db.gateway.run = (async (op, args) => {
+    if (op.name === 'neo.project.move' && (args as any).method === 'createSection' && beforeSection) {
+      const callback = beforeSection; beforeSection = undefined;
+      measuring--; try { callback(); } finally { measuring++; }
+    }
     const start = performance.now(), value = await send(op, args);
     if (op.name === 'neo.project.move') commands.push({ name: op.name, durationMs: performance.now() - start, argsBytes: Buffer.byteLength(JSON.stringify(args)), replyBytes: Buffer.byteLength(JSON.stringify(value)) });
     return value;
@@ -64,6 +69,21 @@ try {
   assert.equal((evidence.invalid as any).reason, 'invalid_epic_url');
   evidence.mismatch = await section('other');
   assert.equal((evidence.mismatch as any).reason, 'section_workspace_mismatch');
+  repo.saveProject({ id: 'vanish', title: 'vanish', summary: '', context: '' }, 0);
+  db.prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)').run('repo:synthetic/project\u0000vanish', 'vanish');
+  if (mode === 'verify') {
+    beforeSection = () => {
+      db.prepare('DELETE FROM neo_project_workspaces WHERE project_id=?').run('vanish');
+      db.prepare('DELETE FROM neo_concerns WHERE id=?').run('vanish');
+    };
+    evidence.deletedParent = await section('vanish');
+    assert.equal((evidence.deletedParent as any).reason, 'unknown_parent');
+  }
+  db.exec("CREATE TRIGGER section_rollback BEFORE INSERT ON neo_concerns WHEN NEW.epic_url IS NOT NULL BEGIN SELECT RAISE(ABORT, 'synthetic section rollback'); END");
+  await assert.rejects(section('a'), /synthetic section rollback/);
+  assert.equal((await snapshot()).filter((value: any) => value.epicUrl).length, 0);
+  db.exec('DROP TRIGGER section_rollback');
+  evidence.rollback = true;
   const race = await Promise.all([section('a'), section('b')]);
   evidence.race = race;
   assert.equal(race.filter(value => value.ok).length, 1);
