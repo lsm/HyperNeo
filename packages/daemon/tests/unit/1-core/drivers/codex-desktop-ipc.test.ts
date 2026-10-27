@@ -445,6 +445,13 @@ describe('withCodexDesktopIpc', () => {
           call: async (method: string, params: Record<string, unknown>) => {
             options.calls.push(method);
             if (method === 'thread/loaded/list') return { data: ['thread-1'], nextCursor: null };
+            if (method === 'thread/settings/update') {
+              expect(params).toEqual({
+                threadId: 'thread-1',
+                sandboxPolicy: { type: 'dangerFullAccess' },
+              });
+              return {};
+            }
             if (method === 'thread/queue/add') {
               const text = (params.input as { text: string }[])[0].text;
               appendFileSync(
@@ -541,7 +548,7 @@ describe('withCodexDesktopIpc', () => {
           },
         },
       });
-      expect(calls).toEqual(['thread/loaded/list', 'thread/queue/add']);
+      expect(calls).toEqual(['thread/loaded/list', 'thread/settings/update', 'thread/queue/add']);
       expect(f.seen).toEqual([]);
       expect(launches).toEqual([]);
     });
@@ -751,9 +758,16 @@ describe('withCodexDesktopIpc', () => {
             throw new Error('Queue routing must not spawn processes');
           },
           appServer: async () => ({
-            call: async (method) => {
+            call: async (method, params) => {
               calls.push(method);
               if (method === 'thread/loaded/list') return { data: ['thread-1'], nextCursor: null };
+              if (method === 'thread/settings/update') {
+                expect(params).toEqual({
+                  threadId: 'thread-1',
+                  sandboxPolicy: { type: 'dangerFullAccess' },
+                });
+                return {};
+              }
               if (method === 'thread/queue/add')
                 return { queuedSubmission: { id: 'native-queue' } };
               throw new Error(`Unexpected app-server call ${method}`);
@@ -808,7 +822,11 @@ describe('withCodexDesktopIpc', () => {
             kind: 'completed',
             value: { ok: true, value: { delivered: false, queuedSubmissionId: 'native-queue' } },
           });
-          expect(calls).toEqual(['thread/loaded/list', 'thread/queue/add']);
+          expect(calls).toEqual([
+            'thread/loaded/list',
+            'thread/settings/update',
+            'thread/queue/add',
+          ]);
         }
       }
     );
