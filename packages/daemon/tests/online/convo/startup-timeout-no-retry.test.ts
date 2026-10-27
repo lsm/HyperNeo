@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { spawn } from 'node:child_process';
+import { QueryOptionsBuilder } from '../../../src/lib/agent/query-options-builder';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import { getProcessingState } from '../../helpers/daemon-actions';
@@ -22,38 +24,6 @@ async function getSessionError(
     { timeout: timeoutMs }
   )) as { error?: { message: string; details?: unknown } | null };
   return state.error ?? null;
-}
-
-async function waitForStartupTimeoutTimer(
-  daemon: DaemonServerContext,
-  expected: number,
-  timeoutMs: number
-): Promise<void> {
-  const countTimers = () =>
-    (daemon.getCapturedOutput?.() ?? '').split('SDK startup timeout:').length - 1;
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (countTimers() >= expected) return;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error(
-    `expected >= ${expected} "SDK startup timeout:" timer log(s); saw ${countTimers()} ` +
-      '(the retry-once sequence did not complete — the second attempt never timed out)'
-  );
-}
-
-function assertRetryOnceSequenceRan(daemon: DaemonServerContext): void {
-  const output = daemon.getCapturedOutput?.() ?? '';
-  const timers = output.split('SDK startup timeout:').length - 1;
-  const retries = output.split('Auto-retrying query after startup timeout').length - 1;
-  expect(
-    timers,
-    `expected 2 startup-timeout timer logs (attempt 1 + the retry's attempt 2); got ${timers}`
-  ).toBe(2);
-  expect(
-    retries,
-    `expected the retry-once branch to run exactly once; got ${retries} retry log(s)`
-  ).toBe(1);
 }
 
 async function waitForSessionError(
@@ -82,24 +52,53 @@ async function waitForRetryOnceCompleted(
 ): Promise<void> {
   const deadline = Date.now() + IDLE_TIMEOUT;
   const remaining = (): number => Math.max(0, deadline - Date.now());
-  await waitForStartupTimeoutTimer(daemon, 2, remaining());
   await waitForSessionError(daemon, sessionId, remaining());
 }
 
 describe('Startup Timeout Error Surfacing', () => {
   let daemon: DaemonServerContext;
+  let sdkStarts: number;
+  let restoreOptions: () => void;
 
   beforeEach(async () => {
+    sdkStarts = 0;
+    const build = QueryOptionsBuilder.prototype.build;
+    QueryOptionsBuilder.prototype.build = async function (...args) {
+      const options = await build.apply(this, args);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      return {
+        ...options,
+        spawnClaudeCodeProcess: (opts) => {
+          sdkStarts++;
+          return spawn(
+            process.execPath,
+            ['-e', 'process.stdin.resume();setInterval(() => {}, 1000);'],
+            {
+              cwd: opts.cwd,
+              env: opts.env,
+              stdio: ['pipe', 'pipe', 'pipe'],
+              signal: opts.signal,
+            }
+          );
+        },
+      };
+    };
+    restoreOptions = () => {
+      QueryOptionsBuilder.prototype.build = build;
+    };
     const origSpawn = process.env.DAEMON_TEST_SPAWN;
-    const origTimeout = process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
-
-    process.env.DAEMON_TEST_SPAWN = 'true';
-    process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = FORCED_STARTUP_INACTIVITY_TIMEOUT_MS;
+    process.env.DAEMON_TEST_SPAWN = 'false';
 
     try {
       daemon = await createDaemonServer({
         modelsReadyTimeoutMs: MODELS_READY_TIMEOUT_MS,
-        env: { LOG_LEVEL: 'warn' },
+        devProxy: process.env.VERIFY_STARTUP_PROXY_PORT
+          ? { port: Number(process.env.VERIFY_STARTUP_PROXY_PORT) }
+          : undefined,
+        env: {
+          LOG_LEVEL: 'warn',
+          HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS: FORCED_STARTUP_INACTIVITY_TIMEOUT_MS,
+        },
       });
     } finally {
       if (origSpawn === undefined) {
@@ -107,18 +106,17 @@ describe('Startup Timeout Error Surfacing', () => {
       } else {
         process.env.DAEMON_TEST_SPAWN = origSpawn;
       }
-      if (origTimeout === undefined) {
-        delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
-      } else {
-        process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = origTimeout;
-      }
     }
   }, SETUP_TIMEOUT);
 
   afterEach(async () => {
-    if (daemon) {
-      daemon.kill('SIGTERM');
-      await daemon.waitForExit();
+    try {
+      if (daemon) {
+        daemon.kill('SIGTERM');
+        await daemon.waitForExit();
+      }
+    } finally {
+      restoreOptions();
     }
   }, SETUP_TIMEOUT);
 
@@ -159,7 +157,7 @@ describe('Startup Timeout Error Surfacing', () => {
 
         await waitForRetryOnceCompleted(daemon, sessionId);
 
-        assertRetryOnceSequenceRan(daemon);
+        expect(sdkStarts).toBe(2);
 
         const finalState = await getProcessingState(daemon, sessionId);
         expect(finalState.status).toBe('idle');
@@ -178,7 +176,7 @@ describe('Startup Timeout Error Surfacing', () => {
         expect(errorMsg).not.toContain('stale lock file');
         expect(errorMsg).not.toContain('another Claude Code session');
         expect(errorMsg).toContain('HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS');
-        expect(errorMsg).toContain('current: 10ms');
+        expect(errorMsg).toContain(`current: ${FORCED_STARTUP_INACTIVITY_TIMEOUT_MS}ms`);
       } finally {
         unsubscribe();
       }
@@ -223,7 +221,7 @@ describe('Startup Timeout Error Surfacing', () => {
 
         await waitForRetryOnceCompleted(daemon, sessionId);
 
-        assertRetryOnceSequenceRan(daemon);
+        expect(sdkStarts).toBe(2);
 
         const finalState = await getProcessingState(daemon, sessionId);
         expect(finalState.status).toBe('idle');
