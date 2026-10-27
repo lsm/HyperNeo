@@ -358,6 +358,14 @@ export class CodingPrLedgerRepository {
     >;
   }
 
+  read<K extends 'lastReads' | 'list'>(
+    method: K
+  ): Promise<ReturnType<CodingPrLedgerRepository[K]>> {
+    return gatewayFor(this.db).run(codingLedgerReads, { method, args: [] }) as Promise<
+      ReturnType<CodingPrLedgerRepository[K]>
+    >;
+  }
+
   recordStage(fact: CodingStageFact): boolean {
     return this.stageFacts.record(fact);
   }
@@ -811,8 +819,8 @@ export async function reconcileCodingPrLedger(
 ): Promise<CodingPrTransition[]> {
   const seen = new Set<string>();
   const transitions: CodingPrTransition[] = [];
-  const last = ledger.lastReads();
-  const pending = ledger.list().filter((row) => row.state === 'approved_pending');
+  const last = await ledger.read('lastReads');
+  const pending = (await ledger.read('list')).filter((row) => row.state === 'approved_pending');
   const pendingFor = (repo: string) => {
     const canonical = ledger.canonicalRepo(repo);
     return pending.filter((row) => row.repo === canonical);
@@ -883,4 +891,11 @@ export const codingLedgerWrites = defineRepositoryOp<CodingPrLedgerRepository, C
     'assignOwners',
     'observeSessions',
   ]
+);
+
+export const codingLedgerReads = defineRepositoryOp(
+  'coding.ledger.read',
+  'read',
+  CodingPrLedgerRepository,
+  ['lastReads', 'list'] as const
 );

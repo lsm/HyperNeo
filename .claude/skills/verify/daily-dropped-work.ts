@@ -81,7 +81,10 @@ try {
   await sweepNeoPacks(app!.jobQueue, service!);
   const messages = await read('next day keeps history and new counts', 2);
   assert.equal(messages[0].publication.fullText, first.fullText);
-  assert(messages[1].publication.fullText.includes('stalled asks: 0'));
+  const nextDayStalled = await service!.todos.read('listStalledAsks', clock - 2 * hour);
+  assert.deepEqual(nextDayStalled.map(ask => ask.id), ['idle']);
+  evidence.nextDayStalled = nextDayStalled;
+  assert(messages[1].publication.fullText.includes('stalled asks: 1'));
   clock += 24 * hour;
   let hookAttempts = 0;
   service!.filePacks = [
@@ -92,7 +95,7 @@ try {
   app!.db.updateGlobalSettings({ neo: { packs: ['broken', 'healthy', 'large'] } });
   await sweepNeoPacks(app!.jobQueue, service!);
   const bounded = (await read('faulty and oversized packs preserve the core report', 3)).at(-1).publication;
-  assert(bounded.fullText.includes('Core: stalled asks: 0'));
+  assert(bounded.fullText.includes('Core: stalled asks: 1'));
   assert(bounded.fullText.includes('broken: unavailable'));
   assert(bounded.fullText.includes('healthy: waiting: 4'));
   assert(bounded.fullText.length <= 16000 && bounded.shortText.length <= 2000);
