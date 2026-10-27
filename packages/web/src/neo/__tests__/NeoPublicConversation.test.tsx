@@ -249,6 +249,26 @@ describe('durable public conversation presentation', () => {
     }
   );
 
+  it.each(['7', '7.', '7)'])(
+    'keeps numeric reply %s readable with disclosure on a separate row',
+    async (shortText) => {
+      const value = publication({ shortText, fullText: 'Full numeric reply details.' });
+      const { container } = render(
+        <NeoPublicConversation conversation={conversation([], [value])} />
+      );
+      const body = await screen.findByText(shortText, { exact: true });
+      expect(body.tagName).toBe('P');
+      const more = screen.getByRole('button', { name: 'more', exact: true });
+      expect(more.closest('p')).toBeNull();
+      expect(body.textContent).toBe(shortText);
+      fireEvent.click(more);
+      expect(await screen.findByText(value.fullText!)).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'less', exact: true }));
+      expect(container.querySelector('[data-publication-details]')).toBeNull();
+      expect(screen.getByText(shortText, { exact: true }).textContent).toBe(shortText);
+    }
+  );
+
   it('copies the whole Markdown message while Details copy stays block-only', async () => {
     const value = publication({ shortText: 'The comparison is ready. Nothing has been executed.' });
     const { container } = render(
