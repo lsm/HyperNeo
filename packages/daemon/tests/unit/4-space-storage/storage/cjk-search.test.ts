@@ -85,6 +85,15 @@ describe('shared Chinese card and message search', () => {
     expect(chats(query)).toMatchObject([{ hits: 1 }]);
   });
 
+  test('retains the message index policy that disables automatic merges', () => {
+    expect(
+      facade
+        .getDatabase()
+        .prepare("SELECT v FROM message_search_fts_config WHERE k='automerge'")
+        .get()
+    ).toEqual({ v: 0 });
+  });
+
   test('retains ASCII prefix and mixed-query behavior', () => {
     card('catalog', 'Pack the catalog');
     expect(cards('catalog').results[0].snippet).toContain('catalog');
@@ -94,7 +103,7 @@ describe('shared Chinese card and message search', () => {
     expect(chats('cat')).toMatchObject([{ hits: 1 }]);
   });
 
-  test('upgrades legacy indexes without losing content and keeps triggers working after restart', () => {
+  test('upgrades legacy indexes without losing content and keeps triggers working after repeated migration', () => {
     card('old', '旧的构建版本');
     message('old-message', 'Archive', '旧的构建版本');
     const db = facade.getDatabase();

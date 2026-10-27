@@ -109,7 +109,7 @@ describe('CommandPalette', () => {
     await waitFor(() =>
       expect(request).toHaveBeenCalledWith('message.search', { query: '构建', limit: 16 })
     );
-    expect(await screen.findByText('历史构建版本')).toBeTruthy();
+    expect((await screen.findAllByText('历史构建版本')).length).toBeGreaterThan(0);
     expect(
       screen.getByText('Queries shorter than three characters match message titles only.')
     ).toBeTruthy();

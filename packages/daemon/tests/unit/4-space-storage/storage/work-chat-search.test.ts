@@ -106,9 +106,10 @@ describe('searchWorkChats', () => {
     ).toEqual(['quiet']);
   });
 
-  test('finds nothing for text with no searchable terms', () => {
+  test('short queries search titles rather than message bodies', () => {
     insert('quiet', null, 'anything', 1);
-    expect(searchWorkChats(db, tables, 'a', 50)).toEqual([]);
+    expect(searchWorkChats(db, tables, 'a', 50)).toHaveLength(1);
+    expect(searchWorkChats(db, tables, 'i', 50)).toEqual([]);
   });
 });
 

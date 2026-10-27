@@ -29,9 +29,16 @@ connection; add `memory` before the run directory through the wrapper to exercis
 that mode. It must return the same pointers, fields and snippets.
 
 The proof also searches a bracket-wrapped title with no outcome: it must return a
-title match and a string snippet. A two-character query must be rejected with
-`query_too_short` through the ordinary typed invalid-input response. The schema
-uses the same token rules as the search query, so several short words cannot
-bypass the check; a short word beside a searchable term remains valid.
+title match and a string snippet. Three-character and two-character Chinese
+queries must both find the old card whose full body this client never read.
+Single short literals search every card field in recency/id order. Several
+short words without a searchable term still receive `query_too_short`; a short
+word beside a searchable term remains valid. The message.search leg uses the
+same two-character query and must return the title match, excluding the record
+whose query appears only in its body.
 Run file and memory modes with Bun and pinned Deno. The main-thread SQL ratchet
 must pass without increasing its baseline.
+
+The in-place tokenizer upgrade, restart and browser scope notice have their own
+journey in shared-cjk-search.md. Trigram snippet windows count overlapping
+character groups; the card window must retain whole ordinary ASCII matches.
