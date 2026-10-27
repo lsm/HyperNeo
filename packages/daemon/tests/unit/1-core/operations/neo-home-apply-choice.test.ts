@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createNeoHomeOperations } from '../../../../src/lib/neo/home/operations.ts';
 import { NeoHomeRepository } from '../../../../src/lib/neo/home/repository.ts';
-import { createNeoQuestionOperations } from '../../../../src/lib/neo/question-operations.ts';
 import { readNeoReply, recordNeoReplyAnswer } from '../../../../src/lib/neo/intake.ts';
+import { createNeoQuestionOperations } from '../../../../src/lib/neo/question-operations.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,

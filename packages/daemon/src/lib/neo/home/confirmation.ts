@@ -2,10 +2,10 @@ import { createHash } from 'node:crypto';
 import type { NeoAskTodoRepository } from '../../../storage/repositories/neo-ask-todo-repository.ts';
 import { readNeoQuestion } from '../question-operations.ts';
 import {
-  isVisibleHomeProposal,
-  requireHomeSave,
   type HomeSaveInput,
   type HomeSavePlan,
+  isVisibleHomeProposal,
+  requireHomeSave,
 } from './save.ts';
 
 export function requireHomeConfirmation(

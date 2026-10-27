@@ -14,11 +14,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNeoHomeOperations } from '../../../../src/lib/neo/home/operations.ts';
 import { NeoHomeRepository } from '../../../../src/lib/neo/home/repository.ts';
+import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
-import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { spawnProcess } from '../../../../src/lib/runtime-spawn/index.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
@@ -176,7 +176,8 @@ describe('Neo home save', () => {
       const result = await save({ path: 'alias-free.md', content: 'Exact home bytes.' });
       expect(await readFile(marker, 'utf8').catch(() => null)).toBeNull();
       expect(result.ok).toBe(true);
-      expect(await git('show', 'HEAD:alias-free.md')).toBe('Exact home bytes.');    } finally {
+      expect(await git('show', 'HEAD:alias-free.md')).toBe('Exact home bytes.');
+    } finally {
       if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL;
       else process.env.GIT_CONFIG_GLOBAL = previous;
     }

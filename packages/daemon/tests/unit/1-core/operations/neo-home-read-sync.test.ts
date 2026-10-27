@@ -10,8 +10,8 @@ import {
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
 import { spawnProcess } from '../../../../src/lib/runtime-spawn/index.ts';
-import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { createTestDb } from '../../../helpers/database.ts';
 
 let fixture: string, root: string, peer: string, remote: string;

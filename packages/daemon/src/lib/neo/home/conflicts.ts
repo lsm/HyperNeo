@@ -1,7 +1,7 @@
-import { readNeoQuestion } from '../question-operations.ts';
-import type { HomeSavePlan } from './save.ts';
 import type { NeoAskTodoRepository } from '../../../storage/repositories/neo-ask-todo-repository.ts';
 import { neoDerivedId } from '../derived-id.ts';
+import { readNeoQuestion } from '../question-operations.ts';
+import type { HomeSavePlan } from './save.ts';
 
 export type HomeConflict = { id: string; text: string; document: string };
 export type HomeFailure = {

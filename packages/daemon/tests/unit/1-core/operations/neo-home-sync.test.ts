@@ -254,7 +254,8 @@ describe('Neo home save remote sync', () => {
         else process.env.GIT_CONFIG_GLOBAL = previous;
       }
     }
-  );  test('pulls peer changes, commits and pushes exact content, including an unchanged retry', async () => {
+  );
+  test('pulls peer changes, commits and pushes exact content, including an unchanged retry', async () => {
     await commit(peer, 'peer.md', 'Peer progress.\n');
     await git(peer, 'push');
     const saved = await call('neo.home.save', input);

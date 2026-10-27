@@ -14,9 +14,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNeoHomeOperations } from '../../../../src/lib/neo/home/operations.ts';
 import { NeoHomeRepository } from '../../../../src/lib/neo/home/repository.ts';
-import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { spawnProcess } from '../../../../src/lib/runtime-spawn/index.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
@@ -193,7 +193,8 @@ describe('Neo home setup', () => {
     await git('commit', '-am', 'Missing default ignore');
     expect(await init()).toMatchObject({ ok: true });
     expect(await git('log', '-1', '--format=%an')).toBe('Local identity');
-  });  test('reserves project paths without running project SQL through the main repository', async () => {
+  });
+  test('reserves project paths without running project SQL through the main repository', async () => {
     repo.saveProject({ id: 'synthetic-home', title: 'Synthetic', summary: '', context: '' }, 0);
     const list = spyOn(repo, 'listProjects').mockImplementation(() => {
       throw new Error('project reservation used the main repository');

@@ -1,5 +1,5 @@
-import type { HomeFailure } from './conflicts.ts';
 import { z } from 'zod';
+import type { HomeFailure } from './conflicts.ts';
 
 export const HomeSaveInput = z.object({
   path: z.string().min(1),

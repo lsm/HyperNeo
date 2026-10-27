@@ -4,10 +4,10 @@ import { isLocalUser } from '../../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../../operations/registry.ts';
 import { neoFolderPath } from '../folder.ts';
 import type { NeoService } from '../service.ts';
-import { NeoHomeRepository, type HomeResult } from './repository.ts';
 import { requireHomeConfirmation } from './confirmation.ts';
 import { reportHomeConflict, requireHomeChoice } from './conflicts.ts';
 import { HomeReadInput, HomeReadResult } from './read.ts';
+import { type HomeResult, NeoHomeRepository } from './repository.ts';
 import { HomeSaveInput, HomeSaveResult, requireHomePath } from './save.ts';
 
 export function createNeoHomeOperations(

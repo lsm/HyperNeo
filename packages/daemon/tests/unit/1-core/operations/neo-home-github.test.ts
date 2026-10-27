@@ -231,7 +231,8 @@ describe('Neo private GitHub home proposal', () => {
         }
       }
     }
-  );  test('asks once and creates/pushes only the human-approved bound private repository', async () => {
+  );
+  test('asks once and creates/pushes only the human-approved bound private repository', async () => {
     const proposed = await call({ askId: 'ask' });
     expect(proposed).toMatchObject({
       ok: true,
