@@ -147,7 +147,7 @@ describe('Startup Timeout Error Surfacing', () => {
         };
         if (state.sessionInfo?.id !== sessionId) return;
         if (state.error) {
-          errorEvents.push({ message: state.error.message });
+          errorEvents.push(state.error);
         }
       });
 
@@ -211,7 +211,7 @@ describe('Startup Timeout Error Surfacing', () => {
         };
         if (state.sessionInfo?.id !== sessionId) return;
         if (state.error) {
-          errorEvents.push({ message: state.error.message });
+          errorEvents.push(state.error);
         }
       });
 
@@ -233,7 +233,7 @@ describe('Startup Timeout Error Surfacing', () => {
         expect(errorEvents.length).toBeLessThanOrEqual(8);
 
         for (const ev of errorEvents) {
-          expect(ev.message).toContain('failed to start');
+          expect(ev.message, JSON.stringify(errorEvents)).toContain('failed to start');
         }
       } finally {
         unsubscribe();
