@@ -94,10 +94,14 @@ ordinary progress follows facts, not Neo’s memory or a manual tick.
 
 ## One stall ladder
 
-At 20 min remind the worker, at 40 min remind again, at 60 min go to Neo. Reset it
-only on real progress, and persist it so a restart doesn’t reset it.
-Timeouts only nudge: this ladder never sets blocked by itself. A stopped or idle
-session and “nobody ticked it” are not block facts. A merged/closed coding result
+At 20 min remind the worker, at 40 min remind again, and at 60 min move the todo once
+to a fresh worker. If that worker also sits idle for an hour, block the todo as
+`stalled` and tell Neo. A session the human started and tracked gets no reminders
+typed into it; it goes straight to stalled after an hour idle. Reset the ladder only
+on real progress (a reply right after a reminder is not), and persist it so a restart
+doesn't reset it. A stalled todo returns to doing when its worker runs or reports
+again. The planner is `lib/work-queue/follow-through.ts`. Apart from `stalled`,
+a stopped or idle session and “nobody ticked it” are not block facts. A merged/closed coding result
 must be judged before considering a reminder, even if the worker has stopped.
 
 ## Delete

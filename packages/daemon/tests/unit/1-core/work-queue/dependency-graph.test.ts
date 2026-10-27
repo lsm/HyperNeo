@@ -1,14 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  buildTaskDependencyGraph,
-  hasTaskDependencyCycle,
-} from '../../../../src/lib/tasks/dependency-graph';
+  buildDependencyGraph,
+  hasDependencyCycle,
+} from '../../../../src/lib/work-queue/dependency-graph.ts';
 
-describe('task dependency graph', () => {
+describe('dependency graph', () => {
   test('projects only dependency data and substitutes the proposed update without mutating input', () => {
     const tasks = [{ id: 'a', dependsOn: ['b'] }, { id: 'b', dependsOn: [] }, { id: 'c' }];
     const proposed = ['c'];
-    const graph = buildTaskDependencyGraph(tasks, 'a', proposed);
+    const graph = buildDependencyGraph(tasks, 'a', proposed);
     expect([...graph]).toEqual([
       ['a', ['c']],
       ['b', []],
@@ -58,11 +58,11 @@ describe('task dependency graph', () => {
   ] as { edges: [string, string[]][]; cyclic: boolean }[])(
     'detects cycles in %j',
     ({ edges, cyclic }) => {
-      expect(hasTaskDependencyCycle(new Map(edges))).toBe(cyclic);
+      expect(hasDependencyCycle(new Map(edges))).toBe(cyclic);
     }
   );
 
   test('does not synthesize an absent update target', () => {
-    expect([...buildTaskDependencyGraph([{ id: 'a' }], 'missing', ['a'])]).toEqual([['a', []]]);
+    expect([...buildDependencyGraph([{ id: 'a' }], 'missing', ['a'])]).toEqual([['a', []]]);
   });
 });

@@ -38,7 +38,13 @@ export type NeoTodoState =
 
 export type NeoTodoPriority = 'low' | 'normal' | 'high' | 'urgent';
 
-export type NeoTodoBlocker = 'check' | 'worker' | 'failure' | 'question' | 'needs-human';
+export type NeoTodoBlocker =
+  | 'check'
+  | 'worker'
+  | 'failure'
+  | 'question'
+  | 'needs-human'
+  | 'stalled';
 
 export interface NeoTodo extends ArtifactProjection {
   worker?: WorkerIdentity | null;
