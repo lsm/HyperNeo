@@ -10,6 +10,10 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 async function failure(schema: z.ZodType, input: unknown) {
   const operation = defineOperation({
@@ -33,6 +37,45 @@ async function failure(schema: z.ZodType, input: unknown) {
 }
 
 describe('operation validation examples through MCP', () => {
+  test('a throwing async refinement retains its error and gets a valid example', async () => {
+    const schema = z
+      .object({ text: z.string() })
+      .superRefine(async (input) => {
+        if (input.text === 'bad') throw new Error('Invalid example text');
+      })
+      .meta({ examples: [{ text: 'bad' }, { text: 'good' }] });
+    const { example, message } = await failure(schema, { text: 'bad' });
+    expect(example).toEqual({ text: 'good' });
+    expect(message).toContain('Invalid example text');
+  });
+  test('all advertised daemon operations have one schema-valid example', () => {
+    const run = mkdtempSync(join(tmpdir(), 'operation-example-audit-'));
+    try {
+      mkdirSync(join(run, 'home'));
+      mkdirSync(join(run, 'tmp'));
+      const script = resolve(
+        import.meta.dirname,
+        '../../../../../../.claude/skills/verify/operation-input-catalog-audit.ts'
+      );
+      const output = execFileSync('bun', [script, run], {
+        env: {
+          PATH: process.env.PATH,
+          HOME: join(run, 'home'),
+          TMPDIR: join(run, 'tmp'),
+          NODE_ENV: 'test',
+          HYPERNEO_DATA_DIR: join(run, 'data'),
+          LOG_LEVEL: 'warn',
+        },
+        timeout: 30000,
+        encoding: 'utf8',
+      });
+      const result = JSON.parse(output.trim().split('\n').at(-1)!);
+      expect(result.schemas).toBeGreaterThan(0);
+      expect(result.missing).toEqual([]);
+    } finally {
+      rmSync(run, { recursive: true, force: true });
+    }
+  }, 30000);
   test('generates a valid input with nested unions, constraints and defaults', async () => {
     const schema = z.object({
       name: z.string().min(10).max(12),
@@ -84,6 +127,7 @@ describe('operation validation examples through MCP', () => {
         askId: 'synthetic',
         title: 'Example',
         doneWhen: 'Finished',
+        check: { pack: 'coding', kind: 'pr_merged', params: {} },
         instruction: 'Perform work',
       });
       expect(message).toContain('needs a target');

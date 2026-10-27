@@ -17,7 +17,13 @@ import type { prepareCodingMerge } from './merge-gates.ts';
 import type { runCodingReview } from './review.ts';
 
 const Input = z
-  .object({ todoId: z.string().min(1), url: z.string().refine((url) => !!parsePrUrl(url)) })
+  .object({
+    todoId: z.string().min(1),
+    url: z
+      .string()
+      .refine((url) => !!parsePrUrl(url))
+      .meta({ examples: ['https://github.com/example/repo/pull/1'] }),
+  })
   .strict();
 type Input = z.infer<typeof Input>;
 const Head = z.object({ headRefOid: z.string().regex(/^[a-f\d]{40}$/i), state: z.string() });

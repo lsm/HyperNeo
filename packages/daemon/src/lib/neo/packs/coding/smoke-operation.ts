@@ -13,7 +13,10 @@ import type { NeoDeployReader } from './deploy-checks.ts';
 
 const Input = z.object({
   todoId: z.string().min(1),
-  url: z.string().refine((url) => !!parsePrUrl(url)),
+  url: z
+    .string()
+    .refine((url) => !!parsePrUrl(url))
+    .meta({ examples: ['https://github.com/example/repo/pull/1'] }),
   head: z.string().min(1),
   smoke: CodingSmoke,
 });

@@ -1,5 +1,6 @@
 import { isLocalUser } from './caller.ts';
 import { normalizeOperationInput } from './normalize-input.ts';
+import { operationInputExample } from './input-example.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { OperationCaller, OperationDefinition, OperationRegistry } from './registry.ts';
 
@@ -89,11 +90,7 @@ export async function parseOperationInput(
           reason: {
             kind: 'failed',
             code: 'invalid_input',
-            message:
-              parsed.error.message +
-              (operation.inputSchema.meta()?.examples
-                ? `\nValid examples: ${JSON.stringify(operation.inputSchema.meta()?.examples)}`
-                : ''),
+            message: parsed.error.message + (await operationInputExample(operation.inputSchema)),
           },
         };
   } catch (error) {
@@ -101,7 +98,9 @@ export async function parseOperationInput(
       reason: {
         kind: 'failed',
         code: 'invalid_input',
-        message: error instanceof Error ? error.message : String(error),
+        message:
+          (error instanceof Error ? error.message : String(error)) +
+          (await operationInputExample(operation.inputSchema)),
       },
     };
   }

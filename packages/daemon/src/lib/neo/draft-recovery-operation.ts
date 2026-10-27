@@ -9,7 +9,11 @@ import type { NeoService } from './service.ts';
 
 const Input = z
   .object({
-    sessionId: z.string().startsWith('neo:').max(200),
+    sessionId: z
+      .string()
+      .startsWith('neo:')
+      .max(200)
+      .meta({ examples: ['neo:example'] }),
     text: z.string().max(DRAFT_CHAR_LIMIT),
     base: z.string().max(DRAFT_CHAR_LIMIT).nullable(),
     previewContext: NeoPreviewContextSchema.nullable().optional(),

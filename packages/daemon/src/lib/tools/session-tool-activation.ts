@@ -16,7 +16,10 @@ interface Dependencies {
 }
 const Input = z.object({
   sessionId: z.string().min(1),
-  key: z.string().regex(/^(skill|mcp):.+$/) as z.ZodType<SessionToolChoiceKey>,
+  key: z
+    .string()
+    .regex(/^(skill|mcp):.+$/)
+    .meta({ examples: ['skill:example'] }) as z.ZodType<SessionToolChoiceKey>,
   selected: z.boolean(),
 });
 type Input = z.infer<typeof Input>;

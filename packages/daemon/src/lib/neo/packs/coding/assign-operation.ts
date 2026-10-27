@@ -18,8 +18,14 @@ import type { runCodingReview } from './review.ts';
 
 const Input = z.object({
   todoId: z.string().min(1),
-  url: z.string().refine((url) => !!parsePrUrl(url)),
-  head: z.string().regex(/^[a-f\d]{40}$/i),
+  url: z
+    .string()
+    .refine((url) => !!parsePrUrl(url))
+    .meta({ examples: ['https://github.com/example/repo/pull/1'] }),
+  head: z
+    .string()
+    .regex(/^[a-f\d]{40}$/i)
+    .meta({ examples: ['a'.repeat(40)] }),
   acceptanceContract: z.string().trim().min(1),
   stage: z.enum(['review', 'verify']),
   candidates: z.array(CodingStageTarget).max(30),
