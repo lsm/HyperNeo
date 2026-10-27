@@ -54,6 +54,15 @@ describe('useNeoMessageMenu', () => {
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
+  it('cancels a touch-derived context menu without opening custom actions itself', () => {
+    render(<Probe />);
+    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'sourceCapabilities', { value: { firesTouchEvents: true } });
+    fireEvent(screen.getByTestId('message'), event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
   it.each([
     ['source capabilities', { sourceCapabilities: { firesTouchEvents: true } }],
     ['pointer type', { pointerType: 'touch' }],

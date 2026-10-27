@@ -10,7 +10,23 @@ node .claude/skills/verify/message-context-menu-check.mjs <port> "$RUN" after`.
 The helper seeds only the synthetic run DB, checks desktop right-click remains
 uncancelled and opens no custom menu, then clicks the existing Reply button.
 It checks short taps and touch movement do not open actions, while a long press
-still offers Select text, Copy, Share and Reply. Sharing uses a stubbed Web Share
+still offers Select text, Copy, Share and Reply. After the synthetic TouchEvent
+sequence, it dispatches an actual cancelable contextmenu MouseEvent carrying
+InputDeviceCapabilities(firesTouchEvents: true) and verifies cancellation. A
+contextmenu without capabilities exercises the fallback, and a mouse pointerdown
+followed by contextmenu verifies the native mouse menu remains uncancelled.
+These are browser-dispatched synthetic events, not a physical Android-device
+proof; do not infer actual OS popup behavior from synthetic TouchEvents alone.
+
+Touch cancellation uses sourceCapabilities.firesTouchEvents when available,
+then a nonempty contextmenu pointerType. For browsers lacking both, the hook
+remembers touchstart/pointerdown input: touchend preserves the marker for delayed
+contextmenu delivery; mouse/pen pointerdown or keyboard input clears it. This
+keeps mouse right-click and keyboard context menus native on hybrid devices.
+The 500 ms touch timer still owns opening the custom menu; contextmenu itself
+never opens custom actions.
+
+Sharing uses a stubbed Web Share
 API; a real OS share sheet is not verified. Share has no desktop footer button;
 mouse-only users lose that entry point, as disclosed in #9113.
 

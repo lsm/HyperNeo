@@ -104,6 +104,42 @@ try {
     results.longPressActions = await page.getByRole('menuitem').allTextContents();
     assert.deepEqual(results.longPressActions, ['Select text', 'Copy', 'Share', 'Reply']);
     await source.dispatchEvent('touchend');
+    results.touchContextMenu = await source.evaluate((node) => {
+      const event = new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        sourceCapabilities: new InputDeviceCapabilities({ firesTouchEvents: true }),
+      });
+      node.dispatchEvent(event);
+      return {
+        prevented: event.defaultPrevented,
+        firesTouchEvents: event.sourceCapabilities.firesTouchEvents,
+      };
+    });
+    assert.equal(results.touchContextMenu.prevented, true);
+    results.fallbackContextMenu = await source.evaluate((node) => {
+      const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+      node.dispatchEvent(event);
+      return event.defaultPrevented;
+    });
+    assert.equal(results.fallbackContextMenu, true);
+    results.mouseAfterTouch = await source.evaluate((node) => {
+      node.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' }));
+      const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+      node.dispatchEvent(event);
+      return event.defaultPrevented;
+    });
+    assert.equal(results.mouseAfterTouch, false);
+    await source.evaluate((node) =>
+      node.dispatchEvent(
+        new TouchEvent('touchstart', {
+          bubbles: true,
+          touches: [new Touch({ identifier: 0, target: node, clientX: 100, clientY: 100 })],
+        })
+      )
+    );
+    await page.getByRole('menuitem', { name: 'Share', exact: true }).waitFor();
+    await source.dispatchEvent('touchend');
     await page.screenshot({ path: `${evidence}/message-context-touch.png` });
     await page.getByRole('menuitem', { name: 'Share', exact: true }).click();
     assert.equal(
@@ -116,6 +152,12 @@ try {
   }
   writeFileSync(`${evidence}/message-context-${mode}.json`, JSON.stringify(results, null, 2));
   console.log(JSON.stringify(results, null, 2));
+} catch (error) {
+  writeFileSync(
+    `${evidence}/message-context-${mode}.json`,
+    JSON.stringify({ ...results, error: String(error) }, null, 2)
+  );
+  throw error;
 } finally {
   await browser.close();
 }

@@ -37,6 +37,7 @@ const LONG_PRESS_MS = 500;
 export function useNeoMessageMenu() {
   const [at, setAt] = useState<{ x: number; y: number } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchInput = useRef(false);
   const cancel = () => {
     if (timer.current) clearTimeout(timer.current);
     timer.current = null;
@@ -47,9 +48,27 @@ export function useNeoMessageMenu() {
     at,
     close,
     bind: {
+      onPointerDown: (event: PointerEvent) => {
+        touchInput.current = event.pointerType === 'touch';
+      },
+      onKeyDown: () => {
+        touchInput.current = false;
+      },
+      onContextMenu: (
+        event: MouseEvent & {
+          sourceCapabilities?: { firesTouchEvents: boolean } | null;
+          pointerType?: string;
+        }
+      ) => {
+        const touch =
+          event.sourceCapabilities?.firesTouchEvents ??
+          (event.pointerType ? event.pointerType === 'touch' : touchInput.current);
+        if (touch) event.preventDefault();
+      },
       onTouchStart: (event: TouchEvent) => {
         const touch = event.touches[0];
         if (!touch) return;
+        touchInput.current = true;
         cancel();
         timer.current = setTimeout(
           () => setAt({ x: touch.clientX, y: touch.clientY }),
