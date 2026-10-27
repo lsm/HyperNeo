@@ -725,6 +725,18 @@ export function createNeoQuestionOperations(
                   `Waiting for earlier steps: ${waiting.map((id) => store.getTodo(id)?.title ?? id).join(', ')}.`,
                 ]
               : []),
+            ...waiting.flatMap((id) => {
+              const family = store.listFamilyTodos(answered.ask.id);
+              const held = (store.getTodo(id)?.dependsOn ?? [])
+                .map((dep) => family.find((todo) => todo.id === dep))
+                .filter((todo) => todo?.blockedBy === 'held')
+                .map((todo) => todo!.title);
+              return held.length
+                ? [
+                    `${store.getTodo(id)?.title ?? id} waits for held steps: ${held.join(', ')}. Ask the human whether to release them (neo.todo.edit hold: null).`,
+                  ]
+                : [];
+            }),
           ].join('\n')
         );
         await deliverAnswers(answered.question.id);
