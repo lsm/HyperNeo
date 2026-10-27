@@ -1,4 +1,5 @@
 import { createNeoQuestionAnswerDelivery } from './question-answer-delivery.ts';
+import { wakeFailedHyperneoSession } from './query-failure.ts';
 import type { UUID } from 'node:crypto';
 import { WORKER_BATCH_SENDER } from '../../storage/repositories/neo-session-message-repository.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
@@ -253,9 +254,18 @@ export class NeoService {
       },
       { subscriberName: 'neo-session-forget' }
     );
+    const offQueryFailure = events.subscribe(
+      'session.error',
+      async (event) => {
+        if (await wakeFailedHyperneoSession(db.getDatabase(), this.wakeNeo.bind(this), event))
+          this.notifyChanged();
+      },
+      { subscriberName: 'neo-query-failure' }
+    );
     const offHumanReset = onHumanDevicesReset(this.notifyPublicationsChanged);
     this.unsubscribe = () => {
       offHumanReset();
+      offQueryFailure();
       offUpdated();
       offModelSwitch();
       offStatus();
