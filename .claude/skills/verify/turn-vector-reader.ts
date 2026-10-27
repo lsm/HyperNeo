@@ -92,6 +92,8 @@ try {
   for (const row of vectors) { assert.equal(row.model, embedder.model); assert.equal(row.dimensions, embedder.dimensions); const vector = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4); assert.equal(vector[0], row.content_id === rows[2].id ? 7 : texts[0].length); }
   assert.equal(evidence.before, evidence.after, 'complete source bodies or preexisting vector changed');
   assert(reads.length >= (writer ? 4 : 3));
+  assert.equal(reads.filter(read => read.modeledWaitMs > 0).length, waitMs ? 1 : 0);
+  assert.equal(reads.reduce((sum, read) => sum + read.modeledWaitMs, 0), waitMs);
   console.log(JSON.stringify({ run, lagMs, maxHealthMs: evidence.maxHealthMs, jobMs, thread: reads[0].thread }));
   assert(lagMs < 1000, `main loop blocked ${lagMs}ms`);
   assert(Number(evidence.maxHealthMs) < 250, 'independent health exceeded250ms');
