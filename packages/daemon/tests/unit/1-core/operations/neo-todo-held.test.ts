@@ -113,4 +113,27 @@ describe('a held todo', () => {
     expect(await w.edit(id, 'Wait.')).toMatchObject({ ok: false });
     expect(w.todo(id).state).toBe('doing');
   });
+
+  test('keeps its hold through a failing or blocking check, and still finishes when the work is done', async () => {
+    const w = (current = world());
+    const id = w.add('first');
+    await w.edit(id, 'Wait for the human.');
+    for (const judgement of [
+      { state: 'failed' as const, reason: 'CI failed' },
+      { state: 'blocked' as const, reason: 'Needs review' },
+    ]) {
+      await w.runner.recompute(w.todo(id), {}, Date.now(), judgement);
+      expect(w.todo(id)).toMatchObject({ state: 'blocked', blockedBy: 'held' });
+    }
+    await w.runner.recompute(w.todo(id), {}, Date.now(), { state: 'done', evidence: 'Merged' });
+    expect(w.todo(id).state).toBe('done');
+  });
+
+  test('cannot be held or released together with ticking it done', () => {
+    const w = (current = world());
+    const id = w.add('first');
+    expect(
+      planNeoTodoEdit(w.todo(id), { todoId: id, hold: 'Wait.', done: 'met', evidence: 'x' })
+    ).toMatchObject({ reason: { ok: false } });
+  });
 });
