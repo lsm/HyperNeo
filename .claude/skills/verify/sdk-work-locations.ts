@@ -14,7 +14,7 @@ assert.equal(process.env.HOME, join(run, 'home'));
 for (const name of ['workspace', 'evidence', 'bin']) mkdirSync(join(run, name), { recursive: true });
 for (const name of ['gh', 'open', 'security', 'codex', 'claude']) writeFileSync(join(run, 'bin', name), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 const marker = 'WORK_LOCATION_SDK_PROOF';
-const captures: { count: number; hasWorktrees: boolean; hasWorkspace: boolean }[] = [];
+const captures: { count: number; systemCount: number; hasWorktrees: boolean; hasWorkspace: boolean }[] = [];
 const model = 'claude-haiku-4-5-20251001';
 const mock = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
   const path = new URL(request.url).pathname;
@@ -24,7 +24,7 @@ const mock = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
   if (path.endsWith('/count_tokens')) return Response.json({ input_tokens: 50 });
   if (JSON.stringify(body.messages).includes(marker)) {
     const text = JSON.stringify([body.system, body.messages]);
-    captures.push({ count: text.split('## Runtime Location').length - 1, hasWorktrees: text.includes('HYPERNEO_WORKTREES'), hasWorkspace: text.includes(join(run, 'workspace')) });
+    captures.push({ count: text.split('## Runtime Location').length - 1, systemCount: JSON.stringify(body.system ?? '').split('## Runtime Location').length - 1, hasWorktrees: text.includes('HYPERNEO_WORKTREES'), hasWorkspace: text.includes(join(run, 'workspace')) });
   }
   const usage = { input_tokens: 50, output_tokens: 10 };
   const block = { type: 'text', text: 'WORK_LOCATION_SDK_RECEIVED' };
@@ -71,7 +71,9 @@ try {
     await Bun.sleep(100);
   }
   assert(captures.length > 0, 'real SDK sent the worker task to the loopback model');
-  for (const capture of captures) {
+  const workers = captures.filter((capture) => capture.systemCount > 0);
+  assert(workers.length > 0, 'captured the worker request with its host system prompt');
+  for (const capture of workers) {
     assert.equal(capture.count, 1, 'model receives one runtime location section');
     assert(capture.hasWorktrees && capture.hasWorkspace);
   }

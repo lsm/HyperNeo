@@ -68,3 +68,8 @@ arrive. With an existing prompt or the preset, the brief is appended. Scratch is
 only described as TMPDIR when sandboxing is on; unsandboxed temp behavior stays
 unchanged. Include the existing-turn Codex policy tests when rebasing this change
 so policy refresh remains enforced before queueing an input.
+
+SDK system/user input de-duplication has its own real-SDK journey in
+worker-work-locations-sdk.md. The native Codex request-field contract is checked
+separately by codex-work-locations-schema.md; schema acceptance is not a native
+Codex shell or Desktop UI proof.

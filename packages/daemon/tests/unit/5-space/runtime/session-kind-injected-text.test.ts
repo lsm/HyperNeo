@@ -800,7 +800,7 @@ describe('session kind injected text', () => {
   });
 
   describe('buildCustomAgentTaskMessage', () => {
-    test('gives a direct task worker the task, the workspace and the Space prose, but never the Space identity or the operations door', () => {
+    test('gives a direct task worker the task and the Space prose, but never the Space identity or the operations door', () => {
       const message = buildCustomAgentTaskMessage({
         task: makeSessionKindTask({ description: 'Pin what the model receives.' }),
         space: SPACE,
@@ -811,7 +811,6 @@ describe('session kind injected text', () => {
         'space-standing-instructions',
         'space-background-context',
         'task-heading',
-        'runtime-location',
       ]);
       expect(message).toContain('**Title:** Session kinds task');
       expect(message).toContain('**Description:** Pin what the model receives.');
@@ -833,7 +832,6 @@ describe('session kind injected text', () => {
         'space-standing-instructions',
         'space-background-context',
         'task-heading',
-        'runtime-location',
         'workflow-role',
         'workflow-standing-instructions',
       ]);

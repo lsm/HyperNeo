@@ -259,6 +259,13 @@ New work started through HyperNeo requests Full Access through the supported per
 
 Interface evidence (2026-10-16): both `codex-cli 0.160.1` and the desktop-bundled `codex-cli 0.162.0-alpha.17.2` public `codex app-server generate-json-schema` outputs include both permission fields and the above sandbox enum values; `claude 2.1.295 --help` exposes `--permission-mode`. See the official [Codex App Server protocol](https://learn.chatgpt.com/docs/app-server), [Codex Full Access definition](https://learn.chatgpt.com/docs/sandboxing), [Claude CLI reference](https://code.claude.com/docs/en/cli-reference), and [Desktop permission settings](https://code.claude.com/docs/en/desktop#choose-a-permission-mode). Unit tests exercise the real adapter creation functions with recorded transport/process arguments; they do not establish that a live Desktop application accepted or displayed the requested mode.
 
+Work-location interface evidence (2026-10-27): generated public schemas from
+standalone codex-cli 0.160.1 and Desktop-bundled 0.164.0-alpha.11.1 both declare
+thread/start developerInstructions as string/null. The repeatable
+codex-work-locations-schema verification journey checks the installed binaries
+with an isolated HOME/CODEX_HOME. This establishes the request-field contract;
+native model delivery and Desktop rendering remain separate proof surfaces.
+
 ### Status mapping
 
 | Status | hyperneo | space | codex-desktop | claude-desktop |

@@ -7,7 +7,6 @@ import {
 import type { SpaceWorkflow, WorkflowChannel, WorkflowNode } from '@hyperneo/shared';
 import type { AgentMemoryCoreEntry } from '../../storage/repositories/agent-memory-repository.ts';
 import { Logger } from '../logger.ts';
-import { workerWorkLocationsBrief } from '../work-locations.ts';
 import type { CustomAgentConfig, TaskMessageContext } from './custom-agent-types.ts';
 
 const USER_MESSAGE_SOFT_LIMIT_BYTES = 4 * 1024;
@@ -25,7 +24,6 @@ export function buildCustomAgentTaskMessage(
     workflowRun,
     workflow,
     space,
-    workspacePath,
     goal,
     relevantScopeLessons,
     previousTaskSummaries,
@@ -50,9 +48,6 @@ export function buildCustomAgentTaskMessage(
   if (startNote) {
     sections.push('', '## Note From the User', '', startNote);
   }
-
-  sections.push('');
-  sections.push(workerWorkLocationsBrief(workspacePath));
 
   if (goal) {
     sections.push('');
