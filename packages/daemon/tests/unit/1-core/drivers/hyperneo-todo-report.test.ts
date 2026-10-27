@@ -1,3 +1,4 @@
+import { readHyperneoTurnEnds } from '../../../../src/storage/hyperneo-turn-ends-read.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHyperneoAdapter } from '../../../../src/lib/drivers/hyperneo-adapter.ts';
 import { readDriverFollowUp, readDriverSettlement } from '../../../../src/lib/neo/driver-work.ts';
@@ -26,6 +27,7 @@ describe('HyperNeo todo reply attribution', () => {
   };
   const status = async (input = receipt, extra = {}) => {
     const adapter = createHyperneoAdapter({
+      readTurnEnds: async (id, since) => readHyperneoTurnEnds(db, id, since),
       db: () => db,
       ...extra,
       machine: 'synthetic',

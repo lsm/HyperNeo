@@ -62,7 +62,7 @@ try {
   assert.equal(digest(), before);
   evidence.bodySha256 = before;
   evidence.turns = count;
-  evidence.workerQueries = logs.filter(m => m.workerKind === 'sdk-status' && m.workerOperation === 'hyperneo-turn-ends' && m.event === 'slow');
+  evidence.workerQueries = logs.filter(m => m.workerKind === 'sdk-status' && m.workerOperation === 'hyperneo-turn-ends' && m.event === 'slow' && m.operation === 'all');
   assert.equal(mainReads, 0, 'Turn-end SQL blocked the daemon main connection');
   assert((evidence.workerQueries as unknown[]).length > 0, 'No worker query evidence');
   evidence.passed = true;
