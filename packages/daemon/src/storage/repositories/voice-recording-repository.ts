@@ -1,8 +1,40 @@
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { VoiceTranscribeOutcome } from '../../lib/voice/transcribe-pipeline.ts';
 
 export class VoiceRecordingRepository {
   constructor(private readonly db: Database) {}
+
+  getAsync(owner: string, id: string) {
+    return gatewayFor(this.db).call(voiceRecordingReads, 'get', owner, id);
+  }
+
+  reserveAsync(owner: string, id: string, hash: string) {
+    return gatewayFor(this.db).call(voiceRecordingWrites, 'reserve', owner, id, hash);
+  }
+
+  markDispatchedAsync(owner: string, id: string) {
+    return gatewayFor(this.db).call(voiceRecordingWrites, 'markDispatched', owner, id);
+  }
+
+  finishAsync(
+    owner: string,
+    id: string,
+    outcome: VoiceTranscribeOutcome,
+    dispatched: boolean,
+    releaseUnsent = false
+  ) {
+    return gatewayFor(this.db).call(
+      voiceRecordingWrites,
+      'finish',
+      owner,
+      id,
+      outcome,
+      dispatched,
+      releaseUnsent
+    );
+  }
 
   get(
     owner: string,
@@ -48,11 +80,37 @@ export class VoiceRecordingRepository {
     );
   }
 
-  finish(owner: string, id: string, outcome: VoiceTranscribeOutcome, dispatched: boolean): void {
+  finish(
+    owner: string,
+    id: string,
+    outcome: VoiceTranscribeOutcome,
+    dispatched: boolean,
+    releaseUnsent = false
+  ): void {
     this.db
       .prepare(
-        'UPDATE voice_recordings SET outcome_json = ?, completed_at = ? WHERE owner = ? AND recording_id = ? AND (dispatched_at IS NOT NULL) = ?'
+        'UPDATE voice_recordings SET outcome_json = ?, completed_at = ?, dispatched_at = CASE WHEN ? THEN NULL ELSE dispatched_at END WHERE owner = ? AND recording_id = ? AND (dispatched_at IS NOT NULL) = ?'
       )
-      .run(JSON.stringify(outcome), Date.now(), owner, id, Number(dispatched));
+      .run(
+        JSON.stringify(outcome),
+        Date.now(),
+        Number(releaseUnsent),
+        owner,
+        id,
+        Number(dispatched || releaseUnsent)
+      );
   }
 }
+
+export const voiceRecordingReads = defineRepositoryOp(
+  'voice.recording.read',
+  'read',
+  VoiceRecordingRepository,
+  ['get'] as const
+);
+export const voiceRecordingWrites = defineRepositoryOp(
+  'voice.recording.write',
+  'write',
+  VoiceRecordingRepository,
+  ['reserve', 'markDispatched', 'finish'] as const
+);

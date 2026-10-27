@@ -60,6 +60,7 @@ function mount(empty = false, worker = false) {
               worker
                 ? {
                     state: 'done',
+                    doneCount: 1,
                     todos: [testTodo('worker', { state: 'done', link: '/session/worker' })],
                   }
                 : {}
@@ -286,7 +287,9 @@ describe('Neo preview Work layout', () => {
     await open('a');
     fireEvent.click(screen.getByRole('button', { name: 'Expand preview' }));
     fireEvent.click(screen.getByRole('tab', { name: 'Your work · 1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'All · 1', exact: true }));
     fireEvent.click(screen.getByRole('button', { name: 'Open Todo worker' }));
+    expect(screen.queryByRole('dialog', { name: 'Existing task' })).toBeNull();
     expect(
       screen.queryByRole('button', { name: /Expand preview|Restore side by side/ })
     ).toBeNull();
@@ -304,7 +307,9 @@ describe('Neo preview Work layout', () => {
     const preview = screen.getByRole('dialog');
     const opens = pushed.mock.calls.length;
     const backs = vi.mocked(history.back).mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: 'All · 1', exact: true }));
     fireEvent.click(screen.getByRole('button', { name: 'Open Todo worker' }));
+    expect(screen.queryByRole('dialog', { name: 'Existing task' })).toBeNull();
     const chat = screen.getByRole('button', { name: 'Close worker chat' });
     chat.focus();
     expect(vi.mocked(history.back).mock.calls.length).toBe(backs);

@@ -249,6 +249,32 @@ Constraints:
 
 Standalone CLI sessions share the same owner gate and inbox sender as confirmed CLI sessions discovered through Desktop records. The adapter offers `find`, owner-verified `status`, `send` and `steer`; it has no creation, stop, turn-end queue or withdrawal capability. Status and delivery evidence reuse the native transcript and exact input UUID. Daemon-owned SDK sessions remain on `hyperneo`, whose cached runtime and deferred mailbox support the controls described above.
 
+Claude worker location settings are persisted in the worker project before
+Desktop adoption, merging the location environment without replacing existing
+permissions or sandbox settings. The Desktop opener passes only the session id;
+its short-lived launcher is not the settings transport. In Claude 2.1.302, a
+native resumed conversation retains the preparation brief and uses that local
+environment without location flags. The worker-standalone-clone journey verifies
+this with an isolated daemon and real CLI shell; actual Desktop app adoption and
+rendering remain unverified.
+
+Claude validates local settings before preparing a session and writes the
+location environment only after the first CLI turn succeeds. Failed in-place
+preparation preserves absent settings or existing bytes. Unsupported layouts
+return a typed refusal before launch; an unused private clone is released.
+
+Copilot work-location evidence (SDK 1.0.13): SystemMessageAppendConfig makes
+append the default. The owned worker uses empty mode; the real SDK converts
+an omitted/append mode into customize with environment_context removed and
+content retained. The owned lifecycle test captures this real SDK wire payload
+against a scripted CLI peer. Native model/tool behavior remains unverified.
+
+Unsandboxed Claude location settings share the SDK settings-target resolver, so
+valid directory and file symlinks keep their aliases while the resolved target
+receives the location environment. Validation stays read-only until preparation
+succeeds. Sandboxed native-policy installation retains its separate in-clone
+checks. The linked-folder standalone-clone journey covers the public start path.
+
 ### Creation permission defaults
 
 New work started through HyperNeo requests Full Access through the supported permission parameters:
@@ -258,6 +284,13 @@ New work started through HyperNeo requests Full Access through the supported per
 - Claude Code Desktop: the human chose B1 option B (message `4aa1e100-4e51-4d38-b9cd-5e44268a7343`): accept `acceptEdits` after handoff. CLI2.1.302 rejects a permission flag with `--desktop`; Desktop3.6556.1 explicitly downgrades imported bypass to acceptEdits. Report actual `permissionMode`, `needs_you` and native `waitingFor`; do not approve prompts, rewrite native records or change global `defaultMode`. The existing authorized `rc-toggle` handles RC; no replacement RC helper is created. A queued RC request is not a connected session or phone-view confirmation. The standalone `claude-code` adapter still has no creation API.
 
 Interface evidence (2026-10-16): both `codex-cli 0.160.1` and the desktop-bundled `codex-cli 0.162.0-alpha.17.2` public `codex app-server generate-json-schema` outputs include both permission fields and the above sandbox enum values; `claude 2.1.295 --help` exposes `--permission-mode`. See the official [Codex App Server protocol](https://learn.chatgpt.com/docs/app-server), [Codex Full Access definition](https://learn.chatgpt.com/docs/sandboxing), [Claude CLI reference](https://code.claude.com/docs/en/cli-reference), and [Desktop permission settings](https://code.claude.com/docs/en/desktop#choose-a-permission-mode). Unit tests exercise the real adapter creation functions with recorded transport/process arguments; they do not establish that a live Desktop application accepted or displayed the requested mode.
+
+Work-location interface evidence (2026-10-27): generated public schemas from
+standalone codex-cli 0.160.1 and Desktop-bundled 0.164.0-alpha.11.1 both declare
+thread/start developerInstructions as string/null. The repeatable
+codex-work-locations-schema verification journey checks the installed binaries
+with an isolated HOME/CODEX_HOME. This establishes the request-field contract;
+native model delivery and Desktop rendering remain separate proof surfaces.
 
 ### Status mapping
 

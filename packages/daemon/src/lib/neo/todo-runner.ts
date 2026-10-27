@@ -202,9 +202,6 @@ const neoTodoStallNote = (todo: Pick<NeoTodo, 'title'>, reason: string) =>
 const neoTodoMovedNote = (todo: Pick<NeoTodo, 'title'>, minutes: number) =>
   `Todo "${todo.title}" sat idle ${minutes} min with no progress, so the daemon moved it to a fresh worker.`;
 
-const neoTodoUnreachedNote = (todo: Pick<NeoTodo, 'title'>, minutes: number) =>
-  `Todo "${todo.title}" has made no progress for ${minutes} min, and its worker could not be reached.`;
-
 const neoTodoHandoff = (todo: Pick<NeoTodo, 'title' | 'doneWhen'>) =>
   `Take over the todo "${todo.title}". It is done when: ${todo.doneWhen}. Its previous worker stopped making progress; read what it did, then finish the work.`;
 
@@ -745,6 +742,16 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   const stallTodo = (superpipe({})('neo.todo.stall') as PipelineAPI)
     .input(['claim', 'reason', 'now'])
     .pipe(
+      (claim: NudgeClaim) =>
+        ['done', 'closed_unverified', 'failed', 'removed'].includes(
+          store.getTodo(claim.todo.id)?.state ?? 'removed'
+        )
+          ? { reason: null }
+          : { value: claim },
+      'claim',
+      'result:claim'
+    )
+    .pipe(
       (claim: NudgeClaim, reason: string) =>
         deps
           .tell(
@@ -760,6 +767,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     .pipe(
       ({ todo }: NudgeClaim, reason: string, now: number) => {
         const current = store.getTodo(todo.id) ?? todo;
+        if (['done', 'closed_unverified', 'failed', 'removed'].includes(current.state))
+          return current;
         return recompute(
           current,
           planNeoTodoBlocked(current, 'stalled', reason, NEO_TODO_STALL_NEXT) ?? {},
@@ -842,27 +851,47 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'sent'
     )
     .pipe(
-      (sent: OperationOutcome | null) =>
-        sent && sent.kind === 'completed' && (sent.value as { ok?: boolean } | null)?.ok
-          ? { reason: null }
-          : { value: null },
+      (sent: OperationOutcome | null) => {
+        const value =
+          sent?.kind === 'completed'
+            ? (sent.value as {
+                ok?: boolean;
+                detail?: string;
+                reason?: string;
+                notSent?: boolean;
+              } | null)
+            : null;
+        if (value?.ok) return { reason: null };
+        return {
+          value: {
+            bounced: value?.notSent === true,
+            detail: value?.detail ?? value?.reason ?? null,
+          },
+        };
+      },
       'sent',
       'result:unreached'
     )
     .pipe(
-      (claim: NudgeClaim, now: number) =>
-        deps
-          .tell(
-            claim.ask,
-            claim.todo,
-            neoTodoUnreachedNote(claim.todo, idleMinutes(claim.incident, now)),
-            `neo-todo-remind:${claim.todo.id}:${claim.incident.since}:${claim.plan.nudges}`
-          )
-          .catch((error: unknown) => releaseNudge(claim, error)),
-      ['claim', 'now'],
-      'unreached'
+      (claim: NudgeClaim, unreached: { bounced: boolean; detail: string | null }, now: number) =>
+        unreached.bounced
+          ? stallTodo(
+              claim,
+              `${neoTodoIdleReason(idleMinutes(claim.incident, now))} The reminder did not reach its worker${unreached.detail ? ` (${unreached.detail})` : ''}.`,
+              now
+            )
+          : deps
+              .tell(
+                claim.ask,
+                claim.todo,
+                `Todo "${claim.todo.title}" has made no progress for ${idleMinutes(claim.incident, now)} min, and its worker could not be reached.`,
+                `neo-todo-remind:${claim.todo.id}:${claim.incident.since}:${claim.plan.nudges}`
+              )
+              .catch((error: unknown) => releaseNudge(claim, error)),
+      ['claim', 'unreached', 'now'],
+      'stalled'
     )
-    .endAsync('unreached') as (claim: NudgeClaim, now: number) => Promise<void | null>;
+    .endAsync('stalled') as (claim: NudgeClaim, now: number) => Promise<unknown>;
 
   const act = async (claim: NudgeClaim, now: number) => {
     const idle = neoTodoIdleReason(idleMinutes(claim.incident, now));
@@ -872,48 +901,59 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     if (moved && 'stall' in moved) await stallTodo(claim, `${idle} ${moved.stall}`, now);
   };
 
+  type NudgeContext = NonNullable<ReturnType<typeof sessions.nudgeContext>>;
   const nudge = (superpipe({})('neo.todo.nudge') as PipelineAPI)
     .input(['todoId', 'now'])
     .pipe((todoId: string) => sessions.read('nudgeContext', todoId), 'todoId', 'snapshot')
     .pipe(
-      async (snapshot: Awaited<ReturnType<typeof sessions.nudgeContext>>) => {
-        if (snapshot)
-          for (const pack of deps.packs())
-            if (
-              (!snapshot.todo.check || pack.id === snapshot.todo.check.pack) &&
-              (await pack.todos?.waiting?.(snapshot.todo))
-            )
-              return { reason: null };
-        return snapshot ? { value: snapshot } : { reason: null };
-      },
+      (snapshot: NudgeContext | null) => (snapshot ? { value: snapshot } : { reason: null }),
       'snapshot',
+      'result:admission'
+    )
+    .pipe(
+      async (context: NudgeContext) => {
+        const live = readDriverLive(
+          await deps.invoke(caller(context.ask), 'work.status', { ref: context.ref })
+        );
+        await sessions.write('noteWorkerStatus', context.todo.id, live?.status ?? 'unknown');
+        return live;
+      },
+      ['admission'],
+      'live'
+    )
+    .pipe(
+      async (context: NudgeContext) => {
+        for (const pack of deps.packs())
+          if (
+            (!context.todo.check || pack.id === context.todo.check.pack) &&
+            (await pack.todos?.waiting?.(context.todo))
+          )
+            return { reason: null };
+        return { value: context };
+      },
+      'admission',
       'result:admission'
     )
     .pipe(
       async (now: number) =>
         mayRedispatch(
           (await store.read('listCheckable')).filter(
-            (other) =>
-              other.state === 'doing' &&
-              !['done', 'stopped', 'failed', 'needs_you'].includes(
-                sessions.readLiveStatus(other.id) ?? ''
-              )
+            (other) => other.state === 'doing' && !sessions.workerIdle(other.id)
           ).length,
           sweep.movedAt,
-          now
+          now,
+          deps.limits().running
         ),
       'now',
       'move'
     )
     .pipe(
       async (
-        context: NonNullable<ReturnType<typeof sessions.nudgeContext>>,
+        context: NudgeContext,
+        live: ReturnType<typeof readDriverLive>,
         now: number,
         move: boolean
       ) => {
-        const live = readDriverLive(
-          await deps.invoke(caller(context.ask), 'work.status', { ref: context.ref })
-        );
         const claim =
           live &&
           (await sessions.write(
@@ -927,7 +967,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           ));
         return claim ? { value: claim } : { reason: null };
       },
-      ['admission', 'now', 'move'],
+      ['admission', 'live', 'now', 'move'],
       'result:admission'
     )
     .pipe(act, ['admission', 'now'], 'admission')
@@ -1010,13 +1050,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     .pipe(
       async (stalled: Stalled, now: number) => {
         const running = (await store.read('listCheckable')).filter(
-          (other) =>
-            other.state === 'doing' &&
-            !['done', 'stopped', 'failed', 'needs_you'].includes(
-              sessions.readLiveStatus(other.id) ?? ''
-            )
+          (other) => other.state === 'doing' && !sessions.workerIdle(other.id)
         ).length;
-        if (!mayRedispatch(running, sweep.movedAt, now)) return { reason: null };
+        if (!mayRedispatch(running, sweep.movedAt, now, deps.limits().running))
+          return { reason: null };
         sweep.movedAt = now;
         return { value: stalled };
       },

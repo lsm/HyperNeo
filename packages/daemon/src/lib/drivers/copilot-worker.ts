@@ -1,3 +1,4 @@
+import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
 import { CopilotClient, RuntimeConnection, type SessionEvent } from '@github/copilot-sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { isAbsolute } from 'node:path';
@@ -117,7 +118,7 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
         '--disable-builtin-mcps',
         '--no-custom-instructions',
       ],
-      env: buildAcpSafeEnv(config.env),
+      env: { ...buildAcpSafeEnv(config.env), ...workerWorkEnvironment(config.cwd) },
     }),
     mode: 'empty',
     baseDirectory: config.stateDirectory,
@@ -200,6 +201,7 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
     if (!(await bounded(client.listModels(), timeoutMs)).some((model) => model.id === config.model))
       throw new CopilotModelUnavailableError('Unsupported Copilot model ID.');
     const policy = {
+      systemMessage: { content: workerWorkLocationsBrief(config.cwd) },
       workingDirectory: config.cwd,
       model: config.model,
       availableTools: [],

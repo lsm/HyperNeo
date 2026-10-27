@@ -1,9 +1,8 @@
 import { neoTodoDependencyNodes, neoTodoReady } from '../../lib/neo/todo-dependencies.ts';
 import { NeoTurnReportReceipts } from '../../lib/neo/turn-report-receipts.ts';
 import {
-  continuesIncident,
+  advanceFollowThrough,
   type FollowThroughIncident,
-  planFollowThrough,
 } from '../../lib/work-queue/follow-through.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
@@ -179,6 +178,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
             {
               group: asks.find((ask) => ask.id === todo.askId)?.projectId ?? null,
               worker: worker(this.readRef(todo.id)),
+              idle: this.workerIdle(todo.id),
             },
           ]
         : []
@@ -243,20 +243,13 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       context.todo.startedAt ?? context.todo.createdAt,
       live.lastReplyAt ?? live.lastActivityAt
     );
-    const prior = this.readNudge(todoId);
-    const incident =
-      prior && continuesIncident(prior, since)
-        ? { ...prior, nudges: Math.min(prior.nudges, 2) }
-        : { since, nudges: 0, ...(prior?.redispatched ? { redispatched: true } : {}) };
-    const plan = ['done', 'stopped'].includes(live.status)
-      ? planFollowThrough(incident, now, { ...context.follow, move })
-      : null;
-    this.recordNudge(
-      todoId,
-      plan?.kind === 'redispatch'
-        ? { since: now, nudges: 0, redispatched: true }
-        : { ...incident, nudges: plan?.nudges ?? incident.nudges, ...(plan ? { at: now } : {}) }
+    const { incident, plan, next } = advanceFollowThrough(
+      this.readNudge(todoId),
+      { since, live: live.status, idle: ['done', 'stopped'].includes(live.status) },
+      now,
+      { ...context.follow, move }
     );
+    this.recordNudge(todoId, next);
     return plan ? { ...context, incident, plan } : null;
   }
 
@@ -264,6 +257,19 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     const current = this.readNudge(todoId);
     if (current?.since === since && current.nudges === expectedNudges)
       this.recordNudge(todoId, { ...current, nudges });
+  }
+
+  noteWorkerStatus(todoId: string, status: string): void {
+    const prior = this.readNudge(todoId);
+    if (prior?.live !== status)
+      this.recordNudge(
+        todoId,
+        prior ? { ...prior, live: status } : { since: 0, nudges: 0, live: status }
+      );
+  }
+
+  workerIdle(todoId: string): boolean {
+    return ['done', 'stopped', 'failed', 'needs_you'].includes(this.readNudge(todoId)?.live ?? '');
   }
 
   readNudge(todoId: string): FollowThroughIncident | null {
@@ -384,5 +390,13 @@ export const neoTodoSessionWrites = defineRepositoryOp(
   'neo.todoSessionWrites',
   'write',
   NeoTodoSessionRepository,
-  ['recordLive', 'recordDispatch', 'recordProgress', 'claimNeedsYou', 'claimNudge', 'finishNudge']
+  [
+    'recordLive',
+    'recordDispatch',
+    'recordProgress',
+    'claimNeedsYou',
+    'claimNudge',
+    'finishNudge',
+    'noteWorkerStatus',
+  ]
 );

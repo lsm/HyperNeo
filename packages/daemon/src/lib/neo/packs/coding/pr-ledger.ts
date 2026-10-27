@@ -429,6 +429,10 @@ export class CodingPrLedgerRepository {
     return this.stageFacts.record(fact);
   }
 
+  readHealthCurrent(repo: string) {
+    return gatewayFor(this.db).call(codingLedgerReads, 'readHealth', repo);
+  }
+
   readHealth(repo: string) {
     return this.health.read(repo);
   }
@@ -947,5 +951,5 @@ export const codingLedgerReads = defineRepositoryOp(
   'coding.ledger.read',
   'read',
   CodingPrLedgerRepository,
-  ['lastReads', 'list'] as const
+  ['lastReads', 'list', 'readHealth'] as const
 );

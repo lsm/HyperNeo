@@ -1,3 +1,4 @@
+import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
 import { basename, join } from 'node:path';
 import { CODEX_WORKER_INSTRUCTIONS } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -1244,6 +1245,7 @@ export async function startCodexThread(
         : ((await deps.gitCheckout(folder))?.repo ?? folder);
       const projectId = await deps.prepareDesktopProject(projectFolder);
       const config = {
+        shell_environment_policy: { set: workerWorkEnvironment(workFolder.cwd) },
         ...sandbox?.config,
         ...(configuration.value.effort
           ? { model_reasoning_effort: configuration.value.effort }
@@ -1251,10 +1253,11 @@ export async function startCodexThread(
       };
       const started = await server.call('thread/start', {
         projectId,
+        developerInstructions: workerWorkLocationsBrief(workFolder.cwd),
         cwd: workFolder.cwd,
         approvalPolicy: 'never',
         ...(sandbox ? { permissions: sandbox.permissions } : { sandbox: 'danger-full-access' }),
-        ...(sandbox || configuration.value.effort ? { config } : {}),
+        config,
         ...(configuration.value.model ? { model: configuration.value.model } : {}),
       });
       const createdThreadId = startedThreadId(started);

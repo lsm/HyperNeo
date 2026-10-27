@@ -81,6 +81,12 @@ export type NeoQuestionState = 'open' | 'answered' | 'retired';
 
 export type NeoQuestionAnswer = string | string[];
 
+export function isAgentResolvedQuestion(
+  question: Pick<NeoQuestion, 'state' | 'answer' | 'answeredBy'>
+): boolean {
+  return question.state === 'retired' && question.answer !== null && question.answeredBy === null;
+}
+
 export interface NeoQuestionSource extends WorkerIdentity {
   provider: string;
   link: string | null;

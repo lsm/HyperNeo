@@ -1,3 +1,8 @@
+import { toolRecoveryWrites } from '../repositories/tool-continuation-recovery-repository.ts';
+import {
+  voiceRecordingReads,
+  voiceRecordingWrites,
+} from '../repositories/voice-recording-repository.ts';
 import { turnVectorWrites } from '../turn-vectors.ts';
 import { taskSchedulePauseWrites } from '../repositories/task-schedule-pause-write.ts';
 import { taskScheduleDeleteWrites } from '../repositories/task-schedule-delete-write.ts';
@@ -137,12 +142,17 @@ import {
 } from '../../lib/neo/packs/coding/smoke-admission-db.ts';
 import { sessionScheduleCreateWrites } from '../repositories/session-schedule-create-write.ts';
 import { workflowRunPinWrites } from '../repositories/workflow-run-pin-write.ts';
+import { agentReminderDeleteWrites } from '../repositories/agent-reminder-delete-write.ts';
 import { workflowDeleteWrites } from '../repositories/workflow-delete-write.ts';
 import { codingStageTargetReads } from '../../lib/neo/packs/coding/stage-target-db.ts';
 import { codingLedgerPollReads } from '../../lib/neo/packs/coding/ledger-poll-db.ts';
+import { neoPublicationPageWrites } from '../repositories/neo-publication-page-db.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    toolRecoveryWrites,
+    voiceRecordingReads,
+    voiceRecordingWrites,
     turnVectorWrites,
     neoPublicationWrites,
     neoAskSettlementReads,
@@ -254,10 +264,12 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     codingSmokeWrites,
     sessionScheduleCreateWrites,
     workflowRunPinWrites,
+    agentReminderDeleteWrites,
     workflowDeleteWrites,
     taskSchedulePauseWrites,
     taskScheduleDeleteWrites,
     codingStageTargetReads,
     codingLedgerPollReads,
+    neoPublicationPageWrites,
   ].map((op) => [op.name, op])
 );

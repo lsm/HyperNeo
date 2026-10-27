@@ -12,7 +12,12 @@ tool guards, post-approval routing and transitions round-trip unchanged.
 Clearing post-approval and empty transitions retains the existing omitted-field
 semantics. The persisted immutable definition payload/hash matches the RPC result.
 
-Commit this characterization before extracting the pure node-config builder and
+The reader checks also seed legacy node configuration in the owned synthetic DB:
+blank slot names fall back to their agent ID, nonblank names retain whitespace,
+post-approval/transitions survive, and retired completionActions stay omitted.
+NULL and malformed configuration produce the existing empty-agent view.
+
+Commit this characterization before extracting pure node configuration/view builders and
 repeat it unchanged afterward and under supported Deno with
 VERIFY_PROOF_RUNTIME=deno. Compare the captured main-connection node SQL hashes.
 This rung leaves node SQL on main; it prepares the smaller serializable writer
