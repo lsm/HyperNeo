@@ -11,6 +11,7 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { parseOperationInput } from '../../../../src/lib/operations/invoke.ts';
 import { SendWorkInputSchema } from '../../../../src/lib/drivers/work-operations.ts';
+import { SendMessageInputSchema } from '../../../../src/lib/messaging/message-send.ts';
 import fixtures from './fixtures/refused-inputs.json';
 
 const invoke = async (schema: z.ZodType, input: unknown) => {
@@ -31,6 +32,42 @@ const invoke = async (schema: z.ZodType, input: unknown) => {
 };
 
 describe('operation input variants through the MCP door', () => {
+  test('does not alias stray text into the SDK envelope message object', async () => {
+    const message = { type: 'user', message: { content: 'Report' }, parent_tool_use_id: null };
+    const canonical = await invoke(SendMessageInputSchema, { sessionId: 'synthetic', message });
+    expect(canonical.error).toBe(false);
+    expect(
+      await invoke(SendMessageInputSchema, {
+        sessionId: 'synthetic',
+        message: { ...message, text: 'stray extra field' },
+      })
+    ).toEqual(canonical);
+  });
+  test('does not fill an object-valued message from an unrelated text field', async () => {
+    const schema = z.object({ message: z.object({ content: z.string() }).optional() });
+    expect(await invoke(schema, { text: { content: 'Not an alias' } })).toEqual({
+      error: false,
+      value: {},
+    });
+  });
+  test.each([
+    z.string().optional(),
+    z.string().default('Default'),
+    z.string().readonly(),
+    z.string().transform((value) => value.toUpperCase()),
+  ])('retains string-field aliases through wrappers and transforms', async (message) => {
+    const result = await invoke(z.object({ message }), { text: 'Report' });
+    expect(result.error).toBe(false);
+    expect(result.value.message).toMatch(/^(Report|REPORT)$/);
+  });
+  test('still refuses conflicting text and canonical string messages', async () => {
+    const result = await invoke(z.object({ message: z.string() }), {
+      message: 'Canonical',
+      text: 'Different',
+    });
+    expect(result.error).toBe(true);
+    expect(result.value.message).toMatch(/Conflicting fields/);
+  });
   test('converts scalar literals and enums only to declared values', async () => {
     const schema = z.object({
       version: z.literal(2),
