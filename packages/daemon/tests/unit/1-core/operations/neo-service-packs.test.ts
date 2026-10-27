@@ -2,6 +2,9 @@ import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import { NEO_WORK_GOAL_MERGE } from '@hyperneo/prompts';
 import type { MessageHub } from '@hyperneo/shared';
 import { BUILD_METADATA } from '../../../../src/lib/build-metadata.ts';
+import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
+import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import {
   type DaemonInternalEventMap,
   InternalEventBus,
@@ -195,6 +198,97 @@ test.each([
     expect(service.todos.getTodo(todo.id)?.state).toBe('done');
   }
 );
+
+test('a queued confirmation starts its successor exactly once when the answer arrives', async () => {
+  const store = service.todos;
+  store.openAsk({
+    id: 'ask',
+    title: 'Synthetic ordered work',
+    request: 'Approve and continue',
+    sessionId: 'neo',
+    projectId: null,
+    originMessageId: null,
+    createdAt: 1,
+  });
+  store.addTodo(
+    'first',
+    'ask',
+    {
+      title: 'Human decides',
+      doneWhen: 'Human confirms',
+      instruction: null,
+      named: null,
+      check: { pack: 'core', kind: 'human_confirmed', params: { questionId: 'card' } },
+    },
+    1
+  );
+  const card = store.askQuestion(
+    'card',
+    'ask',
+    {
+      text: 'Approve the synthetic plan?',
+      kind: 'reply',
+      options: null,
+      multiple: false,
+      noLabel: null,
+      yesLabel: null,
+      startTodos: null,
+      todoId: 'first',
+    },
+    1
+  );
+  store.addTodo(
+    'next',
+    'ask',
+    {
+      title: 'Next step',
+      doneWhen: 'Output exists',
+      instruction: 'Record a synthetic dispatch',
+      named: null,
+      check: null,
+    },
+    2
+  );
+  const raw = db.getDatabase(),
+    gateway = gatewayFor(raw),
+    sessions = new NeoTodoSessionRepository(raw);
+  sessions.create('next', { verb: 'send', ref: { adapter: 'hyperneo', id: 'synthetic-worker' } });
+  const dispatches: unknown[] = [];
+  const runner = createNeoTodoRunner({
+    store,
+    sessions,
+    write: gateway.run.bind(gateway),
+    packs: () => service.installedPacks(),
+    changed: () => {},
+    tell: async () => {},
+    invoke: async (_caller, name, input) => {
+      if (name === 'work.send') dispatches.push(input.ref);
+      return {
+        kind: 'completed',
+        value: {
+          ok: true,
+          value: {
+            delivered: true,
+            ref: input.ref,
+            status: 'running',
+            lastActivityAt: 1,
+          },
+        },
+      };
+    },
+  });
+  store.answerQuestion(card, 'The synthetic plan is approved.', 'chat', 3);
+  await runner.checkQuestion('card', (_message, error) => {
+    throw error;
+  });
+  expect(store.getTodo('first')?.state).toBe('done');
+  expect(store.getTodo('next')?.state).toBe('doing');
+  expect(dispatches).toEqual([{ adapter: 'hyperneo', id: 'synthetic-worker' }]);
+  await runner.checkQuestion('card', (_message, error) => {
+    throw error;
+  });
+  expect(dispatches).toHaveLength(1);
+});
 
 test('an installed legacy todo check observes reader replacements and retains its claims', async () => {
   service.todos.openAsk({

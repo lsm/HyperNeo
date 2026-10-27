@@ -856,12 +856,15 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       );
       return start(todoId);
     },
-    async checkNow(
-      todoIds: readonly string[],
+    async checkQuestion(
+      questionId: string,
       warn: (message: string, error: unknown) => void
     ): Promise<void> {
-      for (const todo of (await store.read('listCheckable')).filter((item) =>
-        todoIds.includes(item.id)
+      for (const todo of (await store.read('listCheckable')).filter(
+        (item) =>
+          item.check?.pack === 'core' &&
+          item.check.kind === 'human_confirmed' &&
+          item.check.params.questionId === questionId
       )) {
         await check(todo, Date.now()).catch((error) => warn('Todo check pending', error));
       }

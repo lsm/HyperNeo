@@ -100,6 +100,39 @@ test('deployed compares the requested commit to the daemon build, never the work
   ).toEqual({ done: false, evidence: null });
 });
 
+test.each([
+  { kind: 'yesno' as const, answer: 'no', via: 'button' as const, done: false },
+  { kind: 'yesno' as const, answer: 'no', via: 'chat' as const, done: false },
+  { kind: 'choice' as const, answer: [], via: 'button' as const, done: false },
+  { kind: 'reply' as const, answer: '', via: 'chat' as const, done: false },
+  { kind: 'reply' as const, answer: 'no', via: 'chat' as const, done: true },
+  { kind: 'choice' as const, answer: ['Keep everything'], via: 'button' as const, done: true },
+])(
+  'human confirmation follows $kind answer semantics ($answer)',
+  async ({ kind, answer, via, done }) => {
+    const { store, pack, checked } = fixture();
+    const card = store.askQuestion(
+      'card',
+      'ask',
+      {
+        text: 'Make a synthetic decision',
+        kind,
+        options: kind === 'choice' ? ['Keep everything', 'Proceed'] : null,
+        multiple: false,
+        noLabel: 'No',
+        yesLabel: 'Yes',
+        startTodos: null,
+      },
+      1
+    );
+    const todo = checked('human_confirmed', { questionId: card.id });
+    expect(await pack.todos!.check(todo)).toMatchObject({ done: false });
+    store.answerQuestion(card, answer, via, 2);
+    expect(await pack.todos!.check(todo)).toMatchObject({ done });
+    expect(await pack.todos!.check({ ...todo, askId: 'foreign' })).toMatchObject({ done: false });
+  }
+);
+
 test('core checks reject malformed inputs and derive their completion sentence', () => {
   const { pack, checked } = fixture();
   for (const todo of [
@@ -113,5 +146,5 @@ test('core checks reject malformed inputs and derive their completion sentence',
   }
   const todo = checked('human_confirmed', { questionId: 'card' });
   expect(pack.todos!.refuse!(todo)).toBeNull();
-  expect(pack.todos!.doneWhen!(todo.check)).toBe('The human answers yes to card card.');
+  expect(pack.todos!.doneWhen!(todo.check)).toBe('The human confirms card card.');
 });
