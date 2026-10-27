@@ -2,6 +2,7 @@ import { lstat, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
+import { workerWorkEnvironment } from '../work-locations.ts';
 import { secretNamePatterns } from '../neo/secret-read-rules.ts';
 import {
   excludeWorkerConfig,
@@ -190,4 +191,21 @@ export async function readClaudeWorkerSandbox(directory: string | undefined) {
   const normalized = { ...upgraded, env };
   if (before !== JSON.stringify(normalized)) await writeAtomic(settingsPath(directory), normalized);
   return normalized;
+}
+
+export async function persistClaudeWorkEnvironment(directory: string) {
+  const folder = join(directory, '.claude');
+  await mkdir(folder, { recursive: true });
+  if (!(await lstat(folder)).isDirectory()) throw new Error('Claude settings require a directory');
+  const path = settingsPath(directory);
+  const entry = await lstat(path).catch((error) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (entry && !entry.isFile()) throw new Error('Claude settings must be a regular file');
+  const existing = entry ? JSON.parse(await readFile(path, 'utf8')) : {};
+  await writeAtomic(path, {
+    ...existing,
+    env: { ...existing.env, ...workerWorkEnvironment(directory) },
+  });
 }

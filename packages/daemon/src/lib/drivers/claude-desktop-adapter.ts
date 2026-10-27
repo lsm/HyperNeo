@@ -2,7 +2,11 @@ import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locatio
 import { releaseWorkerSandbox, workerSandboxOn } from './worker-sandbox.ts';
 import { createHash } from 'node:crypto';
 import { getDataDir } from '../data-dir.ts';
-import { installClaudeNativeWrites, readClaudeWorkerSandbox } from './claude-native-writes.ts';
+import {
+  installClaudeNativeWrites,
+  persistClaudeWorkEnvironment,
+  readClaudeWorkerSandbox,
+} from './claude-native-writes.ts';
 import { collectDescendantPids, listProcesses, type ProcessLister } from '../process-watchdog.ts';
 import { readClaudeReceiverMode } from './claude-receiver-mode.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
@@ -1433,24 +1437,10 @@ export async function launchInClaudeDesktop(
   deps: Pick<ClaudeDesktopAdapterDeps, 'spawn'>
 ): Promise<number> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const sandbox = await readClaudeWorkerSandbox(cwd);
+  await readClaudeWorkerSandbox(cwd);
   try {
     const proc = deps.spawn(
-      [
-        'script',
-        '-q',
-        '/dev/null',
-        'claude',
-        '--desktop',
-        '--resume',
-        cliSessionId,
-        '--settings',
-        sandbox
-          ? join(cwd, '.claude/settings.local.json')
-          : JSON.stringify({ env: workerWorkEnvironment(cwd) }),
-        '--append-system-prompt',
-        workerWorkLocationsBrief(cwd),
-      ],
+      ['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', cliSessionId],
       {
         cwd,
         stdout: 'ignore',
@@ -1665,6 +1655,7 @@ export async function startClaudeSession(
     permissionMode,
   };
   cache.set(`${STARTED_KEY}${sessionId}`, { modifiedAt: 0, records: [record] });
+  await persistClaudeWorkEnvironment(cwd);
   const imported = await importClaudeDesktopSession(cliSessionId, cwd, deps);
   if (!imported.ok)
     return {

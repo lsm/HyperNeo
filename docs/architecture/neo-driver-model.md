@@ -249,6 +249,15 @@ Constraints:
 
 Standalone CLI sessions share the same owner gate and inbox sender as confirmed CLI sessions discovered through Desktop records. The adapter offers `find`, owner-verified `status`, `send` and `steer`; it has no creation, stop, turn-end queue or withdrawal capability. Status and delivery evidence reuse the native transcript and exact input UUID. Daemon-owned SDK sessions remain on `hyperneo`, whose cached runtime and deferred mailbox support the controls described above.
 
+Claude worker location settings are persisted in the worker project before
+Desktop adoption, merging the location environment without replacing existing
+permissions or sandbox settings. The Desktop opener passes only the session id;
+its short-lived launcher is not the settings transport. In Claude 2.1.302, a
+native resumed conversation retains the preparation brief and uses that local
+environment without location flags. The worker-standalone-clone journey verifies
+this with an isolated daemon and real CLI shell; actual Desktop app adoption and
+rendering remain unverified.
+
 ### Creation permission defaults
 
 New work started through HyperNeo requests Full Access through the supported permission parameters:

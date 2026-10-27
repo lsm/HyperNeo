@@ -61,6 +61,8 @@ describe('claude-desktop start', () => {
   beforeEach(() => {
     configureWorkerSandbox(() => 'always');
     dir = mkdtempSync(join(tmpdir(), 'claude-start-'));
+    place.folder = join(dir, 'workspace');
+    mkdirSync(place.folder);
     spawned = [];
     cwds = [];
     clock = 1_000;
@@ -74,6 +76,7 @@ describe('claude-desktop start', () => {
 
   afterEach(() => {
     configureWorkerSandbox(() => 'off');
+    place.folder = '/focus/dolmen';
     vi.unstubAllEnvs();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -242,10 +245,6 @@ describe('claude-desktop start', () => {
       '--desktop',
       '--resume',
       'u1',
-      '--settings',
-      expect.stringContaining('HYPERNEO_WORKTREES'),
-      '--append-system-prompt',
-      expect.stringContaining('HYPERNEO_WORKTREES'),
     ]);
     expect(inbox).toEqual([]);
   });
@@ -266,28 +265,29 @@ describe('claude-desktop start', () => {
     const path = join(directory, '.claude/settings.local.json');
     const retained = { env: { CUSTOM_SETTING: 'retained' }, permissions: { deny: ['Bash(rm *)'] } };
     writeFileSync(path, JSON.stringify(retained));
-    const launches: string[][] = [];
-    const code = await launchInClaudeDesktop('synthetic-adopted', directory, {
-      spawn: (args) => {
-        launches.push(args);
-        return { exited: Promise.resolve(0) } as never;
-      },
+    mkdirSync(join(directory, '.git/info'), { recursive: true });
+    const driver = adapter({
+      prepareExecution: async () => ({ ok: true, value: { directory, release: async () => {} } }),
     });
-    expect(code).toBe(0);
+    const started = await driver.start!(
+      { ...request, preparation: { pack: 'coding', parameters: {} } },
+      user
+    );
+    expect(started.ok).toBe(true);
     const settings = JSON.parse(readFileSync(path, 'utf8'));
     expect(settings.env.HYPERNEO_WORKTREES).toBe(join(dir, 'data/worktrees'));
     expect(settings.env.CUSTOM_SETTING).toBe('retained');
     expect(settings.permissions).toEqual(retained.permissions);
     expect(settings.sandbox).toBeUndefined();
     expect(settings.env.TMPDIR).toBeUndefined();
-    expect(launches[0]).toEqual([
+    expect(spawned.find((args) => args.includes('--desktop'))).toEqual([
       'script',
       '-q',
       '/dev/null',
       'claude',
       '--desktop',
       '--resume',
-      'synthetic-adopted',
+      'u1',
     ]);
   });
 
@@ -387,7 +387,7 @@ describe('claude-desktop start', () => {
     });
   });
 
-  test('with the worker sandbox off, a prepared start passes no sandbox settings file', async () => {
+  test('with the worker sandbox off, adoption persists env without enabling a sandbox', async () => {
     configureWorkerSandbox(() => 'off');
     const directory = join(dir, 'prepared');
     mkdirSync(join(directory, '.git/info'), { recursive: true });
@@ -398,7 +398,11 @@ describe('claude-desktop start', () => {
       (await driver.start!({ ...request, preparation: { pack: 'coding', parameters: {} } }, user))
         .ok
     ).toBe(true);
-    expect(existsSync(join(directory, '.claude/settings.local.json'))).toBe(false);
+    const persisted = JSON.parse(
+      readFileSync(join(directory, '.claude/settings.local.json'), 'utf8')
+    );
+    expect(persisted.env.HYPERNEO_WORKTREES).toBe(join(dir, 'data/worktrees'));
+    expect(persisted.sandbox).toBeUndefined();
     const opening = spawned.find((args) => args.includes('--session-id'))!;
     const inline = JSON.parse(opening[opening.indexOf('--settings') + 1]);
     expect(inline.env.HYPERNEO_WORKTREES).toMatch(/worktrees$/);
@@ -599,11 +603,7 @@ describe('claude-desktop start', () => {
       expect(
         spawned
           .filter((args) => args.includes('--desktop'))
-          .every(
-            (args) =>
-              args.slice(0, 7).join(' ') === 'script -q /dev/null claude --desktop --resume u1' &&
-              args.includes('--settings')
-          )
+          .every((args) => args.join(' ') === 'script -q /dev/null claude --desktop --resume u1')
       ).toBe(true);
       const reloaded = adapter();
       expect((await reloaded.status!({ adapter: 'claude-desktop', id: 'local_u1' })).ok).toBe(true);
@@ -777,10 +777,10 @@ describe('claude-desktop start', () => {
   });
 
   test('opens work in a git repo in its own worktree and resumes it there', async () => {
-    await adapter({ checkout: { repo: '/focus/dolmen', linked: false } }).start?.(request, user);
+    await adapter({ checkout: { repo: place.folder, linked: false } }).start?.(request, user);
     expect(spawned[0]).toContain('--worktree');
     expect(spawned[0]).toContain('neo-u1');
-    expect(cwds).toEqual(['/focus/dolmen', '/focus/dolmen/.claude/worktrees/neo-u1']);
+    expect(cwds).toEqual([place.folder, join(place.folder, '.claude/worktrees/neo-u1')]);
   });
 
   test('keeps a shared non-coding home in place despite its Git parent', async () => {
@@ -791,13 +791,13 @@ describe('claude-desktop start', () => {
       )
     ).toMatchObject({ ok: true });
     expect(spawned[0]).not.toContain('--worktree');
-    expect(cwds).toEqual(['/focus/dolmen', '/focus/dolmen']);
+    expect(cwds).toEqual([place.folder, place.folder]);
   });
 
   test('runs work in a folder that is already a linked worktree without making another', async () => {
     await adapter({ checkout: { repo: '/focus/main', linked: true } }).start?.(request, user);
     expect(spawned[0]).not.toContain('--worktree');
-    expect(cwds).toEqual(['/focus/dolmen', '/focus/dolmen']);
+    expect(cwds).toEqual([place.folder, place.folder]);
   });
 
   test('stops when the first turn fails to start, without opening Desktop', async () => {

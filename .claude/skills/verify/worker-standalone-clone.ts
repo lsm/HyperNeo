@@ -90,6 +90,10 @@ try {
     assert.equal(native.status, 0, native.stdout + native.stderr);
     assert(native.stdout.includes('WORKTREE_HINT_CREATED'), native.stdout);
     assert(existsSync(join(workerEnv.HYPERNEO_WORKTREES, 'worker-probe/.git')));
+    const adopted = spawnSync('python3', [fileURLToPath(new URL('./worker-adopted-cli.py', import.meta.url)), process.env.VERIFY_CLAUDE, worker, launch.brief, join(run, 'evidence')], { encoding: 'utf8', timeout: 260000 });
+    writeFileSync(join(run, 'evidence/adopted-resume.log'), adopted.stdout + adopted.stderr);
+    assert.equal(adopted.status, 0, adopted.stdout + adopted.stderr);
+    assert(existsSync(join(workerEnv.HYPERNEO_WORKTREES, 'adopted-probe/.git')));
   }
   assert.equal(readFileSync(join(legacy, 'retained'), 'utf8'), 'legacy worktree bytes');
   evidence.push({ workLocations: workerEnv, brief: launch.brief, noSandbox: true, legacyUnchanged: true, nativeVerified: !!process.env.VERIFY_CLAUDE });

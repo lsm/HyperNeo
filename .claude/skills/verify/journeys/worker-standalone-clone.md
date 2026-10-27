@@ -54,11 +54,22 @@ implementation worktree, then remove only this synthetic run directory.
 Run the helper through the shared proof-run.sh wrapper with VERIFY_CLAUDE set
 explicitly to the installed Claude CLI. The synthetic Desktop preparation records
 the generated inline environment-only settings and appended location brief.
-The installed CLI then loads those same settings against a loopback scripted
-model and runs real Git to create a worktree under HYPERNEO_WORKTREES. Its clone
-has no sandbox marker. A synthetic legacy worktree sentinel remains unchanged;
-legacy directories are accepted, not migrated. work-locations-native.log and
-observed.json retain the result. No Desktop UI or real provider is used.
+The installed CLI loads those settings against a loopback scripted model and
+runs real Git to create a worktree under HYPERNEO_WORKTREES. The handoff now
+persists just the location environment in the worker's local project settings,
+preserving other settings; the Desktop opener receives only --desktop/--resume.
+The native adoption leg starts one real Claude conversation with the brief,
+then resumes it in a new process with no location settings or prompt flags.
+The resumed request must still contain the recorded brief and its real Bash
+must create a second worktree using the persisted environment. Before the fix,
+this leg fails because HYPERNEO_WORKTREES is missing, even though the recorded
+brief survives. Inspect adopted-native.json and adopted-native-*.log.
+
+The clone has no sandbox marker. A synthetic legacy worktree sentinel remains
+unchanged; legacy directories are accepted, not migrated. work-locations-native.log
+and observed.json retain the result. The Python helper uses a synthetic HOME,
+a loopback-only key helper and its own ephemeral HTTP server, closed in finally.
+No Desktop UI, actual app adoption, real provider or credential is exercised.
 SDK/Codex/Copilot launch-envelope regressions cover the other adapters; this
 native proof specifically exercises Claude's shell environment, not those CLIs.
 
