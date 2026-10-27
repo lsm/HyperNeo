@@ -1,30 +1,48 @@
 {
   "verified": true,
-  "productionLines": 45,
+  "productionLines": 64,
   "redRegressionCommit": "a5c8f22177c4cb70579629a620153338ec8c4b15",
   "baselineMainSql": 36,
   "fixedMainSql": {
     "bun": 0,
     "deno": 0
   },
-  "checks": "Full bun run check passed. 23 focused target preference/actor assignment tests passed.",
+  "checks": "Full bun run check passed. 27 actor/selector tests pass under Bun and Vitest; both review mutations fail four cases.",
   "limitations": "Actual Write-plan RPC and preference restart proof. Review/Verify target dispatch is covered by focused operation tests, not a native actor journey. Other assignment admission SQL, real model/harness availability, full-daemon SQL absence, GUI and latency are unverified.",
   "proofBinding": {
-    "testedCodeCommit": "0b52bafe19c0567cf28dcb3d6fbcb3672e1e5cea",
-    "testedGitTree": "c76d9fb7c2df858e7d355902a398b770f602da9f",
+    "testedCodeCommit": "8cf8314b1757897623ceb81ed91ac0f9a37873cb",
+    "testedGitTree": "3cd9d35a06c8c94892880f562fd8eb2b6e74648c",
     "applicationTrees": {
-      "packages": "8932f901b66df5f9c54318a56ab66eee35979774",
+      "packages": "80159c3776b576128fd5f666b69845c25ff2c35a",
       "scripts": "c09b4b6751dfe35b025b71f7df2ce83f02653973"
     },
     "proofBlobs": {
-      ".claude/skills/verify/lane-a-stage-target-db.ts": "a157096d944f7d83ee4e0bdf3a63e442d76c85fc",
+      ".claude/skills/verify/lane-a-stage-target-db.ts": "f160fbe31c7ad71e54e827c4cc638351d89a50f3",
       ".claude/skills/verify/lane-a-stage-target-db-run.py": "d5fa55c5ddb476219e00920dd23be17c836e1822",
       ".claude/skills/verify/lane-a-stage-target-proof-binding.ts": "c8f0436c5739e84cb58ba4c5bc8c184390326afe"
     },
     "runs": {
-      "bun": "bun-verify-2",
-      "deno": "deno-verify"
+      "bun": "bun-verify-3",
+      "deno": "deno-verify-1"
     },
     "postProofChangePolicy": "evidence-and-journey-only"
+  },
+  "readerReviewFix": {
+    "reviewedHead": "9cc50fb77b40c094af266b9997b560c3c1bc2376",
+    "readerOperation": "coding.stageTarget.reads",
+    "tests": "27 actor/selector tests pass in Bun and Vitest.",
+    "mutationChecks": "Restoring reference comparison or write mode each causes four cloned read-only default tests to fail. Production restored.",
+    "heldWriterProof": "Bun and Deno real Write-plan RPCs return the preferred target while a synthetic BEGIN IMMEDIATE lock is held; target main SQL is zero.",
+    "coordinatorGrant": "On codex/lane-a-stage-target only, exactly two append-only edits to storage/db-gateway/db-ops.ts: codingStageTargetReads import and DB_OPS array entry. No other shared-file edits.",
+    "fixtureScope": "Query-only is scoped to the selector gateway command; unrelated legacy assignment bookkeeping on main remains outside this slice.",
+    "grantAudit": "Exactly the two authorized insertions, zero removals in db-ops.ts."
+  },
+  "ciRecovery": {
+    "head": "9cc50fb77b40c094af266b9997b560c3c1bc2376",
+    "run": 40549648872,
+    "attempt": 2,
+    "conclusion": "success",
+    "initialFailure": "Windows compiled-worker temporary directory cleanup EBUSY; runtime assertions had passed.",
+    "sourceChangeForCI": false
   }
 }

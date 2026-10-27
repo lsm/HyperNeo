@@ -25,7 +25,7 @@ settings because unrelated bookkeeping preferences may exist at startup.
 During plan RPCs, instrument preference/alias SQL on the main connection,
 excluding setting RPCs, fixtures and assertions. Baseline requires target SQL;
 fixed runs require zero. The complete preference lookup and selection decision
-runs in one existing assignment gateway command. Review/Verify assignment also
+runs in one dedicated read-only gateway command. Review/Verify assignment also
 awaits that shared command before external actor creation; existing actor tests
 retain fallback, provenance and target-selection contracts. This journey does
 not claim real actor dispatch or absence of other assignment admission SQL.
@@ -45,3 +45,13 @@ bun --no-install --no-env-file .claude/skills/verify/lane-a-stage-target-proof-b
 
 Only this journey and its evidence directory may change after the bound proof
 commit. Other source, test or helper changes require fresh committed proofs.
+
+The reader proof also holds a synthetic writer lock during a real Write-plan
+RPC. The reader must return the preferred configuration before lock release.
+The CI actor tests structured-clone gateway replies and make the selector
+connection query-only for its snapshot. An unsupported default configuration
+must be attempted once without persisting an assignment. Temporarily restoring
+reference comparison or write mode makes all four new default cases fail.
+The initial broad read-only fixture also blocked unrelated legacy bookkeeping;
+that attempt is retained, not counted as a selector regression. Query-only is
+now scoped to the selector command.
