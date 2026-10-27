@@ -25,4 +25,8 @@ schemas and Neo-supplied known aliases. The refusal ledger does not store inputs
 They must also match their canonical replies; a declared text field must retain
 its original meaning rather than becoming a message alias.
 Unit tests additionally exercise nested numeric variants and validity constraints.
+Implicit text aliases apply only to string-valued fields, including wrapped
+strings. The daemon helper also compares an SDK message envelope containing
+an extra nested text key with its canonical reply for a missing synthetic
+session; the extra key must be stripped, without becoming an object alias.
 This journey does not exercise a browser or a real model turn.

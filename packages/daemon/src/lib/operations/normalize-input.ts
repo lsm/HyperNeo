@@ -6,8 +6,23 @@ const commonAliases: Readonly<Record<string, readonly string[]>> = {
   message: ['text'],
 };
 
+function unwrapInput(schema: z.ZodType): z.ZodType {
+  if (
+    schema instanceof z.ZodOptional ||
+    schema instanceof z.ZodNullable ||
+    schema instanceof z.ZodDefault ||
+    schema instanceof z.ZodPrefault ||
+    schema instanceof z.ZodCatch ||
+    schema instanceof z.ZodReadonly ||
+    schema instanceof z.ZodLazy
+  )
+    return unwrapInput(schema.unwrap() as z.ZodType);
+  return schema instanceof z.ZodPipe ? unwrapInput(schema.in as z.ZodType) : schema;
+}
+
 export async function normalizeOperationInput(schema: z.ZodType, input: unknown): Promise<unknown> {
   if (input === undefined || input === null) return input;
+  schema = unwrapInput(schema);
   if (schema instanceof z.ZodString && typeof input === 'number' && Number.isFinite(input))
     return String(input);
   if (schema instanceof z.ZodNumber && typeof input === 'string') {
@@ -30,18 +45,6 @@ export async function normalizeOperationInput(schema: z.ZodType, input: unknown)
         : input;
     }
   }
-  if (
-    schema instanceof z.ZodOptional ||
-    schema instanceof z.ZodNullable ||
-    schema instanceof z.ZodDefault ||
-    schema instanceof z.ZodPrefault ||
-    schema instanceof z.ZodCatch ||
-    schema instanceof z.ZodReadonly
-  )
-    return normalizeOperationInput(schema.unwrap() as z.ZodType, input);
-  if (schema instanceof z.ZodPipe) return normalizeOperationInput(schema.in as z.ZodType, input);
-  if (schema instanceof z.ZodLazy)
-    return normalizeOperationInput(schema.unwrap() as z.ZodType, input);
   if (schema instanceof z.ZodUnion) {
     if ((await schema.safeParseAsync(input)).success) return input;
     const candidates: unknown[] = [];
@@ -80,7 +83,7 @@ export async function normalizeOperationInput(schema: z.ZodType, input: unknown)
     const child = field as z.ZodType;
     const declaredAliases = child.meta()?.aliases;
     const aliases = [
-      ...(commonAliases[name] ?? []),
+      ...(unwrapInput(child) instanceof z.ZodString ? (commonAliases[name] ?? []) : []),
       ...(Array.isArray(declaredAliases) ? declaredAliases : []),
     ];
     for (const alias of aliases) {

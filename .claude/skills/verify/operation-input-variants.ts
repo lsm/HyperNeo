@@ -34,6 +34,12 @@ try {
     assert.deepEqual(variant, canonical);
   }
   const conflict = await handler({ name: 'neo.question.get', input: { id: 'a', questionId: 'b' } });
+  const message = { type: 'user', message: { content: 'Synthetic report' }, parent_tool_use_id: null };
+  const canonicalMessage = await handler({ name: 'message.send', input: { sessionId: 'synthetic-missing-session', message } });
+  const extraText = await handler({ name: 'message.send', input: { sessionId: 'synthetic-missing-session', message: { ...message, text: 'Stray extra field' } } });
+  evidence.push({ canonicalMessage, extraText });
+  assert.notEqual(canonicalMessage.isError, true, JSON.stringify(canonicalMessage));
+  assert.deepEqual(extraText, canonicalMessage);
   evidence.push({ conflict });
   assert.equal(conflict.isError, true);
   assert.match(conflict.content[0].text, /Conflicting/);
