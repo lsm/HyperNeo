@@ -9,7 +9,10 @@ import {
 import { neoTodoMutationReads } from '../repositories/neo-todo-mutation-planning.ts';
 import { neoTodoMutations } from '../repositories/neo-todo-mutation-commit.ts';
 import { neoTodoRunnerWrites } from '../repositories/neo-todo-runner-state.ts';
-import { neoSessionTrackWrites } from '../repositories/neo-session-track-write.ts';
+import {
+  neoSessionTrackWrites,
+  neoSessionTrackRootRead,
+} from '../repositories/neo-session-track-write.ts';
 import { neoTodoAddWrites } from '../repositories/neo-todo-add-write.ts';
 import { globalSettingsWrites } from '../repositories/global-settings-writes.ts';
 import {
@@ -148,6 +151,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     neoTodoMutations,
     neoTodoRunnerWrites,
     neoSessionTrackWrites,
+    neoSessionTrackRootRead,
     neoTodoAddWrites,
     codingPollPageReads,
     codingPollPageWrites,
