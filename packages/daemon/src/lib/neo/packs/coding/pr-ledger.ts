@@ -419,6 +419,12 @@ export class CodingPrLedgerRepository {
     };
   }
 
+  read(method: 'lastReads'): Promise<ReturnType<CodingPrLedgerRepository['lastReads']>>;
+  read(method: 'list'): Promise<ReturnType<CodingPrLedgerRepository['list']>>;
+  read(method: 'lastReads' | 'list') {
+    return gatewayFor(this.db).call(codingLedgerReads, method);
+  }
+
   recordStage(fact: CodingStageFact): boolean {
     return this.stageFacts.record(fact);
   }
@@ -935,4 +941,11 @@ export const codingLedgerWrites = defineRepositoryOp<CodingPrLedgerRepository, C
     'observeSessions',
     'observePoll',
   ]
+);
+
+export const codingLedgerReads = defineRepositoryOp(
+  'coding.ledger.read',
+  'read',
+  CodingPrLedgerRepository,
+  ['lastReads', 'list'] as const
 );

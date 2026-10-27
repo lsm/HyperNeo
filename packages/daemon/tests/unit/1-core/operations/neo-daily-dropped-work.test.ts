@@ -249,31 +249,35 @@ test('large pack labels still produce a valid bounded daily publication', async 
   expect(history()[0].fullText).toContain('Core: stalled asks: 0');
 });
 
-test('a broken pack cannot suppress core counts or another pack, or retry its hook all day', async () => {
-  let attempts = 0;
-  service.filePacks = [
-    {
-      id: 'broken',
-      describe: 'Synthetic failure',
-      instructions: () => null,
-      stats: () => {
-        attempts++;
-        throw new Error('Synthetic unavailable');
+test.each([false, true])(
+  'a broken pack cannot suppress daily counts (async: %s)',
+  async (asynchronous) => {
+    let attempts = 0;
+    service.filePacks = [
+      {
+        id: 'broken',
+        describe: 'Synthetic failure',
+        instructions: () => null,
+        stats: () => {
+          attempts++;
+          if (asynchronous) return Promise.reject(new Error('Synthetic unavailable'));
+          throw new Error('Synthetic unavailable');
+        },
       },
-    },
-    {
-      id: 'healthy',
-      describe: 'Synthetic domain',
-      instructions: () => null,
-      stats: () => ({ 'waiting items': 4 }),
-    },
-  ];
-  db.updateGlobalSettings({ neo: { packs: ['broken', 'healthy'] } });
-  await service.sweepPacks();
-  await service.sweepPacks();
-  expect(history()).toHaveLength(1);
-  expect(history()[0].fullText).toContain('Core: stalled asks: 0');
-  expect(history()[0].fullText).toContain('healthy: waiting items: 4');
-  expect(history()[0].fullText).toContain('broken: unavailable');
-  expect(attempts).toBe(1);
-});
+      {
+        id: 'healthy',
+        describe: 'Synthetic domain',
+        instructions: () => null,
+        stats: () => ({ 'waiting items': 4 }),
+      },
+    ];
+    db.updateGlobalSettings({ neo: { packs: ['broken', 'healthy'] } });
+    await service.sweepPacks();
+    await service.sweepPacks();
+    expect(history()).toHaveLength(1);
+    expect(history()[0].fullText).toContain('Core: stalled asks: 0');
+    expect(history()[0].fullText).toContain('healthy: waiting items: 4');
+    expect(history()[0].fullText).toContain('broken: unavailable');
+    expect(attempts).toBe(1);
+  }
+);

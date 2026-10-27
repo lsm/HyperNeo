@@ -9,7 +9,7 @@ import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/run
 import { sweepNeoPacks } from '../../../packages/daemon/src/lib/neo/pack-sweep.ts';
 import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
 
-const execFile = promisify(execFileCallback), run = resolve(process.argv[2]);
+const execFile = promisify(execFileCallback), run = resolve(process.argv[2]?.startsWith('/') ? process.argv[2] : process.argv.at(-1)!);
 assert(run.startsWith('/private/tmp/'));
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -30,6 +30,13 @@ const open = async () => {
   await app.spaceRuntimeService.ready();
   await app.jobProcessor.stop();
   assert.notEqual(app.server.port, 8399);
+  if (process.argv.includes('off-main')) {
+    const raw = app.db.getDatabase(), prepare = raw.prepare.bind(raw);
+    raw.prepare = ((sql: string) => {
+      if (sql.includes('state_since AS stateSince, read_at AS readAt')) throw new Error('Ledger inventory SQL forbidden on main');
+      return prepare(sql);
+    }) as typeof raw.prepare;
+  }
   service = createNeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
   service.pack('coding')!.sweep = async () => {};
 };
@@ -74,7 +81,10 @@ try {
   await sweepNeoPacks(app!.jobQueue, service!);
   const messages = await read('next day keeps history and new counts', 2);
   assert.equal(messages[0].publication.fullText, first.fullText);
-  assert(messages[1].publication.fullText.includes('stalled asks: 0'));
+  const nextDayStalled = await service!.todos.read('listStalledAsks', clock - 2 * hour);
+  assert.deepEqual(nextDayStalled.map(ask => ask.id), ['idle']);
+  evidence.nextDayStalled = nextDayStalled;
+  assert(messages[1].publication.fullText.includes('stalled asks: 1'));
   clock += 24 * hour;
   let hookAttempts = 0;
   service!.filePacks = [
@@ -85,7 +95,7 @@ try {
   app!.db.updateGlobalSettings({ neo: { packs: ['broken', 'healthy', 'large'] } });
   await sweepNeoPacks(app!.jobQueue, service!);
   const bounded = (await read('faulty and oversized packs preserve the core report', 3)).at(-1).publication;
-  assert(bounded.fullText.includes('Core: stalled asks: 0'));
+  assert(bounded.fullText.includes('Core: stalled asks: 1'));
   assert(bounded.fullText.includes('broken: unavailable'));
   assert(bounded.fullText.includes('healthy: waiting: 4'));
   assert(bounded.fullText.length <= 16000 && bounded.shortText.length <= 2000);
