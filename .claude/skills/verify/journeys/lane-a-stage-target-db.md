@@ -36,3 +36,12 @@ The corrected regression reaches the main-SQL assertion after all behaviour
 checks. No provider, credentials, model, GUI, actual GitHub, complete-daemon SQL
 absence or latency target is verified. Command duration and argument/reply sizes
 are recorded without separate queue, SQL or cloning attribution.
+
+Bind both successful runtime proofs to the committed application/helper tree:
+
+```sh
+bun --no-install --no-env-file .claude/skills/verify/lane-a-stage-target-proof-binding.ts HEAD
+```
+
+Only this journey and its evidence directory may change after the bound proof
+commit. Other source, test or helper changes require fresh committed proofs.

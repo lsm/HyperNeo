@@ -1,0 +1,30 @@
+{
+  "verified": true,
+  "productionLines": 45,
+  "redRegressionCommit": "a5c8f22177c4cb70579629a620153338ec8c4b15",
+  "baselineMainSql": 36,
+  "fixedMainSql": {
+    "bun": 0,
+    "deno": 0
+  },
+  "checks": "Full bun run check passed. 23 focused target preference/actor assignment tests passed.",
+  "limitations": "Actual Write-plan RPC and preference restart proof. Review/Verify target dispatch is covered by focused operation tests, not a native actor journey. Other assignment admission SQL, real model/harness availability, full-daemon SQL absence, GUI and latency are unverified.",
+  "proofBinding": {
+    "testedCodeCommit": "0b52bafe19c0567cf28dcb3d6fbcb3672e1e5cea",
+    "testedGitTree": "c76d9fb7c2df858e7d355902a398b770f602da9f",
+    "applicationTrees": {
+      "packages": "8932f901b66df5f9c54318a56ab66eee35979774",
+      "scripts": "c09b4b6751dfe35b025b71f7df2ce83f02653973"
+    },
+    "proofBlobs": {
+      ".claude/skills/verify/lane-a-stage-target-db.ts": "a157096d944f7d83ee4e0bdf3a63e442d76c85fc",
+      ".claude/skills/verify/lane-a-stage-target-db-run.py": "d5fa55c5ddb476219e00920dd23be17c836e1822",
+      ".claude/skills/verify/lane-a-stage-target-proof-binding.ts": "c8f0436c5739e84cb58ba4c5bc8c184390326afe"
+    },
+    "runs": {
+      "bun": "bun-verify-2",
+      "deno": "deno-verify"
+    },
+    "postProofChangePolicy": "evidence-and-journey-only"
+  }
+}
