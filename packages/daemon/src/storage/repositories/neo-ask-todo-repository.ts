@@ -1,4 +1,5 @@
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { neoTodoAddWrites } from './neo-todo-add-write.ts';
 import { NeoQuestionAnswerRepository } from './neo-question-answer-repository.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
@@ -187,6 +188,14 @@ export interface NeoCardReplyContext {
 }
 
 export class NeoAskTodoRepository {
+  async commitAdd(input: Parameters<typeof neoTodoAddWrites.run>[1]) {
+    const gateway = gatewayFor(this.db);
+    const write = gateway.run.bind(gateway);
+    const receipt = await write(neoTodoAddWrites, input);
+    if (receipt.ok && receipt.todo) this.changed();
+    return receipt;
+  }
+
   get questionAnswers() {
     return new NeoQuestionAnswerRepository(
       this.db,
@@ -1054,6 +1063,7 @@ export const neoTodoReads = defineRepositoryOp(
     }
   },
   [
+    'getAsk',
     'snapshot',
     'doneTodoFacts',
     'askFacts',

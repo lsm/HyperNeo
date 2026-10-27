@@ -40,7 +40,7 @@ const input=(title:string)=>({askId:'ask',title,check:{pack:'core',kind:'evidenc
 const add=(args:ReturnType<typeof input>)=>hub.request<Receipt>('operation.invoke',{name:'neo.todo.add',input:args});
 const visible=()=>hub.request<{ok:boolean;entry:{ask:NeoAsk;todos:NeoTodo[];questions:{startTodos?:string[]}[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId:'ask'}});
 const replay=app.db.gateway.onChanges,runCommand=app.db.gateway.run.bind(app.db.gateway);let held=false,notices=0,commands=0,lockNext=false,reached=()=>{},failNext=false;
-const tables:string[]=[];app.db.gateway.onChanges=events=>{tables.push(...events.map(event=>event.table));replay(events);};
+const tables:string[]=[];app.db.gateway.onChanges=events=>{tables.push(...events.map(event=>event.table).filter(table=>/^(neo_asks|neo_todos|neo_questions|neo_todo_sessions)$/.test(table)));replay(events);};
 app.db.gateway.run=(async(op,args)=>{if(op.name==='neo.todoAddWrites'){commands++;if(failNext){failNext=false;throw new Error('synthetic writer failure');}if(lockNext){lockNext=false;db.exec('BEGIN IMMEDIATE');held=true;reached();}}return runCommand(op,args);}) as typeof app.db.gateway.run;
 const off=hub.onEvent('neo.changed',()=>{notices++;});
 const result:Record<string,unknown>={surface:'Real todo-add WebSocket RPC plus ask-open agent MCP and public Work-card RPC'};
@@ -50,13 +50,13 @@ try{
  await app.db.createSession({id:root,title:'Synthetic todo-add activation',workspacePath:join(run,'workspace'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});
  new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
  store.openAsk({id:'ask',projectId:null,sessionId:root,originMessageId:null,title:'Whole add activation',request:'Preserve work',createdAt:1});
- const before=await visible();const beforeNotices=notices;
+ const before=await visible();const beforeNotices=notices;tables.length=0;
  db.exec("CREATE TRIGGER refuse_start BEFORE INSERT ON neo_questions BEGIN SELECT RAISE(ABORT,'synthetic late add rollback'); END");
  await assert.rejects(add(input('rollback')),/synthetic late add rollback/);
  assert.deepEqual(await visible(),before,'Failed add must leave the public card unchanged');assert.equal(notices,beforeNotices,'Failed add must not announce a partial card');assert.equal(tables.length,0);
  db.exec('DROP TRIGGER refuse_start');result.publicRollbackAtomic=true;
  const cached=db.prepare('SELECT COUNT(*) AS count FROM neo_todos');cached.get();record=true;assert.throws(()=>cached.get(),/Todo add SQL executed on daemon main/);record=false;assert.equal(mainSql,1);mainSql=0;result.cachedSqlGuardVerified=true;
- const text='完整工作 🦊\n'.repeat(20000),args=input('held');args.instruction=text;const reachedWriter=new Promise<void>(done=>{reached=done;});lockNext=true;record=true;
+ const text='完整工作 🦊\n'.repeat(20000).trim(),args=input('held');args.instruction=text;const reachedWriter=new Promise<void>(done=>{reached=done;});lockNext=true;record=true;
  let replied=false,error:unknown;const sent=performance.now();const pending=add(args);void pending.then(()=>{replied=true;},caught=>{error=caught;replied=true;});
  await Promise.race([reachedWriter,pending.then(()=>{throw new Error('Writer command was bypassed');})]);
  await new Promise(done=>setTimeout(done,1200));if(error)throw error;assert.equal(replied,false);assert.equal(tables.length,0);assert.equal(notices,beforeNotices);assert.deepEqual(await visible(),before);
@@ -69,6 +69,11 @@ try{
  record=true;const raced=await Promise.all([add(input('one')),add(input('two'))]);record=false;assert(raced.every(item=>item.ok));const after=await visible();assert.equal(after.entry.todos.length,3);assert.equal(after.entry.questions.length,1);assert.equal(after.entry.questions[0].startTodos?.length,3);result.concurrentMembership=true;
  const prior=await visible(),count=notices;failNext=true;record=true;await assert.rejects(add(input('failed writer')),/synthetic writer failure/);record=false;assert.deepEqual(await visible(),prior);assert.equal(notices,count);result.noMainFallback=true;
  const atCommands=commands;const opened=await mcp({name:'neo.ask.open',input:{title:'MCP creation',request:'Add through the same writer',todos:[{...input('MCP todo'),askId:undefined}]}});assert(!opened.isError,JSON.stringify(opened));const openedBody=JSON.parse(opened.content[0].text) as Receipt;assert(openedBody.ok,JSON.stringify(openedBody));assert(commands>atCommands,'Ask open must use the same add writer');assert.equal(openedBody.todos[0].state,'blocked');result.askOpenUsesWriter=true;
+ const splitDraft=(title:string,repo:string)=>({...input(title),check:{pack:'coding',kind:'pr_merged',params:{urls:[`https://github.com/synthetic/${repo}/pull/1`]}}});
+ const splitCall=async(todos:unknown[])=>{const reply=await mcp({name:'neo.ask.open',input:{title:'Split work',request:'Keep child cards open',todos}});assert(!reply.isError,JSON.stringify(reply));return JSON.parse(reply.content[0].text) as Receipt & {ask:NeoAsk};};
+ const split=await splitCall([splitDraft('First repo','one'),splitDraft('Second repo','two')]);assert(split.ok && split.ask.status==='done');
+ const extended=await splitCall([splitDraft('Additional child work','two')]);assert(extended.ok && extended.todos.length===3,'A settled parent must still route a new todo into an open child');result.settledParentOpenChild=true;
+
  assert.equal(mainSql,0);result.mainSql=mainSql;result.rssBytes=process.memoryUsage().rss;result.walBytes=statSync(`${path}-wal`).size;result.verified=true;
 }finally{
  record=false;if(held)db.exec('ROLLBACK');clearInterval(lag);off();SQLite.prototype.prepare=sqlitePrepare;SQLite.prototype.exec=sqliteExec;app.db.gateway.onChanges=replay;app.db.gateway.run=runCommand;
