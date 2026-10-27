@@ -42,6 +42,7 @@ function fixture(target: string, sharedModes = true) {
   mkdirSync(join(root, '.git'));
   dataDir = mkdtempSync(join(tmpdir(), 'worker-data-'));
   vi.stubEnv('HYPERNEO_DATA_DIR', dataDir);
+  vi.stubEnv('HOME', join(dataDir, 'home'));
   Object.defineProperty(process, 'platform', { value: target, configurable: true });
   if (sharedModes) {
     Object.defineProperty(process, 'getuid', {
@@ -93,6 +94,30 @@ test('runtime preparation creates every work location on demand', async () => {
   }
   await writeFile(join(env.TMPDIR, 'probe'), 'synthetic');
   expect(await readFile(join(env.TMPDIR, 'probe'), 'utf8')).toBe('synthetic');
+});
+
+test('worker gh configuration preserves public settings without copying host credentials', async () => {
+  fixture('darwin', false);
+  const home = join(dataDir, 'synthetic-home');
+  vi.stubEnv('HOME', home);
+  mkdirSync(join(home, '.config/gh'), { recursive: true });
+  await writeFile(join(home, '.config/gh/config.yml'), 'git_protocol: ssh\n');
+  await writeFile(
+    join(home, '.config/gh/hosts.yml'),
+    'github.com:\n  oauth_token: synthetic-only\n'
+  );
+  const env = await prepareWorkerSandbox(root);
+  expect(env.GH_CONFIG_DIR).toBeTruthy();
+  expect(await readFile(join(env.GH_CONFIG_DIR, 'config.yml'), 'utf8')).toBe('git_protocol: ssh\n');
+  expect(existsSync(join(env.GH_CONFIG_DIR, 'hosts.yml'))).toBe(false);
+  await writeFile(join(home, '.config/gh/config.yml'), 'git_protocol: https\n');
+  await prepareWorkerSandbox(root);
+  expect(await readFile(join(env.GH_CONFIG_DIR, 'config.yml'), 'utf8')).toBe(
+    'git_protocol: https\n'
+  );
+  rmSync(join(home, '.config/gh/config.yml'));
+  await prepareWorkerSandbox(root);
+  expect(existsSync(join(env.GH_CONFIG_DIR, 'config.yml'))).toBe(false);
 });
 
 test('runtime preparation tolerates shared work locations with ordinary modes', async () => {
