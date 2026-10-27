@@ -1,3 +1,4 @@
+import { neoTodoStalledCard } from './todo-runner.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { WorkRefSchema, type WorkRef } from '../drivers/types.ts';
@@ -110,9 +111,13 @@ export function createNeoWorkerQuestionWriter(
             rejection = 'ask_settled: this ask is no longer open.';
             return null;
           }
-          const existing = store
+          const open = store
             .listQuestions(todo.askId)
             .find((q) => q.todoId === todo.id && q.state === 'open');
+          const daemonCard = open?.text === neoTodoStalledCard(todo);
+          if (open && daemonCard)
+            store.retireQuestion(open, 'its worker asked its own question', null, Date.now());
+          const existing = daemonCard ? null : open;
           const card =
             existing ??
             store.askQuestion(

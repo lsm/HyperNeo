@@ -206,7 +206,7 @@ const neoTodoUnreachedNote = (todo: Pick<NeoTodo, 'title'>, minutes: number) =>
 const neoTodoHandoff = (todo: Pick<NeoTodo, 'title' | 'doneWhen'>) =>
   `Take over the todo "${todo.title}". It is done when: ${todo.doneWhen}. Its previous worker stopped making progress; read what it did, then finish the work.`;
 
-const neoTodoStalledCard = (todo: Pick<NeoTodo, 'title'>) =>
+export const neoTodoStalledCard = (todo: Pick<NeoTodo, 'title'>) =>
   `"${todo.title}" has nobody working on it, and HyperNeo cannot restart it on its own. Where should it continue, or should it close?`;
 
 export function neoTodoIdleReminder(todo: Pick<NeoTodo, 'title' | 'doneWhen'>, minutes: number) {
@@ -412,6 +412,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       link: result.link,
       observed: { model: result.model, effort: result.effort },
       keepIdentity: target.verb === 'send',
+      target,
       sent: probe
         ? probe.sent && { ...probe.sent, receipt: result.receipt, delivery: result.delivery }
         : opening
@@ -981,20 +982,18 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'result:rescue'
     )
     .pipe(
-      async (stalled: Stalled, now: number) =>
-        mayRedispatch(
-          (await store.read('listCheckable')).filter(
-            (other) =>
-              other.state === 'doing' &&
-              !['done', 'stopped', 'failed', 'needs_you'].includes(
-                sessions.readLiveStatus(other.id) ?? ''
-              )
-          ).length,
-          sweep.movedAt,
-          now
-        )
-          ? { value: stalled }
-          : { reason: null },
+      async (stalled: Stalled, now: number) => {
+        const running = (await store.read('listCheckable')).filter(
+          (other) =>
+            other.state === 'doing' &&
+            !['done', 'stopped', 'failed', 'needs_you'].includes(
+              sessions.readLiveStatus(other.id) ?? ''
+            )
+        ).length;
+        if (!mayRedispatch(running, sweep.movedAt, now)) return { reason: null };
+        sweep.movedAt = now;
+        return { value: stalled };
+      },
       ['rescue', 'now'],
       'result:rescue'
     )
@@ -1010,7 +1009,6 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
     .pipe(
       ({ todo }: Rescue, now: number) => {
-        sweep.movedAt = now;
         sessions.recordNudge(todo.id, { since: now, nudges: 0, redispatched: true });
         return store.updateTodo(todo, { state: 'doing', startedAt: now, finishedAt: null }, now);
       },
