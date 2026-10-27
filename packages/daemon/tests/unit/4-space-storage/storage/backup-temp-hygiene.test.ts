@@ -7,14 +7,25 @@ import { fileURLToPath } from 'node:url';
 
 const daemonRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 const suites = [
+  ['4-space-storage/storage/database-facade.test.ts', 'creates a Database instance'],
+  [
+    '1-core/core/backfill-deepseek-provider.test.ts',
+    'backfillDeepSeekProvider|migrateProvidersIfNeeded',
+  ],
   ['4-space-storage/storage/scoped-invalidation.test.ts', 'ReactiveDatabase — scope extraction'],
-  ['4-space-storage/storage/scoped-messages-integration.test.ts', 'Scoped invalidation'],
+  [
+    '4-space-storage/storage/scoped-messages-integration.test.ts',
+    'writing message for sess-A DOES trigger delta',
+  ],
   [
     '4-space-storage/storage/live-query-delivery-status.test.ts',
     'delivery-status reactive pipeline',
   ],
   ['2-handlers/rpc-handlers/live-query-handlers.test.ts', 'sessions.list reactive scope filter'],
-  ['2-handlers/rpc-handlers/inactivity-nag-mailbox-probes.test.ts', 'inactivity nag probes'],
+  [
+    '2-handlers/rpc-handlers/inactivity-nag-mailbox-probes.test.ts',
+    'treats an active admission for the nag claim key as pending delivery',
+  ],
 ];
 
 for (const [suite, filter] of suites) {
@@ -29,7 +40,7 @@ for (const [suite, filter] of suites) {
           "import { afterEach } from 'bun:test'; afterEach(() => { throw new Error('forced hygiene failure'); });"
         );
         const result = spawnSync(
-          process.execPath,
+          'bun',
           [
             'test',
             ...(fail ? ['--preload', preload] : []),
@@ -51,7 +62,7 @@ for (const [suite, filter] of suites) {
           expect(output).toContain('forced hygiene failure');
           expect(result.status).toBe(1);
         } else {
-          expect(result.status).toBe(0);
+          expect(result.status, output).toBe(0);
         }
         expect(readdirSync(root).filter((name) => name !== 'force-failure.ts')).toEqual([]);
       } finally {
