@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, screen, waitFor, fireEvent } from '@testing-library/preact';
-import type { AppMcpServer, AppSkill } from '@hyperneo/shared';
+import type { AppMcpServer } from '@hyperneo/shared';
 
 const {
   mockCreateAppMcpServer,
@@ -224,22 +224,6 @@ function makeServer(id: string, overrides: Partial<AppMcpServer> = {}): AppMcpSe
     env: {},
     enabled: true,
     source: 'user',
-    ...overrides,
-  };
-}
-
-function makeMcpSkill(id: string, serverId: string, overrides: Partial<AppSkill> = {}): AppSkill {
-  return {
-    id,
-    name: `skill-${id}`,
-    displayName: `Skill ${id}`,
-    description: '',
-    sourceType: 'mcp_server',
-    config: { type: 'mcp_server', appMcpServerId: serverId },
-    enabled: true,
-    builtIn: false,
-    validationStatus: 'valid',
-    createdAt: 0,
     ...overrides,
   };
 }
