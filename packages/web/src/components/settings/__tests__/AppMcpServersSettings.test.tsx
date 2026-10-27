@@ -54,6 +54,20 @@ vi.mock('../../../lib/api-helpers.ts', () => ({
   setAppMcpServerEnabled: (...args: unknown[]) => mockSetAppMcpServerEnabled(...args),
 }));
 
+vi.mock('../../../lib/global-store.ts', () => ({
+  globalStore: {
+    settings: {
+      value: {
+        toolSelectionDefaults: {
+          version: 1,
+          choices: { 'skill:1': { selected: true }, 'mcp:1': { selected: true } },
+        },
+      },
+    },
+    refresh: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
 vi.mock('../../../lib/toast.ts', () => ({
   toast: {
     error: (msg: string) => mockToastError(msg),
@@ -366,85 +380,11 @@ describe('AppMcpServersSettings', () => {
       expect(mockSubscribe).toHaveBeenCalled();
     });
 
-    it('should subscribe to the skills store too (for wrapper linkage)', () => {
-      render(<AppMcpServersSettings />);
-
-      expect(mockSkillsSubscribe).toHaveBeenCalled();
-    });
-
-    it('should unsubscribe from both stores on unmount', () => {
+    it('should unsubscribe on unmount', () => {
       const { unmount } = render(<AppMcpServersSettings />);
       unmount();
 
       expect(mockUnsubscribe).toHaveBeenCalled();
-      expect(mockSkillsUnsubscribe).toHaveBeenCalled();
-    });
-  });
-
-  describe('Skill wrapper linkage', () => {
-    it('shows "Exposed via skill X" when a wrapper skill exists', () => {
-      const server = makeServer('s1', { name: 'chrome-devtools' });
-      const skill = makeMcpSkill('w1', server.id, {
-        displayName: 'Chrome DevTools (MCP)',
-      });
-      appMcpStore.appMcpServers.value = [server];
-      skillsStore.skills.value = [skill];
-
-      render(<AppMcpServersSettings />);
-
-      const link = screen.getByTestId('skill-link-chrome-devtools');
-      expect(link).toBeTruthy();
-      expect(link.textContent).toContain('Chrome DevTools (MCP)');
-    });
-
-    it('notes "(skill is off)" when the wrapper skill is disabled', () => {
-      const server = makeServer('s1', { name: 'chrome-devtools' });
-      const skill = makeMcpSkill('w1', server.id, {
-        displayName: 'Chrome DevTools (MCP)',
-        enabled: false,
-      });
-      appMcpStore.appMcpServers.value = [server];
-      skillsStore.skills.value = [skill];
-
-      render(<AppMcpServersSettings />);
-
-      const link = screen.getByTestId('skill-link-chrome-devtools');
-      expect(link.textContent).toMatch(/skill is off/i);
-    });
-
-    it('shows the orphan warning when no skill wrapper exists', () => {
-      const server = makeServer('s1', { name: 'fetch-mcp' });
-      appMcpStore.appMcpServers.value = [server];
-      skillsStore.skills.value = [makeMcpSkill('w1', 'some-other-server')];
-
-      render(<AppMcpServersSettings />);
-
-      const warn = screen.getByTestId('skill-orphan-fetch-mcp');
-      expect(warn).toBeTruthy();
-      expect(warn.textContent).toMatch(/no skill wrapper/i);
-    });
-
-    it('suppresses annotations while the skills subscription has not yet delivered a snapshot', () => {
-      const server = makeServer('s1', { name: 'chrome-devtools' });
-      appMcpStore.appMcpServers.value = [server];
-      skillsStore.skills.value = [];
-      skillsStore.loaded.value = false;
-
-      render(<AppMcpServersSettings />);
-
-      expect(screen.queryByTestId('skill-link-chrome-devtools')).toBeNull();
-      expect(screen.queryByTestId('skill-orphan-chrome-devtools')).toBeNull();
-    });
-
-    it('shows orphan warning once the subscription has loaded even if there are zero skills', () => {
-      const server = makeServer('s1', { name: 'fetch-mcp' });
-      appMcpStore.appMcpServers.value = [server];
-      skillsStore.skills.value = [];
-      skillsStore.loaded.value = true;
-
-      render(<AppMcpServersSettings />);
-
-      expect(screen.getByTestId('skill-orphan-fetch-mcp')).toBeTruthy();
     });
   });
 
@@ -802,7 +742,7 @@ describe('AppMcpServersSettings', () => {
       fireEvent.click(toggle);
 
       await waitFor(() => {
-        expect(mockToastSuccess).toHaveBeenCalledWith('Disabled "test-server"');
+        expect(mockToastSuccess).toHaveBeenCalledWith('New-session default off: test-server');
       });
     });
 

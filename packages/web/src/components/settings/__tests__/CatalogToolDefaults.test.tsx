@@ -4,9 +4,14 @@ import { signal } from '@preact/signals';
 import type { AppMcpServer, AppSkill, GlobalSettings } from '@hyperneo/shared';
 
 const mocks = vi.hoisted(() => ({ saveSkill: vi.fn(), saveServer: vi.fn() }));
-vi.mock('../../../lib/state.ts', async () => {
+vi.mock('../../../lib/global-store.ts', async () => {
   const { signal } = await import('@preact/signals');
-  return { globalSettings: signal<GlobalSettings | null>(null) };
+  return {
+    globalStore: {
+      settings: signal<GlobalSettings | null>(null),
+      refresh: vi.fn().mockResolvedValue(undefined),
+    },
+  };
 });
 vi.mock('../../../hooks/useSkills.ts', () => ({
   useSkills: () => ({ skills: skillsStore.skills.value, isLoading: false, error: null }),
@@ -33,12 +38,12 @@ vi.mock('../../../lib/api-helpers.ts', () => ({ setAppMcpServerEnabled: mocks.sa
 vi.mock('../AddSkillDialog.tsx', () => ({ AddSkillDialog: () => null }));
 vi.mock('../EditSkillDialog.tsx', () => ({ EditSkillDialog: () => null }));
 vi.mock('../InstallSkillFromGitDialog.tsx', () => ({ InstallSkillFromGitDialog: () => null }));
-import { globalSettings } from '../../../lib/state.ts';
+import { globalStore } from '../../../lib/global-store.ts';
 import { skillsStore } from '../../../lib/skills-store.ts';
 import { appMcpStore } from '../../../lib/app-mcp-store.ts';
 import { SkillsRegistry } from '../SkillsRegistry.tsx';
 import { AppMcpServersSettings } from '../AppMcpServersSettings.tsx';
-const settings = globalSettings as ReturnType<typeof signal<GlobalSettings | null>>;
+const settings = globalStore.settings as ReturnType<typeof signal<GlobalSettings | null>>;
 const guide: AppSkill = {
   id: 'guide',
   name: 'guide',
@@ -76,6 +81,7 @@ beforeEach(() => {
   skillsStore.skills.value = [guide, wrapper];
   appMcpStore.appMcpServers.value = [server];
   settings.value = {
+    settingSources: [],
     toolSelectionDefaults: {
       version: 1,
       choices: { 'skill:guide': { selected: true }, 'mcp:browser': { selected: true } },
@@ -92,7 +98,7 @@ it('shows saved skill and backing-server defaults even when legacy flags are off
   expect(screen.getByText(/Existing sessions keep their own choices/)).toBeTruthy();
   expect(screen.getByText(/Tools → Use here/)).toBeTruthy();
   fireEvent.click(toggle('Fixture Browser'));
-  await waitFor(() => expect(mocks.saveSkill).toHaveBeenCalledWith('wrapper', false));
+  await waitFor(() => expect(mocks.saveServer).toHaveBeenCalledWith('browser', false));
 });
 it('shows a wrapper-free server default and saves the opposite canonical choice', async () => {
   skillsStore.skills.value = [];
@@ -113,4 +119,35 @@ it('waits for settings before allowing a default edit', () => {
   settings.value = null;
   render(<SkillsRegistry />);
   expect((toggle('Fixture Guide') as HTMLButtonElement).disabled).toBe(true);
+});
+
+it('changes the shared MCP default even when another wrapper remains legacy-enabled', async () => {
+  skillsStore.skills.value = [
+    wrapper,
+    { ...wrapper, id: 'sibling', displayName: 'Sibling', enabled: true },
+  ];
+  render(<SkillsRegistry />);
+  fireEvent.click(toggle('Fixture Browser'));
+  await waitFor(() => expect(mocks.saveServer).toHaveBeenCalledWith('browser', false));
+  expect(mocks.saveSkill).not.toHaveBeenCalled();
+});
+it('reflects newly delivered canonical defaults without remounting', async () => {
+  render(<AppMcpServersSettings />);
+  settings.value = { toolSelectionDefaults: { version: 1, choices: {} } } as GlobalSettings;
+  await waitFor(() => expect(toggle('Fixture Server').getAttribute('aria-checked')).toBe('false'));
+});
+
+it('disables sibling wrapper switches until the shared default save finishes', async () => {
+  skillsStore.skills.value = [wrapper, { ...wrapper, id: 'sibling', displayName: 'Sibling' }];
+  let finish!: () => void;
+  mocks.saveServer.mockReturnValue(
+    new Promise<void>((resolve) => {
+      finish = resolve;
+    })
+  );
+  render(<SkillsRegistry />);
+  fireEvent.click(toggle('Fixture Browser'));
+  await waitFor(() => expect((toggle('Sibling') as HTMLButtonElement).disabled).toBe(true));
+  finish();
+  await waitFor(() => expect((toggle('Sibling') as HTMLButtonElement).disabled).toBe(false));
 });
