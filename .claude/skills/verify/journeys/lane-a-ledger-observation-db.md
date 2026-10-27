@@ -71,3 +71,10 @@ reader. Both runtime proofs identify that merged code head. Only the registry
 append conflicted; the resolution preserves the base reader and this slice's
 reader. Against the base, the shared-file diff remains exactly the granted import
 and DB_OPS entry. Prior successful proof bindings remain historical.
+
+Dev advanced again with the inventory readers for sweep/daily counts (#9218).
+The second merge retained its public read facade and op registration. The
+reconciliation conflict uses this slice's whole polling snapshot/context; its
+per-response writer remains atomic. Both runtimes were refreshed on that merged
+commit, and the neighboring sweep/daily-count contracts were included in checks.
+This merge does not claim a fresh execution of #9218's separate full-pack journeys.
