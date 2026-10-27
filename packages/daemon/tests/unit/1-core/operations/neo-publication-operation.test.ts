@@ -42,6 +42,7 @@ describe('Neo publication without runtime input attribution', () => {
     failWrite = false;
     publish = createNeoPublisher({
       receivedHumanInput: () => false,
+      currentHumanInput: () => null,
       getBinding: (id) => repo.getBindingBySession(id),
       getRootBinding: () => repo.defaultBinding(),
       hasProject: (id) => !!repo.getProject(id),
