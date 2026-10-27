@@ -86,7 +86,8 @@ describe('shared Chinese card and message search', () => {
   });
 
   test('retains ASCII prefix and mixed-query behavior', () => {
-    card('catalog', 'Garden catalog');
+    card('catalog', 'Pack the catalog');
+    expect(cards('catalog').results[0].snippet).toContain('catalog');
     message('catalog', 'Archive', 'Garden catalog');
     expect(cards('cat').results).toMatchObject([{ askId: 'catalog' }]);
     expect(messages('a cat')).toMatchObject([{ messageId: 'catalog' }]);

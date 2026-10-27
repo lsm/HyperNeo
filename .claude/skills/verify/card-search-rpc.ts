@@ -82,6 +82,9 @@ try {
       name: 'neo.ask.search',
       input,
     });
+  const shortMessages = await hub.request<{ results: { messageId: string }[] }>('message.search', { query: '构建' });
+  assert.deepEqual(shortMessages.results.map((hit) => hit.messageId), ['old-chinese-title']);
+  evidence.shortMessageTitles = shortMessages;
   measuring = true;
   const page = await search({ query: 'catalog' });
   evidence.firstPage = page;
@@ -120,9 +123,6 @@ try {
   assert.deepEqual(chinese.results.map((hit) => [hit.askId, hit.field]), [['old-chinese', 'meta']]);
   const short = await search({ query: '构建' });
   assert.deepEqual(short.results.map((hit) => [hit.askId, hit.field]), [['old-chinese', 'meta']]);
-  const shortMessages = await hub.request<{ results: { messageId: string }[] }>('message.search', { query: '构建' });
-  assert.deepEqual(shortMessages.results.map((hit) => hit.messageId), ['old-chinese-title']);
-  evidence.shortMessageTitles = shortMessages;
   evidence.oldChineseCard = { threeCharacters: chinese, twoCharacters: short, noPriorCardRead: true };
   await assert.rejects(search({ query: 'a bc' }), /query_too_short/);
   evidence.backend = inMemory ? 'memory' : 'file';
