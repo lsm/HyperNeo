@@ -29,7 +29,9 @@ For a cause-independent error after prompt consumption, run the existing helper
 with `consumed` and `consumed-init`; their scripted iterators consume the real queue input before
 throwing an arbitrary error, before or after SDK initialization. Require the same cap, delivered message, stable
 persisted episode, no fourth start, and successful explicit reset after fixing
-the scripted cause. The after-init fixture deliberately has no SDK transcript,
+the scripted cause. Recovery must include a persisted successful parent result;
+a reset count of zero or a constructed query alone is not a completed recovery.
+The after-init fixture deliberately has no SDK transcript,
 so recovery accepts the public start-fresh choice rather than bypassing resume
 validation. `consumed-handoff` checks an accepted rate-limit handoff stays
 with that owner rather than being retried by the terminal fallback.

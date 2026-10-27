@@ -144,6 +144,8 @@ try{
    await hub.request('session.sdkResumeChoice',{sessionId,choice:'start_fresh',messageUuid:choice!.uuid});
   }
   await until(async()=>{const state=(await read()).metadata.queryFailureEpisode;return !!state && state.id!==old && state.failures===0 && attempts.length>beforeCount;},'explicit recovery did not start a fresh successful episode');
+  await until(async()=>{const rows=await hub.request<{sdkMessages:{type:string;is_error?:boolean;result?:string}[]}>('message.sdkMessages',{sessionId});return rows.sdkMessages.some(row=>row.type==='result'&&row.is_error===false&&row.result==='Recovered synthetic reply');},'explicit recovery never produced a successful parent result');
+  evidence.recoveredParentResult=true;
   evidence.recovered=(await read()).metadata.queryFailureEpisode;evidence.originalError=failure;evidence.noHotLoop=true;
   if(consumerMode){
    const after=app.db.getDatabase().prepare("SELECT COUNT(*) AS count FROM sdk_messages WHERE session_id=? AND message_type='user'").get(consumerRoot) as {count:number};assert.equal(after.count,1);evidence.recipientCountAfterRecovery=after.count;
