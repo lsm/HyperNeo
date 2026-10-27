@@ -2246,8 +2246,8 @@ export class QueryRunner {
         }
         break;
       }
-      const owner = this.ctx.getQueryGeneration();
-      const live = () => !this.ctx.isCleaningUp() && this.ctx.getQueryGeneration() === owner;
+      const owner = this.toolInventoryOwner;
+      const live = () => !this.ctx.isCleaningUp() && (owner?.isLive() ?? true);
       await this.failures.admit(live);
       await messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
       const queuedMessage = message as typeof message & { internal?: boolean };
