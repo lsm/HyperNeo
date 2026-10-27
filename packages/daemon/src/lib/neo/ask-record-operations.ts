@@ -206,7 +206,18 @@ export function createNeoAskRecordOperations(
         const existing = priorAsk ? store.listFamilyTodos(priorAsk.id) : [];
         const badAfter = input.todos
           .map((todo, index) =>
-            recordedRow(todo) ? null : neoTodoAfterRefusal(existing, index, todo.after, todo.start)
+            recordedRow(todo)
+              ? null
+              : neoTodoAfterRefusal(
+                  existing,
+                  index,
+                  todo.after?.map((ref) =>
+                    typeof ref === 'number' && ref < index && input.todos[ref]
+                      ? (recordedRow(input.todos[ref])?.id ?? ref)
+                      : ref
+                  ),
+                  todo.start
+                )
           )
           .find(Boolean);
         if (badAfter) return { ok: false as const, reason: badAfter };

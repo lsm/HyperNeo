@@ -190,4 +190,28 @@ describe('todo dependencies', () => {
       db.close();
     }
   });
+
+  test('a repeated plan may start a step whose index points at a recorded, finished step', async () => {
+    const { db, store, invoke, step } = setup();
+    try {
+      const plan = { title: 'Plan', request: 'Plan' };
+      const opened = await invoke('neo.ask.open', { ...plan, todos: [step('A')] });
+      store.updateTodo(opened.todos[0], { state: 'done', evidence: 'Done.' }, 5);
+      const again = await invoke('neo.ask.open', {
+        ...plan,
+        todos: [
+          step('A'),
+          {
+            ...step('B', [0]),
+            instruction: 'Do B.',
+            target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } },
+            start: true,
+          },
+        ],
+      });
+      expect(again.ok).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
 });
