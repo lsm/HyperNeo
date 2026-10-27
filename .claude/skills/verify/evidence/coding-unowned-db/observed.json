@@ -1,0 +1,30 @@
+{
+  "verified": true,
+  "redRegressionCommit": "cdc39be9a0463637f102d582ad173c2dca2f0791",
+  "baselineMainSql": {
+    "bun": 13,
+    "deno": 13
+  },
+  "productionLines": 49,
+  "targetMainSql": 0,
+  "consumer": "Persisted synthetic job invokes production coding-pack sweep",
+  "limitation": "Notification receiver checks commit and records keys; no actual Neo mailbox, model, GitHub or GUI delivery",
+  "proofBinding": {
+    "testedCodeCommit": "0b89f38a1f97fa3395ecfab0fd1e3b31bd76bb89",
+    "testedGitTree": "e2326914853ed50c466628e12319759a4572c302",
+    "applicationTrees": {
+      "packages": "6a72065dc23debbb45b885148d074ba63aeffe0e",
+      "scripts": "06e378f1145671c3ac2a5223ff148a466b38bcf9"
+    },
+    "proofBlobs": {
+      ".claude/skills/verify/coding-unowned-db.ts": "d71448b99b6dbe36dfc8fdcf1f67cb3eef2df305",
+      ".claude/skills/verify/coding-unowned-db-run.py": "1762583a88f676bcedc32477976f12919893ed45",
+      ".claude/skills/verify/coding-unowned-proof-binding.ts": "6d85e907702203522af509bb349657ba20fa54c2"
+    },
+    "runs": {
+      "bun": "bun-verify",
+      "deno": "deno-verify"
+    },
+    "postProofChangePolicy": "evidence-and-journey-only"
+  }
+}
