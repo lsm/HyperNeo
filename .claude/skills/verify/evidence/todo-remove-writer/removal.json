@@ -1,0 +1,47 @@
+{
+  "mode": "verify",
+  "surface": "real remove RPC, independent observer and opened Work card",
+  "refused": [
+    {
+      "kind": "remove",
+      "error": "MessageHubResponseError: synthetic finalization refusal",
+      "observed": {
+        "state": "doing",
+        "card": "open",
+        "visibleState": "doing"
+      }
+    }
+  ],
+  "rollbackNotifications": {
+    "websocket": 0,
+    "internal": 0
+  },
+  "commitNotifications": {
+    "websocket": 1,
+    "internal": 1,
+    "otherClientState": "removed"
+  },
+  "receipts": [
+    {
+      "kind": "remove",
+      "state": "removed",
+      "replyBytes": 1750912
+    }
+  ],
+  "fullReport": {
+    "bytes": 850000,
+    "sha256": "3f9b3fceb06c0114abcd818ca083bf1b4f701bd5cb4da59995440ac8398388bb"
+  },
+  "contention": {
+    "writeMs": 1212.935958,
+    "healthMs": 0.5837089999999989,
+    "maxLagMs": 2.1816670000000613,
+    "affectedWriteUnder250ms": false
+  },
+  "verified": true,
+  "notificationCounts": {
+    "websocket": 1,
+    "internal": 1
+  },
+  "mainSql": 0
+}

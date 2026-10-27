@@ -17,8 +17,11 @@ Both operations must retain the entire Unicode report in their receipts and
 public cards. A thrown stop or driver refusal must leave the card unchanged;
 unsupported remains a successful no-op. An adopted worker must never receive
 a stop. A replacement committed before the context read must receive the stop
-instead of the prior worker. An already-settled ask must return unchanged,
-successful no-op receipts without any stop.
+instead of the prior worker. A valid replacement todo stays linked; one deleted
+during stop produces replacement_missing without a stale link. A full report
+written concurrently during that stop survives the receipt and opened card. An
+already-settled ask must return unchanged, successful no-op receipts without
+any stop.
 
 The scripted stop opens and rolls back a main connection transaction and
 awaits a writer-lane status update. Both must finish before close/remove commits,
@@ -26,7 +29,8 @@ proving driver effects do not occupy a transaction. Trace stop-context SQL
 on main and require zero. A human card arriving during stop must still refuse
 close after the stop returns. The #9072 policy must retain open-question and
 pending-answer needs-human holds, releasing a retired card with no pending
-answer. This activation does not move ask settlement or close #8998/#9002.
+answer. This activation does not move ask settlement. The removal completion audit
+for #9002 is in neo-todo-remove-writer.md.
 
 Focused stop-context tests additionally cover stale caller states in both
 directions, missing current todos, current adoption, operation errors and
