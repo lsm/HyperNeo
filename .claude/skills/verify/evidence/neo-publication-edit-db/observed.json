@@ -9,27 +9,34 @@
     "bun": 75,
     "deno": 75
   },
-  "productionLines": 64,
+  "productionLines": 55,
   "targetEditMainSql": 0,
   "consumer": "Actual daemon registered MCP edit + public WebSocket publication read",
   "limitation": "Public reader SQL excluded from admission instrumentation; no GUI, model, card-reply append or live daemon",
   "initialHarnessAttempts": "First two Bun baseline probes had incorrect expectations for existing conflict precedence and MCP explanatory refusal text; retained as failed harness evidence, not passing proof. Corrected baselines named above pass.",
   "proofBinding": {
-    "testedCodeCommit": "008589158df13cb6cea127863d6645507d1124b0",
-    "testedGitTree": "d19abea5e35e7c531afddf270b26f30e2ffc105f",
+    "testedCodeCommit": "67c39d44b5665886ed652550076a3f78e6f1b277",
+    "testedGitTree": "8a99227467e3835ed4e77c1fae46a17cb25c6212",
     "applicationTrees": {
-      "packages": "105c4ebf7e97adec10ac58f4845e662dada0e5bc",
+      "packages": "44207c63ed93ecc6126d973e70eae73ea9a15330",
       "scripts": "c90800da0ae5374df140064f18ccc5bfbec47d75"
     },
     "proofBlobs": {
-      ".claude/skills/verify/neo-publication-edit-db.ts": "53055500315b018dea2ece4b6782724f13a10ab2",
+      ".claude/skills/verify/neo-publication-edit-db.ts": "d28159027c433a1b00564e4e8f6c58fba7ec6839",
       ".claude/skills/verify/neo-publication-edit-db-run.py": "f560c2f4ef0c4eda586e5ca9d5055b61b807b378",
       ".claude/skills/verify/neo-publication-edit-proof-binding.ts": "79edddbbaefa497231cbf7463299cb1425f89383"
     },
     "runs": {
-      "bun": "bun-verify",
-      "deno": "deno-verify"
+      "bun": "bun-verify-2",
+      "deno": "deno-verify-1"
     },
     "postProofChangePolicy": "evidence-and-journey-only"
+  },
+  "reviewRegressionCommit": "6deb34b85114039d9bfe6fa8e44fc963e20d0a40",
+  "reviewFixCommit": "67c39d44b5665886ed652550076a3f78e6f1b277",
+  "timestampRegressionEvidence": "bun-verify-1: actual MCP receipt predates writer release by 37ms; expected failure retained",
+  "timestampFixedEvidence": {
+    "bun": "bun-verify-2",
+    "deno": "deno-verify-1"
   }
 }
