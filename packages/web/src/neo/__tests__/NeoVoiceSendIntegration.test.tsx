@@ -788,7 +788,9 @@ describe('Send accepted while final transcription is pending', () => {
         )
       );
       if (staged === 'attachment')
-        expect(JSON.stringify(input.content)).toContain('original attachment');
+        expect(input.content).toBe(
+          'typed first\nspoken second\n\n### Attached file: notes.txt\n\n```text\noriginal attachment\n```'
+        );
       if (staged === 'reply') expect(input).toHaveProperty('replyTo', quote?.replyTo);
       if (staged === 'preview')
         expect(input.previewContext).toEqual({ artifactId: 'saved', snapshot: 'a'.repeat(64) });
@@ -877,3 +879,66 @@ it('keeps the audio and reports a failed durable pending Send upgrade', async ()
   expect(store.records.size).toBe(1);
   expect(view.current.value).toBe('keep these words');
 });
+
+it.each([false, true])(
+  'tray retry preserves the accepted full composition before sendText exists (Preview: %s)',
+  async (bound) => {
+    voice.recording = false;
+    const quote: NeoQuote = {
+      author: 'Neo',
+      text: 'accepted quote',
+      anchor: 'accepted-source',
+      replyTo: { kind: 'message', id: 'accepted-source', author: 'neo', excerpt: 'accepted quote' },
+    };
+    const preview: NeoPreviewReference = {
+      artifactId: 'accepted-preview',
+      snapshot: 'a'.repeat(64),
+      displayName: 'Accepted Preview',
+      state: 'available',
+    };
+    const context = {
+      suffix: '### Attached file: accepted.txt\n\n```text\naccepted file words\n```',
+      attachmentIds: ['accepted-file', 'accepted-photo'],
+      images: [{ data: 'aGk=', media_type: 'image/png' }],
+      quote,
+    };
+    store.records.set('retry-context', {
+      id: 'retry-context',
+      sessionId: 'neo-1',
+      audioBase64: 'aGk=',
+      mimeType: 'audio/wav',
+      peakLevel: 0.5,
+      createdAt: Date.now(),
+      intent: 'send',
+      sendDraft: 'accepted typed words',
+      sendContext: context,
+      ...(bound ? { previewContext: preview } : {}),
+    });
+    attachmentFiles.current = [
+      { id: 'accepted-file', kind: 'text', name: 'accepted.txt', text: 'accepted file words' },
+    ];
+    const view = renderComposer(
+      'newer draft',
+      { author: 'Neo', text: 'newer quote', anchor: 'newer-source' },
+      bound ? { ...preview, artifactId: 'newer-preview' } : undefined
+    );
+    fireEvent.click(await screen.findByTestId('resend-voice-audio'));
+    await waitFor(() => expect(asks()).toHaveLength(1));
+    const input = asks()[0][1].input;
+    expect(input.requestId).toBe('retry-context');
+    expect(input.content).toEqual([
+      { type: 'text', text: 'accepted typed words\nspoken second\n\n' + context.suffix },
+      { type: 'image', source: { type: 'base64', data: 'aGk=', media_type: 'image/png' } },
+    ]);
+    expect(input).toHaveProperty('replyTo', quote.replyTo);
+    if (bound)
+      expect(input.previewContext).toEqual({
+        artifactId: preview.artifactId,
+        snapshot: preview.snapshot,
+      });
+    expect(store.puts[0].sendContext).toEqual(context);
+    await waitFor(() => expect(store.records.size).toBe(0));
+    expect(view.current.value).toBe('newer draft');
+    expect(view.onCancelQuote).not.toHaveBeenCalled();
+  }
+);
