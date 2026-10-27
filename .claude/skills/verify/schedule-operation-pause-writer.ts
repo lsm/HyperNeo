@@ -29,8 +29,9 @@ try {
   ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });
   const rpc = <T = { schedule: TaskSchedule }>(method: string, data: unknown) => new Promise<T>((done, fail) => {
-    const id = crypto.randomUUID(), timer = setTimeout(() => fail(new Error(`RPC timeout: ${method}`)), 15000);
-    ws!.onmessage = event => { const reply = JSON.parse(String(event.data)); if (reply.id !== id && reply.requestId !== id) return; clearTimeout(timer); replies.push({ method, reply }); if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data); };
+    const id = crypto.randomUUID(), timer = setTimeout(() => { ws!.removeEventListener('message', listener); fail(new Error(`RPC timeout: ${method}`)); }, 15000);
+    const listener = (event: MessageEvent) => { const reply = JSON.parse(String(event.data)); if (reply.id !== id && reply.requestId !== id) return; clearTimeout(timer); ws!.removeEventListener('message', listener); replies.push({ method, reply }); if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data); };
+    ws!.addEventListener('message', listener);
     ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method, data, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
   const pause = (spaceId: string, scheduleId: string) => rpc<{ ok: boolean; schedule: TaskSchedule; reason?: string; message?: string }>('operation.invoke', { name: 'schedule.update', input: { spaceId, scheduleId, status: 'paused' } });
@@ -58,6 +59,15 @@ try {
   measuring = true;
   const missing = await pause(space.id, 'missing-schedule'); assert.equal(missing.ok, false); assert.equal(missing.reason, 'schedule_not_found');
   measuring = false;
+  const concurrent = (await rpc('taskSchedule.create', { spaceId: space.id, title: 'Concurrent pause', triggerType: 'at', runAt: Date.now() + 86400000 })).schedule;
+  assert(concurrent.pendingJobId);
+  measuring = true;
+  const outcomes = await Promise.all([pause(space.id, concurrent.id), pause(space.id, concurrent.id)]);
+  measuring = false;
+  assert(outcomes.every(outcome => outcome.ok), `Concurrent requests for paused status must both succeed: ${JSON.stringify(outcomes)}`);
+  assert.deepEqual(outcomes[0].schedule, outcomes[1].schedule);
+  assert.equal(outcomes[0].schedule.status, 'paused');
+  assert.equal(app.jobQueue.getJob(concurrent.pendingJobId), null);
   const rollback = (await rpc('taskSchedule.create', { spaceId: space.id, title: 'Rollback fixture', triggerType: 'at', runAt: Date.now() + 86400000 })).schedule;
   assert(rollback.pendingJobId);
   raw.exec(`CREATE TRIGGER verify_pause_failure BEFORE UPDATE ON task_schedules WHEN OLD.id = '${rollback.id}' AND NEW.status = 'paused' BEGIN SELECT RAISE(ABORT, 'synthetic pause failure'); END`);

@@ -9,7 +9,9 @@ The helper starts a fresh synthetic daemon, creates one-shot and cron schedules,
 and invokes schedule.update with status paused through real operation.invoke
 WebSocket RPC. The returned and persisted schedules must be paused with their
 pending jobs deleted and all metadata preserved. Repeating the desired status is
-accepted without changes. Wrong-Space and missing targets return typed rejections.
+accepted without changes. Concurrent requests for paused status must both succeed
+with the same committed schedule; strict RPC pause rejection must not leak into
+the desired-status operation. Wrong-Space and missing targets return typed rejections.
 An injected SQL pause failure must return rejected and retain the active schedule
 and its pending job together.
 
