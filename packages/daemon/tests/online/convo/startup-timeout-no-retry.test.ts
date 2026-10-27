@@ -11,7 +11,7 @@ const TEST_TIMEOUT = IS_MOCK ? 60000 : 90000;
 const IDLE_TIMEOUT = IS_MOCK ? 45000 : 60000;
 const MODELS_READY_TIMEOUT_MS = IS_MOCK ? 25000 : 30000;
 
-const FORCED_STARTUP_INACTIVITY_TIMEOUT_MS = '10';
+const FORCED_STARTUP_INACTIVITY_TIMEOUT_MS = '2000';
 
 async function getSessionError(
   daemon: DaemonServerContext,
