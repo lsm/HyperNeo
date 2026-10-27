@@ -1,4 +1,4 @@
-import { searchNeoCards, type NeoCardSearchPage } from './neo-card-search.ts';
+import type { NeoCardSearchPage } from './neo-card-search.ts';
 import { bindGateway, bindSpaceTaskLane, DbGateway } from './db-gateway/db-gateway.ts';
 import type { RunDbOp, TableChange } from './db-gateway/db-op.ts';
 import { countPendingTurns, readPendingTurns } from './turn-vectors.ts';
@@ -477,8 +477,6 @@ export class Database {
   }
 
   searchNeoCardsAsync(query: string, cursor?: string, limit?: number): Promise<NeoCardSearchPage> {
-    if (this.getDbPath() === ':memory:')
-      return Promise.resolve(searchNeoCards(this.core.getDb(), query, cursor, limit));
     return this.getSDKReader().readNeoCardSearch({ cardQuery: { query, cursor, limit } });
   }
 

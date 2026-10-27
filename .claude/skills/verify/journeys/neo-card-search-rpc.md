@@ -16,3 +16,13 @@ the query must run on the reader thread (`card-search` operation in the SDK
 status worker), never on main. Evidence lands in
 `evidence/card-search-rpc.json`; the wrapper removes the disposable HOME and
 daemon data after owned resources close.
+
+A title containing literal brackets must not be mistaken for a highlighted
+match when only the request contains the query. The dedicated unit and actual
+RPC regressions report meta rather than title; both failed on the staged head.
+Run this journey with both Bun and pinned Deno through the shared wrapper.
+
+Production statement execution belongs to the existing SDK status worker; the
+query helper builds SQL and projects pointer rows. The facade always dispatches
+this new API to that worker. Unit SQL fixtures supply their own in-memory reader.
+The main-thread SQL ratchet must pass without increasing its baseline.

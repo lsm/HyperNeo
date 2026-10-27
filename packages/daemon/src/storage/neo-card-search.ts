@@ -1,5 +1,4 @@
 import { buildFtsQuery } from './message-search.ts';
-import type { Database } from './sqlite-compat.ts';
 
 export type NeoCardSearchField = 'title' | 'meta' | 'body';
 
@@ -29,21 +28,21 @@ interface HitRow {
   ask_id: string;
   entity_id: string;
   score: number;
-  title_highlight: string;
-  meta_highlight: string;
-  body_highlight: string;
+  title_match: number;
+  meta_match: number;
+  body_match: number;
   title_snippet: string;
   meta_snippet: string;
   body_snippet: string;
 }
 
 function toHit(row: HitRow): NeoCardSearchHit {
-  const fields: [NeoCardSearchField, string, string][] = [
-    ['title', row.title_highlight, row.title_snippet],
-    ['meta', row.meta_highlight, row.meta_snippet],
-    ['body', row.body_highlight, row.body_snippet],
+  const fields: [NeoCardSearchField, number, string][] = [
+    ['title', row.title_match, row.title_snippet],
+    ['meta', row.meta_match, row.meta_snippet],
+    ['body', row.body_match, row.body_snippet],
   ];
-  const matched = fields.find(([, highlight]) => highlight?.includes('['));
+  const matched = fields.find(([, matched]) => matched > 0);
   const [, , snippet] = matched ?? fields[fields.length - 1];
   return {
     askId: row.ask_id,
@@ -56,7 +55,7 @@ function toHit(row: HitRow): NeoCardSearchHit {
 }
 
 export function searchNeoCards(
-  db: Database,
+  read: (sql: string, bindings: readonly [string, number, number]) => unknown[],
   query: string,
   cursor?: string,
   limit?: number
@@ -65,13 +64,12 @@ export function searchNeoCards(
   const offset = Math.max(Number.parseInt(cursor ?? '0', 10) || 0, 0);
   const ftsQuery = buildFtsQuery(query);
   if (!ftsQuery) return { results: [], nextCursor: null };
-  const rows = db
-    .prepare(
-      `SELECT c.source AS source, c.ask_id AS ask_id, c.entity_id AS entity_id,
+  const rows = read(
+    `SELECT c.source AS source, c.ask_id AS ask_id, c.entity_id AS entity_id,
         bm25(neo_card_search_fts, ${TITLE_WEIGHT}, ${META_WEIGHT}, ${BODY_WEIGHT}) AS score,
-        highlight(neo_card_search_fts, 0, '[', ']') AS title_highlight,
-        highlight(neo_card_search_fts, 1, '[', ']') AS meta_highlight,
-        highlight(neo_card_search_fts, 2, '[', ']') AS body_highlight,
+        highlight(neo_card_search_fts, 0, '[', ']') IS NOT c.title AS title_match,
+        highlight(neo_card_search_fts, 1, '[', ']') IS NOT c.meta AS meta_match,
+        highlight(neo_card_search_fts, 2, '[', ']') IS NOT c.body AS body_match,
         snippet(neo_card_search_fts, 0, '', '', '…', ${SNIPPET_TOKENS}) AS title_snippet,
         snippet(neo_card_search_fts, 1, '', '', '…', ${SNIPPET_TOKENS}) AS meta_snippet,
         snippet(neo_card_search_fts, 2, '', '', '…', ${SNIPPET_TOKENS}) AS body_snippet
@@ -79,9 +77,9 @@ export function searchNeoCards(
       JOIN neo_card_search_content c ON c.id = neo_card_search_fts.rowid
       WHERE neo_card_search_fts MATCH ?
       ORDER BY score, c.id
-      LIMIT ? OFFSET ?`
-    )
-    .all(ftsQuery, bounded + 1, offset) as HitRow[];
+      LIMIT ? OFFSET ?`,
+    [ftsQuery, bounded + 1, offset]
+  ) as HitRow[];
   const page = rows.slice(0, bounded).map(toHit);
   return {
     results: page,

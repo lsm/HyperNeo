@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { searchNeoCards } from '../../../../src/storage/neo-card-search.ts';
+import { searchNeoCards as readCards } from '../../../../src/storage/neo-card-search.ts';
 import { runMigration461 } from '../../../../src/storage/schema/m461-neo-card-search-fts.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+
+function searchNeoCards(db: Database, query: string, cursor?: string, limit?: number) {
+  return readCards((sql, bindings) => db.prepare(sql).all(...bindings), query, cursor, limit);
+}
 
 function cardDb() {
   const db = new Database(':memory:');

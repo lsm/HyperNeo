@@ -71,7 +71,7 @@ worker.onmessage = ({ data }) => {
       result = db.transaction(() => {
         if ('cardQuery' in args) {
           return searchNeoCards(
-            db!,
+            (sql, bindings) => db!.prepare(sql).all(...bindings),
             args.cardQuery.query,
             args.cardQuery.cursor,
             args.cardQuery.limit
