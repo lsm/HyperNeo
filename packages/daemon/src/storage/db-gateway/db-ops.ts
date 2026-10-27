@@ -1,4 +1,5 @@
 import { taskSchedulePauseWrites } from '../repositories/task-schedule-pause-write.ts';
+import { taskScheduleDeleteWrites } from '../repositories/task-schedule-delete-write.ts';
 import { neoPublicationWrites } from '../repositories/neo-publication-repository.ts';
 import {
   neoAskSettlementReads,
@@ -245,5 +246,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     workflowRunPinWrites,
     workflowDeleteWrites,
     taskSchedulePauseWrites,
+    taskScheduleDeleteWrites,
   ].map((op) => [op.name, op])
 );
