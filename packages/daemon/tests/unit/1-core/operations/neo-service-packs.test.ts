@@ -144,6 +144,7 @@ test('installed builtins keep identity and settings select without rebuilding th
 test.each([
   { kind: 'yesno' as const, answer: 'yes', via: 'button' as const },
   { kind: 'yesno' as const, answer: 'Yes, go ahead with this plan.', via: 'chat' as const },
+  { kind: 'reply' as const, answer: 'The synthetic plan is approved.', via: 'chat' as const },
   {
     kind: 'choice' as const,
     answer: ['Delete the approved synthetic leftovers'],
@@ -190,7 +191,7 @@ test.each([
     );
     expect(todo.state).toBe('todo');
     service.todos.answerQuestion(question, answer, via, 2);
-    await service.todoRunner.refresh(() => {});
+    await service.deliverQuestionAnswers(question.id);
     expect(service.todos.getTodo(todo.id)?.state).toBe('done');
   }
 );
