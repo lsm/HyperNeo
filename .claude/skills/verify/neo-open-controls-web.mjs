@@ -53,7 +53,13 @@ export async function verifyOpenControls(page, fixture, { theme, touch = false, 
   await page.locator('.neo-session-pane').getByRole('heading',{name:/Local worker/}).waitFor();
   await use(page.locator('.neo-session-pane').getByRole('button',{name:'Back to Neo',exact:true}));
   await retainedOpen.waitFor();
-  focusedCases.push({id,navigation:true,...retiredColors});
+  const title=await retired.locator('h3').innerText();
+  await use(retired.getByRole('button',{name:/^All · /}));
+  const history=page.getByRole('dialog',{name:title,exact:true});await history.waitFor();
+  await history.screenshot({path:`${evidence}/${theme}-${touch?'touch':'desktop'}-${id}-all.png`,scale:'css'});
+  await use(history.getByRole('button',{name:'Close modal',exact:true}));await history.waitFor({state:'detached'});
+  await retainedOpen.waitFor();
+  focusedCases.push({id,navigation:true,allDialog:true,...retiredColors});
   }
   const local=page.locator('[data-ask="open-local-worker"]:visible');
   for(const control of [local.locator('[data-question-source] button'),local.locator('[data-ask-todo] button[aria-label^="Open "]')]) {

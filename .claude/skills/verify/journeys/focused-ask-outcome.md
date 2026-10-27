@@ -28,7 +28,7 @@ Restart the test daemon and assert the same
 outcome, source link, open ask and pending execution remain in neo.snapshot.
 
 Headless 1440px/390px screenshots show the outcome's working Markdown links in
-Details and the incomplete execution row. The header retains session context without a duplicate opener. A card-level
+All and the incomplete execution row. The header retains session context without a duplicate opener. A card-level
 fallback preserves focused-session navigation when no visible opener remains. Question and
 per-todo navigation remain covered by neo-open-controls.md in both themes. Retain observed.json, web.json,
 screenshots, receipts.json and cleanup.json. The helper closes its own daemon,

@@ -22,7 +22,8 @@ a single card-level logo + Open fallback, outside the header, and reach its sess
 An open start question whose selected todo has the focused link needs the same
 fallback: start-selection rows have no session opener. Verify both cards and
 retain separate before evidence for the missing start-question opener.
-The helper records actual rendered colors and contrast against
+Open and close each fallback card’s All dialog, then verify its card-level Open
+still works. The helper records actual rendered colors and contrast against
 the question surface, checks todo logo colors agree, and saves each card PNG.
 Inspect the screenshots for readable colors and no clipping. Both the local
 question Open and todo Open must enter the existing session pane; Back restores

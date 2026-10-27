@@ -26,13 +26,17 @@ try {
         return box.x >= 0 && box.right <= width + 1;
       }, { id: saved.askId, width });
       if (saved.outcomeMode) {
-        await card.getByRole('button', { name: /Details$/ }).click();
-        await card.getByRole('link', { name: 'Positioning document', exact: true }).waitFor();
-        assert.equal(await card.getByRole('link', { name: 'Positioning document', exact: true }).getAttribute('href'), 'https://example.test/positioning.md');
-        assert.equal(await card.getByRole('link', { name: 'Implementation PR', exact: true }).getAttribute('href'), 'https://github.com/example/project/pull/8');
-        assert((await card.innerText()).includes('Decision: prioritize beginner gardeners.'));
-        const execution = card.locator(`[data-ask-todo="${saved.outcomeEvidence.execution.todo.id}"]`);
+        await card.getByRole('button', { name: /^All · / }).click();
+        const history = page.getByRole('dialog', { name: saved.card.ask.title, exact: true });
+        await history.getByRole('link', { name: 'Positioning document', exact: true }).waitFor();
+        assert.equal(await history.getByRole('link', { name: 'Positioning document', exact: true }).getAttribute('href'), 'https://example.test/positioning.md');
+        assert.equal(await history.getByRole('link', { name: 'Implementation PR', exact: true }).getAttribute('href'), 'https://github.com/example/project/pull/8');
+        assert((await history.innerText()).includes('Decision: prioritize beginner gardeners.'));
+        const execution = history.locator(`[data-ask-todo="${saved.outcomeEvidence.execution.todo.id}"]`);
         assert.equal(await execution.getAttribute('data-todo-state'), 'todo');
+        await page.screenshot({ path: `${run}/evidence/outcome-${width}.png`, fullPage: true, animations: 'disabled' });
+        await history.getByRole('button', { name: 'Close modal', exact: true }).click();
+        await history.waitFor({ state: 'detached' });
       }
       await page.screenshot({ path: `${run}/evidence/ask-${width}.png`, fullPage: true, animations: 'disabled' });
       assert.equal(await header.getByRole('button').count(), 0);
