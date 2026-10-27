@@ -1,3 +1,4 @@
+import { existingTodoTarget } from '../../helpers/todo-check-packs.ts';
 import { afterEach, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createCoreTodoPack } from '../../../../src/lib/neo/core-todo-checks.ts';
@@ -33,6 +34,7 @@ function fixture() {
     store,
     new NeoTodoSessionRepository(db),
     {
+      resolveTarget: existingTodoTarget,
       recompute: async (todo, patch) => store.updateTodo(todo, patch, Date.now()),
       start: async () => ({ ok: false as const, reason: 'no worker' }),
       proceed: async () => ({ ok: false as const, reason: 'no worker' }),

@@ -45,7 +45,11 @@ export function withCodexState<T>(
   }
 }
 
-export function readCodexSnapshot(statePath: string, includeClosed: boolean): CodexSnapshot {
+export function readCodexSnapshot(
+  statePath: string,
+  includeClosed: boolean,
+  idPrefix = ''
+): CodexSnapshot {
   return withCodexState(statePath, (db) => ({
     roots: runLagPhase(
       'scanner:codex_desktop:roots',
@@ -76,13 +80,15 @@ export function readCodexSnapshot(statePath: string, includeClosed: boolean): Co
           .prepare(
             `SELECT * FROM (
              SELECT ${THREAD_COLUMNS} FROM threads WHERE ${OWN_THREADS} AND COALESCE(archived, 0) = 0
+               AND substr(id, 1, length(?2)) = ?2
              UNION ALL
              SELECT * FROM (SELECT ${THREAD_COLUMNS} FROM threads
-               WHERE ${OWN_THREADS} AND ? = 1 AND COALESCE(archived, 0) != 0
+               WHERE ${OWN_THREADS} AND ?1 = 1 AND COALESCE(archived, 0) != 0
+                 AND substr(id, 1, length(?2)) = ?2
                ORDER BY updatedAt DESC LIMIT ${CLOSED_THREADS}))
            ORDER BY updatedAt DESC`
           )
-          .all(includeClosed ? 1 : 0) as CodexThreadRow[]
+          .all(includeClosed ? 1 : 0, idPrefix) as CodexThreadRow[]
     ),
   }));
 }

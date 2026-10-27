@@ -1,3 +1,4 @@
+import { existingTodoTarget } from '../../helpers/todo-check-packs.ts';
 import { createTodoCheckPacks, pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -39,6 +40,7 @@ function setup(packs: NeoPack[] = []) {
       repo,
       new NeoTodoSessionRepository(db),
       {
+        resolveTarget: existingTodoTarget,
         recompute: async (todo, patch) => repo.updateTodo(todo, patch, Date.now()),
         start: async () => ({ ok: false as const, reason: 'not started' }),
         proceed: async () => ({ ok: false as const, reason: 'no session' }),

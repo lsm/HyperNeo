@@ -1,9 +1,15 @@
 import type { Database } from '../../../src/storage/sqlite-compat.ts';
+import type { WorkRef } from '../../../src/lib/drivers/types.ts';
+
 import { createCoreTodoPack } from '../../../src/lib/neo/core-todo-checks.ts';
 import {
   CodingTodoPrRepository,
   createCodingTodoPack,
 } from '../../../src/lib/neo/packs/coding/todo-prs.ts';
+
+export async function existingTodoTarget(ref: WorkRef) {
+  return { value: ref };
+}
 
 export const pendingTodoCheck = {
   pack: 'core',

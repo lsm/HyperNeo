@@ -528,8 +528,8 @@ export class Database {
     return this.getSDKReader().readHyperneoTurnEnds(sessionId, since);
   }
 
-  readCodexSnapshotAsync(statePath: string, includeClosed: boolean) {
-    return this.getSDKReader().readCodexSnapshot(statePath, includeClosed);
+  readCodexSnapshotAsync(statePath: string, includeClosed: boolean, idPrefix?: string) {
+    return this.getSDKReader().readCodexSnapshot(statePath, includeClosed, idPrefix);
   }
 
   get gateway(): DbGateway {

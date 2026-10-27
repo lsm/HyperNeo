@@ -61,7 +61,11 @@ worker.onmessage = ({ data }) => {
       db = null;
       repository = null;
     } else if ('codexSnapshot' in args) {
-      result = readCodexSnapshot(args.codexSnapshot.statePath, args.codexSnapshot.includeClosed);
+      result = readCodexSnapshot(
+        args.codexSnapshot.statePath,
+        args.codexSnapshot.includeClosed,
+        args.codexSnapshot.idPrefix
+      );
     } else {
       if (!db) {
         db = new Database(data.dbPath, {
