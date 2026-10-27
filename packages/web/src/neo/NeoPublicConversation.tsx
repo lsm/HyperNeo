@@ -443,7 +443,11 @@ function PublicEntry({
   const short = publication?.shortText?.trim() ?? '';
   const full = publication?.fullText.trim() ?? '';
   const hasDetails = !!short && !!full && full !== short && publication?.verbatim !== true;
-  const copyText = ask ? publicAskText(ask.content) : full || short;
+  const copyText = ask
+    ? publicAskText(ask.content)
+    : hasDetails
+      ? `${short}\n\n${full}`
+      : full || short;
   const text = ask ? publicAskText(ask.content) : hasDetails ? short : full || short;
   const quoteText = publication ? neoPublicationQuoteExcerpt(publication) : text;
   const references = useMemo(
