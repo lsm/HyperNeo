@@ -467,19 +467,10 @@ describe('claude-desktop start', () => {
     async (layout) => {
       configureWorkerSandbox(() => 'off');
       const directory = join(dir, 'prepared');
-      const outside = join(dir, 'dotfiles');
-      mkdirSync(outside);
-      writeFileSync(join(outside, 'settings.local.json'), '{"env":{"RETAINED":"yes"}}');
-      if (layout === 'symlinked-claude') symlinkSync(outside, join(directory, '.claude'));
-      else if (layout === 'file-claude') writeFileSync(join(directory, '.claude'), 'retained');
+      if (layout === 'file-claude') writeFileSync(join(directory, '.claude'), 'retained');
       else {
         mkdirSync(join(directory, '.claude'));
-        if (layout === 'symlinked-settings')
-          symlinkSync(
-            join(outside, 'settings.local.json'),
-            join(directory, '.claude/settings.local.json')
-          );
-        else writeFileSync(join(directory, '.claude/settings.local.json'), 'not JSON');
+        writeFileSync(join(directory, '.claude/settings.local.json'), 'not JSON');
       }
       let releases = 0;
       const driver = adapter({
@@ -502,9 +493,12 @@ describe('claude-desktop start', () => {
       });
       expect(spawned).toEqual([]);
       expect(releases).toBe(1);
-      expect(readFileSync(join(outside, 'settings.local.json'), 'utf8')).toBe(
-        '{"env":{"RETAINED":"yes"}}'
-      );
+      expect(
+        readFileSync(
+          join(directory, layout === 'file-claude' ? '.claude' : '.claude/settings.local.json'),
+          'utf8'
+        )
+      ).toBe(layout === 'file-claude' ? 'retained' : 'not JSON');
     }
   );
 

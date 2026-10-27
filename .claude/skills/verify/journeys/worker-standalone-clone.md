@@ -88,10 +88,13 @@ Codex shell or Desktop UI proof.
 The unsupported-settings leg commits deliberately invalid local settings into the
 synthetic remote, then calls work.start again. It must return preparation_failed
 before a child starts, release the unlaunched private clone and preserve source
-bytes. Unit cases also cover symlinked settings, a symlinked .claude directory and
-a regular file in its place. These layouts receive a typed pre-launch refusal;
-the proof does not claim they can be adopted. A confirmed CLI-created worktree is
-retained with a typed not_delivered if later settings/import work fails.
+bytes. Invalid JSON and a regular file in place of the settings directory receive
+a typed pre-launch refusal. With sandboxing off, valid directory/file symlinks
+use the same target resolver as SDK settings writes: links and custom settings
+survive and the resolved target receives the location environment. The linked
+non-Git-folder work.start leg verifies that through the actual daemon. Sandbox-on
+native-policy symlink refusals remain covered separately. A confirmed CLI-created
+worktree is retained with typed not_delivered if later settings/import work fails.
 
 Validation reads supported project settings before the preparation turn, without
 creating or changing them. The location environment is persisted after the CLI

@@ -122,9 +122,10 @@ include it, and resume replaces runtime-managed env keys (`TMPDIR`,
 data-root layout. Location guidance is independent of the sandbox marker. Unsandboxed workers
 receive the three HYPERNEO location hints without replacing their TMPDIR/cache
 or enabling sandbox permissions. SDK, Claude Desktop/CLI, Codex and owned
-Copilot launch paths supply the hints and brief. The worker brief's
-`## Runtime Location` section states the same four paths (unit-covered in
-`custom-agent.test.ts`).
+Copilot launch paths supply the hints and brief. SDK host-prompt coverage lives
+in query-options-builder.test.ts and session-kind-injected-text.test.ts. Task
+kickoff text does not duplicate that section; worker-work-locations-sdk.md checks
+the real SDK request.
 
 Per-worker policy replacements are atomic. No cross-worker filesystem transaction
 is claimed for the pre-existing native-permission sibling refresh; try/precompute

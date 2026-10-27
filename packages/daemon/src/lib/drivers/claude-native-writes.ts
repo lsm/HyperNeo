@@ -1,7 +1,8 @@
-import { lstat, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
+import { resolveSettingsTarget } from '../settings-target.ts';
 import { workerWorkEnvironment } from '../work-locations.ts';
 import { secretNamePatterns } from '../neo/secret-read-rules.ts';
 import {
@@ -195,13 +196,15 @@ export async function readClaudeWorkerSandbox(directory: string | undefined) {
 
 async function readClaudeWorkSettings(directory: string) {
   const folder = join(directory, '.claude');
-  const directoryEntry = await lstat(folder).catch((error) => {
+  const directoryEntry = await stat(folder).catch((error) => {
     if (error.code === 'ENOENT') return null;
     throw error;
   });
   if (directoryEntry && !directoryEntry.isDirectory())
     throw new Error('Claude settings require a directory');
-  const path = settingsPath(directory);
+  const path = directoryEntry
+    ? await resolveSettingsTarget(settingsPath(directory))
+    : settingsPath(directory);
   const entry = await lstat(path).catch((error) => {
     if (error.code === 'ENOENT') return null;
     throw error;

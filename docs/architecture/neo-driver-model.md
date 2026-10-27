@@ -269,6 +269,12 @@ an omitted/append mode into customize with environment_context removed and
 content retained. The owned lifecycle test captures this real SDK wire payload
 against a scripted CLI peer. Native model/tool behavior remains unverified.
 
+Unsandboxed Claude location settings share the SDK settings-target resolver, so
+valid directory and file symlinks keep their aliases while the resolved target
+receives the location environment. Validation stays read-only until preparation
+succeeds. Sandboxed native-policy installation retains its separate in-clone
+checks. The linked-folder standalone-clone journey covers the public start path.
+
 ### Creation permission defaults
 
 New work started through HyperNeo requests Full Access through the supported permission parameters:

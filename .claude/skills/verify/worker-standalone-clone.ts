@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, lstatSync, symlinkSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -159,8 +159,21 @@ try {
     else assert.equal(existsSync(join(inPlaceDirectory, '.claude')), false);
     evidence.push({ inPlaceFailed, existingSettings: existing, projectSettingsUnchanged: true });
   }
-  const launchBeforeSettingsRefusal = readFileSync(join(run, 'evidence/worker-cwd'), 'utf8');
   rmSync(join(run, 'fail-cli'));
+  const linkedDirectory = join(run, 'linked-workspace');
+  const dotfiles = join(run, 'dotfile-settings');
+  mkdirSync(linkedDirectory);
+  mkdirSync(dotfiles);
+  writeFileSync(join(dotfiles, 'settings.local.json'), JSON.stringify({ env: { DOTFILE_OWNER: 'retained' } }));
+  symlinkSync(dotfiles, join(linkedDirectory, '.claude'));
+  const linkedStart = await rpc('work.start', { adapter: 'claude-desktop', place: { machine: hostname(), folder: linkedDirectory, name: 'Synthetic linked folder' }, title: 'Synthetic linked worker', message: 'Never dispatched' }) as { ok: boolean };
+  assert.equal(linkedStart.ok, true);
+  assert(lstatSync(join(linkedDirectory, '.claude')).isSymbolicLink());
+  const linkedSettings = JSON.parse(readFileSync(join(dotfiles, 'settings.local.json'), 'utf8'));
+  assert.equal(linkedSettings.env.DOTFILE_OWNER, 'retained');
+  assert.equal(linkedSettings.env.HYPERNEO_WORKTREES, workerEnv.HYPERNEO_WORKTREES);
+  evidence.push({ linkedStart, symlinkPreserved: true, customSettingPreserved: true, locationsPersisted: true });
+  const launchBeforeSettingsRefusal = readFileSync(join(run, 'evidence/worker-cwd'), 'utf8');
   const clonesBefore = readdirSync(dirname(worker)).sort();
   mkdirSync(join(remote, '.claude'));
   writeFileSync(join(remote, '.claude/settings.local.json'), 'synthetic invalid JSON');
