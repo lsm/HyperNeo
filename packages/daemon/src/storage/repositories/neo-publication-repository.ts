@@ -231,14 +231,11 @@ export class NeoPublicationRepository {
   constructor(private readonly db: Database) {}
 
   readPageCurrent(page: Parameters<typeof readNeoPublicationPage>[0], caller: OperationCaller) {
-    return gatewayFor(this.db).run(neoPublicationPageWrites, {
-      page,
-      caller: {
-        source: caller.source,
-        principal: caller.principal,
-        role: caller.role,
-        sessionId: caller.sessionId,
-      },
+    return gatewayFor(this.db).call(neoPublicationPageWrites, 'read', page, {
+      source: caller.source,
+      principal: caller.principal,
+      role: caller.role,
+      sessionId: caller.sessionId,
     });
   }
 
