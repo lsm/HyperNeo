@@ -70,7 +70,7 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
     else if (
       !Object.keys(change).length &&
       !['done', 'closed_unverified', 'failed'].includes(todo.state) &&
-      !(todo.state === 'blocked' && ['failure', 'held'].includes(todo.blockedBy ?? ''))
+      !(todo.state === 'blocked' && ['failure', 'stalled', 'held'].includes(todo.blockedBy ?? ''))
     ) {
       if (
         facts.questionOpen &&

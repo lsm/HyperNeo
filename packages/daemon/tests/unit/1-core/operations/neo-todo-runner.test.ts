@@ -1734,50 +1734,49 @@ describe('stopped worker ladder', () => {
     }
   });
 
-  test('a refused escalation releases its reservation so notification can retry', async () => {
+  test('a refused unreachable notice releases its reservation so notification can retry', async () => {
     let refused = true;
     const h = await stopped(null, 'Build the rows.', undefined, () => {
       if (refused) throw new Error('synthetic notification refusal');
     });
     try {
-      await h.at(60);
+      h.setSend({ ok: false, reason: 'not_open' });
+      await h.at(20);
       expect(h.told).toEqual([]);
       expect(h.sessions.readNudge(h.todo.id)?.nudges).toBe(0);
       refused = false;
-      await h.at(60);
-      await h.at(60);
-      expect(h.told).toEqual([expect.stringContaining('reminder window elapsed')]);
-      expect(h.sessions.readNudge(h.todo.id)?.nudges).toBe(3);
+      await h.at(20);
+      await h.at(20);
+      expect(h.told).toEqual([expect.stringContaining('could not be reached')]);
+      expect(h.sessions.readNudge(h.todo.id)?.nudges).toBe(1);
     } finally {
       h.clock.mockRestore();
       h.db.close();
     }
   });
 
-  test('a stopped worker is reminded at 20 and 40, escalated at 60, and never blocked', async () => {
+  test('a stopped worker is reminded at 20 and 40, then moved to a fresh worker at 60', async () => {
     const h = await stopped();
     try {
-      for (const minutes of [19, 20, 39, 40, 59, 60, 90]) await h.at(minutes);
+      for (const minutes of [19, 20, 39, 40, 59, 60]) await h.at(minutes);
       expect(h.warnings).toEqual([]);
       expect(h.sends()).toEqual([
         expect.stringContaining('stopped for 20 min'),
         expect.stringContaining('stopped for 40 min'),
       ]);
       expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
-      expect(h.told).toEqual([expect.stringContaining('reminder window elapsed without progress')]);
+      expect(h.calls.filter((call) => call.name === 'work.start')).toHaveLength(2);
+      expect(h.told).toEqual([expect.stringContaining('moved it to a fresh worker')]);
     } finally {
       h.clock.mockRestore();
       h.db.close();
     }
   });
 
-  test('a refused completion stamp does not replay the delivered reminder or notice', async () => {
+  test('an unreachable worker is not reminded or reported twice for one step', async () => {
     const h = await stopped(null);
     try {
       h.setSend({ ok: false, reason: 'not_open' });
-      h.db.exec(
-        "CREATE TRIGGER reject_nudge_completion BEFORE INSERT ON pack_facts WHEN NEW.pack='core' AND NEW.key='nudge' AND json_extract(NEW.value_json,'$.nudges')=3 BEGIN SELECT RAISE(ABORT, 'synthetic completion refusal'); END"
-      );
       await h.at(20);
       await h.at(20);
       expect(h.sends()).toHaveLength(1);
@@ -1785,20 +1784,20 @@ describe('stopped worker ladder', () => {
         expect.stringContaining('its worker could not be reached'),
       ]);
       expect(h.sessions.readNudge(h.todo.id)?.nudges).toBe(1);
-      expect(h.warnings).toEqual([expect.stringContaining('synthetic completion refusal')]);
+      expect(h.warnings).toEqual([]);
     } finally {
       h.clock.mockRestore();
       h.db.close();
     }
   });
 
-  test('a todo without a check uses the same worker reminders and never blocks', async () => {
+  test('a todo without a check follows the same ladder and then stalls', async () => {
     const h = await stopped(null);
     try {
       for (const minutes of [20, 40, 60, 120]) await h.at(minutes);
       expect(h.sends()).toHaveLength(2);
-      expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
-      expect(h.told.filter((note) => note.includes('without progress'))).toHaveLength(1);
+      expect(h.store.getTodo(h.todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
+      expect(h.told.filter((note) => note.includes('stalled'))).toHaveLength(1);
     } finally {
       h.clock.mockRestore();
       h.db.close();
@@ -1827,7 +1826,7 @@ describe('stopped worker ladder', () => {
       for (const minutes of [20, 40, 60]) await h.at(minutes);
       expect(h.warnings).toEqual([]);
       expect(h.sends()).toHaveLength(2);
-      expect(h.told.filter((note) => note.includes('reminder window elapsed'))).toHaveLength(1);
+      expect(h.told.filter((note) => note.includes('fresh worker'))).toHaveLength(1);
     } finally {
       h.clock.mockRestore();
       h.db.close();
@@ -1888,12 +1887,13 @@ describe('stopped worker ladder', () => {
     }
   });
 
-  test('a human-owned session gets no worker reminder', async () => {
+  test('a todo without an instruction idle for hours stalls with no fresh worker', async () => {
     const h = await stopped(null, null);
     try {
       for (const minutes of [20, 40, 60, 120]) await h.at(minutes);
       expect(h.sends()).toEqual([]);
-      expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
+      expect(h.calls.filter((call) => call.name === 'work.start')).toEqual([]);
+      expect(h.store.getTodo(h.todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
     } finally {
       h.clock.mockRestore();
       h.db.close();

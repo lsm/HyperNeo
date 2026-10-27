@@ -254,7 +254,9 @@ export const NeoTodoSchema = z.object({
   reason: z.string().nullable(),
   blockedReason: z.string().nullable(),
   nextAction: z.string().nullable(),
-  blockedBy: z.enum(['check', 'worker', 'failure', 'question', 'needs-human', 'held']).nullable(),
+  blockedBy: z
+    .enum(['check', 'worker', 'failure', 'question', 'needs-human', 'stalled', 'held'])
+    .nullable(),
   replacedBy: z.string().nullable(),
   addedAfterStart: z.boolean(),
   report: z.string().nullable(),
