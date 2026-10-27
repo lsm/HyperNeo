@@ -4,7 +4,6 @@ import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { callCodingBranchDb } from './branch-facts-db.ts';
 import { codingConnectorIdentityReads } from './connector-identity-db.ts';
-import { withBusyRetry } from '../../../../storage/busy-retry.ts';
 import type { ConnectorOutcome } from '../../../github/connectors/connector.ts';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
@@ -54,7 +53,7 @@ export async function codingConnectorPrTarget(
 
 async function acquire(target: Target, workspacePath: string, spawn: SpawnFn, now: () => number) {
   const { facts, subject } = target;
-  const before = facts.read(subject, now(), Infinity);
+  const before = await facts.readCurrent(subject, now(), Infinity);
   const response = await facts.acquire(subject, null, async () => {
     const outcome = await runGhJson(
       ['gh', 'pr', 'view', subject.url, '--json', 'url,state,mergeable,mergeStateStatus'],
@@ -72,10 +71,13 @@ async function acquire(target: Target, workspacePath: string, spawn: SpawnFn, no
     const observation = value
       ? { value, etag: null, next: null }
       : { reason: outcome.ok ? ('partial' as const) : ('failed' as const) };
-    const recorded = withBusyRetry(() =>
-      facts.record(subject, observation, now(), before.observationRevision)
+    const recorded = await facts.observeCurrent(
+      subject,
+      observation,
+      now(),
+      before.observationRevision
     );
-    const result: ConnectorOutcome = !recorded
+    const result: ConnectorOutcome = !recorded.accepted
       ? { ok: false, error: 'GitHub connector PR observation superseded' }
       : !outcome.ok
         ? outcome
@@ -87,13 +89,13 @@ async function acquire(target: Target, workspacePath: string, spawn: SpawnFn, no
   return { ...((await response.json()) as { result: ConnectorOutcome; revision: number }), target };
 }
 
-function project(
+async function project(
   acquired: Awaited<ReturnType<typeof acquire>>,
   now: () => number
-): ConnectorOutcome {
+): Promise<ConnectorOutcome> {
   if (!acquired.result.ok) return acquired.result;
   const { facts, subject } = acquired.target;
-  const current = facts.read(subject, now(), Infinity);
+  const current = await facts.readCurrent(subject, now(), Infinity);
   return current.observationRevision === acquired.revision && current.page.status === 'known'
     ? { ok: true, data: current.page.value }
     : { ok: false, error: 'GitHub connector PR observation superseded' };

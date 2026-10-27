@@ -17,8 +17,10 @@ describe('Consumed startup timeout reaches the shared failure cap', () => {
     starts = [];
     const build = QueryOptionsBuilder.prototype.build;
     QueryOptionsBuilder.prototype.build = async function (...args) {
+      const options = await build.apply(this, args);
+      await new Promise((resolve) => setTimeout(resolve, 25));
       return {
-        ...(await build.apply(this, args)),
+        ...options,
         spawnClaudeCodeProcess: (opts) => {
           starts.push(Date.now());
           return spawn(
@@ -45,7 +47,7 @@ describe('Consumed startup timeout reaches the shared failure cap', () => {
         devProxy: process.env.VERIFY_STARTUP_PROXY_PORT
           ? { port: Number(process.env.VERIFY_STARTUP_PROXY_PORT) }
           : undefined,
-        env: { LOG_LEVEL: 'warn', HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS: '400' },
+        env: { LOG_LEVEL: 'warn', HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS: '2000' },
       });
     } finally {
       if (prior === undefined) delete process.env.DAEMON_TEST_SPAWN;

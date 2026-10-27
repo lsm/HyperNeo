@@ -26,7 +26,7 @@ proof.log and wrapper exit status. The helper closes its daemon, socket and all
 owned children; the wrapper saves evidence before deleting temporary data.
 
 For a cause-independent error after prompt consumption, run the existing helper
-with `consumed` and `consumed-init`; their scripted iterators consumes the real queue input before
+with `consumed` and `consumed-init`; their scripted iterators consume the real queue input before
 throwing an arbitrary error, before or after SDK initialization. Require the same cap, delivered message, stable
 persisted episode, no fourth start, and successful explicit reset after fixing
 the scripted cause. The after-init fixture deliberately has no SDK transcript,
@@ -53,3 +53,11 @@ It owns a mock-model listener on an ephemeral port for provider discovery; the
 session SDK process stays silent. Require the Vitest test and wrapper exit zero,
 with no extra retries or children left running. The fixture saves the test log
 and cleanup receipt outside its disposable HOME/data before deleting that data.
+
+After the paired consumer has landed, also run `query-failure-governor.ts
+consumed-consumer` with the shared wrapper. It consumes the worker prompt before
+throwing the arbitrary error and saturates the recoverable error throttle. Require
+three attempts, public work.status=failed with the original error, one durable
+Neo input, exactly one recipient SDK start, and no second wake after recovery.
+This combines the consumed-input producer with the real landed consumer. It
+keeps the native silent-process proof separate from the scripted model proof.
