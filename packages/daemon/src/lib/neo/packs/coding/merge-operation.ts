@@ -10,7 +10,6 @@ import { spawnProcess } from '../../../runtime-spawn/index.ts';
 import { defineOperation } from '../../../operations/registry.ts';
 import { codingReviewerPolicy } from './stage-facts.ts';
 import { createCodingReviewThreadReader } from './connector-review-thread-reader.ts';
-import type { CodingPrLedgerRepository } from './pr-ledger.ts';
 import type { CodingTodoPrRepository } from './todo-prs.ts';
 import type { prepareCodingMerge } from './merge-gates.ts';
 import type { runCodingReview } from './review.ts';
@@ -51,7 +50,6 @@ const Checks = z.array(z.object({ bucket: z.string(), name: z.string().min(1), l
 const Threads = z.object({ headOid: z.string(), unresolvedThreadUrls: z.array(z.string()) });
 type Deps = {
   db: Database;
-  ledger: CodingPrLedgerRepository;
   todos: CodingTodoPrRepository;
   review: typeof runCodingReview;
   prepareMerge: typeof prepareCodingMerge;
