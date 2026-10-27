@@ -31,13 +31,10 @@ const RUNTIME_MCP_LABELS: Record<string, { title: string; description: string }>
 };
 import {
   buildDisabledSkillsList,
-  computeMcpSkillRuntimeState,
   computeObservedRuntimeState,
-  computeMcpServerSkillLinkage,
   computeSkillGroupState,
   getMcpServerEffectiveEnabled,
   getMcpServerProvenanceBadge,
-  getMcpSkillRuntimeClasses,
   getSkillSourceBadge,
   isSkillEnabledForSession,
   type PendingMcpOverride,
@@ -137,7 +134,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 
   const sessionMcpEntries = useSignal<SessionMcpServerEntry[]>([]);
   const mcpServerSearch = useSignal('');
-  const sessionMcpLoaded = useSignal(false);
 
   const skillSearch = useSignal('');
 
@@ -263,7 +259,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
   const loadSessionMcpEntries = async () => {
     if (!session) {
       sessionMcpEntries.value = [];
-      sessionMcpLoaded.value = false;
       return;
     }
     try {
@@ -272,10 +267,8 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
         sessionId: session.id,
       });
       sessionMcpEntries.value = response.entries ?? [];
-      sessionMcpLoaded.value = true;
     } catch {
       sessionMcpEntries.value = [];
-      sessionMcpLoaded.value = false;
     }
   };
 
@@ -608,15 +601,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                           skill,
                           pendingDisabledSkills.value
                         );
-                        const runtime = computeMcpSkillRuntimeState(
-                          skill,
-                          sessionMcpEntries.value,
-                          sessionMcpLoaded.value,
-                          inventory.value,
-                          pendingDisabledSkills.value
-                        );
-                        const { dot: runtimeDotClass, text: runtimeTextClass } =
-                          getMcpSkillRuntimeClasses(runtime.status);
                         const sourceBadge = getSkillSourceBadge(skill);
                         const globallyDisabled = !skill.enabled;
                         return (
@@ -640,19 +624,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                                 </span>
                                 <SourceBadge {...sourceBadge} />
                               </div>
-                              {runtime.status !== 'unknown' && runtime.label && (
-                                <div
-                                  class={`text-[10px] flex items-start gap-1 mt-0.5 ${runtimeTextClass}`}
-                                  title={runtime.label}
-                                  data-testid={`skill-runtime-${skill.name}`}
-                                  data-status={runtime.status}
-                                >
-                                  <span
-                                    class={`w-1.5 h-1.5 mt-1 rounded-full flex-shrink-0 ${runtimeDotClass}`}
-                                  />
-                                  <span class="break-words">{runtime.label}</span>
-                                </div>
-                              )}
                             </div>
                             <div class="flex items-center gap-1 flex-shrink-0">
                               <input
@@ -729,18 +700,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                         const pending = pendingMcpOverrides.value.get(entry.server.id);
                         const effectiveEnabled = getMcpServerEffectiveEnabled(entry, pending);
                         const provenanceBadge = getMcpServerProvenanceBadge(entry.server);
-                        const linked = computeMcpServerSkillLinkage(allSkills.value).get(
-                          entry.server.id
-                        );
-                        const observed = linked
-                          ? computeMcpSkillRuntimeState(
-                              linked,
-                              sessionMcpEntries.value,
-                              sessionMcpLoaded.value,
-                              inventory.value,
-                              pendingDisabledSkills.value
-                            )
-                          : computeObservedRuntimeState(inventory.value, entry.server.name);
                         const showClearAffordance =
                           entry.source === 'session' && (!pending || pending.enabled !== null);
                         return (
@@ -767,9 +726,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                                   {entry.server.name}
                                 </span>
                                 <SourceBadge {...provenanceBadge} />
-                              </div>
-                              <div class="text-[10px] text-fg-faint" title={observed.label}>
-                                {observed.label}
                               </div>
                               {entry.server.description && (
                                 <div class="text-[10px] text-fg-faint truncate">
