@@ -27,3 +27,12 @@ daemon in finally; the wrapper saves evidence and removes HOME/data immediately.
 The online convo regression invokes the same helper in a scrubbed temporary home.
 This verifies the RPC/SDK lifecycle with a scripted provider; upstream model
 behavior, browser rendering and deployment remain unverified.
+
+Repeat with --cancel before the run directory (the wrapper forwards arguments).
+That case cancels through session.cancelRateLimitRetry while recovery is pending,
+releases only the synthetic old stream, and requires the original model with no
+fallback SDK start. It characterizes model/replay ownership; the observed stale
+processing projection after this cancellation is a separate #9095 finding.
+The scripted SDK requests the next prompt concurrently, as the real transport
+does, so the queue can acknowledge the consumed input. Await the existing
+post-settlement flush before cleanup; closed-database callbacks are not a pass.

@@ -6,6 +6,10 @@ import { mock } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
 
 const run = resolve(process.argv.at(-1)!);
+const cancel = process.argv.includes('--cancel');
+let resultAnnounced = false;
+let allowInterrupt = () => {};
+const interruptGate = new Promise<void>((done) => { allowInterrupt = done; });
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -38,10 +42,11 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
         mkdirSync(getSDKProjectDir(join(run, 'workspace')), { recursive: true });
         writeFileSync(getSDKSessionFilePath(join(run, 'workspace'), sdkSessionId), JSON.stringify({ ...(input.value as object), type: 'user', parentUuid: null }) + '\n');
         yield { type: 'system', subtype: 'init', uuid: crypto.randomUUID(), session_id: sdkSessionId, cwd: join(run, 'workspace'), model: options?.model ?? 'haiku', permissionMode: 'default', apiKeySource: 'user', claude_code_version: 'synthetic', tools: [], skills: [], plugins: [], mcp_servers: [], slash_commands: [], output_style: 'default' };
+        resultAnnounced = true;
         yield { type: 'result', subtype: 'success', uuid: crypto.randomUUID(), session_id: sdkSessionId, parent_tool_use_id: null, is_error: first, result: first ? 'API Error: 429 rate_limit_error: too many requests' : 'FALLBACK_RECOVERED', duration_ms: 1, duration_api_ms: 1, num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 }, modelUsage: {}, permission_denials: [], ...(first ? { api_error_status: 429, terminal_reason: 'blocking_limit' } : {}) };
         await held;
       },
-      interrupt: async () => { if (first) oldInterrupted = true; release(); },
+      interrupt: async () => { if (first) { oldInterrupted = true; if (cancel) await interruptGate; } release(); },
       close: () => { if (first) oldClosed = true; release(); },
       supportedModels: async () => [],
       supportedCommands: async () => [],
@@ -59,7 +64,7 @@ assert.notEqual(app.server.port, 8399);
 const hub = new MessageHub({ defaultSessionId: 'global' });
 const transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
 hub.registerTransport(transport);
-const evidence: Record<string, unknown> = { surface: 'message.send, session.get and message.sdkMessages RPC', scriptedSdk: true, passed: false, starts, consumed };
+const evidence: Record<string, unknown> = { surface: 'message.send, session.get and message.sdkMessages RPC', scriptedSdk: true, cancel, passed: false, starts, consumed };
 const until = async (check: () => boolean | Promise<boolean>, label: string, timeout = 15000) => {
   const deadline = Date.now() + timeout;
   while (!await check()) { assert(Date.now() < deadline, label); await new Promise((done) => setTimeout(done, 25)); }
@@ -74,9 +79,16 @@ try {
   const read = async () => (await hub.request<{ session: Session }>('session.get', { sessionId })).session;
   await hub.request('message.send', { sessionId, content: 'Retain this input through fallback.' });
   await until(() => starts.length > 0, 'Initial SDK query never started');
+  const agent = app.sessionManager.getSession(sessionId)!;
   const started = Date.now();
   try {
-    await until(async () => {
+    if (cancel) {
+      await until(() => resultAnnounced && agent.isLimitRecoveryPending(), 'Fallback handoff did not become pending');
+      evidence.cancellation = await hub.request('session.cancelRateLimitRetry', { sessionId });
+      allowInterrupt();
+      releases[0]();
+      await until(() => oldClosed && !agent.isLimitRecoveryPending(), 'Cancelled fallback did not settle');
+    } else await until(async () => {
       const { sdkMessages } = await hub.request<{ sdkMessages: { type: string; result?: string }[] }>('message.sdkMessages', { sessionId });
       evidence.results = sdkMessages.filter((message) => message.type === 'result');
       return sdkMessages.some((message) => message.type === 'result' && message.result === 'FALLBACK_RECOVERED');
@@ -87,20 +99,26 @@ try {
     evidence.oldInterrupted = oldInterrupted;
     evidence.oldClosed = oldClosed;
   }
-  const agent = app.sessionManager.getSession(sessionId)!;
   await until(() => !agent.isLimitRecoveryPending(), 'Fallback recovery callback did not settle');
   await agent.replayPendingMessagesForImmediateMode({ waitForPostSettlementFlush: true });
   const state = await hub.request<{ agentState: { status: string } }>('state.session', { sessionId });
   evidence.finalState = state.agentState;
-  assert.equal(state.agentState.status, 'idle');
+  if (!cancel) assert.equal(state.agentState.status, 'idle');
+  evidence.session = await read();
+  if (cancel) {
+    assert.equal(starts.length, 1);
+    assert.equal((evidence.session as Session).config.model, 'haiku');
+  } else {
   assert(oldClosed && oldInterrupted);
   assert.equal(starts.length, 2);
   assert(starts[1].model.includes('sonnet'));
   assert.equal(consumed.length, 2);
   const content = (value: unknown) => (value as { message: { content: unknown } }).message.content;
   assert.deepEqual(content(consumed[1]), content(consumed[0]));
+  }
   evidence.passed = true;
 } finally {
+  allowInterrupt();
   await transport.close();
   await app.cleanup();
   for (const release of releases) release();
