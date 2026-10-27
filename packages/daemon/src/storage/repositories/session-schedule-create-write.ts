@@ -1,4 +1,4 @@
-import { getNextRunAt } from '../../lib/schedule/cron-utils.ts';
+import { requireNextRun } from '../../lib/scheduler/session-schedule-cadence.ts';
 import { SESSION_SCHEDULE_FIRE } from '../../lib/job-queue-constants.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
@@ -16,11 +16,7 @@ class SessionScheduleCreator {
     const schedules = new SessionScheduleRepository(this.db);
     const existing = schedules.getBySource(input.sourceKind, input.sourceId);
     if (existing) return existing;
-    const nextRunAt =
-      input.cadence.kind === 'every'
-        ? now + input.cadence.everyMs
-        : getNextRunAt(input.cadence.cron, input.cadence.timezone, now);
-    if (nextRunAt === null) throw new Error('invalid_cadence: the cadence has no next run.');
+    const nextRunAt = requireNextRun(input.cadence, now);
     const created = schedules.create(input, nextRunAt, now);
     const job = new JobQueueRepository(this.db).enqueue({
       queue: SESSION_SCHEDULE_FIRE,

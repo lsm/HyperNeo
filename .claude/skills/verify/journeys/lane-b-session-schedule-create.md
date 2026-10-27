@@ -8,7 +8,9 @@ turn, credential or external HTTP access.
 
 Call the actual `schedule.session.create` operation over WebSocket. Cold and
 concurrent requests must return active schedules whose wake job and pending-job
-pointer are already committed together. Invalid cadence is refused before admission.
+pointer are already committed together. Invalid cadence is refused before admission. Focused parity tests pin interval, UTC cron
+and daylight-saving cron receipts and wake due times before extracting the shared
+next-run helper used by synchronous and writer paths.
 A short held WAL writer must delay the affected create while health stays usable;
 its uncommitted fixture value stays invisible outside its connection.
 

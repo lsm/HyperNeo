@@ -1,6 +1,6 @@
 {
   "base": "8399563508",
-  "productionChangedLines": 54,
+  "productionChangedLines": 79,
   "redRegressionCommit": "106997a5c0837781276492ad097c035d3d4c5a9b",
   "baseline": {
     "failedRegressions": 2,
@@ -8,7 +8,7 @@
     "realRpcMainSqlAttempts": 1
   },
   "focusedVitest": {
-    "passed": 77,
+    "passed": 80,
     "files": 5
   },
   "bareBun": {
@@ -36,5 +36,17 @@
     "repositoryCheck": "passed",
     "bunDenoMainSql": 0,
     "unknownOutcomeNotReplayed": true
+  },
+  "reviewCadenceExtraction": {
+    "thread": "PRRT_kwDORDDLj86woY3l",
+    "pinCommit": "988463c781462d009ba3162f4d601a798c2b4564",
+    "characterization": "Interval, UTC cron and DST cron sync/writer receipts and wake due times pinned before extraction; all nine creation tests passed before production edit.",
+    "change": "Move next-run and required-next-run into one pure helper shared by creation, validation, resume and finishRun.",
+    "productionChangedLines": 79,
+    "vitestPassed": 80,
+    "repositoryCheck": "passed",
+    "bunDenoMainSql": 0,
+    "unknownOutcomeNotReplayed": true,
+    "sharedSmokeRegistrationLines": 1
   }
 }
