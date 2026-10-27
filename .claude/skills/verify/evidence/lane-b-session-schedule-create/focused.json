@@ -1,0 +1,30 @@
+{
+  "base": "8399563508",
+  "productionChangedLines": 54,
+  "redRegressionCommit": "106997a5c0837781276492ad097c035d3d4c5a9b",
+  "baseline": {
+    "failedRegressions": 2,
+    "passingRefusalControls": 2,
+    "realRpcMainSqlAttempts": 1
+  },
+  "focusedVitest": {
+    "passed": 77,
+    "files": 5
+  },
+  "bareBun": {
+    "passed": 48,
+    "failed": 1,
+    "failure": "Existing interrupted-Neo delivery test also fails on the pre-change code in isolation; all tests pass in the required Vitest runner. No retry/skip or legacy test edit."
+  },
+  "proofSetupCorrection": "Deno SQLite fixture rows have a null prototype; assertion records spread the row while preserving every key and value. The initial failed run is retained separately.",
+  "scope": "Only ordinary reminder creation. The synchronous goal transaction path is retained; no main fallback for async callers.",
+  "unverified": [
+    "pause/resume/delete/list and recovery DB ownership",
+    "firing/outcome and goal callbacks DB ownership",
+    "large-volume latency",
+    "deployed build and browser UI",
+    "separate SQL queue and clone timings"
+  ],
+  "repositoryCheck": "passed",
+  "hermeticProof": "Fresh HOME/data, refusing GitHub stub, direct HTTP refused; temporary daemon data removed after evidence saved."
+}

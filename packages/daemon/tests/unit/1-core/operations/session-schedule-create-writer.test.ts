@@ -16,7 +16,11 @@ describe('ordinary session reminder writer', () => {
   let scheduler: SessionScheduler;
   let mainSql: number;
   const target = { adapter: 'hyperneo', id: 'synthetic-recipient' };
-  const input = { target, cadence: { kind: 'every', everyMs: 3_600_000 }, note: 'Check progress' };
+  const input = {
+    target,
+    cadence: { kind: 'every' as const, everyMs: 3_600_000 },
+    note: 'Check progress',
+  };
 
   beforeEach(() => {
     main = new SQLite(':memory:');
@@ -97,6 +101,44 @@ describe('ordinary session reminder writer', () => {
       value: { ok: false, reason: 'This action belongs to Neo or the user.' },
     });
     expect(new SessionScheduleRepository(writer).list()).toEqual([]);
+    expect(mainSql).toBe(0);
+  });
+
+  test('the async command reuses one existing source without enqueuing duplicate wakes', async () => {
+    const draft = {
+      ...input,
+      sourceKind: 'reminder',
+      sourceId: 'stable-source',
+      nudgeEvery: 1,
+      createdBySession: null,
+    };
+    const [first, second] = await Promise.all([
+      scheduler.createAsync(draft),
+      scheduler.createAsync(draft),
+    ]);
+    expect(second).toEqual(first);
+    expect(new SessionScheduleRepository(writer).list()).toHaveLength(1);
+    expect(new JobQueueRepository(writer).listJobs({ queue: 'sessionSchedule.fire' })).toHaveLength(
+      1
+    );
+    expect(mainSql).toBe(0);
+  });
+
+  test('cron reminder receipts retain their timezone and queued due time', async () => {
+    const outcome = await call({
+      ...input,
+      cadence: { kind: 'cron', cron: '0 * * * *', timezone: 'UTC' },
+    });
+    expect(outcome.kind).toBe('completed');
+    if (outcome.kind !== 'completed') throw new Error(outcome.message);
+    const { schedule } = outcome.value as {
+      schedule: { pendingJobId: string; nextRunAt: number; cadence: unknown };
+    };
+    expect(schedule.cadence).toEqual({ kind: 'cron', cron: '0 * * * *', timezone: 'UTC' });
+    expect(new Date(schedule.nextRunAt).getUTCMinutes()).toBe(0);
+    expect(new JobQueueRepository(writer).getJob(schedule.pendingJobId)?.runAt).toBe(
+      schedule.nextRunAt
+    );
     expect(mainSql).toBe(0);
   });
 });

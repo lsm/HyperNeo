@@ -11,7 +11,9 @@ assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert(!existsSync(join(run, 'data')));
 for (const key of ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'OPENAI_API_KEY', 'GITHUB_TOKEN']) assert.equal(process.env[key], undefined);
-for (const name of ['home', 'workspace', 'evidence']) mkdirSync(join(run, name), { recursive: true });
+for (const name of ['home', 'workspace', 'bin', 'evidence']) mkdirSync(join(run, name), { recursive: true });
+writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+process.env.PATH = join(run, 'bin') + ':' + process.env.PATH;
 const { createDaemonApp } = await import('../../../packages/daemon/src/app.ts');
 const { JobQueueProcessor } = await import('../../../packages/daemon/src/storage/job-queue-processor.ts');
 const { Database: SQLite } = await import('../../../packages/daemon/src/storage/sqlite-compat.ts');
@@ -109,9 +111,10 @@ try {
   const counts = () => inspect(() => ({ schedules: (raw.prepare('SELECT COUNT(*) AS n FROM session_schedules').get() as { n: number }).n, jobs: (raw.prepare("SELECT COUNT(*) AS n FROM job_queue WHERE queue='sessionSchedule.fire'").get() as { n: number }).n }));
   const pair = (schedule: SessionSchedule) => inspect(() => {
     const stored = raw.prepare('SELECT id,pending_job_id,next_run_at FROM session_schedules WHERE id=?').get(schedule.id);
-    assert.deepEqual(stored, { id: schedule.id, pending_job_id: schedule.pendingJobId, next_run_at: schedule.nextRunAt });
+    assert.deepEqual({ ...stored }, { id: schedule.id, pending_job_id: schedule.pendingJobId, next_run_at: schedule.nextRunAt });
     const job = raw.prepare('SELECT status,run_at,payload FROM job_queue WHERE id=?').get(schedule.pendingJobId) as { status: string; run_at: number; payload: string };
     assert.equal(job.status, 'pending'); assert.equal(job.run_at, schedule.nextRunAt); assert.deepEqual(JSON.parse(job.payload), { scheduleId: schedule.id });
+    return { schedule: { ...stored }, job: { ...job, payload: JSON.parse(job.payload) } };
   });
   let previous = performance.now(); let maxLoopLagMs = 0;
   timer = setInterval(() => { const now = performance.now(); maxLoopLagMs = Math.max(maxLoopLagMs, now - previous - 5); previous = now; }, 5);
@@ -120,7 +123,7 @@ try {
   let first: Awaited<ReturnType<typeof create>>;
   try { first = await create('cold reminder'); } catch (error) { evidence.coldError = String(error); throw error; }
   evidence.coldMs = performance.now() - coldAt;
-  assert.equal(first.ok, true); assert.equal(first.schedule.status, 'active'); pair(first.schedule);
+  assert.equal(first.ok, true); assert.equal(first.schedule.status, 'active'); evidence.firstReceipt = first; evidence.firstCommittedPair = pair(first.schedule);
   const warmAt = performance.now();
   const replies = await Promise.all(Array.from({ length: 5 }, (_, i) => create(`warm reminder ${i}`)));
   replies.forEach((reply) => { assert.equal(reply.ok, true); pair(reply.schedule); });
@@ -153,7 +156,7 @@ try {
   const recovered = await create('writer recovered'); pair(recovered.schedule); evidence.writerRecovered = true;
   assert.deepEqual(counts(), { schedules: before.schedules + 2, jobs: before.jobs + 2 });
   assert.equal((await hub.request<{ status: string }>('system.health', {})).status, 'ok');
-  evidence.committedPairs = counts().schedules;
+  evidence.finalCommittedCounts = counts(); evidence.committedPairs = counts().schedules;
   evidence.mainSqlAttempts = mainSqlAttempts; assert.equal(mainSqlAttempts, 0);
   evidence.maxLoopLagMs = maxLoopLagMs; assert(maxLoopLagMs < 1000);
   evidence.latencyUnder250ms = [evidence.coldMs, evidence.concurrentWarmMs, evidence.healthWhileHeldMs, evidence.heldWriteMs].every((ms) => Number(ms) < 250); assert.equal(evidence.latencyUnder250ms, true);

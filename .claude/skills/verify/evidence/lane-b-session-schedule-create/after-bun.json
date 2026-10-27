@@ -1,0 +1,126 @@
+{
+  "coldMs": 5.02150000000006,
+  "firstReceipt": {
+    "ok": true,
+    "schedule": {
+      "id": "c4c208d9-5564-49e2-a654-8f6f9d1a5ff6",
+      "status": "active",
+      "target": {
+        "adapter": "hyperneo",
+        "id": "schedule-recipient"
+      },
+      "sourceKind": "reminder",
+      "sourceId": "407d450b-dbae-490e-a37f-e90859193219",
+      "note": "cold reminder",
+      "cadence": {
+        "kind": "every",
+        "everyMs": 3600000
+      },
+      "nudgeEvery": 1,
+      "nextRunAt": 1793095224938,
+      "pendingJobId": "d589d99b-5d30-44e5-8bf1-fd949f7dd418",
+      "dueCount": 0,
+      "factsDigest": null,
+      "lastRunAt": null,
+      "lastOutcome": null,
+      "lastSkipReason": null,
+      "lastMessageId": null,
+      "createdBySession": null,
+      "createdAt": 1793091624938,
+      "updatedAt": 1793091624938
+    }
+  },
+  "firstCommittedPair": {
+    "schedule": {
+      "id": "c4c208d9-5564-49e2-a654-8f6f9d1a5ff6",
+      "pending_job_id": "d589d99b-5d30-44e5-8bf1-fd949f7dd418",
+      "next_run_at": 1793095224938
+    },
+    "job": {
+      "status": "pending",
+      "run_at": 1793095224938,
+      "payload": {
+        "scheduleId": "c4c208d9-5564-49e2-a654-8f6f9d1a5ff6"
+      }
+    }
+  },
+  "concurrentWarmMs": 0.885915999999952,
+  "invalidCadenceRefused": true,
+  "healthWhileHeldMs": 2.0674999999999955,
+  "writerIsolation": {
+    "outside": 0,
+    "inside": 1
+  },
+  "heldWriteMs": 25.719542000000047,
+  "rollbackFailure": "MessageHubResponseError: synthetic schedule enqueue failure",
+  "beforeCommitFailure": "MessageHubResponseError: synthetic schedule admission rejected before commit",
+  "lostReceiptFailure": "MessageHubResponseError: synthetic committed schedule reply lost; outcome unknown",
+  "unknownOutcomeNotReplayed": true,
+  "writerRecovered": true,
+  "finalCommittedCounts": {
+    "schedules": 9,
+    "jobs": 9
+  },
+  "committedPairs": 9,
+  "mainSqlAttempts": 0,
+  "maxLoopLagMs": 2.456874999999968,
+  "latencyUnder250ms": true,
+  "rssBytes": 160236600,
+  "walBytes": 41232,
+  "timings": [
+    {
+      "roundTripMs": 0.43020799999999326,
+      "requestBytes": 283,
+      "replyBytes": 545,
+      "encodeMs": 0.0050829999998995845
+    },
+    {
+      "roundTripMs": 0.3047920000000204,
+      "requestBytes": 285,
+      "replyBytes": 547,
+      "encodeMs": 0.0028329999998959465
+    },
+    {
+      "roundTripMs": 0.2648340000000644,
+      "requestBytes": 285,
+      "replyBytes": 547,
+      "encodeMs": 0.0007079999999177744
+    },
+    {
+      "roundTripMs": 0.23429199999998218,
+      "requestBytes": 285,
+      "replyBytes": 547,
+      "encodeMs": 0.003458000000023276
+    },
+    {
+      "roundTripMs": 0.235541000000012,
+      "requestBytes": 285,
+      "replyBytes": 547,
+      "encodeMs": 0.0004589999999780048
+    },
+    {
+      "roundTripMs": 0.22658300000000509,
+      "requestBytes": 285,
+      "replyBytes": 547,
+      "encodeMs": 0.0004590000000916916
+    },
+    {
+      "roundTripMs": 25.43558299999995,
+      "requestBytes": 290,
+      "replyBytes": 552,
+      "encodeMs": 0.005708000000026914
+    },
+    {
+      "roundTripMs": 4.418708000000038,
+      "requestBytes": 282,
+      "replyBytes": 544,
+      "encodeMs": 0.003249999999979991
+    },
+    {
+      "roundTripMs": 11.180874999999787,
+      "requestBytes": 286,
+      "replyBytes": 548,
+      "encodeMs": 0.004458999999997104
+    }
+  ]
+}

@@ -1,5 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { createHash } from 'node:crypto';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { sessionScheduleCreateWrites } from '../../storage/repositories/session-schedule-create-write.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import {
   type NewSessionSchedule,
@@ -148,6 +150,10 @@ export class SessionScheduler {
   private enqueue(scheduleId: string, runAt: number): string {
     return this.jobQueue.enqueue({ queue: SESSION_SCHEDULE_FIRE, payload: { scheduleId }, runAt })
       .id;
+  }
+
+  createAsync(input: NewSessionSchedule, now = Date.now()): Promise<SessionSchedule> {
+    return gatewayFor(this.db).call(sessionScheduleCreateWrites, 'create', input, now);
   }
 
   create(input: NewSessionSchedule, now = Date.now()): SessionSchedule {
