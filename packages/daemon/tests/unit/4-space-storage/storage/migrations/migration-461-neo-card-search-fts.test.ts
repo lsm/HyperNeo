@@ -33,6 +33,7 @@ function cardDb() {
     kind TEXT NOT NULL,
     state TEXT NOT NULL DEFAULT 'open',
     answer TEXT,
+    answered_at INTEGER,
     created_at INTEGER NOT NULL
   );
   PRAGMA foreign_keys = ON;`);
@@ -129,6 +130,29 @@ test('moving a todo to another ask re-points its indexed card', () => {
     ]);
     db.prepare(`DELETE FROM neo_asks WHERE id = 'ask-1'`).run();
     expect(matches(db, 'TestFlight')).toEqual([]);
+  } finally {
+    db.close();
+  }
+});
+
+test('answering a question refreshes its indexed updated_at', () => {
+  const db = cardDb();
+  try {
+    runMigration461(db);
+    const before = db
+      .prepare(`SELECT updated_at FROM neo_card_search_content WHERE source = 'question'`)
+      .get() as { updated_at: number };
+    db.prepare(
+      `UPDATE neo_questions SET state = 'answered', answer = '"Catalog"', answered_at = 99 WHERE id = 'q-1'`
+    ).run();
+    const after = db
+      .prepare(`SELECT updated_at FROM neo_card_search_content WHERE source = 'question'`)
+      .get() as { updated_at: number };
+    expect(after.updated_at).toBe(99);
+    expect(after.updated_at).not.toBe(before.updated_at);
+    expect(matches(db, 'Catalog')).toEqual([
+      { source: 'question', entity_id: 'q-1', ask_id: 'ask-1' },
+    ]);
   } finally {
     db.close();
   }

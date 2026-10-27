@@ -94,9 +94,10 @@ export function runMigration461(db: Database): void {
       VALUES ('question', new.id, new.ask_id, new.text, NULL, ${QUESTION_ANSWER}, new.created_at);
     END;
     CREATE TRIGGER IF NOT EXISTS neo_card_search_question_au
-    AFTER UPDATE OF text, answer, created_at ON neo_questions BEGIN
+    AFTER UPDATE OF text, answer, answered_at, created_at ON neo_questions BEGIN
       UPDATE neo_card_search_content
-      SET title = new.text, body = ${QUESTION_ANSWER}
+      SET title = new.text, body = ${QUESTION_ANSWER},
+          updated_at = COALESCE(new.answered_at, new.created_at)
       WHERE source = 'question' AND entity_id = new.id;
     END;
     CREATE TRIGGER IF NOT EXISTS neo_card_search_question_ad
@@ -137,7 +138,7 @@ export function runMigration461(db: Database): void {
         WHEN json_valid(answer) THEN json_extract(answer, '$')
         ELSE answer
       END,
-      created_at
+      COALESCE(answered_at, created_at)
     FROM neo_questions;
     `);
   })();
