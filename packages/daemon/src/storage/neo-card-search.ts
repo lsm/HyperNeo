@@ -21,7 +21,7 @@ const META_WEIGHT = 2.0;
 const BODY_WEIGHT = 1.0;
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
-const SNIPPET_TOKENS = 12;
+const SNIPPET_TOKENS = 36;
 
 interface HitRow {
   source: 'ask' | 'todo' | 'question';
