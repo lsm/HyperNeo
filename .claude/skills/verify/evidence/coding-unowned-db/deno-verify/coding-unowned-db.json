@@ -1,0 +1,109 @@
+{
+  "mode": "verify",
+  "verified": true,
+  "consumer": "Real persisted job -> production coding-pack sweep -> unowned wake pipeline",
+  "limitation": "Synthetic scheduled job and repository read; notification receiver records keys after checking commit. No actual Neo model, external notification, GitHub or GUI.",
+  "rejected": {
+    "status": "completed",
+    "result": {
+      "completed": true
+    }
+  },
+  "retry": {
+    "status": "completed",
+    "result": {
+      "completed": true
+    }
+  },
+  "reopened": {
+    "status": "completed",
+    "result": {
+      "completed": true
+    }
+  },
+  "confirmed": {
+    "status": "completed",
+    "result": {
+      "completed": true
+    }
+  },
+  "rows": [
+    {
+      "key": "neo-pr-unowned:synthetic/unowned#1",
+      "listed_at": 1793084534363
+    },
+    {
+      "key": "neo-pr-unowned:synthetic/unowned#2",
+      "listed_at": 1793084534363
+    }
+  ],
+  "state": {
+    "id": 1,
+    "activated_at": 1793084534183,
+    "pending_key": null,
+    "pending_text": null,
+    "pending_rows": "[{\"repo\":\"synthetic/unowned\",\"number\":1,\"title\":\"Synthetic PR 1\"},{\"repo\":\"synthetic/unowned\",\"number\":2,\"title\":\"Synthetic PR 2\"}]"
+  },
+  "attempts": [
+    {
+      "key": "neo-pr-unowned-batch:371b9a2b95fda0e92592d2e6dd4aa0d7951aacf0d416e5ad7c1091b672eac896",
+      "text": "New pull requests observed without a known worker owner:\nsynthetic/unowned#1 \"Synthetic PR 1\" [neo-pr-unowned:synthetic/unowned#1]\nsynthetic/unowned#2 \"Synthetic PR 2\" [neo-pr-unowned:synthetic/unowned#2]\nCheck the current ledger before assigning an owner."
+    },
+    {
+      "key": "neo-pr-unowned-batch:371b9a2b95fda0e92592d2e6dd4aa0d7951aacf0d416e5ad7c1091b672eac896",
+      "text": "New pull requests observed without a known worker owner:\nsynthetic/unowned#1 \"Synthetic PR 1\" [neo-pr-unowned:synthetic/unowned#1]\nsynthetic/unowned#2 \"Synthetic PR 2\" [neo-pr-unowned:synthetic/unowned#2]\nCheck the current ledger before assigning an owner."
+    },
+    {
+      "key": "neo-pr-unowned-batch:371b9a2b95fda0e92592d2e6dd4aa0d7951aacf0d416e5ad7c1091b672eac896",
+      "text": "New pull requests observed without a known worker owner:\nsynthetic/unowned#1 \"Synthetic PR 1\" [neo-pr-unowned:synthetic/unowned#1]\nsynthetic/unowned#2 \"Synthetic PR 2\" [neo-pr-unowned:synthetic/unowned#2]\nCheck the current ledger before assigning an owner."
+    }
+  ],
+  "acceptedKeys": [
+    "neo-pr-unowned-batch:371b9a2b95fda0e92592d2e6dd4aa0d7951aacf0d416e5ad7c1091b672eac896"
+  ],
+  "mainSql": [],
+  "commands": [
+    {
+      "name": "coding.unowned.commands",
+      "method": "pending",
+      "durationMs": 0.4270840000001499,
+      "argsBytes": 43,
+      "replyBytes": 368
+    },
+    {
+      "name": "coding.unowned.commands",
+      "method": "pending",
+      "durationMs": 0.11862500000006548,
+      "argsBytes": 43,
+      "replyBytes": 368
+    },
+    {
+      "name": "coding.unowned.commands",
+      "method": "pending",
+      "durationMs": 0.5008749999997235,
+      "argsBytes": 43,
+      "replyBytes": 368
+    },
+    {
+      "name": "coding.unowned.commands",
+      "method": "acknowledge",
+      "durationMs": 0.08662499999991269,
+      "argsBytes": 121,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.unowned.commands",
+      "method": "pending",
+      "durationMs": 0.08833300000014788,
+      "argsBytes": 43,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.unowned.commands",
+      "method": "pending",
+      "durationMs": 0.06379100000003746,
+      "argsBytes": 43,
+      "replyBytes": 4
+    }
+  ]
+}
