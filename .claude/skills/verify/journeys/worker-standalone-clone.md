@@ -102,3 +102,11 @@ confirms that first turn and before Desktop import. The failed-in-place legs
 check both absent and existing local settings: no directory is created and
 existing file bytes remain identical when CLI preparation fails. The successful
 native resume leg still verifies the persisted environment.
+
+An additional work.send leg discovers a synthetic user-created idle Desktop
+session without starting it through HyperNeo. Its actual CLI resume arguments
+must contain neither settings nor the Runtime Location prompt, and its project
+must remain free of generated settings. Marked prepared-worker resume regressions
+still require their policy file; unsandboxed workers retain locations through
+the persisted project settings and recorded creation brief, verified by the
+native resumed-shell leg. No human Desktop record or real transcript is read.

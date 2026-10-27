@@ -1257,12 +1257,14 @@ export async function resumeIdleClaudeSession(
       record.cliSessionId,
       '--permission-mode',
       mode,
-      '--settings',
-      sandbox
-        ? join(folder, '.claude/settings.local.json')
-        : JSON.stringify({ env: workerWorkEnvironment(folder) }),
-      '--append-system-prompt',
-      workerWorkLocationsBrief(folder),
+      ...(sandbox
+        ? [
+            '--settings',
+            join(folder, '.claude/settings.local.json'),
+            '--append-system-prompt',
+            workerWorkLocationsBrief(folder),
+          ]
+        : []),
       '--',
       message,
     ],

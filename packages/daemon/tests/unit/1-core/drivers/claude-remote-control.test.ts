@@ -505,8 +505,8 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
       'auto',
     ]);
     expect(args.slice(-2)).toEqual(['--', 'Cold marker']);
-    expect(JSON.parse(args[args.indexOf('--settings') + 1]).env.HYPERNEO_WORKTREES).toBeTruthy();
-    expect(args[args.indexOf('--append-system-prompt') + 1]).toContain('## Runtime Location');
+    expect(args).not.toContain('--settings');
+    expect(args).not.toContain('--append-system-prompt');
   });
 
   test('leaves a session that already has its Remote Control set alone', async () => {
