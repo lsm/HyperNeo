@@ -141,6 +141,60 @@ test('installed builtins keep identity and settings select without rebuilding th
   ).not.toContain(NEO_WORK_GOAL_MERGE);
 });
 
+test.each([
+  { kind: 'yesno' as const, answer: 'yes', via: 'button' as const },
+  { kind: 'yesno' as const, answer: 'Yes, go ahead with this plan.', via: 'chat' as const },
+  {
+    kind: 'choice' as const,
+    answer: ['Delete the approved synthetic leftovers'],
+    via: 'button' as const,
+  },
+])(
+  'an approved $kind card completes its still-queued todo ($via: $answer)',
+  async ({ kind, answer, via }) => {
+    service.todos.openAsk({
+      id: 'ask',
+      title: 'Confirm synthetic plan',
+      request: 'Approve the synthetic plan',
+      sessionId: 'neo',
+      projectId: null,
+      originMessageId: null,
+      createdAt: 1,
+    });
+    const question = service.todos.askQuestion(
+      'approval',
+      'ask',
+      {
+        text: 'Approve the synthetic plan?',
+        kind,
+        options:
+          kind === 'choice' ? ['Keep everything', 'Delete the approved synthetic leftovers'] : null,
+        multiple: false,
+        noLabel: 'No',
+        yesLabel: 'Yes',
+        startTodos: null,
+      },
+      1
+    );
+    const todo = service.todos.addTodo(
+      'queued',
+      'ask',
+      {
+        title: 'Human approves the synthetic plan',
+        doneWhen: 'Human confirms',
+        instruction: null,
+        named: null,
+        check: { pack: 'core', kind: 'human_confirmed', params: { questionId: question.id } },
+      },
+      1
+    );
+    expect(todo.state).toBe('todo');
+    service.todos.answerQuestion(question, answer, via, 2);
+    await service.todoRunner.refresh(() => {});
+    expect(service.todos.getTodo(todo.id)?.state).toBe('done');
+  }
+);
+
 test('an installed legacy todo check observes reader replacements and retains its claims', async () => {
   service.todos.openAsk({
     id: 'ask',
