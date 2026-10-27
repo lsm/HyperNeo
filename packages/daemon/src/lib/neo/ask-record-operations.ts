@@ -1,3 +1,4 @@
+import { NEO_TODO_NOT_READY, neoTodoAfterRefusal, neoTodoReady } from './todo-dependencies.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -10,7 +11,8 @@ import {
 } from '../operations/registry.ts';
 import { NeoAskEntrySchema } from './ask-entries.ts';
 import {
-  addNeoTodo,
+  recordNeoTodo,
+  resolveNeoTodoDraft,
   type NeoTodoControls,
   NeoTodoDraftSchema,
   planNeoTodoDraft,
@@ -156,8 +158,93 @@ export function createNeoAskRecordOperations(
         _caller: OperationCaller
       ): Promise<AskReceipt | Rejection> => {
         const origin = null;
+        const priorAsk = store.findAsk(sessionId, origin, input.title, goalId);
+        const family = (ask: NeoAsk | null) =>
+          ask
+            ? [
+                ...store.listTodos(ask.id),
+                ...store.listChildAsks(ask.id).flatMap((child) => store.listTodos(child.id)),
+              ]
+            : [];
+        const recorded = family(priorAsk);
+        const recordedRow = (
+          todo: (typeof input.todos)[number],
+          scope: Pick<NeoAsk, 'repo'> = priorAsk ?? { repo: null }
+        ) => {
+          const repo = neoTodoRepo(todo, packs(), scope);
+          const filed = (item: NeoTodo) =>
+            neoTodoRepo(
+              { check: item.check, named: item.named, target: sessions.get(item.id) },
+              packs(),
+              scope
+            );
+          return recorded.find(
+            (item) => item.title === todo.title && (item.repo === repo || filed(item) === repo)
+          );
+        };
+        const homeless =
+          priorAsk &&
+          priorAsk.status !== 'open' &&
+          input.todos.find((todo) => {
+            const repo = neoTodoRepo(todo, packs(), priorAsk);
+            return !recordedRow(todo) && (!repo || !store.childAsk(priorAsk.id, repo));
+          });
+        if (priorAsk && homeless)
+          return {
+            ok: true,
+            ask: priorAsk,
+            todos: family(priorAsk),
+            records: [
+              `ask_settled: ${priorAsk.title} is settled and "${homeless.title}" has no open card in it; nothing was added. Open a new ask for it with a different title, since this title in this turn reaches the settled request.`,
+            ],
+          };
+        const refused = input.todos
+          .filter((todo) => !recordedRow(todo))
+          .map((todo) => planNeoTodoDraft(todo, packs()))
+          .find((planned) => 'reason' in planned);
+        if (refused && 'reason' in refused) return refused.reason;
+        const existing = priorAsk ? store.listFamilyTodos(priorAsk.id) : [];
+        const badAfter = input.todos
+          .map((todo, index) => {
+            const row = recordedRow(todo);
+            if (row)
+              return todo.start && isNeoTodoStartable(row) && !neoTodoReady(existing, row.id)
+                ? NEO_TODO_NOT_READY
+                : null;
+            return neoTodoAfterRefusal(
+              existing,
+              index,
+              todo.after?.map((ref) =>
+                typeof ref === 'number' && ref < index && input.todos[ref]
+                  ? (recordedRow(input.todos[ref])?.id ?? ref)
+                  : ref
+              ),
+              todo.start
+            );
+          })
+          .find(Boolean);
+        if (badAfter) return { ok: false as const, reason: badAfter };
+        const drafts: typeof input.todos = [];
+        for (const todo of input.todos) {
+          const repo = neoTodoRepo(todo, packs(), priorAsk ?? { repo: null });
+          const home =
+            priorAsk && repo && priorAsk.repo !== repo
+              ? (store.childAsk(priorAsk.id, repo) ?? priorAsk)
+              : priorAsk;
+          if (recordedRow(todo) || (home && home.status !== 'open')) {
+            drafts.push(todo);
+            continue;
+          }
+          const resolved = await resolveNeoTodoDraft(todo, controls.resolveTarget);
+          if ('reason' in resolved) return resolved.reason;
+          drafts.push(resolved.value);
+        }
+        const current = priorAsk
+          ? store.getAsk(priorAsk.id)
+          : store.findAsk(sessionId, origin, input.title, goalId);
+        if (priorAsk && !current) return { ok: false, reason: 'not_found: no such ask.' };
         const ask =
-          store.findAsk(sessionId, origin, input.title, goalId) ??
+          current ??
           store.openAsk({
             id: crypto.randomUUID(),
             projectId,
@@ -168,57 +255,24 @@ export function createNeoAskRecordOperations(
             request: input.request,
             createdAt: Date.now(),
           });
-        const family = () => [
-          ...store.listTodos(ask.id),
-          ...store.listChildAsks(ask.id).flatMap((child) => store.listTodos(child.id)),
-        ];
-        const recorded = family();
+        recorded.push(...family(ask));
         const split =
           store.listChildAsks(ask.id).length > 0 ||
-          new Set(input.todos.map((todo) => neoTodoRepo(todo, packs(), ask)).filter(Boolean)).size >
-            1;
-        const recordedRow = (todo: (typeof input.todos)[number]) => {
-          const repo = neoTodoRepo(todo, packs(), ask);
-          const filed = (item: NeoTodo) =>
-            neoTodoRepo(
-              { check: item.check, named: item.named, target: sessions.get(item.id) },
-              packs(),
-              ask
-            );
-          return recorded.find(
-            (item) => item.title === todo.title && (item.repo === repo || filed(item) === repo)
-          );
-        };
-        const homeless =
-          ask.status !== 'open' &&
-          input.todos.find((todo) => {
-            const repo = neoTodoRepo(todo, packs(), ask);
-            return !recordedRow(todo) && (!repo || !store.childAsk(ask.id, repo));
-          });
-        if (homeless)
-          return {
-            ok: true,
-            ask,
-            todos: family(),
-            records: [
-              `ask_settled: ${ask.title} is settled and "${homeless.title}" has no open card in it; nothing was added. Open a new ask for it with a different title, since this title in this turn reaches the settled request.`,
-            ],
-          };
-        const refused = input.todos
-          .filter((todo) => !recordedRow(todo))
-          .map((todo) => planNeoTodoDraft(todo, packs()))
-          .find((planned) => 'reason' in planned);
-        if (refused && 'reason' in refused) return refused.reason;
+          new Set(drafts.map((todo) => neoTodoRepo(todo, packs(), ask)).filter(Boolean)).size > 1;
         const records: string[] = [];
-        for (const todo of input.todos) {
-          const row = recordedRow(todo);
+        const ids: (string | undefined)[] = [];
+        for (const [index, todo] of drafts.entries()) {
+          const row = recordedRow(todo, ask);
+          const after = todo.after?.map((ref) =>
+            typeof ref === 'number' ? (ref < index ? (ids[ref] ?? `#${ref}`) : `#${ref}`) : ref
+          );
           const added = !row
-            ? await addNeoTodo(
+            ? await recordNeoTodo(
                 store,
                 sessions,
-                controls.start,
+                controls,
                 store.getAsk(ask.id)!,
-                todo,
+                { ...todo, ...(after ? { after } : {}) },
                 packs(),
                 split
               )
@@ -226,6 +280,11 @@ export function createNeoAskRecordOperations(
               ? await controls.start(row.id)
               : { ok: true as const };
           if (!added.ok) return added;
+          if (row && todo.after)
+            records.push(
+              `after_ignored: "${row.title}" already exists; change what it waits for with neo.todo.edit.`
+            );
+          ids.push(row?.id ?? ('todo' in added ? added.todo?.id : undefined));
           if ('records' in added && added.records) records.push(...added.records);
         }
         const settled = split
@@ -235,7 +294,7 @@ export function createNeoAskRecordOperations(
         return {
           ok: true,
           ask: settled?.ok ? settled.ask : (store.getAsk(ask.id) ?? ask),
-          todos: family(),
+          todos: family(ask),
           ...(records.length ? { records } : {}),
         };
       },

@@ -30,7 +30,7 @@ let record=false,mainSql=0,held=false;
 const tables:string[]=[],effects:{name:string;input?:Record<string,unknown>}[]=[];
 const visible=(askId='ask')=>hub.request<{ok:true;entry:{todos:NeoTodo[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId}});
 const result:Record<string,unknown>={runtimeCallersMoved:true};
-const runner=createNeoTodoRunner({store,sessions,write:async(op,args)=>{
+const runner=createNeoTodoRunner({ limits: () => ({ running: 99, perGroup: 99 }),store,sessions,write:async(op,args)=>{
   const receipt=await app.db.gateway.run(op,args);
   if((args as {method?:string}).method==='claim') record=false;
   return receipt;

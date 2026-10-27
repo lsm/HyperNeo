@@ -557,27 +557,34 @@ test('a cold reader waits for its handler before sending the accepted turn-range
   }
 });
 
-test('external Codex snapshots share the reader with status requests', async () => {
-  const { reader, workers } = fixture();
-  const status = reader.read(args);
-  const snapshot = reader.readCodexSnapshot('/synthetic-codex.sqlite', true);
-  await tick();
-  workers[0].reply(workers[0].requests[0], page);
-  await status;
-  await tick();
-  const rows = {
-    roots: [],
-    folders: [{ folder: '/synthetic', openCount: 3, archivedCount: 2, lastActiveAt: 5 }],
-    threads: [],
-  };
-  expect(workers[0].requests[1].args).toEqual({
-    codexSnapshot: { statePath: '/synthetic-codex.sqlite', includeClosed: true },
-  });
-  workers[0].reply(workers[0].requests[1], rows);
-  expect(await snapshot).toEqual(rows);
-  expect(workers).toHaveLength(1);
-  await reader.close();
-});
+test.each([undefined, '10000000'])(
+  'external Codex snapshots share the reader with status requests (prefix=%s)',
+  async (idPrefix) => {
+    const { reader, workers } = fixture();
+    const status = reader.read(args);
+    const snapshot = reader.readCodexSnapshot('/synthetic-codex.sqlite', true, idPrefix);
+    await tick();
+    workers[0].reply(workers[0].requests[0], page);
+    await status;
+    await tick();
+    const rows = {
+      roots: [],
+      folders: [{ folder: '/synthetic', openCount: 3, archivedCount: 2, lastActiveAt: 5 }],
+      threads: [],
+    };
+    expect(workers[0].requests[1].args).toEqual({
+      codexSnapshot: {
+        statePath: '/synthetic-codex.sqlite',
+        includeClosed: true,
+        ...(idPrefix ? { idPrefix } : {}),
+      },
+    });
+    workers[0].reply(workers[0].requests[1], rows);
+    expect(await snapshot).toEqual(rows);
+    expect(workers).toHaveLength(1);
+    await reader.close();
+  }
+);
 
 test('a memory daemon can read an external file off main and close that reader', async () => {
   const worker = new TestWorker();

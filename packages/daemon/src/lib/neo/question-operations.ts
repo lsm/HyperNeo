@@ -1,3 +1,5 @@
+import { neoTodoDependencyNodes, neoTodoReady } from './todo-dependencies.ts';
+import { neoTodoStalledCard } from './todo-runner.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { WorkRefSchema, type WorkRef } from '../drivers/types.ts';
@@ -110,9 +112,13 @@ export function createNeoWorkerQuestionWriter(
             rejection = 'ask_settled: this ask is no longer open.';
             return null;
           }
-          const existing = store
+          const open = store
             .listQuestions(todo.askId)
             .find((q) => q.todoId === todo.id && q.state === 'open');
+          const daemonCard = open?.text === neoTodoStalledCard(todo);
+          if (open && daemonCard)
+            store.retireQuestion(open, 'its worker asked its own question', null, Date.now());
+          const existing = daemonCard ? null : open;
           const card =
             existing ??
             store.askQuestion(
@@ -703,18 +709,41 @@ export function createNeoQuestionOperations(
     .pipe(
       async (answered: { question: NeoQuestion; ask: NeoAsk }): Promise<QuestionReceipt> => {
         const refused: string[] = [];
-        if (answered.question.kind === 'start')
-          for (const todoId of [answered.question.answer ?? []].flat()) {
-            const started = await start(todoId);
-            if (!started.ok)
-              refused.push(`${store.getTodo(todoId)?.title ?? todoId}: ${started.reason}`);
-          }
+        const ticked =
+          answered.question.kind === 'start' ? [answered.question.answer ?? []].flat() : [];
+        const waiting = ticked.filter(
+          (id) => !neoTodoReady(store.listFamilyTodos(answered.ask.id), id)
+        );
+        for (const todoId of ticked.filter((id) => !waiting.includes(id))) {
+          const started = await start(todoId);
+          if (!started.ok)
+            refused.push(`${store.getTodo(todoId)?.title ?? todoId}: ${started.reason}`);
+        }
         await told(
           answered.ask,
           answered.question,
           [
             neoQuestionAnsweredNote(answered.question, store.listTodos(answered.ask.id)),
             ...(refused.length ? [`These did not start: ${refused.join(' ')}`] : []),
+            ...(waiting.length
+              ? [
+                  `Waiting for earlier steps: ${waiting.map((id) => store.getTodo(id)?.title ?? id).join(', ')}.`,
+                ]
+              : []),
+            ...waiting.flatMap((id) => {
+              const family = store.listFamilyTodos(answered.ask.id);
+              const held = (
+                neoTodoDependencyNodes(family).find((node) => node.id === id)?.dependsOn ?? []
+              )
+                .map((dep) => family.find((todo) => todo.id === dep))
+                .filter((todo) => todo?.blockedBy === 'held')
+                .map((todo) => todo!.title);
+              return held.length
+                ? [
+                    `${store.getTodo(id)?.title ?? id} waits for held steps: ${held.join(', ')}. Ask the human whether to release them (neo.todo.edit hold: null).`,
+                  ]
+                : [];
+            }),
           ].join('\n')
         );
         await deliverAnswers(answered.question.id);

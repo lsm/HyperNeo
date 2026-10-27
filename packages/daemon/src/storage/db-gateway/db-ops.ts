@@ -1,3 +1,7 @@
+import { turnVectorWrites } from '../turn-vectors.ts';
+import { taskSchedulePauseWrites } from '../repositories/task-schedule-pause-write.ts';
+import { taskScheduleDeleteWrites } from '../repositories/task-schedule-delete-write.ts';
+import { neoPublicationWrites } from '../repositories/neo-publication-repository.ts';
 import {
   neoAskSettlementReads,
   neoAskSettlementWrites,
@@ -5,6 +9,11 @@ import {
 import { neoTodoMutationReads } from '../repositories/neo-todo-mutation-planning.ts';
 import { neoTodoMutations } from '../repositories/neo-todo-mutation-commit.ts';
 import { neoTodoRunnerWrites } from '../repositories/neo-todo-runner-state.ts';
+import {
+  neoSessionTrackWrites,
+  neoSessionTrackRootRead,
+} from '../repositories/neo-session-track-write.ts';
+import { neoTodoAddWrites } from '../repositories/neo-todo-add-write.ts';
 import { globalSettingsWrites } from '../repositories/global-settings-writes.ts';
 import {
   codingPollPageReads,
@@ -44,9 +53,9 @@ import {
 } from '../../lib/external-events/session-external-event-store.ts';
 import { sdkMessageWrites } from '../repositories/sdk-message-writes.ts';
 import { claudeDesktopOutboxWrites } from '../repositories/claude-desktop-outbox-repository.ts';
-import { codingLedgerWrites } from '../../lib/neo/packs/coding/pr-ledger.ts';
+import { codingLedgerReads, codingLedgerWrites } from '../../lib/neo/packs/coding/pr-ledger.ts';
 import { codingAssignmentWrites } from '../../lib/neo/packs/coding/assignments.ts';
-import { codingSweepWrites } from '../../lib/neo/packs/coding/pr-sweep.ts';
+import { codingSweepReads, codingSweepWrites } from '../../lib/neo/packs/coding/pr-sweep.ts';
 import { codingTodoPrWrites } from '../../lib/neo/packs/coding/todo-prs.ts';
 import { codingDeliveryWrites } from '../../lib/neo/packs/coding/delivery-facts.ts';
 import {
@@ -117,14 +126,33 @@ import { sessionProjectionReads } from '../repositories/session-projection-read.
 import { singleMessageReads } from '../repositories/sdk-single-message-read.ts';
 import { messageCountReads } from '../repositories/sdk-message-count-read.ts';
 import { codingUnownedWrites } from '../../lib/neo/packs/coding/unowned-db.ts';
+import { sessionExportReads } from '../repositories/session-export-read.ts';
+import { neoPublicationEditWrites } from '../repositories/neo-publication-edit-writes.ts';
+import { neoProjectMoveWrites } from '../repositories/neo-project-move-writes.ts';
+import { codingPrEventReads } from '../../lib/neo/packs/coding/pr-event-routing-db.ts';
+import { codingMergeReceiptWrites } from '../../lib/neo/packs/coding/merge-receipt-db.ts';
+import {
+  codingSmokeReads,
+  codingSmokeWrites,
+} from '../../lib/neo/packs/coding/smoke-admission-db.ts';
+import { sessionScheduleCreateWrites } from '../repositories/session-schedule-create-write.ts';
+import { workflowRunPinWrites } from '../repositories/workflow-run-pin-write.ts';
+import { workflowDeleteWrites } from '../repositories/workflow-delete-write.ts';
+import { codingStageTargetReads } from '../../lib/neo/packs/coding/stage-target-db.ts';
+import { codingLedgerPollReads } from '../../lib/neo/packs/coding/ledger-poll-db.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    turnVectorWrites,
+    neoPublicationWrites,
     neoAskSettlementReads,
     neoAskSettlementWrites,
     neoTodoMutationReads,
     neoTodoMutations,
     neoTodoRunnerWrites,
+    neoSessionTrackWrites,
+    neoSessionTrackRootRead,
+    neoTodoAddWrites,
     codingPollPageReads,
     codingPollPageWrites,
     codingConnectorIdentityReads,
@@ -172,10 +200,12 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     createStandaloneTask,
     transitionStandaloneTask,
     editStandaloneTaskWithDependencies,
+    codingLedgerReads,
     codingLedgerWrites,
     codingAssignmentWrites,
     codingTodoPrWrites,
     codingDeliveryWrites,
+    codingSweepReads,
     codingSweepWrites,
     claudeDesktopOutboxWrites,
     recordOperationRefusal,
@@ -215,5 +245,19 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     singleMessageReads,
     messageCountReads,
     codingUnownedWrites,
+    sessionExportReads,
+    neoPublicationEditWrites,
+    neoProjectMoveWrites,
+    codingPrEventReads,
+    codingMergeReceiptWrites,
+    codingSmokeReads,
+    codingSmokeWrites,
+    sessionScheduleCreateWrites,
+    workflowRunPinWrites,
+    workflowDeleteWrites,
+    taskSchedulePauseWrites,
+    taskScheduleDeleteWrites,
+    codingStageTargetReads,
+    codingLedgerPollReads,
   ].map((op) => [op.name, op])
 );

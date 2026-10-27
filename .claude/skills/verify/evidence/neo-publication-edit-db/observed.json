@@ -1,0 +1,55 @@
+{
+  "verified": true,
+  "redRegressionCommit": "f2d9fa522502799dae1cad5960405acf761a4d92",
+  "baselineFolders": {
+    "bun": "bun-before-3",
+    "deno": "deno-before-1"
+  },
+  "baselineMainSql": {
+    "bun": 75,
+    "deno": 75
+  },
+  "productionLines": 55,
+  "targetEditMainSql": 0,
+  "consumer": "Actual daemon registered MCP edit + public WebSocket publication read",
+  "limitation": "Public reader SQL excluded from admission instrumentation; no GUI, model, card-reply append or live daemon",
+  "initialHarnessAttempts": "First two Bun baseline probes had incorrect expectations for existing conflict precedence and MCP explanatory refusal text; retained as failed harness evidence, not passing proof. Corrected baselines named above pass.",
+  "proofBinding": {
+    "testedCodeCommit": "2587d1635ed242c4ba1e1f7a0146be40ec2c4431",
+    "testedGitTree": "27ceeb8d26cc2c62f2f982a2f208a9bb54c3210a",
+    "applicationTrees": {
+      "packages": "5a201e363cdffa0cf3327b543219009f7509427e",
+      "scripts": "586a99d85998c27fffeb05673dad08e51048e25c"
+    },
+    "proofBlobs": {
+      ".claude/skills/verify/neo-publication-edit-db.ts": "d28159027c433a1b00564e4e8f6c58fba7ec6839",
+      ".claude/skills/verify/neo-publication-edit-db-run.py": "f560c2f4ef0c4eda586e5ca9d5055b61b807b378",
+      ".claude/skills/verify/neo-publication-edit-proof-binding.ts": "79edddbbaefa497231cbf7463299cb1425f89383"
+    },
+    "runs": {
+      "bun": "bun-verify-3",
+      "deno": "deno-verify-2"
+    },
+    "postProofChangePolicy": "evidence-and-journey-only"
+  },
+  "reviewRegressionCommit": "6deb34b85114039d9bfe6fa8e44fc963e20d0a40",
+  "reviewFixCommit": "67c39d44b5665886ed652550076a3f78e6f1b277",
+  "timestampRegressionEvidence": "bun-verify-1: actual MCP receipt predates writer release by 37ms; expected failure retained",
+  "timestampFixedEvidence": {
+    "bun": "bun-verify-3",
+    "deno": "deno-verify-2"
+  },
+  "baseSync": {
+    "mergedDev": "7a13d7a72147047d8b98c1aed855c22894533838",
+    "sourceCommit": "2587d1635ed242c4ba1e1f7a0146be40ec2c4431",
+    "previousApprovedHead": "3cc0617225c897ab0a5beafd447e50d3848fac68",
+    "conflict": "db-ops append-only registrations; retain export reader and publication writer entries",
+    "focusedTestsPassed": 83,
+    "fullCheck": "passed",
+    "runtimeProofs": {
+      "bun": "bun-verify-3",
+      "deno": "deno-verify-2"
+    },
+    "productionLines": 55
+  }
+}

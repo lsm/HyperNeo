@@ -1,0 +1,46 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/coding-smoke-writer.test.ts:
+64 |     const prepare = main.prepare.bind(main),
+65 |       fault = readOnly
+66 |         ? null
+67 |         : spyOn(main, 'prepare').mockImplementation(((sql: string) => {
+68 |             if (/pack_facts|pack_coding_delivery_facts/.test(sql))
+69 |               throw new Error('Smoke admission SQL on main');
+                             ^
+error: Smoke admission SQL on main
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/coding-smoke-writer.test.ts:69:25)
+      at read (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/src/lib/neo/packs/coding/assignments.ts:44:8)
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/src/lib/neo/packs/coding/smoke-operation.ts:35:40)
+      at executePipe (/Users/lsm/focus/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:574:16)
+      at continuePipeline (/Users/lsm/focus/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:730:34)
+      at next (/Users/lsm/focus/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:687:5)
+      at runPipeline (/Users/lsm/focus/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:762:2)
+      at <anonymous> (/Users/lsm/focus/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:823:4)
+      at new Promise (1:11)
+(fail) smoke admission reads and records on the writer with guarded main [10.03ms]
+90 |       operation.execute(
+91 |         { todoId: 'todo', url, head, smoke: value },
+92 |         { source: 'rpc', principal: 'local' }
+93 |       );
+94 |     try {
+95 |       expect(await call()).toEqual({ accepted: true });
+                                ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "accepted": true,
++   "accepted": false,
++   "reason": "stage_assignment_mismatch",
+  }
+
+- Expected  - 1
++ Received  + 2
+
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/coding-smoke-writer.test.ts:95:28)
+(fail) smoke admission reads and records on the writer with read-only main [4.41ms]
+
+ 0 pass
+ 2 fail
+ 5 expect() calls
+Ran 2 tests across 1 file. [108.00ms]

@@ -71,6 +71,7 @@ function fixture(legacyCheck = false, legacyResult?: NeoTodoCheckResult) {
         createdAt: 1,
       });
     return createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
       write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions,

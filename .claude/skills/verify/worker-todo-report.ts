@@ -1,3 +1,4 @@
+import { resolveNeoTodoTarget } from '../../../packages/daemon/src/lib/neo/todo-target.ts';
 import { createCodingPackTables } from '../../../packages/daemon/src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { gatewayFor } from '../../../packages/daemon/src/storage/db-gateway/db-gateway.ts';
 import { strict as assert } from 'node:assert';
@@ -35,8 +36,8 @@ const adapter=createHyperneoAdapter({db:()=>db,machine:'synthetic',searchChats:a
  handoff:async(_id,message,_from,uuid)=>{receipt={executionId:'worker',inputId:uuid};put(uuid,'user',message,10);put('human','user','Mid-turn human clarification',15);put('report','assistant',report,null);db.prepare('INSERT INTO sdk_message_bodies(seq,sdk_message) SELECT seq,sdk_message FROM sdk_messages WHERE id=?').run('report');db.prepare('UPDATE sdk_messages SET sdk_message=? WHERE id=?').run('{"type":"assistant"}','report');put('terminal','result','',20);put('other','user','A separate later turn',30);put('other-result','result','UNRELATED_LATER_REPORT',40);original=digest();return {kind:'enqueued',id:'synthetic-handoff'};},
  sessions:{create:async()=>{throw new Error('unused');},resolveModel:async()=>null,model:()=>null,chooseWorktree:async()=>{},announce:()=>{},interrupt:()=>false},neoFolder:()=>join(run,'data/Neo'),folderExists:()=>true,makeFolder:()=>{},homeDir:join(run,'home')});
 let registry:ReturnType<typeof createOperationRegistry>;const notes:string[]=[];const errors:string[]=[];
-const runner=createNeoTodoRunner({ write: gatewayFor(db).run.bind(gatewayFor(db)),store,sessions,invoke:(caller,name,input)=>invokeOperation(registry,name,input,caller),packs:()=>[],tell:async(_ask,_todo,note)=>{notes.push(note);},changed:()=>{}});
-registry=createOperationRegistry([...createWorkVerbOperations({adapters:()=>[adapter],daemonName:'synthetic',remote:{list:()=>[],invoke:async()=>{throw new Error('no remote');}}}),...createNeoTodoOperations(store,sessions,runner,()=>[])]);
+const runner=createNeoTodoRunner({ limits: () => ({ running: 99, perGroup: 99 }), write: gatewayFor(db).run.bind(gatewayFor(db)),store,sessions,invoke:(caller,name,input)=>invokeOperation(registry,name,input,caller),packs:()=>[],tell:async(_ask,_todo,note)=>{notes.push(note);},changed:()=>{}});
+registry=createOperationRegistry([...createWorkVerbOperations({adapters:()=>[adapter],daemonName:'synthetic',remote:{list:()=>[],invoke:async()=>{throw new Error('no remote');}}}),...createNeoTodoOperations(store,sessions,{...runner,resolveTarget:(ref)=>resolveNeoTodoTarget(ref,(name,input)=>invokeOperation(registry,name,input,{source:'internal',role:'neo'}))},()=>[])]);
 const results:string[]=[];let step=0;
 const strings=(value:unknown):string=>typeof value==='string'?value:Array.isArray(value)?value.map(strings).join('\n'):value&&typeof value==='object'&&'text'in value?strings(value.text):JSON.stringify(value);
 const object=(value:string)=>JSON.parse(value.slice(value.indexOf('{'),value.lastIndexOf('}')+1));

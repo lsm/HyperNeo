@@ -22,6 +22,8 @@ const todo = (id: string, patch: Partial<NeoTodoEntry> = {}): NeoTodoEntry => ({
   id,
   askId: 'ask',
   position: 0,
+  priority: 'normal',
+  dependsOn: null,
   title: `Todo ${id}`,
   doneWhen: 'PR 合进 main',
   check: null,
@@ -91,10 +93,10 @@ const entry = (patch: Partial<NeoAskEntry>): NeoAskEntry => ({
 });
 
 describe('NeoAskTodos', () => {
-  it('loads question text and todo bodies only after opening the summary', async () => {
+  it('loads todo bodies only after opening a summary without open questions', async () => {
     locale.value = 'en';
     const summary = entry({
-      summary: { todoCount: 1, questionCount: 1, openQuestionCount: 1 },
+      summary: { todoCount: 1, questionCount: 1, openQuestionCount: 0 },
       todos: [todo('one', { instruction: null })],
       questions: [],
     });
@@ -115,6 +117,92 @@ describe('NeoAskTodos', () => {
     fireEvent.click(app.getByRole('button', { name: 'Ship' }));
     expect(answer).toHaveBeenCalledWith('choice', ['Ship']);
   });
+  it('loads every open question above todos while the summary stays collapsed', async () => {
+    locale.value = 'en';
+    const summary = entry({
+      summary: { todoCount: 1, questionCount: 4, openQuestionCount: 2 },
+      todos: [todo('one', { instruction: null })],
+    });
+    const answer = vi.fn();
+    const load = vi.fn().mockResolvedValue({
+      ...summary,
+      summary: undefined,
+      questions: [
+        question('choice', { kind: 'choice', options: ['Ship', 'Wait'] }),
+        question('confirm', { kind: 'yesno', yesLabel: 'Proceed', noLabel: 'Stop' }),
+        question('old', { state: 'answered', answer: 'Old answer' }),
+        question('retired', { state: 'retired' }),
+      ],
+      todos: [todo('one', { report: 'Hidden worker report' })],
+    });
+    const app = render(<NeoAskTodos entry={summary} onAnswer={answer} onLoadDetails={load} />);
+    await waitFor(() => expect(app.getByRole('button', { name: 'Ship' })).toBeTruthy());
+    expect(load).toHaveBeenCalledExactlyOnceWith('ask');
+    expect(app.container.querySelector('[data-ask-details]')).toBeNull();
+    expect(app.queryByText('Hidden worker report')).toBeNull();
+    expect(app.queryByText('Question old')).toBeNull();
+    expect(app.queryByText('Question retired')).toBeNull();
+    expect(
+      [...app.container.querySelectorAll('[data-ask-question], [data-ask-todo]')].map(
+        (node) => node.getAttribute('data-ask-question') ?? node.getAttribute('data-ask-todo')
+      )
+    ).toEqual(['choice', 'confirm', 'one']);
+    fireEvent.click(app.getByRole('button', { name: 'Ship' }));
+    fireEvent.click(app.getByRole('button', { name: 'Proceed' }));
+    expect(answer.mock.calls).toEqual([
+      ['choice', ['Ship']],
+      ['confirm', 'yes'],
+    ]);
+    fireEvent.click(app.getByRole('button', { name: /Details$/ }));
+    fireEvent.click(app.getByRole('button', { name: /Details$/ }));
+    expect(app.getByRole('button', { name: 'Ship' })).toBeTruthy();
+    expect(app.getByRole('button', { name: 'Stop' })).toBeTruthy();
+    load.mockResolvedValueOnce({
+      ...summary,
+      summary: undefined,
+      ask: { ...summary.ask, updatedAt: 2 },
+      questions: [question('choice', { state: 'answered', answer: ['Ship'] })],
+    });
+    app.rerender(
+      <NeoAskTodos
+        entry={{
+          ...summary,
+          ask: { ...summary.ask, updatedAt: 2 },
+          summary: { todoCount: 1, questionCount: 1, openQuestionCount: 0 },
+        }}
+        onAnswer={answer}
+        onLoadDetails={load}
+      />
+    );
+    await waitFor(() => expect(app.queryByRole('button', { name: 'Ship' })).toBeNull());
+    expect(app.container.querySelector('[data-ask-details]')).toBeNull();
+  });
+
+  it('loads questions arriving on a later summary revision without expanding', async () => {
+    locale.value = 'en';
+    const summary = entry({ summary: { todoCount: 0, questionCount: 0, openQuestionCount: 0 } });
+    const load = vi.fn().mockResolvedValue({
+      ...summary,
+      summary: undefined,
+      questions: [question('new', { kind: 'choice', options: ['Continue', 'Pause'] })],
+    });
+    const app = render(<NeoAskTodos entry={summary} onAnswer={vi.fn()} onLoadDetails={load} />);
+    expect(load).not.toHaveBeenCalled();
+    app.rerender(
+      <NeoAskTodos
+        entry={{
+          ...summary,
+          ask: { ...summary.ask, updatedAt: 2 },
+          summary: { todoCount: 0, questionCount: 1, openQuestionCount: 1 },
+        }}
+        onAnswer={vi.fn()}
+        onLoadDetails={load}
+      />
+    );
+    await waitFor(() => expect(app.getByRole('button', { name: 'Continue' })).toBeTruthy());
+    expect(app.container.querySelector('[data-ask-details]')).toBeNull();
+  });
+
   it('copies a quote after expanding and reopening a collapsed card', async () => {
     locale.value = 'en';
     const copy = vi.spyOn(clipboard, 'copyToClipboard').mockResolvedValue(true);
@@ -1060,6 +1148,31 @@ describe('done todos on a card', () => {
     [...app.container.querySelectorAll('[data-ask-todo]')].map((row) =>
       row.getAttribute('data-ask-todo')
     );
+
+  it.each([2, 5])(
+    'folds %i completed todos back down and reopens the cached rows',
+    async (count) => {
+      const onLoadDone = vi.fn();
+      const app = render(
+        <NeoAskTodos
+          entry={entry({
+            todos: [todo('a'), ...Array.from({ length: count }, (_, i) => done(`d${i}`))],
+            doneCount: count,
+          })}
+          onAnswer={vi.fn()}
+          onLoadDone={onLoadDone}
+        />
+      );
+      if (count > 3)
+        fireEvent.click(app.getByRole('button', { name: `${count} done — show more` }));
+      expect(rows(app)).toHaveLength(count + 1);
+      fireEvent.click(app.getByRole('button', { name: 'Hide done todos' }));
+      expect(rows(app)).toEqual(['a']);
+      fireEvent.click(app.getByRole('button', { name: `${count} done — show more` }));
+      expect(rows(app)).toHaveLength(count + 1);
+      expect(onLoadDone).not.toHaveBeenCalled();
+    }
+  );
 
   it('shows up to three done todos and folds more behind one control', () => {
     const few = render(

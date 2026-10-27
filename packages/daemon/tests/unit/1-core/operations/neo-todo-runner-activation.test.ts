@@ -35,6 +35,7 @@ describe('Runtime runner commits before external effects', () => {
       return result;
     };
     runner = createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
       store,
       sessions,
       ...{ write },

@@ -1,3 +1,4 @@
+import { codingLedgerPollReads } from './ledger-poll-db.ts';
 import { isRateLimitError } from '../../../session/rate-limit-detector.ts';
 import { codingCanonicalRepo, codingRepoWatched, codingWatchedRepos } from './watched-repos.ts';
 import { posix } from 'node:path';
@@ -358,8 +359,82 @@ export class CodingPrLedgerRepository {
     >;
   }
 
+  pollSnapshot(repos: readonly string[]) {
+    const last = this.lastReads();
+    return {
+      order: repos
+        .filter((repo) => this.watches(repo))
+        .sort(
+          (a, b) => (last.get(this.canonicalRepo(a)) ?? 0) - (last.get(this.canonicalRepo(b)) ?? 0)
+        ),
+      pending: this.list()
+        .filter((row) => row.state === 'approved_pending')
+        .map(({ repo, number, head, readAt }) => ({ repo, number, head, readAt })),
+    };
+  }
+
+  pollContext(repo: string) {
+    return { watched: this.watches(repo), health: this.health.read(repo) };
+  }
+
+  pollSnapshotCurrent(repos: readonly string[]) {
+    return gatewayFor(this.db).call(codingLedgerPollReads, 'snapshot', repos);
+  }
+
+  pollContextCurrent(repo: string) {
+    return gatewayFor(this.db).call(codingLedgerPollReads, 'context', repo);
+  }
+
+  observePoll(
+    repo: string,
+    raw: unknown,
+    now: number,
+    observedAt: number,
+    seen: readonly string[],
+    pending: ReturnType<CodingPrLedgerRepository['pollSnapshot']>['pending']
+  ) {
+    if (!this.watches(repo))
+      return { canonical: null, transitions: [] as CodingPrTransition[], warning: null };
+    const before = this.health.read(repo);
+    const planned = planCodingLedgerRead(raw, now, (canonical) => this.policy(canonical));
+    const cycle = planLedgerHealth(raw, planned !== null, now);
+    if (planned) this.recordAlias(repo.toLowerCase(), planned.repo);
+    const canonical = this.canonicalRepo(repo);
+    const health = this.recordHealth(repo, {
+      ...cycle,
+      pending: pending.filter((row) => row.repo === canonical),
+    });
+    if (planned && planned.repo !== repo.toLowerCase()) this.dropRepo(repo.toLowerCase());
+    const transitions =
+      planned && !seen.includes(planned.repo)
+        ? this.replace(planned.repo, planned.rows, now, observedAt)
+        : [];
+    return {
+      canonical: planned?.repo ?? null,
+      transitions,
+      warning:
+        health.misses === CODING_LEDGER_WARN_SKIPS && before?.misses !== health.misses
+          ? health.reason
+          : null,
+    };
+  }
+
+  read(method: 'lastReads'): Promise<ReturnType<CodingPrLedgerRepository['lastReads']>>;
+  read(method: 'list'): Promise<ReturnType<CodingPrLedgerRepository['list']>>;
+  read(method: 'lastReads' | 'list') {
+    return gatewayFor(this.db).call(codingLedgerReads, method);
+  }
+
   recordStage(fact: CodingStageFact): boolean {
     return this.stageFacts.record(fact);
+  }
+
+  readHealthCurrent(repo: string) {
+    return gatewayFor(this.db).call(codingLedgerReads, 'readHealth', repo);
+  }
+
+  readHealth(repo: string) {
+    return this.health.read(repo);
   }
 
   recordHealth(repo: string, cycle: RepoHealthCycle) {
@@ -807,39 +882,28 @@ export async function reconcileCodingPrLedger(
 ): Promise<CodingPrTransition[]> {
   const seen = new Set<string>();
   const transitions: CodingPrTransition[] = [];
-  const last = ledger.lastReads();
-  const pending = ledger.list().filter((row) => row.state === 'approved_pending');
-  const pendingFor = (repo: string) => {
-    const canonical = ledger.canonicalRepo(repo);
-    return pending.filter((row) => row.repo === canonical);
-  };
-  const order = repos
-    .filter((repo) => ledger.watches(repo))
-    .sort(
-      (a, b) => (last.get(ledger.canonicalRepo(a)) ?? 0) - (last.get(ledger.canonicalRepo(b)) ?? 0)
-    );
+  const { order, pending } = await ledger.pollSnapshotCurrent(repos);
   for (const repo of order) {
-    if (!ledger.watches(repo)) continue;
-    const before = ledger.health.read(repo);
+    const context = await ledger.pollContextCurrent(repo);
+    if (!context.watched) continue;
     const observedAt = Date.now();
-    const raw = await read(repo, before?.quota);
-    if (!ledger.watches(repo)) continue;
-    const planned = planCodingLedgerRead(raw, now, (canonical) => ledger.policy(canonical));
-    const cycle = planLedgerHealth(raw, planned !== null, now);
-    if (planned) await ledger.write('recordAlias', repo.toLowerCase(), planned.repo);
-    const health = await ledger.write('recordHealth', repo, {
-      ...cycle,
-      pending: pendingFor(repo),
-    });
-    if (health.misses === CODING_LEDGER_WARN_SKIPS && before?.misses !== health.misses)
-      log.warn('PR ledger coverage missed three eligible cycles', { repo, reason: health.reason });
-    if (planned && planned.repo !== repo.toLowerCase())
-      await ledger.write('dropRepo', repo.toLowerCase());
-    if (planned && !seen.has(planned.repo))
-      transitions.push(
-        ...(await ledger.write('replace', planned.repo, planned.rows, now, observedAt))
-      );
-    if (planned) seen.add(planned.repo);
+    const raw = await read(repo, context.health?.quota);
+    const observation = await ledger.write(
+      'observePoll',
+      repo,
+      raw,
+      now,
+      observedAt,
+      [...seen],
+      pending
+    );
+    if (observation.warning)
+      log.warn('PR ledger coverage missed three eligible cycles', {
+        repo,
+        reason: observation.warning,
+      });
+    transitions.push(...observation.transitions);
+    if (observation.canonical) seen.add(observation.canonical);
   }
   await ledger.write('prune', [...repos, ...seen], now);
   await ledger.write('pruneSessions', now);
@@ -851,6 +915,7 @@ type CodingLedgerWrite =
   | 'acceptTerminalEvent'
   | 'acceptHealthNotice'
   | 'recordHealth'
+  | 'readHealth'
   | 'recordStage'
   | 'recordAlias'
   | 'dropRepo'
@@ -858,7 +923,8 @@ type CodingLedgerWrite =
   | 'prune'
   | 'pruneSessions'
   | 'assignOwners'
-  | 'observeSessions';
+  | 'observeSessions'
+  | 'observePoll';
 
 export const codingLedgerWrites = defineRepositoryOp<CodingPrLedgerRepository, CodingLedgerWrite>(
   'coding.ledgerWrites',
@@ -868,6 +934,7 @@ export const codingLedgerWrites = defineRepositoryOp<CodingPrLedgerRepository, C
     'acceptTerminalEvent',
     'acceptHealthNotice',
     'recordHealth',
+    'readHealth',
     'recordStage',
     'recordAlias',
     'dropRepo',
@@ -876,5 +943,13 @@ export const codingLedgerWrites = defineRepositoryOp<CodingPrLedgerRepository, C
     'pruneSessions',
     'assignOwners',
     'observeSessions',
+    'observePoll',
   ]
+);
+
+export const codingLedgerReads = defineRepositoryOp(
+  'coding.ledger.read',
+  'read',
+  CodingPrLedgerRepository,
+  ['lastReads', 'list', 'readHealth'] as const
 );

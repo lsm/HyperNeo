@@ -1,4 +1,4 @@
-import { buildFtsQuery, messageSearchPolicy } from './message-search.ts';
+import { buildFtsQuery, buildShortSearchPattern, messageSearchPolicy } from './message-search.ts';
 import type { Database as BunDatabase } from './sqlite-compat.ts';
 import { cosineSimilarity } from './vector-similarity.ts';
 
@@ -10,6 +10,14 @@ const VECTOR_TOP_TURNS = 200;
 const MIN_SIMILARITY = 0.3;
 const SEMANTIC_SNIPPET_CHARS = 240;
 const EXACT_MATCH_BONUS = 100;
+
+export function readSearchRows(
+  db: BunDatabase,
+  sql: string,
+  bindings: readonly (string | number)[]
+): unknown[] {
+  return db.prepare(sql).all(...bindings) as unknown[];
+}
 
 export interface WorkChatSnippet {
   match: 'exact' | 'semantic';
@@ -111,14 +119,14 @@ export function vectorWorkChats(
     kinds.flatMap((kind) => scan.all(kind, model, vector.length) as ScannedVectorTurn[])
   );
   if (top.length === 0) return [];
-  const rows = db
-    .prepare(
-      `SELECT id, kind, COALESCE(task_id, session_id) AS chat, session_id AS sessionId, task_id AS taskId,
+  const rows = readSearchRows(
+    db,
+    `SELECT id, kind, COALESCE(task_id, session_id) AS chat, session_id AS sessionId, task_id AS taskId,
          COALESCE(message_id, source_id) AS messageId, COALESCE(message_type, kind) AS role,
          timestamp AS at, body FROM message_search_content
-        WHERE id IN (${top.map(() => '?').join(', ')})`
-    )
-    .all(...top.map((row) => row.id)) as VectorTurnRow[];
+        WHERE id IN (${top.map(() => '?').join(', ')})`,
+    top.map((row) => row.id)
+  ) as VectorTurnRow[];
   return groupVectorTurns(top, rows, limit);
 }
 
@@ -189,15 +197,17 @@ function keywordWorkChats(
   kinds: readonly WorkChatKind[]
 ): ChatCandidate[] {
   const ftsQuery = buildFtsQuery(query);
-  if (!ftsQuery) return [];
+  const short = !ftsQuery && buildShortSearchPattern(query);
+  if (!ftsQuery && !short) return [];
   const policy = messageSearchPolicy(tables);
   const rows = db
     .prepare(
       `WITH matched AS (
-         SELECT message_search_fts.rowid AS id, bm25(message_search_fts) AS score
-           FROM message_search_fts JOIN message_search_content mk ON mk.id = message_search_fts.rowid
-          WHERE message_search_fts MATCH ? AND ${kindFilter('mk.kind', kinds)}
-          ORDER BY message_search_fts.rowid DESC LIMIT ${MATCH_CAP}
+         SELECT mk.id, ${short ? '0' : 'bm25(message_search_fts)'} AS score
+           FROM message_search_content mk
+           ${short ? '' : 'JOIN message_search_fts ON mk.id = message_search_fts.rowid'}
+          WHERE ${short ? `mk.title LIKE ? ESCAPE '\\'` : 'message_search_fts MATCH ?'} AND ${kindFilter('mk.kind', kinds)}
+          ORDER BY mk.id DESC LIMIT ${MATCH_CAP}
        ),
        hits AS (
          SELECT m.id, m.score, msc.kind, COALESCE(msc.task_id, msc.session_id) AS chat,
@@ -221,17 +231,23 @@ function keywordWorkChats(
         ORDER BY best, lastHitAt DESC, chat, rn
         LIMIT ?`
     )
-    .all(ftsQuery, limit * SNIPPETS_PER_CHAT) as WorkChatHitRow[];
+    .all(short || ftsQuery, limit * SNIPPETS_PER_CHAT) as WorkChatHitRow[];
   if (rows.length === 0) return [];
   const texts = new Map(
     (
       db
         .prepare(
-          `SELECT rowid AS id, snippet(message_search_fts, 1, '', '', '…', 16) AS text
+          short
+            ? `SELECT id, substr(title, 1, 240) AS text FROM message_search_content
+                WHERE id IN (${rows.map(() => '?').join(', ')}) AND title LIKE ? ESCAPE '\\'`
+            : `SELECT rowid AS id, snippet(message_search_fts, 1, '', '', '…', 64) AS text
              FROM message_search_fts
             WHERE rowid IN (${rows.map(() => '?').join(', ')}) AND message_search_fts MATCH ?`
         )
-        .all(...rows.map((row) => row.id), ftsQuery) as Array<{ id: number; text: string | null }>
+        .all(...rows.map((row) => row.id), short || ftsQuery) as Array<{
+        id: number;
+        text: string | null;
+      }>
     ).map((row) => [row.id, row.text ?? ''])
   );
   const chats = new Map<string, ChatCandidate>();

@@ -44,19 +44,25 @@ const call = async (name: 'edit' | 'recent', change: unknown, who = caller()) =>
 beforeEach(() => {
   db = new Database(':memory:');
   createNeoPublicationTable(db);
+  db.exec(
+    'CREATE TABLE neo_session_bindings (session_id TEXT PRIMARY KEY, concern_id TEXT, kind TEXT)'
+  );
+  for (const binding of [root, holder])
+    db.prepare('INSERT INTO neo_session_bindings VALUES (?, ?, ?)').run(
+      binding.sessionId,
+      binding.projectId,
+      binding.kind
+    );
   publications = new NeoPublicationRepository(db);
   publications.append(input);
   notified = 0;
   registry = createOperationRegistry(
-    createNeoPublicationChangeOperations(
-      {
-        getBinding: (id) => [root, holder].find((item) => item.sessionId === id) ?? null,
-        getRootBinding: () => root,
-        publications,
-        notify: () => notified++,
-      },
-      () => new Date('2026-10-16T10:00:00.000Z')
-    )
+    createNeoPublicationChangeOperations({
+      getBinding: (id) => [root, holder].find((item) => item.sessionId === id) ?? null,
+      getRootBinding: () => root,
+      publications,
+      notify: () => notified++,
+    })
   );
 });
 afterEach(() => db.close());

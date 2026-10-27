@@ -1,4 +1,7 @@
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { taskSchedulePauseWrites } from '../../storage/repositories/task-schedule-pause-write.ts';
+import { taskScheduleDeleteWrites } from '../../storage/repositories/task-schedule-delete-write.ts';
 import type {
   SpaceTaskPriority,
   TaskSchedule,
@@ -186,6 +189,10 @@ export class ScheduleService {
     return scheduleRepo.getById(scheduleId) as TaskSchedule;
   }
 
+  pauseScheduleAsync(scheduleId: string): Promise<TaskSchedule> {
+    return gatewayFor(this.deps.db).call(taskSchedulePauseWrites, 'pause', scheduleId);
+  }
+
   pauseSchedule(scheduleId: string): TaskSchedule {
     const { scheduleRepo, jobQueue } = this.deps;
     const schedule = scheduleRepo.getById(scheduleId);
@@ -248,6 +255,10 @@ export class ScheduleService {
       return fresh;
     }
     return scheduleRepo.getById(scheduleId) as TaskSchedule;
+  }
+
+  deleteScheduleAsync(scheduleId: string): Promise<boolean> {
+    return gatewayFor(this.deps.db).call(taskScheduleDeleteWrites, 'delete', scheduleId);
   }
 
   deleteSchedule(scheduleId: string): boolean {

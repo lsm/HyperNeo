@@ -52,6 +52,7 @@ import type { QueryLike } from './query-like.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
 import {
   decideQueryRetry,
+  decideProviderTerminalCategory,
   isClaudeAuthenticationError,
   planTurnEndedGeneration,
   type QueryRetryEnvironment,
@@ -348,6 +349,7 @@ interface RetryTeardownOptions {
   snapshotLastConsumed?: boolean;
   notice?: string;
   guardAfterExit?: boolean;
+  guardAfterBackoff?: boolean;
   restartQueue?: boolean;
   requeueConsumedList?: boolean;
   requeueFedPrompts?: boolean;
@@ -770,6 +772,7 @@ export class QueryRunner {
     let deadReason: 'process_exit' | 'stream_closed' | 'backstop' | null = null;
     let removeFlagSettingsFile: (() => void) | undefined;
     let episodeId: string | undefined;
+    const interruptEpoch = messageQueue.getUserInterruptEpoch?.();
     const owns = () =>
       this.ctx.getQueryGeneration() === queryGeneration && !this.ctx.isCleaningUp();
     const live = () => attemptToken.isLive() && owns();
@@ -1476,27 +1479,12 @@ export class QueryRunner {
       const cancelled = isAbortError || stateManager.getState().status === 'interrupted';
       const isQueryInterrupted =
         cancelled || this.ctx.queryAbortController?.signal.aborted === true;
+      let episode: Session['metadata']['queryFailureEpisode'];
       if (!cancelled && owns()) {
-        const episode =
+        episode =
           episodeId && !(error instanceof QueryFailureCapError)
             ? await this.failures.failure(errorMessage, episodeId)
             : session.metadata.queryFailureEpisode;
-        if (episode?.failed) {
-          const terminal = new QueryFailureCapError(
-            `Query stopped after ${episode.failures} failures: ${episode.error}. Use Retry to recover.`
-          );
-          messageQueue.clear(terminal);
-          await errorManager.handleError(
-            session.id,
-            terminal,
-            ErrorCategory.SYSTEM,
-            terminal.message,
-            stateManager.getState(),
-            { queryFailureEpisode: episode },
-            () => owns() && session.metadata.queryFailureEpisode?.id === episode.id
-          );
-          return;
-        }
       }
       const isStartupTimeout = errorMessage.includes('SDK startup timeout');
       const isConversationNotFound = errorMessage.includes('No conversation found');
@@ -1550,6 +1538,22 @@ export class QueryRunner {
         recoveryState,
       };
       const routeDecision = decideQueryRetry({ errorSignal: retrySignal, env: retryEnv });
+      if (episode?.failed) {
+        const terminal = new QueryFailureCapError(
+          `Query stopped after ${episode.failures} failures: ${episode.error}. Use Retry to recover.`
+        );
+        messageQueue.clear(terminal);
+        await errorManager.handleError(
+          session.id,
+          terminal,
+          decideProviderTerminalCategory(retrySignal, retryEnv),
+          terminal.message,
+          stateManager.getState(),
+          { queryFailureEpisode: episode },
+          () => owns() && session.metadata.queryFailureEpisode?.id === episode.id
+        );
+        return;
+      }
       const queueRunningAtEntry = messageQueue.isRunning();
 
       if (routeDecision.route.action === 'expected_recovery_noop') {
@@ -1627,7 +1631,7 @@ export class QueryRunner {
           }
           return (
             `⚠️ The AI session is slow to start — no response after ` +
-            `${Math.round(inactivityBackstopMs / 1000)}s. Retrying once…`
+            `${Math.round(inactivityBackstopMs / 1000)}s. Retrying…`
           );
         })();
         logger.warn('Auto-retrying query after startup timeout (1 retry).');
@@ -1759,21 +1763,25 @@ export class QueryRunner {
         });
       }
 
-      messageQueue.clear(
-        cancelled ? undefined : error instanceof Error ? error : new Error(errorMessage)
-      );
-
       if (!isAbortError) {
         const processingState = stateManager.getState();
         let decision = routeDecision;
 
         if (decision.route.action === 'rate_limit_handoff') {
-          const handoffAccepted = !!(await this.ctx.onRateLimitExhausted?.(
-            errorMessage,
-            this._lastConsumedUserMessage,
-            retrySignal.rateLimitHint ?? undefined,
-            queryGeneration
-          ));
+          let handoffAccepted = false;
+          try {
+            handoffAccepted = !!(await this.ctx.onRateLimitExhausted?.(
+              errorMessage,
+              this._lastConsumedUserMessage,
+              retrySignal.rateLimitHint ?? undefined,
+              queryGeneration
+            ));
+          } catch (handoffError) {
+            if (owns())
+              messageQueue.clear(error instanceof Error ? error : new Error(errorMessage));
+            throw handoffError;
+          }
+          if (!owns()) return;
           recoveryState.rateLimitCooldownScheduled = handoffAccepted;
           decision = decideQueryRetry({
             errorSignal: retrySignal,
@@ -1786,6 +1794,44 @@ export class QueryRunner {
           recoveryState.rateLimitCooldownScheduled = false;
         }
 
+        if (
+          !cancelled &&
+          messageQueue.getUserInterruptEpoch?.() === interruptEpoch &&
+          decision.route.action === 'terminal' &&
+          session.metadata.queryFailureEpisode?.id === episodeId &&
+          (session.metadata.queryFailureEpisode?.failures ?? 0) > 0 &&
+          (this._lastConsumedUserMessage || retryEnv.hasConsumedPrompt || messageQueue.size() > 0)
+        ) {
+          const consumed = (this._consumedUserMessages.get(queryGeneration)?.length ?? 0) > 0;
+          return await this.runRetryTeardown(queryGeneration, attemptToken, {
+            nextAttempt: retryAttempt + 1,
+            recoveryState,
+            resetStartupState: true,
+            idleFirst: true,
+            routeGuard: {
+              expectedAction: decision.route.action,
+              retrySignal,
+              retryEnv: {
+                ...retryEnv,
+                rateLimitHandoffResult:
+                  routeDecision.route.action === 'rate_limit_handoff' ? 'declined' : undefined,
+              },
+              queueRunningAtEntry,
+              abandonLabel: 'Shared query failure retry',
+            },
+            guardAfterBackoff: true,
+            terminateProcesses: true,
+            guardAfterExit: true,
+            restartQueue: true,
+            requeueConsumedList: consumed,
+            snapshotLastConsumed: !consumed,
+            snapshotRequeueLabel: 'shared query failure retry',
+          });
+        }
+
+        messageQueue.clear(
+          cancelled ? undefined : error instanceof Error ? error : new Error(errorMessage)
+        );
         const { route, finalizer } = decision;
         const owner = stateManager.idleOwnerForQuery(queryGeneration);
         let terminalIdleArmed = false;
@@ -1863,6 +1909,8 @@ export class QueryRunner {
           }
           await stateManager.setIdle({ owner });
         }
+      } else {
+        messageQueue.clear();
       }
     } finally {
       this.ctx.attemptTokens.invalidate(attemptToken);
@@ -1944,7 +1992,9 @@ export class QueryRunner {
 
     this.ctx.attemptTokens.invalidate(attemptToken);
 
+    const interruptEpoch = messageQueue.getUserInterruptEpoch?.();
     const abandon = (point: string): boolean => {
+      if (messageQueue.getUserInterruptEpoch?.() !== interruptEpoch) return true;
       const routeGuard = options.routeGuard;
       if (!routeGuard) {
         if (this.isRunOwnershipLive(queryGeneration)) return false;
@@ -2142,17 +2192,17 @@ export class QueryRunner {
       publicationAbandoned:
         options.noticeAfterTeardown !== undefined ? () => abandon('publication') : undefined,
       backoff,
-      backoffAbandoned:
-        options.backoffMs !== undefined
-          ? () => {
-              if (this.isRunOwnershipLive(queryGeneration)) return false;
-              this.retrySupersededByReplacement(queryGeneration);
-              logger.warn(
-                'Provider error retry cancelled: session interrupted/restarted/cleaning up during backoff.'
-              );
-              return true;
-            }
-          : undefined,
+      backoffAbandoned: () => {
+        if (messageQueue.getUserInterruptEpoch?.() !== interruptEpoch) return true;
+        if (options.guardAfterBackoff) return abandon('backoff');
+        if (options.backoffMs === undefined || this.isRunOwnershipLive(queryGeneration))
+          return false;
+        this.retrySupersededByReplacement(queryGeneration);
+        logger.warn(
+          'Provider error retry cancelled: session interrupted/restarted/cleaning up during backoff.'
+        );
+        return true;
+      },
       requeueSnapshotted: options.snapshotLastConsumed ? requeueSnapshotted : undefined,
     };
 

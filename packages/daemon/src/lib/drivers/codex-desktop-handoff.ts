@@ -1,7 +1,7 @@
 import { Logger } from '../logger.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
 import { type CodexDesktopIpc, withCodexDesktopIpc } from './codex-desktop-ipc.ts';
-import type { Result, WorkDelivery } from './types.ts';
+import type { Rejected, Result, WorkDelivery } from './types.ts';
 import { reject } from './work-operations.ts';
 import { workerSandboxOn } from './worker-sandbox.ts';
 
@@ -102,7 +102,52 @@ async function openCodexDesktopOwner(
   }
 }
 
+function uncertainDesktopInput(messageId: string, detail: string): Rejected {
+  return { ...reject('not_delivered', detail), uncertainDesktopInputId: messageId };
+}
+
+const desktopSends = new Map<string, Promise<void>>();
+
 export async function steerCodexDesktopTurn(
+  ...args: Parameters<typeof sendDesktopTurn>
+): Promise<CodexSendGate<'app-server'>> {
+  const key = JSON.stringify([args[0], args[2]]);
+  const deadline = args[8] ?? Date.now() + TIMEOUT_MS;
+  args[8] = deadline;
+  const previous = desktopSends.get(key) ?? Promise.resolve();
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(() => held);
+  desktopSends.set(key, tail);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const acquired = await Promise.race([
+      previous.then(() => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), Math.max(0, deadline - Date.now()));
+      }),
+    ]);
+    if (!acquired)
+      return {
+        reason: reject(
+          'busy',
+          'Another Desktop handoff is still pending. No input was dispatched; inspect work.status before retrying.',
+          true
+        ),
+      };
+    return await sendDesktopTurn(...args);
+  } finally {
+    clearTimeout(timer);
+    release();
+    void tail.then(() => {
+      if (desktopSends.get(key) === tail) desktopSends.delete(key);
+    });
+  }
+}
+
+async function sendDesktopTurn(
   socketPath: string | undefined,
   spawn: SpawnFn,
   threadId: string,
@@ -110,9 +155,9 @@ export async function steerCodexDesktopTurn(
   messageId: string,
   mode: 'auto' | 'steer' | 'queue' = 'auto',
   desktopRunning = () => codexDesktopRunning(spawn, probePlatform),
-  probePlatform = process.platform
+  probePlatform = process.platform,
+  deadline = Date.now() + TIMEOUT_MS
 ): Promise<CodexSendGate<'app-server'>> {
-  const deadline = Date.now() + TIMEOUT_MS;
   try {
     if (!(await desktopRunning())) {
       log.warn('work.send route', {
@@ -246,13 +291,14 @@ export async function steerCodexDesktopTurn(
       ) {
         if (mode === 'steer')
           return {
-            reason: reject('not_delivered', response.error ?? 'Desktop refused steering.'),
+            reason: reject('not_delivered', response.error ?? 'Desktop refused steering.', true),
           };
         const started = await call(
           'thread-follower-start-turn',
           {
             conversationId: threadId,
             turnStart: {
+              clientUserMessageId: messageId,
               request: {
                 threadId,
                 input: [{ type: 'text', text, text_elements: [] }],
@@ -268,9 +314,9 @@ export async function steerCodexDesktopTurn(
         return started.resultType === 'success' && startedTurnId
           ? { reason: { ok: true, value: { delivered: true, startedTurnId } } }
           : {
-              reason: reject(
-                'not_delivered',
-                started.error ?? 'Desktop did not confirm starting a turn.'
+              reason: uncertainDesktopInput(
+                messageId,
+                `Input ${messageId}: ${started.error ?? 'Desktop did not confirm starting a turn.'} Delivery is uncertain; check work.status and Desktop before retrying.`
               ),
             };
       }
@@ -285,10 +331,9 @@ export async function steerCodexDesktopTurn(
       return response.resultType === 'success' && turnId
         ? { reason: { ok: true, value: { delivered: true, steeredIntoTurnId: turnId } } }
         : {
-            reason: reject(
-              'not_delivered',
-              response.error ??
-                'Desktop did not confirm steering; the message may have been accepted. Check work.status before retrying.'
+            reason: uncertainDesktopInput(
+              messageId,
+              `Input ${messageId}: ${response.error ?? 'Desktop did not confirm steering.'} Delivery is uncertain; check work.status and Desktop before retrying.`
             ),
           };
     };
@@ -301,13 +346,16 @@ export async function steerCodexDesktopTurn(
       reason: String(error),
     });
     return {
-      reason: reject(
-        'not_delivered',
-        dispatched
-          ? `${String(error)} The steer may have been accepted; check work.status before retrying.`
-          : `${String(error)} No background writer was started; open the thread in Codex Desktop and retry.`,
-        dispatched ? undefined : true
-      ),
+      reason: dispatched
+        ? uncertainDesktopInput(
+            messageId,
+            `Input ${messageId}: ${String(error)} The steer may have been accepted; check work.status and Desktop before retrying.`
+          )
+        : reject(
+            'not_delivered',
+            `${String(error)} No background writer was started; open the thread in Codex Desktop and retry.`,
+            true
+          ),
     };
   }
 }

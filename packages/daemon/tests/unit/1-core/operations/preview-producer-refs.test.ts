@@ -1,3 +1,4 @@
+import { existingTodoTarget } from '../../helpers/todo-check-packs.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import { createArtifactRefReader } from '../../../../src/lib/artifacts/read-operations.ts';
@@ -25,6 +26,7 @@ describe('producer artifact references on todo evidence', () => {
           new NeoAskTodoRepository(db),
           new NeoTodoSessionRepository(db),
           {
+            resolveTarget: existingTodoTarget,
             recompute: async (todo, patch) =>
               new NeoAskTodoRepository(db).updateTodo(todo, patch, Date.now()),
             start: async () => ({ ok: false as const, reason: 'not started' }),

@@ -1,4 +1,5 @@
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
+import { existingTodoTarget } from '../../helpers/todo-check-packs.ts';
 import { createTodoCheckPacks, pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -108,6 +109,7 @@ describe('neo.todo.add repo', () => {
       store,
       new NeoTodoSessionRepository(db),
       {
+        resolveTarget: existingTodoTarget,
         recompute: async (todo, patch) => store.updateTodo(todo, patch, Date.now()),
         start: async () => ({ ok: false as const, reason: 'no' }),
         proceed: async () => ({ ok: false as const, reason: 'no' }),
@@ -147,6 +149,7 @@ describe('neo.ask.open repo', () => {
       store,
       new NeoTodoSessionRepository(db),
       {
+        resolveTarget: existingTodoTarget,
         recompute: async (todo, patch) => store.updateTodo(todo, patch, Date.now()),
         start: async () => ({ ok: false as const, reason: 'no' }),
         proceed: async () => ({ ok: false as const, reason: 'no' }),
@@ -214,6 +217,7 @@ describe('repo child cards', () => {
         sessions,
         {
           ...controls,
+          resolveTarget: existingTodoTarget,
           recompute: async (todo, patch) => store.updateTodo(todo, patch, Date.now()),
         },
         () => null,
@@ -232,6 +236,7 @@ describe('repo child cards', () => {
         sessions,
         {
           ...controls,
+          resolveTarget: existingTodoTarget,
           recompute: async (todo, patch) => store.updateTodo(todo, patch, Date.now()),
         },
         () => [coding, ...createTodoCheckPacks(db).filter((pack) => pack.id !== 'coding')],

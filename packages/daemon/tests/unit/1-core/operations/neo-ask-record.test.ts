@@ -1,4 +1,5 @@
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
+import { existingTodoTarget } from '../../helpers/todo-check-packs.ts';
 import { createTodoCheckPacks, pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { describe, expect, test } from 'bun:test';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -47,6 +48,7 @@ function setup() {
       store,
       sessions,
       {
+        resolveTarget: existingTodoTarget,
         start: async (todoId) => {
           if (refuse.value) return { ok: false, reason: 'busy' };
           started.push(todoId);

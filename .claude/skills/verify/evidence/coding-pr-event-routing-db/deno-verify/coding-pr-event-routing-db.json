@@ -1,0 +1,201 @@
+{
+  "mode": "verify",
+  "verified": true,
+  "consumer": "Real persisted daemon jobs run the production PR-event delivery pipeline",
+  "limitation": "Synthetic pending ledger event and notification receiver, no actual Neo mailbox, GitHub, model, GUI or entire pack sweep. No latency target claim.",
+  "rejected": {
+    "status": "completed",
+    "result": {
+      "completed": true
+    }
+  },
+  "retry": {
+    "status": "completed",
+    "result": {
+      "completed": true
+    }
+  },
+  "reopened": {
+    "status": "completed",
+    "result": {
+      "completed": true
+    }
+  },
+  "immutableEventBodyBytes": 190000,
+  "attempts": [
+    {
+      "key": "neo-pr-event:synthetic/events#1:head:merged",
+      "text": "synthetic/events#1 \"Synthetic PR\" was merged on head head.",
+      "owner": {
+        "adapter": "codex-desktop",
+        "id": "synthetic-owner"
+      }
+    },
+    {
+      "key": "neo-pr-event:synthetic/events#1:head:merged",
+      "text": "synthetic/events#1 \"Synthetic PR\" was merged on head head.",
+      "owner": {
+        "adapter": "codex-desktop",
+        "id": "synthetic-owner"
+      }
+    },
+    {
+      "key": "neo-pr-event:synthetic/events#1:head:merged",
+      "text": "synthetic/events#1 \"Synthetic PR\" was merged on head head.",
+      "owner": {
+        "adapter": "codex-desktop",
+        "id": "synthetic-owner"
+      }
+    },
+    {
+      "key": "neo-pr-event:synthetic/events#1:head:merged",
+      "text": "synthetic/events#1 \"Synthetic PR\" was merged on head head.",
+      "owner": {
+        "adapter": "codex-desktop",
+        "id": "synthetic-owner"
+      }
+    },
+    {
+      "key": "neo-pr-event:synthetic/events#1:head:merged",
+      "text": "synthetic/events#1 \"Synthetic PR\" was merged on head head.",
+      "owner": {
+        "adapter": "codex-desktop",
+        "id": "synthetic-successor"
+      }
+    }
+  ],
+  "finalState": {
+    "event": null,
+    "owner": "{\"adapter\":\"codex-desktop\",\"id\":\"synthetic-successor\"}",
+    "at": 1793093502443
+  },
+  "mainSql": [],
+  "commands": [
+    {
+      "name": "coding.prEvent.reads",
+      "method": "pendingEvents",
+      "durationMs": 0.6421669999999722,
+      "argsBytes": 36,
+      "replyBytes": 195153
+    },
+    {
+      "name": "coding.prEvent.reads",
+      "method": "route",
+      "durationMs": 0.12912499999993088,
+      "argsBytes": 66,
+      "replyBytes": 60
+    },
+    {
+      "name": "coding.prEvent.reads",
+      "method": "pendingEvents",
+      "durationMs": 0.6563750000000255,
+      "argsBytes": 36,
+      "replyBytes": 195153
+    },
+    {
+      "name": "coding.prEvent.reads",
+      "method": "route",
+      "durationMs": 0.10466699999983575,
+      "argsBytes": 66,
+      "replyBytes": 60
+    },
+    {
+      "name": "coding.prEvent.reads",
+      "method": "pendingEvents",
+      "durationMs": 129.27241700000013,
+      "argsBytes": 36,
+      "replyBytes": 195153
+    },
+    {
+      "name": "coding.prEvent.reads",
+      "method": "route",
+      "durationMs": 0.2087500000000091,
+      "argsBytes": 66,
+      "replyBytes": 60
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "acceptTerminalEvent",
+      "durationMs": 0.5912500000001728,
+      "argsBytes": 195268,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.prEvent.reads",
+      "method": "pendingEvents",
+      "durationMs": 0.11354100000016842,
+      "argsBytes": 36,
+      "replyBytes": 2
+    },
+    {
+      "name": "coding.prEvent.reads",
+      "method": "pendingEvents",
+      "durationMs": 0.10762500000009823,
+      "argsBytes": 36,
+      "replyBytes": 2
+    },
+    {
+      "name": "coding.prEvent.reads",
+      "method": "pendingEvents",
+      "durationMs": 0.6218749999998181,
+      "argsBytes": 36,
+      "replyBytes": 2
+    },
+    {
+      "name": "coding.prEvent.reads",
+      "method": "pendingEvents",
+      "durationMs": 0.7619170000002669,
+      "argsBytes": 36,
+      "replyBytes": 195153
+    },
+    {
+      "name": "coding.prEvent.reads",
+      "method": "route",
+      "durationMs": 0.10487499999999272,
+      "argsBytes": 66,
+      "replyBytes": 60
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "acceptTerminalEvent",
+      "durationMs": 0.36712500000021464,
+      "argsBytes": 195268,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.prEvent.reads",
+      "method": "pendingEvents",
+      "durationMs": 0.7386249999999563,
+      "argsBytes": 36,
+      "replyBytes": 195153
+    },
+    {
+      "name": "coding.prEvent.reads",
+      "method": "route",
+      "durationMs": 0.13558299999976953,
+      "argsBytes": 66,
+      "replyBytes": 64
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "acceptTerminalEvent",
+      "durationMs": 0.4421669999999267,
+      "argsBytes": 195272,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.prEvent.reads",
+      "method": "pendingEvents",
+      "durationMs": 0.11162500000000364,
+      "argsBytes": 36,
+      "replyBytes": 2
+    },
+    {
+      "name": "coding.prEvent.reads",
+      "method": "pendingEvents",
+      "durationMs": 0.12691700000004857,
+      "argsBytes": 36,
+      "replyBytes": 2
+    }
+  ]
+}

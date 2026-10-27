@@ -1,3 +1,5 @@
+import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
+import { neoSessionTrackWrites } from '../../storage/repositories/neo-session-track-write.ts';
 import { createNeoQuestionAnswerDelivery } from './question-answer-delivery.ts';
 import { wakeFailedHyperneoSession } from './query-failure.ts';
 import type { UUID } from 'node:crypto';
@@ -35,12 +37,15 @@ import type {
 import type { NeoQuestion, NeoQuestionSource, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import type { NeoWorkingEvent } from '@hyperneo/shared/types/neo-snapshot';
-import { type NeoModelPreference } from '@hyperneo/shared/types/settings';
+import { type NeoModelPreference, neoTodoLimits } from '@hyperneo/shared/types/settings';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
-import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
+import {
+  NeoPublicationRepository,
+  neoPublicationWrites,
+} from '../../storage/repositories/neo-publication-repository.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
 import {
@@ -92,6 +97,7 @@ export class NeoService {
   readonly todos: NeoAskTodoRepository;
   readonly todoSessions: NeoTodoSessionRepository;
   readonly todoRunner: NeoTodoRunner;
+  readonly runDbOp: RunDbOp;
   get sessionNotices(): NeoSessionNotice[] {
     return this.sessionWatcher.sessionNotices;
   }
@@ -133,6 +139,7 @@ export class NeoService {
     readonly events: InternalEventBus<DaemonInternalEventMap>,
     readonly publishSettings?: (settings: GlobalSettings) => void
   ) {
+    this.runDbOp = gatewayFor(db.getDatabase()).run.bind(gatewayFor(db.getDatabase()));
     this.notifyChanged = () => {
       hub.event('neo.changed', {});
       void events.publish('neo.changed', {});
@@ -184,6 +191,7 @@ export class NeoService {
         );
       },
       changed: this.notifyChanged,
+      limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
     });
     const runtime = composePacks(this);
     this.builtinPacks = runtime.packs;
@@ -211,7 +219,7 @@ export class NeoService {
       getBinding: (id) => this.repo.getBindingBySession(id),
       getRootBinding: () => this.repo.defaultBinding(),
       hasProject: (id) => !!this.repo.getProject(id),
-      append: (input) => this.appendPublication(input),
+      append: (input) => this.db.gateway.call(neoPublicationWrites, 'append', input),
       notify: notifyPublication,
       artifact: createArtifactRefReader(() => this.db.getDatabase()),
     });
@@ -747,36 +755,26 @@ export class NeoService {
     await this.watching;
   }
 
-  async trackSession(root: string, notice: NeoSessionNotice, now: number): Promise<{ ok: true }> {
-    const askId = crypto.randomUUID();
-    const messageId = `neo-track:${notice.key}:${askId}`;
-    const done = 'The session finishes its work';
-    const ask = this.todos.openAsk({
-      id: askId,
-      projectId: null,
-      sessionId: root,
-      originMessageId: messageId,
-      title: notice.title,
-      request: `See ${notice.title} through.`,
-      createdAt: now,
+  async trackSession(
+    _root: string,
+    notice: NeoSessionNotice,
+    now: number
+  ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const receipt = await this.runDbOp(neoSessionTrackWrites, {
+      askId: crypto.randomUUID(),
+      todoId: crypto.randomUUID(),
+      notice,
+      now,
     });
-    const todo = this.todos.addTodo(
-      crypto.randomUUID(),
-      ask.id,
-      { title: done, doneWhen: done, check: null, instruction: null, named: null },
-      now
-    );
-    this.todoSessions.create(todo.id, { verb: 'adopt', ref: notice.ref });
-    this.todoSessions.recordRef(todo.id, notice.ref, now, notice.link);
-    this.todoSessions.recordFollowAnchor(todo.id, now);
-    await this.todoRunner.recompute(todo, { state: 'doing', startedAt: now }, now);
+    if (!receipt.ok) return receipt;
+    this.notifyChanged();
     const content = fillPrompt(NEO_SESSION_TRACK, {
-      title: JSON.stringify(notice.title),
-      ref: JSON.stringify(notice.ref),
-      askId: JSON.stringify(ask.id),
-      todoId: JSON.stringify(todo.id),
+      title: JSON.stringify(receipt.ask.title),
+      ref: JSON.stringify(receipt.ref),
+      askId: JSON.stringify(receipt.ask.id),
+      todoId: JSON.stringify(receipt.todo.id),
     });
-    await this.deliver(root, messageId, content, root);
+    await this.deliver(receipt.root, receipt.messageId, content, receipt.root);
     return { ok: true };
   }
 

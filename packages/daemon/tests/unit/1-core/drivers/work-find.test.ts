@@ -444,6 +444,32 @@ describe('hyperneo adapter against the sessions table', () => {
 });
 
 describe('work.find operation', () => {
+  test.each([
+    { id: 'claude-code-7', idPrefix: 'ignored' },
+    { adapters: ['claude-code'], idPrefix: 'claude-code' },
+  ])('an explicit lookup is not excluded by the prefix discovery gate: %j', async (input) => {
+    const found = group('synthetic', '/synthetic', 'claude-code', 7);
+    const ops = createOperationRegistry([
+      createFindWorkOperation({
+        adapters: () => [{ id: 'claude-code', capabilities: ['find'], find: () => [found] }],
+        remote: { list: () => [], invoke: async () => ({}) },
+      }),
+    ]);
+    const outcome = await invokeOperation(
+      ops,
+      'work.find',
+      { ...input, localOnly: true },
+      { source: 'rpc' }
+    );
+    expect(outcome).toMatchObject({
+      kind: 'completed',
+      value: {
+        places: [{ work: [{ ref: { adapter: 'claude-code', id: 'claude-code-7' } }] }],
+        unreachable: [],
+      },
+    });
+  });
+
   const local: WorkAdapter = {
     id: 'hyperneo',
     capabilities: ['find'],

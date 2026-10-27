@@ -1,3 +1,8 @@
+import { codingStageTargetReads } from './stage-target-db.ts';
+import { planCodingStageTarget } from './stage-preferences.ts';
+import { CodingPrLedgerRepository } from './pr-ledger.ts';
+import { codingSmokeReads } from './smoke-admission-db.ts';
+import type { CodingSmokeRequest } from './smoke-operation.ts';
 import { z } from 'zod';
 import { isDeepStrictEqual } from 'node:util';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
@@ -38,6 +43,24 @@ const key = (url: string, head: string, stage: Stage) =>
 
 export class CodingAssignmentsRepository {
   constructor(private readonly db: Database) {}
+
+  planTarget(input: Parameters<typeof planCodingStageTarget>[1]) {
+    return planCodingStageTarget(
+      this.db,
+      input,
+      input.stage === 'review'
+        ? new CodingPrLedgerRepository(this.db).policy(input.repo).provenance !== false
+        : false
+    );
+  }
+
+  planTargetCurrent(input: Parameters<typeof planCodingStageTarget>[1]) {
+    return gatewayFor(this.db).call(codingStageTargetReads, 'planTarget', input);
+  }
+
+  smokeAssignmentCurrent(input: CodingSmokeRequest) {
+    return gatewayFor(this.db).call(codingSmokeReads, 'check', input);
+  }
 
   read(todoId: string, url: string, head: string): Partial<Record<Stage, CodingAssignment>> {
     const rows = this.db

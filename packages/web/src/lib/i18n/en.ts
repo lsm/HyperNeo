@@ -63,6 +63,7 @@ export const en = {
   'ask.markDone': 'Mark done',
   'ask.drop': 'Drop this ask',
   'ask.moreDone': '{count} done — show more',
+  'ask.lessDone': 'Hide done todos',
   'ask.moreDoneFailed': 'Couldn’t load the done todos.',
   'ask.settleFailed': 'Couldn’t close this request. Please try again.',
   'ask.moreDoneRefused': 'Couldn’t load the done todos: {reason}',

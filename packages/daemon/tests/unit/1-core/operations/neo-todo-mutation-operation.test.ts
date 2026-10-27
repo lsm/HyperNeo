@@ -1,3 +1,4 @@
+import { existingTodoTarget } from '../../helpers/todo-check-packs.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { wireNeoTodoMutations } from '../../../../src/lib/neo/todo-mutation-operation.ts';
@@ -73,6 +74,7 @@ describe('Writer-backed todo operation activation', () => {
       store,
       new NeoTodoSessionRepository(db),
       {
+        resolveTarget: existingTodoTarget,
         recompute: async () => {
           throw new Error('Legacy mutation write was called');
         },
@@ -91,7 +93,7 @@ describe('Writer-backed todo operation activation', () => {
         packs: () => packs,
         artifact: () => null,
         stop,
-        start,
+        advance: () => start('peer'),
         changed: () => {
           order.push('announce');
         },
@@ -122,7 +124,7 @@ describe('Writer-backed todo operation activation', () => {
     expect(order.slice(0, 2)).toEqual(['commit', 'announce']);
   });
 
-  test('close stops first, commits before dispatch and returns refreshed successor state', async () => {
+  test('close stops first, commits, then lets the queue start the successor and returns its state', async () => {
     const result = await call('neo.todo.close', { todoId: 'first', reason: 'Finished' });
     expect(result).toMatchObject({ ok: true, todo: { state: 'done' } });
     expect(order).toEqual(['stop', 'commit', 'announce', 'start:peer']);

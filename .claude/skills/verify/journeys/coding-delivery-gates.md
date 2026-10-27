@@ -1,39 +1,33 @@
-# Coding delivery evidence storage (build slice)
+# Coding delivery evidence storage
 
-Use shared isolation in `../SKILL.md`. This backend build slice has no model,
-HTTP mock or browser. It exposes `recordSmoke` on the coding pack and adds
-per-todo/PR/head receipt storage without changing dispatch or todo completion.
-Exercise that exact API in an actual isolated daemon, then reopen its synthetic DB:
+Use the shared isolation and resource guard in SKILL.md. The current
+[coding smoke admission journey](coding-smoke-admission-db.md) exercises this
+storage contract through the real public operation and its DB writer:
 
-```bash
-RUN=$(mktemp -d /private/tmp/hyperneo-delivery-proof-XXXXXX)
-mkdir -p "$RUN/home"
-env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test \
-  HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=error \
-  bun .claude/skills/verify/coding-delivery-gates.ts "$RUN"
+```sh
+python3 .claude/skills/verify/coding-smoke-admission-db-run.py bun verify
+python3 .claude/skills/verify/coding-smoke-admission-db-run.py deno verify --executable "$DENO"
 ```
 
-The helper seeds a synthetic gate receipt. It reuses `readGithubDeploys` with
-synthetic merge/build ancestry effects and its optional head reader; unexpected
-GitHub commands and external HTTP throw. Legacy deploy reads stay unchanged;
-smoke requires a merged-head observation and refuses missing or different heads.
-Check `evidence/observed.json`: an ungated merged head, author attempting smoke,
-and absent deployment all refuse. Author and QA deliberately share a local ID
-on different daemons, exercising full WorkRef independence. Full references on
-stage facts survive storage and app restart; historical facts without refs remain
-valid storage inputs but cannot supply full-ref evidence to the later merge gate.
+The runner owns a fresh HOME/data/TMPDIR and ephemeral daemon, saves evidence,
+and removes temporary data. It supplies a refusing GitHub fixture for synthetic
+merged-PR reads and ancestry comparisons; direct external HTTP throws. No keys,
+model, browser, live database or actual deployment are involved.
 
-A smoke pass followed by a failure retains the failure after reopening the app;
-an explicit docs-only inapplicability reason is then recorded. The todo remains
-doing throughout: completion wiring belongs to a later slice. Historical head
-receipts are preserved and never satisfy another head. Both daemon instances
-close in finally. A deterministic removal between the receipt snapshot and the
-worker write must refuse acknowledgement; an UPDATE affecting zero rows is not
-a successful smoke record. Keep the evidence outside the worktree. The regression commit
-71b407faf5 reproduced acceptance of smoke for head-b under a head-a gate; retain
-that failed evidence alongside the fixed run.
+Assigned independent QA smoke requires the matching merge receipt, merged head
+and containing build. Passing, failing and explicitly inapplicable records keep
+full Unicode evidence. Failure survives reopening and a later valid record can
+update it. The focused delivery contracts also retain full WorkRef independence,
+historical head receipts and zero-row update refusal.
 
-This proves pack smoke API behavior and persistence, not live GitHub transport,
-a real deployment, merge preparation, actor dispatch, or final todo completion.
-Merge preparation follows in the next unstacked slice. The wire slice must add an
-operation-door/completion journey before #8429 is complete.
+The receipt snapshot, independence checks and update now execute in one writer
+transaction. The current helper pauses before dispatch and removes the queued
+request's receipt, verifying matching_merge_gate_required without recording
+smoke. Revoking the assignment also refuses and preserves prior evidence. The obsolete helper has been removed: its interception between snapshot and
+write no longer represented this atomic command boundary. Use the current helper
+above for the receipt-removal regression.
+
+Evidence lives under evidence/coding-smoke-admission-db. The regression commit
+71b407faf5 characterized the original wrong-head storage bug. Merge preparation
+and declared todo completion have their own journeys; this verifies persisted
+smoke admission rather than an actual rollout or rendered UI.

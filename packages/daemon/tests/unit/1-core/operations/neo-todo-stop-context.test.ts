@@ -53,6 +53,7 @@ describe('current worker stop context', () => {
       return Reflect.apply(read, sessions, args);
     }) as typeof sessions.read;
     runner = createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
       store,
       sessions,
       write: gatewayFor(db).run.bind(gatewayFor(db)),

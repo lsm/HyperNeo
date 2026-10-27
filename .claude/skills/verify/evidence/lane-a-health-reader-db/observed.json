@@ -1,0 +1,74 @@
+{
+  "regressionCommit": "16382a7c64e319ed3ad93a3daf32bd0589cd4ede",
+  "baseline": {
+    "sourceCommit": "2944b18a37ca4370b1f733e8a334a3b055e03a43",
+    "run": "bun-verify",
+    "verified": false,
+    "mainSql": 0,
+    "offeredWhileWriterHeld": false,
+    "forcedRelease": true,
+    "readCommandMode": "write",
+    "readCommandMs": 1292.191583,
+    "failure": "Real persisted job offered its committed notice only after the writer-lock deadline; query-only CI case rejected the write reservation."
+  },
+  "proofs": {
+    "bun": {
+      "run": "bun-verify-1",
+      "offeredWhileWriterHeld": true,
+      "forcedRelease": false,
+      "targetMainSql": 0,
+      "maxReadMs": 83.28025000000002,
+      "maxArgsBytes": 104,
+      "maxReplyBytes": 572,
+      "uniqueReceivedNotices": 2,
+      "temporaryDaemonDataRemoved": true
+    },
+    "deno": {
+      "run": "deno-verify",
+      "offeredWhileWriterHeld": true,
+      "forcedRelease": false,
+      "targetMainSql": 0,
+      "maxReadMs": 185.56395800000018,
+      "maxArgsBytes": 104,
+      "maxReplyBytes": 572,
+      "uniqueReceivedNotices": 2,
+      "temporaryDaemonDataRemoved": true
+    }
+  },
+  "legacyJourneyChecks": {
+    "bun": "legacy-bun-verify",
+    "deno": "legacy-deno-verify",
+    "result": "Both original delivery verify helpers pass with reader-aware instrumentation; original binding remains historical."
+  },
+  "productionLines": 8,
+  "sharedIntegrationEdits": false,
+  "ci": {
+    "runner": "Vitest",
+    "result": "25 passed across four health suites; bun run check passed"
+  },
+  "limitations": [
+    "Synthetic persisted jobs/receiver, not an actual Neo mailbox or recipient consumption.",
+    "No full coding sweep, GUI, model, GitHub, whole-daemon SQL absence or general latency/RSS/WAL benchmark.",
+    "The 1.2-second deadline distinguishes lock reservation; command timings include queue/worker work without separate SQL/clone attribution.",
+    "Stable notification keys preserve existing retries; external exactly-once delivery is not promised."
+  ],
+  "proofBinding": {
+    "testedCodeCommit": "ba0045256fa11df33e52cb84a482e3fdc6b94a3d",
+    "testedGitTree": "d5a1279572ccadf88966342eb570f8611ab1315f",
+    "applicationTrees": {
+      "packages": "51fce01c258cb4cee1dc876d1f5fd7e8acfba2e5",
+      "scripts": "4e747be6d40c26bb59d7f8fbb7683c92537893eb"
+    },
+    "proofBlobs": {
+      ".claude/skills/verify/lane-a-health-reader-db.ts": "235f0e19051cbd09a7fc2cd587d3a03da738894f",
+      ".claude/skills/verify/lane-a-health-reader-run.py": "a7efab18e5b75030a45cb7f7449fdaf5ba14ea47",
+      ".claude/skills/verify/lane-a-health-reader-proof-binding.ts": "ee378397217a9cf8a38a783eac9eac9acaf61a58",
+      ".claude/skills/verify/lane-a-health-delivery-db.ts": "66cb0629dcb084c739606ec64158335cd58b5e3a"
+    },
+    "runs": {
+      "bun": "bun-verify-1",
+      "deno": "deno-verify"
+    },
+    "postProofChangePolicy": "evidence-and-journey-only"
+  }
+}

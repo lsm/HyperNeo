@@ -53,7 +53,9 @@ try {
   await source.getByRole('button', { name: 'Reply to Neo’s message' }).waitFor();
   for (const via of ['button', 'menu']) {
     if (via === 'menu') {
-      await source.click({ button: 'right' });
+      await source.evaluate((node) => node.dispatchEvent(new TouchEvent('touchstart', {
+        bubbles: true, touches: [new Touch({ identifier: 0, target: node, clientX: 100, clientY: 100 })],
+      })));
       await page.getByRole('menuitem', { name: 'Reply', exact: true }).click();
     } else {
       await source.getByRole('button', { name: 'Reply to Neo’s message' }).click();

@@ -187,19 +187,22 @@ export function readHyperneoPlaces(db: BunDatabase): HyperneoPlaceRow[] {
 
 export function readHyperneoSessions(
   db: BunDatabase,
-  includeClosed: boolean
+  includeClosed: boolean,
+  idPrefix = ''
 ): HyperneoSessionRow[] {
   return db
     .prepare(
       `SELECT * FROM (
          SELECT ${SESSION_COLUMNS} FROM sessions WHERE ${OWN_SESSIONS} AND ${OPEN}
+           AND substr(id, 1, length(?2)) = ?2
          UNION ALL
          SELECT * FROM (SELECT ${SESSION_COLUMNS} FROM sessions
-           WHERE ${OWN_SESSIONS} AND ? = 1 AND NOT ${OPEN}
+           WHERE ${OWN_SESSIONS} AND ?1 = 1 AND NOT ${OPEN}
+             AND substr(id, 1, length(?2)) = ?2
            ORDER BY lastActiveAt DESC LIMIT ${CLOSED_SESSIONS}))
        ORDER BY lastActiveAt DESC`
     )
-    .all(includeClosed ? 1 : 0) as HyperneoSessionRow[];
+    .all(includeClosed ? 1 : 0, idPrefix) as HyperneoSessionRow[];
 }
 
 export function withSessionLoad(work: WorkSummary): WorkSummary {
@@ -244,6 +247,7 @@ export function buildHyperneoGroups(
           .includes(text);
       const work = sessions
         .filter((session) => session.folder === place.folder)
+        .filter((session) => !query.idPrefix || session.id.startsWith(query.idPrefix))
         .filter(
           (session) =>
             placeMatches ||
@@ -255,7 +259,7 @@ export function buildHyperneoGroups(
         )
         .sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
         .slice(0, SESSIONS_PER_PLACE);
-      if (!placeMatches && work.length === 0) return [];
+      if ((query.idPrefix || !placeMatches) && work.length === 0) return [];
       return [
         {
           place: {
@@ -285,7 +289,7 @@ export function loadHyperneoSessions(
   query: FindQuery,
   deps: HyperneoAdapterDeps
 ): HyperneoSessionRow[] {
-  return readHyperneoSessions(deps.db(), query.includeClosed);
+  return readHyperneoSessions(deps.db(), query.includeClosed, query.idPrefix);
 }
 
 export function matchHyperneoSessions(

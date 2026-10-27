@@ -753,12 +753,12 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(ids).not.toContain(archived.id);
     });
 
-    it('pinExistingRun stamps a pin and appends the version row atomically', () => {
+    it('pinExistingRun stamps a pin and appends the version row atomically', async () => {
       const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Legacy' });
       expect(run.definitionVersion).toBeNull();
 
       const wf = rawWorkflow({ name: 'Backfilled' });
-      const ok = repo.pinExistingRun(run.id, wf);
+      const ok = await repo.pinExistingRun(run.id, wf);
 
       expect(ok).toBe(true);
       const stamped = repo.getRun(run.id)!;
@@ -772,7 +772,23 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(row.source).toBe('backfill');
     });
 
-    it('pinExistingRun embeds template snapshots so backfilled runs are not snapshot-less', () => {
+    it('pinExistingRun rolls back the definition if stamping the run fails', async () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Legacy' });
+      const workflow = rawWorkflow({ name: 'Rejected pin' });
+      db.exec(`CREATE TRIGGER refuse_pin BEFORE UPDATE OF definition_version ON space_workflow_runs
+        BEGIN SELECT RAISE(ABORT, 'synthetic pin refusal'); END`);
+
+      await expect(repo.pinExistingRun(run.id, workflow)).rejects.toThrow('synthetic pin refusal');
+
+      expect(repo.getRun(run.id)!.definitionVersion).toBeNull();
+      expect(
+        db
+          .prepare('SELECT payload FROM space_workflow_definition_versions WHERE version_hash = ?')
+          .get(computeDefinitionVersion(workflow).versionHash)
+      ).toBeNull();
+    });
+
+    it('pinExistingRun embeds template snapshots so backfilled runs are not snapshot-less', async () => {
       const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Legacy' });
       const wf = rawWorkflow({
         nodes: [
@@ -785,7 +801,7 @@ describe('SpaceWorkflowRunRepository', () => {
       });
 
       expect(
-        repo.pinExistingRun(run.id, wf, (key) =>
+        await repo.pinExistingRun(run.id, wf, (key) =>
           key === 'worker.custom'
             ? ({
                 key: 'worker.custom',
@@ -819,7 +835,7 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(pinned.templateSnapshots?.['worker.custom']?.instructions).toBe('Frozen at backfill.');
     });
 
-    it('backfillDefinitionPins passes the resolver through so pinned runs carry snapshots', () => {
+    it('backfillDefinitionPins passes the resolver through so pinned runs carry snapshots', async () => {
       const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Legacy' });
       seedTaskForRun(run.id, spaceId);
       const wf = rawWorkflow({
@@ -833,7 +849,7 @@ describe('SpaceWorkflowRunRepository', () => {
       });
 
       expect(
-        repo.backfillDefinitionPins(
+        await repo.backfillDefinitionPins(
           () => wf,
           () => () => null
         )
@@ -849,7 +865,7 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(JSON.parse(version.payload).templateSnapshots).toEqual({});
     });
 
-    it('migrateSnapshotlessPins upgrades a run pinned before snapshots existed', () => {
+    it('migrateSnapshotlessPins upgrades a run pinned before snapshots existed', async () => {
       const wf = rawWorkflow({
         nodes: [
           {
@@ -870,7 +886,7 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(JSON.parse(pinnedPayload(before!)).templateSnapshots).toBeUndefined();
 
       expect(
-        repo.migrateSnapshotlessPins(
+        await repo.migrateSnapshotlessPins(
           () => (key) =>
             key === 'worker.custom'
               ? ({
@@ -903,7 +919,7 @@ describe('SpaceWorkflowRunRepository', () => {
       );
     });
 
-    it('migrateSnapshotlessPins leaves runs that already carry a snapshot record alone', () => {
+    it('migrateSnapshotlessPins leaves runs that already carry a snapshot record alone', async () => {
       const wf = rawWorkflow({
         nodes: [
           {
@@ -921,7 +937,7 @@ describe('SpaceWorkflowRunRepository', () => {
       const before = repo.getRun(run.id)!.definitionVersion;
 
       expect(
-        repo.migrateSnapshotlessPins(
+        await repo.migrateSnapshotlessPins(
           () => () => null,
           () => wf
         )
@@ -929,7 +945,7 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(repo.getRun(run.id)!.definitionVersion).toBe(before);
     });
 
-    it('migrateSnapshotlessPins includes a taskless run, which is still executable', () => {
+    it('migrateSnapshotlessPins includes a taskless run, which is still executable', async () => {
       const wf = rawWorkflow({
         nodes: [
           {
@@ -948,7 +964,7 @@ describe('SpaceWorkflowRunRepository', () => {
       const before = repo.getRun(run.id)!.definitionVersion;
 
       expect(
-        repo.migrateSnapshotlessPins(
+        await repo.migrateSnapshotlessPins(
           () => () => null,
           () => wf
         )
@@ -959,7 +975,7 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(JSON.parse(pinnedPayload(after!)).templateSnapshots).toEqual({});
     });
 
-    it('migrateSnapshotlessPins refuses to rehash a pinned payload whose hash does not verify', () => {
+    it('migrateSnapshotlessPins refuses to rehash a pinned payload whose hash does not verify', async () => {
       const wf = rawWorkflow({
         nodes: [
           {
@@ -984,7 +1000,7 @@ describe('SpaceWorkflowRunRepository', () => {
       ).run(tampered, WORKFLOW_ID, before);
 
       expect(
-        repo.migrateSnapshotlessPins(
+        await repo.migrateSnapshotlessPins(
           () => () => null,
           () => wf
         )
@@ -994,7 +1010,7 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(JSON.parse(pinnedPayload(after!)).name).toBe('My Workflow');
     });
 
-    it('migrateSnapshotlessPins leaves an unverifiable pin alone when the workflow is gone', () => {
+    it('migrateSnapshotlessPins leaves an unverifiable pin alone when the workflow is gone', async () => {
       const wf = rawWorkflow({
         nodes: [
           {
@@ -1018,7 +1034,7 @@ describe('SpaceWorkflowRunRepository', () => {
       ).run(JSON.stringify({ ...wf, name: 'Altered' }), WORKFLOW_ID, before);
 
       expect(
-        repo.migrateSnapshotlessPins(
+        await repo.migrateSnapshotlessPins(
           () => () => null,
           () => null
         )
@@ -1026,7 +1042,7 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(repo.getRun(run.id)!.definitionVersion).toBe(before);
     });
 
-    it('migrateSnapshotlessPins migrates a pin whose payload is malformed JSON', () => {
+    it('migrateSnapshotlessPins migrates a pin whose payload is malformed JSON', async () => {
       const wf = rawWorkflow({
         nodes: [
           {
@@ -1051,7 +1067,7 @@ describe('SpaceWorkflowRunRepository', () => {
 
       expect(repo.listSnapshotlessPinnedRuns().map((r) => r.id)).toContain(run.id);
       expect(
-        repo.migrateSnapshotlessPins(
+        await repo.migrateSnapshotlessPins(
           () => () => null,
           () => wf
         )
@@ -1062,7 +1078,7 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(JSON.parse(pinnedPayload(after!)).templateSnapshots).toEqual({});
     });
 
-    it('migrateSnapshotlessPins skips runs whose task is archived', () => {
+    it('migrateSnapshotlessPins skips runs whose task is archived', async () => {
       const wf = rawWorkflow({
         nodes: [
           {
@@ -1081,32 +1097,32 @@ describe('SpaceWorkflowRunRepository', () => {
       seedTaskForRun(run.id, spaceId, { archived: true });
 
       expect(
-        repo.migrateSnapshotlessPins(
+        await repo.migrateSnapshotlessPins(
           () => () => null,
           () => wf
         )
       ).toBe(0);
     });
 
-    it('pinExistingRun is idempotent and never overwrites an existing pin', () => {
+    it('pinExistingRun is idempotent and never overwrites an existing pin', async () => {
       const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Legacy' });
       const first = rawWorkflow({ name: 'First' });
-      repo.pinExistingRun(run.id, first);
+      await repo.pinExistingRun(run.id, first);
       const firstPin = repo.getRun(run.id)!.definitionVersion;
 
-      const ok = repo.pinExistingRun(run.id, rawWorkflow({ name: 'Second' }));
+      const ok = await repo.pinExistingRun(run.id, rawWorkflow({ name: 'Second' }));
 
       expect(ok).toBe(false);
       expect(repo.getRun(run.id)!.definitionVersion).toBe(firstPin);
     });
 
-    it('backfillDefinitionPins resolves templates in the run Space, not the workflow Space', () => {
+    it('backfillDefinitionPins resolves templates in the run Space, not the workflow Space', async () => {
       const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Legacy' });
       seedTaskForRun(run.id, spaceId);
       const wf = rawWorkflow({ spaceId: 'other-space' });
       const asked: string[] = [];
 
-      repo.backfillDefinitionPins(
+      await repo.backfillDefinitionPins(
         () => wf,
         (resolverSpaceId) => {
           asked.push(resolverSpaceId);
@@ -1117,7 +1133,7 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(asked).toEqual([spaceId]);
     });
 
-    it('backfillDefinitionPins pins every unpinned run with an existing head', () => {
+    it('backfillDefinitionPins pins every unpinned run with an existing head', async () => {
       const a = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'A' });
       const b = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'B' });
       seedTaskForRun(a.id, spaceId);
@@ -1125,14 +1141,14 @@ describe('SpaceWorkflowRunRepository', () => {
       const wf = rawWorkflow();
       const expectedHash = computeDefinitionVersion(wf).versionHash;
 
-      const count = repo.backfillDefinitionPins(() => wf);
+      const count = await repo.backfillDefinitionPins(() => wf);
 
       expect(count).toBe(2);
       expect(repo.getRun(a.id)!.definitionVersion).toBe(expectedHash);
       expect(repo.getRun(b.id)!.definitionVersion).toBe(expectedHash);
     });
 
-    it('backfillDefinitionPins leaves runs unpinned when the head is deleted and is idempotent', () => {
+    it('backfillDefinitionPins leaves runs unpinned when the head is deleted and is idempotent', async () => {
       const live = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Live' });
       const orphan = repo.createRun({ spaceId, workflowId: 'deleted-wf', title: 'Orphan' });
       seedTaskForRun(live.id, spaceId);
@@ -1140,7 +1156,7 @@ describe('SpaceWorkflowRunRepository', () => {
       const wf = rawWorkflow();
 
       let calls = 0;
-      const count = repo.backfillDefinitionPins((id) => {
+      const count = await repo.backfillDefinitionPins((id) => {
         calls += 1;
         return id === WORKFLOW_ID ? wf : null;
       });
@@ -1149,12 +1165,12 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(repo.getRun(live.id)!.definitionVersion).not.toBeNull();
       expect(repo.getRun(orphan.id)!.definitionVersion).toBeNull();
 
-      const second = repo.backfillDefinitionPins((id) => (id === WORKFLOW_ID ? wf : null));
+      const second = await repo.backfillDefinitionPins((id) => (id === WORKFLOW_ID ? wf : null));
       expect(second).toBe(0);
       expect(calls).toBeGreaterThan(0);
     });
 
-    it('backfillDefinitionPins isolates failures: one bad run does not block the others', () => {
+    it('backfillDefinitionPins isolates failures: one bad run does not block the others', async () => {
       const good = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Good' });
       const bad = repo.createRun({ spaceId, workflowId: 'broken-wf', title: 'Bad' });
       seedTaskForRun(good.id, spaceId);
@@ -1162,7 +1178,7 @@ describe('SpaceWorkflowRunRepository', () => {
       const wf = rawWorkflow();
       const expectedHash = computeDefinitionVersion(wf).versionHash;
 
-      const count = repo.backfillDefinitionPins((id) => {
+      const count = await repo.backfillDefinitionPins((id) => {
         if (id === 'broken-wf') throw new Error('boom');
         return wf;
       });

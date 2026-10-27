@@ -236,14 +236,36 @@ describe('durable public conversation presentation', () => {
       );
       const more = await screen.findByRole('button', { name: /more$/ });
       expect(getComputedStyle(more).getPropertyValue('float')).toBe('right');
-      fireEvent.click(screen.getByText((value.shortText ?? '').trim()));
+      expect(more.closest('.neo-markdown, p')).toBeNull();
+      fireEvent.click(await screen.findByText((value.shortText ?? '').trim()));
       expect(container.querySelector('[data-publication-details]')).toBeNull();
       fireEvent.click(more);
       const less = await screen.findByRole('button', { name: /less$/ });
       expect(getComputedStyle(less).getPropertyValue('float')).toBe('right');
-      fireEvent.click(screen.getByText(ending.trim(), { exact: true }));
+      expect(less.closest('.neo-markdown, p')).toBeNull();
+      fireEvent.click(await screen.findByText(ending.trim(), { exact: true }));
       expect(container.querySelector('[data-publication-details]')).toBeTruthy();
       expect(less.getAttribute('aria-expanded')).toBe('true');
+    }
+  );
+
+  it.each(['7', '7.', '7)'])(
+    'keeps numeric reply %s readable with disclosure on a separate row',
+    async (shortText) => {
+      const value = publication({ shortText, fullText: 'Full numeric reply details.' });
+      const { container } = render(
+        <NeoPublicConversation conversation={conversation([], [value])} />
+      );
+      const body = await screen.findByText(shortText, { exact: true });
+      expect(body.tagName).toBe('P');
+      const more = screen.getByRole('button', { name: 'more', exact: true });
+      expect(more.closest('p')).toBeNull();
+      expect(body.textContent).toBe(shortText);
+      fireEvent.click(more);
+      expect(await screen.findByText(value.fullText!)).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'less', exact: true }));
+      expect(container.querySelector('[data-publication-details]')).toBeNull();
+      expect(screen.getByText(shortText, { exact: true }).textContent).toBe(shortText);
     }
   );
 
@@ -254,7 +276,7 @@ describe('durable public conversation presentation', () => {
     );
     expect(container.querySelector('details')).toBeNull();
     const more = await screen.findByRole('button', { name: /^more$/ });
-    expect(more.closest('p')?.textContent).toContain(value.shortText);
+    expect(more.closest('p')).toBeNull();
     expect(more.getAttribute('aria-expanded')).toBe('false');
     expect(container.querySelector('table')).toBeNull();
     fireEvent.click(more);
@@ -333,14 +355,36 @@ describe('durable public conversation presentation', () => {
     expect(container.querySelector('[data-publication-details]')).toBeNull();
   });
 
-  it('offers select, copy and reply on a right-click, and copying flips the footer icon', async () => {
+  it.each(['ask', 'publication'])(
+    'preserves native right-click on a text %s and the Reply button',
+    (kind) => {
+      const quote = vi.fn();
+      const { container } = render(
+        <NeoPublicConversation
+          conversation={
+            kind === 'ask' ? conversation([ask()], []) : conversation([], [publication()])
+          }
+          onQuote={quote}
+        />
+      );
+      const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+      fireEvent(container.querySelector('[data-public-entry]')!, event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(screen.queryByRole('menu')).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: /Reply to .*message/ }));
+      expect(quote).toHaveBeenCalledOnce();
+    }
+  );
+
+  it('offers select, copy and reply on a touch long press, and copying flips the footer icon', async () => {
     const quote = vi.fn();
     const value = publication({ shortText: 'Short.', links: [] });
     const { container } = render(
       <NeoPublicConversation conversation={conversation([], [value])} onQuote={quote} />
     );
     const entry = container.querySelector('[data-public-entry]')!;
-    fireEvent.contextMenu(entry, { clientX: 10, clientY: 10 });
+    fireEvent.touchStart(entry, { touches: [{ clientX: 10, clientY: 10 }] });
+    await screen.findByRole('menu', { name: 'Message actions' }, { timeout: 3000 });
     const menu = screen.getByRole('menu', { name: 'Message actions' });
     expect(
       within(menu)
@@ -353,7 +397,8 @@ describe('durable public conversation presentation', () => {
     );
     await waitFor(() => expect(screen.getByTitle('Copied!')).toBeTruthy());
     expect(screen.queryByRole('menu')).toBeNull();
-    fireEvent.contextMenu(entry, { clientX: 10, clientY: 10 });
+    fireEvent.touchStart(entry, { touches: [{ clientX: 10, clientY: 10 }] });
+    await screen.findByRole('menu', { name: 'Message actions' }, { timeout: 3000 });
     fireEvent.click(screen.getByRole('menuitem', { name: 'Reply' }));
     expect(quote).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ author: 'Neo', text: value.shortText })

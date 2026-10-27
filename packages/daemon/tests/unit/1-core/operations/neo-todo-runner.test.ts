@@ -90,6 +90,7 @@ function setup(
   } satisfies NeoPack;
   const packs: NeoPack[] = [pack];
   const runner = createNeoTodoRunner({
+    limits: () => ({ running: 99, perGroup: 99 }),
     write: gatewayFor(db).run.bind(gatewayFor(db)),
     store,
     sessions,
@@ -889,6 +890,7 @@ describe('neo todo runner', () => {
     sessions.create(todo.id, { verb: 'send', ref });
     const calls: string[] = [];
     const runner = createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
       write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions,
@@ -986,6 +988,7 @@ describe('neo todo runner', () => {
     const { db, store, add, told } = setup();
     const todo = add();
     const failing = createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
       write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions: new NeoTodoSessionRepository(db),
@@ -1009,6 +1012,7 @@ describe('neo todo runner', () => {
     const todo = h.add();
     try {
       const runner = createNeoTodoRunner({
+        limits: () => ({ running: 99, perGroup: 99 }),
         write: gatewayFor(h.db).run.bind(gatewayFor(h.db)),
         store: h.store,
         sessions: h.sessions,
@@ -1034,6 +1038,7 @@ describe('neo todo runner', () => {
     const { db, store, add } = setup();
     const todo = add();
     const accepted = createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
       write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions: new NeoTodoSessionRepository(db),
@@ -1066,6 +1071,7 @@ describe('neo todo runner', () => {
     const hint =
       'Claude Desktop did not import the new session. The task was not started. Open Claude Desktop, then ask Neo to start it again.';
     const waiting = createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
       write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions: new NeoTodoSessionRepository(db),
@@ -1193,6 +1199,7 @@ describe('neo todo runner uncertainty', () => {
     const todo = add();
     const sessions = new NeoTodoSessionRepository(db);
     const flaky = createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
       write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions,
@@ -1225,6 +1232,7 @@ describe('neo todo runner uncertainty', () => {
     await flaky.stop(store.updateTodo(resumed, { state: 'doing' }, 7));
     expect(calls.at(-1)).toMatchObject({ name: 'work.stop', input: { ref } });
     const unsupported = createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
       write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions,
@@ -1236,6 +1244,7 @@ describe('neo todo runner uncertainty', () => {
     });
     expect(await unsupported.stop(store.getTodo(resumed.id)!)).toBeNull();
     const refusing = createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
       write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions,
@@ -1428,6 +1437,7 @@ describe('a todo sent to an existing session', () => {
     const lastActivity = Date.parse('2026-10-17T20:14:36Z');
     let confirmedAt = 0;
     const runner = createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
       write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions,
@@ -1577,6 +1587,7 @@ describe('blocked todos', () => {
     const { db, store, runner, add, told } = setup();
     const todo = add();
     const failing = createNeoTodoRunner({
+      limits: () => ({ running: 99, perGroup: 99 }),
       write: gatewayFor(db).run.bind(gatewayFor(db)),
       store,
       sessions: new NeoTodoSessionRepository(db),
@@ -1734,50 +1745,49 @@ describe('stopped worker ladder', () => {
     }
   });
 
-  test('a refused escalation releases its reservation so notification can retry', async () => {
+  test('a refused unreachable notice releases its reservation so notification can retry', async () => {
     let refused = true;
     const h = await stopped(null, 'Build the rows.', undefined, () => {
       if (refused) throw new Error('synthetic notification refusal');
     });
     try {
-      await h.at(60);
+      h.setSend({ ok: false, reason: 'not_open' });
+      await h.at(20);
       expect(h.told).toEqual([]);
       expect(h.sessions.readNudge(h.todo.id)?.nudges).toBe(0);
       refused = false;
-      await h.at(60);
-      await h.at(60);
-      expect(h.told).toEqual([expect.stringContaining('reminder window elapsed')]);
-      expect(h.sessions.readNudge(h.todo.id)?.nudges).toBe(3);
+      await h.at(20);
+      await h.at(20);
+      expect(h.told).toEqual([expect.stringContaining('could not be reached')]);
+      expect(h.sessions.readNudge(h.todo.id)?.nudges).toBe(1);
     } finally {
       h.clock.mockRestore();
       h.db.close();
     }
   });
 
-  test('a stopped worker is reminded at 20 and 40, escalated at 60, and never blocked', async () => {
+  test('a stopped worker is reminded at 20 and 40, then moved to a fresh worker at 60', async () => {
     const h = await stopped();
     try {
-      for (const minutes of [19, 20, 39, 40, 59, 60, 90]) await h.at(minutes);
+      for (const minutes of [19, 20, 39, 40, 59, 60]) await h.at(minutes);
       expect(h.warnings).toEqual([]);
       expect(h.sends()).toEqual([
         expect.stringContaining('stopped for 20 min'),
         expect.stringContaining('stopped for 40 min'),
       ]);
       expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
-      expect(h.told).toEqual([expect.stringContaining('reminder window elapsed without progress')]);
+      expect(h.calls.filter((call) => call.name === 'work.start')).toHaveLength(2);
+      expect(h.told).toEqual([expect.stringContaining('moved it to a fresh worker')]);
     } finally {
       h.clock.mockRestore();
       h.db.close();
     }
   });
 
-  test('a refused completion stamp does not replay the delivered reminder or notice', async () => {
+  test('an unreachable worker is not reminded or reported twice for one step', async () => {
     const h = await stopped(null);
     try {
       h.setSend({ ok: false, reason: 'not_open' });
-      h.db.exec(
-        "CREATE TRIGGER reject_nudge_completion BEFORE INSERT ON pack_facts WHEN NEW.pack='core' AND NEW.key='nudge' AND json_extract(NEW.value_json,'$.nudges')=3 BEGIN SELECT RAISE(ABORT, 'synthetic completion refusal'); END"
-      );
       await h.at(20);
       await h.at(20);
       expect(h.sends()).toHaveLength(1);
@@ -1785,20 +1795,20 @@ describe('stopped worker ladder', () => {
         expect.stringContaining('its worker could not be reached'),
       ]);
       expect(h.sessions.readNudge(h.todo.id)?.nudges).toBe(1);
-      expect(h.warnings).toEqual([expect.stringContaining('synthetic completion refusal')]);
+      expect(h.warnings).toEqual([]);
     } finally {
       h.clock.mockRestore();
       h.db.close();
     }
   });
 
-  test('a todo without a check uses the same worker reminders and never blocks', async () => {
+  test('a todo without a check follows the same ladder and then stalls', async () => {
     const h = await stopped(null);
     try {
       for (const minutes of [20, 40, 60, 120]) await h.at(minutes);
       expect(h.sends()).toHaveLength(2);
-      expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
-      expect(h.told.filter((note) => note.includes('without progress'))).toHaveLength(1);
+      expect(h.store.getTodo(h.todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
+      expect(h.told.filter((note) => note.includes('stalled'))).toHaveLength(1);
     } finally {
       h.clock.mockRestore();
       h.db.close();
@@ -1827,7 +1837,7 @@ describe('stopped worker ladder', () => {
       for (const minutes of [20, 40, 60]) await h.at(minutes);
       expect(h.warnings).toEqual([]);
       expect(h.sends()).toHaveLength(2);
-      expect(h.told.filter((note) => note.includes('reminder window elapsed'))).toHaveLength(1);
+      expect(h.told.filter((note) => note.includes('fresh worker'))).toHaveLength(1);
     } finally {
       h.clock.mockRestore();
       h.db.close();
@@ -1888,12 +1898,13 @@ describe('stopped worker ladder', () => {
     }
   });
 
-  test('a human-owned session gets no worker reminder', async () => {
+  test('a todo without an instruction idle for hours stalls with no fresh worker', async () => {
     const h = await stopped(null, null);
     try {
       for (const minutes of [20, 40, 60, 120]) await h.at(minutes);
       expect(h.sends()).toEqual([]);
-      expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
+      expect(h.calls.filter((call) => call.name === 'work.start')).toEqual([]);
+      expect(h.store.getTodo(h.todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
     } finally {
       h.clock.mockRestore();
       h.db.close();
@@ -1919,7 +1930,7 @@ describe('current explicit removal behavior before recompute', () => {
     const operation = createNeoTodoOperations(
       h.store,
       h.sessions,
-      h.runner,
+      { ...h.runner, resolveTarget: async (ref) => ({ value: ref }) },
       () => [],
       () => null
     ).find((operation) => operation.name === 'neo.todo.remove')!;
@@ -2001,6 +2012,7 @@ describe('current explicit removal behavior before recompute', () => {
           sessions = new NeoTodoSessionRepository(db);
         const effects: string[] = [];
         const runner = createNeoTodoRunner({
+          limits: () => ({ running: 99, perGroup: 99 }),
           write: gatewayFor(db).run.bind(gatewayFor(db)),
           store,
           sessions,

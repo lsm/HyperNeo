@@ -13,12 +13,14 @@ python3 .claude/skills/verify/startup-timeout-fixture.py <absolute-fresh-evidenc
 
 The fixture delays real query-options preparation by 25 ms before returning the
 silent process launcher. With the former 10 ms shared preparation/startup limit,
-preparation times out before either SDK process starts. Keep that failing
+preparation times out before the SDK process starts. Keep that failing
 reproduction separately; do not accept a generic preparation error as SDK startup
 coverage. With the two-second fixture window, public message.send and state.session
-must show the startup failure, return idle, and retain the actionable startup
-message after exactly two owned SDK processes. The second case also checks that
-no further error loop begins. Both original behavioral assertions remain active.
+must show three owned SDK starts with the shared backoff, the original delivered
+user prompt, and a persisted failed episode containing the startup timeout. The
+public terminal error must say the shared three-failure cap was reached, return
+idle, and permit no fourth start after a further observation window. The old
+two-attempt local ceiling was the producer defect fixed by #9130.
 
 Require exit zero and retain proof.log, mock.log and run-status.json. The wrapper
 stops its own model listener, the tests close their daemon and owned subprocesses,

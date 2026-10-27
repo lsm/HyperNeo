@@ -17,6 +17,15 @@ import {
 } from './types.ts';
 
 export const FindWorkInputSchema = z.object({
+  idPrefix: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      'Find HyperNeo sessions or Codex threads by ID prefix, before history limits. Multiple matches remain explicit.'
+    ),
   text: z.string().trim().min(1).max(200).optional(),
   id: z.string().trim().min(1).max(200).optional(),
   session: z.string().trim().min(1).max(200).optional(),
@@ -95,6 +104,10 @@ export function selectFindAdapters(input: FindInput, deps: FindWorkDeps): WorkAd
     .filter(
       (adapter) =>
         adapter.capabilities.includes('find') &&
+        (!input.idPrefix ||
+          input.id ||
+          input.adapters ||
+          ['hyperneo', 'codex-desktop'].includes(adapter.id)) &&
         (!input.adapters || input.adapters.includes(adapter.id))
     );
 }
@@ -103,6 +116,7 @@ export function toFindQuery(input: FindInput): FindQuery {
   return input.id
     ? { folder: input.folder, spaceId: input.spaceId, includeClosed: true, limit: 50 }
     : {
+        ...(input.idPrefix ? { idPrefix: input.idPrefix } : {}),
         text: input.text,
         folder: input.folder,
         spaceId: input.spaceId,
@@ -415,7 +429,7 @@ export function createFindWorkOperation(deps: FindWorkDeps) {
   return defineOperation({
     name: 'work.find',
     description:
-      'Find open work and the places it lives, on this daemon and every attached daemon. Returns places (project folders, Spaces) most recent first, the calling Neo project’s own folders ahead of the rest, each with its open sessions, threads, tasks or Space agents; a place is returned even when nothing in it is open, so this is also the project list. With text, it matches place names, work titles and message content. With id, it returns only the work whose ref id matches, closed or not, for example to turn a session id into its ref and place; id takes precedence over text, which is then ignored. With session, the name of a session the human named, it returns only work whose title equals that name exactly (case and spacing aside) and says whether the match is exact, ambiguous (every candidate is listed) or none (near lists the closest titles); send only to an exact match, and tell the human the candidates or the miss instead of picking one. The lookup covers the 50 most recent places and each place’s most recent work, so a long-idle item may not be found. includeClosed adds ended and archived work. A daemon or adapter that cannot answer is listed under unreachable instead of failing the search. The reply is size-bounded: more is true when places or work were left out, so narrow with text, folder or spaceId. folder takes a path as the human wrote it (~ allowed); an existing directory there is returned as a place even when no work has run in it yet, so a folder the human names can always be started in. Snippet handles are for work.read only; to send or propose work, use the item ref.',
+      'Find open work and the places it lives, on this daemon and every attached daemon. Returns places (project folders, Spaces) most recent first, the calling Neo project’s own folders ahead of the rest, each with its open sessions, threads, tasks or Space agents; a place is returned even when nothing in it is open, so this is also the project list. With text, it matches place names, work titles and message content. Queries shorter than three characters match message titles only; longer terms match substrings. With id, it returns only the work whose ref id matches, closed or not, for example to turn a session id into its ref and place; id takes precedence over text, which is then ignored. With session, the name of a session the human named, it returns only work whose title equals that name exactly (case and spacing aside) and says whether the match is exact, ambiguous (every candidate is listed) or none (near lists the closest titles); send only to an exact match, and tell the human the candidates or the miss instead of picking one. The lookup covers the 50 most recent places and each place’s most recent work, so a long-idle item may not be found. includeClosed adds ended and archived work. A daemon or adapter that cannot answer is listed under unreachable instead of failing the search. The reply is size-bounded: more is true when places or work were left out, so narrow with text, folder or spaceId. folder takes a path as the human wrote it (~ allowed); an existing directory there is returned as a place even when no work has run in it yet, so a folder the human names can always be started in. Snippet handles are for work.read only; to send or propose work, use the item ref.',
     inputSchema: FindWorkInputSchema,
     resultSchema: FindWorkResultSchema,
     policy: { safetyClass: 'read' },

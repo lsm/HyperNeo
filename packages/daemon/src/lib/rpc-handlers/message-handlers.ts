@@ -12,12 +12,14 @@ import {
 } from '@hyperneo/shared/sdk';
 import type { Database } from '../../storage/database.ts';
 import {
-  MESSAGE_SEARCH_MIN_TERM_LENGTH,
+  buildFtsQuery,
+  buildShortSearchPattern,
   type MessageSearchResponse,
 } from '../../storage/message-search.ts';
 import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
 import { singleMessageReads } from '../../storage/repositories/sdk-single-message-read.ts';
 import { messageCountReads } from '../../storage/repositories/sdk-message-count-read.ts';
+import { sessionExportReads } from '../../storage/repositories/session-export-read.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { MessageSearchWorkerService } from '../message-search-worker-service.ts';
 import { sessionSdkPath } from '../session/sdk-path.ts';
@@ -49,7 +51,7 @@ export function setupMessageHandlers(
     const offset = sanitizeInteger(request.offset, 0, 0, Number.MAX_SAFE_INTEGER);
     const from = sanitizeTimestamp(request.from, 'from');
     const to = sanitizeTimestamp(request.to, 'to');
-    if (query.length < MESSAGE_SEARCH_MIN_TERM_LENGTH) {
+    if (!buildFtsQuery(query) && !buildShortSearchPattern(query)) {
       return { results: [], limit, offset };
     }
     await db.waitForSdkMessageColumns(request.sessionId, false);
@@ -177,14 +179,15 @@ export function setupMessageHandlers(
       format?: 'markdown' | 'json';
     };
 
-    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
-
-    if (!agentSession) {
-      throw new Error('Session not found');
-    }
-
-    const { messages: sdkMessages } = agentSession.getSDKMessages(10000);
-    const sessionData = agentSession.getSessionData();
+    const store = db ?? sessionManager.getDatabase();
+    await store.waitForSdkMessageColumns(targetSessionId, false);
+    const { session, messages: sdkMessages } = await gatewayFor(store.getDatabase()).call(
+      sessionExportReads,
+      'read',
+      targetSessionId
+    );
+    const sessionData =
+      sessionManager.getCachedSession(targetSessionId)?.getSessionData() ?? session;
 
     if (format === 'json') {
       return {

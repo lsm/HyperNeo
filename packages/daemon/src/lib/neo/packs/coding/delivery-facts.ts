@@ -1,3 +1,7 @@
+import type { CodingMergeLocalAdmission, CodingMergeLocalRequest } from './merge-local-state.ts';
+import { codingSmokeWrites } from './smoke-admission-db.ts';
+import type { CodingSmokeRequest } from './smoke-operation.ts';
+import { codingMergeReceiptWrites } from './merge-receipt-db.ts';
 import { WorkRefSchema, type WorkRef } from '../../../drivers/types.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -46,6 +50,16 @@ export class CodingDeliveryFactsRepository {
         }
       : null;
   }
+  mergeLocalCurrent(input: CodingMergeLocalRequest) {
+    return gatewayFor(this.db).call(codingMergeReceiptWrites, 'snapshot', input);
+  }
+  recordGateCurrent(
+    todoId: string,
+    gate: CodingMergeGate,
+    admission?: CodingMergeLocalAdmission
+  ): Promise<boolean> {
+    return gatewayFor(this.db).call(codingMergeReceiptWrites, 'record', todoId, gate, admission);
+  }
   recordGate(todoId: string, input: CodingMergeGate): void {
     const gate = CodingMergeGate.parse(input);
     this.db
@@ -53,6 +67,18 @@ export class CodingDeliveryFactsRepository {
       VALUES (?, ?, ?, ?) ON CONFLICT(todo_id, url, head) DO UPDATE SET gate_json = excluded.gate_json
       WHERE json_remove(gate_json, '$.evidence') = json_remove(excluded.gate_json, '$.evidence')`)
       .run(todoId, githubUrlKey(gate.url), gate.head, JSON.stringify(gate));
+  }
+  recordAssignedSmokeCurrent(input: CodingSmokeRequest, deploys: NeoDeployRead) {
+    return gatewayFor(this.db).call(codingSmokeWrites, 'assignedRecord', input, deploys);
+  }
+  recordSmokeCurrent(
+    todoId: string,
+    url: string,
+    head: string,
+    input: CodingSmoke,
+    deploys: NeoDeployRead
+  ) {
+    return gatewayFor(this.db).call(codingSmokeWrites, 'record', todoId, url, head, input, deploys);
   }
   recordSmoke(todoId: string, gate: CodingMergeGate, smoke: CodingSmoke): boolean {
     return (
@@ -86,7 +112,7 @@ export const codingDeliveryWrites = defineRepositoryOp(
 type Rejection = { accepted: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
 const refuse = (reason: string): { reason: Rejection } => ({ reason: { accepted: false, reason } });
-export const recordCodingSmoke = (superpipe({})('coding.record-smoke') as PipelineAPI)
+export const admitCodingSmoke = (superpipe({})('coding.record-smoke') as PipelineAPI)
   .input(['repo', 'todoId', 'url', 'head', 'input', 'deploys'])
   .pipe(
     (
@@ -137,13 +163,13 @@ export const recordCodingSmoke = (superpipe({})('coding.record-smoke') as Pipeli
   )
   .pipe((result: CodingSmoke) => result, 'result', 'smoke')
   .pipe(
-    async (
+    (
       repo: CodingDeliveryFactsRepository,
       todoId: string,
       delivery: CodingDelivery,
       smoke: CodingSmoke
     ) => {
-      const stored = await repo.write('recordSmoke', todoId, delivery.gate, smoke);
+      const stored = repo.recordSmoke(todoId, delivery.gate, smoke);
       return stored
         ? { accepted: true }
         : { accepted: false, reason: 'matching_merge_gate_required' };
@@ -151,11 +177,17 @@ export const recordCodingSmoke = (superpipe({})('coding.record-smoke') as Pipeli
     ['repo', 'todoId', 'delivery', 'smoke'],
     'result'
   )
-  .endAsync('result') as (
+  .end('result') as (
   repo: CodingDeliveryFactsRepository,
   todoId: string,
   url: string,
   head: string,
   input: CodingSmoke,
   deploys: NeoDeployRead
-) => Promise<{ accepted: true } | Rejection>;
+) => { accepted: true } | Rejection;
+
+export function recordCodingSmoke(
+  ...[repo, ...args]: Parameters<typeof admitCodingSmoke>
+): Promise<ReturnType<typeof admitCodingSmoke>> {
+  return repo.recordSmokeCurrent(...args);
+}

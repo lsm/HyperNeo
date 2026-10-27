@@ -63,7 +63,11 @@ import {
   taskOperationRejection,
 } from '../../drivers/space-adapter.ts';
 import type { PlaceGroup, WorkAdapter } from '../../drivers/types.ts';
-import { createWorkVerbOperations } from '../../drivers/work-operations.ts';
+import {
+  createWorkVerbOperations,
+  type WorkSendUncertainty,
+} from '../../drivers/work-operations.ts';
+import { sessionSender } from '../../messaging/message-send.ts';
 import { renderAddress } from '../../mailbox/address.ts';
 import { createNeoSessionArchiveOperation } from '../../neo/session-archive-operation.ts';
 import { reject } from '../../drivers/work-operations.ts';
@@ -393,7 +397,11 @@ function acpAgentAdapters(
 }
 
 function codexDesktopAdapters(
-  readSnapshot: (statePath: string, includeClosed: boolean) => Promise<CodexSnapshot>,
+  readSnapshot: (
+    statePath: string,
+    includeClosed: boolean,
+    idPrefix?: string
+  ) => Promise<CodexSnapshot>,
   searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>,
   prepareExecution: WorkExecutionPreparer
 ): WorkAdapter[] {
@@ -609,8 +617,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       tasks: spaceTaskControl(context),
     }),
     ...codexDesktopAdapters(
-      (statePath, includeClosed) =>
-        context.deps.db.readCodexSnapshotAsync(statePath, includeClosed),
+      (statePath, includeClosed, idPrefix) =>
+        context.deps.db.readCodexSnapshotAsync(statePath, includeClosed, idPrefix),
       searchChats,
       prepareExecution
     ),
@@ -643,6 +651,28 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       return ask?.status === 'open' && ask.sessionId === sessionId;
     },
     recordStarted: (ref: StartedWork) => recordStartedWork(db(), ref),
+    reportUncertain: async (report: WorkSendUncertainty) => {
+      const to = sessionSender(report.from) ?? new NeoRepository(db()).defaultBinding()?.sessionId;
+      if (!to) throw new Error('No originating session or default Neo for the uncertainty report.');
+      const completion =
+        report.lastCompletion === undefined
+          ? 'unavailable'
+          : new Date(report.lastCompletion).toISOString();
+      const outcome = await invokeOperation(
+        context.deps.sessionManager.getOperationRegistry(),
+        'message.send',
+        {
+          to,
+          kind: 'blocked',
+          text: `Codex Desktop handoff uncertain for ${report.ref.id}. ${report.detail} Last confirmed engine completion: ${completion}. Inspect work.status and the Desktop queue; do not automatically replay or start another writer. Engine completion does not prove this input was consumed.`,
+          idempotencyKey: `desktop-send-uncertain:${report.id}`,
+          from: `session:codex-desktop:${report.ref.id}`,
+        },
+        { source: 'rpc' }
+      );
+      if (outcome.kind !== 'completed' || (outcome.value as { kind: string }).kind !== 'accepted')
+        throw new Error(JSON.stringify(outcome));
+    },
     namedFolder: {
       machine,
       homeDir: homedir(),

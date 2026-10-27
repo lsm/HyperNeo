@@ -1,3 +1,4 @@
+import { existingTodoTarget } from '../../helpers/todo-check-packs.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { createTodoCheckPacks, pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
@@ -43,6 +44,7 @@ function setup() {
   );
   const calls: string[] = [];
   const runner = createNeoTodoRunner({
+    limits: () => ({ running: 99, perGroup: 99 }),
     write: gatewayFor(db).run.bind(gatewayFor(db)),
     store,
     sessions,
@@ -58,18 +60,18 @@ function setup() {
     ...createNeoTodoOperations(
       store,
       sessions,
-      runner,
+      { ...runner, resolveTarget: existingTodoTarget },
       () => createTodoCheckPacks(db),
       () => null
     ),
     ...createNeoAskRecordOperations(
       store,
       sessions,
-      { ...runner, stop: async () => null },
+      { ...runner, resolveTarget: existingTodoTarget, stop: async () => null },
       () => null,
       () => true,
       () => [],
-      undefined,
+      () => createTodoCheckPacks(db),
       undefined,
       undefined,
       { gateway: gatewayFor(db), changed: () => {} }
@@ -93,13 +95,37 @@ function setup() {
   );
   const call = async (name: string, input: unknown) => {
     const reply = await handler({ name, input });
-    expect(reply.isError).not.toBe(true);
+    expect(reply.isError, reply.content[0].text).not.toBe(true);
     return JSON.parse(reply.content[0].text);
   };
   return { db, store, sessions, ask, todo, runner, calls, call, audits };
 }
 
 describe('todo and ask bookkeeping records through MCP', () => {
+  test('opens an ask with an existing worker without dispatching it', async () => {
+    const h = setup();
+    try {
+      const ref = { adapter: 'hyperneo', id: '10000000-0000-4000-8000-000000000001' };
+      const result = await h.call('neo.ask.open', {
+        title: 'Existing worker',
+        request: 'Track its result',
+        todos: [
+          {
+            title: 'Worker task',
+            check: pendingTodoCheck,
+            instruction: 'Work',
+            target: { verb: 'send', ref },
+          },
+        ],
+      });
+      expect(result.ok).toBe(true);
+      expect(h.sessions.get(result.todos[0].id)?.ref).toEqual(ref);
+      expect(h.calls).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test.each(['neo.todo.retry', 'neo.todo.continue'])(
     '%s on unstarted work records without dispatch or start-card approval',
     async (name) => {

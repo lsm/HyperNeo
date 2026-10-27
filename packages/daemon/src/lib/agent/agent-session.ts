@@ -1350,11 +1350,7 @@ export class AgentSession
     const querySuperseded = (): boolean =>
       queryGeneration !== undefined && this.getQueryGeneration() !== queryGeneration;
     try {
-      if (this.queryPromise) {
-        try {
-          await this.queryPromise;
-        } catch {}
-      }
+      await this.lifecycleManager.stop();
 
       if (this.rateLimitWatchdog.isSuperseded(episodeGeneration) || querySuperseded()) {
         this.logger.info('Fallback switch aborted after teardown (episode superseded).');

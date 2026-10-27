@@ -9,7 +9,12 @@ import {
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import type { ReactiveDatabase } from '../../storage/reactive-database.ts';
-import type { JobQueueRepository, Job } from '../../storage/repositories/job-queue-repository.ts';
+import {
+  jobQueueWrites,
+  type JobQueueRepository,
+  type Job,
+} from '../../storage/repositories/job-queue-repository.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import {
   DirectTaskExecutionRepository,
   type DirectTaskAttempt,
@@ -220,16 +225,19 @@ export function decideStartRequeue(
   };
 }
 
-function requeueStartJob(
-  jobs: Pick<JobQueueRepository, 'requeueParked' | 'requeueWaiting'>,
+async function requeueStartJob(
+  db: Database,
   job: Job,
   result: Extract<DirectTaskStartResult, { started: false }>,
   requeue: StartRequeue
-): StartJobResult {
-  const requeued =
-    requeue.kind === 'wait'
-      ? jobs.requeueWaiting(job.id, requeue.runAt, requeue.claimToken)
-      : jobs.requeueParked(job.id, requeue.runAt, requeue.claimToken);
+): Promise<StartJobResult> {
+  const requeued = await gatewayFor(db).call(
+    jobQueueWrites,
+    requeue.kind === 'wait' ? 'requeueWaiting' : 'requeueParked',
+    job.id,
+    requeue.runAt,
+    requeue.claimToken
+  );
   if (!requeued) return { started: false, reason: 'superseded_claim' };
   return { ...result, parked: requeue.kind === 'wait' ? result.reason : requeue.parked };
 }
@@ -237,7 +245,6 @@ function requeueStartJob(
 export function createDirectStartJobHandler(
   db: Database,
   start: (input: DirectTaskStartInput) => Promise<DirectTaskStartResult>,
-  jobs: Pick<JobQueueRepository, 'requeueParked' | 'requeueWaiting'>,
   sessionManager: DirectAttemptStopDependencies['sessionManager'],
   onTaskAttemptChanged?: (taskId: string) => void
 ) {
@@ -245,7 +252,7 @@ export function createDirectStartJobHandler(
   const tasks = new SpaceTaskRepository(db);
   const stop = createDirectAttemptStopper({ attempts, tasks, sessionManager });
   return (
-    superpipe({ db, attempts, tasks, stop, jobs, start, onTaskAttemptChanged })(
+    superpipe({ db, attempts, tasks, stop, start, onTaskAttemptChanged })(
       'run-direct-start-job'
     ) as PipelineAPI
   )
@@ -270,7 +277,7 @@ export function createDirectStartJobHandler(
     .pipe((followUp: StartFollowUp) => followUp, 'outcome', 'followUp')
     .pipe(Date.now, undefined, 'now')
     .pipe(decideStartRequeue, ['job', 'result', 'followUp', 'now'], 'requeue')
-    .pipe(requeueStartJob, ['jobs', 'job', 'result', 'requeue'], 'outcome')
+    .pipe(requeueStartJob, ['db', 'job', 'result', 'requeue'], 'outcome')
     .endAsync('outcome') as (job: Job) => Promise<StartJobResult>;
 }
 
@@ -377,7 +384,6 @@ export function registerDirectStartJobs(
     createDirectStartJobHandler(
       deps.db,
       createDirectTaskStarter(deps),
-      deps.jobQueue,
       deps.sessionManager,
       deps.onTaskClaimed
     ),

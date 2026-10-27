@@ -93,6 +93,7 @@ function createMockSessionManager(): {
   const mocks = {
     getSessionAsync,
     getSessionForControl: getSessionAsync,
+    getCachedSession: () => agentSessionData.agentSession,
     getSession: mock(() => agentSessionData.agentSession),
     getSessionFromDB: mock(
       () =>
@@ -1009,6 +1010,16 @@ describe('Message RPC Handlers', () => {
   });
 
   describe('session.export', () => {
+    let exportDb: Database;
+    beforeEach(async () => {
+      exportDb = await createTestDb();
+      await exportDb.createSession(createTestSession('session-123'));
+      setupMessageHandlers(messageHubData.hub, sessionManagerData.sessionManager, exportDb);
+    });
+    afterEach(async () => {
+      await exportDb.close();
+    });
+
     test('exports to markdown by default', async () => {
       const handler = messageHubData.handlers.get('session.export');
       expect(handler).toBeDefined();
@@ -1040,8 +1051,6 @@ describe('Message RPC Handlers', () => {
     test('throws error when session not found', async () => {
       const handler = messageHubData.handlers.get('session.export');
       expect(handler).toBeDefined();
-
-      sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(null);
 
       await expect(handler!({ sessionId: 'non-existent', format: 'markdown' }, {})).rejects.toThrow(
         'Session not found'

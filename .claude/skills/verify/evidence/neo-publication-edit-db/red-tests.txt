@@ -1,0 +1,66 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/neo-publication-edit-writer.test.ts:
+61 |         source: 'mcp',
+62 |         sessionId: root.sessionId,
+63 |         role: 'neo',
+64 |       });
+65 |     try {
+66 |       expect(await call(input)).toMatchObject({
+                                     ^
+error: expect(received).toMatchObject(expected)
+
+  {
+-   "kind": "completed",
+-   "value": {
+-     "accepted": true,
+-     "publication": {
+-       "fullText": "Original detail.",
+-       "publicationId": "20000000-0000-4000-8000-000000009144",
+-       "shortText": "Changed.",
+-     },
+-   },
++   "code": "execution_failed",
++   "kind": "failed",
++   "message": "Publication admission SQL on main",
+  }
+
+- Expected  - 9
++ Received  + 3
+
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/neo-publication-edit-writer.test.ts:66:33)
+(fail) publication revision admits and commits on the bound writer with guarded main [5.25ms]
+61 |         source: 'mcp',
+62 |         sessionId: root.sessionId,
+63 |         role: 'neo',
+64 |       });
+65 |     try {
+66 |       expect(await call(input)).toMatchObject({
+                                     ^
+error: expect(received).toMatchObject(expected)
+
+  {
+    "kind": "completed",
+    "value": {
+-     "accepted": true,
+-     "publication": {
+-       "fullText": "Original detail.",
+-       "publicationId": "20000000-0000-4000-8000-000000009144",
+-       "shortText": "Changed.",
+-     },
++     "accepted": false,
++     "detail": "No Neo reply in this conversation has that publicationId. There are no recent replies.",
++     "reason": "not_found",
+    },
+  }
+
+- Expected  - 6
++ Received  + 3
+
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/neo-publication-edit-writer.test.ts:66:33)
+(fail) publication revision admits and commits on the bound writer with read-only main [0.80ms]
+
+ 0 pass
+ 2 fail
+ 4 expect() calls
+Ran 2 tests across 1 file. [34.00ms]
