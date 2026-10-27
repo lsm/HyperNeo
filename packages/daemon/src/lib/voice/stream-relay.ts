@@ -1,29 +1,27 @@
 import { VOICE_MAX_AUDIO_BYTES, type VoiceMode, type VoiceSettings } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import WebSocket from 'ws';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
 import { withVoiceCredentialLock } from '../rpc-handlers/voice-credential-lock.ts';
 import {
-  voiceDiagnostic,
-  voicePeerReasonBytes,
-  voiceSocketErrorCode,
-  voiceSocketReason,
-} from './diagnostics.ts';
-import {
-  BATCH_TRANSCRIPTIONS_PATH,
-  joinFinals,
-  type StreamProtocol,
-  serviceBaseEndpoint,
-  streamProtocol,
-} from './stream-protocols.ts';
+  asrRelayDefaults,
+  type AsrRelay,
+  type AsrRelayEvent,
+  type AsrRelayFactory,
+} from './asr-relay.ts';
+import { voiceDiagnostic } from './diagnostics.ts';
 import { resolveTranscriptionEndpoint, withTimeout } from './transcribe-fetch.ts';
 import { resolveApiKey, type VoiceTranscribeOutcome } from './transcribe-pipeline.ts';
+import {
+  BATCH_TRANSCRIPTIONS_PATH,
+  serviceBaseEndpoint,
+  streamProtocol,
+  type StreamProtocol,
+} from './stream-protocols.ts';
 
 const STREAM_SAMPLE_RATE = 16_000;
 const CONNECT_TIMEOUT_MS = 5_000;
 const START_TIMEOUT_MS = 8_000;
 const CREDENTIAL_LOOKUP_TIMEOUT_MS = 16_000;
-const CLOSE_TIMEOUT_MS = 5_000;
 
 export interface VoiceStreamText {
   streamId: string;
@@ -38,6 +36,7 @@ export interface VoiceStreamDeps {
   credentialManager?: Pick<ProviderCredentialManager, 'getCredentials'>;
   transcribeWav: (wavBase64: string) => Promise<VoiceTranscribeOutcome>;
   push: (text: VoiceStreamText) => void;
+  createRelay?: AsrRelayFactory;
 }
 
 type Gate<T> = { value: T } | { reason: string };
@@ -116,13 +115,13 @@ export function pcm16Wav(pcm: Uint8Array): Uint8Array {
   return wav;
 }
 
-async function openAsrSocket(
+async function buildAsrRelayOpen(
   streamId: string,
   voice: VoiceSettings,
   url: URL,
   protocol: StreamProtocol,
   deps: VoiceStreamDeps
-): Promise<Gate<WebSocket>> {
+): Promise<Gate<import('./asr-relay-core.ts').AsrRelayOpen>> {
   try {
     const http = new URL(url);
     http.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
@@ -146,79 +145,72 @@ async function openAsrSocket(
     target.hostname = resolved.hostname;
     const pinned = target.hostname !== url.hostname;
     const tls = { ...voiceStreamTls(voice), ...(pinned ? { servername: url.hostname } : {}) };
-    const socket = new WebSocket(target, {
-      ...tls,
-      tls: { ...tls, ...(pinned ? { serverName: url.hostname } : {}) },
-      headers: {
-        ...(pinned ? { Host: url.host } : {}),
-        ...(apiKey ? { Authorization: protocol.authorization(apiKey) } : {}),
+    return {
+      value: {
+        streamId,
+        clientId: deps.clientId,
+        url: target.toString(),
+        protocolName: voice.streamProtocol ?? 'deepgram',
+        wsOptions: {
+          ...tls,
+          tls: { ...tls, ...(pinned ? { serverName: url.hostname } : {}) },
+          headers: {
+            ...(pinned ? { Host: url.host } : {}),
+            ...(apiKey ? { Authorization: protocol.authorization(apiKey) } : {}),
+          },
+          handshakeTimeout: CONNECT_TIMEOUT_MS,
+        },
       },
-      handshakeTimeout: CONNECT_TIMEOUT_MS,
-    } as WebSocket.ClientOptions);
-    return await new Promise((resolve) => {
-      socket.on('error', (error) => {
-        voiceDiagnostic('voice.asr.error', {
-          streamId,
-          clientId: deps.clientId,
-          reason: 'socket_error',
-          code: voiceSocketErrorCode(error),
-        });
-        resolve({ reason: error?.message || 'connection failed' });
-      });
-      socket.on('close', (code, reason) =>
-        voiceDiagnostic('voice.asr.close', {
-          streamId,
-          clientId: deps.clientId,
-          code,
-          reason: voiceSocketReason(code),
-          peerReasonBytes: voicePeerReasonBytes(reason),
-        })
-      );
-      socket.once('open', () => {
-        for (const message of protocol.opening()) socket.send(message);
-        resolve({ value: socket });
-      });
-    });
+    };
   } catch (error) {
     return { reason: error instanceof Error ? error.message : String(error) };
   }
 }
 
-async function openAsrSocketWithin(
+async function openAsrRelayWithin(
   streamId: string,
   voice: VoiceSettings,
   url: URL,
   protocol: StreamProtocol,
-  deps: VoiceStreamDeps
-): Promise<Gate<WebSocket>> {
-  const startedAt = Date.now();
-  const opening = openAsrSocket(streamId, voice, url, protocol, deps);
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const expired = new Promise<Gate<WebSocket>>((resolve) => {
-    timer = setTimeout(
-      () => resolve({ reason: `no connection within ${START_TIMEOUT_MS} ms` }),
-      START_TIMEOUT_MS
-    );
-  });
-  const opened = await Promise.race([opening, expired]);
-  clearTimeout(timer);
-  if ('reason' in opened)
-    void opening.then((late) => {
-      if (!('value' in late)) return;
-      late.value.once('close', (code, reason) =>
-        voiceDiagnostic('voice.stream.end', {
-          streamId,
-          clientId: deps.clientId,
-          closedBy: 'relay',
-          code,
-          reason: voiceSocketReason(code),
-          peerReasonBytes: voicePeerReasonBytes(reason),
-          durationMs: Date.now() - startedAt,
-        })
-      );
-      late.value.close(1000);
+  deps: VoiceStreamDeps,
+  onEvent: (event: AsrRelayEvent) => void,
+  onRelay: (relay: AsrRelay) => void
+): Promise<Gate<AsrRelay> | { reason: string; relay: AsrRelay | null }> {
+  let timedOut = false;
+  let created: AsrRelay | null = null;
+  const attempt = async (): Promise<
+    Gate<AsrRelay> | { reason: string; relay: AsrRelay | null }
+  > => {
+    const spec = await buildAsrRelayOpen(streamId, voice, url, protocol, deps);
+    if ('reason' in spec) return { ...spec, relay: null };
+    const relay = (deps.createRelay ?? asrRelayDefaults.create)(spec.value);
+    created = relay;
+    onRelay(relay);
+    const opened = new Promise<Gate<null>>((resolveOpened) => {
+      relay.onMessage((event) => {
+        if (event.type === 'opened') resolveOpened({ value: null });
+        else if (event.type === 'open_failed') resolveOpened({ reason: event.reason });
+        onEvent(event);
+      });
     });
-  return opened;
+    if (timedOut) {
+      relay.post({ type: 'abort-late-open' });
+      return { reason: `no connection within ${START_TIMEOUT_MS} ms`, relay };
+    }
+    const outcome = await opened;
+    return 'reason' in outcome ? { ...outcome, relay } : { value: relay };
+  };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<{ reason: string; relay: null }>((resolve) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      created?.post({ type: 'abort-late-open' });
+      resolve({ reason: `no connection within ${START_TIMEOUT_MS} ms`, relay: null });
+    }, START_TIMEOUT_MS);
+  });
+  const outcome = await Promise.race([attempt(), expired]);
+  clearTimeout(timer);
+  return outcome;
 }
 
 export const planVoiceStream = (superpipe({})('voice-stream-start') as PipelineAPI)
@@ -248,15 +240,10 @@ export class VoiceStream {
   private chunks: Uint8Array[] = [];
   private cancelled = false;
   private bytes = 0;
-  private socket: WebSocket | null = null;
-  private protocol: StreamProtocol | null = null;
-  private finals: string[] = [];
-  private partial = '';
-  private closeInitiator: 'client' | 'relay' | null = null;
-  private lastAudioSentAt: number | null = null;
-  private lastResultAt: number | null = null;
-  private lastPingAt: number | null = null;
-  private lastPongAt: number | null = null;
+  private relay: AsrRelay | null = null;
+  private relayAlive = false;
+  private finishedWaiter: ((result: { ok: boolean; text: string }) => void) | null = null;
+  private retireTimer: ReturnType<typeof setTimeout> | null = null;
   private stopping: Promise<
     { text: string; via: 'streaming' | 'batch' } | { error: string; retryable?: true }
   > | null = null;
@@ -305,13 +292,19 @@ export class VoiceStream {
             ...(plan.mode === 'auto' ? { fallback: 'no streaming route' } : {}),
           };
     }
-    const opened = await openAsrSocketWithin(
+    const opened = await openAsrRelayWithin(
       id,
       plan.voice,
       plan.route.url,
       plan.route.protocol,
-      deps
+      deps,
+      (event) => stream.handleRelayEvent(event),
+      (relay) => {
+        stream.relay = relay;
+      }
     );
+    if ('value' in opened) stream.relay = opened.value;
+    else if ('relay' in opened && opened.relay) stream.relay = opened.relay;
     if ('reason' in opened) {
       stream.fallbackReason = 'asr_unavailable';
       openedLog(plan.mode === 'streaming' ? 'refused' : 'started', 'batch', stream.fallbackReason);
@@ -320,72 +313,38 @@ export class VoiceStream {
         : { stream, via: 'batch', fallback: opened.reason };
     }
     stream.via = 'streaming';
+    stream.relayAlive = true;
     openedLog('started', 'streaming');
-    stream.attach(opened.value, plan.route.protocol);
     return { stream, via: 'streaming' };
   }
 
-  private attach(socket: WebSocket, protocol: StreamProtocol): void {
-    this.socket = socket;
-    this.protocol = protocol;
-    socket.on('message', (data, isBinary) => {
-      const parsed = isBinary || this.cancelled ? null : protocol.parse(data.toString());
-      if (!parsed) return;
-      this.lastResultAt = Date.now();
-      if (parsed.isFinal) {
-        if (parsed.text) this.finals.push(parsed.text);
-        this.partial = '';
-      } else this.partial = parsed.text;
-      this.deps.push({ streamId: this.id, text: this.text(), isFinal: false });
-    });
-    socket.on('ping', () => {
-      this.lastPingAt = Date.now();
-    });
-    socket.on('pong', () => {
-      this.lastPongAt = Date.now();
-    });
-    socket.on('close', (code, reason) => {
-      if (this.socket === socket) this.socket = null;
-      this.logEnd(code, reason);
-    });
-    socket.on('error', () => {
-      if (this.socket === socket) this.socket = null;
-    });
+  private handleRelayEvent(event: AsrRelayEvent): void {
+    if (event.type === 'diag') voiceDiagnostic(event.name, event.metadata);
+    else if (event.type === 'text')
+      this.deps.push({ streamId: this.id, text: event.text, isFinal: false });
+    else if (event.type === 'finished') {
+      const waiter = this.finishedWaiter;
+      this.finishedWaiter = null;
+      waiter?.({ ok: event.ok, text: event.text });
+    } else if (event.type === 'dead') {
+      this.relayAlive = false;
+      const waiter = this.finishedWaiter;
+      this.finishedWaiter = null;
+      waiter?.({ ok: false, text: '' });
+      this.retireRelay();
+    } else if (event.type === 'open_failed') this.retireRelay();
   }
 
-  private logEnd(code: number, peerReason: unknown): void {
-    const now = Date.now();
-    const since = (at: number | null) => (at === null ? null : now - at);
-    voiceDiagnostic('voice.stream.end', {
-      streamId: this.id,
-      clientId: this.deps.clientId,
-      closedBy: this.closeInitiator ?? 'server',
-      code,
-      reason: voiceSocketReason(code),
-      peerReasonBytes: voicePeerReasonBytes(peerReason),
-      durationMs: now - this.startedAt,
-      sinceLastAudioMs: since(this.lastAudioSentAt),
-      sinceLastResultMs: since(this.lastResultAt),
-      sinceLastPingMs: since(this.lastPingAt),
-      sinceLastPongMs: since(this.lastPongAt),
-    });
-  }
-
-  private text(): string {
-    return joinFinals([...this.finals, this.partial]);
-  }
-
-  write(pcm: Uint8Array): string | null {
-    if (pcm.byteLength % 2 !== 0) return 'Voice chunks must be whole 16-bit samples';
-    if (this.bytes + pcm.byteLength > VOICE_MAX_AUDIO_BYTES - 44)
-      return 'Audio data exceeds the 10 MB voice input limit';
-    this.chunks.push(pcm);
-    this.bytes += pcm.byteLength;
-    if (this.socket?.readyState === WebSocket.OPEN && this.protocol) {
-      this.socket.send(this.protocol.audio(pcm));
-      this.lastAudioSentAt = Date.now();
-    }
-    return null;
+  private retireRelay(): void {
+    if (this.retireTimer) return;
+    this.retireTimer = setTimeout(() => {
+      this.retireTimer = null;
+      const waiter = this.finishedWaiter;
+      this.finishedWaiter = null;
+      waiter?.({ ok: false, text: '' });
+      this.relay?.close();
+      this.relay = null;
+    }, 1_000);
   }
 
   stop(): Promise<
@@ -431,27 +390,22 @@ export class VoiceStream {
   private async finish(): Promise<
     { text: string; via: 'streaming' | 'batch' } | { error: string; retryable?: true }
   > {
-    const socket = this.socket;
-    if (socket && this.protocol) {
-      const closed = new Promise<boolean>((resolve) => {
-        const timer = setTimeout(() => resolve(false), CLOSE_TIMEOUT_MS);
-        socket.once('close', () => {
-          clearTimeout(timer);
-          resolve(true);
-        });
+    const relay = this.relay;
+    const wasAlive = this.relayAlive;
+    if (relay && wasAlive) {
+      const finished = new Promise<{ ok: boolean; text: string }>((resolve) => {
+        this.finishedWaiter = resolve;
       });
-      socket.send(this.protocol.finish());
-      const finished = await closed;
+      relay.post({ type: 'finish' });
+      const result = await finished;
       this.close();
       if (this.cancelled) return { error: 'Voice stream cancelled' };
-      const text = this.text();
-      if (finished && (text || this.bytes === 0)) {
-        this.deps.push({ streamId: this.id, text, isFinal: true });
-        return { text, via: 'streaming' };
+      if (result.ok && (result.text || this.bytes === 0)) {
+        this.deps.push({ streamId: this.id, text: result.text, isFinal: true });
+        return { text: result.text, via: 'streaming' };
       }
-    }
-    if (this.via === 'streaming')
-      this.fallbackReason = socket ? 'asr_incomplete' : 'asr_disconnected';
+      if (this.via === 'streaming') this.fallbackReason = 'asr_incomplete';
+    } else if (this.via === 'streaming') this.fallbackReason = 'asr_disconnected';
     this.via = 'batch';
     if (this.bytes === 0) return { error: 'Audio data is empty' };
     const pcm = new Uint8Array(this.bytes);
@@ -471,17 +425,24 @@ export class VoiceStream {
     return { text: outcome.text, via: 'batch' };
   }
 
+  write(pcm: Uint8Array): string | null {
+    if (pcm.byteLength % 2 !== 0) return 'Voice chunks must be whole 16-bit samples';
+    if (this.bytes + pcm.byteLength > VOICE_MAX_AUDIO_BYTES - 44)
+      return 'Audio data exceeds the 10 MB voice input limit';
+    this.chunks.push(pcm);
+    this.bytes += pcm.byteLength;
+    if (this.relayAlive) this.relay?.post({ type: 'audio', pcm });
+    return null;
+  }
+
   cancel(): void {
     this.cancelled = true;
-    if (!this.closeInitiator) this.closeInitiator = 'client';
     this.chunks = [];
     this.bytes = 0;
-    this.close();
+    this.close('client_disconnected');
   }
 
   close(reason = 'closed'): void {
-    if (!this.closeInitiator)
-      this.closeInitiator = reason === 'client_disconnected' ? 'client' : 'relay';
     voiceDiagnostic('voice.stream.close', {
       streamId: this.id,
       clientId: this.deps.clientId,
@@ -491,8 +452,11 @@ export class VoiceStream {
       audioDurationMs: (this.bytes / (STREAM_SAMPLE_RATE * 2)) * 1000,
       durationMs: Date.now() - this.startedAt,
     });
-    const socket = this.socket;
-    this.socket = null;
-    socket?.close(1000);
+    this.relay?.post({
+      type: 'close',
+      initiator: reason === 'client_disconnected' ? 'client' : 'relay',
+    });
+    this.relayAlive = false;
+    this.retireRelay();
   }
 }
