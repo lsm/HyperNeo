@@ -926,7 +926,7 @@ export class NeoAskTodoRepository {
         { state: 'retired', retired_reason: reason, replaced_by: replacedBy },
         'open'
       );
-      if (retired) this.releaseStartTodos(question.id, now);
+      if (retired) this.releaseStartTodos(question.id, now, [], 'Start question withdrawn.');
       return retired;
     })();
     if (!changed) return null;
@@ -992,17 +992,28 @@ export class NeoAskTodoRepository {
     }
   }
 
-  private releaseStartTodos(questionId: string, now: number, ticked?: readonly string[]): void {
-    for (const id of this.getQuestion(questionId)?.startTodos ?? []) {
+  private releaseStartTodos(
+    questionId: string,
+    now: number,
+    ticked?: readonly string[],
+    heldReason = 'Not ticked in the start answer.'
+  ): void {
+    const question = this.getQuestion(questionId);
+    const waiting = new Set(
+      (question ? this.listQuestions(question.askId) : [])
+        .filter((other) => other.kind === 'start' && other.state === 'open')
+        .flatMap((other) => other.startTodos ?? [])
+    );
+    for (const id of question?.startTodos ?? []) {
       const todo = this.getTodo(id);
-      if (todo?.state === 'blocked' && todo.blockedBy === 'question')
+      if (todo?.state === 'blocked' && todo.blockedBy === 'question' && !waiting.has(id))
         this.updateTodo(
           todo,
           ticked && !ticked.includes(id)
             ? {
                 state: 'blocked',
                 blockedBy: 'held',
-                blockedReason: 'Not ticked in the start answer.',
+                blockedReason: heldReason,
                 nextAction: 'The human releases it.',
               }
             : { state: 'todo' },

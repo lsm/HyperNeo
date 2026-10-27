@@ -464,7 +464,7 @@ describe('neo.question operations', () => {
     });
   });
 
-  test('a start question holds its todos until answered; unticked ones stay held, retired ones are released', async () => {
+  test('a start question holds its todos until answered; unticked or withdrawn ones stay held', async () => {
     const { store, call, daemonStart, started, fix, rows } = setup();
     const held = {
       state: 'blocked',
@@ -488,7 +488,11 @@ describe('neo.question operations', () => {
     store.updateTodo(store.getTodo(rows.id)!, held, 5);
     const moot = daemonStart([rows.id], 'Start this?');
     store.retireQuestion(moot, 'not needed', null, 6);
-    expect(store.getTodo(rows.id)).toMatchObject({ state: 'todo', blockedBy: null });
+    expect(store.getTodo(rows.id)).toMatchObject({
+      state: 'blocked',
+      blockedBy: 'held',
+      blockedReason: 'Start question withdrawn.',
+    });
   });
 
   test('tells Neo which ticked todos did not start', async () => {
