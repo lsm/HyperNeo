@@ -6,6 +6,7 @@ import {
 import { neoTodoMutationReads } from '../repositories/neo-todo-mutation-planning.ts';
 import { neoTodoMutations } from '../repositories/neo-todo-mutation-commit.ts';
 import { neoTodoRunnerWrites } from '../repositories/neo-todo-runner-state.ts';
+import { neoSessionTrackWrites } from '../repositories/neo-session-track-write.ts';
 import { globalSettingsWrites } from '../repositories/global-settings-writes.ts';
 import {
   codingPollPageReads,
@@ -120,6 +121,8 @@ import { messageCountReads } from '../repositories/sdk-message-count-read.ts';
 import { codingUnownedWrites } from '../../lib/neo/packs/coding/unowned-db.ts';
 import { sessionExportReads } from '../repositories/session-export-read.ts';
 import { neoPublicationEditWrites } from '../repositories/neo-publication-edit-writes.ts';
+import { neoProjectMoveWrites } from '../repositories/neo-project-move-writes.ts';
+import { codingPrEventReads } from '../../lib/neo/packs/coding/pr-event-routing-db.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -129,6 +132,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     neoTodoMutationReads,
     neoTodoMutations,
     neoTodoRunnerWrites,
+    neoSessionTrackWrites,
     codingPollPageReads,
     codingPollPageWrites,
     codingConnectorIdentityReads,
@@ -221,5 +225,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     codingUnownedWrites,
     sessionExportReads,
     neoPublicationEditWrites,
+    neoProjectMoveWrites,
+    codingPrEventReads,
   ].map((op) => [op.name, op])
 );

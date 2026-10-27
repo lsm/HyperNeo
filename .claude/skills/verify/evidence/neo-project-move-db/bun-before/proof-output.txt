@@ -1,0 +1,18 @@
+64 |   evidence.workspace = await move('group', 'b', 2); assert.equal(evidence.workspace.reason, 'section_workspace_mismatch');
+65 |   evidence.orphan = await move(section.projectId, null, 1); assert.equal(evidence.orphan.reason, 'section_needs_parent');
+66 |   evidence.missing = await move('missing', null, 999); assert.equal(evidence.missing.reason, 'unknown_project');
+67 |   db.exec("CREATE TRIGGER reject_project_move BEFORE UPDATE ON neo_concerns WHEN OLD.id = 'child' BEGIN SELECT RAISE(ABORT, 'synthetic move refusal'); END");
+68 |   let failure: string | undefined; try { await move('child', null, 2); } catch (error) { failure = String(error); }
+69 |   assert(failure?.includes('synthetic move refusal')); evidence.rollback = failure;
+       ^
+AssertionError: false == true
+ generatedMessage: true,
+     actual: false,
+   expected: true,
+   operator: "==",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /Users/lsm/.codex/worktrees/dea1f09f/neokai/.claude/skills/verify/neo-project-move-db.ts:69:3
+
+Bun v1.4.3 (macOS arm64)

@@ -1,0 +1,35 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/coding-pr-event-routing-db.test.ts:
+(pass) PR events route from the bound database with guarded main [3.75ms]
+(pass) PR events route from the bound database with read-only main [1.66ms]
+
+tests/unit/1-core/operations/neo-coding-pr-events.test.ts:
+(pass) PR ledger events > approval pending CI advances to green and tells a live desktop owner exactly once [119.23ms]
+(pass) PR ledger events > attributed quota deferral resumes pending-owner delivery at reset [108.61ms]
+(pass) PR ledger events > CI recovery and a merge reach the owner once and never Neo [106.95ms]
+(pass) PR ledger events > a terminal observation survives a lost transition return and retries on the next sweep [109.37ms]
+(pass) PR ledger events > a newly merged first observation waits for its owner, survives a rejected tell and repository restart [105.98ms]
+(pass) PR ledger events > terminal history predating activation is not replayed to existing owners [105.83ms]
+(pass) PR ledger events > overlapping delivery sweeps serialize terminal handoffs [104.91ms]
+(pass) PR ledger events > legacy schema activation persists and leaves old terminal rows quiet [111.22ms]
+(pass) PR ledger events > a failed durable intent write rolls back the terminal state observation [107.67ms]
+(pass) PR ledger events > an unowned PR stays quiet and a claimed PR receives its ledger event [105.60ms]
+(pass) PR ledger events > a changes-requested transition survives a restart between the ledger write and delivery [106.36ms]
+(pass) PR ledger events > an owner cleared during delivery skips that PR and the sweep finishes [106.44ms]
+(pass) PR ledger events > an event skipped because its PR has no owner is logged with the PR and event [109.14ms]
+(pass) planCodingPrEvent > names the next step for each state the owner must act on [0.09ms]
+
+tests/unit/1-core/operations/coding-watched-repos.test.ts:
+(pass) Coding watched repositories > a fresh instance ignores machine sessions and project repos until explicitly added [108.78ms]
+(pass) Coding watched repositories > upgrade leaves an unset watch list empty despite project and PR history [104.85ms]
+(pass) Coding watched repositories > upgrade preserves every saved watch list and its attribution [103.91ms]
+(pass) Coding watched repositories > invalid repository names and non-global lists are refused without changing the watch list [103.84ms]
+(pass) Coding watched repositories > unwatching retains history but stops stale terminal, unowned and idle-owner notices [104.27ms]
+(pass) Coding watched repositories > a watched alias follows its canonical repo without admitting unrelated repos [104.36ms]
+(pass) Coding watched repositories > a pending mixed batch keeps only still-watched repositories [104.73ms]
+
+ 23 pass
+ 0 fail
+ 97 expect() calls
+Ran 23 tests across 3 files. [2.22s]
