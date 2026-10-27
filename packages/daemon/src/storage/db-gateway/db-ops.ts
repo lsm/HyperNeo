@@ -1,3 +1,7 @@
+import {
+  neoAskSettlementReads,
+  neoAskSettlementWrites,
+} from '../repositories/neo-ask-settlement.ts';
 import { neoTodoMutationReads } from '../repositories/neo-todo-mutation-planning.ts';
 import { neoTodoMutations } from '../repositories/neo-todo-mutation-commit.ts';
 import { neoTodoRunnerWrites } from '../repositories/neo-todo-runner-state.ts';
@@ -113,6 +117,8 @@ import { singleMessageReads } from '../repositories/sdk-single-message-read.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    neoAskSettlementReads,
+    neoAskSettlementWrites,
     neoTodoMutationReads,
     neoTodoMutations,
     neoTodoRunnerWrites,
