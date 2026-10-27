@@ -58,6 +58,16 @@ try {
   db.prepare("INSERT INTO neo_pack_preferences (pack,scope_kind,scope_key,key,value_json,set_by,set_at) VALUES ('coding','repo','synthetic/active','mergePolicy','\"review_bot\"','human',0)").run();
   db.prepare("INSERT INTO neo_pack_preferences (pack,scope_kind,scope_key,key,value_json,set_by,set_at) VALUES ('coding','repo','synthetic/active','reviewBot','\"bot\"','human',0)").run();
   await ledger.write('observeSessions', [{ ref: { adapter: 'hyperneo', id: String(root.sessionId) }, status: { state: 'running' }, lastActivityAt: Date.now(), remotes: ['git@github.com:synthetic/active.git'], branches: ['b1'], openedPrs: ['https://github.com/synthetic/active/pull/1'] }], Date.now());
+  const mainSql: string[] = [];
+  evidence.mainSql = mainSql;
+  const prepare = db.prepare.bind(db);
+  db.prepare = ((sql: string) => {
+    if (sql.includes('SELECT repo, MAX(readAt)') || sql.includes('state_since AS stateSince, read_at AS readAt')) {
+      mainSql.push(sql);
+      if (mode === 'off-main') throw new Error('Ledger inventory SQL forbidden on main');
+    }
+    return prepare(sql);
+  }) as typeof db.prepare;
   const base = Date.now(), clock = Date.now;
   configureLogger({ level: LogLevel.INFO });
   app.db.updateGlobalSettings({ neo: { packs: ['coding'] } });

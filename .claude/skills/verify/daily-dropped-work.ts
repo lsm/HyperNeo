@@ -9,7 +9,7 @@ import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/run
 import { sweepNeoPacks } from '../../../packages/daemon/src/lib/neo/pack-sweep.ts';
 import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
 
-const execFile = promisify(execFileCallback), run = resolve(process.argv[2]);
+const execFile = promisify(execFileCallback), run = resolve(process.argv[2]?.startsWith('/') ? process.argv[2] : process.argv.at(-1)!);
 assert(run.startsWith('/private/tmp/'));
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -30,6 +30,13 @@ const open = async () => {
   await app.spaceRuntimeService.ready();
   await app.jobProcessor.stop();
   assert.notEqual(app.server.port, 8399);
+  if (process.argv.includes('off-main')) {
+    const raw = app.db.getDatabase(), prepare = raw.prepare.bind(raw);
+    raw.prepare = ((sql: string) => {
+      if (sql.includes('state_since AS stateSince, read_at AS readAt')) throw new Error('Ledger inventory SQL forbidden on main');
+      return prepare(sql);
+    }) as typeof raw.prepare;
+  }
   service = createNeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
   service.pack('coding')!.sweep = async () => {};
 };
