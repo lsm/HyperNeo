@@ -1,3 +1,4 @@
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { createTodoCheckPacks, pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { describe, expect, test } from 'bun:test';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -66,7 +67,9 @@ function setup() {
       (sessionId) => ['neo-a', 'neo-other'].includes(sessionId),
       () => [{ id: 'project-1', title: 'P' }],
       () => createTodoCheckPacks(db),
-      (id) => goals.get(id)
+      (id) => goals.get(id),
+      undefined,
+      { gateway: gatewayFor(db), changed: () => {} }
     ).map((op) => [op.name, op])
   );
   const call = async (name: string, input: unknown, caller: OperationCaller) =>

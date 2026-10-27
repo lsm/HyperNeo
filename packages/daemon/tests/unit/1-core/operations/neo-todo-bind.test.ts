@@ -53,7 +53,10 @@ function setup() {
       () => null,
       (id) => id === caller.sessionId,
       () => [],
-      () => packs
+      () => packs,
+      undefined,
+      undefined,
+      { gateway: gatewayFor(db), changed: () => {} }
     ),
   ];
   const invoke = async (name: string, input: unknown) => {

@@ -31,7 +31,12 @@ for (const phase of ['initial', 'reopen']) {
     const project = async <T,>(items: readonly T[]) => [...items];
     const registry: OperationRegistry = createOperationRegistry([
       ...createDiscoveryOperations(() => registry),
-      ...createNeoAskRecordOperations(store, sessions, { start: unexpected, proceed: unexpected, retry: unexpected, stop: async () => null, recompute: async (todo, patch) => store.updateTodo(todo, patch, Date.now()) }, () => null, () => true, () => []),
+      ...createNeoAskRecordOperations(store, sessions, { start: unexpected, proceed: unexpected, retry: unexpected, stop: async () => null, recompute: async (todo, patch) => store.updateTodo(todo, patch, Date.now()) }, () => null, () => true, () => [],
+      undefined,
+      undefined,
+      undefined,
+      { gateway: gatewayFor(db), changed: () => {} }
+),
       ...createNeoQuestionOperations(store, unexpected, unexpected),
       createNeoAskReadOperation(store, () => [], admit, project),
       createNeoDoneTodosOperation(store, sessions, () => [], admit, project),

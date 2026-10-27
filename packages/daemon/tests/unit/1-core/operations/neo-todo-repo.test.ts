@@ -1,3 +1,4 @@
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { createTodoCheckPacks, pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -156,7 +157,9 @@ describe('neo.ask.open repo', () => {
       () => true,
       () => [],
       () => [coding, ...createTodoCheckPacks(db).filter((pack) => pack.id !== 'coding')],
-      () => null
+      () => null,
+      undefined,
+      { gateway: gatewayFor(db), changed: () => {} }
     ).find((op) => op.name === 'neo.ask.open')!;
     const receipt = (await open.execute(
       open.inputSchema.parse({
@@ -216,7 +219,10 @@ describe('repo child cards', () => {
         () => null,
         () => true,
         () => [],
-        () => [coding, ...createTodoCheckPacks(db).filter((pack) => pack.id !== 'coding')]
+        () => [coding, ...createTodoCheckPacks(db).filter((pack) => pack.id !== 'coding')],
+        undefined,
+        undefined,
+        { gateway: gatewayFor(db), changed: () => {} }
       ),
       'neo.ask.open'
     );
