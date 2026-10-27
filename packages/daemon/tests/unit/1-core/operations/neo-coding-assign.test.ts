@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { z } from 'zod';
+import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
@@ -133,6 +134,41 @@ function fixture(
 }
 
 describe('coding actor assignments', () => {
+  test.each([
+    'unsupported_model',
+    'unsupported_effort',
+    'unsupported_preparation',
+    'unknown_adapter',
+  ] as const)(
+    'an unavailable default (%s) is attempted once after a cloned read-only plan reply',
+    async (reason) => {
+      const f = fixture(() => ({
+        kind: 'completed',
+        value: { ok: false, reason, detail: 'Synthetic default unavailable' },
+      }));
+      const gateway = new DbGateway(':memory:', f.db);
+      const run = gateway.run.bind(gateway);
+      gateway.run = (async (op, args) => {
+        f.db.exec('PRAGMA query_only=ON');
+        try {
+          return structuredClone(await run(op, args));
+        } finally {
+          f.db.exec('PRAGMA query_only=OFF');
+        }
+      }) as typeof gateway.run;
+      bindGateway(f.db, gateway);
+      try {
+        expect(await f.assign({ candidates: [reviewer] })).toMatchObject({
+          ok: false,
+          reason: expect.stringContaining(reason),
+        });
+        expect(f.starts).toHaveLength(1);
+        expect(f.assignments.read('todo', url, head)).toEqual({});
+      } finally {
+        await gateway.close();
+      }
+    }
+  );
   test('configured bot suppresses all reviewer starts, including explicit human/preferences, but permits independent Verify', async () => {
     const f = fixture();
     f.set('reviewBot', 'fixture-bot');

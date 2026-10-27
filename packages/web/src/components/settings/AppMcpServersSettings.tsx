@@ -1,21 +1,20 @@
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import type { AppMcpServer, AppMcpServerSourceType } from '@hyperneo/shared';
 import {
   createAppMcpServer,
   updateAppMcpServer,
   deleteAppMcpServer,
-  setAppMcpServerEnabled,
 } from '../../lib/api-helpers.ts';
 import { formatMcpArgs, parseMcpArgs } from '../../lib/mcp-args.ts';
 import { appMcpStore } from '../../lib/app-mcp-store.ts';
-import { skillsStore } from '../../lib/skills-store.ts';
+import { globalStore } from '../../lib/global-store.ts';
+import { saveCatalogToolDefault } from '../../lib/catalog-tool-defaults.ts';
 import { toast } from '../../lib/toast.ts';
 import { SettingsGroup, SettingsSection, SettingsToggle } from './SettingsSection.tsx';
 import { Modal } from '../ui/Modal.tsx';
 import { ConfirmModal } from '../ui/ConfirmModal.tsx';
 import { Button } from '../ui/Button.tsx';
 import { cn } from '../../lib/utils.ts';
-import { computeMcpServerSkillLinkage } from '../ToolsModal.utils.ts';
 import { FORM_CONTROL_CLASS } from '../ui/FormField.tsx';
 
 interface FormData {
@@ -54,8 +53,8 @@ export function AppMcpServersSettings() {
   const servers = appMcpStore.appMcpServers.value;
   const loading = appMcpStore.loading.value;
   const error = appMcpStore.error.value;
-  const skills = skillsStore.skills.value;
-  const skillsLoaded = skillsStore.loaded.value;
+  const settings = globalStore.settings.value;
+  const defaults = settings?.toolSelectionDefaults;
 
   const [showForm, setShowForm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -72,21 +71,15 @@ export function AppMcpServersSettings() {
         'Failed to load MCP servers: ' + (err instanceof Error ? err.message : 'Unknown error')
       );
     });
-    skillsStore.subscribe().catch((err) => {
-      // eslint-disable-next-line no-console
-      console.warn(
-        'Failed to load skills for MCP linkage:',
-        err instanceof Error ? err.message : err
-      );
-    });
 
     return () => {
       appMcpStore.unsubscribe();
-      skillsStore.unsubscribe();
     };
   }, []);
 
-  const skillLinkage = useMemo(() => computeMcpServerSkillLinkage(skills), [skills]);
+  useEffect(() => {
+    globalStore.refresh().catch(() => toast.error('Could not refresh new-session defaults'));
+  }, [servers]);
 
   const validateForm = (): boolean => {
     const errors: FormErrors = {};
@@ -278,8 +271,8 @@ export function AppMcpServersSettings() {
   const handleToggle = async (server: AppMcpServer, enabled: boolean) => {
     setTogglingId(server.id);
     try {
-      await setAppMcpServerEnabled(server.id, enabled);
-      toast.success(`${enabled ? 'Enabled' : 'Disabled'} "${server.name}"`);
+      await saveCatalogToolDefault(`mcp:${server.id}`, enabled);
+      toast.success(`New-session default ${enabled ? 'on' : 'off'}: ${server.name}`);
     } catch (err) {
       const message =
         err instanceof Error
@@ -310,8 +303,9 @@ export function AppMcpServersSettings() {
   return (
     <>
       <SettingsSection
+        class="max-sm:[&>.st-sec-head]:flex-col max-sm:[&>.st-sec-head]:items-start"
         title="MCP Servers"
-        description="MCP servers are available to any space or session. For API keys and secrets, set them in your system environment and reference them by name in the env vars field below. Values stored here are saved in plain text."
+        description="Defaults for new sessions. Existing sessions keep their own choices; change a session in Tools → Use here. For API keys and secrets, set them in your system environment and reference them by name in the env vars field below. Values stored here are saved in plain text."
         actions={
           <Button variant="primary" size="sm" onClick={openAddForm}>
             Add MCP Server
@@ -325,7 +319,6 @@ export function AppMcpServersSettings() {
         ) : (
           <SettingsGroup>
             {servers.map((server) => {
-              const linkedSkill = skillLinkage.get(server.id);
               return (
                 <div key={server.id} class="flex items-center justify-between gap-3 px-4 py-3">
                   <div class="flex-1 min-w-0">
@@ -357,25 +350,6 @@ export function AppMcpServersSettings() {
                         data-testid={`mcp-attach-error-${server.name}`}
                       >
                         Failed to attach: {server.lastAttachError}
-                      </div>
-                    )}
-                    {skillsLoaded && linkedSkill && (
-                      <div
-                        class="text-[11px] text-info/80 mt-1 truncate"
-                        data-testid={`skill-link-${server.name}`}
-                      >
-                        Exposed to sessions via the{' '}
-                        <span class="font-medium">{linkedSkill.displayName}</span> skill
-                        {!linkedSkill.enabled && ' (skill is off)'}
-                      </div>
-                    )}
-                    {skillsLoaded && !linkedSkill && (
-                      <div
-                        class="text-[11px] text-warning/90 mt-1"
-                        data-testid={`skill-orphan-${server.name}`}
-                      >
-                        ⚠️ No skill wrapper — this server is not injected into any session. Toggling
-                        it here has no runtime effect.
                       </div>
                     )}
                   </div>
@@ -413,9 +387,10 @@ export function AppMcpServersSettings() {
                       </svg>
                     </button>
                     <SettingsToggle
-                      checked={server.enabled}
+                      aria-label={`New-session default: ${server.name}`}
+                      checked={defaults?.choices[`mcp:${server.id}`]?.selected ?? false}
                       onChange={(enabled) => handleToggle(server, enabled)}
-                      disabled={togglingId === server.id}
+                      disabled={!settings || defaults?.version !== 1 || togglingId === server.id}
                     />
                   </div>
                 </div>

@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { homedir } from 'node:os';
 import { z } from 'zod';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -13,7 +14,7 @@ import { CodingAssignment as Assignment, CodingAssignmentsRepository } from './a
 import { sameCodingWorkRef } from './delivery-facts.ts';
 import type { CodingPrLedgerRepository } from './pr-ledger.ts';
 import type { CodingTodoPrRepository } from './todo-prs.ts';
-import { CodingStageTarget, planCodingStageTarget } from './stage-preferences.ts';
+import { CodingStageTarget } from './stage-preferences.ts';
 import type { runCodingReview } from './review.ts';
 
 const Input = z.object({
@@ -114,12 +115,13 @@ export function createCodingAssignmentOperation(deps: Deps) {
       };
     if (!input.candidates.length) return refuse('Configure an available independent actor.');
     const select = (candidates: Input['candidates']) =>
-      planCodingStageTarget(
-        deps.db,
-        { repo: repoName(input), stage: input.stage, candidates, body: pr.body },
-        deps.ledger.policy(repoName(input)).provenance !== false
-      );
-    const plan = select(input.candidates);
+      assignments.planTargetCurrent({
+        repo: repoName(input),
+        stage: input.stage,
+        candidates,
+        body: pr.body,
+      });
+    const plan = await select(input.candidates);
     if (!plan.ok) return refuse(plan.reason);
     const message = `Coding-pack ${input.stage === 'verify' ? 'Verify' : 'Review'} run. Before inspecting code, resolve git rev-parse --git-common-dir and read hyperneo-stage-contract.md there; it is your full role contract and its coding-only override. Todo: ${input.todoId}. PR: ${input.url}. Exact head: ${input.head}. Acceptance contract: ${input.acceptanceContract}. Read that acceptance contract and cover every criterion and allowed scope. ${input.stage === 'verify' ? "Use the repository's .claude/skills/verify/SKILL.md (list and read relevant journeys) or Verify section in AGENTS.md. Return durable evidence per criterion; stop owned test resources." : 'Return a soundness verdict across every review-contract dimension, with separate bug/integration and goal/scope passes.'} Do not merge, close or complete the todo. Report facts through Neo with this exact head and contract.`;
     const start = (target: z.infer<typeof CodingStageTarget>) =>
@@ -153,9 +155,9 @@ export function createCodingAssignmentOperation(deps: Deps) {
         'unsupported_preparation',
         'unknown_adapter',
       ].includes(started.reason) &&
-      plan.target !== input.candidates[0]
+      !isDeepStrictEqual(plan.target, input.candidates[0])
     ) {
-      const fallback = select([input.candidates[0]]);
+      const fallback = await select([input.candidates[0]]);
       if (!fallback.ok) return refuse(fallback.reason);
       plan.fallback.push(
         `${started.reason}: preferred configuration unavailable; using the qualifying default.`,
