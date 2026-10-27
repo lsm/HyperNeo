@@ -50,7 +50,13 @@ try{
   await Promise.race([gate,new Promise<never>((_,fail)=>setTimeout(()=>fail(new Error('Revision did not reach writer boundary')),5000))]);
   fixture(()=>app!.db.getDatabase().prepare('DELETE FROM neo_session_bindings WHERE session_id=?').run(root));release();evidence.staleBinding=await pending;assert.equal(evidence.staleBinding.reason.split(':')[0],'avatar_required');
   fixture(()=>new NeoRepository(app!.db.getDatabase()).reserveBinding({sessionId:root,kind:'neo',projectId:null}));
-  assert.deepEqual(await read(),before);assert.deepEqual(mainSql,[],'Revision admission, binding and publication SQL must leave main');
+  assert.deepEqual(await read(),before);
+  const timeGate=new Promise<void>(done=>{parked=done;});park=true;const timed=edit({publicationId,requestId:'queued-time',shortText:'Timestamp after the writer queue.'});
+  await Promise.race([timeGate,new Promise<never>((_,fail)=>setTimeout(()=>fail(new Error('Timed revision did not reach writer boundary')),5000))]);
+  await new Promise(done=>setTimeout(done,35));const releasedAt=Date.now();release();const timedReply=await timed;
+  evidence.queuedTimestamp={releasedAt,reply:timedReply};assert(timedReply.accepted);assert(Date.parse(timedReply.publication.editedAt)>=releasedAt,'Edited timestamp must be generated after writer queue admission');
+  const timedPage=await read();assert.equal(timedPage.items.find((p:any)=>p.publicationId===publicationId).editedAt,timedReply.publication.editedAt);
+  assert.deepEqual(mainSql,[],'Revision admission, binding and publication SQL must leave main');
  }else assert(mainSql.length>0,'Baseline must reproduce revision SQL on main');
  evidence.verified=true;
 }finally{release();evidence.mainSql=mainSql;evidence.commands=commands;writeFileSync(join(run,'evidence/neo-publication-edit-db.json'),JSON.stringify(evidence,null,2));await app?.cleanup();globalThis.fetch=network;}

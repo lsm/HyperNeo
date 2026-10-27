@@ -34,6 +34,24 @@ for (const readOnly of [false, true]) {
     expect(stored.append(original).accepted).toBe(true);
     const gateway = new DbGateway(':memory:', writer);
     bindGateway(main, gateway);
+    let queued!: () => void;
+    let resume!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      queued = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const run = gateway.run.bind(gateway);
+    let first = true;
+    const pause = spyOn(gateway, 'run').mockImplementation((async (op, args) => {
+      if (first && op.name === 'neo.publication.revision') {
+        first = false;
+        queued();
+        await blocked;
+      }
+      return run(op, args);
+    }) as typeof gateway.run);
     const prepare = main.prepare.bind(main);
     const fault = readOnly
       ? null
@@ -63,13 +81,24 @@ for (const readOnly of [false, true]) {
         role: 'neo',
       });
     try {
-      expect(await call(input)).toMatchObject({
+      const pending = call(input);
+      await waiting;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      const releasedAt = Date.now();
+      resume();
+      const changed = await pending;
+      expect(changed).toMatchObject({
         kind: 'completed',
         value: {
           accepted: true,
           publication: { publicationId, shortText: 'Changed.', fullText: original.fullText },
         },
       });
+      const receipt =
+        changed.kind === 'completed'
+          ? (changed.value as { publication: { editedAt: string } })
+          : null;
+      expect(Date.parse(receipt!.publication.editedAt)).toBeGreaterThanOrEqual(releasedAt);
       expect(await call(input)).toMatchObject({ kind: 'completed', value: { accepted: true } });
       expect(await call({ ...input, shortText: 'Conflicting.' })).toMatchObject({
         kind: 'completed',
@@ -79,6 +108,8 @@ for (const readOnly of [false, true]) {
       expect(stored.get(conversation, publicationId)?.revisions?.[0].shortText).toBe('Original.');
       expect(notified).toBe(2);
     } finally {
+      resume();
+      pause.mockRestore();
       fault?.mockRestore();
       await gateway.close();
       main.close();
