@@ -156,6 +156,25 @@ describe('NeoAskTodos', () => {
     fireEvent.click(app.getByRole('button', { name: /Details$/ }));
     expect(app.getByRole('button', { name: 'Ship' })).toBeTruthy();
     expect(app.getByRole('button', { name: 'Stop' })).toBeTruthy();
+    load.mockResolvedValueOnce({
+      ...summary,
+      summary: undefined,
+      ask: { ...summary.ask, updatedAt: 2 },
+      questions: [question('choice', { state: 'answered', answer: ['Ship'] })],
+    });
+    app.rerender(
+      <NeoAskTodos
+        entry={{
+          ...summary,
+          ask: { ...summary.ask, updatedAt: 2 },
+          summary: { todoCount: 1, questionCount: 1, openQuestionCount: 0 },
+        }}
+        onAnswer={answer}
+        onLoadDetails={load}
+      />
+    );
+    await waitFor(() => expect(app.queryByRole('button', { name: 'Ship' })).toBeNull());
+    expect(app.container.querySelector('[data-ask-details]')).toBeNull();
   });
 
   it('loads questions arriving on a later summary revision without expanding', async () => {
