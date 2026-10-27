@@ -1,3 +1,4 @@
+import { codingStageTargetReads } from './stage-target-db.ts';
 import { planCodingStageTarget } from './stage-preferences.ts';
 import { CodingPrLedgerRepository } from './pr-ledger.ts';
 import { codingSmokeReads } from './smoke-admission-db.ts';
@@ -54,7 +55,7 @@ export class CodingAssignmentsRepository {
   }
 
   planTargetCurrent(input: Parameters<typeof planCodingStageTarget>[1]) {
-    return gatewayFor(this.db).call(codingAssignmentWrites, 'planTarget', input);
+    return gatewayFor(this.db).call(codingStageTargetReads, 'planTarget', input);
   }
 
   smokeAssignmentCurrent(input: CodingSmokeRequest) {
@@ -136,5 +137,5 @@ export const codingAssignmentWrites = defineRepositoryOp(
   'coding.assignmentWrites',
   'write',
   CodingAssignmentsRepository,
-  ['record', 'planTarget']
+  ['record']
 );
