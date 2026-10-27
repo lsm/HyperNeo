@@ -105,7 +105,7 @@ function world(limits = { running: 6, perGroup: 3 }) {
     await runner.recompute(store.getTodo(id)!, { state: 'done', finishedAt: Date.now() });
   };
   const tick = () => runner.refresh(() => {});
-  return { db, clock, started, ask, approved, add, state, finish, tick };
+  return { db, store, clock, started, ask, approved, add, state, finish, tick };
 }
 
 let current: ReturnType<typeof world> | null = null;
@@ -164,5 +164,35 @@ describe('queued todos start themselves', () => {
     await w.tick();
     expect(w.state(todo)).toBe('todo');
     expect(w.started).toEqual([]);
+  });
+
+  test('a step waits while its ask has an open question for the human', async () => {
+    const w = (current = world());
+    const ask = w.approved();
+    const todo = w.add(ask);
+    w.store.askQuestion(
+      'q',
+      ask,
+      {
+        text: 'Which way?',
+        kind: 'reply',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+        todoId: null,
+      },
+      3
+    );
+    await w.tick();
+    expect(w.state(todo)).toBe('todo');
+  });
+
+  test('todos outside any project share only the overall cap', async () => {
+    const w = (current = world({ running: 6, perGroup: 1 }));
+    const todos = [w.add(w.approved(null)), w.add(w.approved(null)), w.add(w.approved(null))];
+    await w.tick();
+    expect(todos.map(w.state)).toEqual(['doing', 'doing', 'doing']);
   });
 });
