@@ -1260,6 +1260,32 @@ describe('QueryRunner', () => {
   });
 
   describe('createMessageGeneratorWrapper', () => {
+    it('keeps a delayed prompt bound to its original query attempt', async () => {
+      const onSent = mock(() => {});
+      async function* messages() {
+        yield { message: { uuid: 'old-attempt', message: { content: 'task' } }, onSent };
+      }
+      runner = createRunner({
+        messageQueue: {
+          ...mockMessageQueue,
+          messageGenerator: mock(() => messages()),
+        } as unknown as MessageQueue,
+      });
+      const internals = runner as unknown as {
+        failures: { admit: (live: () => boolean) => Promise<string> };
+        toolInventoryOwner: { isLive: () => boolean };
+      };
+      internals.toolInventoryOwner = { isLive: () => true };
+      vi.spyOn(internals.failures, 'admit').mockImplementation(async (live) => {
+        await Promise.resolve();
+        if (!live()) throw Object.assign(new Error('Old attempt ended'), { name: 'AbortError' });
+        return 'fixture';
+      });
+      const feed = runner.createMessageGeneratorWrapper(0, undefined, undefined, () => false);
+      await expect(feed.next()).rejects.toMatchObject({ name: 'AbortError' });
+      expect(onSent).not.toHaveBeenCalled();
+    });
+
     it('rechecks ownership after processing setup before yielding a prompt', async () => {
       let allowed = true;
       const onSent = mock(() => {});
