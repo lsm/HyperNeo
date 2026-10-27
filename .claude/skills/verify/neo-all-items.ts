@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
@@ -35,6 +36,8 @@ try{
   const todo=store.addTodo(`all-todo-${i}`,askId,{title:i===0?'Unfinished All step':`Completed All step ${i}`,doneWhen:'Observed synthetic result',check:null,instruction:null,named:null},now+i);
   if(i>0)store.updateTodo(todo,{state:'done',report:`Synthetic report ${i}`,evidence:'Observed fixture only'},now+i);
  }
+ await app.db.createSession({id:'all-worker',title:'Synthetic All worker',workspacePath:join(run,'workspace'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});
+ const links=new NeoTodoSessionRepository(db);links.bind('all-todo-25',{adapter:'hyperneo',id:'all-worker'},now);links.recordRef('all-todo-25',{adapter:'hyperneo',id:'all-worker'},now,'/session/all-worker');
  const removed=store.addTodo('all-removed',askId,{title:'Removed All step',doneWhen:'Synthetic removal',check:null,instruction:null,named:null},now);
  store.updateTodo(removed,{state:'removed',reason:'Synthetic retired work'},now);
  store.askQuestion('start-removed',askId,{...draft,text:'Synthetic removed selection',kind:'start',startTodos:[removed.id],document:undefined},now+7);
