@@ -70,7 +70,7 @@ function setup() {
       () => null,
       () => true,
       () => [],
-      undefined,
+      () => createTodoCheckPacks(db),
       undefined,
       undefined,
       { gateway: gatewayFor(db), changed: () => {} }
@@ -94,13 +94,37 @@ function setup() {
   );
   const call = async (name: string, input: unknown) => {
     const reply = await handler({ name, input });
-    expect(reply.isError).not.toBe(true);
+    expect(reply.isError, reply.content[0].text).not.toBe(true);
     return JSON.parse(reply.content[0].text);
   };
   return { db, store, sessions, ask, todo, runner, calls, call, audits };
 }
 
 describe('todo and ask bookkeeping records through MCP', () => {
+  test('opens an ask with an existing worker without dispatching it', async () => {
+    const h = setup();
+    try {
+      const ref = { adapter: 'hyperneo', id: '10000000-0000-4000-8000-000000000001' };
+      const result = await h.call('neo.ask.open', {
+        title: 'Existing worker',
+        request: 'Track its result',
+        todos: [
+          {
+            title: 'Worker task',
+            check: pendingTodoCheck,
+            instruction: 'Work',
+            target: { verb: 'send', ref },
+          },
+        ],
+      });
+      expect(result.ok).toBe(true);
+      expect(h.sessions.get(result.todos[0].id)?.ref).toEqual(ref);
+      expect(h.calls).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test.each(['neo.todo.retry', 'neo.todo.continue'])(
     '%s on unstarted work records without dispatch or start-card approval',
     async (name) => {
