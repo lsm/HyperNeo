@@ -13,12 +13,14 @@ records pong gaps while the parent busy-waits its own main thread for 2 s.
 The parent then asserts the stream stayed responsive the whole time.
 
 ```bash
-RUN=$(mktemp -d /private/tmp/hn-voice-stall-XXXXXX)
-bun .claude/skills/verify/voice-relay-stall-proof.ts "$RUN"
+TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory .claude/skills/verify/voice-relay-stall-proof.ts
 ```
 
 No daemon, database or provider is involved; the helper owns both processes
 and exits 2 with the recorded gaps in `evidence/voice-relay-stall.json` when
 the largest pong gap reaches 1 s. The unfixed relay measured a 2,202 ms gap
 over the same stall; the fixed relay stays near the 300 ms ping interval.
-Keep the run directory only for the evidence file.
+The shared wrapper saves evidence and removes the disposable run directory.
+The helper closes its relay and stops and waits for its exact ASR child in
+finally, including failures. A streaming route and recorded pongs are required;
+no measurements is a failed proof.

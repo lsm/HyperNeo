@@ -2,6 +2,7 @@ import { execSync, spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
+import type { VoiceStream } from '../../../packages/daemon/src/lib/voice/stream-relay.ts';
 
 const REPO = process.env.VERIFY_REPO ?? resolve(import.meta.dir, '../../..');
 const RUN = resolve(process.argv[2] ?? '.');
@@ -39,42 +40,56 @@ if (process.argv[3] === 'child') {
     const pongMatch = /PONGS (.*)/.exec(data.toString());
     if (pongMatch) pongs = JSON.parse(pongMatch[1]);
   });
-  const { VoiceStream } = await import(
-    `${REPO}/packages/daemon/src/lib/voice/stream-relay.ts`
-  );
-  for (let index = 0; index < 50 && !port; index++) {
-    await new Promise((done) => setTimeout(done, 100));
+  const exited = new Promise<void>((done) => child.once('exit', () => done()));
+  let stream: VoiceStream | undefined;
+  let via: string | undefined;
+  try {
+    const { VoiceStream } = await import(
+      `${REPO}/packages/daemon/src/lib/voice/stream-relay.ts`
+    );
+    for (let index = 0; index < 50 && !port; index++) {
+      await new Promise((done) => setTimeout(done, 100));
+    }
+    if (!port) throw new Error('stub ASR server never reported a port');
+    const started = await VoiceStream.start('stall-proof', {
+      voice: () => ({
+        enabled: true,
+        endpoint: `http://127.0.0.1:${port}/v1/audio/transcriptions`,
+        model: 'm',
+        streamEndpoint: `ws://127.0.0.1:${port}/v1/listen`,
+        allowPrivateNetwork: true,
+      }),
+      transcribeWav: async () => ({ action: 'transcribed', text: 'batch' }),
+      push: () => {},
+    });
+    if ('error' in started) throw new Error(started.error);
+    stream = started.stream;
+    via = started.via;
+    await new Promise((done) => setTimeout(done, 800));
+    const stallStarted = Date.now();
+    while (Date.now() - stallStarted < STALL_MS) execSync('true');
+    await new Promise((done) => setTimeout(done, 800));
+    started.stream.close();
+    await new Promise((done) => setTimeout(done, 300));
+  } finally {
+    stream?.close();
+    child.kill('SIGTERM');
+    const timer = setTimeout(() => child.kill('SIGKILL'), 2_000);
+    try {
+      await exited;
+    } finally {
+      clearTimeout(timer);
+    }
   }
-  if (!port) throw new Error('stub ASR server never reported a port');
-  const started = await VoiceStream.start('stall-proof', {
-    voice: () => ({
-      enabled: true,
-      endpoint: `http://127.0.0.1:${port}/v1/audio/transcriptions`,
-      model: 'm',
-      streamEndpoint: `ws://127.0.0.1:${port}/v1/listen`,
-      allowPrivateNetwork: true,
-    }),
-    transcribeWav: async () => ({ action: 'transcribed', text: 'batch' }),
-    push: () => {},
-  });
-  if ('error' in started) throw new Error(started.error);
-  await new Promise((done) => setTimeout(done, 800));
-  const stallStarted = Date.now();
-  while (Date.now() - stallStarted < STALL_MS) execSync('true');
-  await new Promise((done) => setTimeout(done, 800));
-  started.stream.close();
-  await new Promise((done) => setTimeout(done, 300));
-  child.kill('SIGTERM');
-  await new Promise((done) => setTimeout(done, 300));
   const maxGap = Math.max(...pongs, 0);
   const result = {
-    via: started.via,
+    via,
     stallMs: STALL_MS,
     pongGaps: pongs,
     maxPongGapMs: maxGap,
-    passed: started.via === 'streaming' && pongs.length > 0 && maxGap < MAX_PONG_GAP_MS,
+    passed: via === 'streaming' && pongs.length > 0 && maxGap < MAX_PONG_GAP_MS,
   };
   writeFileSync(join(RUN, 'evidence', 'voice-relay-stall.json'), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result));
-  process.exit(result.passed ? 0 : 2);
+  process.exitCode = result.passed ? 0 : 2;
 }

@@ -203,7 +203,6 @@ describe('VoiceStream against a stub Deepgram server', () => {
     server.on('connection', (socket, request) => {
       const url = new URL(request.url!, 'http://stub');
       connections.push(url);
-      expect(url.pathname).toBe('/v1/listen');
       expect(url.searchParams.get('sample_rate')).toBe('16000');
       socket.on('message', (data: Buffer, isBinary: boolean) => {
         if (!isBinary) {
@@ -251,6 +250,7 @@ describe('VoiceStream against a stub Deepgram server', () => {
       if ('error' in started) throw new Error(started.error);
       try {
         expect(started.via).toBe('streaming');
+        expect(connections[0].pathname).toBe('/v1/listen');
         expect(connections[0].searchParams.getAll('language')).toEqual(language ? [language] : []);
       } finally {
         started.stream.close();
