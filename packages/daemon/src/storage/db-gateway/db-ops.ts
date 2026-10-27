@@ -1,3 +1,4 @@
+import { historySnapshotReads } from '../repositories/sdk-history-snapshot-read.ts';
 import { toolRecoveryWrites } from '../repositories/tool-continuation-recovery-repository.ts';
 import {
   voiceRecordingReads,
@@ -151,6 +152,7 @@ import { pairingApproveWrite } from '../repositories/pairing-approve-write.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
+    historySnapshotReads,
     toolRecoveryWrites,
     voiceRecordingReads,
     voiceRecordingWrites,

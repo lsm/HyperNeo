@@ -619,6 +619,12 @@ env -i HOME="$TRANSCRIPT_SESSION_READER_RUN/home" PATH="$PATH" TMPDIR="$TRANSCRI
 	HYPERNEO_DATA_DIR="$TRANSCRIPT_SESSION_READER_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-transcript-session-reader.ts" --defer-body-copy "$TRANSCRIPT_SESSION_READER_RUN"
 
+HISTORY_SNAPSHOT_READER_RUN="$WORK_DIR/history-snapshot-reader"
+mkdir -p "$HISTORY_SNAPSHOT_READER_RUN/home" "$HISTORY_SNAPSHOT_READER_RUN/tmp"
+env -i HOME="$HISTORY_SNAPSHOT_READER_RUN/home" PATH="$PATH" TMPDIR="$HISTORY_SNAPSHOT_READER_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$HISTORY_SNAPSHOT_READER_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/history-snapshot-reader.ts" "$HISTORY_SNAPSHOT_READER_RUN"
+
 SESSION_LIST_READER_RUN="$WORK_DIR/session-list-reader"
 mkdir -p "$SESSION_LIST_READER_RUN/home" "$SESSION_LIST_READER_RUN/tmp"
 env -i HOME="$SESSION_LIST_READER_RUN/home" PATH="$PATH" TMPDIR="$SESSION_LIST_READER_RUN/tmp" NODE_ENV=test \

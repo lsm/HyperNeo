@@ -14,7 +14,7 @@ SDK-message/body SQL during these requests, including actor restoration side
 effects. The tests-first baseline fails its first public snapshot with that SQL
 guard. Preserve its log and failure JSON.
 
-Fixed cold/concurrent snapshots must match the existing repository reference,
+Fixed cold/concurrent snapshots under a second connection's held WAL write must match the existing repository reference,
 keep the actor cold and leave body hashes unchanged. Health remains responsive;
 a native gateway reader failure must reject the snapshot without main fallback,
 and the next request must recover. Evidence records latency, maximum loop lag,

@@ -15,6 +15,7 @@ for (const key of ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'OPENAI_API_K
 for (const name of ['home', 'workspace', 'evidence']) mkdirSync(join(run, name), { recursive: true });
 const { createDaemonApp } = await import('../../../packages/daemon/src/app.ts');
 const { JobQueueProcessor } = await import('../../../packages/daemon/src/storage/job-queue-processor.ts');
+const { Database: SQLite } = await import('../../../packages/daemon/src/storage/sqlite-compat.ts');
 const { DatabaseCore } = await import('../../../packages/daemon/src/storage/database-core.ts');
 const { getConfig } = await import('../../../packages/daemon/src/config.ts');
 const { capSdkMessage } = await import('../../../packages/daemon/src/lib/rpc-handlers/message-output-cap.ts');
@@ -35,7 +36,7 @@ globalThis.Worker = function (url: string | URL, options?: WorkerOptions) {
   if (String(url).endsWith('/db-gateway-worker.ts')) {
     const post = worker.postMessage.bind(worker);
     worker.postMessage = ((message: { op?: string }) => {
-      if (message.op === 'sdk.message.page.read') {
+      if (message.op === 'sdk.message.snapshot.read') {
         pageRequests++;
         if (rejectNextPage) {
           rejectNextPage = false;
@@ -72,12 +73,12 @@ try {
     metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0, titleGenerated: true, titleSetBy: 'user' },
   });
   const text = 'Complete ordinary history 🦊\n'.repeat(1000);
-  for (let n = 0; n < 4; n++) await app.db.saveSDKMessage(sessionId, {
+  for (let n = 0; n < 104; n++) await app.db.saveSDKMessage(sessionId, {
     type: 'user', uuid: `history-${n}`, parent_tool_use_id: null,
     message: { role: 'user', content: `${n}:${text}` },
   } as SDKMessage);
   await app.db.saveSDKMessage(sessionId, { type: 'assistant', uuid: 'history-parent', parent_tool_use_id: null, message: { role: 'assistant', content: [{ type: 'tool_use', id: 'history-tool', name: 'Bash', input: {} }] } } as SDKMessage);
-  await app.db.saveSDKMessage(sessionId, { type: 'user', uuid: 'history-child', parent_tool_use_id: 'history-tool', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'history-tool', content: 'child tool result' }] } } as SDKMessage);
+  await app.db.saveSDKMessage(sessionId, { type: 'user', uuid: 'history-child', parent_tool_use_id: 'history-tool', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'history-tool', content: 'complete tool output 🦊'.repeat(3000) }] } } as SDKMessage);
   await app.db.saveSDKMessage(sessionId, { type: 'system', subtype: 'task_started', uuid: 'history-task', task_id: 'synthetic-task' } as SDKMessage);
   const raw = app.db.getDatabase();
   raw.prepare('UPDATE sdk_messages SET timestamp = ? WHERE session_id = ?').run('2026-10-26T00:00:00.000Z', sessionId);
@@ -88,6 +89,8 @@ try {
   };
   const queries = [{ limit: 100 }, { limit: 100, since: Date.parse('2026-10-25T00:00:00.000Z') }, { limit: 100, since: Date.parse('2026-10-27T00:00:00.000Z') }];
   const expected = queries.map(reference);
+  assert.equal(expected[0].hasMore, true);
+  assert(expected[0].sdkMessages.some((message) => message.uuid === 'history-child'));
   if (releaseBodyCopy) queueMicrotask(releaseBodyCopy);
   evidence.startupCopyDeferred = Boolean(releaseBodyCopy);
   await waitForSdkBodyCopy(raw);
@@ -98,6 +101,8 @@ try {
     return hash.digest('hex');
   };
   const beforeHash = bodyHash();
+  raw.exec('CREATE TABLE synthetic_snapshot_counter(value INTEGER); INSERT INTO synthetic_snapshot_counter VALUES(0)');
+  const writer = new SQLite(app.db.getDbPath());
   assert.equal(app.sessionManager.getCachedSession(sessionId), null);
   const hub = new MessageHub({ defaultSessionId: 'global' });
   transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
@@ -126,6 +131,10 @@ try {
       evidence.coldMs = performance.now() - started;
       const withoutTimestamp = (value: unknown) => { const { timestamp, ...page } = value as Record<string, unknown>; assert.equal(typeof timestamp, 'number'); return page; };
       assert.deepEqual(withoutTimestamp(cold), JSON.parse(JSON.stringify(expected[0])));
+      writer.exec('BEGIN IMMEDIATE');
+      writer.prepare('UPDATE synthetic_snapshot_counter SET value=value+1').run();
+      const counters = () => ({ outside: (raw.prepare('SELECT value FROM synthetic_snapshot_counter').get() as { value: number }).value, inside: (writer.prepare('SELECT value FROM synthetic_snapshot_counter').get() as { value: number }).value });
+      assert.deepEqual(counters(), { outside: 0, inside: 1 });
       const warmAt = performance.now();
       const healthAt = performance.now();
       const concurrentHealth = hub.request('system.health', {}).then((health) => {
@@ -135,6 +144,9 @@ try {
       const replies = await Promise.all(queries.map((page) => hub.request('state.sdkMessages', { sessionId, ...page })));
       evidence.warmConcurrentMs = performance.now() - warmAt;
       await concurrentHealth;
+      assert.deepEqual(counters(), { outside: 0, inside: 1 });
+      evidence.concurrentWalWriter = true;
+      writer.exec('ROLLBACK');
       assert.deepEqual(replies.map(withoutTimestamp), JSON.parse(JSON.stringify(expected)));
       evidence.missingSession = await hub.request('state.sdkMessages', { sessionId: 'missing-history' }).then(() => 'unexpected success', String);
       assert.match(String(evidence.missingSession), /Session not found/);
@@ -163,6 +175,7 @@ try {
   } finally {
     evidence.mainSqlAttempts = mainSqlAttempts;
     raw.prepare = prepare;
+    writer.close();
   }
   evidence.bodyHashUnchanged = bodyHash() === beforeHash;
   assert.equal(evidence.bodyHashUnchanged, true);
