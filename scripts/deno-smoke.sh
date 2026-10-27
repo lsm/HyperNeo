@@ -707,6 +707,12 @@ env -i HOME="$TRACK_ADMISSION_RUN/home" PATH="$PATH" TMPDIR="$TRACK_ADMISSION_RU
 	HYPERNEO_DATA_DIR="$TRACK_ADMISSION_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/neo-track-admission-build.ts" verify "$TRACK_ADMISSION_RUN"
 
+TODO_ADD_BUILD_RUN="$WORK_DIR/todo-add-build"
+mkdir -p "$TODO_ADD_BUILD_RUN/home" "$TODO_ADD_BUILD_RUN/tmp"
+env -i HOME="$TODO_ADD_BUILD_RUN/home" PATH="$PATH" TMPDIR="$TODO_ADD_BUILD_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$TODO_ADD_BUILD_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-add-build.ts" verify "$TODO_ADD_BUILD_RUN"
+
 TODO_STOP_CONTEXT_RUN="$WORK_DIR/todo-stop-context"
 mkdir -p "$TODO_STOP_CONTEXT_RUN/home" "$TODO_STOP_CONTEXT_RUN/tmp"
 env -i HOME="$TODO_STOP_CONTEXT_RUN/home" PATH="$PATH" TMPDIR="$TODO_STOP_CONTEXT_RUN/tmp" NODE_ENV=test \
