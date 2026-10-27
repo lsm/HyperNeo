@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import {
   appendFileSync,
   existsSync,
@@ -111,6 +113,59 @@ afterEach(async () => {
 });
 
 describe('Copilot owned history and discovery', () => {
+  test('unchanged missing inputs read no history again, but append, rewrite and replacement are visible', async () => {
+    const f = setup();
+    const work = await f.start();
+    await f.restart();
+    const file = f.history(work);
+    const event = (name: string) =>
+      JSON.stringify({
+        type: 'user.message',
+        timestamp: '1990-01-01T00:00:00Z',
+        data: { messageId: name, content: `[worker-answer:${name}]\nDecision` },
+      }) + '\n';
+    appendFileSync(file, event('seed'));
+    for (let n = 0; n < 160; n++)
+      appendFileSync(file, event('noise').replace('Decision', 'x'.repeat(2000)));
+    const reads = spyOn(fs, 'readSync');
+    syncBuiltinESMExports();
+    const bytes = () =>
+      reads.mock.results.reduce(
+        (sum, result) => sum + (result.type === 'return' ? Number(result.value) : 0),
+        0
+      );
+    const find = (name: string) => f.adapter.readInput!(work.ref.id, `[worker-answer:${name}]`);
+    try {
+      expect(await find('late')).toBeNull();
+      expect(bytes()).toBeGreaterThan(300000);
+      reads.mockClear();
+      for (let n = 0; n < 3; n++) expect(await find('late')).toBeNull();
+      expect(bytes()).toBe(0);
+      expect(await find('seed')).toMatchObject({ messageId: 'user:seed' });
+      appendFileSync(file, event('late'));
+      expect(await find('late')).toMatchObject({ messageId: 'user:late' });
+      expect(await find('next')).toBeNull();
+      const stamp = fs.statSync(file);
+      const text = readFileSync(file, 'utf8');
+      writeFileSync(file, text.replaceAll('late', 'next'));
+      fs.utimesSync(file, stamp.atime, stamp.mtime);
+      expect(await find('next')).toMatchObject({ messageId: 'user:next' });
+      expect(await find('last')).toBeNull();
+      renameSync(file, file + '.preserved');
+      writeFileSync(file, text.replaceAll('late', 'last'));
+      fs.utimesSync(file, stamp.atime, stamp.mtime);
+      expect(await find('last')).toMatchObject({ messageId: 'user:last' });
+      await f.restart();
+      reads.mockClear();
+      expect(await find('late')).toBeNull();
+      expect(bytes()).toBeGreaterThan(300000);
+      expect(readFileSync(join(f.run, 'calls.jsonl'), 'utf8')).not.toContain('session.resume');
+    } finally {
+      reads.mockRestore();
+      syncBuiltinESMExports();
+    }
+  });
+
   test('finds an exact input marker beyond the recent input and byte windows after restart', async () => {
     const f = setup();
     const work = await f.start();
