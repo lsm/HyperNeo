@@ -100,7 +100,7 @@ try {
   app.jobProcessor.start();
   await until(() => store.getQuestion(first.id)?.state === 'retired', 'the real Neo SDK tool must resolve the card from its saved rule');
   const ruleRead = await rpc('neo.question.get', { questionId: first.id });
-  assert(issued); assert.equal(ruleRead.answeredByHuman, false); assert.equal(ruleRead.resolvedByAgent, true); assert.equal(ruleRead.answerDelivery[0].answeredBy, 'rule'); assert.equal(ruleRead.answerDelivery[0].state, 'accepted');
+  assert(issued); assert.equal(ruleRead.answeredByHuman, false); assert.equal(ruleRead.resolvedByAgent, true); assert.equal(ruleRead.answerDelivery[0].answeredBy, 'agent'); assert.equal(ruleRead.answerDelivery[0].state, 'accepted');
   await until(() => app!.db.getSDKMessageRepo().getUserSendStatus('synthetic-worker', ruleRead.answerDelivery[0].receipt) === 'consumed', 'the worker SDK must consume the agent resolution');
   await Bun.sleep(1000); await app.jobProcessor.stop();
   const prior = store.askQuestion('earlier-human', todo.askId, { text: 'Earlier preview destination', kind: 'choice', options: ['Staging', 'Production'], multiple: false, noLabel: null, yesLabel: null, startTodos: null }, Date.now());
@@ -129,6 +129,10 @@ try {
   app.jobProcessor.start();
   await until(() => store.questionAnswers.list(failedQuestion.id)[0]?.state === 'accepted', 'restart must recover the retired card through the existing delivery path');
   const recovered = await rpc('neo.question.get', { questionId: failedQuestion.id });
+  assert.equal(recovered.answerDelivery[0].answeredBy, 'agent');
+  const priorAfterRestart = await rpc('neo.question.get', { questionId: next.id });
+  assert.equal(priorAfterRestart.answerDelivery[0].answeredBy, 'agent');
+  assert(priorAfterRestart.question.retiredReason.includes(prior.id));
   await until(() => app!.db.getSDKMessageRepo().getUserSendStatus('synthetic-worker', recovered.answerDelivery[0].receipt) === 'consumed', 'the recovered resolution must reach the worker SDK');
   await rpc('neo.message.send', { sessionId: root, requestId: crypto.randomUUID(), content: 'Continue the synthetic plan.' });
   await until(() => neoBodies.some((entry) => entry.phase === 'restarted' && entry.body.includes(JSON.stringify(`Neo resolved "${failedQuestion.text}"`).slice(1, -1)) && entry.body.includes(rule)), 'Neo must retain the agent resolution and citation in its real SDK context after restart');
@@ -137,7 +141,7 @@ try {
   const counts = reads.map((read) => app!.db.getDatabase().prepare("SELECT COUNT(*) AS count FROM sdk_messages WHERE session_id = 'synthetic-worker' AND sdk_uuid = ? AND message_type = 'user'").get(read.answerDelivery[0].receipt));
   assert(counts.every((row) => row.count === 1), JSON.stringify(counts));
   assert.equal(recovered.answeredByHuman, false); assert.equal(recovered.resolvedByAgent, true); assert(recovered.question.retiredReason.includes(rule)); assert.equal(store.getTodo(todo.id)?.state, 'doing');
-  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ issuedByNeoSdk: issued, invalid, ruleRead, priorRead, failed, recovered, counts, todo: store.getTodo(todo.id), ruleRemovedBeforeRestart: true, neoContextAfterRestart: true }, null, 2));
+  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ issuedByNeoSdk: issued, invalid, ruleRead, priorRead, priorAfterRestart, failed, recovered, counts, todo: store.getTodo(todo.id), ruleRemovedBeforeRestart: true, neoContextAfterRestart: true }, null, 2));
   console.log('PASS: cited Neo resolution retires cards, reaches the worker once, retains holds on failure, and preserves non-human provenance through restart');
 } finally {
   await app?.cleanup(); model.stop(true);

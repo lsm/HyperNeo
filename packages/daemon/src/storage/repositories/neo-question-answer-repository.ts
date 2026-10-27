@@ -122,7 +122,7 @@ export class NeoQuestionAnswerRepository {
         ...route,
         questionId: row.id,
         answer: row.answer === null ? null : (JSON.parse(row.answer) as NeoQuestionAnswer),
-        answeredBy: isAgentResolvedQuestion(row) ? ('rule' as const) : row.answeredBy,
+        answeredBy: isAgentResolvedQuestion(row) ? ('agent' as const) : row.answeredBy,
         answeredAt: row.answeredAt,
         state:
           route.acceptedAt !== null

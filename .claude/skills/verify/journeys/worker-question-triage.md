@@ -21,6 +21,9 @@ resolvedByAgent true, answeredByHuman false, a durable citation, an accepted
 worker receipt and actual worker SDK consumption. A prior human answer can be
 cited for another card; an earlier agent resolution must be refused as a human
 source. Unit controls also cover foreign callers/answers and approval cards.
+Both citation forms report answerDelivery.answeredBy as agent. Read the durable
+citation to distinguish a saved rule from an earlier human answer; the resolver
+label must not present a human-answer citation as a rule.
 A prior answer citation retains its question ID and a short title; it does not
 copy the old card's full body or answer into the worker input. The long-card
 regression exercises the actual external-send limit and observes accepted

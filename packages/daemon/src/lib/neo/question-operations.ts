@@ -239,7 +239,7 @@ const AnswerDelivery = z.object({
   todoId: z.string(),
   sourceSession: WorkerIdentitySchema.extend({ provider: z.string(), link: z.string().nullable() }),
   answer: z.union([z.string(), z.array(z.string())]).nullable(),
-  answeredBy: z.enum(['button', 'chat', 'rule']).nullable(),
+  answeredBy: z.enum(['button', 'chat', 'agent']).nullable(),
   answeredAt: z.number().nullable(),
   receipt: z.string().nullable(),
   acceptedAt: z.number().nullable(),
