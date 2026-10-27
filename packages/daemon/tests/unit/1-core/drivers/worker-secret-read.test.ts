@@ -233,6 +233,7 @@ test('worker policies permit gh configuration while retaining credential denials
     '.git-credentials',
     '.config/git/credentials',
     '.codex/auth.json',
+    '.config/gh/hosts.yml',
   ]) {
     expect(fs[join(home, path)]).toBe('deny');
     expect(policy.sandbox.filesystem.denyRead).toContain(join(home, path));
@@ -255,6 +256,8 @@ test('Claude resume removes only the obsolete generated gh denials', async () =>
   expect(policy.sandbox.filesystem.denyRead).toContain(custom);
   expect(policy.permissions.deny).toContain(`Read(/${custom}/**)`);
   expect(policy.sandbox.filesystem.denyRead).toContain(join(fixture, 'home/Library/Keychains'));
+  expect(policy.sandbox.filesystem.denyRead).toContain(join(gh, 'hosts.yml'));
+  expect(policy.env.GH_CONFIG_DIR).toBeTruthy();
 });
 
 test('configured engine homes remain denied without denying the worker repo', async () => {

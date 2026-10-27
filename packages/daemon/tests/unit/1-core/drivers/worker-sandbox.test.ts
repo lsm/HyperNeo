@@ -87,6 +87,24 @@ test('runtime preparation creates every work location on demand', async () => {
   expect(await readFile(join(env.TMPDIR, 'probe'), 'utf8')).toBe('synthetic');
 });
 
+test('worker gh configuration preserves public settings without copying host credentials', async () => {
+  fixture('darwin', false);
+  const home = join(dataDir, 'synthetic-home');
+  vi.stubEnv('HOME', home);
+  mkdirSync(join(home, '.config/gh'), { recursive: true });
+  await writeFile(join(home, '.config/gh/config.yml'), 'git_protocol: ssh\n');
+  await writeFile(
+    join(home, '.config/gh/hosts.yml'),
+    'github.com:\n  oauth_token: synthetic-only\n'
+  );
+  const env = await prepareWorkerSandbox(root);
+  expect(env.GH_CONFIG_DIR).toBeTruthy();
+  expect(await readFile(join(env.GH_CONFIG_DIR, 'config.yml'), 'utf8')).toBe('git_protocol: ssh\n');
+  expect(existsSync(join(env.GH_CONFIG_DIR, 'hosts.yml'))).toBe(false);
+  await prepareWorkerSandbox(root);
+  expect(await readFile(join(env.GH_CONFIG_DIR, 'config.yml'), 'utf8')).toBe('git_protocol: ssh\n');
+});
+
 test('runtime preparation tolerates shared work locations with ordinary modes', async () => {
   const data = fixture('darwin', false);
   const shared = join(data, 'worktrees', 'acme', 'demo');

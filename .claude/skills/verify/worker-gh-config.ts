@@ -16,11 +16,11 @@ assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert(codex.startsWith('/') && gh.startsWith('/'));
 mkdirSync(join(run, 'evidence'), { recursive: true });
 mkdirSync(join(home, '.config/gh'), { recursive: true });
-writeFileSync(join(home, '.config/gh/config.yml'), 'git_protocol: https\n');
-const protectedFiles = [join(home, 'Library/Keychains/synthetic'), join(home, '.git-credentials')];
+writeFileSync(join(home, '.config/gh/config.yml'), 'git_protocol: ssh\n');
+const protectedFiles = [join(home, 'Library/Keychains/synthetic'), join(home, '.git-credentials'), join(home, '.config/gh/hosts.yml')];
 for (const path of protectedFiles) {
   mkdirSync(join(path, '..'), { recursive: true });
-  writeFileSync(path, 'synthetic-credential-never-real');
+  writeFileSync(path, path.endsWith('hosts.yml') ? 'github.com:\n  user: synthetic\n  oauth_token: synthetic-oauth-token\n' : 'synthetic-credential-never-real');
 }
 const quote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
 const roots = ['codex', 'claude'].map(engine => join(run, `worker-${engine}`));
@@ -82,15 +82,15 @@ try {
   for await (const event of stream) writeFileSync(join(run, 'evidence/claude-events.jsonl'), `${JSON.stringify(event)}\n`, { flag: 'a' });
   for (const [index, engine] of ['codex', 'claude'].entries()) {
     const root = roots[index];
-    const files = ['gh.out', 'gh.err', 'gh.status', 'secret-0.out', 'secret-0.err', 'secret-0.status', 'secret-1.out', 'secret-1.err', 'secret-1.status', 'repo.out'];
+    const files = ['gh.out', 'gh.err', 'gh.status', 'secret-0.out', 'secret-0.err', 'secret-0.status', 'secret-1.out', 'secret-1.err', 'secret-1.status', 'secret-2.out', 'secret-2.err', 'secret-2.status', 'repo.out'];
     results[engine] = Object.fromEntries(files.map(file => [file, readFileSync(join(root, file), 'utf8')]));
   }
   writeFileSync(join(run, 'evidence/result.json'), JSON.stringify(results, null, 2));
   for (const engine of ['codex', 'claude']) {
     const observed = results[engine] as Record<string, string>;
     assert.equal(observed['gh.status'], '0', `${engine} gh config read failed`);
-    assert.equal(observed['gh.out'].trim(), 'https');
-    for (const index of [0, 1]) {
+    assert.equal(observed['gh.out'].trim(), 'ssh');
+    for (const index of [0, 1, 2]) {
       assert.notEqual(observed[`secret-${index}.status`], '0', `${engine} secret read allowed`);
       assert.equal(observed[`secret-${index}.out`], '');
     }
