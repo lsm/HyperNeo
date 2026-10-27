@@ -105,6 +105,11 @@ describe('authored publication reads', () => {
     });
     expect(bindings).not.toHaveBeenCalled();
     expect(reads).not.toHaveBeenCalled();
+    expect(await invoke({ conversationId }, human)).toMatchObject({
+      kind: 'completed',
+      value: { ok: true },
+    });
+    expect(bindings).toHaveBeenCalled();
   });
 
   test('the bound Neo session reads its conversation publications; unbound workers stay out', async () => {
