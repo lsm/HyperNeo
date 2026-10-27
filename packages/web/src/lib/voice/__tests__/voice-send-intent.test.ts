@@ -46,11 +46,13 @@ vi.mock('../voice-transcript-outbox.ts', async (importOriginal) => ({
   enqueueTranscript,
 }));
 
+import type { VoiceRecordEntry } from '../voice-audio-store.ts';
 import { connectionManager } from '../../connection-manager.ts';
 import {
   flushPendingVoiceAudio,
   resetVoiceAudioOutbox,
   queuePendingVoiceSend,
+  submitVoiceSendIntent,
 } from '../voice-audio-outbox.ts';
 
 function seedEntry(overrides: Record<string, unknown> = {}) {
@@ -285,5 +287,68 @@ describe('voice send-intent recovery', () => {
     expect(await queuePendingVoiceSend('missing', {})).toBe(false);
     seedEntry({ intent: 'send' });
     expect(await queuePendingVoiceSend('rec-1', {})).toBe(false);
+  });
+  it('replays the accepted session receipt after a lost response without another delivery', async () => {
+    const record = seedEntry({
+      intent: 'send',
+      door: 'session',
+      sendContext: {
+        suffix: 'saved file words',
+        attachmentIds: [],
+        images: [{ data: 'aGk=', media_type: 'image/png' }],
+      },
+    }) as VoiceRecordEntry;
+    const receipts = new Map<string, Record<string, unknown>>();
+    let deliveries = 0;
+    let dropResponse = true;
+    hubRequest.mockImplementation(async (method, payload) => {
+      const invocation = payload as { name?: string; input?: { idempotencyKey?: string } };
+      if (
+        method !== 'message.send' &&
+        !(method === 'operation.invoke' && invocation.name === 'message.send')
+      )
+        throw new Error('Unexpected route');
+      const key = method === 'operation.invoke' ? invocation.input?.idempotencyKey : undefined;
+      let receipt = key ? receipts.get(key) : undefined;
+      if (!receipt) {
+        deliveries++;
+        receipt = {
+          kind: 'accepted',
+          mailboxId: 'mailbox-' + deliveries,
+          messageId: 'message-' + deliveries,
+        };
+        if (key) receipts.set(key, receipt);
+      }
+      if (dropResponse) {
+        dropResponse = false;
+        throw new Error('Response lost after acceptance');
+      }
+      return receipt;
+    });
+    const hub = { request: hubRequest } as never;
+    expect(
+      (
+        await submitVoiceSendIntent(
+          hub,
+          record,
+          'typed words\nfinal transcript\n\nsaved file words'
+        )
+      ).kind
+    ).not.toBe('accepted');
+    expect(deliveries).toBe(1);
+    const saved = store.records.find(
+      (entry) => entry.id === record.id
+    ) as unknown as VoiceRecordEntry;
+    expect(saved.sendContext).toEqual(record.sendContext);
+    expect(
+      await submitVoiceSendIntent({ request: hubRequest } as never, saved, saved.sendText!)
+    ).toEqual({ kind: 'accepted' });
+    expect(deliveries).toBe(1);
+    expect(rawMethods()).not.toContain('message.send');
+    expect(hubRequest.mock.calls[0][1]).toEqual(hubRequest.mock.calls[1][1]);
+    expect(hubRequest.mock.calls[1][1]).toMatchObject({
+      name: 'message.send',
+      input: { idempotencyKey: 'voice:rec-1', sessionId: 's1' },
+    });
   });
 });
