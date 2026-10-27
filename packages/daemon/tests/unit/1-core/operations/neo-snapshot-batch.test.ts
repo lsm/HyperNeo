@@ -61,6 +61,72 @@ test('paired relays can open summarized cards without gaining mutation access', 
     )
   ).toMatchObject({ kind: 'failed', code: 'forbidden' });
 });
+test('Work snapshots carry complete open questions without per-card reads', async () => {
+  const opened = service.todos.askQuestion(
+    'first-paint-question',
+    'ask-18',
+    {
+      text: 'Choose **the full option**\nwith context',
+      kind: 'choice',
+      options: ['Keep the current version', 'Use the proposed version'],
+      multiple: true,
+      noLabel: null,
+      yesLabel: null,
+      startTodos: null,
+      document: 'Full immutable proposal\n'.repeat(20),
+      replyTo: ['2a21f6c6-5a67-4716-8fcf-fd791da89f0b'],
+      confirm: { path: '/synthetic/proposal.md', sha256: 'a'.repeat(64) },
+    },
+    1000
+  );
+  db.getDatabase()
+    .prepare(
+      "UPDATE neo_questions SET state='retired', retired_reason='Superseded' WHERE id='question-0'"
+    )
+    .run();
+  const value = read(await snapshot());
+  const entry = value.todoAsks.find((entry) => entry.ask.id === 'ask-18')!;
+  expect(entry.questions).toEqual([{ ...opened, optionLabels: ['A', 'B'] }]);
+  expect(entry.summary).toMatchObject({ questionCount: 3, openQuestionCount: 1 });
+  expect(value.todoAsks.flatMap((entry) => entry.questions)).toHaveLength(1);
+  expect(entry.todos.every((todo) => todo.instruction === null && todo.report === null)).toBe(true);
+});
+test.each([0, 1999, 2000, 2001, 2_000_000])(
+  'Work snapshots bound a %i-character document preview while ask.read retains the original',
+  async (length) => {
+    const document = 'd'.repeat(length);
+    const opened = service.todos.askQuestion(
+      'preview-question',
+      'ask-18',
+      {
+        text: 'Complete question text\n'.repeat(300),
+        kind: 'yesno',
+        options: null,
+        multiple: false,
+        noLabel: 'Keep current',
+        yesLabel: 'Apply proposal',
+        startTodos: null,
+        document,
+        confirm: { path: '/synthetic/proposal.md', sha256: 'a'.repeat(64) },
+      },
+      1000
+    );
+    const entry = read(await snapshot()).todoAsks.find((entry) => entry.ask.id === 'ask-18')!;
+    expect(entry.questions).toEqual([
+      {
+        ...opened,
+        document:
+          length > 2000 ? `${document.slice(0, 2000)}\n\n[Document preview truncated]` : document,
+      },
+    ]);
+    const detail = await invokeOperation(registry, 'neo.ask.read', { askId: 'ask-18' }, caller);
+    if (detail.kind !== 'completed') throw new Error(detail.message);
+    expect((detail.value as { entry: { questions: unknown[] } }).entry.questions).toContainEqual(
+      opened
+    );
+    expect(service.todos.getQuestion(opened.id)).toEqual(opened);
+  }
+);
 test('Work cards defer full todo bodies until the card is opened', async () => {
   const value = read(await snapshot());
   const todo = value.todoAsks
