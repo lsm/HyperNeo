@@ -123,8 +123,12 @@ export function createDevicePairingOperations({
       resultSchema: z.union([z.object({ ok: z.literal(true) }), Refused]),
       execute: async (input, caller) => {
         if (!isLocalUser(caller)) return refused;
-        if (!isPairedHuman(caller)) return { ok: false as const, reason: ALLOW_NEEDS_PAIRED_HUMAN };
-        return pairing().approve(input.codeId, now())
+        if (caller.device?.kind !== 'human')
+          return { ok: false as const, reason: ALLOW_NEEDS_PAIRED_HUMAN };
+        const approved = await pairing().approveAsync(input.codeId, caller.device.deviceId, now());
+        if (approved === 'not_paired')
+          return { ok: false as const, reason: ALLOW_NEEDS_PAIRED_HUMAN };
+        return approved === 'approved'
           ? { ok: true as const }
           : { ok: false as const, reason: 'not_pending: no pending code with that id.' };
       },

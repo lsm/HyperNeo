@@ -773,4 +773,5 @@ env -i HOME="$TASK_SCHEDULE_PAUSE_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE
 WORKFLOW_OPTIONS_CONTRACT_RUN="$WORK_DIR/workflow-options-contract"
 mkdir -p "$WORKFLOW_OPTIONS_CONTRACT_RUN/home"
 env -i HOME="$WORKFLOW_OPTIONS_CONTRACT_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_OPTIONS_CONTRACT_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-options-contract.ts" verify "$WORKFLOW_OPTIONS_CONTRACT_RUN"
+env -i HOME="$WORK_DIR/pairing-approve/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/pairing-approve/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-pairing-approve.ts" "$WORK_DIR/pairing-approve"
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"
