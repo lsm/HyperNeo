@@ -31,7 +31,7 @@ const EditInput = z
 export interface NeoPublicationChangeRuntime {
   getBinding(id: string): NeoBinding | null;
   getRootBinding(): NeoBinding | null;
-  publications: Pick<NeoPublicationRepository, 'get' | 'edit' | 'listRecent'>;
+  publications: Pick<NeoPublicationRepository, 'get' | 'edit' | 'listRecent' | 'reviseCurrent'>;
   notify(conversationId: string): void;
 }
 
@@ -124,7 +124,7 @@ function changePipeline(
   ) => NeoPublicationChangeResult | Rejection;
 }
 
-export function createNeoPublicationChangeOperations(
+export function createNeoPublicationChangeAdmission(
   runtime: NeoPublicationChangeRuntime,
   now: () => Date = () => new Date()
 ) {
@@ -145,7 +145,13 @@ export function createNeoPublicationChangeOperations(
           undefined
         )
     );
-  const edit = revise('neo.publication.edit', EditInput);
+  return revise('neo.publication.edit', EditInput);
+}
+
+export function createNeoPublicationChangeOperations(
+  runtime: NeoPublicationChangeRuntime,
+  now: () => Date = () => new Date()
+) {
   return [
     defineOperation({
       name: 'neo.publication.edit',
@@ -154,7 +160,11 @@ export function createNeoPublicationChangeOperations(
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       inputSchema: EditInput,
       resultSchema: NeoPublicationResultSchema,
-      execute: async (input, caller) => edit(input, caller),
+      execute: async (input, caller) => {
+        const result = await runtime.publications.reviseCurrent(input, caller, now().toISOString());
+        if (result.accepted) runtime.notify(result.publication.conversationId);
+        return result;
+      },
     }),
   ];
 }
