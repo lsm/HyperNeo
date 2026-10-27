@@ -316,3 +316,17 @@ it('keeps legacy Advanced selectors from making a second attachment claim', asyn
   expect(view.getByText('Claude Code Preset')).toBeTruthy();
   expect(view.queryAllByRole('checkbox').length).toBeGreaterThan(0);
 });
+
+it('uses the canonical skill picker without a second Advanced skills group', async () => {
+  const current = { ...session, config: { toolSelection: { version: 1 as const, choices: {} } } };
+  const view = render(<ToolsModal isOpen onClose={() => {}} session={current} />);
+  await view.findByRole('button', { name: 'Use here: Synthetic Browser' });
+  fireEvent.click(view.getByRole('button', { name: 'Advanced settings' }));
+  expect(view.queryByRole('button', { name: /^Skills \(/ })).toBeNull();
+  expect(view.queryByRole('checkbox', { name: 'Synthetic Browser MCP', exact: true })).toBeNull();
+  expect(view.getByRole('button', { name: 'Use here: Synthetic Browser' })).toBeTruthy();
+  expect(view.getByText('Claude Code Preset')).toBeTruthy();
+  expect(
+    view.getByRole('checkbox', { name: 'User settings (~/.claude/settings.json)' })
+  ).toBeTruthy();
+});
