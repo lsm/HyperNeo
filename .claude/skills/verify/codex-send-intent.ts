@@ -177,6 +177,7 @@ try {
   ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connection failed')); });
   const send = (mode?: string, describe = false, adapters = false, receipt?: { executionId: string; inputId: string }, message = 'synthetic marker') => new Promise<any>((done, fail) => {
+    const workerSandbox = mode === 'sandbox-off' ? 'off' : mode === 'sandbox-always' ? 'always' : undefined;
     const id = crypto.randomUUID();
     const timer = setTimeout(() => fail(new Error('RPC timeout')), 10000);
     const listener = (event: MessageEvent) => {
@@ -186,8 +187,9 @@ try {
       if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data);
     };
     ws!.addEventListener('message', listener);
-    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: receipt ? { name: 'work.status', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, receipt } } : adapters ? { name: 'work.adapters', input: {} } : describe ? { name: 'operations.describe', input: { name: 'work.send' } } : { name: 'work.send', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, message, ...(mode ? { mode } : {}) } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
+    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: workerSandbox ? 'settings.global.update' : 'operation.invoke', data: workerSandbox ? { updates: { workerSandbox } } : receipt ? { name: 'work.status', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, receipt } } : adapters ? { name: 'work.adapters', input: {} } : describe ? { name: 'operations.describe', input: { name: 'work.send' } } : { name: 'work.send', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, message, ...(mode ? { mode } : {}) } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
+  await send('sandbox-always');
   await startCodexDesktopTurn(join(home, 'ipc/ipc.sock'), spawnProcess, 'new-handoff-control', { threadId: 'new-handoff-control', input: [{ type: 'text', text: 'synthetic opening turn', text_elements: [] }] });
   assert(calls.some(call => {
     const request = call as { desktop?: string; params?: { conversationId?: string } };
@@ -293,6 +295,11 @@ try {
   const before = calls.length;
   assert.equal((await send('steer')).reason, 'not_delivered');
   assert(!calls.slice(before).some(call => (call as { server?: string }).server === 'thread/queue/add'));
+  await send('sandbox-off');
+  const offStart = calls.length;
+  assert.equal((await send()).value.startedTurnId, 'desktop-started');
+  const nextTurn = calls.slice(offStart).find(call => (call as { desktop?: string }).desktop === 'thread-follower-start-turn') as { params: { turnStart: { request: { sandboxPolicy?: unknown } } } };
+  assert.deepEqual(nextTurn.params.turnStart.request.sandboxPolicy, { type: 'dangerFullAccess' }, 'Current off preference must replace the old Desktop policy for the next turn');
   const opens = readFileSync(openLog, 'utf8').trim().split('\n').map(line => JSON.parse(line));
   assert.equal(opens.length, 2, 'Only new-thread creation and the first ownerless automatic send open Desktop');
   console.log(`${action} PASS: ${run}/evidence/observed.json`);
