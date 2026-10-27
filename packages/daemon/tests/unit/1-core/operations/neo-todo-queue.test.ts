@@ -248,4 +248,14 @@ describe('queued todos start themselves', () => {
     await w.tick();
     expect(w.started).toEqual([]);
   });
+
+  test('an urgent todo starts before older normal work when one slot is free', async () => {
+    const w = (current = world({ running: 1, perGroup: 1 }));
+    const older = w.add(w.approved());
+    const urgent = w.add(w.approved());
+    w.store.updateTodo(w.store.getTodo(urgent)!, { priority: 'urgent' }, 5);
+    await w.tick();
+    expect(w.started).toEqual([urgent]);
+    expect(w.state(older)).toBe('todo');
+  });
 });

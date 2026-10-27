@@ -201,7 +201,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
             {
               id: next.id,
               group: ask.projectId ?? null,
-              priority: 'normal' as const,
+              priority: next.priority,
               createdAt: next.createdAt,
               worker: target.verb === 'send' ? worker(target.ref) : null,
             },
