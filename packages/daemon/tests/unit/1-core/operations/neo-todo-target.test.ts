@@ -108,10 +108,45 @@ function fixture(
     expect(reply.isError ?? false).toBe(false);
     return JSON.parse(reply.content[0].text);
   };
-  return { db, todos, sessions, add, starts: () => starts };
+  const bind = async (todoId: string, ref: WorkRef) => {
+    const reply = await handler({ name: 'neo.todo.bind', input: { todoId, ref } });
+    expect(reply.isError ?? false).toBe(false);
+    return JSON.parse(reply.content[0].text);
+  };
+  return { db, todos, sessions, add, bind, starts: () => starts };
 }
 
 describe('todo target identity at the MCP add door', () => {
+  test('direct binding stores the resolved reference rather than the supplied prefix', async () => {
+    const f = fixture();
+    try {
+      const original = { adapter: 'hyperneo', id: full };
+      const added = await f.add({ verb: 'send', ref: original });
+      const ref = { adapter: 'codex-desktop', daemon: 'synthetic-peer', id: full.slice(0, 8) };
+      const result = await f.bind(added.todo.id, ref);
+      expect(result.ok).toBe(true);
+      expect(f.sessions.readRef(added.todo.id)).toEqual({ ...ref, id: full });
+      expect(f.starts()).toBe(0);
+    } finally {
+      f.db.close();
+    }
+  });
+  test('direct binding rejects unknown work and leaves the prior target intact', async () => {
+    const f = fixture();
+    try {
+      const original = { adapter: 'hyperneo', id: full };
+      const added = await f.add({ verb: 'send', ref: original });
+      const before = f.todos.getTodo(added.todo.id);
+      const target = f.sessions.get(added.todo.id);
+      const result = await f.bind(added.todo.id, { adapter: 'codex-desktop', id: 'missing' });
+      expect(result).toEqual({ ok: false, reason: expect.stringMatching(/^target_not_found:/) });
+      expect(f.todos.getTodo(added.todo.id)).toEqual(before);
+      expect(f.sessions.get(added.todo.id)).toEqual(target);
+      expect(f.sessions.readRef(added.todo.id)).toBeNull();
+    } finally {
+      f.db.close();
+    }
+  });
   test('does not add a todo if the ask settles during target lookup', async () => {
     const f = fixture({
       beforeLookup: (todos) => {
