@@ -1,0 +1,42 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/coding-connector-pr-writer.test.ts:
+30 |     const prepare = main.prepare.bind(main);
+31 |     const fault = readOnly
+32 |       ? null
+33 |       : spyOn(main, 'prepare').mockImplementation(((sql: string) => {
+34 |           if (/pack_coding_(poll_facts|repo_aliases)/.test(sql))
+35 |             throw new Error('basic PR observation SQL on main');
+                           ^
+error: basic PR observation SQL on main
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/coding-connector-pr-writer.test.ts:35:23)
+      at loadPage (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/src/lib/neo/packs/coding/poll-facts.ts:49:13)
+      at executePipe (/Users/lsm/focus/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:574:16)
+      at continuePipeline (/Users/lsm/focus/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:730:34)
+      at next (/Users/lsm/focus/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:687:5)
+      at runPipeline (/Users/lsm/focus/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:762:2)
+      at <anonymous> (/Users/lsm/focus/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:809:22)
+      at acquire (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/src/lib/neo/packs/coding/connector-pr-reader.ts:57:24)
+      at executePipe (/Users/lsm/focus/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:574:16)
+(fail) basic PR observation uses the bound writer with guarded main [4.31ms]
+42 |   const sleep = options.sleep ?? sleepSync;
+43 | 
+44 |   let context: Record<string, unknown> | undefined;
+45 |   for (let attempt = 1; ; attempt++) {
+46 |     try {
+47 |       const result = operation();
+                          ^
+SQLiteError: attempt to write a readonly database
+      errno: 8,
+ byteOffset: -1,
+       code: "SQLITE_READONLY"
+
+      at #runNoArgs (bun:sqlite:140:25)
+      at transaction (bun:sqlite:400:15)
+      at withBusyRetry (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/src/storage/busy-retry.ts:47:22)
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/src/lib/neo/packs/coding/connector-pr-reader.ts:75:22)
+(fail) basic PR observation uses the bound writer with read-only main [3.16ms]
+
+ 0 pass
+ 2 fail
+Ran 2 tests across 1 file. [54.00ms]
