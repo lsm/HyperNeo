@@ -54,6 +54,53 @@ describe('useNeoMessageMenu', () => {
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
+  it.each([
+    ['source capabilities', { sourceCapabilities: { firesTouchEvents: true } }],
+    ['pointer type', { pointerType: 'touch' }],
+    ['last touch fallback', {}],
+  ])(
+    'suppresses the native touch menu using %s without replacing long-press actions',
+    (_, fields) => {
+      vi.useFakeTimers();
+      render(<Probe />);
+      const message = screen.getByTestId('message');
+      fireEvent.touchStart(message, { touches: [{ clientX: 5, clientY: 5 }] });
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+      fireEvent.touchEnd(message);
+      const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+      for (const [key, value] of Object.entries(fields)) {
+        Object.defineProperty(event, key, { value });
+      }
+      fireEvent(message, event);
+      expect(event.defaultPrevented).toBe(true);
+      expect(screen.getByRole('menu', { name: 'Message actions' })).toBeTruthy();
+    }
+  );
+
+  it.each([
+    ['mouse source capabilities', { sourceCapabilities: { firesTouchEvents: false } }, null],
+    ['mouse pointer type', { pointerType: 'mouse' }, null],
+    ['pen pointer type', { pointerType: 'pen' }, null],
+    ['mouse fallback', {}, 'mouse'],
+    ['keyboard fallback', {}, 'keyboard'],
+  ])('preserves the native menu after touch using %s', (_, fields, input) => {
+    render(<Probe />);
+    const message = screen.getByTestId('message');
+    fireEvent.touchStart(message, { touches: [{ clientX: 5, clientY: 5 }] });
+    fireEvent.touchEnd(message);
+    if (input === 'mouse') fireEvent.pointerDown(message, { pointerType: 'mouse' });
+    if (input === 'keyboard') fireEvent.keyDown(message, { key: 'ContextMenu' });
+    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    for (const [key, value] of Object.entries(fields)) {
+      Object.defineProperty(event, key, { value });
+    }
+    fireEvent(message, event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
   it('opens on a long press and not on a short tap, and closes on Escape', () => {
     vi.useFakeTimers();
     render(<Probe />);
