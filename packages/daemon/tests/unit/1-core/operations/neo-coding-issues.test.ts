@@ -287,7 +287,7 @@ test.each(['', 'synthetic/plan#0', '#1', 'synthetic/plan#1oops', 'a/b/c#1'])(
   }
 );
 
-test('20/40/60 reminders persist across reopen, ignore metadata edits, and never block', async () => {
+test('20/40 reminders persist across reopen and ignore metadata edits; 60 moves it to a fresh worker', async () => {
   const f = fixture();
   f.add('first', true);
   f.issue('OPEN', []);
@@ -301,15 +301,10 @@ test('20/40/60 reminders persist across reopen, ignore metadata edits, and never
   await f.at(40);
   f.restart();
   await f.at(60);
-  await f.at(120);
   expect(f.calls.filter((name) => name === 'work.send')).toHaveLength(2);
-  expect(f.notes.filter((text) => text.includes('without progress'))).toHaveLength(1);
+  expect(f.calls.filter((name) => name === 'work.start')).toHaveLength(1);
+  expect(f.notes.filter((text) => text.includes('fresh worker'))).toHaveLength(1);
   expect(f.store.getTodo('first')?.state).toBe('doing');
-  f.progress();
-  await f.at(139);
-  expect(f.calls.filter((name) => name === 'work.send')).toHaveLength(2);
-  await f.at(140);
-  expect(f.calls.filter((name) => name === 'work.send')).toHaveLength(3);
 });
 
 test('unreachable reminder delivery escalates without turning time into a block fact', async () => {
@@ -333,13 +328,13 @@ test('a reminder sent but not yet confirmed counts as delivered: no resend and n
   expect(f.notes.some((text) => text.includes('could not be reached'))).toBe(false);
 });
 
-test('a first refresh after 60 minutes escalates without inventing sent reminders', async () => {
+test('a first refresh after 60 minutes moves it to a fresh worker without inventing sent reminders', async () => {
   const f = fixture();
   f.add('first', true);
   f.issue('OPEN', []);
   await f.at(60);
   expect(f.calls.filter((name) => name === 'work.send')).toHaveLength(0);
-  expect(f.notes.filter((text) => text.includes('without progress'))).toHaveLength(1);
+  expect(f.notes.filter((text) => text.includes('fresh worker'))).toHaveLength(1);
   expect(f.notes.some((text) => text.includes('two reminders'))).toBe(false);
   expect(f.store.getTodo('first')?.state).toBe('doing');
 });
