@@ -1,8 +1,8 @@
-# Build the writer command for migrating a workflow run snapshot
+# Workflow snapshot migrations use the writer
 
-This is the build rung: startup still uses its existing migration path until a
-separate wiring PR. The new command accepts only a prepared version payload and
-identifiers; template resolver callbacks remain outside the writer transaction.
+The command accepts only a prepared version payload and identifiers. Both the
+job proof and production startup migration use it; template resolver callbacks
+remain on main, outside the writer transaction.
 
 ```sh
 bash .claude/skills/verify/proof-run.sh /absolute/fresh/snapshot-evidence \
@@ -17,17 +17,24 @@ workflow's hooks. The full Unicode definition and its SHA-256 hash must survive.
 Main-connection instrumentation records zero definition-version or pin-update SQL
 while the job runs. Evidence retains the terminal job record and RPC reply.
 
-On the contract commit before the build, the same job ends dead with
-`workflow.run.pin.write does not run migrateSnapshot`. That failure is recorded
-before adding the command. Repeat with `VERIFY_PROOF_RUNTIME=deno` and supported
-Deno on PATH for the second runtime. The wrapper isolates the daemon and removes
-its temporary database and home after preserving evidence.
+After the job and contention phases, the helper seeds another snapshot-less
+pin, closes the daemon and restarts against that synthetic database. Production
+RPC setup must finish migration before serving `spaceWorkflowRun.listHookStates`;
+the reply must retain the frozen hooks despite the edited live definition.
+Instrumentation during startup migration must record zero version INSERTs and
+pin UPDATEs on main. Evidence includes `startupSql` and the recovered pin.
+
+The wiring regression commit completes the job proof but fails this startup SQL
+assertion. The earlier build contract instead ended dead with
+`workflow.run.pin.write does not run migrateSnapshot`. Repeat with
+`VERIFY_PROOF_RUNTIME=deno` and supported Deno on PATH for the second runtime.
+The wrapper preserves evidence and removes its temporary database and home.
 
 The workflow-run-pin-write unit cases cover preservation of ordinary pin
 admission, snapshot replacement, transaction rollback, and notifications only
-after successful commit. This fixture proves the new command through a real
-job/RPC surface; it does not claim startup uses the command yet or exercise
-worker death, held locks, model turns or GUI layout.
+after successful commit. This fixture proves the command through a real job/RPC surface and production
+startup migration. Other workflow reads/writes, worker death, model turns and
+GUI layout remain separate verification surfaces.
 
 A second phase holds a writer lock on the same synthetic WAL database in a
 separate Bun child for 1.2 seconds. The snapshot command must wait, while the real

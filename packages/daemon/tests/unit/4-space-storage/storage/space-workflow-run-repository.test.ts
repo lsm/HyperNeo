@@ -865,7 +865,7 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(JSON.parse(version.payload).templateSnapshots).toEqual({});
     });
 
-    it('migrateSnapshotlessPins upgrades a run pinned before snapshots existed', () => {
+    it('migrateSnapshotlessPins upgrades a run pinned before snapshots existed', async () => {
       const wf = rawWorkflow({
         nodes: [
           {
@@ -886,7 +886,7 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(JSON.parse(pinnedPayload(before!)).templateSnapshots).toBeUndefined();
 
       expect(
-        repo.migrateSnapshotlessPins(
+        await repo.migrateSnapshotlessPins(
           () => (key) =>
             key === 'worker.custom'
               ? ({
@@ -919,7 +919,7 @@ describe('SpaceWorkflowRunRepository', () => {
       );
     });
 
-    it('migrateSnapshotlessPins leaves runs that already carry a snapshot record alone', () => {
+    it('migrateSnapshotlessPins leaves runs that already carry a snapshot record alone', async () => {
       const wf = rawWorkflow({
         nodes: [
           {
@@ -937,7 +937,7 @@ describe('SpaceWorkflowRunRepository', () => {
       const before = repo.getRun(run.id)!.definitionVersion;
 
       expect(
-        repo.migrateSnapshotlessPins(
+        await repo.migrateSnapshotlessPins(
           () => () => null,
           () => wf
         )
@@ -945,7 +945,7 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(repo.getRun(run.id)!.definitionVersion).toBe(before);
     });
 
-    it('migrateSnapshotlessPins includes a taskless run, which is still executable', () => {
+    it('migrateSnapshotlessPins includes a taskless run, which is still executable', async () => {
       const wf = rawWorkflow({
         nodes: [
           {
@@ -964,7 +964,7 @@ describe('SpaceWorkflowRunRepository', () => {
       const before = repo.getRun(run.id)!.definitionVersion;
 
       expect(
-        repo.migrateSnapshotlessPins(
+        await repo.migrateSnapshotlessPins(
           () => () => null,
           () => wf
         )
@@ -975,7 +975,7 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(JSON.parse(pinnedPayload(after!)).templateSnapshots).toEqual({});
     });
 
-    it('migrateSnapshotlessPins refuses to rehash a pinned payload whose hash does not verify', () => {
+    it('migrateSnapshotlessPins refuses to rehash a pinned payload whose hash does not verify', async () => {
       const wf = rawWorkflow({
         nodes: [
           {
@@ -1000,7 +1000,7 @@ describe('SpaceWorkflowRunRepository', () => {
       ).run(tampered, WORKFLOW_ID, before);
 
       expect(
-        repo.migrateSnapshotlessPins(
+        await repo.migrateSnapshotlessPins(
           () => () => null,
           () => wf
         )
@@ -1010,7 +1010,7 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(JSON.parse(pinnedPayload(after!)).name).toBe('My Workflow');
     });
 
-    it('migrateSnapshotlessPins leaves an unverifiable pin alone when the workflow is gone', () => {
+    it('migrateSnapshotlessPins leaves an unverifiable pin alone when the workflow is gone', async () => {
       const wf = rawWorkflow({
         nodes: [
           {
@@ -1034,7 +1034,7 @@ describe('SpaceWorkflowRunRepository', () => {
       ).run(JSON.stringify({ ...wf, name: 'Altered' }), WORKFLOW_ID, before);
 
       expect(
-        repo.migrateSnapshotlessPins(
+        await repo.migrateSnapshotlessPins(
           () => () => null,
           () => null
         )
@@ -1042,7 +1042,7 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(repo.getRun(run.id)!.definitionVersion).toBe(before);
     });
 
-    it('migrateSnapshotlessPins migrates a pin whose payload is malformed JSON', () => {
+    it('migrateSnapshotlessPins migrates a pin whose payload is malformed JSON', async () => {
       const wf = rawWorkflow({
         nodes: [
           {
@@ -1067,7 +1067,7 @@ describe('SpaceWorkflowRunRepository', () => {
 
       expect(repo.listSnapshotlessPinnedRuns().map((r) => r.id)).toContain(run.id);
       expect(
-        repo.migrateSnapshotlessPins(
+        await repo.migrateSnapshotlessPins(
           () => () => null,
           () => wf
         )
@@ -1078,7 +1078,7 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(JSON.parse(pinnedPayload(after!)).templateSnapshots).toEqual({});
     });
 
-    it('migrateSnapshotlessPins skips runs whose task is archived', () => {
+    it('migrateSnapshotlessPins skips runs whose task is archived', async () => {
       const wf = rawWorkflow({
         nodes: [
           {
@@ -1097,7 +1097,7 @@ describe('SpaceWorkflowRunRepository', () => {
       seedTaskForRun(run.id, spaceId, { archived: true });
 
       expect(
-        repo.migrateSnapshotlessPins(
+        await repo.migrateSnapshotlessPins(
           () => () => null,
           () => wf
         )
