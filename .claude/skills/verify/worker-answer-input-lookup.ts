@@ -115,6 +115,7 @@ try {
     appendFileSync(copilotHistory, JSON.stringify({ type: 'user.message', timestamp: '1990-01-01T00:00:00Z', data: { messageId: 'late-copilot', content: `${marker('late')}\nStored answer` } }) + '\n');
     assert.equal((await lookup('late', { sessionId: copilotId }, 'copilot-cli')).value.turns[0].messageId, 'user:late-copilot');
     appendFileSync(copilotHistory, JSON.stringify({ type: 'user.message', timestamp: '1990-01-01T00:00:00Z', data: { messageId: 'oversized-copilot', content: `${marker('oversized')}\n${'x'.repeat(300000)}` } }) + '\n');
+    for (let n = 0; n < 80; n++) appendFileSync(copilotHistory, JSON.stringify({ type: 'user.message', timestamp: '2026-01-01T00:00:00Z', data: { messageId: `after-large-${n}`, content: 'x'.repeat(2000) } }) + '\n');
     for (let n = 0; n < 2; n++) assert.equal((await lookup('oversized', { sessionId: copilotId }, 'copilot-cli')).ok, false);
     assert.equal((await lookup('past', { sessionId: copilotId }, 'copilot-cli')).value.turns[0].messageId, 'user:past-copilot');
     assert.equal((await lookup('past', { sessionId: 'external' }, 'copilot-cli')).ok, false);
@@ -139,7 +140,7 @@ try {
     for (const name of ['native-wrapper', 'native-meta', 'native-queued']) assert.equal((await lookup(name, { sessionId: 'local_card' }, 'claude-desktop')).ok, true);
     for (const name of ['past', 'future', 'late']) assert.equal((await lookup(name, { sessionId: copilotId }, 'copilot-cli')).value.turns[0].messageId, `user:${name}-copilot`);
     assert(!readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').includes('session.resume'), 'history lookup must not resume the peer');
-    writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ clockSkew: ['past', 'future'], interveningInputs: 160, nativeFeedIngested: true, exactOwningPeer: true, restart: true, desktopAlias: true, nativePeerEnvelopes: true, queuedPeerAttachment: true, copilotBeyondByteWindow: true, copilotMissInvalidatedByAppend: true, copilotOversizedUncertain: true, oversizedSendRejected: true }, null, 2));
+    writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ clockSkew: ['past', 'future'], interveningInputs: 160, nativeFeedIngested: true, exactOwningPeer: true, restart: true, desktopAlias: true, nativePeerEnvelopes: true, queuedPeerAttachment: true, copilotBeyondByteWindow: true, copilotMissInvalidatedByAppend: true, copilotOversizedUncertain: true, copilotOversizedLaterInputs: 80, oversizedSendRejected: true }, null, 2));
     console.log('PASS: exact native input lookup ignores clock and history windows, preserves scope across peer routing and restart');
   }
 } finally {

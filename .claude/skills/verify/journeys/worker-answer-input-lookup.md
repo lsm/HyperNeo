@@ -37,6 +37,12 @@ must remain discoverable across such a record. The helper injects one oversized
 native event to exercise that limit. Worker-card sends use work.send's existing
 20,000-character body limit; this journey does not claim general oversized-event
 reconstruction or acceptance from missing evidence.
+Completeness applies to the entire cursor walk. A window that skips the end of
+an oversized record is followed by an earlier window containing its unparsed
+beginning; that window marks the scan incomplete. Unit layouts place the record
+at EOF and before 80 later records, require repeated misses to read history,
+and retain the zero-byte repeat check for complete ordinary histories. The RPC
+journey uses the 80-record tail and finds older readable inputs after restart.
 
 Keep receipts.json, observed.json, proof.log and cleanup.json. Both daemons stop
 and their synthetic native files, HOME and DB data are removed after evidence is

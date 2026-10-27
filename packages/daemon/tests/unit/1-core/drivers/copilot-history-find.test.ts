@@ -112,37 +112,53 @@ afterEach(async () => {
 });
 
 describe('Copilot owned history and discovery', () => {
-  test('an oversized unreadable event stays uncertain and its incomplete scan is not memoized', async () => {
-    const f = setup();
-    const work = await f.start('[worker-answer:small]\nDecision');
-    await f.restart();
-    appendFileSync(
-      f.history(work),
-      JSON.stringify({
-        type: 'user.message',
-        timestamp: '1990-01-01T00:00:00Z',
-        data: {
-          messageId: 'oversized',
-          content: `[worker-answer:oversized]\n${'x'.repeat(300000)}`,
-        },
-      }) + '\n'
-    );
-    const reads = spyOn(fs, 'readSync');
-    syncBuiltinESMExports();
-    try {
-      expect(await f.adapter.readInput!(work.ref.id, '[worker-answer:oversized]')).toBeNull();
-      reads.mockClear();
-      expect(await f.adapter.readInput!(work.ref.id, '[worker-answer:oversized]')).toBeNull();
-      expect(reads.mock.calls.length).toBeGreaterThan(0);
-      expect(await f.adapter.readInput!(work.ref.id, '[worker-answer:small]')).toMatchObject({
-        role: 'user',
-      });
-      expect(readFileSync(join(f.run, 'calls.jsonl'), 'utf8')).not.toContain('session.resume');
-    } finally {
-      reads.mockRestore();
+  for (const later of [0, 80])
+    test(`an oversized unreadable event with ${later} later records stays uncertain and uncached`, async () => {
+      const f = setup();
+      const work = await f.start('[worker-answer:small]\nDecision');
+      await f.restart();
+      const file = f.history(work);
+      const oversizedStart = fs.statSync(file).size;
+      appendFileSync(
+        file,
+        JSON.stringify({
+          type: 'user.message',
+          timestamp: '1990-01-01T00:00:00Z',
+          data: {
+            messageId: 'oversized',
+            content: `[worker-answer:oversized]\n${'x'.repeat(300000)}`,
+          },
+        }) + '\n'
+      );
+      const oversizedEnd = fs.statSync(file).size;
+      for (let n = 0; n < later; n++)
+        appendFileSync(
+          file,
+          JSON.stringify({
+            type: 'user.message',
+            timestamp: '1990-01-01T00:00:00Z',
+            data: { messageId: `after-${n}`, content: 'x'.repeat(2000) },
+          }) + '\n'
+        );
+      const pageStart = fs.statSync(file).size - 262144;
+      expect(pageStart).toBeGreaterThan(oversizedStart);
+      expect(pageStart).toBeLessThan(oversizedEnd);
+      const reads = spyOn(fs, 'readSync');
       syncBuiltinESMExports();
-    }
-  });
+      try {
+        expect(await f.adapter.readInput!(work.ref.id, '[worker-answer:oversized]')).toBeNull();
+        reads.mockClear();
+        expect(await f.adapter.readInput!(work.ref.id, '[worker-answer:oversized]')).toBeNull();
+        expect(reads.mock.calls.length).toBeGreaterThan(0);
+        expect(await f.adapter.readInput!(work.ref.id, '[worker-answer:small]')).toMatchObject({
+          role: 'user',
+        });
+        expect(readFileSync(join(f.run, 'calls.jsonl'), 'utf8')).not.toContain('session.resume');
+      } finally {
+        reads.mockRestore();
+        syncBuiltinESMExports();
+      }
+    });
 
   test('unchanged missing inputs read no history again, but append, rewrite and replacement are visible', async () => {
     const f = setup();
