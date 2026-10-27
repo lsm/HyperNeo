@@ -46,7 +46,7 @@ describe('neo.ask.search operation', () => {
     });
   });
 
-  test.each(['a', 'ab', 'a bc', '中文', '!?'])(
+  test.each(['a bc', '!!!'])(
     'rejects an unsearchable query %s before reading cards',
     async (query) => {
       let reads = 0;
@@ -66,6 +66,19 @@ describe('neo.ask.search operation', () => {
         message: expect.stringContaining('query_too_short'),
       });
       expect(reads).toBe(0);
+    }
+  );
+
+  test.each(['a', 'ab', '中文', '%', '_', '\\'])(
+    'accepts the single short literal %s',
+    async (query) => {
+      const op = createNeoCardSearchOperation(
+        async () => ({ results: [], nextCursor: null }),
+        admitAll
+      );
+      expect(
+        await invokeOperation(createOperationRegistry([op]), 'neo.ask.search', { query }, neoCaller)
+      ).toMatchObject({ kind: 'completed', value: { ok: true } });
     }
   );
 

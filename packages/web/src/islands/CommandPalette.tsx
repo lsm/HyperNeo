@@ -281,7 +281,7 @@ function stripSnippetMarks(snippet: string): string {
 
 function shouldSearchMessages(query: string, mode: CommandPaletteMode): boolean {
   const trimmed = query.trim();
-  return mode === 'quick-open' && trimmed.length >= 3 && !trimmed.startsWith('>');
+  return mode === 'quick-open' && trimmed.length > 0 && !trimmed.startsWith('>');
 }
 
 export function CommandPalette() {
@@ -511,6 +511,15 @@ export function CommandPalette() {
               </span>
             </div>
           </div>
+
+          {mode === 'quick-open' &&
+            query.trim() &&
+            [...query.trim()].length < 3 &&
+            !query.trim().startsWith('>') && (
+              <p class="px-4 py-1 text-xs text-fg-muted" role="status">
+                Queries shorter than three characters match message titles only.
+              </p>
+            )}
 
           <div class="max-h-[58vh] overflow-y-auto p-2">
             {items.length === 0 ? (

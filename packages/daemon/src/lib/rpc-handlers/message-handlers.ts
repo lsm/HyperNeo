@@ -12,7 +12,8 @@ import {
 } from '@hyperneo/shared/sdk';
 import type { Database } from '../../storage/database.ts';
 import {
-  MESSAGE_SEARCH_MIN_TERM_LENGTH,
+  buildFtsQuery,
+  buildShortSearchPattern,
   type MessageSearchResponse,
 } from '../../storage/message-search.ts';
 import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
@@ -50,7 +51,7 @@ export function setupMessageHandlers(
     const offset = sanitizeInteger(request.offset, 0, 0, Number.MAX_SAFE_INTEGER);
     const from = sanitizeTimestamp(request.from, 'from');
     const to = sanitizeTimestamp(request.to, 'to');
-    if (query.length < MESSAGE_SEARCH_MIN_TERM_LENGTH) {
+    if (!buildFtsQuery(query) && !buildShortSearchPattern(query)) {
       return { results: [], limit, offset };
     }
     await db.waitForSdkMessageColumns(request.sessionId, false);
