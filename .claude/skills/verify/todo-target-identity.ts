@@ -74,6 +74,24 @@ try {
   assert.match(rejectedBatch.reason, /^target_not_found:/);
   assert.deepEqual(todos.listAsks(null, 100), beforeBatch, 'Rejected batch opened an ask or recorded its first todo');
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get().n, 0);
+  const taskId = 'synthetic-full-space-task';
+  db.prepare("INSERT INTO spaces(id,slug,name,workspace_path,created_at,updated_at) VALUES ('synthetic-space','synthetic','Synthetic',?,1,1)").run(join(run, 'space'));
+  db.prepare("INSERT INTO space_tasks(id,space_id,task_number,title,status,created_at,updated_at) VALUES (?,'synthetic-space',1,'Synthetic work','review',1,1)").run(taskId);
+  for (const input of [{ id: taskId, idPrefix: 'ignored', localOnly: true }, { adapters: ['space'], idPrefix: 'synthetic-full', localOnly: true }]) {
+    const reply = await handler({ name: 'work.find', input });
+    evidence.push({ operation: 'work.find', input, reply });
+    assert.notEqual(reply.isError, true);
+    const result = JSON.parse(reply.content[0].text);
+    assert.deepEqual(result.places.flatMap((place: { work: { ref: unknown }[] }) => place.work.map(work => work.ref)), [{ adapter: 'space', id: taskId }]);
+    assert.deepEqual(result.unreachable, []);
+  }
+  const spaceTodo = await handler({ name: 'neo.todo.add', input: { askId: 'synthetic-ask', title: 'Space target', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Synthetic instruction', target: { verb: 'send', ref: { adapter: 'space', id: 'synthetic-full' } } } });
+  evidence.push({ operation: 'neo.todo.add', adapter: 'space', spaceTodo });
+  assert.notEqual(spaceTodo.isError, true);
+  const addedSpace = JSON.parse(spaceTodo.content[0].text);
+  assert.equal(addedSpace.ok, true, JSON.stringify(addedSpace));
+  assert.deepEqual(sessions.get(addedSpace.todo.id)?.ref, { adapter: 'space', id: taskId });
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get().n, 0);
   evidence.push({ rows: db.prepare('SELECT target, ref FROM neo_todo_sessions').all() });
   console.log('PASS: real daemon MCP add and direct bind store full target IDs; unknown prefixes are refused without recording, rebinding or dispatching.');
 } finally {
