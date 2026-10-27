@@ -31,11 +31,11 @@ function seed(db: Database) {
 test('a corrupt publication cannot leave a partially initialized public conversation', async () => {
   const db = new Database(':memory:');
   try {
-    const { repo, ledger } = seed(db);
+    const { ledger } = seed(db);
     db.prepare('UPDATE neo_publications SET payload_json=?').run('{}');
-    await expect(
-      createNeoPublicationReadOperation(repo, ledger).execute(page, human)
-    ).rejects.toThrow('Invalid stored Neo publication');
+    await expect(createNeoPublicationReadOperation(ledger).execute(page, human)).rejects.toThrow(
+      'Invalid stored Neo publication'
+    );
     expect(db.prepare('SELECT id FROM neo_conversation').get()).toBeNull();
   } finally {
     db.close();
@@ -52,10 +52,7 @@ test('public pages initialize and read from the gateway while main rejects SQL',
     throw new Error(`Publication SQL on main: ${sql}`);
   }) as typeof main.prepare);
   try {
-    const operation = createNeoPublicationReadOperation(
-      new NeoRepository(main),
-      new NeoPublicationRepository(main)
-    );
+    const operation = createNeoPublicationReadOperation(new NeoPublicationRepository(main));
     const replies = await Promise.all([
       operation.execute(page, human),
       operation.execute(page, human),

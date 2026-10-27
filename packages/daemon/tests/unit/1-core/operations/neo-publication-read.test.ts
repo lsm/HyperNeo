@@ -44,7 +44,7 @@ describe('authored publication reads', () => {
   let ledger: NeoPublicationRepository;
   function invoke(input: unknown = { conversationId }, caller = human) {
     return invokeOperation(
-      createOperationRegistry([createNeoPublicationReadOperation(repo, ledger)]),
+      createOperationRegistry([createNeoPublicationReadOperation(ledger)]),
       'neo.publication.read',
       input,
       caller
@@ -58,7 +58,10 @@ describe('authored publication reads', () => {
     ledger = new NeoPublicationRepository(mailbox.db);
     repo.reserveBinding(root);
   });
-  afterEach(() => mailbox.close());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    mailbox.close();
+  });
 
   test('pure reader and conversation gates require actual local human and root identities', () => {
     const binding = { sessionId: root.sessionId, kind: 'neo' as const, projectId: null };
@@ -95,7 +98,7 @@ describe('authored publication reads', () => {
     { source: 'rpc' },
   ] as OperationCaller[])('refuses non-human caller %o before any ledger read', async (caller) => {
     const bindings = vi.spyOn(repo, 'defaultBinding');
-    const reads = vi.spyOn(ledger, 'list');
+    const reads = vi.spyOn(NeoPublicationRepository.prototype, 'list');
     expect(await invoke({ conversationId }, caller)).toEqual({
       kind: 'completed',
       value: { ok: false, reason: 'human_only' },
@@ -169,7 +172,7 @@ describe('authored publication reads', () => {
     'does not read mismatched or missing root %o',
     async (input) => {
       if ('missing' in input) mailbox.db.exec('DELETE FROM neo_session_bindings');
-      const reads = vi.spyOn(ledger, 'list');
+      const reads = vi.spyOn(NeoPublicationRepository.prototype, 'list');
       expect(await invoke({ conversationId: input.conversationId })).toEqual({
         kind: 'completed',
         value: { ok: false, reason: 'conversation_not_found' },
@@ -188,7 +191,7 @@ describe('authored publication reads', () => {
     { conversationId, limit: 1.5 },
     { conversationId, sessionId: root.sessionId },
   ])('rejects malformed identity, cursor, bounds or injected fields %o', async (input) => {
-    const reads = vi.spyOn(ledger, 'list');
+    const reads = vi.spyOn(NeoPublicationRepository.prototype, 'list');
     expect(await invoke(input)).toMatchObject({ kind: 'failed', code: 'invalid_input' });
     expect(reads).not.toHaveBeenCalled();
   });
@@ -205,7 +208,7 @@ describe('authored publication reads', () => {
       } as SDKUserMessage)
     ).toBe(true);
     const before = mailbox.sdkRows();
-    const reads = vi.spyOn(ledger, 'list');
+    const reads = vi.spyOn(NeoPublicationRepository.prototype, 'list');
     expect(await invoke()).toEqual({
       kind: 'completed',
       value: { ok: true, conversationId, items: [], nextAfter: 0 },
@@ -217,11 +220,10 @@ describe('authored publication reads', () => {
     expect(mailbox.rows()).toEqual([]);
   });
 
-  test('the operation finishes its synchronous reads before returning its transport promise', async () => {
-    const reads = vi.spyOn(ledger, 'list');
-    const pending = createNeoPublicationReadOperation(repo, ledger).execute(page, human);
-    expect(reads).toHaveBeenCalledTimes(1);
-    expect(await pending).toEqual({ ok: true, conversationId, items: [], nextAfter: 0 });
+  test('a queued page rechecks root binding before initializing its conversation', async () => {
+    const pending = createNeoPublicationReadOperation(ledger).execute(page, human);
+    mailbox.db.exec('DELETE FROM neo_session_bindings');
+    expect(await pending).toEqual({ ok: false, reason: 'conversation_not_found' });
   });
 
   test('invalid stored publications surface an infrastructure failure, not an empty success', async () => {
@@ -242,10 +244,7 @@ describe('authored publication reads', () => {
       if (!stored.accepted) throw new Error('fixture append failed');
       db.close();
       db = new Database(path);
-      const op = createNeoPublicationReadOperation(
-        new NeoRepository(db),
-        new NeoPublicationRepository(db)
-      );
+      const op = createNeoPublicationReadOperation(new NeoPublicationRepository(db));
       expect(await op.execute(page, human)).toEqual({
         ok: true,
         conversationId,

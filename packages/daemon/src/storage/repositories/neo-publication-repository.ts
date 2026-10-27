@@ -1,3 +1,5 @@
+import { neoPublicationPageWrites } from './neo-publication-page-db.ts';
+import type { readNeoPublicationPage } from '../../lib/neo/publication-read-operation.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { NeoInputOrigin } from '@hyperneo/shared/types/neo-message';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
@@ -227,6 +229,18 @@ const readPage = (superpipe({})('neo-publication-page') as PipelineAPI)
 
 export class NeoPublicationRepository {
   constructor(private readonly db: Database) {}
+
+  readPageCurrent(page: Parameters<typeof readNeoPublicationPage>[0], caller: OperationCaller) {
+    return gatewayFor(this.db).run(neoPublicationPageWrites, {
+      page,
+      caller: {
+        source: caller.source,
+        principal: caller.principal,
+        role: caller.role,
+        sessionId: caller.sessionId,
+      },
+    });
+  }
 
   reviseCurrent(input: unknown, caller: OperationCaller) {
     return gatewayFor(this.db).call(neoPublicationEditWrites, 'revise', input, {
