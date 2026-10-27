@@ -1,5 +1,9 @@
 import { NeoTurnReportReceipts } from '../../lib/neo/turn-report-receipts.ts';
-import { continuesTodoIncident, planTodoNudge, type TodoIncident } from '../../lib/neo/nudge.ts';
+import {
+  continuesIncident,
+  type FollowThroughIncident,
+  planFollowThrough,
+} from '../../lib/work-queue/follow-through.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
@@ -140,9 +144,16 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     const ask = todo && store.getAsk(todo.askId),
       ref = this.readRef(todoId),
       verb = this.get(todoId)?.verb;
-    const remind = !!todo?.instruction && verb !== 'adopt';
     return todo?.state === 'doing' && ref && ask?.status === 'open'
-      ? { todo, ask, ref, follow: { remind, redispatch: remind && verb === 'start' } }
+      ? {
+          todo,
+          ask,
+          ref,
+          follow: {
+            remind: !ask.originMessageId?.startsWith('neo-track:'),
+            redispatch: !!todo.instruction && verb === 'start',
+          },
+        }
       : null;
   }
 
@@ -167,11 +178,11 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     );
     const prior = this.readNudge(todoId);
     const incident =
-      prior && continuesTodoIncident(prior, since)
+      prior && continuesIncident(prior, since)
         ? prior
         : { since, nudges: 0, ...(prior?.redispatched ? { redispatched: true } : {}) };
     const plan = ['done', 'stopped'].includes(live.status)
-      ? planTodoNudge(incident, now, context.follow)
+      ? planFollowThrough(incident, now, context.follow)
       : null;
     this.recordNudge(
       todoId,
@@ -188,7 +199,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       this.recordNudge(todoId, { ...current, nudges });
   }
 
-  readNudge(todoId: string): TodoIncident | null {
+  readNudge(todoId: string): FollowThroughIncident | null {
     const row = this.db
       .prepare(
         "SELECT value_json FROM pack_facts WHERE todo_id = ? AND pack = 'core' AND key = 'nudge'"
@@ -197,7 +208,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     return row ? JSON.parse(row.value_json) : null;
   }
 
-  recordNudge(todoId: string, incident: TodoIncident): void {
+  recordNudge(todoId: string, incident: FollowThroughIncident): void {
     this.db
       .prepare(
         "INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, 'core', 'nudge', ?) ON CONFLICT(todo_id, pack, key) DO UPDATE SET value_json = excluded.value_json"

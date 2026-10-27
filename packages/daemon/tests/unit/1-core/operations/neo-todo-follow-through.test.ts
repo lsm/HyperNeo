@@ -26,15 +26,19 @@ function world() {
   new JobQueueRepository(db).commitSubmissionReceipt('neo-turn-report:v2:cutoff', 'v2', () => 0);
   const store = new NeoAskTodoRepository(db);
   const sessions = new NeoTodoSessionRepository(db);
-  store.openAsk({
-    id: 'ask',
-    projectId: null,
-    sessionId: 'neo',
-    originMessageId: 'm1',
-    title: 'Ship it',
-    request: 'Ship it',
-    createdAt: 1,
-  });
+  for (const [id, originMessageId] of [
+    ['ask', 'm1'],
+    ['tracked', 'neo-track:session:tracked'],
+  ])
+    store.openAsk({
+      id,
+      projectId: null,
+      sessionId: 'neo',
+      originMessageId,
+      title: 'Ship it',
+      request: 'Ship it',
+      createdAt: 1,
+    });
   const base = Date.now();
   const clock = vi.spyOn(Date, 'now').mockReturnValue(base);
   const workers = new Map<string, { lastActivityAt: number; replies: boolean }>();
@@ -92,12 +96,12 @@ function world() {
     });
     return todo;
   };
-  const adopt = (instruction: string | null) => {
-    const ref = { adapter: 'hyperneo', id: 'human-session' };
+  const adopt = (instruction: string | null, askId = 'ask') => {
+    const ref = { adapter: 'hyperneo', id: 'adopted-session' };
     workers.set(ref.id, { lastActivityAt: base, replies: false });
     const todo = store.addTodo(
       crypto.randomUUID(),
-      'ask',
+      askId,
       { title: 'Watch it', doneWhen: 'PR merged', check: null, instruction, named: null },
       base
     );
@@ -112,7 +116,7 @@ function world() {
   };
   const named = (name: string) => calls.filter((call) => call.name === name);
   const todo = (id: string) => store.getTodo(id) as NeoTodo;
-  return { db, runner, workers, told, add, adopt, at, named, todo, clock };
+  return { db, store, runner, workers, told, add, adopt, at, named, todo, clock };
 }
 
 let current: ReturnType<typeof world> | null = null;
@@ -156,15 +160,31 @@ describe('a doing todo never sits idle without someone on it', () => {
   });
 
   for (const instruction of [null, 'Keep an eye on it.'])
-    test(`an adopted todo ${instruction ? 'with' : 'without'} an instruction stalls after an hour idle, and nothing is typed into its session`, async () => {
+    test(`an adopted worker ${instruction ? 'with' : 'without'} an instruction is reminded, then stalls with no fresh worker to take it`, async () => {
       const w = (current = world());
       const todo = w.adopt(instruction);
       for (const minutes of [20, 40, 60]) await w.at(minutes);
-      expect(w.named('work.send')).toEqual([]);
+      expect(w.named('work.send')).toHaveLength(2);
       expect(w.named('work.start')).toEqual([]);
       expect(w.todo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
       expect(w.told.filter((note) => note.includes('stalled'))).toHaveLength(1);
     });
+
+  test("the human's own tracked session gets nothing typed into it, and stalls after an hour idle", async () => {
+    const w = (current = world());
+    const todo = w.adopt(null, 'tracked');
+    for (const minutes of [20, 40, 60]) await w.at(minutes);
+    expect(w.named('work.send')).toEqual([]);
+    expect(w.todo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
+  });
+
+  test('a stalled todo stays stalled when its state is recomputed with no change', async () => {
+    const w = (current = world());
+    const todo = w.adopt(null, 'tracked');
+    for (const minutes of [20, 40, 60]) await w.at(minutes);
+    w.store.updateTodo(w.todo(todo.id), {}, Date.now());
+    expect(w.todo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
+  });
 
   test('a started todo without an instruction stalls instead of staying doing', async () => {
     const w = (current = world());

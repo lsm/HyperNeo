@@ -134,7 +134,7 @@ test('todo worker reads preserve lists, recovery and PR windows; live writes com
     expect(await sessions.write('claimNeedsYou', 't0', 15)).toEqual(todos.getTodo('t0'));
     db.prepare("UPDATE neo_todos SET instruction='Continue synthetic work' WHERE id='t0'").run();
     expect((await sessions.read('nudgeContext', 't0'))?.follow).toEqual({
-      remind: false,
+      remind: true,
       redispatch: false,
     });
     db.prepare('UPDATE neo_todo_sessions SET target=? WHERE todo_id=?').run(

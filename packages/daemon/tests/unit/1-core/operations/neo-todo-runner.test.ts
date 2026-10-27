@@ -1887,11 +1887,12 @@ describe('stopped worker ladder', () => {
     }
   });
 
-  test('a human-owned session gets no worker reminder and stalls after an hour', async () => {
+  test('a todo without an instruction idle for hours stalls with no fresh worker', async () => {
     const h = await stopped(null, null);
     try {
       for (const minutes of [20, 40, 60, 120]) await h.at(minutes);
       expect(h.sends()).toEqual([]);
+      expect(h.calls.filter((call) => call.name === 'work.start')).toEqual([]);
       expect(h.store.getTodo(h.todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
     } finally {
       h.clock.mockRestore();
