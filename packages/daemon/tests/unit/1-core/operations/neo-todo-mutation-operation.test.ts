@@ -93,6 +93,7 @@ describe('Writer-backed todo operation activation', () => {
         packs: () => packs,
         artifact: () => null,
         stop,
+        resolveTarget: async (ref) => ({ value: ref }),
         advance: () => start('peer'),
         changed: () => {
           order.push('announce');

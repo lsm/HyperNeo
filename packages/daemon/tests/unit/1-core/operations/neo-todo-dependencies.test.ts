@@ -54,6 +54,7 @@ function setup() {
         packs: () => packs,
         artifact: () => null,
         stop: async () => null,
+        resolveTarget: existingTodoTarget,
         advance: () => runner.advance(),
         changed: () => {},
         project: async (todos) => [...todos],
