@@ -1,0 +1,34 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/coding-pr-event-routing-db.test.ts:
+50 |     const prepare = main.prepare.bind(main);
+51 |     const fault = readOnly
+52 |       ? null
+53 |       : spyOn(main, 'prepare').mockImplementation(((sql: string) => {
+54 |           if (/pack_coding_pr_ledger|neo_pack_preferences|pack_coding_repo_aliases/.test(sql))
+55 |             throw new Error('PR delivery SQL on main');
+                           ^
+error: PR delivery SQL on main
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/coding-pr-event-routing-db.test.ts:55:23)
+      at pendingEvents (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/src/lib/neo/packs/coding/pr-events.ts:62:10)
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/src/lib/neo/packs/coding/pr-events.ts:177:28)
+(fail) PR events route from the bound database with guarded main [4.49ms]
+70 |         throw new Error('No unowned wake expected');
+71 |       },
+72 |     };
+73 |     try {
+74 |       await deliverCodingPrEvents(events, [], deps);
+75 |       expect(attempts).toHaveLength(1);
+                            ^
+error: expect(received).toHaveLength(expected)
+
+Expected length: 1
+Received length: 0
+
+      at <anonymous> (/Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/tests/unit/1-core/operations/coding-pr-event-routing-db.test.ts:75:24)
+(fail) PR events route from the bound database with read-only main [2.13ms]
+
+ 0 pass
+ 2 fail
+ 1 expect() calls
+Ran 2 tests across 1 file. [112.00ms]
