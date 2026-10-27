@@ -173,6 +173,19 @@ try {
   assert.equal(linkedSettings.env.DOTFILE_OWNER, 'retained');
   assert.equal(linkedSettings.env.HYPERNEO_WORKTREES, workerEnv.HYPERNEO_WORKTREES);
   evidence.push({ linkedStart, symlinkPreserved: true, customSettingPreserved: true, locationsPersisted: true });
+  for (const original of ['[]', '"text"', '42', 'null', '{"env":[]}', '{"env":"text"}', '{"env":42}', '{"env":null}']) {
+    const invalidDirectory = join(run, `invalid-settings-${evidence.length}`);
+    mkdirSync(join(invalidDirectory, '.claude'), { recursive: true });
+    const invalidPath = join(invalidDirectory, '.claude/settings.local.json');
+    writeFileSync(invalidPath, original);
+    const before = readFileSync(join(run, 'evidence/worker-cwd'), 'utf8');
+    const rejected = await rpc('work.start', { adapter: 'claude-desktop', place: { machine: hostname(), folder: invalidDirectory, name: 'Synthetic invalid settings' }, title: 'Synthetic invalid worker', message: 'Never dispatched' }) as { ok: boolean; reason?: string };
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.reason, 'preparation_failed');
+    assert.equal(readFileSync(invalidPath, 'utf8'), original);
+    assert.equal(readFileSync(join(run, 'evidence/worker-cwd'), 'utf8'), before);
+    evidence.push({ settingsShape: original, rejected, noChildLaunched: true, sourceUnchanged: true });
+  }
   const launchBeforeSettingsRefusal = readFileSync(join(run, 'evidence/worker-cwd'), 'utf8');
   const clonesBefore = readdirSync(dirname(worker)).sort();
   mkdirSync(join(remote, '.claude'));

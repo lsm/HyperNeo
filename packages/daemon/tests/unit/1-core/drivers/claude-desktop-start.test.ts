@@ -462,7 +462,18 @@ describe('claude-desktop start', () => {
     }
   );
 
-  test.each(['file-claude', 'invalid-json'])(
+  test.each([
+    'file-claude',
+    'invalid-json',
+    '[]',
+    '"text"',
+    '42',
+    'null',
+    '{"env":[]}',
+    '{"env":"text"}',
+    '{"env":42}',
+    '{"env":null}',
+  ])(
     'location settings failure %s is typed before launch and releases preparation',
     async (layout) => {
       configureWorkerSandbox(() => 'off');
@@ -470,7 +481,10 @@ describe('claude-desktop start', () => {
       if (layout === 'file-claude') writeFileSync(join(directory, '.claude'), 'retained');
       else {
         mkdirSync(join(directory, '.claude'));
-        writeFileSync(join(directory, '.claude/settings.local.json'), 'not JSON');
+        writeFileSync(
+          join(directory, '.claude/settings.local.json'),
+          layout === 'invalid-json' ? 'not JSON' : layout
+        );
       }
       let releases = 0;
       const driver = adapter({
@@ -498,7 +512,9 @@ describe('claude-desktop start', () => {
           join(directory, layout === 'file-claude' ? '.claude' : '.claude/settings.local.json'),
           'utf8'
         )
-      ).toBe(layout === 'file-claude' ? 'retained' : 'not JSON');
+      ).toBe(
+        layout === 'file-claude' ? 'retained' : layout === 'invalid-json' ? 'not JSON' : layout
+      );
     }
   );
 
