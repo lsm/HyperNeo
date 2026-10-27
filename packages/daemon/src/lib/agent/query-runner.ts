@@ -1053,6 +1053,7 @@ export class QueryRunner {
             queryGeneration,
             recoveryState.startGuard,
             questionInputs,
+            live,
             humanInputs
           ),
           options: queryOptions,
@@ -2230,6 +2231,7 @@ export class QueryRunner {
     queryGeneration: number,
     startGuard?: () => void,
     questionInputs?: QuestionInputScope,
+    liveAttempt?: () => boolean,
     humanInputs?: QuestionInputScope
   ) {
     const { session, messageQueue, stateManager, logger } = this.ctx;
@@ -2246,8 +2248,7 @@ export class QueryRunner {
         }
         break;
       }
-      const owner = this.toolInventoryOwner;
-      const live = () => !this.ctx.isCleaningUp() && (owner?.isLive() ?? true);
+      const live = () => !this.ctx.isCleaningUp() && (liveAttempt?.() ?? true);
       await this.failures.admit(live);
       await messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
       const queuedMessage = message as typeof message & { internal?: boolean };
