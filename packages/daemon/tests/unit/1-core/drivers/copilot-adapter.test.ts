@@ -61,6 +61,25 @@ async function start(fixture: ReturnType<typeof setup>, message = fixture.reques
 }
 
 describe('owned Copilot lifecycle', () => {
+  test('gives the owned runtime work locations and the brief without a sandbox marker', async () => {
+    const fixture = setup();
+    await start(fixture);
+    const calls = readFileSync(join(fixture.run, 'calls.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(calls[0].worktrees).toMatch(/worktrees$/);
+    expect(
+      calls.find((call) => call.method === 'session.create').params.systemMessage.sections
+    ).toEqual({ environment_context: { action: 'remove' } });
+    expect(calls.find((call) => call.method === 'session.create').params.systemMessage.mode).toBe(
+      'customize'
+    );
+    expect(
+      calls.find((call) => call.method === 'session.create').params.systemMessage.content
+    ).toContain('HYPERNEO_WORKTREES');
+  });
+
   test('explains strict steering refusal without sending or starting a runtime', () => {
     const { adapter, run } = setup();
     expect(adapter.capabilities).not.toContain('steer');

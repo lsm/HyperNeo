@@ -4,18 +4,17 @@ import {
   type GlobalSettingsRollback,
 } from '../storage/repositories/global-settings-writes.ts';
 import { readFileSync, existsSync } from 'node:fs';
-import { readFile, mkdir, realpath, readlink, stat, open, rename, unlink } from 'node:fs/promises';
+import { readFile, mkdir, stat, open, rename, unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { join, dirname, basename, resolve } from 'node:path';
+import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import type { GlobalSettings } from '@hyperneo/shared';
 import type { McpServerConfig } from '@hyperneo/shared/types/sdk-config';
 
 import type { Database } from '../storage/database.ts';
 import { Logger } from './logger.ts';
+import { queueSettingsWrite, resolveSettingsTarget } from './settings-target.ts';
 import { runLagPhase } from './event-loop-activity.ts';
-
-const settingsWrites = new Map<string, Promise<void>>();
 
 export class SettingsManager {
   private logger = new Logger('SettingsManager');
@@ -50,36 +49,11 @@ export class SettingsManager {
       if (!this.workspacePath) return;
       const directory = join(this.workspacePath, '.claude');
       await mkdir(directory, { recursive: true });
-      const path = await this.resolveSettingsTarget(join(directory, 'settings.local.json'));
-      const write = (settingsWrites.get(path) ?? Promise.resolve())
-        .catch(() => {})
-        .then(() => this.writeFileOnlySettings(path, this.getGlobalSettings()));
-      settingsWrites.set(path, write);
-      try {
-        await write;
-      } finally {
-        if (settingsWrites.get(path) === write) settingsWrites.delete(path);
-      }
+      const path = await resolveSettingsTarget(join(directory, 'settings.local.json'));
+      await queueSettingsWrite(path, () =>
+        this.writeFileOnlySettings(path, this.getGlobalSettings())
+      );
     });
-  }
-
-  private async resolveSettingsTarget(candidate: string): Promise<string> {
-    const directory = await realpath(dirname(candidate));
-    const path = join(directory, basename(candidate));
-    try {
-      return await realpath(path);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    }
-    let target: string;
-    try {
-      target = await readlink(path);
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === 'ENOENT' || code === 'EINVAL') return path;
-      throw error;
-    }
-    return this.resolveSettingsTarget(resolve(directory, target));
   }
 
   private async readUserAttribution(): Promise<{ commit?: string; pr?: string } | undefined> {

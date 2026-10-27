@@ -836,7 +836,7 @@ describe('worker-template spawn payload (ATC-1 pin, feeds slice 7 lock semantics
     });
   });
 
-  test('a worker.swe kickoff message carries the task, runtime location, and role sections', async () => {
+  test('a worker.swe kickoff message carries task and role without repeating host locations', async () => {
     const h = makeSpawnPayloadHarness(makeWorkflow(makeTemplateWorkflowNode()), 'coder');
 
     await h.spawn();
@@ -849,7 +849,7 @@ describe('worker-template spawn payload (ATC-1 pin, feeds slice 7 lock semantics
     expect(message).toContain(
       '**Description:** Characterize the template resolution and spawn payload'
     );
-    expect(message).toContain('## Runtime Location\n\n- Worktree: /tmp/ws');
+    expect(message).not.toContain('## Runtime Location');
     expect(message).toContain(
       '## Your Role in This Workflow\n\n- Workflow: Coding\n- Node: coder\n- Peers: reviewer'
     );

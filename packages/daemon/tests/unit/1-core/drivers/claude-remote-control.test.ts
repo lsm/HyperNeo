@@ -102,7 +102,7 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
       spawn: (args, options) => {
         spawned.push({ args, cwd: options?.cwd });
         if (args.includes('--desktop')) {
-          const id = args.at(-1) as string;
+          const id = args[args.indexOf('--resume') + 1];
           if (id === 'new-rc')
             write({
               ...record(id),
@@ -112,7 +112,7 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
               permissionMode: 'acceptEdits',
             });
           live.push({
-            sessionId: args.at(-1) as string,
+            sessionId: args[args.indexOf('--resume') + 1],
             status: 'idle',
             name: 'rc-toggle',
             pid: 1,
@@ -205,7 +205,7 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
     write(record('rc', { title: 'rc-toggle', cwd: '/Users/test' }));
     const outcome = await runClaudeRemoteControlRequest(target, deps(), new Map());
     expect(outcome).toMatchObject({ ok: false, reason: 'not_delivered' });
-    expect(spawned[0].args.slice(-3)).toEqual(['--desktop', '--resume', 'cli-rc']);
+    expect(spawned[0].args[spawned[0].args.indexOf('--resume') + 1]).toBe('cli-rc');
     expect(relayed()).toContain('Please turn on Remote Control');
   });
 
@@ -266,10 +266,8 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
       value: { record: { sessionId: 'local_old', permissionMode: 'bypassPermissions' } },
     });
     expect(spawned.some((call) => call.args.includes('--session-id'))).toBe(false);
-    expect(spawned.find((call) => call.args.includes('--desktop'))?.args.slice(-2)).toEqual([
-      '--resume',
-      'cli-old',
-    ]);
+    const desktopArgs = spawned.find((call) => call.args.includes('--desktop'))!.args;
+    expect(desktopArgs[desktopArgs.indexOf('--resume') + 1]).toBe('cli-old');
   });
 
   test.each(['desktop-wake', 'rc-toggle'])(
@@ -497,16 +495,18 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
       value: { delivered: true, receipt: { inputId: 'cold-input' } },
     });
     expect(spawned).toHaveLength(1);
-    expect(spawned[0].args).toEqual([
+    const args = spawned[0].args;
+    expect(args.slice(0, 6)).toEqual([
       'claude',
       '-p',
       '--resume',
       'cli-t1',
       '--permission-mode',
       'auto',
-      '--',
-      'Cold marker',
     ]);
+    expect(args.slice(-2)).toEqual(['--', 'Cold marker']);
+    expect(args).not.toContain('--settings');
+    expect(args).not.toContain('--append-system-prompt');
   });
 
   test('leaves a session that already has its Remote Control set alone', async () => {
