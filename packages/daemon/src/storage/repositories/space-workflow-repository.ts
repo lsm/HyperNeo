@@ -20,6 +20,8 @@ import {
   verifyDefinitionVersion,
 } from '../../lib/workflows/definition-version.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { workflowDeleteWrites, type WorkflowDeleteResult } from './workflow-delete-write.ts';
 import {
   type DefinitionVersionSource,
   SpaceWorkflowDefinitionVersionRepository,
@@ -506,6 +508,10 @@ export class SpaceWorkflowRepository {
   deleteWorkflow(id: string): boolean {
     const result = this.db.prepare(`DELETE FROM space_workflows WHERE id = ?`).run(id);
     return result.changes > 0;
+  }
+
+  deleteWorkflowAsync(id: string): Promise<WorkflowDeleteResult> {
+    return gatewayFor(this.db).call(workflowDeleteWrites, 'delete', id);
   }
 
   hasExecutableRuns(workflowId: string): boolean {

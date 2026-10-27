@@ -460,7 +460,7 @@ export function setupSpaceWorkflowHandlers(
       throw new Error(`Workflow not found: ${params.id}`);
     }
 
-    const deleted = workflowManager.deleteWorkflow(params.id);
+    const deleted = await workflowManager.deleteWorkflowAsync(params.id);
     if (!deleted) {
       throw new Error(`Workflow not found: ${params.id}`);
     }
@@ -740,7 +740,7 @@ export function setupSpaceWorkflowHandlers(
         continue;
       }
       workflowRunRepo.deleteByWorkflowId(wf.id);
-      const ok = workflowManager.deleteWorkflow(wf.id);
+      const ok = await workflowManager.deleteWorkflowAsync(wf.id);
       if (ok) {
         deletedIds.push(wf.id);
         await internalEventBus
