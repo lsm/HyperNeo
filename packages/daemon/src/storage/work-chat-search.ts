@@ -11,6 +11,14 @@ const MIN_SIMILARITY = 0.3;
 const SEMANTIC_SNIPPET_CHARS = 240;
 const EXACT_MATCH_BONUS = 100;
 
+export function readSearchRows(
+  db: BunDatabase,
+  sql: string,
+  bindings: readonly (string | number)[]
+): unknown[] {
+  return db.prepare(sql).all(...bindings) as unknown[];
+}
+
 export interface WorkChatSnippet {
   match: 'exact' | 'semantic';
   messageId: string;
@@ -111,14 +119,14 @@ export function vectorWorkChats(
     kinds.flatMap((kind) => scan.all(kind, model, vector.length) as ScannedVectorTurn[])
   );
   if (top.length === 0) return [];
-  const rows = db
-    .prepare(
-      `SELECT id, kind, COALESCE(task_id, session_id) AS chat, session_id AS sessionId, task_id AS taskId,
+  const rows = readSearchRows(
+    db,
+    `SELECT id, kind, COALESCE(task_id, session_id) AS chat, session_id AS sessionId, task_id AS taskId,
          COALESCE(message_id, source_id) AS messageId, COALESCE(message_type, kind) AS role,
          timestamp AS at, body FROM message_search_content
-        WHERE id IN (${top.map(() => '?').join(', ')})`
-    )
-    .all(...top.map((row) => row.id)) as VectorTurnRow[];
+        WHERE id IN (${top.map(() => '?').join(', ')})`,
+    top.map((row) => row.id)
+  ) as VectorTurnRow[];
   return groupVectorTurns(top, rows, limit);
 }
 
