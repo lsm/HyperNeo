@@ -87,7 +87,7 @@ function setup() {
     doneWhen: 'Result verified',
     ...(after ? { after } : {}),
   });
-  return { db, store, invoke, step };
+  return { db, store, sessions, invoke, step };
 }
 
 describe('todo dependencies', () => {
@@ -186,6 +186,45 @@ describe('todo dependencies', () => {
         todos: [step('A'), step('B', [])],
       })) as unknown as { records?: string[] };
       expect(again.records).toEqual([expect.stringContaining('neo.todo.edit')]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('the queue keeps a step waiting on a failed step in a settled card', () => {
+    const { db, store, sessions } = setup();
+    try {
+      const ask = (id: string, parentId: string | null) =>
+        store.openAsk({
+          id,
+          projectId: null,
+          goalId: null,
+          sessionId: caller.sessionId!,
+          originMessageId: `${id}-origin`,
+          title: id,
+          request: id,
+          createdAt: 1,
+          parentId,
+          repo: parentId ? 'synthetic/child' : null,
+        });
+      const draft = (title: string, dependsOn?: string[]) => ({
+        title,
+        doneWhen: 'Result verified',
+        check: null,
+        instruction: `Do ${title}.`,
+        named: null,
+        ...(dependsOn ? { dependsOn } : {}),
+      });
+      ask('parent', null);
+      ask('child', 'parent');
+      const first = store.addTodo('first', 'parent', draft('A'), 2);
+      store.updateTodo(first, { state: 'done', evidence: 'Done.', startedAt: 3, finishedAt: 4 }, 4);
+      const failed = store.addTodo('child-step', 'child', draft('X'), 2, 'synthetic/child');
+      store.updateTodo(failed, { state: 'failed', reason: 'Worker failed.' }, 5);
+      store.settleAsk(store.getAsk('child')!, 'done', 'Done.', 6);
+      const waiting = store.addTodo('waiting', 'parent', draft('B', [failed.id]), 7);
+      sessions.create(waiting.id, { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } });
+      expect(sessions.queueFacts().candidates.map((item) => item.id)).not.toContain(waiting.id);
     } finally {
       db.close();
     }
