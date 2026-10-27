@@ -820,7 +820,7 @@ export function NeoAskTodos({
                 {removed.map((todo) => (
                   <li
                     key={todo.id}
-                    id={`neo-ref-todo-${todo.id}`}
+                    id={`${inQuestion.has(todo.id) ? 'all-' : ''}neo-ref-todo-${todo.id}`}
                     data-ask-todo={todo.id}
                     data-todo-state="removed"
                     class="truncate"

@@ -19,7 +19,8 @@ question stay on the card; the named dialog contains in-progress, done, removed,
 answered, retired and outcome. First 20 done rows load on opening and the next
 five load through the remaining-page control. Inspect card, first-page and
 history screenshots in both viewports for fit and readable scrolling. Check no
-duplicate anchor IDs. Escape and Close return focus to All; reopening preserves
+duplicate anchor IDs, including a removed todo still referenced by an open start
+question. Its dialog copy uses a distinct anchor while both surfaces retain it. Escape and Close return focus to All; reopening preserves
 loaded pages. The settled-preview helper also checks nested Read all and literal
 versions dialogs, links, final text, bounded previews and unchanged open answers.
 
