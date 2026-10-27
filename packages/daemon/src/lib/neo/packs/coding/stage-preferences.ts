@@ -1,3 +1,4 @@
+import { CodingAssignmentsRepository } from './assignments.ts';
 import { z } from 'zod';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
@@ -148,6 +149,10 @@ export function createCodingWritePlanOperation(database: () => Database) {
     ]),
     policy: { safetyClass: 'read', roles: ['neo'] },
     execute: async (input) =>
-      planCodingStageTarget(database(), { ...input, stage: 'write', body: '' }, false),
+      new CodingAssignmentsRepository(database()).planTargetCurrent({
+        ...input,
+        stage: 'write',
+        body: '',
+      }),
   });
 }

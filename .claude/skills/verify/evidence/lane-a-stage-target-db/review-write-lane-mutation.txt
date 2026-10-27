@@ -1,0 +1,84 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/neo-coding-assign.test.ts:
+114 |         candidates: [author, reviewer],
+115 |         ...patch,
+116 |       },
+117 |       { source: 'internal', role: 'neo' }
+118 |     );
+119 |     expect(outcome.kind).toBe('completed');
+                               ^
+error: expect(received).toBe(expected)
+
+Expected: "completed"
+Received: "failed"
+
+      at <anonymous> (/Users/lsm/.codex/worktrees/lane-a-stage-target/neokai/packages/daemon/tests/unit/1-core/operations/neo-coding-assign.test.ts:119:26)
+      at async <anonymous> (/Users/lsm/.codex/worktrees/lane-a-stage-target/neokai/packages/daemon/tests/unit/1-core/operations/neo-coding-assign.test.ts:161:24)
+(fail) coding actor assignments > an unavailable default (unsupported_model) is attempted once after a cloned read-only plan reply [294.09ms]
+114 |         candidates: [author, reviewer],
+115 |         ...patch,
+116 |       },
+117 |       { source: 'internal', role: 'neo' }
+118 |     );
+119 |     expect(outcome.kind).toBe('completed');
+                               ^
+error: expect(received).toBe(expected)
+
+Expected: "completed"
+Received: "failed"
+
+      at <anonymous> (/Users/lsm/.codex/worktrees/lane-a-stage-target/neokai/packages/daemon/tests/unit/1-core/operations/neo-coding-assign.test.ts:119:26)
+      at async <anonymous> (/Users/lsm/.codex/worktrees/lane-a-stage-target/neokai/packages/daemon/tests/unit/1-core/operations/neo-coding-assign.test.ts:161:24)
+(fail) coding actor assignments > an unavailable default (unsupported_effort) is attempted once after a cloned read-only plan reply [292.05ms]
+114 |         candidates: [author, reviewer],
+115 |         ...patch,
+116 |       },
+117 |       { source: 'internal', role: 'neo' }
+118 |     );
+119 |     expect(outcome.kind).toBe('completed');
+                               ^
+error: expect(received).toBe(expected)
+
+Expected: "completed"
+Received: "failed"
+
+      at <anonymous> (/Users/lsm/.codex/worktrees/lane-a-stage-target/neokai/packages/daemon/tests/unit/1-core/operations/neo-coding-assign.test.ts:119:26)
+      at async <anonymous> (/Users/lsm/.codex/worktrees/lane-a-stage-target/neokai/packages/daemon/tests/unit/1-core/operations/neo-coding-assign.test.ts:161:24)
+(fail) coding actor assignments > an unavailable default (unsupported_preparation) is attempted once after a cloned read-only plan reply [276.65ms]
+114 |         candidates: [author, reviewer],
+115 |         ...patch,
+116 |       },
+117 |       { source: 'internal', role: 'neo' }
+118 |     );
+119 |     expect(outcome.kind).toBe('completed');
+                               ^
+error: expect(received).toBe(expected)
+
+Expected: "completed"
+Received: "failed"
+
+      at <anonymous> (/Users/lsm/.codex/worktrees/lane-a-stage-target/neokai/packages/daemon/tests/unit/1-core/operations/neo-coding-assign.test.ts:119:26)
+      at async <anonymous> (/Users/lsm/.codex/worktrees/lane-a-stage-target/neokai/packages/daemon/tests/unit/1-core/operations/neo-coding-assign.test.ts:161:24)
+(fail) coding actor assignments > an unavailable default (unknown_adapter) is attempted once after a cloned read-only plan reply [354.27ms]
+(pass) coding actor assignments > configured bot suppresses all reviewer starts, including explicit human/preferences, but permits independent Verify [325.44ms]
+(pass) coding actor assignments > a PR from a fork (%s) asks for the worker sandbox on its Review and Verify starts [332.28ms]
+(pass) coding actor assignments > a PR from a fork (%s) asks for the worker sandbox on its Review and Verify starts [330.15ms]
+(pass) coding actor assignments > one todo keeps its author and linked fresh reviewer/Verify; repeated calls reuse exact-head assignments [347.53ms]
+(pass) coding actor assignments > an explicit human is an alternative with no reviewer session [319.40ms]
+(pass) coding actor assignments > missing provenance and same-model review cannot launch; explicit opt-out permits the default [380.60ms]
+(pass) coding actor assignments > shared Review/Verify harness, model and effort preferences reach the started actor [337.93ms]
+(pass) coding actor assignments > an unavailable preferred configuration (unsupported_model) safely falls back to the qualifying default [306.21ms]
+(pass) coding actor assignments > an unavailable preferred configuration (unsupported_effort) safely falls back to the qualifying default [364.91ms]
+(pass) coding actor assignments > an unavailable preferred configuration (unsupported_preparation) safely falls back to the qualifying default [293.05ms]
+(pass) coding actor assignments > an unavailable preferred configuration (unknown_adapter) safely falls back to the qualifying default [309.49ms]
+(pass) coding actor assignments > uncertain delivery is never retried or recorded as an assignment [335.85ms]
+(pass) coding actor assignments > a new head requires fresh assignments; contract changes and stale/closed PRs refuse before launch [434.64ms]
+(pass) coding actor assignments > Verify cannot reuse the author or reviewer ref [353.24ms]
+(pass) coding actor assignments > head changes during start stop only the new actor rather than persist stale ownership [309.67ms]
+(pass) coding actor assignments > simultaneous assignment requests do not duplicate session starts [326.22ms]
+
+ 16 pass
+ 4 fail
+ 117 expect() calls
+Ran 20 tests across 1 file. [6.71s]
