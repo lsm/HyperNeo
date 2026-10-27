@@ -1,0 +1,34 @@
+{
+  "verified": true,
+  "productionLines": 45,
+  "redRegressionCommit": "804ff062c301ce449ebe5c740afc78f778983c49",
+  "baselineMainSql": {
+    "bun": 27,
+    "deno": 27
+  },
+  "fixedMainSql": {
+    "bun": 0,
+    "deno": 0
+  },
+  "immutableEventBodyBytes": 190000,
+  "checks": "Full checks pass; 23 focused tests pass in Bun and Vitest.",
+  "limitations": "Persisted synthetic jobs invoke the production delivery pipeline. No actual Neo mailbox, entire pack sweep, GUI or latency claim.",
+  "proofBinding": {
+    "testedCodeCommit": "b73658baa52459f57436a2ee03b716518bb80545",
+    "testedGitTree": "176f4db085f2e68db7f759fbe8d272094f5685d9",
+    "applicationTrees": {
+      "packages": "bb623a874c7d9f9f479b064f9312f5cc70cc5274",
+      "scripts": "586a99d85998c27fffeb05673dad08e51048e25c"
+    },
+    "proofBlobs": {
+      ".claude/skills/verify/coding-pr-event-routing-db.ts": "49dcc70951b60139265bcf544e802c780732aded",
+      ".claude/skills/verify/coding-pr-event-routing-db-run.py": "c1dc584438c647ffd01e2adc7240031056901a15",
+      ".claude/skills/verify/coding-pr-event-routing-proof-binding.ts": "4793ac8ebd91a6a39f364462b232a66daaae6443"
+    },
+    "runs": {
+      "bun": "bun-verify",
+      "deno": "deno-verify"
+    },
+    "postProofChangePolicy": "evidence-and-journey-only"
+  }
+}
