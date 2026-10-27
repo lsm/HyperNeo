@@ -292,7 +292,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         todo: NeoTodo
       ) => {
         if (receipt.changed) deps.changed();
-        if (receipt.startNext) await fill();
+        if (receipt.startNext) await advance();
         return receipt.todo ?? todo;
       },
       ['receipt', 'todo'],
@@ -452,6 +452,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   let filling: Promise<void> = Promise.resolve();
   const fill = () =>
     (filling = filling.catch(() => undefined).then(() => fillQueue(deps.limits())));
+  const advance = () => fill().catch(() => undefined);
 
   const start = async (todoId: string) => {
     const tracked = starting.has(todoId);
@@ -938,6 +939,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   return {
     start,
     fill,
+    advance,
     recompute,
     proceed,
     stop,
