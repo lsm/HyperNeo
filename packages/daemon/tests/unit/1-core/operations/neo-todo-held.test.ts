@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { planNeoTodoEdit } from '../../../../src/lib/neo/todo-operations.ts';
-import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
+import { createNeoTodoRunner, planNeoTodoCheck } from '../../../../src/lib/neo/todo-runner.ts';
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
@@ -135,5 +135,29 @@ describe('a held todo', () => {
     expect(
       planNeoTodoEdit(w.todo(id), { todoId: id, hold: 'Wait.', done: 'met', evidence: 'x' })
     ).toMatchObject({ reason: { ok: false } });
+  });
+
+  test("keeps its hold when a pack's own check reports a failure", async () => {
+    const w = (current = world());
+    const id = w.add('first');
+    await w.edit(id, 'Wait for the human.');
+    expect(planNeoTodoCheck(w.todo(id), { done: false, failed: 'CI failed' }, 5, false)).toBe(null);
+  });
+
+  test('can hold a todo still waiting on its start card', async () => {
+    const w = (current = world());
+    const id = w.add('first');
+    w.store.updateTodo(
+      w.todo(id),
+      {
+        state: 'blocked',
+        blockedBy: 'question',
+        blockedReason: 'Waiting for the human to start it.',
+        nextAction: 'Answer the start question.',
+      },
+      2
+    );
+    await w.edit(id, 'Not this one yet.');
+    expect(w.todo(id)).toMatchObject({ state: 'blocked', blockedBy: 'held' });
   });
 });
