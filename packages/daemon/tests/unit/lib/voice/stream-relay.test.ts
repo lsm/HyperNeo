@@ -7,7 +7,7 @@ import {
 import { vi } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { voicePeerReasonBytes } from '../../../../src/lib/voice/diagnostics';
-import { deepgram, joinFinals } from '../../../../src/lib/voice/stream-protocols';
+import { batchTranscriptionUrl, deepgram, joinFinals } from '../../../../src/lib/voice/stream-protocols';
 import {
   pcm16Wav,
   VoiceStream,
@@ -58,6 +58,22 @@ describe('voice stream settings', () => {
         streamEndpoint: 'ws://h/v1/listen?endpointing=300',
       })?.url.searchParams.get('endpointing')
     ).toBe('300');
+  });
+
+  test('batchTranscriptionUrl keeps a trailing-slash transcriptions URL as-is', () => {
+    expect(batchTranscriptionUrl(new URL('https://h/v1/audio/transcriptions/')).toString()).toBe(
+      'https://h/v1/audio/transcriptions/'
+    );
+    expect(batchTranscriptionUrl(new URL('https://h/speech/v1/')).toString()).toBe(
+      'https://h/speech/v1/audio/transcriptions'
+    );
+  });
+
+  test('voiceStreamRoute derives listen from a trailing-slash transcriptions URL', () => {
+    expect(
+      voiceStreamRoute({ ...voice, streamEndpoint: undefined, endpoint: 'https://h/v1/audio/transcriptions/' })
+        ?.url.toString()
+    ).toBe('wss://h/v1/listen');
   });
 
   test('voiceStreamRoute needs a ws or wss endpoint and a supported protocol', () => {

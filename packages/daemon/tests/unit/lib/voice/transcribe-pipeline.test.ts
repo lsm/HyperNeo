@@ -348,6 +348,32 @@ describe('voice transcribe pipeline', () => {
     expect((init?.headers as Record<string, string>)?.Authorization).toBe('Bearer stored-key');
   });
 
+  it('resolves the stored key for a base-URL endpoint without the appended path', async () => {
+    const getCredentials = mock(async () => ({
+      type: 'api_key' as const,
+      apiKey: 'stored-key',
+    }));
+    let init: RequestInit | undefined;
+    globalThis.fetch = mock(async (_url: string | URL | Request, requestInit?: RequestInit) => {
+      init = requestInit;
+      return new Response(JSON.stringify({ text: 'hello' }), { status: 200 });
+    }) as typeof fetch;
+
+    await transcribe(
+      createDeps(
+        {
+          endpoint: 'https://ai0:8090/speech/v1',
+          model: 'qwen3-asr-0.6b',
+          apiKeyEndpoint: 'https://ai0:8090/speech/v1',
+        },
+        createVoiceTranscribeLimiters(),
+        { getCredentials } as unknown as Pick<ProviderCredentialManager, 'getCredentials'>
+      )
+    );
+
+    expect((init?.headers as Record<string, string>)?.Authorization).toBe('Bearer stored-key');
+  });
+
   it('refreshes endpoint and model from live settings inside the credential lock', async () => {
     const settingsSequence = [
       { endpoint: 'https://ai0:8090/v1/audio/transcriptions', model: 'old-model' },
