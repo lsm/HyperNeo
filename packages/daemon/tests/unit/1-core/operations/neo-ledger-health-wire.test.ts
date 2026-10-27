@@ -33,6 +33,45 @@ async function using(run: (db: Database, ledger: CodingPrLedgerRepository) => Pr
 }
 
 describe('ledger reconciliation health', () => {
+  test('failed PR persistence cannot advance completed coverage', () =>
+    using(async (db, ledger) => {
+      await reconcileCodingPrLedger(ledger, [repos[0]], async () => response(repos[0]), 1);
+      const before = ledger.health.read(repos[0]);
+      const raw = response(repos[0]);
+      const observed = {
+        ...raw,
+        data: {
+          ...raw.data,
+          repository: {
+            ...raw.data.repository,
+            open: {
+              ...raw.data.repository.open,
+              nodes: [
+                {
+                  number: 1,
+                  title: 'Observed 甲🙂',
+                  headRefName: 'topic',
+                  headRefOid: 'new-head',
+                  state: 'OPEN',
+                  isDraft: false,
+                  mergeable: 'MERGEABLE',
+                  reviewDecision: null,
+                  closedAt: null,
+                },
+              ],
+            },
+          },
+        },
+      };
+      db.exec(
+        "CREATE TRIGGER reject_poll_rows BEFORE INSERT ON pack_coding_pr_ledger BEGIN SELECT RAISE(ABORT,'synthetic observation rejection'); END"
+      );
+      await expect(
+        reconcileCodingPrLedger(ledger, [repos[0]], async () => observed, 2)
+      ).rejects.toThrow('synthetic observation rejection');
+      expect(ledger.health.read(repos[0])).toEqual(before);
+      expect(ledger.list()).toEqual([]);
+    }));
   for (const [label, raw, reason] of [
     ['empty', response(repos[0]), 'complete'],
     ['partial', response(repos[0], 4000, true), 'partial'],
