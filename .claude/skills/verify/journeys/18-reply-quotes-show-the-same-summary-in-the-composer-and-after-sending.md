@@ -4,7 +4,7 @@
     If Playwright's browser is not installed, set `VERIFY_BROWSER` to a Chrome
     executable; it runs headless with a fresh browser context. The check seeds
     a publication in the isolated run DB with different short and detailed text,
-    then replies through the visible footer button and the context menu, types
+    then replies through the visible footer button and the touch long-press menu, types
     and sends a reply, and waits for the durable message rather than its pending
     preview. End state: all four quote previews show only the short summary;
     `evidence/quote-summary.json` records the observed strings, with composer
