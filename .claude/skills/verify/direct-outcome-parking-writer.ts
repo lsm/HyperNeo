@@ -55,7 +55,7 @@ try {
   app.jobQueue.reschedulePending(jobId, Date.now() - 1);
   const replacement = app.jobQueue.dequeue(DIRECT_TASK_OUTCOME)[0];
   assert(replacement.claimToken); assert.notEqual(replacement.claimToken, parked.claimToken);
-  const handler = createDirectOutcomeHandler({ db: raw, sessionManager: app.sessionManager, jobQueue: app.jobQueue });
+  const handler = createDirectOutcomeHandler({ db: raw, sessionManager: app.sessionManager });
   measuring = true;
   const stale = await handler(parked);
   measuring = false;

@@ -23,7 +23,6 @@ import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { parkDeliveryJob } from '../../storage/repositories/job-delivery-parking.ts';
 
 interface DirectOutcomeDependencies extends DirectTaskFinalizerDependencies {
-  jobQueue: Pick<JobQueueRepository, 'requeueParked'>;
   onTaskUpdated?: (task: SpaceTask) => void;
   settleDependents?: (task: SpaceTask) => Promise<SpaceTask[]>;
 }
