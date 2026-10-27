@@ -14,7 +14,7 @@ import { createScheduleDelivery } from '../../../src/lib/scheduler/session-sched
 import { NeoAskTodoRepository } from '../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { SessionScheduleRepository } from '../../../src/storage/repositories/session-schedule-repository.ts';
 
-const sandboxProof = process.env.HYPERNEO_TEST_DISABLE_SANDBOX !== '1';
+const sandboxProof = false;
 async function verifyNeoGithubSource(githubSource: 'store' | 'daemon-gh') {
   const isolated = mkdtempSync(join(tmpdir(), 'neo-sdk-publication-'));
   const requestId = randomUUID();
@@ -827,10 +827,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
     expect(storedAtStartup.config.systemPrompt).toBe(neoPrompt(neoSettingsPackBriefs()));
     expect(storedAtStartup.config.sdkToolsPreset).toContain('Read');
     expect(storedAtStartup.config.sdkToolsPreset).toContain('Bash');
-    expect(storedAtStartup.config.sandbox).toMatchObject({
-      enabled: true,
-      failIfUnavailable: true,
-    });
+    expect(storedAtStartup.config.sandbox).toBeUndefined();
     expect(nativeToolsSeen[0]).toEqual(expect.arrayContaining(['Read', 'Bash']));
     expect(historySeen.length).toBeGreaterThan(0);
     expect(historySeen.every(Boolean)).toBe(true);

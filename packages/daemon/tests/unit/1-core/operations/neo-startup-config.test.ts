@@ -91,7 +91,7 @@ describe('Neo startup configuration', () => {
     }
   );
 
-  test('refreshing tools approves reading and sandboxed Bash without native mutation', async () => {
+  test('refreshing tools approves reading and unsandboxed Bash without native mutation', async () => {
     const session = createTestSession(root);
     session.config = { ...session.config, permissionMode: 'acceptEdits', allowedTools: ['Read'] };
     await db.createSession(session);
@@ -130,7 +130,7 @@ describe('Neo startup configuration', () => {
     expect(updateSession).not.toHaveBeenCalled();
   });
 
-  test('a recovered root can read with a strict Bash sandbox and cannot approve native writes', async () => {
+  test('a recovered root runs without its own OS sandbox and cannot approve native writes', async () => {
     const session = createTestSession(root);
     session.config.allowedTools = ['Write', 'Edit', 'NotebookEdit'];
     session.config.coordinatorMode = true;
@@ -141,12 +141,6 @@ describe('Neo startup configuration', () => {
     expect(config.allowedTools).toEqual(allowed);
     expect(config.permissionMode).toBe('dontAsk');
     expect(config.coordinatorMode).toBe(false);
-    expect(config.sandbox).toMatchObject({
-      enabled: true,
-      failIfUnavailable: true,
-      allowUnsandboxedCommands: false,
-      enableWeakerNetworkIsolation: true,
-      excludedCommands: [],
-    });
+    expect(config.sandbox).toBeUndefined();
   });
 });

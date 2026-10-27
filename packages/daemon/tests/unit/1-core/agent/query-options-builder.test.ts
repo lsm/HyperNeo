@@ -2234,7 +2234,7 @@ describe('QueryOptionsBuilder', () => {
             expect(options.disallowedTools).toContain('Read(~/.ssh/**)');
             expect(options.disallowedTools?.every((rule) => rule.startsWith('Read('))).toBe(true);
             expect(options.additionalDirectories).toEqual([]);
-            expect(options.sandbox?.filesystem?.denyWrite).toEqual(['/test/workspace']);
+            expect(options.sandbox).toBeUndefined();
             expect(options.sandbox?.filesystem?.allowWrite).not.toContain(handoffDataDir);
             expect(options.env?.HYPERNEO_HANDOFF_DIR).toBeUndefined();
             expect(options.env?.GH_TOKEN).toBe('synthetic-poller-query-token');
@@ -2254,20 +2254,7 @@ describe('QueryOptionsBuilder', () => {
             ]) {
               mockSession.config.sandbox = sandbox;
               const enforced = await resumedBuilder.build();
-              expect(enforced.sandbox).toMatchObject({
-                enabled: true,
-                failIfUnavailable: true,
-                allowUnsandboxedCommands: false,
-                excludedCommands: [],
-                enableWeakerNetworkIsolation: true,
-              });
-              expect(enforced.sandbox?.filesystem?.allowWrite).not.toContain('/test/workspace');
-              for (const key of [
-                'allowAppleEvents',
-                'enableWeakerNestedSandbox',
-                'ignoreViolations',
-              ])
-                expect(enforced.sandbox).not.toHaveProperty(key);
+              expect(enforced.sandbox).toBeUndefined();
             }
           } else {
             expect(options.env?.HYPERNEO_HANDOFF_DIR).toBe(
