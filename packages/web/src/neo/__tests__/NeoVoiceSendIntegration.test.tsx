@@ -95,12 +95,14 @@ vi.mock('../../lib/voice/voice-transcript-outbox.ts', async (importOriginal) => 
 
 const store = vi.hoisted(() => ({
   records: new Map<string, Record<string, unknown>>(),
+  failUpgrade: false,
   puts: [] as Array<Record<string, unknown>>,
 }));
 vi.mock('../../lib/voice/voice-audio-store.ts', () => ({
   listVoiceRecords: async () => [...store.records.values()].map((r) => ({ ...r })),
   getVoiceRecord: async (id: string) => store.records.get(id) ?? null,
   putVoiceRecord: async (entry: Record<string, unknown>) => {
+    if (store.failUpgrade && entry.intent === 'send') return false;
     store.puts.push({ ...entry });
     store.records.set(entry.id as string, { ...entry });
     return true;
@@ -187,6 +189,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   hubRequest.mockReset().mockImplementation(defaultHub);
   store.records.clear();
+  store.failUpgrade = false;
   store.puts.length = 0;
   parked.entries.length = 0;
   parked.fail = false;
@@ -718,7 +721,7 @@ describe('NeoComposer and NeoVoice send integration', () => {
 });
 
 describe('Send accepted while final transcription is pending', () => {
-  it.each(['plain', 'attachment', 'reply', 'preview', 'photo'] as const)(
+  it.each(['plain', 'empty', 'attachment', 'reply', 'preview', 'photo'] as const)(
     'sends the completed %s composition once without another tap',
     async (staged) => {
       let release: (value: Record<string, unknown>) => void = () => {};
@@ -744,7 +747,17 @@ describe('Send accepted while final transcription is pending', () => {
         ];
       const quote =
         staged === 'reply'
-          ? { author: 'Neo' as const, text: 'quoted words', anchor: 'source' }
+          ? {
+              author: 'Neo' as const,
+              text: 'quoted words',
+              anchor: 'source',
+              replyTo: {
+                kind: 'message' as const,
+                id: 'source',
+                author: 'neo' as const,
+                excerpt: 'quoted words',
+              },
+            }
           : undefined;
       const preview =
         staged === 'preview'
@@ -755,7 +768,7 @@ describe('Send accepted while final transcription is pending', () => {
               state: 'available' as const,
             }
           : undefined;
-      const view = renderComposer('typed first', quote, preview);
+      const view = renderComposer(staged === 'empty' ? '' : 'typed first', quote, preview);
       await waitFor(() => expect(stopControl().disabled).toBe(false));
       fireEvent.click(stopControl());
       await waitFor(() =>
@@ -769,11 +782,14 @@ describe('Send accepted while final transcription is pending', () => {
       await waitFor(() => expect(asks()).toHaveLength(1));
       const input = asks()[0][1].input;
       expect(JSON.stringify(input.content)).toContain(
-        'typed first\nspoken second'.replaceAll('\n', '\\n')
+        (staged === 'empty' ? 'spoken second' : 'typed first\nspoken second').replaceAll(
+          '\n',
+          '\\n'
+        )
       );
       if (staged === 'attachment')
         expect(JSON.stringify(input.content)).toContain('original attachment');
-      if (staged === 'reply') expect(JSON.stringify(input.content)).toContain('quoted words');
+      if (staged === 'reply') expect(input).toHaveProperty('replyTo', quote?.replyTo);
       if (staged === 'preview')
         expect(input.previewContext).toEqual({ artifactId: 'saved', snapshot: 'a'.repeat(64) });
       if (staged === 'photo') expect(JSON.stringify(input.content)).toContain('aGk=');
@@ -782,4 +798,82 @@ describe('Send accepted while final transcription is pending', () => {
       await waitFor(() => expect(store.records.size).toBe(0));
     }
   );
+});
+
+it('keeps a pending Send snapshot when later text or quote changes', async () => {
+  let release: (value: Record<string, unknown>) => void = () => {};
+  hubRequest.mockImplementation(async (method, payload) =>
+    method === 'voice.transcribe'
+      ? new Promise((resolve) => {
+          release = resolve;
+        })
+      : defaultHub(method, payload)
+  );
+  const view = renderComposer('accepted words');
+  await waitFor(() => expect(stopControl().disabled).toBe(false));
+  fireEvent.click(stopControl());
+  await waitFor(() =>
+    expect(hubRequest.mock.calls.some(([method]) => method === 'voice.transcribe')).toBe(true)
+  );
+  fireEvent.click(buttonNamed('Send message'));
+  await waitFor(() => expect([...store.records.values()][0]?.intent).toBe('send'));
+  view.current.value = 'later words';
+  view.rerender({ author: 'Neo', anchor: 'later', text: 'later quote' });
+  release({ text: 'final words' });
+  await waitFor(() => expect(asks()).toHaveLength(1));
+  expect(asks()[0][1].input.content).toBe('accepted words\nfinal words');
+  expect(view.current.value).toBe('later words');
+  expect(view.onCancelQuote).not.toHaveBeenCalled();
+});
+
+it('keeps typed text and reports an ASR failure after a pending Send tap', async () => {
+  let reject: (cause: Error) => void = () => {};
+  hubRequest.mockImplementation(async (method, payload) =>
+    method === 'voice.transcribe'
+      ? new Promise((_resolve, refuse) => {
+          reject = refuse;
+        })
+      : defaultHub(method, payload)
+  );
+  const view = renderComposer('keep typed words');
+  await waitFor(() => expect(stopControl().disabled).toBe(false));
+  fireEvent.click(stopControl());
+  await waitFor(() =>
+    expect(hubRequest.mock.calls.some(([method]) => method === 'voice.transcribe')).toBe(true)
+  );
+  fireEvent.click(buttonNamed('Send message'));
+  await waitFor(() => expect([...store.records.values()][0]?.intent).toBe('send'));
+  reject(new Error('Voice transcription failed with HTTP 401'));
+  await waitFor(() => expect(reportedErrors(view.onError).length).toBeGreaterThan(0));
+  expect(asks()).toHaveLength(0);
+  expect(view.current.value).toBe('keep typed words');
+  expect(view.onTranscript).not.toHaveBeenCalled();
+});
+
+it('keeps the audio and reports a failed durable pending Send upgrade', async () => {
+  let release: (value: Record<string, unknown>) => void = () => {};
+  hubRequest.mockImplementation(async (method, payload) =>
+    method === 'voice.transcribe'
+      ? new Promise((resolve) => {
+          release = resolve;
+        })
+      : defaultHub(method, payload)
+  );
+  const view = renderComposer('keep these words');
+  await waitFor(() => expect(stopControl().disabled).toBe(false));
+  fireEvent.click(stopControl());
+  await waitFor(() =>
+    expect(hubRequest.mock.calls.some(([method]) => method === 'voice.transcribe')).toBe(true)
+  );
+  store.failUpgrade = true;
+  fireEvent.click(buttonNamed('Send message'));
+  release({ text: 'final words' });
+  await waitFor(() =>
+    expect(
+      reportedErrors(view.onError).some((text) => text.includes('Could not save the send request'))
+    ).toBe(true)
+  );
+  expect(asks()).toHaveLength(0);
+  expect(store.records.size).toBe(1);
+  expect(view.current.value).toBe('keep these words');
 });

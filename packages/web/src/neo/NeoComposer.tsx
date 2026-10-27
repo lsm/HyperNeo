@@ -7,6 +7,7 @@ import type { SessionStore } from '../lib/session-store.ts';
 import { connectionState } from '../lib/state.ts';
 import {
   combineVoiceSubmission,
+  queuePendingVoiceSend,
   submitVoiceSendIntent,
   type VoiceSendOutcome,
 } from '../lib/voice/voice-audio-outbox.ts';
@@ -162,6 +163,14 @@ export function NeoComposer({
       );
       return;
     }
+    if (voicePhase === 'drafting') {
+      if (attachments.reading) {
+        onError(t('composer.stillReading'));
+        return;
+      }
+      finishVoice.current?.('send');
+      return;
+    }
     const submitted = draft;
     const files = attachments.files;
     if (!submitted.trim() && !files.length) return;
@@ -205,11 +214,13 @@ export function NeoComposer({
   ): Promise<VoiceSendOutcome> {
     if (
       record.sendText === undefined &&
+      !record.sendContext &&
       (hasAttachments || quote || (record.intent !== 'send' && boundPreview))
     )
       return { kind: 'unconfirmed' };
     const composed =
-      record.sendText ?? combineVoiceSubmission(record.sendDraft ?? draft, transcript);
+      record.sendText ??
+      combineVoiceSubmission(record.sendDraft ?? draft, transcript, record.sendContext?.suffix);
     if (!composed.trim() || inFlight.current || sending || !connected)
       return { kind: 'unconfirmed' };
     inFlight.current = true;
@@ -232,10 +243,25 @@ export function NeoComposer({
         (!currentPreview.current ||
           (currentPreview.current.artifactId === record.previewContext?.artifactId &&
             currentPreview.current.snapshot === record.previewContext?.snapshot)) &&
-        !currentQuote.current
+        (!currentQuote.current ||
+          (!!record.sendContext?.quote &&
+            JSON.stringify(currentQuote.current) === JSON.stringify(record.sendContext.quote)))
       )
         onDraft('');
-      else if (outcome.kind === 'refused' && alive.current) onError(outcome.reason);
+      if (
+        outcome.kind === 'accepted' &&
+        record.sendContext &&
+        alive.current &&
+        currentSession.current === sessionId
+      ) {
+        attachments.remove(record.sendContext.attachmentIds);
+        if (
+          record.sendContext.quote &&
+          JSON.stringify(currentQuote.current) === JSON.stringify(record.sendContext.quote)
+        )
+          onCancelQuote?.();
+      }
+      if (outcome.kind === 'refused' && alive.current) onError(outcome.reason);
       return outcome;
     } catch {
       return { kind: 'unconfirmed' };
@@ -452,6 +478,22 @@ export function NeoComposer({
             draftText={draft}
             onTranscript={onTranscript}
             onInterim={setInterim}
+            onPrepareSend={(recordId) => {
+              const files = structuredClone(attachments.files);
+              const snapshot = {
+                sendDraft: draft,
+                sendContext: {
+                  suffix: files.some((file) => file.kind === 'text')
+                    ? attachmentMessage('', files)
+                    : '',
+                  images: files.flatMap((file) => (file.kind === 'image' ? [file.image] : [])),
+                  attachmentIds: files.map((file) => file.id),
+                  ...(quote ? { quote: structuredClone(quote) } : {}),
+                },
+                previewContext: boundPreview ? { ...boundPreview } : undefined,
+              };
+              return queuePendingVoiceSend(recordId, snapshot);
+            }}
             onSendVoice={async (text, recordId) => {
               const record = await getVoiceRecord(recordId);
               if (!record) return { kind: 'unconfirmed' } as const;

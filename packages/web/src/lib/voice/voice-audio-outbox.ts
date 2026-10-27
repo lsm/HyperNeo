@@ -1,4 +1,5 @@
 import { type MessageHub, MessageHubResponseError } from '@hyperneo/shared';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { effect, signal } from '@preact/signals';
 import { connectionManager } from '../connection-manager';
 import { NEO_UNCONFIRMED_RECEIPT, submitNeoDraft } from '../../neo/neo-intake.ts';
@@ -6,6 +7,7 @@ import { connectionState } from '../state';
 import { t } from '../i18n/index.ts';
 import {
   deleteVoiceRecord,
+  getVoiceRecord,
   listVoiceRecords,
   putVoiceRecord,
   type VoiceRecordEntry,
@@ -69,17 +71,47 @@ export type VoiceSendOutcome =
   | { kind: 'refused'; reason: string; retained?: boolean }
   | { kind: 'unconfirmed' };
 
-export function combineVoiceSubmission(draft: string, transcript: string): string {
-  return [draft.trim(), transcript].filter(Boolean).join('\n');
+export function combineVoiceSubmission(draft: string, transcript: string, suffix = ''): string {
+  const text = [draft.trim(), transcript].filter(Boolean).join('\n');
+  return [text, suffix].filter(Boolean).join('\n\n');
 }
+
+export const queuePendingVoiceSend = (superpipe({})('voice.queue-pending-send') as PipelineAPI)
+  .input(['id', 'snapshot'])
+  .pipe(
+    async (id: string) => {
+      const record = await getVoiceRecord(id);
+      return record && record.intent !== 'send' && record.sendText === undefined
+        ? { value: record }
+        : { reason: false };
+    },
+    'id',
+    'result:stored'
+  )
+  .pipe(
+    (record: VoiceRecordEntry, snapshot: Partial<VoiceRecordEntry>) => ({
+      ...record,
+      ...snapshot,
+      intent: 'send' as const,
+    }),
+    ['stored', 'snapshot'],
+    'record'
+  )
+  .pipe(putVoiceRecord, 'record', 'stored')
+  .endAsync('stored') as (id: string, snapshot: Partial<VoiceRecordEntry>) => Promise<boolean>;
 
 async function sendSessionVoice(
   hub: MessageHub,
   sessionId: string,
-  text: string
+  text: string,
+  record: VoiceRecordEntry
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   try {
-    await hub.request('message.send', { sessionId, content: text });
+    await hub.request('message.send', {
+      sessionId,
+      content: text,
+      ...(record.sendContext?.images?.length ? { images: record.sendContext.images } : {}),
+    });
     return { ok: true };
   } catch (cause) {
     return {
@@ -118,11 +150,13 @@ export async function submitVoiceSendIntent(
               sessionId: record.sessionId,
               requestId: record.id,
               text: settled,
+              ...(record.sendContext?.images ? { images: record.sendContext.images } : {}),
+              ...(record.sendContext?.quote ? { quote: record.sendContext.quote } : {}),
               ...(record.previewContext ? { previewContext: record.previewContext } : {}),
             },
             async () => hub
           )
-        : await sendSessionVoice(hub, record.sessionId, settled);
+        : await sendSessionVoice(hub, record.sessionId, settled, record);
   } catch {
     return { kind: 'unconfirmed' };
   }
@@ -136,7 +170,7 @@ async function refuseVoiceSend(
   text: string,
   reason: string
 ): Promise<VoiceSendOutcome> {
-  if (record.previewContext) {
+  if (record.previewContext || record.sendContext) {
     const retained = await putVoiceRecord({ ...record, sendText: text, sendRefusal: reason });
     return retained ? { kind: 'refused', reason, retained: true } : { kind: 'unconfirmed' };
   }
@@ -174,7 +208,11 @@ async function completeSendIntent(
     if (result.kind === 'silent-recording') return 'discarded';
     if (result.kind === 'transcribe-failed') return result.dequeued ? 'discarded' : 'retry';
     if (!('transcript' in result.outcome)) return 'discarded';
-    text = combineVoiceSubmission(entry.sendDraft ?? '', result.outcome.transcript);
+    text = combineVoiceSubmission(
+      entry.sendDraft ?? '',
+      result.outcome.transcript,
+      entry.sendContext?.suffix
+    );
   }
   if (!text.trim()) return 'discarded';
   const outcome = await submitVoiceSendIntent(hub, entry, text);

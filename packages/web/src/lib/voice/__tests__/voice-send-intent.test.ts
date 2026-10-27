@@ -47,7 +47,11 @@ vi.mock('../voice-transcript-outbox.ts', async (importOriginal) => ({
 }));
 
 import { connectionManager } from '../../connection-manager.ts';
-import { flushPendingVoiceAudio, resetVoiceAudioOutbox } from '../voice-audio-outbox.ts';
+import {
+  flushPendingVoiceAudio,
+  resetVoiceAudioOutbox,
+  queuePendingVoiceSend,
+} from '../voice-audio-outbox.ts';
 
 function seedEntry(overrides: Record<string, unknown> = {}) {
   const entry = {
@@ -246,5 +250,40 @@ describe('voice send-intent recovery', () => {
     await flush;
     expect(store.records).toHaveLength(1);
     expect(asks()).toHaveLength(0);
+  });
+
+  it('recovers an upgraded pending Send with its original quote, photo and file suffix', async () => {
+    seedEntry({ intent: 'draft' });
+    const quote = {
+      author: 'Neo' as const,
+      text: 'original quote',
+      anchor: 'original',
+      replyTo: { kind: 'message' as const, id: 'original', excerpt: 'original quote' },
+    };
+    expect(
+      await queuePendingVoiceSend('rec-1', {
+        sendDraft: 'accepted typed words',
+        sendContext: {
+          suffix: 'original attachment',
+          images: [{ data: 'aGk=', media_type: 'image/png' }],
+          quote,
+          attachmentIds: ['photo1'],
+        },
+      })
+    ).toBe(true);
+    resetVoiceAudioOutbox();
+    await flushPendingVoiceAudio();
+    expect(asks()).toHaveLength(1);
+    const input = asks()[0][1].input;
+    expect(input.requestId).toBe('rec-1');
+    expect(JSON.stringify(input.content)).toContain('original attachment');
+    expect(JSON.stringify(input.content)).toContain('aGk=');
+    expect(input).toHaveProperty('replyTo', quote.replyTo);
+    expect(store.records).toHaveLength(0);
+  });
+  it('refuses missing or already accepted pending Send records', async () => {
+    expect(await queuePendingVoiceSend('missing', {})).toBe(false);
+    seedEntry({ intent: 'send' });
+    expect(await queuePendingVoiceSend('rec-1', {})).toBe(false);
   });
 });
