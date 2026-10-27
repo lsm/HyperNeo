@@ -25,6 +25,7 @@ function setup() {
   const packs = createTodoCheckPacks(db);
   const calls: string[] = [];
   const runner = createNeoTodoRunner({
+    limits: () => ({ running: 99, perGroup: 99 }),
     write: gatewayFor(db).run.bind(gatewayFor(db)),
     store,
     sessions,
@@ -143,6 +144,25 @@ describe('bind an already running worker without dispatch', () => {
       });
       expect(store.getTodo(todo.id)?.state).toBe('doing');
       expect(calls.filter((name) => name !== 'work.status')).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a held todo cannot be bound to a worker', async () => {
+    const { db, store, calls, invoke } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Synthetic work',
+        request: 'Track work',
+        todos: [{ check: pendingTodoCheck, title: 'Held step', doneWhen: 'Result verified' }],
+      });
+      const todo = opened.todos[0];
+      await invoke('neo.todo.edit', { todoId: todo.id, hold: 'The human said wait.' });
+      const bound = await invoke('neo.todo.bind', { todoId: todo.id, ref });
+      expect(bound.ok).toBe(false);
+      expect(store.getTodo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'held' });
+      expect(calls).toEqual([]);
     } finally {
       db.close();
     }

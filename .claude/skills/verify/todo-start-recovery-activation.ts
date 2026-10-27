@@ -29,7 +29,7 @@ const tables:string[]=[],effects:string[]=[],notes:string[]=[],warnings:string[]
 db.prepare=((sql:string)=>{if(admission && /neo_todos|neo_asks|neo_questions|neo_todo_sessions/.test(sql)) mainSql++; return prepare(sql);}) as typeof db.prepare;
 app.db.gateway.onChanges=changes=>{if(watchTables) tables.push(...changes.map(change=>change.table)); replay(changes);};
 const visible=()=>hub.request<{ok:true;entry:{todos:NeoTodo[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId:'ask'}});
-const runner=createNeoTodoRunner({store,sessions,write:async(op,args)=>{
+const runner=createNeoTodoRunner({ limits: () => ({ running: 99, perGroup: 99 }),store,sessions,write:async(op,args)=>{
   try { return await app.db.gateway.run(op,args); }
   finally { if((args as {method?:string}).method==='recover') admission=false; }
 },packs:()=>[],changed:()=>{effects.push('changed');},

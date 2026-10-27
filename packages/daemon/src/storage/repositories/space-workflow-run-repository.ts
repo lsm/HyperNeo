@@ -23,6 +23,8 @@ import {
   type RunSnapshotMigrationPlan,
 } from '../../lib/workflows/plan-run-snapshot-migration.ts';
 import { SpaceWorkflowDefinitionVersionRepository } from './space-workflow-definition-version-repository.ts';
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { workflowRunPinWrites } from './workflow-run-pin-write.ts';
 import type { SQLiteValue } from '../types.ts';
 import { assertValidTransition } from '../../lib/workflows/run-status-machine.ts';
 import { Logger } from '../../lib/logger.ts';
@@ -154,33 +156,22 @@ export class SpaceWorkflowRunRepository {
     }));
   }
 
-  pinExistingRun(
+  async pinExistingRun(
     runId: string,
     rawWorkflow: SpaceWorkflow,
     resolveTemplate?: AgentTemplateResolver
-  ): boolean {
+  ): Promise<boolean> {
     const pinnedWorkflow = resolveTemplate
       ? withRunTemplateSnapshots(rawWorkflow, resolveTemplate)
       : rawWorkflow;
     const { versionHash, payload } = computeDefinitionVersion(pinnedWorkflow);
-    const appendVersion = new SpaceWorkflowDefinitionVersionRepository(this.db);
-    return this.db.transaction(() => {
-      appendVersion.appendVersion({
-        workflowId: rawWorkflow.id,
-        spaceId: rawWorkflow.spaceId,
-        versionHash,
-        payload,
-        source: 'backfill',
-        createdAt: Date.now(),
-      });
-      const result = this.db
-        .prepare(
-          `UPDATE space_workflow_runs SET definition_version = ?
-           WHERE id = ? AND definition_version IS NULL`
-        )
-        .run(versionHash, runId);
-      return result.changes > 0;
-    })();
+    return gatewayFor(this.db).call(workflowRunPinWrites, 'pin', {
+      runId,
+      workflowId: rawWorkflow.id,
+      spaceId: rawWorkflow.spaceId,
+      versionHash,
+      payload,
+    });
   }
 
   listSnapshotlessPinnedRuns(): Array<{
@@ -279,17 +270,17 @@ export class SpaceWorkflowRunRepository {
     return migrated > 0;
   }
 
-  backfillDefinitionPins(
+  async backfillDefinitionPins(
     loadWorkflow: (workflowId: string) => SpaceWorkflow | null,
     resolveTemplateFor?: AgentTemplateResolverFactory
-  ): number {
+  ): Promise<number> {
     let count = 0;
     for (const run of this.listPinnableRuns()) {
       try {
         const workflow = loadWorkflow(run.workflowId);
         if (!workflow) continue;
         const resolveTemplate = resolveTemplateFor?.(run.spaceId);
-        if (this.pinExistingRun(run.id, workflow, resolveTemplate)) count += 1;
+        if (await this.pinExistingRun(run.id, workflow, resolveTemplate)) count += 1;
       } catch (err) {
         log.warn(`backfillDefinitionPins: skipped run ${run.id} (non-fatal):`, err);
       }

@@ -50,6 +50,7 @@ function setup(result: NeoTodoCheckResult = merged, judgement?: NeoTodoJudgement
   } satisfies NeoPack;
   const told: string[] = [];
   const runner = createNeoTodoRunner({
+    limits: () => ({ running: 99, perGroup: 99 }),
     write: gatewayFor(db).run.bind(gatewayFor(db)),
     store,
     sessions: new NeoTodoSessionRepository(db),
