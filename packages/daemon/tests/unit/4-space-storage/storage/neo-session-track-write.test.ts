@@ -20,6 +20,8 @@ type Receipt =
       messageId: string;
       ask: NeoAsk;
       todo: NeoTodo;
+      ref: NeoSessionNotice['ref'];
+      link: string | null;
     };
 
 describe('Atomic Track admission build', () => {
@@ -88,6 +90,8 @@ describe('Atomic Track admission build', () => {
         request: `See ${args.notice.title} through.`,
       },
       todo: { id: 'todo-one', state: 'doing', startedAt: 123, check: null },
+      ref: args.notice.ref,
+      link: args.notice.link,
     });
     expect(sessions.get('todo-one')).toEqual({ verb: 'adopt', ref });
     expect(sessions.readRef('todo-one')).toEqual(ref);

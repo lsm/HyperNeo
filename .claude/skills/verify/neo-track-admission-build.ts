@@ -7,6 +7,7 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
+import { Database as SQLite } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { DbGateway } from '../../../packages/daemon/src/storage/db-gateway/db-gateway.ts';
 import type { DbOp } from '../../../packages/daemon/src/storage/db-gateway/db-op.ts';
 import { neoSessionKey } from '../../../packages/daemon/src/lib/neo/session-watch.ts';
@@ -18,18 +19,29 @@ assert.equal(mode,'verify');assert.equal(process.env.NODE_ENV,'test');assert.equ
 for(const path of ['workspace','bin','evidence'])mkdirSync(join(run,path),{recursive:true});
 writeFileSync(join(run,'bin/gh'),'#!/bin/sh\nexit 1\n',{mode:0o700});
 const network=globalThis.fetch;globalThis.fetch=(()=>{throw new Error('External HTTP disabled');}) as typeof fetch;
+let record=false,mainSql=0;
+const sqlitePrepare=SQLite.prototype.prepare,sqliteExec=SQLite.prototype.exec;
+const targetSql=/neo_asks|neo_todos|neo_questions|neo_todo_sessions|neo_session_bindings/;
+SQLite.prototype.prepare=function(...args){
+ const statement=Reflect.apply(sqlitePrepare,this,args);
+ if(!targetSql.test(args[0]))return statement;
+ return new Proxy(statement,{get(target,key){const value=Reflect.get(target,key);if(typeof value!=='function')return value;return(...values:unknown[])=>{
+  if(record&&['get','all','iterate','run','values'].includes(String(key))){mainSql++;throw new Error('Track SQL executed on daemon main');}
+  return Reflect.apply(value,target,values);
+ };}});
+};
+SQLite.prototype.exec=function(sql:string){if(record&&targetSql.test(sql)){mainSql++;throw new Error('Track SQL executed on daemon main');}return Reflect.apply(sqliteExec,this,[sql]);};
 const path=join(run,'data/daemon.db');
 const app=await createDaemonApp({config:{...getConfig({port:0,host:'127.0.0.1',dbPath:path}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});assert.notEqual(app.server.port,8399);
 const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);
 const db=app.db.getDatabase(),store=new NeoAskTodoRepository(db),sessions=new NeoTodoSessionRepository(db),repo=new NeoRepository(db);
-type Receipt={ok:false;reason:string}|{ok:true;root:string;messageId:string;ask:NeoAsk;todo:NeoTodo;timings:{workerStartedAt:number;workerPreparedAt:number}};
+type Receipt={ok:false;reason:string}|{ok:true;root:string;messageId:string;ask:NeoAsk;todo:NeoTodo;ref:{adapter:string;id:string};link:string|null;timings:{workerStartedAt:number;workerPreparedAt:number}};
 const op={name:'neo.sessionTrackWrites',mode:'write',run:()=>{throw new Error('Track command must execute in the writer worker');}} as DbOp<ReturnType<typeof input>,Receipt>;
 const input=(id:string,worker=id,title='Synthetic human work 🦊')=>{const ref={adapter:'hyperneo',id:`synthetic-${worker}`};return {askId:`ask-${id}`,todoId:`todo-${id}`,notice:{key:neoSessionKey(ref),ref,title,kind:'needs_you',at:1,link:`/session/${ref.id}`},now:123};};
 const call=(args:ReturnType<typeof input>)=>app.db.gateway.run(op,args);
 const visible=(id:string)=>hub.request<{ok:boolean;entry:{ask:NeoAsk;todos:NeoTodo[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId:id}});
 const until=async(check:()=>boolean|Promise<boolean>,label:string)=>{const end=Date.now()+10000;while(!await check()){assert(Date.now()<end,label);await new Promise(done=>setTimeout(done,10));}};
-const prepare=db.prepare.bind(db),replay=app.db.gateway.onChanges;let record=false,mainSql=0,held=false;const tables:string[]=[];
-db.prepare=((sql:string)=>{if(record && /neo_asks|neo_todos|neo_questions|neo_todo_sessions|neo_session_bindings/.test(sql))mainSql++;return prepare(sql);}) as typeof db.prepare;
+const replay=app.db.gateway.onChanges;let held=false;const tables:string[]=[];
 app.db.gateway.onChanges=events=>{if(record)tables.push(...events.map(event=>event.table));replay(events);};
 const result:Record<string,unknown>={runtimeCallersMoved:false};const ghosts:DbGateway[]=[];
 let lastTick=performance.now(),maxLagMs=0;const lag=setInterval(()=>{const now=performance.now();maxLagMs=Math.max(maxLagMs,now-lastTick-10);lastTick=now;},10);
@@ -37,12 +49,14 @@ try{
  await app.spaceRuntimeService.ready();await app.jobProcessor.stop();await transport.initialize();
  for(const id of ['neo:track-root','neo:track-current'])await app.db.createSession({id,title:'Synthetic Track build',workspacePath:join(run,'workspace'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});
  repo.reserveBinding({sessionId:'neo:track-root',kind:'neo',projectId:null});
+ const cached=db.prepare('SELECT COUNT(*) AS count FROM neo_session_bindings');cached.get();record=true;assert.throws(()=>cached.get(),/Track SQL executed on daemon main/);record=false;assert.equal(mainSql,1);mainSql=0;result.cachedSqlGuardVerified=true;
  const title='完整的人类工作 🦊\n'.repeat(12000),args=input('held','held',title);const beforeChanges=tables.length;
  db.exec('BEGIN IMMEDIATE');held=true;record=true;let replied=false,error:unknown;const sentAt=Date.now();const pending=call(args);void pending.then(()=>{replied=true;},caught=>{error=caught;replied=true;});
  await new Promise(done=>setTimeout(done,1200));if(error)throw error;assert.equal(replied,false);assert.equal(tables.length,beforeChanges);assert.equal((await visible(args.askId)).ok,false);
  const healthStart=performance.now();await hub.request('system.health',{});const healthMs=performance.now()-healthStart;
  db.exec('ROLLBACK');held=false;const receipt=await pending,receivedAt=Date.now();record=false;assert(receipt.ok);
  assert.equal(receipt.root,'neo:track-root');assert.equal(receipt.ask.title,title);assert.equal(receipt.ask.request,`See ${title} through.`);assert.equal(receipt.todo.state,'doing');assert.equal(receipt.todo.startedAt,123);assert.equal(receipt.messageId,`neo-track:${args.notice.key}:${args.askId}`);
+ assert.deepEqual(receipt.ref,args.notice.ref);assert.equal(receipt.link,args.notice.link);
  assert.deepEqual(sessions.readRef(args.todoId),args.notice.ref);assert.equal(sessions.readFollowAnchor(args.todoId),123);assert.equal(sessions.readLinks(args.todoId).link,args.notice.link);
  const card=await visible(args.askId);assert.equal(card.entry.ask.title,title);assert.equal(card.entry.todos[0].state,'doing');
  result.commitBeforeReply=true;result.publicCardMatches=true;result.fullTitle={bytes:Buffer.byteLength(title),sha256:createHash('sha256').update(card.entry.ask.title).digest('hex')};
@@ -64,7 +78,7 @@ try{
  await until(async()=>(await visible('ask-lost')).ok,'committed row disappeared after lost reply');assert.equal(store.listTodos('ask-lost').length,1);record=true;const retried=await call(input('lost-retry','lost'));record=false;assert(!retried.ok && retried.reason.includes('already follows'));result.lostReply={reported:'outcome unknown',persistedCard:true,automaticReplay:false,explicitRepeatRefused:true};
  assert.equal(mainSql,0);assert(maxLagMs<1000);result.maxMainLoopLagMs=maxLagMs;result.mainSql=0;result.rssBytes=process.memoryUsage().rss;result.walBytes=statSync(`${path}-wal`).size;result.verified=true;
 }finally{
- record=false;if(held)db.exec('ROLLBACK');clearInterval(lag);db.prepare=prepare;app.db.gateway.onChanges=replay;
+ record=false;if(held)db.exec('ROLLBACK');clearInterval(lag);SQLite.prototype.prepare=sqlitePrepare;SQLite.prototype.exec=sqliteExec;app.db.gateway.onChanges=replay;
  await Promise.all(ghosts.map(gateway=>gateway.close()));await transport.close();await app.cleanup();globalThis.fetch=network;result.resourcesStopped=true;
  writeFileSync(join(run,'evidence/neo-track-admission-build.json'),JSON.stringify(result,null,2).replaceAll(run,'<synthetic-run>'));
 }
