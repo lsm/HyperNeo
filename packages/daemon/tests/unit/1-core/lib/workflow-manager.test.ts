@@ -1520,7 +1520,7 @@ describe('SpaceWorkflowManager', () => {
       expect(manager.getWorkflow(wf.id)).not.toBeNull();
     });
 
-    it('backfill pins a legacy run to its head, and the pin resolves behaviorally equal to the head', () => {
+    it('backfill pins a legacy run to its head, and the pin resolves behaviorally equal to the head', async () => {
       const wf = manager.createWorkflow({
         spaceId: 'space-1',
         name: 'Backfill Target',
@@ -1535,7 +1535,7 @@ describe('SpaceWorkflowManager', () => {
       ).run(`task-${run.id}`, run.id, run.id, now, now);
       expect(run.definitionVersion).toBeNull();
 
-      const count = runRepo.backfillDefinitionPins((id) => repo.getWorkflow(id));
+      const count = await runRepo.backfillDefinitionPins((id) => repo.getWorkflow(id));
       expect(count).toBe(1);
 
       const pinned = runRepo.getRun(run.id)!;
