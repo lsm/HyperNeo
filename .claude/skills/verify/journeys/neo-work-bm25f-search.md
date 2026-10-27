@@ -43,6 +43,13 @@ error, then releases them and checks results. Chromium controlled IME compositio
 plus keyboard Escape must preserve the CJK query; an ordinary Escape still closes.
 This exercises real browser composition events, not a physical OS IME candidate
 window. Preserve the separate before evidence reproducing both bugs.
+Also import verifySearchRefresh from neo-search-refresh-web.mjs. In separate
+contexts at both widths, stage an unchanged feed event through the fixture’s
+/__verify-refresh endpoint: no card body may re-read and ranked cards must stay
+visible. With changed=1 the fixture changes one synthetic report and publishes
+neo.changed. Exactly that body must re-read; hold it to verify existing matches
+remain visible, then release it and search the updated report. This setup endpoint
+exists only on the fresh non-live fixture. Keep the failing before proof separate.
 All other RPC reaches the real isolated daemon. Inspect
 closed, ranked, ranked-tail, empty and recovered screenshots for settled
 animations, readable cards, a usable field and horizontal fit at both widths.
