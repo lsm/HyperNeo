@@ -259,11 +259,11 @@ test.each(['rpc', 'internal', 'mcp'] as const)(
     }) as SessionManager;
     const result = await createDirectOutcomeHandler({
       db,
-      jobQueue: jobs,
       onTerminalTransition: terminal,
       sessionManager: {
         coalesceDirectStopVerification: owner.coalesceDirectStopVerification.bind(owner),
         getCachedSession: () => cached,
+        getSessionForControl: async () => null,
         isSessionLoading: () => false,
         unregisterSession: async () => {
           cached = null;

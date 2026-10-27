@@ -37,7 +37,7 @@ const scripted=createOperationRegistry(registry.entries.map(entry=>entry.name!==
 }}));
 app.sessionManager.setOperationRegistryProvider(()=>scripted);
 type Receipt={ok:false;reason:string}|{ok:true;todo:NeoTodo;records?:string[]};
-const mutate=(kind:'close'|'remove',id:string)=>hub.request<Receipt>('operation.invoke',{name:`neo.todo.${kind}`,input:{todoId:id,reason:'Explicit human outcome'}});
+const mutate=(kind:'close'|'remove',id:string,replacedBy?:string)=>hub.request<Receipt>('operation.invoke',{name:`neo.todo.${kind}`,input:{todoId:id,reason:'Explicit human outcome',...(replacedBy?{replacedBy}:{})}});
 const visible=(askId='ask')=>hub.request<{ok:true;entry:{todos:NeoTodo[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId}});
 const seed=(id:string,askId='ask')=>{
  store.addTodo(id,askId,{title:id,doneWhen:'Observed',check:null,instruction:null,named:null},1);
@@ -72,6 +72,19 @@ try{
  beforeRead=()=>{if(!replaced){replaced=true;sessions.recordRef('replacement',{adapter:'hyperneo',id:'replacement-replacement'},4);}};
  assert((await mutate('remove','replacement')).ok);beforeRead=()=>{};
  assert.equal(calls.at(-1),'replacement-replacement');result.currentReplacement=true;
+ seed('valid-source');seed('valid-target');
+ const linked=await mutate('remove','valid-source','valid-target');
+ assert(linked.ok && linked.todo.replacedBy==='valid-target');
+ assert((await visible()).entry.todos.some(todo=>todo.id==='valid-source' && todo.replacedBy==='valid-target'));result.validReplacement=true;
+ seed('vanishing-source');seed('vanishing-target');
+ const lateReport='Complete finalization report 🦊\n'.repeat(25000);
+ beforeStop=()=>{db.prepare('DELETE FROM neo_todos WHERE id = ?').run('vanishing-target');store.updateTodo(store.getTodo('vanishing-source')!,{report:lateReport},8);};
+ const vanished=await mutate('remove','vanishing-source','vanishing-target');beforeStop=()=>{};
+ assert(vanished.ok && vanished.todo.state==='removed' && vanished.todo.replacedBy===null);
+ assert(vanished.ok && vanished.records?.some(line=>line.startsWith('replacement_missing:')));
+ assert.equal(vanished.todo.report,lateReport);
+ assert((await visible()).entry.todos.some(todo=>todo.id==='vanishing-source' && todo.replacedBy===null && todo.report===lateReport));
+ result.replacementRevalidatedAfterStop=true;result.concurrentReport={bytes:Buffer.byteLength(lateReport),sha256:createHash('sha256').update(lateReport).digest('hex')};
  seed('late-card');beforeStop=()=>{card('late-card');};const late=await mutate('close','late-card');beforeStop=()=>{};
  assert(!late.ok && late.reason.startsWith('card_unanswered:'));assert.equal(store.getTodo('late-card')!.state,'doing');assert.equal(store.getTodo('late-card')!.report,report);result.lateCardRefusesClose=true;
  seed('needs-human');card('needs-human');store.updateTodo(store.getTodo('needs-human')!,{state:'blocked',blockedBy:'needs-human',blockedReason:'Answer first'},5);

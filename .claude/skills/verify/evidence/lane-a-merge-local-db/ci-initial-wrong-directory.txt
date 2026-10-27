@@ -1,0 +1,14 @@
+Resolving dependencies
+Resolved, downloaded and extracted [2]
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (packages/daemon/vitest.config.ts:7:14). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/lsm/.codex/worktrees/lane-a-merge-local/neokai
+
+No test files found, exiting with code 1
+
+filter: packages/daemon/tests/unit/1-core/operations/coding-merge-receipt-writer.test.ts
+include: tests/**/*.test.ts, tests/**/*_test.ts
+exclude:  node_modules, dist, tests/online/**
+

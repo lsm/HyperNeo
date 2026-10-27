@@ -1,0 +1,15 @@
+{
+  "runtime": "Bun 1.4.3",
+  "productionCommit": "23ec8f45d16675777eb78ba9923864f8fc8bc4fb",
+  "repositoryCheck": "bun run check: exit 0",
+  "focusedTests": "31 passed, 0 failed",
+  "unverified": [
+    "Deno (not installed locally; required CI registered)",
+    "GUI layout",
+    "real external worker-stop delivery",
+    "provider turns",
+    "queue/SQL/clone phase timings"
+  ],
+  "contentionLatencyTarget": "FAIL: held 1.2-second WAL lock; see removal.json",
+  "syntheticDataRemoved": true
+}

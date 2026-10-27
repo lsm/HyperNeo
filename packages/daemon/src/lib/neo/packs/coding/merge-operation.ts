@@ -4,14 +4,12 @@ import { isDeepStrictEqual } from 'node:util';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
-import { NeoTodoSessionRepository } from '../../../../storage/repositories/neo-todo-session-repository.ts';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { githubUrlKey, parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { spawnProcess } from '../../../runtime-spawn/index.ts';
 import { defineOperation } from '../../../operations/registry.ts';
-import { CodingAssignmentsRepository } from './assignments.ts';
+import { codingReviewerPolicy } from './stage-facts.ts';
 import { createCodingReviewThreadReader } from './connector-review-thread-reader.ts';
-import type { CodingPrLedgerRepository } from './pr-ledger.ts';
 import type { CodingTodoPrRepository } from './todo-prs.ts';
 import type { prepareCodingMerge } from './merge-gates.ts';
 import type { runCodingReview } from './review.ts';
@@ -52,7 +50,6 @@ const Checks = z.array(z.object({ bucket: z.string(), name: z.string().min(1), l
 const Threads = z.object({ headOid: z.string(), unresolvedThreadUrls: z.array(z.string()) });
 type Deps = {
   db: Database;
-  ledger: CodingPrLedgerRepository;
   todos: CodingTodoPrRepository;
   review: typeof runCodingReview;
   prepareMerge: typeof prepareCodingMerge;
@@ -61,21 +58,10 @@ type Result = Awaited<ReturnType<typeof prepareCodingMerge>>;
 const refuse = (reason: string) => ({ reason: { accepted: false as const, reason } });
 
 export function createCodingMergeOperation(deps: Deps) {
-  const assignments = new CodingAssignmentsRepository(deps.db);
   const readThreads = createCodingReviewThreadReader(() => deps.db);
   const gh = (args: string[]) => runGhJson(['gh', ...args], homedir(), spawnProcess);
-  const local = (input: Input, head: string) => ({
-    assignments: assignments.read(input.todoId, input.url, head),
-    write: new NeoTodoSessionRepository(deps.db).readCard(input.todoId)?.ref,
-    facts: deps.ledger.stageFacts.read(input.url),
-    policy: deps.ledger.policy(`${parsePrUrl(input.url)!.owner}/${parsePrUrl(input.url)!.repo}`),
-    live: deps.db
-      .prepare(
-        "SELECT 1 FROM neo_todos t JOIN neo_asks a ON a.id=t.ask_id WHERE t.id=? AND t.state IN ('doing','blocked') AND a.status='open'"
-      )
-      .get(input.todoId),
-    linked: deps.todos.urls(input.todoId).includes(githubUrlKey(input.url)),
-  });
+  const local = (input: Input, head: string) =>
+    deps.todos.deliveryFacts.mergeLocalCurrent({ ...input, head });
   const prepare = (superpipe({})('coding.admit-recorded-manual-merge') as PipelineAPI)
     .input('input')
     .pipe(
@@ -137,7 +123,7 @@ export function createCodingMergeOperation(deps: Deps) {
         }
       ): Promise<Result> => {
         const { pr, reviews, checks, threads } = observed,
-          state = local(input, pr.headRefOid);
+          state = await local(input, pr.headRefOid);
         const { review, qa } = state.assignments;
         if (
           !state.live ||
@@ -159,8 +145,8 @@ export function createCodingMergeOperation(deps: Deps) {
           (review.bot ?? '').toLowerCase() !== (state.policy.reviewBot ?? '').toLowerCase()
         )
           return { accepted: false, reason: 'Resolve repository review policy before merging.' };
-        const provenance = deps.ledger.reviewerPolicy(
-          `${parsePrUrl(input.url)!.owner}/${parsePrUrl(input.url)!.repo}`,
+        const provenance = codingReviewerPolicy(
+          state.policy.provenance !== false,
           pr.body,
           review.actor ?? { kind: 'human', id: 'bot-route' }
         );
@@ -242,10 +228,11 @@ export function createCodingMergeOperation(deps: Deps) {
             const head = Head.safeParse(fresh.ok ? fresh.data : null);
             return head.success &&
               head.data.state === 'OPEN' &&
-              isDeepStrictEqual(state, local(input, pr.headRefOid))
+              isDeepStrictEqual(state, await local(input, pr.headRefOid))
               ? head.data.headRefOid
               : null;
-          }
+          },
+          { input: { ...input, head: pr.headRefOid }, state }
         );
       },
       ['input', 'result'],
