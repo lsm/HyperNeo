@@ -266,7 +266,7 @@ describe('simple message.send worker handoff', () => {
       expect(await send(input)).toMatchObject({
         kind: 'failed',
         code: 'invalid_input',
-        message: expect.stringContaining('Valid examples:'),
+        message: expect.stringContaining('Example input:'),
       });
     expect(mailbox.rows()).toHaveLength(0);
   });

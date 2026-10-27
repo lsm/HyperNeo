@@ -49,7 +49,17 @@ describe('task.get operation', () => {
     });
   });
 
-  test.each([{}, { taskId: '' }, { taskId: 1 }])(
+  test('normalizes a numeric task ID before reading', async () => {
+    const { read, registry } = fixture();
+    const caller = { source: 'mcp' as const };
+    expect(await invokeOperation(registry, 'task.get', { taskId: 1 }, caller)).toEqual({
+      kind: 'completed',
+      value: task,
+    });
+    expect(read).toHaveBeenCalledWith('1', caller);
+  });
+
+  test.each([{}, { taskId: '' }, { taskId: true }])(
     'rejects invalid task IDs before reading: %j',
     async (input) => {
       const { read, registry } = fixture();

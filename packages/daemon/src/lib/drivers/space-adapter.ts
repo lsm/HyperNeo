@@ -7,7 +7,6 @@ import {
   readHyperneoInputs,
   readHyperneoExchange,
   readHyperneoLastResult,
-  readHyperneoTurnEnds,
 } from './hyperneo-adapter.ts';
 import { withExchange, workEntryTime } from './work-messages.ts';
 import { readSpaceInputEvidence } from './space-input-evidence.ts';
@@ -107,6 +106,7 @@ export interface SpaceTaskControl {
 }
 
 export interface SpaceAdapterDeps {
+  readTurnEnds: (sessionId: string, since: number) => Promise<NonNullable<WorkDetail['turnEnds']>>;
   db: () => BunDatabase;
   machine: string;
   searchChats: (text: string) => Promise<readonly WorkChatMatch[]>;
@@ -665,7 +665,8 @@ export function createSpaceAdapter(deps: SpaceAdapterDeps): WorkAdapter {
         ? readSpaceAgents(deps.db(), true, ref.id.slice(AGENT_REF.length))[0]?.sessionId
         : readActiveNode(deps.db(), ref.id)?.agentSessionId;
       const last = agent && sessionId ? readHyperneoLastResult(deps.db(), sessionId) : null;
-      const turnEnds = sessionId ? readHyperneoTurnEnds(deps.db(), sessionId, since) : [];
+      const turnEnds =
+        sessionId && since !== undefined ? await deps.readTurnEnds(sessionId, since) : [];
       return {
         ...result,
         value: {

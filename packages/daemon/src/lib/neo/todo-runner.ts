@@ -219,9 +219,11 @@ export function planNeoTodoCheck(
   now: number,
   started: boolean
 ): NeoTodoPatch | null {
-  if (!result || todo.state === 'done' || todo.state === 'failed') return null;
+  if (!result || todo.state === 'done') return null;
+  if (result.done && !result.failed)
+    return { state: 'done', evidence: result.evidence, finishedAt: now };
+  if (todo.state === 'failed' || todo.state === 'closed_unverified') return null;
   if (result.failed) return planNeoTodoFailure(todo, result.failed, now);
-  if (result.done) return { state: 'done', evidence: result.evidence, finishedAt: now };
   if (result.blocked)
     return todo.state === 'blocked' && todo.blockedBy !== 'check'
       ? null
@@ -534,6 +536,11 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           : null);
       const live = store.getCheckable(todo.id);
       if (!live?.check || !sameNeoTodoCheck(todo, live)) continue;
+      if (
+        (live.state === 'failed' || live.state === 'closed_unverified') &&
+        completion?.state !== 'done'
+      )
+        continue;
       const next = completion
         ? await recompute(live, {}, now, completion)
         : await finish(
@@ -857,11 +864,15 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       return start(todoId);
     },
     async checkNow(
-      todoIds: readonly string[],
+      selection: readonly string[] | { questionId: string },
       warn: (message: string, error: unknown) => void
     ): Promise<void> {
       for (const todo of (await store.read('listCheckable')).filter((item) =>
-        todoIds.includes(item.id)
+        'questionId' in selection
+          ? item.check?.pack === 'core' &&
+            item.check.kind === 'human_confirmed' &&
+            item.check.params.questionId === selection.questionId
+          : selection.includes(item.id)
       )) {
         await check(todo, Date.now()).catch((error) => warn('Todo check pending', error));
       }

@@ -16,9 +16,13 @@ const inputSchema = z.strictObject({
     .string()
     .regex(
       /^(?:[\w.-]+\/[\w.-]+#[1-9]\d*|https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/[1-9]\d*)$/
-    ),
+    )
+    .meta({ examples: ['example/repo#1'] }),
   path: z.string().min(1).max(4096),
-  headSha: z.string().regex(/^[a-f0-9]{40}$/),
+  headSha: z
+    .string()
+    .regex(/^[a-f0-9]{40}$/)
+    .meta({ examples: ['a'.repeat(40)] }),
   requestId: z.string().uuid(),
 });
 type Input = z.infer<typeof inputSchema>;

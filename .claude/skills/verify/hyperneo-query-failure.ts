@@ -1,3 +1,4 @@
+import { readHyperneoTurnEnds } from '../../../packages/daemon/src/storage/hyperneo-turn-ends-read.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -40,6 +41,7 @@ const seed = (id: string): Session => ({
 await db.createSession(seed(root));
 await db.createSession(seed(worker));
 const driver = createHyperneoAdapter({
+  readTurnEnds: async (id, since) => readHyperneoTurnEnds(db.getDatabase(), id, since),
   db: () => db.getDatabase(), machine: 'synthetic', searchChats: async () => [],
   handoff: async () => ({ kind: 'enqueued', id: 'unused' }),
   sessions: { create: async () => { throw new Error('unused'); }, resolveModel: async () => null,

@@ -29,3 +29,9 @@ RPC replies, stored rows and stub calls before removing the synthetic HOME/data.
 The helper closes the WebSocket and owned daemon in finally, including failures.
 For the legacy-precedence regression, the baseline must fail because the same
 public read incorrectly shows Done for the conflicting result.
+
+Closed-without-replacement PR judgements must preserve failed and closed-unverified
+todos instead of replacing their recorded outcome or sending another failure
+notice. The same terminal states must still become Done when their PR merges.
+The baseline regression shows the public closed-unverified card becoming Failed;
+the fixed proof must retain Closed unverified across both scheduled refreshes.

@@ -710,9 +710,9 @@ export class NeoService {
     this.notifyChanged();
   }
 
-  deliverQuestionAnswers(questionId?: string): Promise<void> {
+  async deliverQuestionAnswers(questionId?: string): Promise<void> {
     const warn = (error: unknown) => this.log.warn('Worker answer delivery pending', error);
-    return createNeoQuestionAnswerDelivery(
+    await createNeoQuestionAnswerDelivery(
       this.todos,
       this.todoSessions,
       (caller, name, input) =>
@@ -721,6 +721,10 @@ export class NeoService {
       this.todoRunner.recompute,
       warn
     )(questionId).catch(warn);
+    if (questionId)
+      await this.todoRunner.checkNow({ questionId }, (message, error) =>
+        this.log.warn(message, error)
+      );
   }
 
   async refreshDriverWork(): Promise<void> {

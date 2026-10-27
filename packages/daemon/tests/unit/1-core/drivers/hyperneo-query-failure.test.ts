@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
+import { readHyperneoTurnEnds } from '../../../../src/storage/hyperneo-turn-ends-read.ts';
 import { createHyperneoAdapter } from '../../../../src/lib/drivers/hyperneo-adapter.ts';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
@@ -41,6 +42,7 @@ async function persist(value: typeof episode | null) {
 
 function adapter() {
   return createHyperneoAdapter({
+    readTurnEnds: async (id, since) => readHyperneoTurnEnds(db.getDatabase(), id, since),
     db: () => db.getDatabase(),
     machine: 'synthetic',
     searchChats: async () => [],
@@ -102,9 +104,13 @@ test('an old successful result cannot hide a failed episode; a hard reset clears
     parent_tool_use_id: null,
   } as never);
   await persist(episode);
-  expect(await adapter().status!(ref)).toMatchObject({
+  expect(await adapter().status!(ref, 0)).toMatchObject({
     ok: true,
-    value: { status: 'failed', lastReply: error },
+    value: {
+      status: 'failed',
+      lastReply: error,
+      turnEnds: [expect.objectContaining({ message: 'An older successful turn' })],
+    },
   });
   await persist({ ...episode, id: 'reset-episode', failures: 0, failed: false });
   expect(await adapter().status!(ref)).toMatchObject({

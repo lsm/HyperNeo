@@ -32,8 +32,7 @@ type Contains = (repo: string, sha: string, build: string) => Promise<boolean>;
 const unmet: NeoTodoCheckResult = { done: false, evidence: null };
 
 function sentence(check: CoreCheck): string {
-  if (check.kind === 'human_confirmed')
-    return `The human answers yes to card ${check.params.questionId}.`;
+  if (check.kind === 'human_confirmed') return `The human answers card ${check.params.questionId}.`;
   if (check.kind === 'evidence')
     return 'artifact' in check.params
       ? `Registered artifact ${check.params.artifact} exists.`
@@ -63,9 +62,10 @@ export function createCoreTodoPack(db: Database, contains: Contains): NeoPack {
       return (
         !!question &&
         question.askId === todo.askId &&
-        question.kind === 'yesno' &&
         question.state === 'answered' &&
-        question.answer === 'yes' &&
+        (Array.isArray(question.answer)
+          ? question.answer.length > 0
+          : typeof question.answer === 'string' && question.answer.trim().length > 0) &&
         question.answeredBy !== null
       );
     }
