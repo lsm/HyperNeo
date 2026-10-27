@@ -40,6 +40,9 @@ export const planNeoTodoDependencies = (superpipe({})('neo.todo.plan-dependencie
   after: readonly string[]
 ) => string[] | DependencyRejection;
 
+export const NEO_TODO_NOT_READY =
+  'not_ready: this step waits for unfinished steps; add it without start and the daemon starts it once they are done.';
+
 export function neoTodoAfterRefusal(
   existing: readonly NeoTodo[],
   index: number | null,
@@ -60,7 +63,7 @@ export function neoTodoAfterRefusal(
       (ref) =>
         typeof ref === 'number' || !['done', 'closed_unverified'].includes(live.get(ref) ?? '')
     )
-    ? 'not_ready: this step waits for unfinished steps; add it without start and the daemon starts it once they are done.'
+    ? NEO_TODO_NOT_READY
     : null;
 }
 

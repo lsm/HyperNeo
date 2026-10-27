@@ -214,7 +214,7 @@ describe('todo dependencies', () => {
         ],
       });
       expect(again).toMatchObject({ ok: false, reason: expect.stringContaining('not_ready') });
-      expect(store.getTodo(opened.todos[1].id)?.state).toBe('todo');
+      expect(store.getTodo(opened.todos[1].id)?.state).toBe(opened.todos[1].state);
     } finally {
       db.close();
     }
