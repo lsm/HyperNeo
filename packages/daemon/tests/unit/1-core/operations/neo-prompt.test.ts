@@ -13,7 +13,9 @@ import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 describe('root Neo system prompt', () => {
   test.each([false, true])('limits worker messages with packs: %s', (enabled) => {
     const prompt = neoPrompt(enabled ? neoSettingsPackBriefs() : []);
-    expect(prompt).toContain('Give a new item to an existing worker when it continues that worker');
+    expect(prompt).toContain(
+      'otherwise start a new worker there, named for the matter, never across projects'
+    );
     if (enabled) {
       expect(prompt).toContain('named for the project and a number');
       expect(prompt).toContain('work.rename');
