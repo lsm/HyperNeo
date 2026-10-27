@@ -20,7 +20,7 @@ import {
   sameNeoTodoCheck,
 } from './todo-completion.ts';
 import { neoTodoHome, neoTodoRepo } from './todo-repo.ts';
-import { planNeoTodoAwaitingStart } from './todo-runner.ts';
+import { isNeoTodoStartable, planNeoTodoAwaitingStart } from './todo-runner.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -301,7 +301,7 @@ export function planNeoTodoEdit(
   const held = todo.state === 'blocked' && todo.blockedBy === 'held';
   if (input.hold !== undefined && (input.done || input.artifacts))
     return fail('hold_with_done: hold or release a todo separately from ticking it done.');
-  if (input.hold && todo.state !== 'todo' && !held)
+  if (input.hold && !isNeoTodoStartable(todo) && !held)
     return fail(
       `not_holdable: only a todo that has not started can be held; this one is ${todo.state}.`
     );
