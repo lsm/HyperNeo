@@ -1240,6 +1240,71 @@ describe('NeoAskTodos in English', () => {
   });
 });
 
+describe('Settled question previews', () => {
+  it.each(['answered', 'retired'] as const)(
+    'keeps a long %s question bounded until Read all opens it',
+    async (state) => {
+      locale.value = 'en';
+      const text =
+        '## A settled decision\n\n' +
+        'Long synthetic context. '.repeat(60) +
+        '\n\n**Final detail**';
+      const view = render(
+        <NeoAskTodos
+          entry={entry({
+            questions: [
+              question('long', {
+                text,
+                state,
+                answer: state === 'answered' ? 'Keep the decision' : null,
+                answeredAt: state === 'answered' ? 1 : null,
+                retiredReason: 'No longer needed',
+              }),
+            ],
+          })}
+          onAnswer={vi.fn()}
+        />
+      );
+      fireEvent.click(view.container.querySelector('[data-ask-details-toggle]')!);
+      const row = view.container.querySelector('#neo-ref-question-long')!;
+      await waitFor(() => expect(row.textContent).toContain('A settled decision'));
+      expect(row.textContent).not.toContain('Final detail');
+      expect(row.textContent!.length).toBeLessThan(450);
+      expect(row.textContent).toContain(
+        state === 'answered' ? 'Keep the decision' : 'No longer needed'
+      );
+      fireEvent.click(view.getByRole('button', { name: 'Read all', exact: true }));
+      const dialog = await view.findByRole('dialog');
+      await waitFor(() => expect(dialog.querySelector('strong')?.textContent).toBe('Final detail'));
+      expect(dialog.textContent).toContain('Long synthetic context. '.repeat(60).trim());
+      fireEvent.click(view.getByRole('button', { name: /close/i }));
+      await waitFor(() => expect(view.queryByRole('dialog')).toBeNull());
+      expect(row.textContent).not.toContain('Final detail');
+    }
+  );
+
+  it('keeps short questions inline and uses a localized full-text control', async () => {
+    const view = render(
+      <NeoAskTodos
+        entry={entry({
+          questions: [
+            question('short', { text: '**Brief question**', state: 'answered', answer: 'Yes' }),
+            question('long', { text: '长问题。'.repeat(120), state: 'retired' }),
+          ],
+        })}
+        onAnswer={vi.fn()}
+      />
+    );
+    fireEvent.click(view.container.querySelector('[data-ask-details-toggle]')!);
+    await waitFor(() =>
+      expect(view.container.querySelector('#neo-ref-question-short strong')?.textContent).toBe(
+        'Brief question'
+      )
+    );
+    expect(view.getAllByRole('button', { name: '阅读全文', exact: true })).toHaveLength(1);
+  });
+});
+
 describe('Question full-version document', () => {
   it.each(['open', 'answered', 'retired'] as const)(
     'keeps the %s card short and opens literal full text',
