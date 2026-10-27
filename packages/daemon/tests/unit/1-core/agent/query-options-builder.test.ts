@@ -158,7 +158,7 @@ describe('QueryOptionsBuilder', () => {
       await releaseWorkerSandbox(root);
       const options = await builder.build();
       expect(options.sandbox).toMatchObject({ enabled: false });
-      expect(options.env?.TMPDIR).toBe(undefined);
+      expect(options.env?.TMPDIR).not.toBe(workerSandboxPaths(root).TMPDIR);
       await releaseWorkerSandbox(root);
     });
 

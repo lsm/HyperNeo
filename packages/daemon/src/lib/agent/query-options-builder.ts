@@ -1,13 +1,12 @@
-import { readClaudeWorkerSandbox } from '../drivers/claude-native-writes.ts';
-import { fillPrompt, MINIMAL_WORKTREE_PROMPT, WORKTREE_ISOLATION_PROMPT } from '@hyperneo/prompts';
 import type {
   CanUseTool,
-  McpServerConfig as SdkMcpServerConfig,
   HookCallback,
   Options,
   PreToolUseHookInput,
+  McpServerConfig as SdkMcpServerConfig,
   Settings,
 } from '@anthropic-ai/claude-agent-sdk';
+import { fillPrompt, MINIMAL_WORKTREE_PROMPT, WORKTREE_ISOLATION_PROMPT } from '@hyperneo/prompts';
 import type {
   AgentDefinition,
   AppMcpServer,
@@ -21,12 +20,12 @@ import type {
   ValidationResult,
 } from '@hyperneo/shared';
 import {
+  effortForThinkingLevel,
   isMcpServerSkillConfig,
   normalizeThinkingLevel,
   PROVIDER_THINKING_MODES,
   resolveAutoCompactPercent,
   THINKING_LEVEL_TOKENS,
-  effortForThinkingLevel,
   type ThinkingEffort,
 } from '@hyperneo/shared';
 import type { McpServerConfig } from '@hyperneo/shared/types/sdk-config';
@@ -36,27 +35,26 @@ import { join } from 'path';
 import type { Database } from '../../storage/database.ts';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository.ts';
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository.ts';
+import { NON_DELEGATING_GENERAL_AGENT } from '../agents/custom-agent.ts';
 import { PROVIDER_KEY_ENV_VARS } from '../credential-discovery.ts';
 import { getDataDir } from '../data-dir.ts';
-import { sessionDoorPath } from '../messaging/session-door.ts';
+import { readClaudeWorkerSandbox } from '../drivers/claude-native-writes.ts';
+import { handoffDraftDirectory } from '../handoffs/outbox.ts';
 import { Logger } from '../logger.ts';
-import { neoCoordinatorBinding } from '../neo/session-policy.ts';
-import { neoSecretReadRules } from '../neo/secret-read-rules.ts';
-import { neoReadAccess } from '../neo/read-access.ts';
-import { neoReadSandbox, neoReadTools } from '../neo/session-config.ts';
 import { mergeSessionMcpServers } from '../mcp/built-in-servers.ts';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
-import {
-  prepareInitialSessionToolSelection,
-  projectSessionToolInputs,
-  type SessionToolInputs,
-} from '../tools/session-tool-inputs.ts';
+import { sessionDoorPath } from '../messaging/session-door.ts';
+import { createSendMessageRedirectHook } from '../messaging/session-reply.ts';
 import {
   getProviderCatalogEpoch,
   getSessionModelCacheKey,
   isCuratedOutModel,
   resolveSessionContextModelInfo,
 } from '../model-service.ts';
+import { neoReadAccess } from '../neo/read-access.ts';
+import { neoSecretReadRules } from '../neo/secret-read-rules.ts';
+import { neoReadSandbox, neoReadTools } from '../neo/session-config.ts';
+import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
 import {
   getProviderContextManager,
@@ -68,27 +66,29 @@ import { KimiProvider } from '../providers/kimi-provider.js';
 import { stripRejectedSessionConfig } from '../session/create-session-config.ts';
 import type { SettingsManager } from '../settings-manager.ts';
 import type { SkillsManager } from '../skills-manager.ts';
-import { NON_DELEGATING_GENERAL_AGENT } from '../agents/custom-agent.ts';
+import {
+  prepareInitialSessionToolSelection,
+  projectSessionToolInputs,
+  type SessionToolInputs,
+} from '../tools/session-tool-inputs.ts';
 import { createBashScopeHook, extractBashScopePrefixes } from './bash-scope.ts';
-import { createSendMessageRedirectHook } from '../messaging/session-reply.ts';
 import {
   builtinSkillPluginPath,
   defaultBuiltinSkillPluginRoot,
 } from './builtin-skill-plugin-wrapper.ts';
 import { autoCompactReserveTokens } from './context-tracker.js';
 import { getCoordinatorAgents } from './coordinator-agents.ts';
+import { type ExaWebToolsActivation, resolveExaWebToolsActivation } from './exa-web-tools.ts';
 import { decideFallbackModelCuration } from './fallback-model-curation.ts';
-import { resolveExaWebToolsActivation, type ExaWebToolsActivation } from './exa-web-tools.ts';
 import { createLoopDetectorHooks } from './loop-detector-hook.ts';
 import {
   createOutputLimiterPostHook,
   createOutputLimiterPreHook,
   resolveConfig,
 } from './output-limiter-hook.ts';
+import type { QuestionInputOriginSource } from './question-input-origin.ts';
 import { awaitSDKCliPath, isRunningUnderBun } from './sdk-cli-resolver.js';
 import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
-import { handoffDraftDirectory } from '../handoffs/outbox.ts';
-import type { QuestionInputOriginSource } from './question-input-origin.ts';
 
 const log = new Logger('QueryOptionsBuilder');
 
@@ -418,7 +418,9 @@ export class QueryOptionsBuilder {
     const session = overrides?.session ?? this.ctx.session;
     const config = this.admittedConfig(session);
     const toolInputs = this.canonicalToolInputs(session);
-    const workerSandbox = await readClaudeWorkerSandbox(this.getCwd());
+    const sessionSandbox = config.sandbox as { enabled?: boolean } | undefined;
+    const workerSandbox =
+      sessionSandbox?.enabled === false ? null : await readClaudeWorkerSandbox(this.getCwd());
 
     await this.ctx.settingsManager.prepareSDKOptions();
 
@@ -504,7 +506,7 @@ export class QueryOptionsBuilder {
       ? undefined
       : handoffDraftDirectory(getDataDir(), this.ctx.session.id);
     if (handoffDirectory) additionalDirectories?.push(handoffDirectory);
-    if (handoffDirectory) workerSandbox?.sandbox.filesystem.allowWrite.push(handoffDirectory);
+    if (handoffDirectory) workerSandbox?.sandbox?.filesystem?.allowWrite?.push(handoffDirectory);
     const hooks = this.buildHooks(overrides?.askUserQuestionHook ?? this.askUserQuestionHook);
     const requestedPermissionMode = this.getPermissionMode();
     const permissionMode =

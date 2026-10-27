@@ -1,5 +1,13 @@
 import { afterEach, expect, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, type Stats } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  type Stats,
+  statSync,
+} from 'node:fs';
 import { lstat, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +16,7 @@ import {
   prepareWorkerSandbox,
   workerSandboxPaths,
 } from '../../../../src/lib/drivers/worker-sandbox';
+import { workerWorkLocations } from '../../../../src/lib/work-locations';
 
 var realLstat: typeof lstat | undefined;
 vi.mock('node:fs/promises', async (original) => {
@@ -113,10 +122,10 @@ test('Windows runtime preparation does not reject synthesized group and other bi
 
 test('POSIX workers chmod their own scratch roots private instead of refusing', async () => {
   const data = fixture('linux', false);
-  const scratch = join(data, 'work', 'scratch', 'hn-demo');
+  const scratch = workerWorkLocations(root).scratch;
   mkdirSync(scratch, { recursive: true });
   chmodSync(scratch, 0o755);
   const env = (await prepareWorkerSandbox(root)) as Record<string, string>;
   expect(statSync(scratch).mode & 0o777).toBe(0o700);
-  expect(env.TMPDIR.startsWith(scratch)).toBe(true);
+  expect(env.TMPDIR).toBe(scratch);
 });

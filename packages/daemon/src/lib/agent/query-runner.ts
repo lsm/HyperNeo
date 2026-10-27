@@ -11,14 +11,14 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import type { SessionToolApplication } from '@hyperneo/shared/types/session-tool-choice';
-import type { SessionToolInventory } from '@hyperneo/shared/types/observed-tool-inventory';
 import {
   isSDKAPIRetryMessage,
   isSDKResultMessage,
   isSDKResultSuccess,
   isSDKSystemInit,
 } from '@hyperneo/shared/sdk/type-guards';
+import type { SessionToolInventory } from '@hyperneo/shared/types/observed-tool-inventory';
+import type { SessionToolApplication } from '@hyperneo/shared/types/session-tool-choice';
 import type { UUID } from 'crypto';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -28,9 +28,10 @@ import { ErrorCategory, type ErrorManager } from '../error-manager.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Logger } from '../logger.ts';
+import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import type { ProviderEnvVars } from '../provider-service.ts';
-import { setKeyBridgeThinkingOff } from '../providers/provider-key-bridge.ts';
 import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
+import { setKeyBridgeThinkingOff } from '../providers/provider-key-bridge.ts';
 import { resolveAvailableQueryProvider } from '../providers/registry.js';
 import {
   FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
@@ -44,9 +45,9 @@ import { assessLimitError, type LimitRetryHint } from './limit-error-classifier.
 import { drainDeliveryWaitersOnTerminalSDKMessage } from './message-delivery.ts';
 import type { MessageQueue } from './message-queue.ts';
 import { isNetworkUnreachableError } from './network-outage-pause.ts';
+import { ObservedToolInventory } from './observed-tool-inventory.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
-import { ObservedToolInventory } from './observed-tool-inventory.ts';
 import type { QueryLike } from './query-like.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
 import {
@@ -59,7 +60,6 @@ import {
 } from './query-retry-routing.ts';
 import { type QuestionInputOriginSource, QuestionInputScope } from './question-input-origin.ts';
 import { RetryPromptIdentity } from './retry-prompt-identity.ts';
-import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import type { SDKMessageHandler } from './sdk-message-handler.ts';
 import { getSdkStartupGate, type SdkStartupPermit } from './sdk-startup-gate.ts';
 import {
@@ -412,6 +412,7 @@ export interface QueryRunnerContext {
     prompt: { uuid: string; content: string | MessageContent[] } | null,
     queryGeneration?: number
   ): Promise<boolean>;
+  onQueryStartFailure?(error: Error, promptConsumed: boolean): Promise<void>;
 }
 
 export class QueryRunner {
@@ -1751,6 +1752,7 @@ export class QueryRunner {
           }
         } else if (route.action === 'terminal') {
           this.ctx.endNetworkOutage?.();
+          await this.ctx.onQueryStartFailure?.(error as Error, retryEnv.hasConsumedPrompt);
           if (!finalizer.skipBeginTerminalIdle) {
             if (this.ctx.isCleaningUp() || this.ctx.getQueryGeneration() !== queryGeneration) {
               return;

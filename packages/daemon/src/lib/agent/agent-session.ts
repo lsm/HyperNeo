@@ -1,8 +1,3 @@
-import type {
-  SessionToolApplication,
-  SessionToolChoiceKey,
-} from '@hyperneo/shared/types/session-tool-choice';
-import { sdkPendingRemoval } from '../../storage/repositories/sdk-message-transactions.ts';
 import type { ChildProcess } from 'node:child_process';
 import type {
   AgentProcessingState,
@@ -35,11 +30,15 @@ import type {
 import { generateUUID, DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
 import type { McpSetServersResult } from '@hyperneo/shared/sdk';
 import type { SessionToolInventory } from '@hyperneo/shared/types/observed-tool-inventory';
+import type {
+  SessionToolApplication,
+  SessionToolChoiceKey,
+} from '@hyperneo/shared/types/session-tool-choice';
 import type { Database } from '../../storage/database.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { AgentChildProcessRepository } from '../../storage/repositories/agent-child-process-repository.ts';
 import { recordOperationRefusal } from '../../storage/repositories/operation-refusal-repository.ts';
-import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
-import type { OperationRefusal } from '../operations/mcp-adapter.ts';
+import { sdkPendingRemoval } from '../../storage/repositories/sdk-message-transactions.ts';
 import { assembleSessionBriefing } from '../briefings/assemble-session-briefing.ts';
 import type { AuthoredCapabilityContribution } from '../briefings/contribution.ts';
 import { NO_SESSION_SCOPE, type SessionScopeResolver } from '../briefings/scope-resolver.ts';
@@ -55,6 +54,7 @@ import {
 } from '../operations/caller.ts';
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
 import { operationsCapabilityContribution } from '../operations/door-briefing.ts';
+import type { OperationRefusal } from '../operations/mcp-adapter.ts';
 import { createOperationMcpServer } from '../operations/mcp-server.ts';
 import type {
   OperationCallerRole,
@@ -161,11 +161,12 @@ import {
   isSDKResultSuccess,
   isSDKSessionStateChangedMessage,
 } from '@hyperneo/shared/sdk/type-guards';
+import { AcpQueryAdapter } from '../acp/acp-query-adapter.ts';
 import { AcpQueryRunner } from '../acp/acp-query-runner.ts';
 import {
+  getModelInfo,
   getSessionContextModelInfo,
   initializeModels,
-  getModelInfo,
   resolveModelAlias,
   resolveSessionContextModelInfo,
 } from '../model-service.ts';
@@ -179,6 +180,7 @@ import {
   claimProviderFailureNotice,
   recordClassifiedProviderFailure,
 } from '../providers/provider-failure-store.ts';
+import { setKeyBridgeThinkingOff } from '../providers/provider-key-bridge.ts';
 import { resolveAvailableQueryProvider } from '../providers/registry.ts';
 import {
   AskUserQuestionHandler,
@@ -199,9 +201,9 @@ import {
   acquireContextClearBoundary,
   admitAcrossContextClearBoundary,
   type ContextClearBoundaryOwner,
+  DeliveryEnqueueRejectedError,
   type DeliveryOutcome,
   type DriveTurnOutcome,
-  DeliveryEnqueueRejectedError,
   deliverMessage,
   deliveryConsumptionTimeoutMs,
   deliveryConsumptionTimeoutOrDefault,
@@ -239,8 +241,6 @@ import {
   QueryOptionsBuilder,
   type QueryOptionsBuilderContext,
 } from './query-options-builder.ts';
-import { AcpQueryAdapter } from '../acp/acp-query-adapter.ts';
-import { setKeyBridgeThinkingOff } from '../providers/provider-key-bridge.ts';
 import { QueryRunner, type QueryRunnerContext, type TrackedAgentProcess } from './query-runner.ts';
 import { RateLimitWatchdog } from './rate-limit-watchdog.ts';
 import { selectStaleSubmittedDeliveries } from './reconciler-sweep.ts';
@@ -258,6 +258,7 @@ import {
   type SessionConfigHandlerContext,
 } from './session-config-handler.ts';
 import { SlashCommandManager, type SlashCommandManagerContext } from './slash-command-manager.ts';
+import { startFailureDecision } from './start-failure-policy.ts';
 import {
   buildTaskNotificationRequeryEscalationEvent,
   resolveTaskNotificationRequery,
@@ -470,6 +471,7 @@ export class AgentSession
   private clearConfirmTimeoutMs = CLEAR_CONFIRM_TIMEOUT_MS;
 
   readonly errorManager: ErrorManager;
+  private startFailures = { count: 0, until: 0 };
   settingsManager: SettingsManager;
   readonly logger: Logger;
 
@@ -2651,6 +2653,27 @@ export class AgentSession
     this.networkPause.endOutage();
   }
 
+  async onQueryStartFailure(error: Error, promptConsumed: boolean): Promise<void> {
+    if (promptConsumed) {
+      this.startFailures = { count: 0, until: 0 };
+      return;
+    }
+    this.startFailures.count += 1;
+    const decision = startFailureDecision(this.startFailures.count);
+    if (!decision.failed) {
+      this.startFailures.until = Date.now() + decision.parkMs;
+      return;
+    }
+    this.startFailures.until = Number.POSITIVE_INFINITY;
+    await this.errorManager.handleError(
+      this.session.id,
+      error,
+      ErrorCategory.SYSTEM,
+      `Session failed after ${this.startFailures.count} start attempts: ${error.message}`,
+      this.stateManager.getState()
+    );
+  }
+
   async onNetworkOutage(
     errorText: string,
     prompt: { uuid: string; content: string | MessageContent[] } | null,
@@ -2767,6 +2790,13 @@ export class AgentSession
           }
           if (this.isCleaningUp()) return { outcome: 'aborted' };
           if (claimGuard && !claimGuard()) return { outcome: 'aborted' };
+
+          if (Number.isFinite(this.startFailures.until) && this.startFailures.until > Date.now())
+            return { outcome: 'blocked', retryAt: this.startFailures.until };
+          if (!Number.isFinite(this.startFailures.until))
+            throw new MessageDeliveryTerminalTurnError(
+              `Session failed after ${this.startFailures.count} start attempts`
+            );
 
           if (this.isWaitingForInput()) {
             return {
