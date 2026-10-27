@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { waitForSdkBodyCopy } from './wait-for-sdk-body-copy.ts';
 
 const run = resolve(process.argv.at(-1)!);
 const deferBodyCopy = process.argv.includes('--defer-body-copy');
@@ -93,6 +94,10 @@ try {
     { limit: 3, since: first.timestamp, sinceRowid: first.rowid },
   ];
   const expected = await Promise.all(queries.map(reference));
+  if (releaseBodyCopy) queueMicrotask(releaseBodyCopy);
+  evidence.startupCopyDeferred = Boolean(releaseBodyCopy);
+  await waitForSdkBodyCopy(raw);
+  evidence.startupBodyCopyComplete = true;
   const bodyHash = () => {
     const hash = createHash('sha256');
     for (const row of raw.prepare('SELECT sdk_message FROM sdk_message_bodies ORDER BY seq').all() as { sdk_message: string }[]) hash.update(row.sdk_message);
@@ -104,8 +109,6 @@ try {
   transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
   hub.registerTransport(transport);
   await transport.initialize();
-  if (releaseBodyCopy) queueMicrotask(releaseBodyCopy);
-  evidence.startupCopyDeferred = Boolean(releaseBodyCopy);
   const prepare = raw.prepare;
   let mainSqlAttempts = 0;
   raw.prepare = (...args) => {
