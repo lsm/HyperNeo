@@ -42,3 +42,12 @@ only this journey and its evidence folder may change. Audit before push:
 ```sh
 bun --no-install --no-env-file .claude/skills/verify/lane-a-health-reader-proof-binding.ts HEAD
 ```
+
+The `bun-verify` directory is the deliberately failing pre-fix job committed
+before the fix. It already had zero target SQL on main; its read was on the
+writer and waited for forced lock release. The final pair in observed.json
+requires read-mode lookup commands, writer-mode acknowledgements, no forced
+release and the offered notice while the lock remains held. Raw receipts and
+cleanup records are retained. The original delivery helper was also run in both
+runtimes after updating its instrumentation; legacy-* directories retain those
+successful compatibility checks. Its old binding applies only to its original PR.
