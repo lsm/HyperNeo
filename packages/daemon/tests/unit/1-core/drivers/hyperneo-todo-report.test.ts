@@ -24,9 +24,10 @@ describe('HyperNeo todo reply attribution', () => {
       type === 'result' ? 1 : 0
     );
   };
-  const status = async (input = receipt) => {
+  const status = async (input = receipt, extra = {}) => {
     const adapter = createHyperneoAdapter({
       db: () => db,
+      ...extra,
       machine: 'synthetic',
       searchChats: async () => [],
       handoff: async () => ({ kind: 'enqueued', id: 'synthetic' }),
@@ -74,6 +75,30 @@ describe('HyperNeo todo reply attribution', () => {
     put('todo-input', 'user', 'Original todo instruction', 10);
   });
   afterEach(() => db.close());
+
+  test('status awaits the reader for complete turn reports without a main SQL fallback', async () => {
+    const turnEnds = [{ id: 'worker-result', at: 20000, startedAt: 10000, message: report }];
+    const calls: unknown[] = [];
+    const detail = await status(receipt, {
+      readTurnEnds: async (id: string, since: number) => {
+        calls.push([id, since]);
+        await Promise.resolve();
+        return turnEnds;
+      },
+    });
+    expect(calls).toEqual([['worker', 0]]);
+    expect(detail.value).toMatchObject({ ok: true, value: { turnEnds } });
+  });
+
+  test('reader failure rejects status instead of repeating the read on main', async () => {
+    await expect(
+      status(receipt, {
+        readTurnEnds: async () => {
+          throw new Error('reader unavailable');
+        },
+      })
+    ).rejects.toThrow('reader unavailable');
+  });
 
   test.each(['', report])(
     'exposes a complete explicit SDK turn end, including silence: %s',
