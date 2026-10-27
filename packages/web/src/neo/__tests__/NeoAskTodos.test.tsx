@@ -278,7 +278,7 @@ describe('NeoAskTodos', () => {
     ).toBe('todo');
   });
 
-  it('keeps focused session context without a duplicate header opener', () => {
+  it('keeps retired focused discussion navigation on the card without a header pill', () => {
     locale.value = 'en';
     const onOpen = vi.fn();
     const focusedSession = {
@@ -301,8 +301,12 @@ describe('NeoAskTodos', () => {
     );
     expect(app.container.querySelector('[data-ask-question]')).toBeNull();
     expect(app.getByText('Positioning discussion · Anthropic')).toBeTruthy();
-    expect(app.queryByRole('button', { name: 'Open session: Positioning discussion' })).toBeNull();
-    expect(onOpen).not.toHaveBeenCalled();
+    expect(app.container.querySelector('[data-ask-focused-session] button')).toBeNull();
+    const open = app.getByRole('button', { name: 'Open session: Positioning discussion' });
+    expect(open.textContent).toBe('Open');
+    expect(open.querySelector('svg')).toBeTruthy();
+    fireEvent.click(open);
+    expect(onOpen).toHaveBeenCalledWith('/session/discussion', focusedSession.label);
   });
 
   it.each(['codex://threads/worker', 'https://claude.ai/code/synthetic-bridge', '/session/worker'])(
