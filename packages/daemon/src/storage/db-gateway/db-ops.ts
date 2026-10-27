@@ -119,6 +119,7 @@ import { singleMessageReads } from '../repositories/sdk-single-message-read.ts';
 import { messageCountReads } from '../repositories/sdk-message-count-read.ts';
 import { codingUnownedWrites } from '../../lib/neo/packs/coding/unowned-db.ts';
 import { sessionExportReads } from '../repositories/session-export-read.ts';
+import { neoPublicationEditWrites } from '../repositories/neo-publication-edit-writes.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -219,5 +220,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     messageCountReads,
     codingUnownedWrites,
     sessionExportReads,
+    neoPublicationEditWrites,
   ].map((op) => [op.name, op])
 );

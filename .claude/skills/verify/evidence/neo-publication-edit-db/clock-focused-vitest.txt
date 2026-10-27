@@ -1,0 +1,12 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:7:14). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon
+
+
+ Test Files  3 passed (3)
+      Tests  65 passed (65)
+   Start at  04:18:19
+   Duration  1.49s (transform 56%, tests 25%, import 15%, setup 3%)
+
