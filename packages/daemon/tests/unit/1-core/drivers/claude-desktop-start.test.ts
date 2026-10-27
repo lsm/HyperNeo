@@ -259,6 +259,38 @@ describe('claude-desktop start', () => {
     expect(handoffs).toBe(1);
   });
 
+  test('an adopted worker retains location env in project settings without launcher flags', async () => {
+    configureWorkerSandbox(() => 'off');
+    const directory = join(dir, 'adopted');
+    mkdirSync(join(directory, '.claude'), { recursive: true });
+    const path = join(directory, '.claude/settings.local.json');
+    const retained = { env: { CUSTOM_SETTING: 'retained' }, permissions: { deny: ['Bash(rm *)'] } };
+    writeFileSync(path, JSON.stringify(retained));
+    const launches: string[][] = [];
+    const code = await launchInClaudeDesktop('synthetic-adopted', directory, {
+      spawn: (args) => {
+        launches.push(args);
+        return { exited: Promise.resolve(0) } as never;
+      },
+    });
+    expect(code).toBe(0);
+    const settings = JSON.parse(readFileSync(path, 'utf8'));
+    expect(settings.env.HYPERNEO_WORKTREES).toBe(join(dir, 'data/worktrees'));
+    expect(settings.env.CUSTOM_SETTING).toBe('retained');
+    expect(settings.permissions).toEqual(retained.permissions);
+    expect(settings.sandbox).toBeUndefined();
+    expect(settings.env.TMPDIR).toBeUndefined();
+    expect(launches[0]).toEqual([
+      'script',
+      '-q',
+      '/dev/null',
+      'claude',
+      '--desktop',
+      '--resume',
+      'synthetic-adopted',
+    ]);
+  });
+
   test('a hung Desktop handoff has a bounded refusal and clears its timer', async () => {
     vi.useFakeTimers();
     try {
