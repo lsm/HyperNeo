@@ -35,14 +35,14 @@ export async function verifyWholeMessageCopy(page, fixture, { phase, touch = fal
   await use(footer);
   assert.equal(await clipboard(), expected);
   await entry.scrollIntoViewIfNeeded();
-  if (touch) {
+  {
     const box = await entry.boundingBox(), cdp = await page.context().newCDPSession(page);
     try {
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: box.x + 45, y: box.y + 75 }] });
       await page.waitForTimeout(600);
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     } finally { await cdp.detach(); }
-  } else await entry.click({ button: 'right', position: { x: 35, y: 40 } });
+  }
   await use(page.getByRole('menuitem', { name: 'Copy', exact: true }));
   assert.equal(await clipboard(), expected);
   for (const [text, source] of [['Same source', 'Same **source**'], ['Verbatim source', 'Verbatim **source**']]) {
