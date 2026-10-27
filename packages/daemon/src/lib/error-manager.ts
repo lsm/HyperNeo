@@ -2,7 +2,7 @@ import { isProviderNotRegisteredMessage } from './providers/session-provider-env
 import type { MessageHub } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus.ts';
 import { Logger } from './logger.ts';
-import { isTerminalTurnError } from './agent/message-delivery.ts';
+import { isTerminalTurnError, MessageDeliveryTerminalTurnError } from './agent/message-delivery.ts';
 
 export enum ErrorCategory {
   AUTHENTICATION = 'authentication',
@@ -96,7 +96,9 @@ export class ErrorManager {
       code: errorCode,
       message: errorMessage,
       userMessage: userMessage || this.getUserFriendlyMessage(category, errorCode, errorMessage),
-      recoverable: this.isRecoverable(category, errorCode),
+      recoverable:
+        !(error instanceof MessageDeliveryTerminalTurnError) &&
+        this.isRecoverable(category, errorCode),
       timestamp: new Date().toISOString(),
       stack,
       sessionContext,

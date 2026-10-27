@@ -126,6 +126,14 @@ the helper's evidence JSON and log outside that run, then immediately removes
 its temporary daemon data. It preserves failure status and never deletes the
 run if saving evidence fails. Keep baseline and fixed evidence in separate
 directories; the helper must close its resources in finally.
+
+Reader proofs that trap SDK-message SQL must finish startup body copying before
+measuring reader work or acquiring a competing writer. After seeding fixtures,
+call `waitForSdkBodyCopy(raw)` from `wait-for-sdk-body-copy.ts`, then capture body
+hashes and enable the measurement guard. It waits for the real completion or
+rollback marker with a deadline; never seed those markers to bypass migration.
+Use the transcript/single-message helpers' `--defer-body-copy` mode to exercise
+late startup copying deterministically.
 The wrapper and Deno smoke trim TMPDIR's trailing slash so HOME/data paths match helpers'
 normalized run paths, including macOS's default TMPDIR.
 For native Unix-socket fixtures, select `TMPDIR=/private/tmp` when invoking the
