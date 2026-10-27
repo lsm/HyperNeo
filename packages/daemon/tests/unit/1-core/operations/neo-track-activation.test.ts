@@ -17,13 +17,18 @@ let service: ReturnType<typeof createNeoService>;
 const ref = { adapter: 'codex-desktop', id: 'synthetic-track-worker' };
 const key = neoSessionKey(ref);
 const told: { root: string; id: string; text: string }[] = [];
+const announcements: string[] = [];
 beforeEach(async () => {
   db = await createTestDb();
   await db.createSession(createTestSession('neo:root'));
   service = createNeoService(
     db,
     { getOperationRegistry: () => createOperationRegistry([]) } as unknown as SessionManager,
-    { event: mock(() => {}) } as unknown as MessageHub,
+    {
+      event: mock((name: string) => {
+        if (name === 'neo.changed') announcements.push(name);
+      }),
+    } as unknown as MessageHub,
     new InternalEventBus<DaemonInternalEventMap>()
   );
   service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
@@ -31,6 +36,7 @@ beforeEach(async () => {
     { key, ref, title: '完整的人类工作 🦊', kind: 'failed', at: 1 },
   ];
   told.length = 0;
+  announcements.length = 0;
   Object.assign(service, {
     deliver: async (root: string, id: string, text: string) => {
       told.push({ root, id, text });
@@ -60,6 +66,7 @@ test('a failed Track transaction leaves no Work card or kickoff', async () => {
   expect(service.todos.listOpenAsks()).toEqual([]);
   expect(service.todos.followedRefs()).toEqual([]);
   expect(told).toEqual([]);
+  expect(announcements).toEqual([]);
 });
 test('overlapping Track requests admit one complete card and one kickoff', async () => {
   const results = await Promise.all([tap(), tap()]);
@@ -80,10 +87,13 @@ test('overlapping Track requests admit one complete card and one kickoff', async
   expect(told[0].root).toBe(ask.sessionId);
   expect(told[0].text).toContain(ask.id);
   expect(told[0].text).toContain(todo.id);
+  expect(announcements).toEqual(['neo.changed']);
 });
 test('a failed kickoff leaves one committed card and a repeated tap is refused', async () => {
+  let announcedBeforeKickoff = false;
   Object.assign(service, {
     deliver: async () => {
+      announcedBeforeKickoff = announcements.length === 1;
       throw new Error('synthetic delivery failure');
     },
   });
@@ -92,11 +102,14 @@ test('a failed kickoff leaves one committed card and a repeated tap is refused',
     message: expect.stringContaining('synthetic delivery failure'),
   });
   expect(service.todos.listOpenAsks()).toHaveLength(1);
+  expect(announcedBeforeKickoff).toBe(true);
+  expect(announcements).toEqual(['neo.changed']);
   expect(await tap()).toEqual({
     kind: 'completed',
     value: { ok: false, reason: 'A Neo card already follows this session.' },
   });
   expect(service.todos.listOpenAsks()).toHaveLength(1);
+  expect(announcements).toEqual(['neo.changed']);
 });
 test('missing root keeps its refusal precedence over missing notice', async () => {
   db.getDatabase().exec('DELETE FROM neo_session_bindings');
