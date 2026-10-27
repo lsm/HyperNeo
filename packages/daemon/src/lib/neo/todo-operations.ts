@@ -6,6 +6,7 @@ import {
   neoTodoDependencyRefusal,
   planNeoTodoDependencies,
 } from './todo-dependencies.ts';
+import { wireNeoTodoAdd } from './todo-add-operation.ts';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -900,7 +901,7 @@ export function createNeoTodoOperations(
     caller: OperationCaller
   ) => Promise<TodoReceipt | Rejection>;
 
-  return [
+  const definitions = [
     defineOperation({
       name: 'neo.todo.add',
       description: neoToolDescription('neo.todo.add'),
@@ -985,4 +986,5 @@ export function createNeoTodoOperations(
       execute: async (input, caller) => present(await close(input, caller)),
     }),
   ];
+  return wireNeoTodoAdd(definitions, todos, sessions, controls, packs, project);
 }

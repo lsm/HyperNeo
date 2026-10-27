@@ -15,7 +15,6 @@ import {
 } from '../operations/registry.ts';
 import { NeoAskEntrySchema } from './ask-entries.ts';
 import {
-  recordNeoTodo,
   startNeoTodoWhenFree,
   resolveNeoTodoDraft,
   type NeoTodoControls,
@@ -23,6 +22,7 @@ import {
   planNeoTodoDraft,
   requireNeoOpenAsk,
 } from './todo-operations.ts';
+import { recordNeoTodoAdmission } from './todo-add-operation.ts';
 import { isNeoTodoStartable } from './todo-runner.ts';
 import type { NeoPack, NeoTodoPolicyScope } from './pack-contract.ts';
 import { neoTodoRepository } from './pack-contract.ts';
@@ -321,7 +321,7 @@ export function createNeoAskRecordOperations(
             typeof ref === 'number' ? (ref < index ? (ids[ref] ?? `#${ref}`) : `#${ref}`) : ref
           );
           const added = !row
-            ? await recordNeoTodo(
+            ? await recordNeoTodoAdmission(
                 store,
                 sessions,
                 controls,
