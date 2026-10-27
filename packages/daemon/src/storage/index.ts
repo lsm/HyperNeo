@@ -534,7 +534,11 @@ export class Database {
         'codexSnapshot' in args
           ? Promise.resolve()
           : this.core.waitForSdkMessageColumns(
-              'sessionId' in args ? args.sessionId : undefined,
+              'sessionId' in args
+                ? args.sessionId
+                : 'hyperneoTurnEnds' in args
+                  ? args.hyperneoTurnEnds.sessionId
+                  : undefined,
               false
             )
     ));
