@@ -505,6 +505,9 @@ env -i HOME="$DELIVERY_PARKING_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$DELIVERY_PARKING_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-delivery-parking.ts" "$DELIVERY_PARKING_RUN"
 
+WORKFLOW_DELETE_WRITER_RUN="$WORK_DIR/workflow-delete-writer"
+mkdir -p "$WORKFLOW_DELETE_WRITER_RUN/home"
+env -i HOME="$WORKFLOW_DELETE_WRITER_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_DELETE_WRITER_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-delete-writer.ts" verify "$WORKFLOW_DELETE_WRITER_RUN"
 RATE_LIMIT_CANCEL_RUN="$WORK_DIR/rate-limit-cancel"
 mkdir -p "$RATE_LIMIT_CANCEL_RUN/home"
 env -i HOME="$RATE_LIMIT_CANCEL_RUN/home" PATH="$PATH" NODE_ENV=test \
