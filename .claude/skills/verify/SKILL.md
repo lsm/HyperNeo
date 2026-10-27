@@ -313,6 +313,8 @@ Construction-only writer journeys may invoke a registered command through the
 isolated daemon gateway and verify its receipt through a public reader. Record
 that public mutation callers remain unchanged; repeat the proof through those
 callers in the activation slice before claiming the user path moved off main.
+For staged pack migrations, record which pack identities select the writer and
+which retain their old callback policy; worker failure must not change that route.
 
 A Windows compiled-startup proof also isolates `USERPROFILE`, `TEMP` and `TMP`.
 Use native Windows paths for `HOME` and `HYPERNEO_DATA_DIR` (PowerShell

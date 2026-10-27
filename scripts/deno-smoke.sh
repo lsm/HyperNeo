@@ -713,6 +713,12 @@ env -i HOME="$TODO_ADD_BUILD_RUN/home" PATH="$PATH" TMPDIR="$TODO_ADD_BUILD_RUN/
 	HYPERNEO_DATA_DIR="$TODO_ADD_BUILD_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-add-build.ts" verify "$TODO_ADD_BUILD_RUN"
 
+TODO_ADD_ACTIVATION_RUN="$WORK_DIR/todo-add-activation"
+mkdir -p "$TODO_ADD_ACTIVATION_RUN/home" "$TODO_ADD_ACTIVATION_RUN/tmp"
+env -i HOME="$TODO_ADD_ACTIVATION_RUN/home" PATH="$PATH" TMPDIR="$TODO_ADD_ACTIVATION_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$TODO_ADD_ACTIVATION_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-add-activation.ts" verify "$TODO_ADD_ACTIVATION_RUN"
+
 TODO_STOP_CONTEXT_RUN="$WORK_DIR/todo-stop-context"
 mkdir -p "$TODO_STOP_CONTEXT_RUN/home" "$TODO_STOP_CONTEXT_RUN/tmp"
 env -i HOME="$TODO_STOP_CONTEXT_RUN/home" PATH="$PATH" TMPDIR="$TODO_STOP_CONTEXT_RUN/tmp" NODE_ENV=test \

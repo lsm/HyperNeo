@@ -76,10 +76,11 @@ describe('neo.todo operations', () => {
     if (!first.ok) throw new Error(first.reason);
     expect(first.todo).toMatchObject({
       position: 0,
-      state: 'todo',
+      state: 'blocked',
       check: { pack: 'coding', kind: 'pr_merged', params: {} },
       addedAfterStart: false,
     });
+    expect(first.todo).toEqual(repo.getTodo(first.todo.id)!);
     repo.updateTodo(first.todo, { state: 'doing', startedAt: 5 }, 5);
     const second = await call('neo.todo.add', {
       check: pendingTodoCheck,

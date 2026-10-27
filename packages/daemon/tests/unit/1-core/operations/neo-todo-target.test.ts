@@ -17,6 +17,7 @@ function fixture(
     refs?: WorkRef[];
     more?: boolean;
     beforeLookup?: (todos: NeoAskTodoRepository) => void;
+    onStart?: (todos: NeoAskTodoRepository, id: string) => void;
   } = {}
 ) {
   const db = new Database(':memory:');
@@ -79,8 +80,9 @@ function fixture(
                     },
             };
           }),
-        start: async () => {
+        start: async (id) => {
           starts++;
+          options.onStart?.(todos, id);
           return { ok: false as const, reason: 'Unexpected dispatch' };
         },
         recompute: async (todo, patch) => todos.updateTodo(todo, patch, Date.now()),
@@ -117,6 +119,33 @@ function fixture(
 }
 
 describe('todo target identity at the MCP add door', () => {
+  test('dispatch sees the committed todo and target outside the writer transaction', async () => {
+    let observed = false;
+    const f = fixture({
+      onStart: (todos, id) => {
+        expect(todos.getTodo(id)).toMatchObject({
+          state: 'todo',
+          instruction: 'Perform synthetic work',
+        });
+        expect(todos.listQuestions('ask')).toEqual([]);
+        expect(f.sessions.get(id)).toEqual({ verb: 'start', adapter: 'hyperneo' });
+        f.db.exec('BEGIN IMMEDIATE');
+        f.db.exec('ROLLBACK');
+        observed = true;
+      },
+    });
+    try {
+      expect(await f.add({ verb: 'start', adapter: 'hyperneo' }, true)).toMatchObject({
+        ok: false,
+        reason: 'Unexpected dispatch',
+      });
+      expect(observed).toBe(true);
+      expect(f.starts()).toBe(1);
+      expect(f.todos.listTodos('ask')).toHaveLength(1);
+    } finally {
+      f.db.close();
+    }
+  });
   test('direct binding stores the resolved reference rather than the supplied prefix', async () => {
     const f = fixture();
     try {

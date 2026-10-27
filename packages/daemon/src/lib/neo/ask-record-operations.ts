@@ -10,13 +10,13 @@ import {
 } from '../operations/registry.ts';
 import { NeoAskEntrySchema } from './ask-entries.ts';
 import {
-  recordNeoTodo,
   resolveNeoTodoDraft,
   type NeoTodoControls,
   NeoTodoDraftSchema,
   planNeoTodoDraft,
   requireNeoOpenAsk,
 } from './todo-operations.ts';
+import { recordNeoTodoAdmission } from './todo-add-operation.ts';
 import { isNeoTodoStartable } from './todo-runner.ts';
 import type { NeoPack } from './pack-contract.ts';
 import { neoTodoRepo } from './todo-repo.ts';
@@ -241,7 +241,7 @@ export function createNeoAskRecordOperations(
         for (const todo of drafts) {
           const row = recordedRow(todo, ask);
           const added = !row
-            ? await recordNeoTodo(
+            ? await recordNeoTodoAdmission(
                 store,
                 sessions,
                 controls,
