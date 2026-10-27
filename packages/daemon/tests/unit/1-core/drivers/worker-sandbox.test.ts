@@ -1,9 +1,9 @@
 import { afterEach, expect, test } from 'bun:test';
-import { vi } from 'vitest';
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, rmSync, type Stats } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, type Stats } from 'node:fs';
 import { lstat, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { vi } from 'vitest';
 import {
   prepareWorkerSandbox,
   workerSandboxPaths,
@@ -111,7 +111,12 @@ test('Windows runtime preparation does not reject synthesized group and other bi
   await expect(prepareWorkerSandbox(root)).resolves.toHaveProperty('TMPDIR');
 });
 
-test('POSIX workers still refuse shared directory modes', async () => {
-  fixture('linux');
-  await expect(prepareWorkerSandbox(root)).rejects.toThrow('owned private directories');
+test('POSIX workers chmod their own scratch roots private instead of refusing', async () => {
+  const data = fixture('linux', false);
+  const scratch = join(data, 'work', 'scratch', 'hn-demo');
+  mkdirSync(scratch, { recursive: true });
+  chmodSync(scratch, 0o755);
+  const env = (await prepareWorkerSandbox(root)) as Record<string, string>;
+  expect(statSync(scratch).mode & 0o777).toBe(0o700);
+  expect(env.TMPDIR.startsWith(scratch)).toBe(true);
 });

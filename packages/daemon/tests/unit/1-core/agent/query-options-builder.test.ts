@@ -149,12 +149,25 @@ describe('QueryOptionsBuilder', () => {
       }
     });
 
-    it('prepared workers retain sandbox enforcement and recreate purged temp roots', async () => {
+    it('prepared workers with sandboxing disabled start without the worker sandbox', async () => {
       const root = join(handoffDataDir, 'prepared');
       mkdirSync(join(root, '.git/info'), { recursive: true });
       await installClaudeNativeWrites(root, [join(handoffDataDir, 'source')]);
       mockSession.workspacePath = root;
       mockSession.config.sandbox = { enabled: false };
+      await releaseWorkerSandbox(root);
+      const options = await builder.build();
+      expect(options.sandbox).toMatchObject({ enabled: false });
+      expect(options.env?.TMPDIR).toBe(undefined);
+      await releaseWorkerSandbox(root);
+    });
+
+    it('prepared workers retain sandbox enforcement and recreate purged temp roots', async () => {
+      const root = join(handoffDataDir, 'prepared');
+      mkdirSync(join(root, '.git/info'), { recursive: true });
+      await installClaudeNativeWrites(root, [join(handoffDataDir, 'source')]);
+      mockSession.workspacePath = root;
+      mockSession.config.sandbox = { enabled: true };
       await releaseWorkerSandbox(root);
       const options = await builder.build();
       expect(options.sandbox).toMatchObject({
