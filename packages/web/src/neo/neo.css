@@ -831,6 +831,10 @@
   opacity: 1;
 }
 
+.neo-message [data-clamped] {
+  mask-image: linear-gradient(to bottom, black calc(100% - 44px), transparent);
+}
+
 @media (pointer: coarse) {
   .neo-shell :is(.copy-button, .neo-message-action, .mermaid-figure-toolbar button) {
     display: inline-flex;

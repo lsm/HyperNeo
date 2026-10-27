@@ -142,9 +142,12 @@ import {
 } from '../../lib/neo/packs/coding/smoke-admission-db.ts';
 import { sessionScheduleCreateWrites } from '../repositories/session-schedule-create-write.ts';
 import { workflowRunPinWrites } from '../repositories/workflow-run-pin-write.ts';
+import { agentReminderDeleteWrites } from '../repositories/agent-reminder-delete-write.ts';
 import { workflowDeleteWrites } from '../repositories/workflow-delete-write.ts';
 import { codingStageTargetReads } from '../../lib/neo/packs/coding/stage-target-db.ts';
 import { codingLedgerPollReads } from '../../lib/neo/packs/coding/ledger-poll-db.ts';
+import { neoPublicationPageWrites } from '../repositories/neo-publication-page-db.ts';
+import { pairingApproveWrite } from '../repositories/pairing-approve-write.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -262,10 +265,13 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     codingSmokeWrites,
     sessionScheduleCreateWrites,
     workflowRunPinWrites,
+    agentReminderDeleteWrites,
     workflowDeleteWrites,
     taskSchedulePauseWrites,
     taskScheduleDeleteWrites,
     codingStageTargetReads,
     codingLedgerPollReads,
+    neoPublicationPageWrites,
+    pairingApproveWrite,
   ].map((op) => [op.name, op])
 );
