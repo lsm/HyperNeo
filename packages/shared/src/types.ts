@@ -356,6 +356,13 @@ export interface PendingModelSwitch {
 }
 
 export interface SessionMetadata {
+  queryFailureEpisode?: {
+    id: string;
+    failures: number;
+    retryAt: number;
+    error: string;
+    failed: boolean;
+  };
   executionProjectPath?: string;
   pendingAutoCompactPercent?: number | null;
   messageCount: number;

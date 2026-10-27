@@ -611,6 +611,8 @@ describe('N4: literal /compact never enters the transcript or provider request',
 
     const runner = new QueryRunner({
       session,
+      db: { getSession: () => session, updateSession: async () => {} } as unknown as Database,
+      isCleaningUp: () => false,
       messageQueue: queue,
       stateManager: {
         setProcessing: setProcessingSpy,
@@ -683,6 +685,8 @@ describe('N4: literal /compact never enters the transcript or provider request',
 
     const runner = new QueryRunner({
       session,
+      db: { getSession: () => session, updateSession: async () => {} } as unknown as Database,
+      isCleaningUp: () => false,
       messageQueue: queue,
       stateManager: {
         setProcessing: setProcessingSpy,
