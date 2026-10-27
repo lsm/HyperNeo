@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { Database } from '../../../../../src/storage/sqlite-compat.ts';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { runMigration461 } from '../../../../../src/storage/schema/m461-neo-card-search-fts.ts';
 import { runMigration462 } from '../../../../../src/storage/schema/m462-trigram-fts.ts';
+import { Database } from '../../../../../src/storage/sqlite-compat.ts';
 
 function indexedDb() {
   const db = new Database(':memory:');
@@ -61,7 +61,7 @@ function indexedDb() {
   ).run();
   db.prepare(
     `INSERT INTO message_search_content (id, kind, source_id, title, body, timestamp)
-     VALUES (1, 'message', 'm1', '发布构建版本的说明', '正文包含构建版本四个字', 1)`
+     VALUES (1, 'message', 'm1', '发布构建版本的说明', '正文包含构建版本四个字 signed build', 1)`
   ).run();
   runMigration461(db);
   return db;
@@ -73,6 +73,9 @@ function unicode61Indexes(db: Database) {
       content = 'message_search_content', content_rowid = 'id',
       detail = 'column', tokenize = 'unicode61'
     );
+    CREATE TRIGGER message_search_content_ai AFTER INSERT ON message_search_content BEGIN
+      INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body);
+    END;
     INSERT INTO message_search_fts(rowid, title, body)
       SELECT id, title, body FROM message_search_content;`);
 }
@@ -88,7 +91,11 @@ const cardHits = (db: Database, term: string) =>
 
 const messageHits = (db: Database, term: string) =>
   db
-    .prepare(`SELECT message_search_content.id FROM message_search_fts WHERE message_search_fts MATCH ?`)
+    .prepare(
+      `SELECT c.id FROM message_search_fts f
+       JOIN message_search_content c ON c.id = f.rowid
+       WHERE message_search_fts MATCH ?`
+    )
     .all(term) as { id: number }[];
 
 describe('trigram fts migration', () => {
@@ -105,16 +112,16 @@ describe('trigram fts migration', () => {
     runMigration462(db);
     expect(cardHits(db, '"构建版本"')).toEqual([{ entity_id: 'ask-1' }]);
     expect(messageHits(db, '"构建版"')).toEqual([{ id: 1 }]);
-    expect(messageHits(db, '"signed"')).toEqual([]);
+    expect(messageHits(db, '"unrelated"')).toEqual([]);
     expect(messageHits(db, '"sign"*')).toEqual([{ id: 1 }]);
   });
 
   test('repeated runs change nothing and missing card tables skip the card rebuild', () => {
     unicode61Indexes(db);
     runMigration462(db);
-    const again = db
-      .prepare(`SELECT count(*) AS n FROM neo_card_search_fts`)
-      .get() as { n: number };
+    const again = db.prepare(`SELECT count(*) AS n FROM neo_card_search_fts`).get() as {
+      n: number;
+    };
     runMigration462(db);
     expect(db.prepare(`SELECT count(*) AS n FROM neo_card_search_fts`).get()).toEqual(again);
     const plain = new Database(':memory:');
@@ -137,7 +144,7 @@ describe('trigram fts migration', () => {
       `INSERT INTO neo_asks (id, session_id, title, request, created_at, updated_at)
        VALUES ('ask-2', 'neo:c', '数据库迁移', 'Move the daemon database', 3, 3)`
     ).run();
-    expect(cardHits(db, '"据迁移"')).toEqual([{ entity_id: 'ask-2' }]);
+    expect(cardHits(db, '"库迁移"')).toEqual([{ entity_id: 'ask-2' }]);
     db.prepare(
       `INSERT INTO message_search_content (id, kind, source_id, title, body, timestamp)
        VALUES (2, 'message', 'm2', '数据库迁移记录', 'body', 2)`
