@@ -795,23 +795,45 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     return { ok: true as const, todo: next };
   };
 
-  const stop = async (todo: NeoTodo) => {
-    const ref = sessions.readRef(todo.id);
-    const ask = store.getAsk(todo.askId);
-    const live = sessions.readLiveStatus(todo.id);
-    const settled = live === 'done' || live === 'failed' || live === 'stopped';
-    const adopted = sessions.get(todo.id)?.verb === 'adopt';
-    if (!ref || !ask || adopted || (todo.state !== 'doing' && settled)) return null;
-    const stopped = await deps
-      .invoke(caller(ask), 'work.stop', { ref })
-      .catch((error: unknown) => ({ kind: 'failed' as const, message: String(error) }));
-    if (stopped.kind !== 'completed')
-      return `stop_failed: ${(stopped as { message?: string }).message ?? 'the stop did not complete'}`;
-    const value = stopped.value as { ok?: boolean; reason?: string; detail?: string } | null;
-    return value?.ok === false && value.reason !== 'unsupported'
-      ? `stop_failed: ${value.detail ?? value.reason ?? 'the driver refused'}`
-      : null;
-  };
+  type StopContext = NonNullable<ReturnType<NeoTodoSessionRepository['stopContext']>>;
+  const stop = (superpipe({})('neo.todo.stop-current-worker') as PipelineAPI)
+    .input(['todo'])
+    .pipe((todo: NeoTodo) => sessions.read('stopContext', todo.id), 'todo', 'context')
+    .pipe(
+      (context: StopContext | null) =>
+        context?.ref &&
+        context.ask &&
+        !context.adopted &&
+        (context.todo.state === 'doing' ||
+          !['done', 'failed', 'stopped'].includes(context.live ?? ''))
+          ? { value: context as StopContext & { ask: NeoAsk; ref: WorkRef } }
+          : { reason: null },
+      'context',
+      'result:outcome'
+    )
+    .pipe(
+      ({ ask, ref }: StopContext & { ask: NeoAsk; ref: WorkRef }) =>
+        deps
+          .invoke(caller(ask), 'work.stop', { ref })
+          .catch((error: unknown) => ({ kind: 'failed' as const, message: String(error) })),
+      'outcome',
+      'stopped'
+    )
+    .pipe(
+      (stopped: OperationOutcome) => {
+        if (stopped.kind !== 'completed')
+          return {
+            reason: `stop_failed: ${(stopped as { message?: string }).message ?? 'the stop did not complete'}`,
+          };
+        const value = stopped.value as { ok?: boolean; reason?: string; detail?: string } | null;
+        return value?.ok === false && value.reason !== 'unsupported'
+          ? { reason: `stop_failed: ${value.detail ?? value.reason ?? 'the driver refused'}` }
+          : { value: null };
+      },
+      'stopped',
+      'result:outcome'
+    )
+    .endAsync('outcome') as (todo: NeoTodo) => Promise<string | null>;
 
   return {
     start,

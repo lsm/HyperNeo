@@ -23,15 +23,16 @@ const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketCli
 const db=app.db.getDatabase(),store=new NeoAskTodoRepository(db),sessions=new NeoTodoSessionRepository(db);
 const prepare=db.prepare.bind(db),read=NeoTodoSessionRepository.prototype.read,registry=app.sessionManager.getOperationRegistry();
 let mainSql=0,watch=false,beforeRead=()=>{},beforeStop=()=>{};
-const calls:string[]=[],refused=new Set<string>(),throwing=new Set<string>();
+const calls:string[]=[],refused=new Set<string>(),unsupported=new Set<string>(),throwing=new Set<string>();
 const report='Complete stop report 🦊\n'.repeat(20000).trim();
 db.prepare=((sql:string)=>{if(watch && /neo_todos|neo_asks|neo_todo_sessions/.test(sql) && new Error().stack?.includes('/lib/neo/todo-runner.ts:')){mainSql++;throw new Error('Main-thread stop context SQL');}return prepare(sql);}) as typeof db.prepare;
 NeoTodoSessionRepository.prototype.read=(function(method:string,...args:unknown[]){if(method==='stopContext')beforeRead();return Reflect.apply(read,this,[method,...args]);}) as typeof read;
 const scripted=createOperationRegistry(registry.entries.map(entry=>entry.name!=='work.stop'?entry:{...entry,execute:async(input)=>{
  const ref=(input as {ref:{id:string}}).ref;calls.push(ref.id); db.exec('BEGIN');db.exec('ROLLBACK');
  beforeStop();if(throwing.has(ref.id))throw new Error('Synthetic disconnected driver');
- if(refused.has(ref.id))return {ok:false,reason:'unsupported',detail:'Synthetic stop refusal'};
- await sessions.write('recordLive',ref.id.replace(/-replacement$/,''),'stopped');
+ if(refused.has(ref.id))return {ok:false,reason:'busy',detail:'Synthetic stop refusal'};
+ if(unsupported.has(ref.id))return {ok:false,reason:'unsupported',detail:'Synthetic unsupported stop'};
+ await sessions.write('recordLive',ref.id.replace(/-replacement$/,''),'stopped',undefined);
  return {ok:true,value:{stopped:true}};
 }}));
 app.sessionManager.setOperationRegistryProvider(()=>scripted);
@@ -63,7 +64,8 @@ try{
   assert(!failed.ok && failed.reason.includes('stop_failed:') && failed.reason.includes('Synthetic disconnected driver'));assert.deepEqual(await visible(),before);
  }
  result.stopFailurePreservesCards=true;
- seed('unsupported');refused.add('unsupported');assert((await mutate('remove','unsupported')).ok);result.unsupportedNoop=true;
+ seed('refused');refused.add('refused');const refusedBefore=await visible();const refusal=await mutate('remove','refused');assert(!refusal.ok && refusal.reason.includes('Synthetic stop refusal'));assert.deepEqual(await visible(),refusedBefore);result.driverRefusalPreservesCard=true;
+ seed('unsupported');unsupported.add('unsupported');assert((await mutate('remove','unsupported')).ok);result.unsupportedNoop=true;
  seed('adopted');sessions.bind('adopted',{adapter:'hyperneo',id:'adopted'},3);const prior=calls.length;
  assert((await mutate('remove','adopted')).ok);assert.equal(calls.length,prior);result.adoptedExempt=true;
  seed('replacement');let replaced=false;
@@ -76,7 +78,9 @@ try{
  const refresh=()=>app.db.gateway.call(neoTodoRunnerWrites,'recompute','needs-human',null,{},20,{state:'no_opinion'});
  assert.equal((await refresh()).todo!.blockedBy,'needs-human');
  store.retireQuestion(store.getQuestion('needs-human-card')!,'Human no longer needs it',null,21);
- assert.notEqual((await refresh()).todo!.blockedBy,'needs-human');result.needsHumanPreserved=true;
+ assert.notEqual((await refresh()).todo!.blockedBy,'needs-human');
+ seed('pending-answer');card('pending-answer');store.questionAnswers.bind('pending-answer-card','pending-answer',{adapter:'hyperneo',id:'pending-answer'});store.answerQuestion(store.getQuestion('pending-answer-card')!,'yes','button',22);store.updateTodo(store.getTodo('pending-answer')!,{state:'blocked',blockedBy:'needs-human',blockedReason:'Deliver answer'},23);
+ const pending=await app.db.gateway.call(neoTodoRunnerWrites,'recompute','pending-answer',null,{},24,{state:'no_opinion'});assert.equal(pending.todo!.blockedBy,'needs-human');result.needsHumanPreserved=true;
  seed('settled-work','settled');store.settleAsk(store.getAsk('settled')!,'done','Settled',30);const settled=await visible('settled'),count=calls.length;
  for(const kind of ['close','remove'] as const){const noop=await mutate(kind,'settled-work');assert(noop.ok && noop.records?.some(line=>line.startsWith('ask_settled:')));}
  assert.deepEqual(await visible('settled'),settled);assert.equal(calls.length,count);result.settledNoops=true;
