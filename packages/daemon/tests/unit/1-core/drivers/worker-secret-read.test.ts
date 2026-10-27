@@ -50,7 +50,6 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.unstubAllEnvs();
-  rmSync(join(workerSandboxPaths(root).TMPDIR, '..'), { recursive: true, force: true });
   rmSync(fixture, { recursive: true, force: true });
 });
 const settingsPath = () => join(root, '.claude/settings.local.json');

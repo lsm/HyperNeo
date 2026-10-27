@@ -213,6 +213,7 @@ export async function excludeWorkerConfig(root: string, pattern: string) {
     throw error;
   });
   if (entry && !entry.isFile()) throw new Error('Git exclude must be a regular file');
+  if (constants.O_NOFOLLOW === undefined) throw new Error('Git exclude guard requires O_NOFOLLOW');
   const handle = await open(
     path,
     constants.O_RDWR | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW,

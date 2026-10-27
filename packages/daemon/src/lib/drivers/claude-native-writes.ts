@@ -129,7 +129,8 @@ export function installClaudeNativeWrites(directory: string, roots: string[]): P
 
 function withSecretDenials(
   computed: ReturnType<typeof policy>,
-  existing: Partial<ReturnType<typeof policy>>
+  existing: Partial<ReturnType<typeof policy>>,
+  resetFilesystem = false
 ) {
   return {
     ...computed,
@@ -149,8 +150,9 @@ function withSecretDenials(
         allowAllUnixSockets: computed.sandbox.network.allowAllUnixSockets,
       },
       filesystem: {
-        ...computed.sandbox.filesystem,
-        ...existing?.sandbox?.filesystem,
+        ...(resetFilesystem
+          ? computed.sandbox.filesystem
+          : { ...computed.sandbox.filesystem, ...existing?.sandbox?.filesystem }),
         denyRead: [
           ...new Set([
             ...computed.sandbox.filesystem.denyRead,
@@ -182,7 +184,7 @@ export async function readClaudeWorkerSandbox(directory: string | undefined) {
   if (existing?.sandbox?.network && existing.sandbox.network.allowLocalBinding === undefined) {
     existing.sandbox.network.allowLocalBinding = computed.sandbox.network.allowLocalBinding;
   }
-  const upgraded = withSecretDenials(computed, existing);
+  const upgraded = withSecretDenials(computed, existing, true);
   if (before !== JSON.stringify(upgraded)) await writeAtomic(settingsPath(directory), upgraded);
   return upgraded;
 }

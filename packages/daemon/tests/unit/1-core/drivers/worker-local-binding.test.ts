@@ -88,6 +88,24 @@ test('the Codex worker sandbox keeps the shared worktrees root read-only', () =>
   expect(profile[set.HYPERNEO_WORKTREES]).not.toBe('write');
 });
 
+test('resuming recomputes filesystem roots from the current policy', async () => {
+  await installClaudeNativeWrites(root, [join(root, 'source')]);
+  const stale = settings();
+  stale.sandbox = {
+    ...stale.sandbox,
+    filesystem: {
+      ...stale.sandbox.filesystem,
+      allowWrite: ['/tmp/hn-legacy/stale-root'],
+      denyRead: [...stale.sandbox.filesystem.denyRead],
+    },
+  };
+  writeFileSync(join(root, '.claude/settings.local.json'), JSON.stringify(stale));
+  const resumed = await readClaudeWorkerSandbox(root);
+  expect(resumed?.sandbox.filesystem.allowWrite).toContain(root);
+  expect(resumed?.sandbox.filesystem.allowWrite).not.toContain('/tmp/hn-legacy/stale-root');
+  expect(settings().sandbox.filesystem.allowWrite).toEqual(resumed?.sandbox.filesystem.allowWrite);
+});
+
 test('resuming a pre-upgrade worker adopts the data-root runtime env', async () => {
   await installClaudeNativeWrites(root, [join(root, 'source')]);
   const legacy = settings();
