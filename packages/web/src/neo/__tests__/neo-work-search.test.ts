@@ -11,6 +11,7 @@ const entry = (
     status?: string;
     next?: string;
     question?: string;
+    answer?: string;
     report?: string;
     evidence?: string;
     outcome?: string;
@@ -33,7 +34,7 @@ const entry = (
         evidence: patch.evidence ?? 'evidence',
       },
     ],
-    questions: [{ text: patch.question ?? 'question' }],
+    questions: [{ text: patch.question ?? 'question', answer: patch.answer ?? null }],
   }) as NeoAskEntry;
 const ids = (entries: NeoAskEntry[]) => entries.map((item) => item.ask.id);
 
@@ -54,6 +55,14 @@ describe('Work search ranking', () => {
     ]);
     for (const query of ['requestsigil735', '请求'])
       expect(ids(search(query))).toEqual(['request']);
+  });
+  it('finds work from an answered question even when its text does not match', () => {
+    const search = createNeoWorkSearch([
+      entry('answered', { answer: 'answercipher736 回答内容' }),
+      entry('other'),
+    ]);
+    for (const query of ['answercipher736', '回答'])
+      expect(ids(search(query))).toEqual(['answered']);
   });
   it('finds next actions, questions, evidence and outcomes', () => {
     const search = createNeoWorkSearch([

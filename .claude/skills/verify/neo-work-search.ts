@@ -31,7 +31,7 @@ try{
   if(item.id==='status-match')store.updateTodo(todo,{state:'blocked',blockedReason:'Needle status'},now+1);
   if(item.id==='report-match')store.updateTodo(todo,{report:'Needle microcipher731'},now+1);
   if(item.id==='todo-match')store.updateTodo(todo,{evidence:'evidencesigil732'},now+1);
-  if(item.id==='ask-match'){const question=store.askQuestion('search-question',item.id,{kind:'reply',text:'permission734',options:null,multiple:false,noLabel:null,yesLabel:null,startTodos:null},now+1);store.answerQuestion(question,'Synthetic answer','chat',now+2);}
+  if(item.id==='ask-match'){const question=store.askQuestion('search-question',item.id,{kind:'reply',text:'permission734',options:null,multiple:false,noLabel:null,yesLabel:null,startTodos:null},now+1);store.answerQuestion(question,'answercipher736 回答内容','chat',now+2);}
   if(item.id==='status-match')db.prepare('UPDATE neo_asks SET outcome=? WHERE id=?').run('outcomesigil733',item.id);
  }
  const dist=resolve('packages/web/dist');assert(existsSync(join(dist,'neo/index.html')));
