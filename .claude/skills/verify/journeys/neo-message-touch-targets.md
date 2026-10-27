@@ -38,3 +38,17 @@ Run conversation, message-copy and quote-reply suites plus full checks.
 After merge confirm the served build contains the squash, then browser-check
 these actual served assets live; never restart the live daemon. Isolated proof
 does not substitute for that deployment smoke.
+
+## Mermaid toolbar spacing
+
+Use neo-hit-mermaid.ts instead of neo-whole-message-copy.ts in the same wrapper
+command to add a real Mermaid publication. Import verifyMermaidHitAreas from
+neo-mermaid-hit-check.mjs and pass the same page/fixture/phase/evidence/touch
+options. Before the spacing correction, mobile Expand diagram overlaps Copy
+code; capture that reproduction. After the fix both controls are at least
+44x44 with a positive gap on touch, while desktop remains unchanged. Open and
+close the real expanded diagram and require exact source from code copy.
+Inspect both diagram screenshots for clipped diagram content and controls.
+Run verifyIconHitAreas too; its pressed assertion requires the exact computed
+matrix(0.94, 0, 0, 0.94, 0, 0), not merely a nonzero transform. Save all returned
+observations in browser.json before releasing the helper and cleaning up.

@@ -832,7 +832,7 @@
 }
 
 @media (pointer: coarse) {
-  .neo-shell :is(.copy-button, .neo-message-action) {
+  .neo-shell :is(.copy-button, .neo-message-action, .mermaid-figure-toolbar button) {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -842,9 +842,19 @@
     touch-action: manipulation;
   }
 
-  .neo-shell :is(.copy-button, .neo-message-action):active:not(:disabled) {
+  .neo-shell
+    :is(.copy-button, .neo-message-action, .mermaid-figure-toolbar button):active:not(:disabled) {
     background: var(--fill-strong);
     transform: scale(0.94);
+  }
+
+  .neo-shell .mermaid-toolbar-mount {
+    right: 60px;
+  }
+
+  .neo-shell .mermaid {
+    padding-right: 120px !important;
+    min-height: 60px;
   }
 
   .neo-shell .code-block-wrapper pre {
