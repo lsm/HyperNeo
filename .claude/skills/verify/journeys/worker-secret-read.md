@@ -36,7 +36,7 @@ Unsupported app-servers must refuse prepared startup without a confirmed active
 profile and refuse queue admission when their profile catalog is absent or
 disallows the worker profile. A repo tracking `.codex/config.toml` is refused
 without changing its bytes. Library toolchain paths remain readable; Keychains
-and 1Password are denied. Other credential config directories remain denied; worker gh configuration is readable.
+and 1Password are denied. Home credential directories remain denied; workers read a private gh configuration snapshot.
 Both policy writers must refuse symlinked `.git`, `.git/info` or `exclude`,
 leaving synthetic host files unchanged during policy installation. Swapping
 config files must not copy synthetic host TOML into the protected profile;
@@ -79,38 +79,37 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
   .claude/skills/verify/worker-gh-config.ts /absolute/codex-executable /absolute/gh
 ```
 
-No credentials, real home, live daemon, provider, model reasoning or GitHub
-request is used. The disposable home contains only `git_protocol: ssh` in
-`.config/gh/config.yml`, plus synthetic Keychains and Git-credential fixtures.
+The disposable home contains a public gh config, synthetic Keychains/Git
+credential fixtures, and valid hosts.yml plus hosts.yml.bak files containing
+only a synthetic OAuth-token marker. No real home or credential is read by the
+proof, and no live daemon, real provider or GitHub request is used.
+
+Preparation snapshots only public config.yml into daemon-managed, read-only
+GH_CONFIG_DIR metadata outside worker writable roots. Home .config/gh stays
+denied in full, protecting token files, backups and other credential-bearing
+leftovers without an extension allowlist. The snapshot refreshes with a unique
+temporary file and atomic rename each time a worker is prepared; removal of the
+source removes the stale snapshot. Custom denials and other credential rules
+stay intact. Neo's separate policy is unchanged.
+
+The fixture changes the public setting from https to ssh between preparations.
 The actual Codex native sandbox loads production worker permissions and runs
 `gh config get git_protocol`. The actual SDK Bash tool runs the same command
-against a production Claude policy refreshed from obsolete gh read denials,
-using a scripted loopback model with a literal synthetic key only in the SDK
-child. Both must return ssh with status zero. All protected-file cats must
-return nonzero with empty output; ordinary repository output must remain writable.
+against a production Claude policy, using a scripted loopback model with a
+literal synthetic key only in the SDK child. Both must observe the updated ssh
+value and status zero. All four protected-file cats must return nonzero with
+empty output; private gh-config writes must fail while repository output remains
+writable. The focused regression additionally changes/removes the source config.
 
-Before the fix, both engines record `failed to read configuration: operation
-not permitted`. Signed failing-first commit 129108241 also covers fresh grants
-and legacy Claude resume. The upgrade removes only the exact generated gh
-Read/denyRead entries; custom denials and credential rules survive. Codex profile
-refresh regenerates its managed profile from the corrected shared worker paths.
-Neo's separate read restrictions are unchanged.
+Signed failing-first commit 129108241 reproduced the original configuration
+read failure; 71bd582d7 exposed the hosts token and 741025297 reproduced stale
+snapshots and readable backups. Before the latest fix, native results show the
+old https setting and a readable backup marker. Keep result.json,
+codex-stderr.log, claude-stderr.log and claude-events.jsonl.
 
-Keep result.json, codex-stderr.log, claude-stderr.log and claude-events.jsonl.
 The helper closes its query/model listener and removes its worker runtime roots;
 the shared wrapper saves evidence before deleting the disposable home/data.
 This proves native configuration reads and file denials on the running host;
 it does not prove live GitHub authentication, a push/merge, Linux enforcement,
 or that an already-running turn has reloaded its policy. Existing workers need
 the normal policy refresh on a subsequent turn; do not restart the live daemon.
-
-
-Review follow-up: the fixture now also creates a valid gh `hosts.yml` containing
-only a synthetic OAuth-token marker. Before the fix, both engines can read that
-marker (test-first commit 71bd582d7). The real home hosts.yml is now a denied
-credential file. Each worker receives GH_CONFIG_DIR pointing to daemon-managed,
-read-only metadata outside its writable roots; preparation snapshots only public
-config.yml, never hosts.yml. Codex filesystem rules and Claude denyWrite protect
-this directory. The native proof must still read the configured non-default ssh
-value, deny all three secret-file reads, and refuse writes to its private gh
-config. No live OAuth token is read, copied or passed to this fixture.

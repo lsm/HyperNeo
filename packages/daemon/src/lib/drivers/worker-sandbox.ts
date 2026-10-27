@@ -110,13 +110,21 @@ export async function prepareWorkerSandbox(root: string) {
       throw new Error('Worker runtime roots must be owned private directories');
     if (process.platform !== 'win32') await chmod(path, 0o700);
   }
-  await copyFile(
-    join(homedir(), '.config/gh/config.yml'),
-    join(env.GH_CONFIG_DIR, 'config.yml'),
-    constants.COPYFILE_EXCL
-  ).catch((error) => {
-    if (!['ENOENT', 'EEXIST'].includes(error.code)) throw error;
-  });
+  const ghConfig = join(env.GH_CONFIG_DIR, 'config.yml');
+  const temporaryGhConfig = `${ghConfig}.${crypto.randomUUID()}.tmp`;
+  try {
+    await copyFile(
+      join(homedir(), '.config/gh/config.yml'),
+      temporaryGhConfig,
+      constants.COPYFILE_EXCL
+    );
+    await rename(temporaryGhConfig, ghConfig);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    await rm(ghConfig, { force: true });
+  } finally {
+    await rm(temporaryGhConfig, { force: true });
+  }
   await writeFile(join(root, '.git/hyperneo-worker-sandbox'), 'restricted');
   return env;
 }
@@ -163,9 +171,7 @@ export function workerSecretPaths() {
   const home = homedir();
   return [
     ...new Set([
-      ...secretHomePaths(home).filter(
-        (path) => path !== join(home, 'Library') && path !== join(home, '.config/gh')
-      ),
+      ...secretHomePaths(home).filter((path) => path !== join(home, 'Library')),
       ...[
         '.zlogin',
         '.bash_login',
