@@ -33,11 +33,14 @@ VERIFY_CLAUDE="$(command -v claude)" TMPDIR=/private/tmp \
 The helper owns a test daemon on an ephemeral port and seeds only synthetic
 worker policies. Both scratch and cache start at 0755 with retained files. The
 actual SDK option builder must repair enabled policies to 0700, preserve files,
-and leave disabled policies and their directories unchanged. The installed
+and leave disabled directories unchanged. Disabled policies normalize required
+SDK fields and location hints, remove generated temp/cache environment values,
+and preserve custom environment values. A third case deletes the scratch/cache
+directories and leaves only sparse disabled settings before the SDK build. The installed
 Claude CLI then uses each resulting policy against a loopback scripted model
 and executes a real Bash write in its worker directory. The native child receives
 the generated SDK environment; this proves startup, not separate temp routing. Disabled policies must
-not recreate missing runtime roots either (focused worker-local-binding tests).
-Evidence is observed.json and both native shell logs. Desktop UI and retry/backoff
+not recreate missing runtime roots or forward dangling temp/cache paths.
+Evidence is observed.json and all three native shell logs. Desktop UI and retry/backoff
 behavior are outside this slice. The daemon and model subprocesses end before
 wrapper cleanup; no live session, keys or host sandbox settings are used.

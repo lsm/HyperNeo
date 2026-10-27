@@ -164,8 +164,13 @@ test('disabled persisted sandbox does not prepare or recreate its runtime', asyn
   const resumed = await readClaudeWorkerSandbox(root);
   expect(resumed?.sandbox.enabled).toBe(false);
   expect(existsSync(persisted.env.TMPDIR)).toBe(false);
-  expect(resumed?.env).toEqual({});
-  expect(settings().env).toEqual({});
+  const current = workerSandboxPaths(root);
+  expect(resumed?.env).toEqual({
+    HYPERNEO_WORKTREES: current.HYPERNEO_WORKTREES,
+    HYPERNEO_EVIDENCE: current.HYPERNEO_EVIDENCE,
+    HYPERNEO_BUILDS: current.HYPERNEO_BUILDS,
+  });
+  expect(settings().env).toEqual(resumed?.env);
   const normalized = readFileSync(settingsPath, 'utf8');
   await readClaudeWorkerSandbox(root);
   expect(readFileSync(settingsPath, 'utf8')).toBe(normalized);
@@ -197,7 +202,13 @@ test('disabled sparse settings normalize SDK fields and remove obsolete runtime 
   );
   const result = await readClaudeWorkerSandbox(root);
   expect(result?.sandbox.enabled).toBe(false);
-  expect(result?.env).toEqual({ CUSTOM_WORKER_VALUE: 'retain' });
+  const current = workerSandboxPaths(root);
+  expect(result?.env).toEqual({
+    CUSTOM_WORKER_VALUE: 'retain',
+    HYPERNEO_WORKTREES: current.HYPERNEO_WORKTREES,
+    HYPERNEO_EVIDENCE: current.HYPERNEO_EVIDENCE,
+    HYPERNEO_BUILDS: current.HYPERNEO_BUILDS,
+  });
   expect(result?.permissions.disableBypassPermissionsMode).toBe('disable');
   expect(result?.sandbox.filesystem.allowWrite).toContain(root);
   expect(settings()).toEqual(result);
