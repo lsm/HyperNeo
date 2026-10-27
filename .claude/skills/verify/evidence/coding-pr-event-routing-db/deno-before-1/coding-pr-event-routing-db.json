@@ -1,0 +1,124 @@
+{
+  "mode": "before",
+  "verified": true,
+  "consumer": "Real persisted daemon jobs run the production PR-event delivery pipeline",
+  "limitation": "Synthetic pending ledger event and notification receiver, no actual Neo mailbox, GitHub, model, GUI or entire pack sweep. No latency target claim.",
+  "rejected": {
+    "status": "completed",
+    "result": {
+      "completed": true
+    }
+  },
+  "retry": {
+    "status": "completed",
+    "result": {
+      "completed": true
+    }
+  },
+  "reopened": {
+    "status": "completed",
+    "result": {
+      "completed": true
+    }
+  },
+  "immutableEventBodyBytes": 190000,
+  "attempts": [
+    {
+      "key": "neo-pr-event:synthetic/events#1:head:merged",
+      "text": "synthetic/events#1 \"Synthetic PR\" was merged on head head.",
+      "owner": {
+        "adapter": "codex-desktop",
+        "id": "synthetic-owner"
+      }
+    },
+    {
+      "key": "neo-pr-event:synthetic/events#1:head:merged",
+      "text": "synthetic/events#1 \"Synthetic PR\" was merged on head head.",
+      "owner": {
+        "adapter": "codex-desktop",
+        "id": "synthetic-owner"
+      }
+    },
+    {
+      "key": "neo-pr-event:synthetic/events#1:head:merged",
+      "text": "synthetic/events#1 \"Synthetic PR\" was merged on head head.",
+      "owner": {
+        "adapter": "codex-desktop",
+        "id": "synthetic-owner"
+      }
+    },
+    {
+      "key": "neo-pr-event:synthetic/events#1:head:merged",
+      "text": "synthetic/events#1 \"Synthetic PR\" was merged on head head.",
+      "owner": {
+        "adapter": "codex-desktop",
+        "id": "synthetic-owner"
+      }
+    },
+    {
+      "key": "neo-pr-event:synthetic/events#1:head:merged",
+      "text": "synthetic/events#1 \"Synthetic PR\" was merged on head head.",
+      "owner": {
+        "adapter": "codex-desktop",
+        "id": "synthetic-successor"
+      }
+    }
+  ],
+  "finalState": {
+    "event": null,
+    "owner": "{\"adapter\":\"codex-desktop\",\"id\":\"synthetic-successor\"}",
+    "at": 1793093451075
+  },
+  "mainSql": [
+    "SELECT terminal_event_json AS event FROM pack_coding_pr_ledger\n      WHERE terminal_event_json IS NOT NULL AND owner IS NOT NULL\n      ORDER BY state_since, repo, number",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT owner\n           FROM pack_coding_pr_ledger l WHERE l.repo = ? AND l.number = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT terminal_event_json AS event FROM pack_coding_pr_ledger\n      WHERE terminal_event_json IS NOT NULL AND owner IS NOT NULL\n      ORDER BY state_since, repo, number",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT owner\n           FROM pack_coding_pr_ledger l WHERE l.repo = ? AND l.number = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT terminal_event_json AS event FROM pack_coding_pr_ledger\n      WHERE terminal_event_json IS NOT NULL AND owner IS NOT NULL\n      ORDER BY state_since, repo, number",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT owner\n           FROM pack_coding_pr_ledger l WHERE l.repo = ? AND l.number = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT terminal_event_json AS event FROM pack_coding_pr_ledger\n      WHERE terminal_event_json IS NOT NULL AND owner IS NOT NULL\n      ORDER BY state_since, repo, number",
+    "SELECT terminal_event_json AS event FROM pack_coding_pr_ledger\n      WHERE terminal_event_json IS NOT NULL AND owner IS NOT NULL\n      ORDER BY state_since, repo, number",
+    "SELECT terminal_event_json AS event FROM pack_coding_pr_ledger\n      WHERE terminal_event_json IS NOT NULL AND owner IS NOT NULL\n      ORDER BY state_since, repo, number",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT 1 FROM pack_coding_repo_aliases\n    WHERE canonical = ? AND alias IN (SELECT value FROM json_each(?))",
+    "SELECT terminal_event_json AS event FROM pack_coding_pr_ledger\n      WHERE terminal_event_json IS NOT NULL AND owner IS NOT NULL\n      ORDER BY state_since, repo, number",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT owner\n           FROM pack_coding_pr_ledger l WHERE l.repo = ? AND l.number = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT terminal_event_json AS event FROM pack_coding_pr_ledger\n      WHERE terminal_event_json IS NOT NULL AND owner IS NOT NULL\n      ORDER BY state_since, repo, number",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT owner\n           FROM pack_coding_pr_ledger l WHERE l.repo = ? AND l.number = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT terminal_event_json AS event FROM pack_coding_pr_ledger\n      WHERE terminal_event_json IS NOT NULL AND owner IS NOT NULL\n      ORDER BY state_since, repo, number",
+    "SELECT terminal_event_json AS event FROM pack_coding_pr_ledger\n      WHERE terminal_event_json IS NOT NULL AND owner IS NOT NULL\n      ORDER BY state_since, repo, number"
+  ],
+  "commands": [
+    {
+      "name": "coding.ledgerWrites",
+      "method": "acceptTerminalEvent",
+      "durationMs": 0.7342080000000806,
+      "argsBytes": 195268,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "acceptTerminalEvent",
+      "durationMs": 0.43524999999999636,
+      "argsBytes": 195268,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "acceptTerminalEvent",
+      "durationMs": 0.6602500000001328,
+      "argsBytes": 195272,
+      "replyBytes": 4
+    }
+  ]
+}

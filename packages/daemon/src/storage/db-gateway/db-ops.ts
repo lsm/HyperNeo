@@ -121,6 +121,7 @@ import { codingUnownedWrites } from '../../lib/neo/packs/coding/unowned-db.ts';
 import { sessionExportReads } from '../repositories/session-export-read.ts';
 import { neoPublicationEditWrites } from '../repositories/neo-publication-edit-writes.ts';
 import { neoProjectMoveWrites } from '../repositories/neo-project-move-writes.ts';
+import { codingPrEventReads } from '../../lib/neo/packs/coding/pr-event-routing-db.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -223,5 +224,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     sessionExportReads,
     neoPublicationEditWrites,
     neoProjectMoveWrites,
+    codingPrEventReads,
   ].map((op) => [op.name, op])
 );
