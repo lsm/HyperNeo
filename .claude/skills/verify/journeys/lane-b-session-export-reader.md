@@ -8,7 +8,8 @@ external HTTP refused. No provider turn, credentials or model mock is needed.
 Seed consumed, failed and pending user inputs, a full ordinary reply over 16 KiB,
 a parent/child tool exchange, hidden metadata, an ordinary result and another
 session through production writers. Capture the existing unprojected repository
-output before measurement. Actual JSON export RPCs must match it completely;
+output before measurement, serialized through JSON as on the wire. Actual JSON
+export RPCs must match it completely;
 default and explicit Markdown must match each other and include the full ordinary
 text. Preserve scoping, empty exports and ordinary/conversation not-found errors.
 
@@ -30,4 +31,5 @@ size and combined worker round-trip/reply encoding measurements. This does not
 separate SQL, queue and cloning costs. Startup migration is settled before target
 SQL is measured; its remaining main reads are outside this slice. Close owned
 resources and save JSON before removing temporary daemon data. Deployment/UI
-smoke stays pending with Neo.
+smoke stays pending with Neo. The 10,000-message selection boundary is unit-tested;
+large exports and oversized transport latency are not established by this fixture.

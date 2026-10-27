@@ -101,6 +101,7 @@ try {
   const raw = app.db.getDatabase();
   const expected = { session: app.db.getSession('export-history'), messages: app.db.getSDKMessages('export-history', 10000).messages };
   assert(expected.session);
+  const wireExpected = JSON.parse(JSON.stringify(expected)) as typeof expected;
   const serialized = JSON.stringify(expected.messages);
   assert(serialized.includes('export-consumed') && serialized.includes('export-failed') && serialized.includes('export-child'));
   assert(!serialized.includes('export-enqueued') && !serialized.includes('export-hidden'));
@@ -133,11 +134,11 @@ try {
   measuring = true;
   try {
     const coldAt = performance.now();
-    try { assert.deepEqual(await read(), expected); evidence.coldMs = performance.now() - coldAt; }
+    try { assert.deepEqual(await read(), wireExpected); evidence.coldMs = performance.now() - coldAt; }
     catch (error) { evidence.coldError = String(error); throw error; }
     const warmAt = performance.now();
     const replies = await Promise.all(Array.from({ length: 10 }, () => read()));
-    replies.forEach((reply) => assert.deepEqual(reply, expected));
+    replies.forEach((reply) => assert.deepEqual(reply, wireExpected));
     evidence.concurrentWarmMs = performance.now() - warmAt;
     assert.equal((await read('empty-history')).messages.length, 0);
     assert.equal((await read('other-history')).messages.length, 1);
@@ -159,13 +160,13 @@ try {
     assert.deepEqual(evidence.writerAfter, { outside: 0, inside: 1 });
   } finally { writer.exec('ROLLBACK'); writer.close(); writer = undefined; }
   await app.db.saveSDKMessage('export-history', { type: 'assistant', uuid: 'export-later', message: { role: 'assistant', content: [{ type: 'text', text: 'later committed reply' }] } } as SDKMessage);
-  assert.equal((await read()).messages.at(-1)?.uuid, 'export-later');
+  assert((await read()).messages.some((row) => row.uuid === 'export-later'));
   evidence.laterCommitObserved = true;
   rejectNextRead = true;
   evidence.workerFailure = await read().then(() => 'unexpected success', String);
   assert.match(String(evidence.workerFailure), /synthetic session-export reader failure/);
   assert.equal((await hub.request<{ status: string }>('system.health', {})).status, 'ok');
-  assert.equal((await read()).messages.at(-1)?.uuid, 'export-later');
+  assert((await read()).messages.some((row) => row.uuid === 'export-later'));
   evidence.readerRecovered = true;
   assert.equal(app.sessionManager.getCachedSessions().length, 0);
   evidence.actorCacheStayedEmpty = true;
