@@ -43,6 +43,7 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
   let patch = { ...change };
   if (!facts.askOpen && ['todo', 'doing', 'blocked'].includes(todo.state))
     patch = { ...patch, state: 'removed', finishedAt: now };
+  const held = todo.blockedBy === 'held' && !Object.keys(change).length;
   if (patch.state !== 'removed') {
     if (judgement.state === 'done')
       patch = {
@@ -51,14 +52,14 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
         evidence: judgement.evidence,
         finishedAt: todo.finishedAt ?? now,
       };
-    else if (judgement.state === 'failed')
+    else if (judgement.state === 'failed' && !held)
       patch = {
         ...patch,
         state: 'failed',
         reason: judgement.reason,
         finishedAt: todo.finishedAt ?? now,
       };
-    else if (judgement.state === 'blocked')
+    else if (judgement.state === 'blocked' && !held)
       patch = {
         ...patch,
         state: 'blocked',

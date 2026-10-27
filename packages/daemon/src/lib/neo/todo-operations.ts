@@ -175,7 +175,9 @@ const bindNeoTodo = (superpipe({})('neo.todo.bind-worker') as PipelineAPI)
     (todo: NeoTodo): Gate<NeoTodo> =>
       ['done', 'removed'].includes(todo.state)
         ? fail(`todo_settled: cannot bind a ${todo.state} todo.`)
-        : { value: todo },
+        : todo.blockedBy === 'held'
+          ? fail('todo_held: the human is holding this todo; release it first.')
+          : { value: todo },
     'todo',
     'result:bound'
   )
@@ -297,6 +299,8 @@ export function planNeoTodoEdit(
   if (input.artifacts && !input.done)
     return fail('evidence_missing: artifacts are evidence; pass them with done.');
   const held = todo.state === 'blocked' && todo.blockedBy === 'held';
+  if (input.hold !== undefined && (input.done || input.artifacts))
+    return fail('hold_with_done: hold or release a todo separately from ticking it done.');
   if (input.hold && todo.state !== 'todo' && !held)
     return fail(
       `not_holdable: only a todo that has not started can be held; this one is ${todo.state}.`
@@ -457,7 +461,7 @@ export function createNeoTodoOperations(
     input?: z.infer<typeof Edit>
   ): Promise<TodoReceipt | Rejection> => {
     const checked = plan.todo;
-    if (input?.addUrls || input?.check) {
+    if (input?.addUrls || input?.check || input?.hold !== undefined) {
       const latest = requireNeoOpenTodo(todos.getTodo(plan.todo.id), todos.getAsk(plan.todo.askId));
       if ('reason' in latest) return latest.reason;
       const edited = planNeoTodoEdit(latest.value, input);
