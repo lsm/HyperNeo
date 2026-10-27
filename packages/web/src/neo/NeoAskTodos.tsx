@@ -619,10 +619,7 @@ export function NeoAskTodos({
     focused?.link &&
     onOpen &&
     !asked.some((question) => question.sourceSession?.link === focused.link) &&
-    !live.some((todo) => todo.link === focused.link) &&
-    !todos.some(
-      (todo) => inQuestion.has(todo.id) && todo.state !== 'removed' && todo.link === focused.link
-    )
+    !listed.some((todo) => todo.link === focused.link)
       ? focused
       : null;
   const expandable = listed.filter(neoTodoHasMore);

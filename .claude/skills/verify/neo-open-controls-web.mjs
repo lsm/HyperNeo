@@ -30,7 +30,7 @@ export async function verifyOpenControls(page, fixture, { theme, touch = false, 
     assert(colors.logoContrast>=3 && colors.textContrast>=4.5,JSON.stringify({theme,source:source.adapter,...colors}));
     const todoColor=await todo.locator('svg').evaluate(e=>getComputedStyle(e).color);
     assert.equal(todoColor,colors.logo);
-    await card.scrollIntoViewIfNeeded();
+    await card.evaluate(element=>element.scrollIntoView({block:'center'}));
     await page.evaluate(async()=>{await Promise.all(document.getAnimations().filter(a=>a.effect?.getComputedTiming().iterations!==Infinity).map(a=>a.finished));});
     await card.screenshot({path:`${evidence}/${theme}-${touch?'touch':'desktop'}-${source.adapter}.png`,scale:'css'});
     observed.push({adapter:source.adapter,headerOpeners:0,questionAndTodoLogos:true,...colors});
@@ -46,7 +46,7 @@ export async function verifyOpenControls(page, fixture, { theme, touch = false, 
   assert.equal(await retainedOpen.locator('svg').count(),1);
   const retiredColors=await retainedOpen.evaluate(readColors);
   assert(retiredColors.logoContrast>=3 && retiredColors.textContrast>=4.5);
-  await retired.scrollIntoViewIfNeeded();
+  await retired.evaluate(element=>element.scrollIntoView({block:'center'}));
   await page.evaluate(async()=>{await Promise.all(document.getAnimations().filter(a=>a.effect?.getComputedTiming().iterations!==Infinity).map(a=>a.finished));});
   await retired.screenshot({path:`${evidence}/${theme}-${touch?'touch':'desktop'}-${id}.png`,scale:'css'});
   await use(retainedOpen);
