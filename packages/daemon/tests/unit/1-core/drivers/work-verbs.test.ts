@@ -88,6 +88,21 @@ async function call(
 }
 
 describe('work verb operations', () => {
+  test('work naming guidance is domain-neutral', () => {
+    const operations = createWorkVerbOperations({
+      adapters: () => [],
+      remote: { list: () => [], invoke: async () => ({}) },
+      daemonName: 'imac',
+      isOpenTodo: () => false,
+    });
+    for (const name of ['work.rename', 'work.start']) {
+      const description = operations.find((operation) => operation.name === name)!.description;
+      expect(description).not.toContain('project and a number');
+      expect(description).not.toContain('neo-ios dev 1');
+      expect(description).toContain('never a task title');
+    }
+  });
+
   test.each(['before-connect', 'after-dispatch'] as const)(
     'remote work.send preserves certainty for a failure %s',
     async (phase) => {

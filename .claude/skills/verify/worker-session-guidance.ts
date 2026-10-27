@@ -45,7 +45,7 @@ try {
       ? await rpc('operations.describe', { name })
       : JSON.parse((await mcp({ name: 'operations.describe', input: { name } })).content[0].text);
     descriptions[name] = response;
-    includes(JSON.stringify(response), 'project and a number', name);
+    includes(JSON.stringify(response), 'for the matter', name);
     includes(JSON.stringify(response), 'never a task title', name);
   }
   const sendDescription = JSON.parse((await mcp({ name: 'operations.describe', input: { name: 'message.send' } })).content[0].text);
@@ -54,7 +54,7 @@ try {
   evidence.descriptions = descriptions;
   const prompt = String(app.sessionManager.getSessionFromDB(root)?.config.systemPrompt);
   evidence.neoSystemPrompt = prompt;
-  for (const phrase of ['project and a number', 'never a task title', 'work.rename', 'Coordination questions', 'never human cards']) includes(prompt, phrase, 'Neo system prompt');
+  for (const phrase of ['for the matter', 'never a task title', 'work.rename', 'Coordination questions', 'never human cards']) includes(prompt, phrase, 'Neo system prompt');
   const db = app.db.getDatabase();
   db.prepare("INSERT INTO sessions(id,title,workspace_path,created_at,last_active_at,status,config,metadata,type) VALUES ('synthetic-worker','HyperNeo dev 1',?,'2026-10-25','2026-10-25','active','{}','{}','worker')").run(join(run, 'workspace'));
   const store = new NeoAskTodoRepository(db);
