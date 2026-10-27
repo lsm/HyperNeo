@@ -152,14 +152,16 @@ test('todo worker reads preserve lists, recovery and PR windows; live writes com
     const now = 20 * 60_000,
       updatedAt = context!.todo.updatedAt;
     const live = { status: 'stopped' as const, lastActivityAt: 0 };
-    expect(await sessions.write('claimNudge', 't0', ref, live, now, updatedAt + 1)).toBeNull();
     expect(
-      await sessions.write('claimNudge', 't0', { ...ref, id: 'other' }, live, now, updatedAt)
+      await sessions.write('claimNudge', 't0', ref, live, now, updatedAt + 1, true)
+    ).toBeNull();
+    expect(
+      await sessions.write('claimNudge', 't0', { ...ref, id: 'other' }, live, now, updatedAt, true)
     ).toBeNull();
     expect(sessions.readNudge('t0')).toBeNull();
     const reminders = await Promise.all([
-      sessions.write('claimNudge', 't0', ref, live, now, updatedAt),
-      sessions.write('claimNudge', 't0', ref, live, now, updatedAt),
+      sessions.write('claimNudge', 't0', ref, live, now, updatedAt, true),
+      sessions.write('claimNudge', 't0', ref, live, now, updatedAt, true),
     ]);
     expect(reminders.filter(Boolean)).toHaveLength(1);
     const reminder = reminders.find(Boolean)!;
@@ -167,14 +169,16 @@ test('todo worker reads preserve lists, recovery and PR windows; live writes com
     expect(sessions.readNudge('t0')).toEqual({ since: 0, nudges: 1, at: now });
     await sessions.write('finishNudge', 't0', 0, 1, 0);
     expect(sessions.readNudge('t0')).toEqual({ since: 0, nudges: 0, at: now });
-    expect(await sessions.write('claimNudge', 't0', ref, live, now, updatedAt)).not.toBeNull();
+    expect(
+      await sessions.write('claimNudge', 't0', ref, live, now, updatedAt, true)
+    ).not.toBeNull();
     const newer = { since: now, nudges: 0 };
     sessions.recordNudge('t0', newer);
     await sessions.write('finishNudge', 't0', 0, 1, 3);
     expect(sessions.readNudge('t0')).toEqual(newer);
     db.prepare("UPDATE neo_todos SET state='done' WHERE id='t0'").run();
     expect(await sessions.read('nudgeContext', 't0')).toBeNull();
-    expect(await sessions.write('claimNudge', 't0', ref, live, now, updatedAt)).toBeNull();
+    expect(await sessions.write('claimNudge', 't0', ref, live, now, updatedAt, true)).toBeNull();
   } finally {
     await gateway.close();
     db.close();
