@@ -33,5 +33,14 @@
       "sandboxPolicyType": "workspace-write",
       "networkAccess": true
     }
+  },
+  "daemonRpc": {
+    "settingsChange": "always to off on the same existing thread",
+    "expectedTurnSandboxPolicy": {
+      "type": "dangerFullAccess"
+    },
+    "actualTurnSandboxPolicy": null,
+    "assertion": "Current off preference must replace the old Desktop policy for the next turn",
+    "wrapperExitCode": 1
   }
 }
