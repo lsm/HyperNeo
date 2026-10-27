@@ -1,0 +1,116 @@
+{
+  "expectedMessageCount": 5,
+  "originalBodyHashBefore": "a0f51c2211ceb0c0ec9d23388f5c63c7841ffd56e6b42de37a833ec2661f9fce",
+  "writerBefore": {
+    "outside": 0,
+    "inside": 1
+  },
+  "coldMs": 5.945917000000009,
+  "concurrentWarmMs": 6.862458999999944,
+  "fullMarkdownMatched": true,
+  "markdownHash": "a0afd31a7f95e87aee7bd817a1a29ccaa0002a83bfb631d6def3056f9001d7db",
+  "missingConversation": "MessageHubResponseError: Session not found",
+  "missingSession": "MessageHubResponseError: Session not found",
+  "healthMs": 0.4192920000000413,
+  "writerAfter": {
+    "outside": 0,
+    "inside": 1
+  },
+  "laterCommitObserved": true,
+  "workerFailure": "MessageHubResponseError: synthetic session-export reader failure",
+  "readerRecovered": true,
+  "actorCacheStayedEmpty": true,
+  "maxLoopLagMs": 6.575999999999567,
+  "rpcLatencyUnder250ms": true,
+  "originalBodyHashAfter": "a0f51c2211ceb0c0ec9d23388f5c63c7841ffd56e6b42de37a833ec2661f9fce",
+  "rssBytes": 448020480,
+  "walBytes": 4124152,
+  "mainSqlAttempts": 0,
+  "workerTimings": [
+    {
+      "roundTripMs": 3.0960000000000036,
+      "replyBytes": 52241,
+      "encodeMs": 0.07712499999979627
+    },
+    {
+      "roundTripMs": 0.5155409999997573,
+      "replyBytes": 52241,
+      "encodeMs": 0.05295900000010079
+    },
+    {
+      "roundTripMs": 1.1293329999998605,
+      "replyBytes": 52241,
+      "encodeMs": 0.05441700000028504
+    },
+    {
+      "roundTripMs": 1.8254579999997986,
+      "replyBytes": 52241,
+      "encodeMs": 0.05154199999969933
+    },
+    {
+      "roundTripMs": 2.2224169999999503,
+      "replyBytes": 52241,
+      "encodeMs": 0.05108299999983501
+    },
+    {
+      "roundTripMs": 2.5500419999998485,
+      "replyBytes": 52241,
+      "encodeMs": 0.048250000000280124
+    },
+    {
+      "roundTripMs": 2.8404169999998885,
+      "replyBytes": 52241,
+      "encodeMs": 0.049790999999913765
+    },
+    {
+      "roundTripMs": 3.1386670000001686,
+      "replyBytes": 52241,
+      "encodeMs": 0.038791999999830296
+    },
+    {
+      "roundTripMs": 3.4786669999998594,
+      "replyBytes": 52241,
+      "encodeMs": 0.05712500000026921
+    },
+    {
+      "roundTripMs": 3.794332999999824,
+      "replyBytes": 52241,
+      "encodeMs": 0.044082999999773165
+    },
+    {
+      "roundTripMs": 5.518583000000035,
+      "replyBytes": 52241,
+      "encodeMs": 0.0591669999998885
+    },
+    {
+      "roundTripMs": 0.31554099999993923,
+      "replyBytes": 1079,
+      "encodeMs": 0.006167000000459666
+    },
+    {
+      "roundTripMs": 0.24129199999970297,
+      "replyBytes": 1283,
+      "encodeMs": 0.00650000000041473
+    },
+    {
+      "roundTripMs": 0.4517500000001746,
+      "replyBytes": 52241,
+      "encodeMs": 0.06595800000013696
+    },
+    {
+      "roundTripMs": 0.45258300000023155,
+      "replyBytes": 52241,
+      "encodeMs": 0.049042000000099506
+    },
+    {
+      "roundTripMs": 0.5682910000000447,
+      "replyBytes": 52454,
+      "encodeMs": 0.06070899999986068
+    },
+    {
+      "roundTripMs": 0.8139579999997295,
+      "replyBytes": 52454,
+      "encodeMs": 0.045666999999866675
+    }
+  ]
+}

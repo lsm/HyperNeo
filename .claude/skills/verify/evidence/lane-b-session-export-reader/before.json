@@ -1,0 +1,11 @@
+{
+  "expectedMessageCount": 5,
+  "originalBodyHashBefore": "4a3f0d36421e67b65b9ab8eda07f0ea7e491788e9b0003a4a064ed9b7bd8090f",
+  "writerBefore": {
+    "outside": 0,
+    "inside": 1
+  },
+  "coldError": "MessageHubResponseError: Session not found",
+  "mainSqlAttempts": 1,
+  "workerTimings": []
+}
