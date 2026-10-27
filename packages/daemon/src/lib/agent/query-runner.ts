@@ -1355,7 +1355,7 @@ export class QueryRunner {
               throw new Error('401 Claude authentication failed');
             }
           }
-          if (isSDKResultMessage(message) && !message.parent_tool_use_id) {
+          if (isSDKResultMessage(message)) {
             if (message.is_error === true || isTopLevelHollowTaskNotificationResult(message)) {
               await this.failures.failure(
                 message.is_error ? JSON.stringify(message) : 'Turn ended without a reply',

@@ -6,7 +6,7 @@ import { sleep } from '../utils/sleep.ts';
 
 type Episode = NonNullable<Session['metadata']['queryFailureEpisode']>;
 export class QueryFailureCapError extends MessageDeliveryTerminalTurnError {}
-const empty = (id = crypto.randomUUID()): Episode => ({
+const empty = (id: string = crypto.randomUUID()): Episode => ({
   id,
   failures: 0,
   retryAt: 0,

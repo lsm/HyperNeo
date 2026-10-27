@@ -20,6 +20,7 @@ mock.module('@anthropic-ai/claude-agent-sdk',()=>({...sdk,query:({prompt}:{promp
   await ended;
  },close:()=>finish(),interrupt:async()=>finish(),supportedModels:async()=>[],supportedCommands:async()=>[],setMcpServers:async()=>({added:[],removed:[],errors:{}})};
 }}));
+const network=globalThis.fetch;globalThis.fetch=(()=>{throw new Error('External HTTP disabled');}) as typeof fetch;
 const {createDaemonApp}=await import('../../../packages/daemon/src/app.ts');
 const {getConfig}=await import('../../../packages/daemon/src/config.ts');
 const {MessageHub,WebSocketClientTransport}=await import('../../../packages/shared/src/mod.ts');
@@ -43,6 +44,7 @@ try{
   assert(attempts[1]-attempts[0]>=950 && attempts[2]-attempts[1]>=1950);
   const beforeCount=attempts.length;await new Promise(done=>setTimeout(done,2200));assert.equal(attempts.length,beforeCount);
   evidence.failed=failed.metadata.queryFailureEpisode;evidence.attempts=[...attempts];
+  const row=app.db.getDatabase().prepare('SELECT metadata FROM sessions WHERE id=?').get(sessionId) as {metadata:string};assert.deepEqual(JSON.parse(row.metadata).queryFailureEpisode,failed.metadata.queryFailureEpisode);evidence.persisted=true;
   const old=failed.metadata.queryFailureEpisode!.id;healthy=true;
   const reset=await hub.request<{success:boolean}>('session.resetQuery',{sessionId,restartQuery:false});assert(reset.success);
   await hub.request('message.send',{sessionId,content:'Explicit recovery after fixing the cause'});
@@ -51,7 +53,7 @@ try{
  }
  evidence.passed=true;
 }finally{
- finish();await transport.close();await app.cleanup();evidence.resourcesStopped=true;
+ finish();await transport.close();await app.cleanup();globalThis.fetch=network;evidence.resourcesStopped=true;
  writeFileSync(join(run,'evidence/query-failure-governor.json'),JSON.stringify(evidence,null,2).replaceAll(run,'<synthetic-run>'));
 }
 console.log(JSON.stringify(evidence).replaceAll(run,'<synthetic-run>'));
