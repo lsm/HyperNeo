@@ -92,6 +92,26 @@ try {
   assert.equal(addedSpace.ok, true, JSON.stringify(addedSpace));
   assert.deepEqual(sessions.get(addedSpace.todo.id)?.ref, { adapter: 'space', id: taskId });
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get().n, 0);
+  const reopenInput = { title: 'Idempotent worker ask', request: 'Keep tracking it', todos: [{ title: 'Recorded worker', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Work', target: { verb: 'send', ref: { adapter: 'hyperneo', id: worker } } }] };
+  const opened = JSON.parse((await handler({ name: 'neo.ask.open', input: reopenInput })).content[0].text);
+  assert.equal(opened.ok, true);
+  db.prepare('DELETE FROM sessions WHERE id=?').run(worker);
+  const beforeReopen = todos.listTodos(opened.ask.id);
+  const reopen = await handler({ name: 'neo.ask.open', input: reopenInput });
+  evidence.push({ operation: 'neo.ask.open', deletedSyntheticWorker: true, reopen });
+  assert.notEqual(reopen.isError, true);
+  const reopened = JSON.parse(reopen.content[0].text);
+  assert.equal(reopened.ok, true, JSON.stringify(reopened));
+  assert.equal(reopened.ask.id, opened.ask.id);
+  assert.deepEqual(todos.listTodos(opened.ask.id), beforeReopen);
+  todos.settleAsk(opened.ask, 'done', 'Synthetic result complete', Date.now());
+  const settled = await handler({ name: 'neo.ask.open', input: { ...reopenInput, todos: [{ ...reopenInput.todos[0], title: 'New worker task' }] } });
+  evidence.push({ operation: 'neo.ask.open', settledMissingWorker: true, settled });
+  assert.notEqual(settled.isError, true);
+  const receipt = JSON.parse(settled.content[0].text);
+  assert.equal(receipt.ok, true, JSON.stringify(receipt));
+  assert.match(receipt.records[0], /^ask_settled:/);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get().n, 0);
   evidence.push({ rows: db.prepare('SELECT target, ref FROM neo_todo_sessions').all() });
   console.log('PASS: real daemon MCP add and direct bind store full target IDs; unknown prefixes are refused without recording, rebinding or dispatching.');
 } finally {

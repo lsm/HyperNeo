@@ -112,6 +112,81 @@ function setup(overrides: Partial<Pick<NeoTodoControls, 'resolveTarget' | 'start
 }
 
 describe('todo and ask bookkeeping records through MCP', () => {
+  test.each(['open', 'done'] as const)(
+    'reopening a %s ask does not revalidate an already-recorded worker',
+    async (state) => {
+      let gone = false;
+      const h = setup({
+        resolveTarget: async (ref) =>
+          gone
+            ? { reason: { ok: false as const, reason: 'target_not_found: removed worker' } }
+            : { value: ref },
+      });
+      try {
+        const input = {
+          title: 'Recorded worker',
+          request: 'Track existing work',
+          todos: [
+            {
+              title: 'Worker task',
+              check: pendingTodoCheck,
+              instruction: 'Work',
+              target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'synthetic-worker' } },
+            },
+          ],
+        };
+        const first = await h.call('neo.ask.open', input);
+        expect(first.ok).toBe(true);
+        if (state === 'done') h.store.settleAsk(first.ask, 'done', 'Finished', 2);
+        const before = h.store.listTodos(first.ask.id);
+        gone = true;
+        const again = await h.call('neo.ask.open', input);
+        expect(again).toMatchObject({
+          ok: true,
+          ask: { id: first.ask.id, status: state },
+          todos: [{ id: first.todos[0].id }],
+        });
+        expect(h.store.listTodos(first.ask.id)).toEqual(before);
+        expect(h.calls).toEqual([]);
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
+  test('a settled ask returns its bookkeeping receipt before resolving a new homeless target', async () => {
+    const h = setup({
+      resolveTarget: async () => ({
+        reason: { ok: false, reason: 'target_not_found: removed worker' },
+      }),
+    });
+    try {
+      h.store.settleAsk(h.ask, 'done', 'Finished', 2);
+      const before = h.store.listTodos(h.ask.id);
+      const reply = await h.call('neo.ask.open', {
+        title: h.ask.title,
+        request: 'Track work',
+        todos: [
+          {
+            title: 'New task',
+            check: pendingTodoCheck,
+            instruction: 'Work',
+            target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'missing' } },
+          },
+        ],
+      });
+      expect(reply).toMatchObject({
+        ok: true,
+        ask: { id: h.ask.id },
+        records: [expect.stringContaining('ask_settled:')],
+      });
+      expect(h.store.listTodos(h.ask.id)).toEqual(before);
+      expect(h.calls).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test.each([0, 1])(
     'an unknown target at batch position %s refuses the whole ask before writes or dispatch',
     async (position) => {
