@@ -1,13 +1,19 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoCardSearchPage } from '../../storage/neo-card-search.ts';
+import { buildFtsQuery } from '../../storage/message-search.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 
 type Rejection = { ok: false; reason: string };
 type Outcome = { ok: true; results: NeoCardSearchPage['results']; nextCursor: string | null };
 
 const CardSearchInput = z.object({
-  query: z.string().trim().min(1).max(200),
+  query: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .refine((query) => buildFtsQuery(query).length > 0, 'query_too_short'),
   limit: z.number().int().min(1).max(50).optional(),
   cursor: z.string().min(1).max(32).optional(),
 });
@@ -32,7 +38,7 @@ export function createNeoCardSearchOperation(
   return defineOperation({
     name: 'neo.ask.search',
     description:
-      'Search work cards by text across ask titles, requests, outcomes, todo titles, states, next actions, reports, evidence and question text and answers. Returns pointer rows (askId, todoId or questionId, matched field, score, snippet) ranked with titles above status and next actions above reports; open them with neo.ask.read.',
+      'Search work cards by text across ask titles, requests, outcomes, todo titles, states, next actions, reports, evidence and question text and answers. Returns pointer rows (askId, todoId or questionId, matched field, score, snippet) ranked with titles above status and next actions above reports; open them with neo.ask.read. Include at least one term of three or more characters.',
     inputSchema: CardSearchInput,
     resultSchema: z.union([
       z.object({ ok: z.literal(false), reason: z.string() }),

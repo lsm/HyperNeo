@@ -23,6 +23,15 @@ RPC regressions report meta rather than title; both failed on the staged head.
 Run this journey with both Bun and pinned Deno through the shared wrapper.
 
 Production statement execution belongs to the existing SDK status worker; the
-query helper builds SQL and projects pointer rows. The facade always dispatches
-this new API to that worker. Unit SQL fixtures supply their own in-memory reader.
-The main-thread SQL ratchet must pass without increasing its baseline.
+query helper builds SQL and projects pointer rows. File-backed databases dispatch
+to that worker. The explicitly supported :memory: backend reads its existing
+connection; add `memory` before the run directory through the wrapper to exercise
+that mode. It must return the same pointers, fields and snippets.
+
+The proof also searches a bracket-wrapped title with no outcome: it must return a
+title match and a string snippet. A two-character query must be rejected with
+`query_too_short` through the ordinary typed invalid-input response. The schema
+uses the same token rules as the search query, so several short words cannot
+bypass the check; a short word beside a searchable term remains valid.
+Run file and memory modes with Bun and pinned Deno. The main-thread SQL ratchet
+must pass without increasing its baseline.

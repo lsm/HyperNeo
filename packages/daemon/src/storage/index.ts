@@ -1,3 +1,4 @@
+import { readSearchRows } from './work-chat-search.ts';
 import { searchNeoCards, type NeoCardSearchPage } from './neo-card-search.ts';
 import { readHyperneoTurnEnds } from './hyperneo-turn-ends-read.ts';
 import { bindGateway, bindSpaceTaskLane, DbGateway } from './db-gateway/db-gateway.ts';
@@ -481,11 +482,7 @@ export class Database {
     if (this.getDbPath() === ':memory:') {
       return Promise.resolve(
         searchNeoCards(
-          (sql, bindings) =>
-            this.core
-              .getDb()
-              .prepare(sql)
-              .all(...bindings) as unknown[],
+          (sql, bindings) => readSearchRows(this.core.getDb(), sql, bindings),
           query,
           cursor,
           limit
