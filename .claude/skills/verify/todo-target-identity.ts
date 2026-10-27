@@ -40,6 +40,22 @@ try {
     assert.deepEqual(stored, { adapter: 'hyperneo', id: worker });
     evidence.push({ stored });
   }
+  const pending = await add('send', worker);
+  assert.equal(pending.ok, true);
+  const bind = async (id: string) => {
+    const reply = await handler({ name: 'neo.todo.bind', input: { todoId: pending.todo.id, ref: { adapter: 'hyperneo', id } } });
+    evidence.push({ operation: 'neo.todo.bind', id, reply });
+    assert.notEqual(reply.isError, true);
+    return JSON.parse(reply.content[0].text);
+  };
+  const bound = await bind(worker.slice(0, 8));
+  assert.equal(bound.ok, true, JSON.stringify(bound));
+  const original = sessions.readRef(pending.todo.id);
+  assert.deepEqual(original, { adapter: 'hyperneo', id: worker });
+  const refused = await bind('deadbeef');
+  assert.equal(refused.ok, false);
+  assert.match(refused.reason, /^target_not_found:/);
+  assert.deepEqual(sessions.readRef(pending.todo.id), original);
   const count = todos.listTodos('synthetic-ask').length;
   const rejected = await add('send', 'deadbeef', true);
   assert.equal(rejected.ok, false);
@@ -47,7 +63,7 @@ try {
   assert.equal(todos.listTodos('synthetic-ask').length, count);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get().n, 0);
   evidence.push({ rows: db.prepare('SELECT target, ref FROM neo_todo_sessions').all() });
-  console.log('PASS: real daemon MCP stores full target IDs and rejects unknown prefixes before recording or dispatching.');
+  console.log('PASS: real daemon MCP add and direct bind store full target IDs; unknown prefixes are refused without recording, rebinding or dispatching.');
 } finally {
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
   await app.cleanup();

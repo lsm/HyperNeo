@@ -11,6 +11,8 @@ database. It registers no provider and starts no worker or model turn. Through
 the production MCP handler, adding send and bind targets using a uniquely
 resolvable HyperNeo session prefix must store the full ID. An unknown prefix
 with start:true must be refused before creating a todo or delivery input.
+The separate neo.todo.bind door must also resolve a prefix to the full ID;
+an unknown rebind must fail while retaining the previous worker reference.
 The saved observed.json contains actual replies and stored target rows.
 
 Focused neo-todo-target tests also cover Codex references, owning-daemon and

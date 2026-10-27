@@ -511,8 +511,14 @@ export function createNeoTodoOperations(
 
   const bind = owned(superpipe({})('neo.todo.bind') as PipelineAPI)
     .pipe(
-      (todo: NeoTodo, input: z.infer<typeof Bind>) =>
-        ran(bindNeoTodo(todos, sessions, todo, input.ref)),
+      async (todo: NeoTodo, input: z.infer<typeof Bind>) => {
+        const resolved = await controls.resolveTarget(input.ref);
+        if ('reason' in resolved) return resolved.reason;
+        const latest = todos.getTodo(todo.id);
+        const current = requireNeoOpenTodo(latest, latest ? todos.getAsk(latest.askId) : null);
+        if ('reason' in current) return current.reason;
+        return ran(bindNeoTodo(todos, sessions, current.value, resolved.value));
+      },
       ['outcome', 'input'],
       'outcome'
     )

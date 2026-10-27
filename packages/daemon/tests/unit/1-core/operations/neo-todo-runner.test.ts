@@ -1919,7 +1919,7 @@ describe('current explicit removal behavior before recompute', () => {
     const operation = createNeoTodoOperations(
       h.store,
       h.sessions,
-      h.runner,
+      { ...h.runner, resolveTarget: async (ref) => ({ value: ref }) },
       () => [],
       () => null
     ).find((operation) => operation.name === 'neo.todo.remove')!;
