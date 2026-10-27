@@ -1,10 +1,10 @@
 # Shared content disclosure verification
 
-Use SKILL.md's resources, isolation and cleanup. The current publication footer
-has its own journey, neo-reply-fold-row.md: more/less sits on a separate
-right-aligned row. Use that journey
-for the current proof scope and required screenshots. Do not use the former
-inline-position expectation as a pass.
+Use SKILL.md's resources, isolation and cleanup. Current publication copy
+coverage lives in neo-whole-message-copy.md, which verifies complete Markdown
+source and block-copy scope. The separate-row footer migration belongs to
+#9086 item 8; use its journey after that change has landed. Do not interpret
+historical inline-position expectations as proof of a newer footer.
 
 The shared-disclosure-seed.ts and shared-disclosure-web.mjs helpers preserve the
 historical #8092 characterization, including inline final-line placement. They

@@ -29,7 +29,7 @@ export async function verifyMessageFade(page, fixture, { phase, evidence, touch 
       if (item.name === 'fallback') assert(cut.marker);
       if (item.name === 'words' || item.name === 'cjk') assert(!cut.marker);
       const tapText = async () => {
-        const body = article.locator('[role="button"][aria-expanded]');
+        const body = article.locator('.neo-clamped-text');
         await body.evaluate(async element => { element.scrollIntoView({block:'start'}); await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); });
         const box = await body.boundingBox();
         assert(box);

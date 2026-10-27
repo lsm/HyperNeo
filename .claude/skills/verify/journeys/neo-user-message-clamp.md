@@ -29,7 +29,10 @@ but never replaces, visual review.
 Click/tap visible text to open and fold; use a point actually inside the
 viewport, because scroll anchoring can move the top of an expanded message
 above it. Following Safe link must retain the folded state and change the hash.
-Enter/Space on the focused text region must open/fold. Component tests also
+Enter/Space on the dedicated accessible toggle must open/fold. That toggle
+is visually hidden until focused, when it shows a chevron without a more/less
+label. The text region must not have button semantics around its links or
+renderer-injected buttons. Component tests also
 preserve link handlers and selected text, short-message behavior and the exact
 three-row boundary. Shared disclosure's old human-control expectations are
 historical only; use this journey for current proof.

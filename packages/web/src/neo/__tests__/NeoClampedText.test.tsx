@@ -28,7 +28,7 @@ describe('NeoClampedText', () => {
     expect(container.querySelector('[data-clamped]')).toBeTruthy();
   });
 
-  it('supports keyboard folding while preserving link clicks and selected text', () => {
+  it('provides an accessible control while preserving link clicks and selected text', () => {
     sized(500, 272);
     const onLink = vi.fn();
     const { container } = render(
@@ -43,6 +43,7 @@ describe('NeoClampedText', () => {
     );
     fireEvent.click(screen.getByRole('link', { name: 'link' }));
     expect(onLink).toHaveBeenCalledOnce();
+    expect(screen.getByRole('link', { name: 'link' }).closest('[role=button],button')).toBeNull();
     expect(container.querySelector('[data-clamped]')).toBeTruthy();
     const selected = vi
       .spyOn(window, 'getSelection')
@@ -50,9 +51,9 @@ describe('NeoClampedText', () => {
     fireEvent.click(screen.getByText('long'));
     expect(container.querySelector('[data-clamped]')).toBeTruthy();
     selected.mockReturnValue(null);
-    fireEvent.keyDown(screen.getByRole('button', { name: 'Show more' }), { key: 'Enter' });
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
     expect(container.querySelector('[data-clamped]')).toBeNull();
-    fireEvent.keyDown(screen.getByRole('button', { name: 'Show less' }), { key: ' ' });
+    fireEvent.click(screen.getByRole('button', { name: 'Show less' }));
     expect(container.querySelector('[data-clamped]')).toBeTruthy();
   });
 

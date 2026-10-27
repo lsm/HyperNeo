@@ -1,5 +1,5 @@
 import type { ComponentChildren } from 'preact';
-import { useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useId, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { t } from '../lib/i18n/index.ts';
 
 const CLAMP_LINES = 10;
@@ -44,6 +44,7 @@ function neoClampHeight(element: HTMLElement, lines = CLAMP_LINES) {
 }
 
 export function NeoClampedText({ text, children }: { text: string; children: ComponentChildren }) {
+  const contentId = useId();
   const box = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [long, setLong] = useState(false);
@@ -69,11 +70,7 @@ export function NeoClampedText({ text, children }: { text: string; children: Com
   }, [text, open]);
   return (
     <div
-      class={`relative flow-root ${long ? 'cursor-pointer focus-visible:outline-accent' : ''}`}
-      role={long ? 'button' : undefined}
-      tabIndex={long ? 0 : undefined}
-      aria-expanded={long ? open : undefined}
-      aria-label={long ? t(open ? 'chat.showLess' : 'chat.showMore') : undefined}
+      class={`neo-clamped-text relative flow-root ${long ? 'cursor-pointer' : ''}`}
       onClick={(event) => {
         if (!long || event.defaultPrevented || window.getSelection()?.toString()) return;
         if (
@@ -83,20 +80,27 @@ export function NeoClampedText({ text, children }: { text: string; children: Com
           return;
         setOpen(!open);
       }}
-      onKeyDown={(event) => {
-        if (!long || event.target !== event.currentTarget || !['Enter', ' '].includes(event.key))
-          return;
-        event.preventDefault();
-        setOpen(!open);
-      }}
     >
       <div
         ref={box}
+        id={contentId}
         data-clamped={!open && long ? '' : undefined}
         class={open ? '' : 'overflow-hidden'}
       >
         {children}
       </div>
+      {long && (
+        <button
+          type="button"
+          class="sr-only focus:not-sr-only focus:absolute focus:bottom-0 focus:right-0 focus:flex focus:h-11 focus:w-11 focus:items-center focus:justify-center focus:rounded focus:bg-surface focus:text-accent focus:outline-accent"
+          aria-label={t(open ? 'chat.showLess' : 'chat.showMore')}
+          aria-expanded={open}
+          aria-controls={contentId}
+          onClick={() => setOpen(!open)}
+        >
+          <span aria-hidden="true">{open ? '▴' : '▾'}</span>
+        </button>
+      )}
       {!open && long && marked && (
         <span aria-hidden="true" class="pointer-events-none absolute bottom-0 left-0 text-fg-muted">
           ⋯
