@@ -93,10 +93,7 @@ describe('voice stream settings', () => {
     expect(voiceStreamRoute({ ...voice, streamProtocol: 'openai-realtime' })).toBeNull();
   });
 
-  test('voiceStreamRoute derives the live listen URL from one link', () => {
-    expect(voiceStreamRoute({ ...voice, streamEndpoint: undefined })?.url.toString()).toBe(
-      'wss://ai0:8011/v1/listen?encoding=linear16&sample_rate=16000&channels=1&interim_results=true&endpointing=700'
-    );
+  test('voiceStreamRoute derives the live listen URL from one base link', () => {
     expect(
       voiceStreamRoute({
         ...voice,
@@ -111,6 +108,14 @@ describe('voice stream settings', () => {
         streamEndpoint: undefined,
       })?.url.protocol
     ).toBe('ws:');
+    expect(voiceStreamRoute({ ...voice, streamEndpoint: undefined })).toBeNull();
+    expect(
+      voiceStreamRoute({
+        ...voice,
+        endpoint: 'https://ai0:8011/inference',
+        streamEndpoint: undefined,
+      })
+    ).toBeNull();
   });
 
   test('voiceStreamTls pins a configured CA and never turns verification off by default', () => {
@@ -367,13 +372,13 @@ describe('VoiceStream against a stub Deepgram server', () => {
     });
   });
 
-  test('auto mode derives the live listen URL from the one batch link', async () => {
+  test('auto mode derives the live listen URL from the one base link', async () => {
     const { via, stream } = await start({
-      endpoint: `http://127.0.0.1:${port}/v1/audio/transcriptions`,
+      endpoint: `http://127.0.0.1:${port}/speech/v1`,
       streamEndpoint: undefined,
     });
     expect(via).toBe('streaming');
-    expect(connections[0].pathname).toBe('/v1/listen');
+    expect(connections[0].pathname).toBe('/speech/v1/listen');
     await stream.stop();
   });
 

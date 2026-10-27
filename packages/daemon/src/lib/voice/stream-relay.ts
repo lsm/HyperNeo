@@ -10,9 +10,9 @@ import {
   voiceSocketReason,
 } from './diagnostics.ts';
 import {
-  BATCH_TRANSCRIPTIONS_PATH,
   joinFinals,
   type StreamProtocol,
+  serviceBaseEndpoint,
   streamProtocol,
 } from './stream-protocols.ts';
 import { resolveTranscriptionEndpoint, withTimeout } from './transcribe-fetch.ts';
@@ -56,12 +56,9 @@ function derivedStreamUrl(batchEndpoint: string): string | undefined {
   try {
     const url = new URL(batchEndpoint);
     if (url.protocol !== 'https:' && url.protocol !== 'http:') return undefined;
-    const pathname = url.pathname.replace(/\/+$/, '');
-    const base = pathname.endsWith(BATCH_TRANSCRIPTIONS_PATH)
-      ? pathname.slice(0, -BATCH_TRANSCRIPTIONS_PATH.length)
-      : pathname;
+    if (!serviceBaseEndpoint(url)) return undefined;
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-    url.pathname = `${base}/listen`;
+    url.pathname = `${url.pathname.replace(/\/+$/, '')}/listen`;
     url.search = '';
     return url.toString();
   } catch {

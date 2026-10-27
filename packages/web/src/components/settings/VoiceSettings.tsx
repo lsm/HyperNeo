@@ -185,7 +185,7 @@ export function VoiceSettings() {
 
         <SettingsRow
           label="Endpoint"
-          description="One link: the full /audio/transcriptions URL or a service base URL; live listening derives from the same link."
+          description="One link: a service base URL (ending in a version, like /speech/v1) configures batch and live listening; full endpoint URLs are used verbatim."
           layout="stacked"
         >
           <input

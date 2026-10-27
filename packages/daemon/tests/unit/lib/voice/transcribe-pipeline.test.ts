@@ -159,6 +159,10 @@ describe('voice transcribe pipeline', () => {
       transcribe(createDeps({ endpoint: 'https://ai0:8090/speech/v1' }))
     ).resolves.toEqual({ action: 'transcribed', text: 'hello world' });
     expect(requested).toBe('https://ai0:8090/speech/v1/audio/transcriptions');
+    await expect(
+      transcribe(createDeps({ endpoint: 'https://ai0:8090/inference' }))
+    ).resolves.toEqual({ action: 'transcribed', text: 'hello world' });
+    expect(requested).toBe('https://ai0:8090/inference');
   });
 
   it('denies invalid voice settings with byte-identical messages', async () => {
