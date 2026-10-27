@@ -668,11 +668,11 @@ export async function setupRPCHandlers(
   spaceWorkflowRepo.backfillExistingDefinitionVersions();
   const spaceAgentTemplateRepo = new SpaceAgentTemplateRepository(deps.db.getDatabase());
   const agentTemplateResolverFor = createAgentTemplateResolverFactory(spaceAgentTemplateRepo);
-  spaceWorkflowRunRepo.backfillDefinitionPins(
+  await spaceWorkflowRunRepo.backfillDefinitionPins(
     (id) => spaceWorkflowRepo.getWorkflow(id),
     agentTemplateResolverFor
   );
-  spaceWorkflowRunRepo.migrateSnapshotlessPins(agentTemplateResolverFor, (id) =>
+  await spaceWorkflowRunRepo.migrateSnapshotlessPins(agentTemplateResolverFor, (id) =>
     spaceWorkflowRepo.getWorkflow(id)
   );
   const agentLookup: SpaceAgentLookup = createSpaceAgentLookup(longHorizonAgentRepo);

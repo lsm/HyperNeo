@@ -55,6 +55,20 @@ vi.mock('../../../hooks/useSkills.ts', () => ({
   }),
 }));
 
+vi.mock('../../../lib/global-store.ts', () => ({
+  globalStore: {
+    settings: {
+      value: {
+        toolSelectionDefaults: {
+          version: 1,
+          choices: { 'skill:1': { selected: true }, 'mcp:1': { selected: true } },
+        },
+      },
+    },
+    refresh: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
 vi.mock('../../../lib/toast.ts', () => ({
   toast: {
     error: (msg: string) => mockToastError(msg),
@@ -330,7 +344,7 @@ describe('SkillsRegistry', () => {
       fireEvent.click(screen.getByTestId('settings-toggle'));
 
       await waitFor(() => {
-        expect(mockToastSuccess).toHaveBeenCalledWith('Disabled "Web Search"');
+        expect(mockToastSuccess).toHaveBeenCalledWith('New-session default off: Web Search');
       });
     });
 

@@ -23,7 +23,8 @@ import type {
 import { neoStartQuestionTitle } from '../../lib/neo/start-question.ts';
 import type { Database } from '../sqlite-compat.ts';
 
-export type NeoTodoDraft = Pick<NeoTodo, 'title' | 'doneWhen' | 'check' | 'instruction' | 'named'>;
+export type NeoTodoDraft = Pick<NeoTodo, 'title' | 'doneWhen' | 'check' | 'instruction' | 'named'> &
+  Partial<Pick<NeoTodo, 'priority'>>;
 
 export type NeoTodoPatch = Partial<
   Pick<
@@ -42,6 +43,7 @@ export type NeoTodoPatch = Partial<
     | 'blockedReason'
     | 'nextAction'
     | 'blockedBy'
+    | 'priority'
   >
 >;
 
@@ -60,6 +62,7 @@ const TODO_COLUMNS: Record<keyof NeoTodoPatch, string> = {
   blockedReason: 'blocked_reason',
   nextAction: 'next_action',
   blockedBy: 'blocked_by',
+  priority: 'priority',
 };
 
 const ASK_SELECT = `SELECT id, goal_id AS goalId, project_id AS projectId, repo, parent_id AS parentId, session_id AS sessionId,
@@ -83,7 +86,7 @@ const foundAsk = (row: AskRow | null): NeoAsk | null => (row ? toAsk(row) : null
 const TODO_SELECT = `SELECT id, ask_id AS askId, position, title, done_when AS doneWhen,
   check_json AS checkJson, instruction, named, repo, state, reason, blocked_reason AS blockedReason,
   next_action AS nextAction, blocked_by AS blockedBy, replaced_by AS replacedBy,
-  added_after_start AS addedAfterStart, report, evidence, artifacts_json AS artifactsJson, created_at AS createdAt,
+  added_after_start AS addedAfterStart, report, evidence, artifacts_json AS artifactsJson, priority, created_at AS createdAt,
   updated_at AS updatedAt, started_at AS startedAt, finished_at AS finishedAt FROM neo_todos`;
 
 export type NeoQuestionDraft = Pick<
@@ -566,9 +569,9 @@ export class NeoAskTodoRepository {
     this.db
       .prepare(
         `INSERT INTO neo_todos (id, ask_id, position, title, done_when, check_json, instruction, named,
-           repo, added_after_start, created_at, updated_at)
+           repo, added_after_start, priority, created_at, updated_at)
          VALUES (?, ?, (SELECT COALESCE(MAX(position) + 1, 0) FROM neo_todos WHERE ask_id = ?), ?, ?, ?, ?, ?, ?,
-           EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = ? AND started_at IS NOT NULL), ?, ?)`
+           EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = ? AND started_at IS NOT NULL), ?, ?, ?)`
       )
       .run(
         id,
@@ -581,6 +584,7 @@ export class NeoAskTodoRepository {
         draft.named ? JSON.stringify(draft.named) : null,
         repo,
         askId,
+        draft.priority ?? 'normal',
         now,
         now
       );
@@ -895,7 +899,11 @@ export class NeoAskTodoRepository {
         'open'
       );
       if (answered) {
-        this.releaseStartTodos(question.id, now);
+        this.releaseStartTodos(
+          question.id,
+          now,
+          question.kind === 'start' ? [answer].flat().map(String) : undefined
+        );
         if (answer === 'yes') {
           applyPackPreferenceAnswer(this.db, question.id);
           const rules = applyNeoRuleAnswer(this.db, question.id, approval);
@@ -922,7 +930,7 @@ export class NeoAskTodoRepository {
         { state: 'retired', retired_reason: reason, replaced_by: replacedBy },
         'open'
       );
-      if (retired) this.releaseStartTodos(question.id, now);
+      if (retired) this.releaseStartTodos(question.id, now, [], 'Start question withdrawn.');
       return retired;
     })();
     if (!changed) return null;
@@ -988,11 +996,33 @@ export class NeoAskTodoRepository {
     }
   }
 
-  private releaseStartTodos(questionId: string, now: number): void {
-    for (const id of this.getQuestion(questionId)?.startTodos ?? []) {
+  private releaseStartTodos(
+    questionId: string,
+    now: number,
+    ticked?: readonly string[],
+    heldReason = 'Not ticked in the start answer.'
+  ): void {
+    const question = this.getQuestion(questionId);
+    const waiting = new Set(
+      (question ? this.listQuestions(question.askId) : [])
+        .filter((other) => other.kind === 'start' && other.state === 'open')
+        .flatMap((other) => other.startTodos ?? [])
+    );
+    for (const id of question?.startTodos ?? []) {
       const todo = this.getTodo(id);
-      if (todo?.state === 'blocked' && todo.blockedBy === 'question')
-        this.updateTodo(todo, { state: 'todo' }, now);
+      if (todo?.state === 'blocked' && todo.blockedBy === 'question' && !waiting.has(id))
+        this.updateTodo(
+          todo,
+          ticked && !ticked.includes(id)
+            ? {
+                state: 'blocked',
+                blockedBy: 'held',
+                blockedReason: heldReason,
+                nextAction: 'The human releases it.',
+              }
+            : { state: 'todo' },
+          now
+        );
     }
   }
 

@@ -1,0 +1,82 @@
+$ bun run check:no-comments && bun run format:check && bun run lint && bun run typecheck && bun run knip && bun run check:session-guards && bun run check:operation-names && bun run check:db-schema-parity && bun run check:test-quality && bun run check:test-matrix && bun run check:online-shards && bun run check:raw-palette && bun run check:neo-strings && bun run check:neo-pack-imports && bun run check:db-main-thread
+$ bun scripts/strip-comments.ts --check
+files with comments: 0, comments removed: 0
+$ biome format .
+Checked 4521 files in 274ms. No fixes applied.
+$ oxlint .
+packages/daemon/src/lib/neo/home/git-environment.ts:13:15: warning eslint(no-control-regex): Unexpected control character help: Avoid matching control characters in regular expressions. If intentional, disable this rule for the expression.
+packages/web/src/components/chat/markdown-image.ts:30:25: warning eslint(no-control-regex): Unexpected control characters help: Avoid matching control characters in regular expressions. If intentional, disable this rule for the expression.
+packages/daemon/claude-desktop-bridge/hooks/register.ts:61:20: warning eslint(no-control-regex): Unexpected control characters help: Avoid matching control characters in regular expressions. If intentional, disable this rule for the expression.
+packages/daemon/src/lib/neo/packs/coding/prepare-execution.ts:47:9: warning eslint(no-control-regex): Unexpected control characters help: Avoid matching control characters in regular expressions. If intentional, disable this rule for the expression.
+packages/daemon/src/lib/neo/packs/coding/prepare-execution.ts:47:27: warning eslint(no-useless-escape): Unnecessary escape character '[' help: Replace `\[` with `[`.
+packages/daemon/src/lib/neo/session-watcher.ts:240:30: warning unicorn(no-useless-spread): Using a spread operator here creates a new array unnecessarily. help: `for…of` can iterate over iterable, it's unnecessary to convert to an array.
+packages/daemon/src/lib/neo/session-watcher.ts:251:28: warning unicorn(no-useless-spread): Using a spread operator here creates a new array unnecessarily. help: `for…of` can iterate over iterable, it's unnecessary to convert to an array.
+packages/web/src/neo/work-driver.ts:29:7: warning unicorn(prefer-string-starts-ends-with): Prefer String#startsWith over a regex with a caret. help: Replace `/^claude:\/\//.test(link)` with `link.startsWith('claude://')`.
+packages/web/src/neo/work-driver.ts:29:36: warning unicorn(prefer-string-starts-ends-with): Prefer String#startsWith over a regex with a caret. help: Replace `/^https:\/\/claude\.ai\//.test(link)` with `link.startsWith('https://claude.ai/')`.
+packages/web/src/neo/work-driver.ts:30:7: warning unicorn(prefer-string-starts-ends-with): Prefer String#startsWith over a regex with a caret. help: Replace `/^codex:\/\//.test(link)` with `link.startsWith('codex://')`.
+packages/web/src/neo/work-driver.ts:31:7: warning unicorn(prefer-string-starts-ends-with): Prefer String#startsWith over a regex with a caret. help: Replace `/^ghapp:\/\//.test(link)` with `link.startsWith('ghapp://')`.
+packages/web/src/neo/work-driver.ts:32:7: warning unicorn(prefer-string-starts-ends-with): Prefer String#startsWith over a regex with a caret. help: Replace `/^\/session\//.test(link)` with `link.startsWith('/session/')`.
+packages/daemon/src/storage/schema/m275-link-agent-owned-sessions.ts:46:7: warning unicorn(no-useless-fallback-in-spread): Empty fallbacks in spreads are unnecessary help: Spreading falsy values in object literals won't add any unexpected properties, so it's unnecessary to add an empty object as fallback.
+packages/daemon/src/lib/agent/query-options-builder.ts:778:19: warning unicorn(no-useless-fallback-in-spread): Empty fallbacks in spreads are unnecessary help: Spreading falsy values in object literals won't add any unexpected properties, so it's unnecessary to add an empty object as fallback.
+packages/daemon/src/lib/providers/anthropic-non-streaming.ts:61:31: warning unicorn(no-useless-fallback-in-spread): Empty fallbacks in spreads are unnecessary help: Spreading falsy values in object literals won't add any unexpected properties, so it's unnecessary to add an empty object as fallback.
+packages/daemon/src/lib/providers/anthropic-non-streaming.ts:63:27: warning unicorn(no-useless-fallback-in-spread): Empty fallbacks in spreads are unnecessary help: Spreading falsy values in object literals won't add any unexpected properties, so it's unnecessary to add an empty object as fallback.
+packages/daemon/src/lib/providers/provider-key-bridge.ts:80:31: warning unicorn(no-useless-spread): Using a spread operator here creates a new array unnecessarily. help: `for…of` can iterate over iterable, it's unnecessary to convert to an array.
+packages/daemon/src/lib/artifacts/bundle.ts:19:12: warning eslint(no-control-regex): Unexpected control characters help: Avoid matching control characters in regular expressions. If intentional, disable this rule for the expression.
+packages/daemon/src/lib/agent/processing-state-manager.ts:89:54: warning unicorn(no-useless-spread): Using a spread operator here creates a new array unnecessarily. help: Consider removing the spread operator.
+packages/daemon/src/lib/artifacts/pr-summary.ts:16:10: warning eslint(no-control-regex): Unexpected control characters help: Avoid matching control characters in regular expressions. If intentional, disable this rule for the expression.
+packages/web/src/components/sdk/SDKAssistantMessage.tsx:298:20: warning unicorn(prefer-string-starts-ends-with): Prefer String#startsWith over a regex with a caret. help: Replace `/^Async agent launched successfully/.test(replyText)` with `replyText.startsWith('Async agent launched successfully')`.
+packages/daemon/src/lib/artifacts/file-policy.ts:86:7: warning eslint(no-control-regex): Unexpected control characters help: Avoid matching control characters in regular expressions. If intentional, disable this rule for the expression.
+packages/daemon/src/lib/artifacts/html-preview.ts:53:41: warning eslint(no-control-regex): Unexpected control characters help: Avoid matching control characters in regular expressions. If intentional, disable this rule for the expression.
+packages/shared/src/types/artifact-reference.ts:22:23: warning eslint(no-control-regex): Unexpected control characters help: Avoid matching control characters in regular expressions. If intentional, disable this rule for the expression.
+packages/daemon/src/lib/worktree-manager.ts:39:30: warning eslint(no-control-regex): Unexpected control characters help: Avoid matching control characters in regular expressions. If intentional, disable this rule for the expression.
+packages/daemon/src/lib/agents/template-field-validation.ts:23:54: warning eslint(no-misleading-character-class): Unexpected combining class in character class. help: Replace the character with its normalized form (NFC) or use Unicode code point escapes instead of combining sequences.
+packages/daemon/src/lib/agents/template-field-validation.ts:23:73: warning eslint(no-misleading-character-class): Unexpected combining class in character class. help: Replace the character with its normalized form (NFC) or use Unicode code point escapes instead of combining sequences.
+packages/daemon/src/lib/event-loop-activity.ts:21:5: warning typescript(no-this-alias): Unexpected aliasing of 'this' to local variable. help: Assigning a variable to this instead of properly using arrow lambdas may be a symptom of pre-ES2015 practices or not managing scope well.
+packages/prompts/src/mod.ts:1:1: warning typescript(triple-slash-reference): Do not use a triple slash reference for ./markdown.d.ts, use `import` style instead. help: Use of triple-slash reference type directives is generally discouraged in favor of ECMAScript Module imports.
+packages/web/src/lib/artifact-link-policy.ts:17:19: warning eslint(no-control-regex): Unexpected control characters help: Avoid matching control characters in regular expressions. If intentional, disable this rule for the expression.
+packages/daemon/src/lib/drivers/claude-inbox-conversations.ts:92:35: warning unicorn(no-useless-spread): `Promise.allSettled` accepts an iterable, so it's unnecessary to convert the iterable to an array. help: Consider removing the spread operator.
+packages/web/src/components/space/GoalDetailPanel.tsx:191:60: warning eslint(no-unsafe-finally): Unsafe `finally` block. help: Control flow inside `try` or `catch` blocks will be overwritten by this statement.
+$ bun node_modules/typescript7/bin/tsc --build --noEmit
+$ knip --include files,dependencies,exports --no-config-hints
+$ ./scripts/check-session-deletion-callers.sh
+Task #85 guard passed: only allow-listed files call the UI-only session primitives.
+$ bun run scripts/check-operation-names.ts
+operation names: 206 defined, all declared.
+$ bun scripts/check-db-schema-parity.ts
+2026-10-27T13:18:01.085Z [hyperneo:daemon:migration-268] Renamed space_long_horizon_agent_forge_scopes to space_long_horizon_agent_evolution_scopes +0ms
+DB schema parity check passed.
+$ bun scripts/check-test-quality.ts
+Test-quality audit passed.
+$ bash scripts/validate-test-matrix.sh
+daemon unit: 1489 file(s) on disk, 1489 covered
+web: 427 test file(s) in packages/web/ (1 exempt outside src/)
+
+All test files are covered by the CI matrices (unit + web + online).
+Exempt (intentionally disabled) online dirs: benchmark glm providers sandbox cross-provider deno
+$ scripts/test-online.sh --verify
+Verifying daemon online module configuration...
+  weights: 3/3 file(s) duration-weighted, 0 hash-fallback
+  space        2-way split, 3 files (duration-weighted via scripts/shard-weights.tsv):
+      bucket 0: 1 file(s), 67.2s weighted
+      bucket 1: 2 file(s), 87.3s weighted
+  weights: 17/17 file(s) duration-weighted, 0 hash-fallback
+  rpc          4-way split, 17 files (duration-weighted via scripts/shard-weights.tsv):
+      bucket 0: 4 file(s), 85.9s weighted
+      bucket 1: 4 file(s), 85.5s weighted
+      bucket 2: 5 file(s), 85.2s weighted
+      bucket 3: 4 file(s), 85.0s weighted
+
+Online module configuration OK.
+$ bun scripts/check-raw-palette.ts
+raw palette utilities: 180 (baseline 180)
+$ bun scripts/check-neo-strings.ts
+neo strings: all non-allowlisted files use t()
+$ bun scripts/check-neo-pack-imports.ts
+Neo core imports no pack implementations.
+$ bun scripts/check-db-main-thread.ts
+prepare: 1413 (baseline 1413)
+transaction: 151 (baseline 151)
+exec: 116 (baseline 116)
+query: 13 (baseline 13)
+run: 612 (baseline 612)
+open: 4 (baseline 4)

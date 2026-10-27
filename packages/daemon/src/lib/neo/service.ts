@@ -37,7 +37,7 @@ import type {
 import type { NeoQuestion, NeoQuestionSource, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import type { NeoWorkingEvent } from '@hyperneo/shared/types/neo-snapshot';
-import { type NeoModelPreference } from '@hyperneo/shared/types/settings';
+import { type NeoModelPreference, neoTodoLimits } from '@hyperneo/shared/types/settings';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
@@ -191,6 +191,7 @@ export class NeoService {
         );
       },
       changed: this.notifyChanged,
+      limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
     });
     const runtime = composePacks(this);
     this.builtinPacks = runtime.packs;

@@ -1,0 +1,10 @@
+{
+  "runtime": "deno",
+  "mode": "before",
+  "exitCode": 0,
+  "baselineFilesFrom": "dc6a060a6032c93771e5f3155b869b315edd158b",
+  "head": "8cba2eec8b56129ddac6f9c77c2e79c721948918",
+  "temporaryDaemonDataRemoved": true,
+  "freeGiBBefore": 204.51058959960938,
+  "freeMemoryPercentBefore": 59
+}

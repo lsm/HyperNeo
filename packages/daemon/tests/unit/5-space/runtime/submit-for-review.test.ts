@@ -203,10 +203,10 @@ test('completed frozen submission acknowledges again without granting execution 
   }) as SessionManager;
   const result = await createDirectOutcomeHandler({
     db,
-    jobQueue: jobs,
     sessionManager: {
       coalesceDirectStopVerification: owner.coalesceDirectStopVerification.bind(owner),
       getCachedSession: () => cached,
+      getSessionForControl: async () => null,
       isSessionLoading: () => false,
       unregisterSession: async () => {
         cached = null;

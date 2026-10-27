@@ -128,6 +128,15 @@ export interface NeoSettings {
   mutedSessions?: string[];
   autoDispatch?: boolean;
   workerPermissionMode?: NeoWorkerPermissionMode;
+  maxRunningTodos?: number;
+  maxRunningTodosPerProject?: number;
+}
+
+export function neoTodoLimits(settings?: NeoSettings): { running: number; perGroup: number } {
+  return {
+    running: settings?.maxRunningTodos ?? 6,
+    perGroup: settings?.maxRunningTodosPerProject ?? 3,
+  };
 }
 
 export function neoWorkerPermissionMode(settings?: NeoSettings): NeoWorkerPermissionMode {

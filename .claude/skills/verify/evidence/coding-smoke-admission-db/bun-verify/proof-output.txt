@@ -1,0 +1,11 @@
+12 |   url: z
+13 |     .string()
+14 |     .refine((url) => !!parsePrUrl(url))
+15 |     .meta({ examples: ['https://github.com/example/repo/pull/1'] }),
+16 |   head: z.string().min(1),
+17 |   smoke: CodingSmoke,
+              ^
+ReferenceError: Cannot access 'CodingSmoke' before initialization.
+      at /Users/lsm/.codex/worktrees/dea1f09f/neokai/packages/daemon/src/lib/neo/packs/coding/smoke-operation.ts:17:10
+
+Bun v1.4.3 (macOS arm64)

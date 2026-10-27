@@ -62,6 +62,7 @@ function setup(stop: () => Promise<string | null> = async () => null) {
   coding.todos.schema(db);
   const told: string[] = [];
   const runner = createNeoTodoRunner({
+    limits: () => ({ running: 99, perGroup: 99 }),
     write: gatewayFor(db).run.bind(gatewayFor(db)),
     store,
     sessions,

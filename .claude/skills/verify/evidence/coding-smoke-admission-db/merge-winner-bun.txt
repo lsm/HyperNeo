@@ -1,0 +1,10 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/coding-merge-receipt-writer.test.ts:
+(pass) manual merge receipt records and validates on the writer with guarded main [4.88ms]
+(pass) manual merge receipt records and validates on the writer with read-only main [1.73ms]
+
+ 2 pass
+ 0 fail
+ 8 expect() calls
+Ran 2 tests across 1 file. [26.00ms]

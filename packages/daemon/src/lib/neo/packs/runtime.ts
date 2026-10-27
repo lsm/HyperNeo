@@ -103,7 +103,6 @@ export function createNeoService(...args: NeoServiceArgs) {
         ...(coding.operations ?? []),
         createCodingMergeOperation({
           db: db.getDatabase(),
-          ledger: new CodingPrLedgerRepository(db.getDatabase()),
           todos: todoPrs,
           review: coding.review,
           prepareMerge: coding.prepareMerge,

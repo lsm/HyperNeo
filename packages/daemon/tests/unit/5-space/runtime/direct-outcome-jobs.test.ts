@@ -85,7 +85,6 @@ beforeEach(() => {
   }) as SessionManager;
   deps = {
     db,
-    jobQueue: jobs,
     onTerminalTransition: terminal,
     sessionManager: {
       coalesceDirectStopVerification: owner.coalesceDirectStopVerification.bind(owner),

@@ -309,6 +309,11 @@ temporary daemon data and run directory you created.
 
 ## Metadata-only daemon proofs
 
+Construction-only writer journeys may invoke a registered command through the
+isolated daemon gateway and verify its receipt through a public reader. Record
+that public mutation callers remain unchanged; repeat the proof through those
+callers in the activation slice before claiming the user path moved off main.
+
 A Windows compiled-startup proof also isolates `USERPROFILE`, `TEMP` and `TMP`.
 Use native Windows paths for `HOME` and `HYPERNEO_DATA_DIR` (PowerShell
 `Join-Path`). The helper passes `SystemRoot` for Windows process startup but

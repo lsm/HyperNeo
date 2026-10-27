@@ -1,3 +1,4 @@
+import { buildWorkflowOptionsPatch } from './workflow-options-patch.ts';
 import type {
   CreateSpaceWorkflowParams,
   HandoffTransition,
@@ -14,12 +15,15 @@ import type {
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import { Logger } from '../../lib/logger.ts';
+import { buildWorkflowIdentityPatch } from './workflow-identity-patch.ts';
 import {
   computeDefinitionVersion,
   stableVersionTimestamp,
   verifyDefinitionVersion,
 } from '../../lib/workflows/definition-version.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { workflowDeleteWrites, type WorkflowDeleteResult } from './workflow-delete-write.ts';
 import {
   type DefinitionVersionSource,
   SpaceWorkflowDefinitionVersionRepository,
@@ -346,76 +350,11 @@ export class SpaceWorkflowRepository {
     if (!row) return null;
 
     const now = Math.max(Date.now(), row.updated_at + 1);
-    const fields: string[] = [];
-    const values: (string | number | null)[] = [];
+    const { fields, values } = buildWorkflowIdentityPatch(params);
 
-    if (params.name !== undefined) {
-      fields.push('name = ?');
-      values.push(params.name.trim());
-    }
-    if (params.description !== undefined) {
-      fields.push('description = ?');
-      values.push(params.description ?? '');
-    }
-    if (params.startNodeId !== undefined) {
-      fields.push('start_node_id = ?');
-      values.push(params.startNodeId ?? null);
-    }
-    if (params.endNodeId !== undefined) {
-      fields.push('end_node_id = ?');
-      values.push(params.endNodeId ?? null);
-    }
-    if (params.tags !== undefined) {
-      fields.push('tags = ?');
-      values.push(JSON.stringify(params.tags ?? []));
-    }
-
-    if (params.channels !== undefined) {
-      fields.push('channels = ?');
-      values.push(
-        params.channels && params.channels.length > 0 ? JSON.stringify(params.channels) : null
-      );
-    }
-
-    if (params.hooks !== undefined) {
-      fields.push('hooks = ?');
-      values.push(params.hooks && params.hooks.length > 0 ? JSON.stringify(params.hooks) : null);
-    }
-
-    if (params.layout !== undefined) {
-      fields.push('layout = ?');
-      values.push(params.layout ? JSON.stringify(params.layout) : null);
-    }
-
-    if (params.templateName !== undefined) {
-      fields.push('template_name = ?');
-      values.push(params.templateName ?? null);
-    }
-    if (params.templateHash !== undefined) {
-      fields.push('template_hash = ?');
-      values.push(params.templateHash ?? null);
-    }
-    if (params.instructions !== undefined) {
-      fields.push('instructions = ?');
-      values.push(params.instructions ?? null);
-    }
-    if (params.completionAutonomyLevel !== undefined) {
-      fields.push('completion_autonomy_level = ?');
-      values.push(params.completionAutonomyLevel);
-    }
-
-    if (params.postApproval !== undefined) {
-      fields.push('post_approval = ?');
-      values.push(params.postApproval ? JSON.stringify(params.postApproval) : null);
-    }
-    if (params.disabled !== undefined && params.disabled !== null) {
-      fields.push('disabled = ?');
-      values.push(params.disabled ? 1 : 0);
-    }
-    if (params.handle !== undefined) {
-      fields.push('handle = ?');
-      values.push(params.handle ?? null);
-    }
+    const options = buildWorkflowOptionsPatch(params);
+    fields.push(...options.fields);
+    values.push(...options.values);
 
     const hasNodeReplacement = params.nodes !== undefined;
 
@@ -506,6 +445,10 @@ export class SpaceWorkflowRepository {
   deleteWorkflow(id: string): boolean {
     const result = this.db.prepare(`DELETE FROM space_workflows WHERE id = ?`).run(id);
     return result.changes > 0;
+  }
+
+  deleteWorkflowAsync(id: string): Promise<WorkflowDeleteResult> {
+    return gatewayFor(this.db).call(workflowDeleteWrites, 'delete', id);
   }
 
   hasExecutableRuns(workflowId: string): boolean {

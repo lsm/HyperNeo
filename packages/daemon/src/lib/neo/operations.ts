@@ -768,7 +768,7 @@ export function createNeoOperations(service: NeoService) {
         packs: () => service.installedPacks(),
         artifact: createArtifactRefReader(() => service.db.getDatabase()),
         stop: (todo) => service.todoRunner.stop(todo),
-        start: (id) => service.todoRunner.start(id),
+        advance: () => service.todoRunner.advance(),
         changed: () => service.notifyChanged(),
         project: (todos) => service.todoWorkers(todos),
       }

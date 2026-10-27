@@ -1,3 +1,4 @@
+import { taskSchedulePauseWrites } from '../repositories/task-schedule-pause-write.ts';
 import { neoPublicationWrites } from '../repositories/neo-publication-repository.ts';
 import {
   neoAskSettlementReads,
@@ -10,6 +11,7 @@ import {
   neoSessionTrackWrites,
   neoSessionTrackRootRead,
 } from '../repositories/neo-session-track-write.ts';
+import { neoTodoAddWrites } from '../repositories/neo-todo-add-write.ts';
 import { globalSettingsWrites } from '../repositories/global-settings-writes.ts';
 import {
   codingPollPageReads,
@@ -127,6 +129,13 @@ import { neoPublicationEditWrites } from '../repositories/neo-publication-edit-w
 import { neoProjectMoveWrites } from '../repositories/neo-project-move-writes.ts';
 import { codingPrEventReads } from '../../lib/neo/packs/coding/pr-event-routing-db.ts';
 import { codingMergeReceiptWrites } from '../../lib/neo/packs/coding/merge-receipt-db.ts';
+import {
+  codingSmokeReads,
+  codingSmokeWrites,
+} from '../../lib/neo/packs/coding/smoke-admission-db.ts';
+import { sessionScheduleCreateWrites } from '../repositories/session-schedule-create-write.ts';
+import { workflowRunPinWrites } from '../repositories/workflow-run-pin-write.ts';
+import { workflowDeleteWrites } from '../repositories/workflow-delete-write.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -138,6 +147,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     neoTodoRunnerWrites,
     neoSessionTrackWrites,
     neoSessionTrackRootRead,
+    neoTodoAddWrites,
     codingPollPageReads,
     codingPollPageWrites,
     codingConnectorIdentityReads,
@@ -233,5 +243,11 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     neoProjectMoveWrites,
     codingPrEventReads,
     codingMergeReceiptWrites,
+    codingSmokeReads,
+    codingSmokeWrites,
+    sessionScheduleCreateWrites,
+    workflowRunPinWrites,
+    workflowDeleteWrites,
+    taskSchedulePauseWrites,
   ].map((op) => [op.name, op])
 );

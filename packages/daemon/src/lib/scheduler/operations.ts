@@ -91,9 +91,9 @@ export function createSessionScheduleOperations(scheduler: SessionScheduler) {
       'result:outcome'
     )
     .pipe(
-      (input: z.infer<typeof Create>, caller: OperationCaller) => ({
+      async (input: z.infer<typeof Create>, caller: OperationCaller) => ({
         ok: true as const,
-        schedule: scheduler.create({
+        schedule: await scheduler.createAsync({
           target: input.target,
           sourceKind: 'reminder',
           sourceId: generateUUID(),
@@ -106,7 +106,7 @@ export function createSessionScheduleOperations(scheduler: SessionScheduler) {
       ['outcome', 'caller'],
       'outcome'
     )
-    .end('outcome');
+    .endAsync('outcome');
 
   const list = (superpipe({})('schedule.session.list') as PipelineAPI)
     .input(['input', 'caller'])

@@ -1,0 +1,982 @@
+{
+  "mode": "before",
+  "verified": true,
+  "events": [
+    {
+      "name": "operations.describe",
+      "input": {
+        "name": "neo.coding.merge.prepare"
+      },
+      "reply": {
+        "id": "da5fa798-dd4e-416b-8b2c-8a52037db88d",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "found": true,
+          "name": "neo.coding.merge.prepare",
+          "description": "Admit a linked coding PR for manual merge using persisted Review/Verify assignments, actual exact-head review, required CI, resolved findings and repository human sign-off. Re-reads the head, records gates and returns a SHA-pinned command; never merges or enables auto-merge.",
+          "inputSchema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+              "todoId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "url": {
+                "type": "string",
+                "examples": [
+                  "https://github.com/example/repo/pull/1"
+                ]
+              }
+            },
+            "required": [
+              "todoId",
+              "url"
+            ],
+            "additionalProperties": false
+          },
+          "resultSchema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "accepted": {
+                    "type": "boolean",
+                    "const": true
+                  },
+                  "head": {
+                    "type": "string"
+                  },
+                  "command": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "accepted",
+                  "head",
+                  "command"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "accepted": {
+                    "type": "boolean",
+                    "const": false
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "accepted",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "requestId": "988dc2ec-03aa-4bae-8979-edd516538af7",
+        "timestamp": "2026-10-27T17:47:16.166Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "pack.preferences.set",
+      "input": {
+        "pack": "coding",
+        "scope": {
+          "kind": "repo",
+          "key": "synthetic/admission"
+        },
+        "key": "reviewBot",
+        "value": "fixture-bot"
+      },
+      "reply": {
+        "id": "be387e9c-3861-49c6-a8f8-56d84ebb3fb0",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true
+        },
+        "requestId": "cf98728d-2d6a-41e8-beb0-fe41f5a839c5",
+        "timestamp": "2026-10-27T17:47:16.167Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "pack.preferences.set",
+      "input": {
+        "pack": "coding",
+        "scope": {
+          "kind": "repo",
+          "key": "synthetic/admission"
+        },
+        "key": "mergePolicy",
+        "value": "review_bot"
+      },
+      "reply": {
+        "id": "ed5cb839-a6c1-4239-904b-2852fdaae877",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true
+        },
+        "requestId": "39e73c96-7c82-438f-a532-01cf7bdcbc0e",
+        "timestamp": "2026-10-27T17:47:16.167Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "718a7478-68aa-4ad1-b6a5-3415a5266287",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": false,
+          "reason": "Current Review and Verify assignments on a live linked coding todo are required."
+        },
+        "requestId": "53d1cc99-8580-45a2-80bc-d95d29594153",
+        "timestamp": "2026-10-27T17:47:16.361Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.assign",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "acceptanceContract": "artifact:acceptance",
+        "stage": "review",
+        "candidates": []
+      },
+      "reply": {
+        "id": "235a4244-4606-46ac-8e3e-c96479d06941",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true,
+          "assignment": {
+            "url": "https://github.com/synthetic/admission/pull/7",
+            "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "acceptanceContract": "artifact:acceptance",
+            "newDispatch": true,
+            "write": {
+              "adapter": "fixture",
+              "id": "author"
+            },
+            "bot": "fixture-bot"
+          }
+        },
+        "requestId": "51fd0ad4-155e-42e7-895a-702927a9a7af",
+        "timestamp": "2026-10-27T17:47:16.374Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "65c8a05e-9f2b-4cfc-9f94-707d4bb79510",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": false,
+          "reason": "independent_matching_head_qa_required"
+        },
+        "requestId": "1501da37-e612-479d-9664-b6a3c7ac7ae2",
+        "timestamp": "2026-10-27T17:47:16.394Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.result",
+      "input": {
+        "todoId": "todo",
+        "ref": {
+          "adapter": "fixture",
+          "id": "verifier"
+        },
+        "fact": {
+          "url": "https://github.com/synthetic/admission/pull/7",
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "stage": "verify",
+          "actor": {
+            "kind": "agent",
+            "id": "verifier",
+            "model": "gpt-6",
+            "harness": "fixture"
+          },
+          "verdict": "pass",
+          "acceptanceContract": "artifact:acceptance",
+          "evidence": [
+            "artifact:verify"
+          ]
+        }
+      },
+      "reply": {
+        "id": "34d9e07a-c96d-4f12-adf1-bc812f92b8df",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true
+        },
+        "requestId": "07c065b4-f805-4caa-b8f0-ea3648e2866a",
+        "timestamp": "2026-10-27T17:47:16.395Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "8bac81c3-84f5-4fdd-b7fd-b281d4e9fffa",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": false,
+          "reason": "merge_requirements_not_satisfied"
+        },
+        "requestId": "5fa0c3a9-9ffd-43b1-a8ac-60e8ec0f3f5f",
+        "timestamp": "2026-10-27T17:47:16.413Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "7a88a330-7201-45f6-9301-644bd705781e",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": false,
+          "reason": "merge_requirements_not_satisfied"
+        },
+        "requestId": "02216a76-9c12-4005-b002-f8a01ffebd4c",
+        "timestamp": "2026-10-27T17:47:16.434Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "5258b27f-c190-4022-b469-916a18d73d2b",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": false,
+          "reason": "matching_head_review_required"
+        },
+        "requestId": "43a18f24-29b1-4e10-86ce-a331a8d113ff",
+        "timestamp": "2026-10-27T17:47:16.463Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "661be21e-d3af-423a-acf0-761c543e20b9",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": false,
+          "reason": "matching_head_review_required"
+        },
+        "requestId": "2a763f38-38f2-4190-935c-3b82278bf271",
+        "timestamp": "2026-10-27T17:47:16.480Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "c1381cf9-0d06-4a69-b5a2-27186b821a7f",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": false,
+          "reason": "merge_requirements_not_satisfied"
+        },
+        "requestId": "cad474cd-ab82-4739-9ba7-8fce38502bcf",
+        "timestamp": "2026-10-27T17:47:16.498Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "86d9c5d2-b06b-48cf-b2ba-61722a390aed",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": false,
+          "reason": "head_changed_before_manual_merge"
+        },
+        "requestId": "9ad728bd-60ac-451e-94c2-0caa70bb7de0",
+        "timestamp": "2026-10-27T17:47:16.527Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "pack.preferences.set",
+      "input": {
+        "pack": "coding",
+        "scope": {
+          "kind": "repo",
+          "key": "synthetic/admission"
+        },
+        "key": "humanSignoff",
+        "value": [
+          "src/**"
+        ]
+      },
+      "reply": {
+        "id": "c196744d-eaf1-4ab0-93aa-75d1a74e5d89",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "ok": true
+        },
+        "requestId": "58f2db52-5a87-401f-91cd-b0f2003f51e5",
+        "timestamp": "2026-10-27T17:47:16.527Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "88865a33-d3f1-4dcd-b999-da9a21ee84cc",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": false,
+          "reason": "merge_requirements_not_satisfied"
+        },
+        "requestId": "86faab27-2f3a-4bdf-99d2-1baad5f4bc71",
+        "timestamp": "2026-10-27T17:47:16.544Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "39a26534-0959-4834-82e2-e19a41821c9e",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": true,
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "command": [
+            "gh",
+            "pr",
+            "merge",
+            "https://github.com/synthetic/admission/pull/7",
+            "--squash",
+            "--match-head-commit",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ]
+        },
+        "requestId": "174ac502-9f26-46dc-bf0e-65c52eee4e0b",
+        "timestamp": "2026-10-27T17:47:16.572Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "e25d1d97-6322-44dc-8b63-ed931726bd88",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": true,
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "command": [
+            "gh",
+            "pr",
+            "merge",
+            "https://github.com/synthetic/admission/pull/7",
+            "--squash",
+            "--match-head-commit",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ]
+        },
+        "requestId": "eb214cf4-0ea9-452c-9b0c-4702aa2baf0c",
+        "timestamp": "2026-10-27T17:47:16.599Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "cda9461c-2e69-481c-b418-b97eaccd76a5",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": true,
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "command": [
+            "gh",
+            "pr",
+            "merge",
+            "https://github.com/synthetic/admission/pull/7",
+            "--squash",
+            "--match-head-commit",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ]
+        },
+        "requestId": "8272bb07-f0f0-442c-872c-6919d8fd4e1e",
+        "timestamp": "2026-10-27T17:47:16.911Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "name": "neo.coding.merge.prepare",
+      "input": {
+        "todoId": "todo",
+        "url": "https://github.com/synthetic/admission/pull/7"
+      },
+      "reply": {
+        "id": "dc770c94-57bf-4e83-950c-5f74212de023",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "accepted": false,
+          "reason": "merge_receipt_changed"
+        },
+        "requestId": "28b33f8a-df71-404f-9017-57b23dc441f6",
+        "timestamp": "2026-10-27T17:47:16.943Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    },
+    {
+      "verified": true,
+      "receipt": {
+        "gate": {
+          "url": "https://github.com/synthetic/admission/pull/7",
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "acceptanceContract": "artifact:acceptance",
+          "write": {
+            "adapter": "fixture",
+            "id": "author"
+          },
+          "reviewer": "fixture-bot",
+          "qa": {
+            "adapter": "fixture",
+            "id": "verifier"
+          },
+          "evidence": [
+            "https://github.com/synthetic/admission/pull/7/checks",
+            "https://github.com/synthetic/admission/pull/7#review-1",
+            "https://github.com/synthetic/admission/pull/7#human",
+            "artifact:verify"
+          ]
+        },
+        "smoke": null
+      },
+      "conflict": {
+        "url": "https://github.com/synthetic/admission/pull/7",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "acceptanceContract": "artifact:acceptance",
+        "write": {
+          "adapter": "fixture",
+          "id": "author"
+        },
+        "reviewer": "fixture-bot",
+        "qa": {
+          "adapter": "fixture",
+          "id": "conflicting-qa"
+        },
+        "evidence": [
+          "https://github.com/synthetic/admission/pull/7/checks",
+          "https://github.com/synthetic/admission/pull/7#review-1",
+          "https://github.com/synthetic/admission/pull/7#human",
+          "artifact:verify"
+        ]
+      },
+      "race": [
+        {
+          "accepted": true,
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "command": [
+            "gh",
+            "pr",
+            "merge",
+            "https://github.com/synthetic/admission/pull/7",
+            "--squash",
+            "--match-head-commit",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ]
+        },
+        {
+          "accepted": false,
+          "reason": "merge_receipt_changed"
+        }
+      ],
+      "largeEvidenceBytes": 50009,
+      "limitation": "Real merge-prepare RPC and persisted race job; synthetic GitHub, assignments and QA. No real merge, model, harness or deployment. Target instrumentation covers local merge admission and receipt SQL; fixtures are excluded."
+    }
+  ],
+  "mainSql": [
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT target, ref, actual_model AS model, actual_effort AS effort,\n                follow_anchor AS followAnchor, live_status AS liveStatus,\n                started_at AS startedAt, retries, start_interrupted AS startInterrupted,\n                needs_you_since AS needsYouSince, claimed_at AS claimedAt\n           FROM neo_todo_sessions WHERE todo_id = ?",
+    "SELECT fact_json AS fact FROM pack_coding_stage_facts\n      WHERE url = ? ORDER BY stage",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT 1 FROM neo_todos t JOIN neo_asks a ON a.id=t.ask_id WHERE t.id=? AND t.state IN ('doing','blocked') AND a.status='open'",
+    "SELECT url FROM pack_coding_pr_claims WHERE todo_id = ? ORDER BY claimed_at, url",
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT target, ref, actual_model AS model, actual_effort AS effort,\n                follow_anchor AS followAnchor, live_status AS liveStatus,\n                started_at AS startedAt, retries, start_interrupted AS startInterrupted,\n                needs_you_since AS needsYouSince, claimed_at AS claimedAt\n           FROM neo_todo_sessions WHERE todo_id = ?",
+    "SELECT fact_json AS fact FROM pack_coding_stage_facts\n      WHERE url = ? ORDER BY stage",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT 1 FROM neo_todos t JOIN neo_asks a ON a.id=t.ask_id WHERE t.id=? AND t.state IN ('doing','blocked') AND a.status='open'",
+    "SELECT url FROM pack_coding_pr_claims WHERE todo_id = ? ORDER BY claimed_at, url",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT target, ref, actual_model AS model, actual_effort AS effort,\n                follow_anchor AS followAnchor, live_status AS liveStatus,\n                started_at AS startedAt, retries, start_interrupted AS startInterrupted,\n                needs_you_since AS needsYouSince, claimed_at AS claimedAt\n           FROM neo_todo_sessions WHERE todo_id = ?",
+    "SELECT fact_json AS fact FROM pack_coding_stage_facts\n      WHERE url = ? ORDER BY stage",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT 1 FROM neo_todos t JOIN neo_asks a ON a.id=t.ask_id WHERE t.id=? AND t.state IN ('doing','blocked') AND a.status='open'",
+    "SELECT url FROM pack_coding_pr_claims WHERE todo_id = ? ORDER BY claimed_at, url",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT target, ref, actual_model AS model, actual_effort AS effort,\n                follow_anchor AS followAnchor, live_status AS liveStatus,\n                started_at AS startedAt, retries, start_interrupted AS startInterrupted,\n                needs_you_since AS needsYouSince, claimed_at AS claimedAt\n           FROM neo_todo_sessions WHERE todo_id = ?",
+    "SELECT fact_json AS fact FROM pack_coding_stage_facts\n      WHERE url = ? ORDER BY stage",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT 1 FROM neo_todos t JOIN neo_asks a ON a.id=t.ask_id WHERE t.id=? AND t.state IN ('doing','blocked') AND a.status='open'",
+    "SELECT url FROM pack_coding_pr_claims WHERE todo_id = ? ORDER BY claimed_at, url",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT target, ref, actual_model AS model, actual_effort AS effort,\n                follow_anchor AS followAnchor, live_status AS liveStatus,\n                started_at AS startedAt, retries, start_interrupted AS startInterrupted,\n                needs_you_since AS needsYouSince, claimed_at AS claimedAt\n           FROM neo_todo_sessions WHERE todo_id = ?",
+    "SELECT fact_json AS fact FROM pack_coding_stage_facts\n      WHERE url = ? ORDER BY stage",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT 1 FROM neo_todos t JOIN neo_asks a ON a.id=t.ask_id WHERE t.id=? AND t.state IN ('doing','blocked') AND a.status='open'",
+    "SELECT url FROM pack_coding_pr_claims WHERE todo_id = ? ORDER BY claimed_at, url",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT target, ref, actual_model AS model, actual_effort AS effort,\n                follow_anchor AS followAnchor, live_status AS liveStatus,\n                started_at AS startedAt, retries, start_interrupted AS startInterrupted,\n                needs_you_since AS needsYouSince, claimed_at AS claimedAt\n           FROM neo_todo_sessions WHERE todo_id = ?",
+    "SELECT fact_json AS fact FROM pack_coding_stage_facts\n      WHERE url = ? ORDER BY stage",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT 1 FROM neo_todos t JOIN neo_asks a ON a.id=t.ask_id WHERE t.id=? AND t.state IN ('doing','blocked') AND a.status='open'",
+    "SELECT url FROM pack_coding_pr_claims WHERE todo_id = ? ORDER BY claimed_at, url",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT target, ref, actual_model AS model, actual_effort AS effort,\n                follow_anchor AS followAnchor, live_status AS liveStatus,\n                started_at AS startedAt, retries, start_interrupted AS startInterrupted,\n                needs_you_since AS needsYouSince, claimed_at AS claimedAt\n           FROM neo_todo_sessions WHERE todo_id = ?",
+    "SELECT fact_json AS fact FROM pack_coding_stage_facts\n      WHERE url = ? ORDER BY stage",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT 1 FROM neo_todos t JOIN neo_asks a ON a.id=t.ask_id WHERE t.id=? AND t.state IN ('doing','blocked') AND a.status='open'",
+    "SELECT url FROM pack_coding_pr_claims WHERE todo_id = ? ORDER BY claimed_at, url",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT target, ref, actual_model AS model, actual_effort AS effort,\n                follow_anchor AS followAnchor, live_status AS liveStatus,\n                started_at AS startedAt, retries, start_interrupted AS startInterrupted,\n                needs_you_since AS needsYouSince, claimed_at AS claimedAt\n           FROM neo_todo_sessions WHERE todo_id = ?",
+    "SELECT fact_json AS fact FROM pack_coding_stage_facts\n      WHERE url = ? ORDER BY stage",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT 1 FROM neo_todos t JOIN neo_asks a ON a.id=t.ask_id WHERE t.id=? AND t.state IN ('doing','blocked') AND a.status='open'",
+    "SELECT url FROM pack_coding_pr_claims WHERE todo_id = ? ORDER BY claimed_at, url",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT target, ref, actual_model AS model, actual_effort AS effort,\n                follow_anchor AS followAnchor, live_status AS liveStatus,\n                started_at AS startedAt, retries, start_interrupted AS startInterrupted,\n                needs_you_since AS needsYouSince, claimed_at AS claimedAt\n           FROM neo_todo_sessions WHERE todo_id = ?",
+    "SELECT fact_json AS fact FROM pack_coding_stage_facts\n      WHERE url = ? ORDER BY stage",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT 1 FROM neo_todos t JOIN neo_asks a ON a.id=t.ask_id WHERE t.id=? AND t.state IN ('doing','blocked') AND a.status='open'",
+    "SELECT url FROM pack_coding_pr_claims WHERE todo_id = ? ORDER BY claimed_at, url",
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT target, ref, actual_model AS model, actual_effort AS effort,\n                follow_anchor AS followAnchor, live_status AS liveStatus,\n                started_at AS startedAt, retries, start_interrupted AS startInterrupted,\n                needs_you_since AS needsYouSince, claimed_at AS claimedAt\n           FROM neo_todo_sessions WHERE todo_id = ?",
+    "SELECT fact_json AS fact FROM pack_coding_stage_facts\n      WHERE url = ? ORDER BY stage",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT 1 FROM neo_todos t JOIN neo_asks a ON a.id=t.ask_id WHERE t.id=? AND t.state IN ('doing','blocked') AND a.status='open'",
+    "SELECT url FROM pack_coding_pr_claims WHERE todo_id = ? ORDER BY claimed_at, url",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT target, ref, actual_model AS model, actual_effort AS effort,\n                follow_anchor AS followAnchor, live_status AS liveStatus,\n                started_at AS startedAt, retries, start_interrupted AS startInterrupted,\n                needs_you_since AS needsYouSince, claimed_at AS claimedAt\n           FROM neo_todo_sessions WHERE todo_id = ?",
+    "SELECT fact_json AS fact FROM pack_coding_stage_facts\n      WHERE url = ? ORDER BY stage",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT 1 FROM neo_todos t JOIN neo_asks a ON a.id=t.ask_id WHERE t.id=? AND t.state IN ('doing','blocked') AND a.status='open'",
+    "SELECT url FROM pack_coding_pr_claims WHERE todo_id = ? ORDER BY claimed_at, url",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT target, ref, actual_model AS model, actual_effort AS effort,\n                follow_anchor AS followAnchor, live_status AS liveStatus,\n                started_at AS startedAt, retries, start_interrupted AS startInterrupted,\n                needs_you_since AS needsYouSince, claimed_at AS claimedAt\n           FROM neo_todo_sessions WHERE todo_id = ?",
+    "SELECT fact_json AS fact FROM pack_coding_stage_facts\n      WHERE url = ? ORDER BY stage",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT 1 FROM neo_todos t JOIN neo_asks a ON a.id=t.ask_id WHERE t.id=? AND t.state IN ('doing','blocked') AND a.status='open'",
+    "SELECT url FROM pack_coding_pr_claims WHERE todo_id = ? ORDER BY claimed_at, url",
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT target, ref, actual_model AS model, actual_effort AS effort,\n                follow_anchor AS followAnchor, live_status AS liveStatus,\n                started_at AS startedAt, retries, start_interrupted AS startInterrupted,\n                needs_you_since AS needsYouSince, claimed_at AS claimedAt\n           FROM neo_todo_sessions WHERE todo_id = ?",
+    "SELECT fact_json AS fact FROM pack_coding_stage_facts\n      WHERE url = ? ORDER BY stage",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT 1 FROM neo_todos t JOIN neo_asks a ON a.id=t.ask_id WHERE t.id=? AND t.state IN ('doing','blocked') AND a.status='open'",
+    "SELECT url FROM pack_coding_pr_claims WHERE todo_id = ? ORDER BY claimed_at, url",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT target, ref, actual_model AS model, actual_effort AS effort,\n                follow_anchor AS followAnchor, live_status AS liveStatus,\n                started_at AS startedAt, retries, start_interrupted AS startInterrupted,\n                needs_you_since AS needsYouSince, claimed_at AS claimedAt\n           FROM neo_todo_sessions WHERE todo_id = ?",
+    "SELECT fact_json AS fact FROM pack_coding_stage_facts\n      WHERE url = ? ORDER BY stage",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT 1 FROM neo_todos t JOIN neo_asks a ON a.id=t.ask_id WHERE t.id=? AND t.state IN ('doing','blocked') AND a.status='open'",
+    "SELECT url FROM pack_coding_pr_claims WHERE todo_id = ? ORDER BY claimed_at, url",
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT target, ref, actual_model AS model, actual_effort AS effort,\n                follow_anchor AS followAnchor, live_status AS liveStatus,\n                started_at AS startedAt, retries, start_interrupted AS startInterrupted,\n                needs_you_since AS needsYouSince, claimed_at AS claimedAt\n           FROM neo_todo_sessions WHERE todo_id = ?",
+    "SELECT fact_json AS fact FROM pack_coding_stage_facts\n      WHERE url = ? ORDER BY stage",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT 1 FROM neo_todos t JOIN neo_asks a ON a.id=t.ask_id WHERE t.id=? AND t.state IN ('doing','blocked') AND a.status='open'",
+    "SELECT url FROM pack_coding_pr_claims WHERE todo_id = ? ORDER BY claimed_at, url",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT target, ref, actual_model AS model, actual_effort AS effort,\n                follow_anchor AS followAnchor, live_status AS liveStatus,\n                started_at AS startedAt, retries, start_interrupted AS startInterrupted,\n                needs_you_since AS needsYouSince, claimed_at AS claimedAt\n           FROM neo_todo_sessions WHERE todo_id = ?",
+    "SELECT fact_json AS fact FROM pack_coding_stage_facts\n      WHERE url = ? ORDER BY stage",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT 1 FROM neo_todos t JOIN neo_asks a ON a.id=t.ask_id WHERE t.id=? AND t.state IN ('doing','blocked') AND a.status='open'",
+    "SELECT url FROM pack_coding_pr_claims WHERE todo_id = ? ORDER BY claimed_at, url",
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT target, ref, actual_model AS model, actual_effort AS effort,\n                follow_anchor AS followAnchor, live_status AS liveStatus,\n                started_at AS startedAt, retries, start_interrupted AS startInterrupted,\n                needs_you_since AS needsYouSince, claimed_at AS claimedAt\n           FROM neo_todo_sessions WHERE todo_id = ?",
+    "SELECT fact_json AS fact FROM pack_coding_stage_facts\n      WHERE url = ? ORDER BY stage",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT 1 FROM neo_todos t JOIN neo_asks a ON a.id=t.ask_id WHERE t.id=? AND t.state IN ('doing','blocked') AND a.status='open'",
+    "SELECT url FROM pack_coding_pr_claims WHERE todo_id = ? ORDER BY claimed_at, url",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT key, value_json FROM pack_facts\n      WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)",
+    "SELECT target, ref, actual_model AS model, actual_effort AS effort,\n                follow_anchor AS followAnchor, live_status AS liveStatus,\n                started_at AS startedAt, retries, start_interrupted AS startInterrupted,\n                needs_you_since AS needsYouSince, claimed_at AS claimedAt\n           FROM neo_todo_sessions WHERE todo_id = ?",
+    "SELECT fact_json AS fact FROM pack_coding_stage_facts\n      WHERE url = ? ORDER BY stage",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT 1 FROM neo_todos t JOIN neo_asks a ON a.id=t.ask_id WHERE t.id=? AND t.state IN ('doing','blocked') AND a.status='open'",
+    "SELECT url FROM pack_coding_pr_claims WHERE todo_id = ? ORDER BY claimed_at, url"
+  ],
+  "commands": [
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.580208999999968,
+      "argsBytes": 493,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.20412499999997635,
+      "argsBytes": 493,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 1.4559169999999995,
+      "argsBytes": 493,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.24508300000002237,
+      "argsBytes": 493,
+      "replyBytes": 5
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.33862500000009277,
+      "argsBytes": 50427,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.mergeReceipt.commit",
+      "durationMs": 0.46158300000001873,
+      "argsBytes": 50428,
+      "replyBytes": 5
+    }
+  ]
+}
