@@ -1,0 +1,21 @@
+{
+  "verified": false,
+  "bunVerified": true,
+  "denoVerified": false,
+  "productionLines": 34,
+  "redRegressionCommit": "f417349428",
+  "testedCodeCommit": "d30f3617af468193648fd901bfc621b45f737ff7",
+  "testedGitTree": "29d50a756676c3b97c3d57c51b27f80fb84ccd18",
+  "applicationTrees": {
+    "packages": "9f8311d81fbc9150de7a1ddb0543980dc276dc16",
+    "scripts": "487cc507bd2f08d51501069513ee20d79fdbac9a"
+  },
+  "baselineMainSql": 22,
+  "fixedBunMainSql": 0,
+  "fixedBunCommands": 13,
+  "bunRun": "bun-verify-2",
+  "denoFailedRun": "deno-verify",
+  "checks": "Full bun run check passed; 8 existing project hierarchy/authorization tests passed.",
+  "blocker": "Deno 2.9.4 node:sqlite truncates text results at NUL, refusing valid workspace identities before section insertion. Stored bytes remain intact. Adapter repair is outside lane A ownership.",
+  "limitations": "No successful Deno section admission, GUI, real GitHub, whole-daemon SQL absence or held-writer latency proof. No merge is authorized without exact-head approval and required CI."
+}

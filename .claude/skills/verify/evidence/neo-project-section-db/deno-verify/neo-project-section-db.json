@@ -1,0 +1,73 @@
+{
+  "mode": "verify",
+  "verified": false,
+  "consumer": "Real daemon public WebSocket neo.project.section and neo.snapshot",
+  "limitation": "Synthetic fixtures; no GUI, model, live daemon or GitHub. No held-writer latency claim.",
+  "missing": {
+    "ok": false,
+    "reason": "unknown_parent"
+  },
+  "invalid": {
+    "ok": false,
+    "reason": "invalid_epic_url"
+  },
+  "mismatch": {
+    "ok": false,
+    "reason": "section_workspace_mismatch"
+  },
+  "deletedParent": {
+    "ok": false,
+    "reason": "unknown_parent"
+  },
+  "mainSql": [],
+  "commands": [
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.22145799999998417,
+      "argsBytes": 42,
+      "replyBytes": 4
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.11550000000011096,
+      "argsBytes": 36,
+      "replyBytes": 194
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.0726670000001377,
+      "argsBytes": 40,
+      "replyBytes": 202
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.3762080000001333,
+      "argsBytes": 108,
+      "replyBytes": 50
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.15695800000003146,
+      "argsBytes": 41,
+      "replyBytes": 170
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.16795799999999872,
+      "argsBytes": 109,
+      "replyBytes": 38
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 1.9613749999998618,
+      "argsBytes": 36,
+      "replyBytes": 194
+    },
+    {
+      "name": "neo.project.move",
+      "durationMs": 0.28291699999999764,
+      "argsBytes": 104,
+      "replyBytes": 50
+    }
+  ]
+}

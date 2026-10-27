@@ -1,0 +1,29 @@
+$ bun run check:no-comments && bun run format:check && bun run lint && bun run typecheck && bun run knip && bun run check:session-guards && bun run check:operation-names && bun run check:db-schema-parity && bun run check:test-quality && bun run check:test-matrix && bun run check:online-shards && bun run check:raw-palette && bun run check:neo-strings && bun run check:neo-pack-imports && bun run check:db-main-thread
+$ bun scripts/strip-comments.ts --check
+files with comments: 0, comments removed: 0
+$ biome format .
+packages/daemon/src/lib/neo/packs/coding/project-tree-operations.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     58  58 │       .input(['input', 'caller'])
+     59  59 │       .pipe(authorize, 'caller', 'result:outcome')
+     60     │ - ····.pipe((input:·z.infer<typeof·Section>)·=>·repo.getSectionParentLater(input.parentId),·'input',·'parent')
+         60 │ + ····.pipe(
+         61 │ + ······(input:·z.infer<typeof·Section>)·=>·repo.getSectionParentLater(input.parentId),
+         62 │ + ······'input',
+         63 │ + ······'parent'
+         64 │ + ····)
+     61  65 │       .pipe(requireNeoSectionParent, 'parent', 'result:outcome')
+     62  66 │       .pipe(
+  
+
+Checked 4530 files in 283ms. No fixes applied.
+Found 1 error.
+format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some errors were emitted while running checks.
+  
+
+error: script "format:check" exited with code 1
+error: script "check" exited with code 1
