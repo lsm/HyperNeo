@@ -208,6 +208,7 @@ describe('Neo artifact taps', () => {
       askId: 'ask',
       position: 0,
       priority: 'normal' as const,
+      dependsOn: null,
       title: 'Write the layout report',
       doneWhen: 'Report attached',
       check: null,

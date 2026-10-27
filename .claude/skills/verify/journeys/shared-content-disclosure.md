@@ -1,10 +1,10 @@
 # Shared content disclosure verification
 
-Use SKILL.md's resources, isolation and cleanup. Current publication copy
-coverage lives in neo-whole-message-copy.md, which verifies complete Markdown
-source and block-copy scope. The separate-row footer migration belongs to
-#9086 item 8; use its journey after that change has landed. Do not interpret
-historical inline-position expectations as proof of a newer footer.
+Use SKILL.md's resources, isolation and cleanup. The current publication footer
+has its own journey, neo-reply-fold-row.md: more/less sits on a separate
+right-aligned row. Whole-message Markdown copy and block-copy scope remain in
+neo-whole-message-copy.md. Use these journeys for the current proof scope and
+required screenshots; never treat the former inline placement as a pass.
 
 The shared-disclosure-seed.ts and shared-disclosure-web.mjs helpers preserve the
 historical #8092 characterization, including inline final-line placement. They

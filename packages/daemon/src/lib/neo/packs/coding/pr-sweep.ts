@@ -82,6 +82,10 @@ export function codingPrEscalationText(
 export class CodingPrSweepRepository {
   constructor(private readonly db: Database) {}
 
+  rowsAsync(): Promise<CodingSweepRow[]> {
+    return gatewayFor(this.db).call(codingSweepReads, 'rows');
+  }
+
   rows(): CodingSweepRow[] {
     return (
       this.db
@@ -115,7 +119,7 @@ export async function sweepCodingPrs(
   deps: CodingSweepDeps,
   now: number
 ): Promise<void> {
-  for (const row of repo.rows()) {
+  for (const row of await repo.rowsAsync()) {
     const nudge = planCodingPrNudge(row, now);
     if (!nudge) continue;
     const key = `neo-pr-sweep:${row.repo}#${row.number}:${row.head}:${row.state}:${nudge.nudges}`;
@@ -141,4 +145,11 @@ export const codingSweepWrites = defineRepositoryOp(
   'write',
   CodingPrSweepRepository,
   ['mark']
+);
+
+export const codingSweepReads = defineRepositoryOp(
+  'coding.sweep.read',
+  'read',
+  CodingPrSweepRepository,
+  ['rows'] as const
 );

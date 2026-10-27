@@ -54,12 +54,21 @@ type Route<Verb extends RoutedVerb> =
     };
 type Gate<Value> = { value: Value } | { reason: Rejected };
 
+export interface WorkSendUncertainty {
+  id: string;
+  ref: WorkRef;
+  from: string;
+  detail: string;
+  lastCompletion?: number;
+}
+
 export interface WorkVerbDeps {
   adapters(): readonly WorkAdapter[];
   remote: RemoteDaemons;
   daemonName: string;
   isOpenTodo?: (todoId: string, sessionId: string) => boolean;
   recordStarted?: (ref: WorkRef) => void;
+  reportUncertain?: (report: WorkSendUncertainty) => Promise<void>;
   startPlace?: (input: StartDraft, caller: OperationCaller) => Gate<StartInput>;
 }
 
@@ -413,6 +422,45 @@ export async function sendWork(
   );
 }
 
+async function reportUncertainWorkSend(
+  result: SendResult,
+  input: SendInput,
+  from: string,
+  deps: WorkVerbDeps
+): Promise<SendResult> {
+  if (
+    input.ref.adapter !== 'codex-desktop' ||
+    input.ref.daemon ||
+    result.ok ||
+    result.reason !== 'not_delivered' ||
+    !result.uncertainDesktopInputId ||
+    result.notSent ||
+    !deps.reportUncertain
+  )
+    return result;
+  const status = await deps
+    .adapters()
+    .find((adapter) => adapter.id === input.ref.adapter)
+    ?.status?.(input.ref)
+    .catch(() => null);
+  const lastCompletion = status?.ok ? status.value.turnEnds?.at(-1)?.at : undefined;
+  try {
+    await deps.reportUncertain({
+      id: result.uncertainDesktopInputId,
+      ref: input.ref,
+      from,
+      detail: result.detail,
+      lastCompletion,
+    });
+    return result;
+  } catch (error) {
+    return {
+      ...result,
+      detail: `${result.detail} Uncertainty report could not be persisted: ${String(error)}`,
+    };
+  }
+}
+
 export function routeStatus(input: RefInput, deps: WorkVerbDeps): Gate<Route<'status'>> {
   return pickRoute('status', input.ref, deps.adapters());
 }
@@ -527,6 +575,7 @@ const runSendWork = (superpipe({})('send-work') as PipelineAPI)
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')
   .pipe(workReplyInput, ['input', 'from', 'caller', 'deps'], 'deliveryInput')
   .pipe(sendWork, ['outcome', 'deliveryInput', 'from', 'caller', 'deps'], 'outcome')
+  .pipe(reportUncertainWorkSend, ['outcome', 'input', 'from', 'deps'], 'outcome')
   .pipe(withTodoRecords, ['outcome', 'records'], 'outcome')
   .endAsync('outcome') as (
   input: SendInput,
