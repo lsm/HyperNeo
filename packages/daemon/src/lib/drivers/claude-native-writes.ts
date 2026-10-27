@@ -172,11 +172,12 @@ export async function readClaudeWorkerSandbox(directory: string | undefined) {
   });
   if (marker === null) return null;
   const { roots } = Marker.parse(JSON.parse(marker));
-  await prepareWorkerSandbox(directory);
-  const computed = policy(directory, roots, []);
   const existing = await readFile(settingsPath(directory), 'utf8')
     .then(JSON.parse)
     .catch(() => ({}));
+  if (existing?.sandbox?.enabled === false) return existing as ReturnType<typeof policy>;
+  await prepareWorkerSandbox(directory);
+  const computed = policy(directory, roots, []);
   const before = JSON.stringify(existing);
   if (!existing?.env || !existing?.sandbox) {
     Object.assign(existing ?? {}, { env: computed.env, sandbox: computed.sandbox });

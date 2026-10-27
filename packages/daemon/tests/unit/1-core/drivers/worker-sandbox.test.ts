@@ -134,7 +134,8 @@ test('Windows runtime preparation does not reject synthesized group and other bi
   await expect(prepareWorkerSandbox(root)).resolves.toHaveProperty('TMPDIR');
 });
 
-test('POSIX workers still refuse shared directory modes', async () => {
+test('POSIX workers still refuse directories owned by another user', async () => {
   fixture('linux');
+  vi.mocked(lstat).mockResolvedValue({ uid: 502, isDirectory: () => true } as Stats);
   await expect(prepareWorkerSandbox(root)).rejects.toThrow('owned private directories');
 });

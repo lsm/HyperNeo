@@ -1,5 +1,5 @@
 import { constants, existsSync } from 'node:fs';
-import { lstat, mkdir, open, rename, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, open, rename, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { WorkerSandboxMode } from '@hyperneo/shared';
@@ -94,9 +94,9 @@ export async function prepareWorkerSandbox(root: string) {
     if (path !== runtime && path !== env.XDG_CACHE_HOME) continue;
     const entry = await lstat(path);
     const owner = process.platform === 'win32' ? entry.uid : (process.getuid?.() ?? entry.uid);
-    const mode = process.platform === 'win32' ? 0 : entry.mode;
-    if (!entry.isDirectory() || (mode & 0o077) !== 0 || entry.uid !== owner)
+    if (!entry.isDirectory() || entry.uid !== owner)
       throw new Error('Worker runtime roots must be owned private directories');
+    if (process.platform !== 'win32') await chmod(path, 0o700);
   }
   await writeFile(join(root, '.git/hyperneo-worker-sandbox'), 'restricted');
   return env;
