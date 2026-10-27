@@ -48,7 +48,7 @@ import { sdkMessageWrites } from '../repositories/sdk-message-writes.ts';
 import { claudeDesktopOutboxWrites } from '../repositories/claude-desktop-outbox-repository.ts';
 import { codingLedgerReads, codingLedgerWrites } from '../../lib/neo/packs/coding/pr-ledger.ts';
 import { codingAssignmentWrites } from '../../lib/neo/packs/coding/assignments.ts';
-import { codingSweepWrites } from '../../lib/neo/packs/coding/pr-sweep.ts';
+import { codingSweepReads, codingSweepWrites } from '../../lib/neo/packs/coding/pr-sweep.ts';
 import { codingTodoPrWrites } from '../../lib/neo/packs/coding/todo-prs.ts';
 import { codingDeliveryWrites } from '../../lib/neo/packs/coding/delivery-facts.ts';
 import {
@@ -193,6 +193,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     codingAssignmentWrites,
     codingTodoPrWrites,
     codingDeliveryWrites,
+    codingSweepReads,
     codingSweepWrites,
     claudeDesktopOutboxWrites,
     recordOperationRefusal,

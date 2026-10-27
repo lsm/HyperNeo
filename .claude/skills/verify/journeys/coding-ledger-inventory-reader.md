@@ -9,9 +9,9 @@ TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/swee
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/daily-evidence .claude/skills/verify/daily-dropped-work.ts off-main
 ```
 
-The first helper forbids lastReads/list SQL on the daemon main connection while
+The first helper forbids lastReads/list and owned-PR sweep inventory SQL on the daemon main connection while
 twelve synthetic five-minute sweeps preserve PR review, CI, merge and owner
-transitions through neo.snapshot RPC. It must record zero mainSql entries in
+transitions through neo.snapshot RPC. Each cycle also runs the actual owned-PR reminder sweep with synthetic delivery sinks; at least one reminder must be delivered. It must record zero mainSql entries in
 slimming.json while retaining its acquisition budget. Before the fix it fails
 at the first lastReads query. This is off-main routing proof on ordinary data,
 not a production query-speed measurement or physical-storage attribution.

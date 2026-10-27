@@ -358,12 +358,10 @@ export class CodingPrLedgerRepository {
     >;
   }
 
-  read<K extends 'lastReads' | 'list'>(
-    method: K
-  ): Promise<ReturnType<CodingPrLedgerRepository[K]>> {
-    return gatewayFor(this.db).run(codingLedgerReads, { method, args: [] }) as Promise<
-      ReturnType<CodingPrLedgerRepository[K]>
-    >;
+  read(method: 'lastReads'): Promise<ReturnType<CodingPrLedgerRepository['lastReads']>>;
+  read(method: 'list'): Promise<ReturnType<CodingPrLedgerRepository['list']>>;
+  read(method: 'lastReads' | 'list') {
+    return gatewayFor(this.db).call(codingLedgerReads, method);
   }
 
   recordStage(fact: CodingStageFact): boolean {
