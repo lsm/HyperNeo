@@ -184,7 +184,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
           .some(
             (question) =>
               question.state === 'open' &&
-              (question.todoId === null || question.todoId === next.id) &&
+              (!question.todoId || question.todoId === next.id) &&
               (question.kind !== 'start' || !!question.startTodos?.includes(next.id))
           ) &&
         (target?.verb === 'start' || target?.verb === 'send')

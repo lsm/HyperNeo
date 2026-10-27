@@ -900,18 +900,6 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         );
         await nudge(todo.id, Date.now()).catch((error) => warn('Todo nudge pending', error));
       }
-      const asks = await store.read('listOpenAsks');
-      const todos = await store.read(
-        'listTodosForAsks',
-        asks.map((ask) => ask.id)
-      );
-      for (const ask of asks) {
-        const completed = todos.find(
-          (todo) => todo.askId === ask.id && ['done', 'closed_unverified'].includes(todo.state)
-        );
-        if (completed)
-          await recompute(completed).catch((error) => warn('Todo plan advancement pending', error));
-      }
       await fill().catch((error) => warn('Queued todo start pending', error));
     },
   };

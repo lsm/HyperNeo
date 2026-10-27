@@ -25,7 +25,7 @@ export function planWorkQueue(
     const inGroup = perGroup.get(item.group) ?? 0;
     if (
       total >= limits.running ||
-      inGroup >= limits.perGroup ||
+      (item.group !== null && inGroup >= limits.perGroup) ||
       (item.worker && busy.has(item.worker))
     ) {
       queued.push(item.id);
