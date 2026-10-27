@@ -42,7 +42,7 @@ function world() {
   const base = Date.now();
   const clock = vi.spyOn(Date, 'now').mockReturnValue(base);
   const workers = new Map<string, { lastActivityAt: number; replies: boolean; status?: string }>();
-  const knobs = { stopRefused: false, tellRefused: false, placeKnown: true };
+  const knobs = { stopRefused: false, tellRefused: false, placeKnown: true, startRefused: false };
   const calls: { name: string; input: Record<string, unknown> }[] = [];
   const told: string[] = [];
   let started = 0;
@@ -53,6 +53,8 @@ function world() {
     invoke: async (_caller, name, input) => {
       calls.push({ name, input });
       const id = (input.ref as { id?: string } | undefined)?.id ?? '';
+      if (name === 'work.start' && knobs.startRefused)
+        return completed({ ok: false, reason: 'invalid_place', detail: 'synthetic place refusal' });
       if (name === 'work.start') {
         const ref = { adapter: 'hyperneo', id: `worker-${++started}` };
         workers.set(ref.id, { lastActivityAt: Date.now(), replies: false });
@@ -398,5 +400,17 @@ describe('a doing todo never sits idle without someone on it', () => {
     await w.at(41);
     expect(w.todo(todo.id).state).toBe('doing');
     expect(w.store.listQuestions('tracked')).toEqual([]);
+  });
+
+  test('a stalled todo whose fresh start is refused stays stalled and asks the human', async () => {
+    const w = (current = world());
+    w.knobs.startRefused = true;
+    const todo = w.adopt(null);
+    for (const minutes of [20, 40, 60]) await w.at(minutes);
+    expect(w.named('work.start')).toHaveLength(1);
+    expect(w.todo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
+    expect(
+      w.store.listQuestions('ask').filter((question) => question.todoId === todo.id)
+    ).toHaveLength(1);
   });
 });
