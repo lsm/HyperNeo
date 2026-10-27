@@ -1,9 +1,8 @@
 import { neoTodoDependencyNodes, neoTodoReady } from '../../lib/neo/todo-dependencies.ts';
 import { NeoTurnReportReceipts } from '../../lib/neo/turn-report-receipts.ts';
 import {
-  continuesIncident,
+  advanceFollowThrough,
   type FollowThroughIncident,
-  planFollowThrough,
 } from '../../lib/work-queue/follow-through.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
@@ -244,25 +243,13 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       context.todo.startedAt ?? context.todo.createdAt,
       live.lastReplyAt ?? live.lastActivityAt
     );
-    const prior = this.readNudge(todoId);
-    const incident =
-      prior && continuesIncident(prior, since)
-        ? { ...prior, nudges: Math.min(prior.nudges, 2) }
-        : { since, nudges: 0, ...(prior?.redispatched ? { redispatched: true } : {}) };
-    const plan = ['done', 'stopped'].includes(live.status)
-      ? planFollowThrough(incident, now, { ...context.follow, move })
-      : null;
-    this.recordNudge(
-      todoId,
-      plan?.kind === 'redispatch'
-        ? { since: now, nudges: 0, redispatched: true }
-        : {
-            ...incident,
-            live: live.status,
-            nudges: plan?.nudges ?? incident.nudges,
-            ...(plan ? { at: now } : {}),
-          }
+    const { incident, plan, next } = advanceFollowThrough(
+      this.readNudge(todoId),
+      { since, live: live.status, idle: ['done', 'stopped'].includes(live.status) },
+      now,
+      { ...context.follow, move }
     );
+    this.recordNudge(todoId, next);
     return plan ? { ...context, incident, plan } : null;
   }
 
