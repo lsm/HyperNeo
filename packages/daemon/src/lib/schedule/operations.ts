@@ -29,7 +29,7 @@ export interface ScheduleOperationDependencies {
     | 'createSchedule'
     | 'listSchedules'
     | 'getSchedule'
-    | 'pauseSchedule'
+    | 'ensureSchedulePaused'
     | 'resumeSchedule'
     | 'deleteSchedule'
   >;
@@ -250,19 +250,19 @@ export function planScheduleStatusUpdate(
   return input.status === 'paused' ? 'pause' : 'resume';
 }
 
-export function applyScheduleTransition(
+export async function applyScheduleTransition(
   schedule: TaskSchedule,
   caller: OperationCaller,
   deps: ScheduleOperationDependencies,
   transition: ScheduleTransition,
   operationName: string
-): ScheduleResult {
+): Promise<ScheduleResult> {
   let updated = schedule;
   if (transition !== 'none') {
     try {
       updated =
         transition === 'pause'
-          ? deps.schedules.pauseSchedule(schedule.id)
+          ? await deps.schedules.ensureSchedulePaused(schedule.id)
           : deps.schedules.resumeSchedule(schedule.id);
     } catch (err) {
       return reject('rejected', failureMessage(err));

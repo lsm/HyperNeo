@@ -192,6 +192,10 @@ export class ScheduleService {
     return gatewayFor(this.deps.db).call(taskSchedulePauseWrites, 'pause', scheduleId);
   }
 
+  ensureSchedulePaused(scheduleId: string): Promise<TaskSchedule> {
+    return gatewayFor(this.deps.db).call(taskSchedulePauseWrites, 'ensurePaused', scheduleId);
+  }
+
   pauseSchedule(scheduleId: string): TaskSchedule {
     const { scheduleRepo, jobQueue } = this.deps;
     const schedule = scheduleRepo.getById(scheduleId);
