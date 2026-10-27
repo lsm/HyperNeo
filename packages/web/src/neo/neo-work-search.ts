@@ -17,7 +17,7 @@ function terms(text: string): string[] {
 export function createNeoWorkSearch(entries: readonly NeoAskEntry[]) {
   const corpus = entries.map((entry) =>
     [
-      entry.ask.title,
+      [entry.ask.title, entry.ask.request].join(' '),
       entry.todos.map((todo) => todo.title).join(' '),
       [
         entry.state,

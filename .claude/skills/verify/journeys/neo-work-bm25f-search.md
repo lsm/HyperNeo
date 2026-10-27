@@ -21,9 +21,12 @@ must rank ask title, todo title, status and report in that order. The client
 uses BM25F with weights 3/2/1/0.5, k1 1.2 and b 0.75; Unicode words plus CJK
 unigrams/bigrams form its terms. Full bodies are read when a nonempty search
 begins, then indexed once for that feed revision; later query changes must not
-cause more reads. Report, evidence, outcome, question and Chinese-only terms
+cause more reads. Request, report, evidence, outcome, question and Chinese-only terms
 must find their exact card even when the initial summary omitted that body.
 Search covers the loaded Work feed, including any history pages already loaded.
+Import verifySearchRequest from neo-search-request-web.mjs and run it at both
+widths with phase after. Words and CJK text present only in the original request
+must find the ask; preserve a separate before proof showing No matching work.
 The useNeoWorkSearch result boundary can later use neo.ask.search without
 changing the search controls or ranked result rendering.
 
