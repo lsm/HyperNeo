@@ -410,6 +410,52 @@ describe('claude-desktop start', () => {
     expect(opening[opening.indexOf('--append-system-prompt') + 1]).toContain('HYPERNEO_WORKTREES');
   });
 
+  test.each(['symlinked-claude', 'file-claude', 'symlinked-settings', 'invalid-json'])(
+    'location settings failure %s is typed before launch and releases preparation',
+    async (layout) => {
+      configureWorkerSandbox(() => 'off');
+      const directory = join(dir, 'prepared');
+      const outside = join(dir, 'dotfiles');
+      mkdirSync(outside);
+      writeFileSync(join(outside, 'settings.local.json'), '{"env":{"RETAINED":"yes"}}');
+      if (layout === 'symlinked-claude') symlinkSync(outside, join(directory, '.claude'));
+      else if (layout === 'file-claude') writeFileSync(join(directory, '.claude'), 'retained');
+      else {
+        mkdirSync(join(directory, '.claude'));
+        if (layout === 'symlinked-settings')
+          symlinkSync(
+            join(outside, 'settings.local.json'),
+            join(directory, '.claude/settings.local.json')
+          );
+        else writeFileSync(join(directory, '.claude/settings.local.json'), 'not JSON');
+      }
+      let releases = 0;
+      const driver = adapter({
+        prepareExecution: async () => ({
+          ok: true,
+          value: {
+            directory,
+            release: async () => {
+              releases++;
+            },
+          },
+        }),
+      });
+      expect(
+        await driver.start!({ ...request, preparation: { pack: 'coding', parameters: {} } }, user)
+      ).toMatchObject({
+        ok: false,
+        reason: 'preparation_failed',
+        detail: expect.stringContaining('work locations'),
+      });
+      expect(spawned).toEqual([]);
+      expect(releases).toBe(1);
+      expect(readFileSync(join(outside, 'settings.local.json'), 'utf8')).toBe(
+        '{"env":{"RETAINED":"yes"}}'
+      );
+    }
+  );
+
   test('B1 accepts and reports the actual imported acceptEdits mode', async () => {
     expect(
       await adapter({
