@@ -42,7 +42,7 @@ function world() {
   const base = Date.now();
   const clock = vi.spyOn(Date, 'now').mockReturnValue(base);
   const workers = new Map<string, { lastActivityAt: number; replies: boolean; status?: string }>();
-  const knobs = { stopRefused: false, tellRefused: false };
+  const knobs = { stopRefused: false, tellRefused: false, placeKnown: true };
   const calls: { name: string; input: Record<string, unknown> }[] = [];
   const told: string[] = [];
   let started = 0;
@@ -66,6 +66,22 @@ function world() {
         if (worker?.replies) worker.lastActivityAt = Date.now();
         return completed({ ok: true, value: { delivered: true } });
       }
+      if (name === 'work.find')
+        return completed({
+          groups: knobs.placeKnown
+            ? [
+                {
+                  place: { machine: 'laptop', name: 'repo', folder: '/repo' },
+                  work: [
+                    {
+                      ref: { adapter: 'hyperneo', id: input.id },
+                      place: { machine: 'laptop', name: 'repo', folder: '/repo' },
+                    },
+                  ],
+                },
+              ]
+            : [],
+        });
       if (name === 'work.stop')
         return completed(
           knobs.stopRefused
@@ -313,5 +329,38 @@ describe('a doing todo never sits idle without someone on it', () => {
     const before = w.sessions.readNudge(idle.id);
     await w.at(60);
     expect(w.sessions.readNudge(idle.id)).toEqual(before);
+  });
+
+  test('a stalled todo whose worker place is known gets a fresh worker there', async () => {
+    const w = (current = world());
+    const todo = w.adopt(null);
+    for (const minutes of [20, 40, 60]) await w.at(minutes);
+    expect(w.todo(todo.id).blockedBy).toBe('stalled');
+    await w.at(62);
+    expect(w.named('work.start').map((call) => call.input.place)).toEqual([
+      { machine: 'laptop', name: 'repo', folder: '/repo' },
+    ]);
+    expect(w.todo(todo.id).state).toBe('doing');
+  });
+
+  test('a stalled todo with no known place puts one card in front of the human', async () => {
+    const w = (current = world());
+    w.knobs.placeKnown = false;
+    const todo = w.adopt(null);
+    for (const minutes of [20, 40, 60, 62, 64]) await w.at(minutes);
+    expect(w.named('work.start')).toEqual([]);
+    expect(w.store.listQuestions('ask').filter((question) => question.todoId === todo.id)).toEqual([
+      expect.objectContaining({ state: 'open', kind: 'reply' }),
+    ]);
+  });
+
+  test("the human's own tracked session gets a card, not a fresh worker", async () => {
+    const w = (current = world());
+    const todo = w.adopt(null, 'tracked');
+    for (const minutes of [60, 62]) await w.at(minutes);
+    expect(w.named('work.start')).toEqual([]);
+    expect(
+      w.store.listQuestions('tracked').filter((question) => question.todoId === todo.id)
+    ).toHaveLength(1);
   });
 });
