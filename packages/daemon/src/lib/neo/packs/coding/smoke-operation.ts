@@ -1,4 +1,3 @@
-import { isDeepStrictEqual } from 'node:util';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation } from '../../../operations/registry.ts';
@@ -19,23 +18,6 @@ const Input = z.object({
 export type CodingSmokeRequest = z.infer<typeof Input>;
 type Input = CodingSmokeRequest;
 type Result = { accepted: true } | { accepted: false; reason: string };
-
-export function requireCodingSmokeAssignment(
-  input: Input,
-  assignments: CodingAssignmentsRepository,
-  repo: CodingDeliveryFactsRepository
-): { value: true } | { reason: Extract<Result, { accepted: false }> } {
-  const assignment = assignments.read(input.todoId, input.url, input.head).qa;
-  const gate = repo.read(input.todoId, input.url, input.head)?.gate;
-  return assignment &&
-    isDeepStrictEqual(assignment.actor, input.smoke.actor) &&
-    isDeepStrictEqual(assignment.ref, input.smoke.ref) &&
-    (!gate ||
-      (gate.acceptanceContract === assignment.acceptanceContract &&
-        isDeepStrictEqual(gate.write, assignment.write)))
-    ? { value: true }
-    : { reason: { accepted: false, reason: 'stage_assignment_mismatch' } };
-}
 
 export function createCodingSmokeOperation(
   repo: CodingDeliveryFactsRepository,

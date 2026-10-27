@@ -59,3 +59,10 @@ one committed application/helper tree. After that commit only this journey and
 its evidence folder may change; any source, test or helper change needs fresh
 committed proofs. The delivery-gates journey points to this current operation
 proof and retains its historical storage contract context.
+
+The first fixed Bun daemon attempt failed during module import before startup.
+Its failed run and log are retained and committed before the dependency repair;
+it is not a successful proof. The assignment gate now lives in its own helper
+with type-only repository dependencies so daemon import order cannot read an
+uninitialized smoke schema. Successful bound runs must boot, serve RPC and
+close the daemon normally.
