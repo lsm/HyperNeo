@@ -17,7 +17,9 @@ separate evidence showing one extra header opener and no question-card logo.
 QA inventory: the header keeps session context with no duplicate Open session
 pill; each question and todo opener contains one harness/app logo and only the
 localized word Open. Inspect each supported app (Codex, Claude, Copilot, HyperNeo)
-in both themes. The helper records actual rendered colors and contrast against
+in both themes. A retired focused discussion with no remaining opener must retain
+a single card-level logo + Open fallback, outside the header, and reach its session.
+The helper records actual rendered colors and contrast against
 the question surface, checks todo logo colors agree, and saves each card PNG.
 Inspect the screenshots for readable colors and no clipping. Both the local
 question Open and todo Open must enter the existing session pane; Back restores

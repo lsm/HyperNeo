@@ -614,6 +614,17 @@ export function NeoAskTodos({
       .finally(() => setPaging(false));
   };
   const listed = live.filter((todo) => !inQuestion.has(todo.id));
+  const focused = ask.focusedSession;
+  const focusedFallback =
+    focused?.link &&
+    onOpen &&
+    !asked.some((question) => question.sourceSession?.link === focused.link) &&
+    !live.some((todo) => todo.link === focused.link) &&
+    !todos.some(
+      (todo) => inQuestion.has(todo.id) && todo.state !== 'removed' && todo.link === focused.link
+    )
+      ? focused
+      : null;
   const expandable = listed.filter(neoTodoHasMore);
   const allExpanded = expandable.every((todo) => expanded.includes(todo.id));
   const removed = todos.filter((todo) => todo.state === 'removed' && !inQuestion.has(todo.id));
@@ -763,6 +774,21 @@ export function NeoAskTodos({
         <p role="alert" class="mt-1 text-xs text-danger">
           {doneError}
         </p>
+      )}
+      {focusedFallback && onOpen && (
+        <div class="mt-3 flex justify-end" data-ask-session-open>
+          <button
+            type="button"
+            class={neoSecondaryClass}
+            aria-label={t('question.openSessionTitle', {
+              name: focusedFallback.name ?? focusedFallback.id,
+            })}
+            onClick={() => onOpen(focusedFallback.link!, focusedFallback.label)}
+          >
+            <NeoSessionMark kind={neoSessionKind(focusedFallback.adapter, focusedFallback.link)} />
+            {t('question.open')}
+          </button>
+        </div>
       )}
       {open && hasDetails && (
         <div data-ask-details class="mt-3 space-y-3 text-sm text-fg-muted">

@@ -23,7 +23,9 @@ must save ask.focusedSession; a missing source is refused. After retiring all
 questions and restarting only this test daemon, neo.snapshot retains the captured
 session identity, provider and safe opener on the ask, with no question present.
 Headless 1440px/390px checks retain the captured session context without the
-duplicate header Open session pill. Question-card and per-todo openers are
+duplicate header Open session pill. When no visible question or todo opens the
+focused session, a card-level logo + Open fallback reopens it and Back returns.
+Question-card and per-todo openers are
 covered by neo-open-controls.md, including both light and dark themes. Retain screenshots, observed.json, web.json and receipts.
 
 A synthetic tracked dispatch and work.status turn end exercise the actual daemon

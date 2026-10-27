@@ -309,6 +309,35 @@ describe('NeoAskTodos', () => {
     expect(onOpen).toHaveBeenCalledWith('/session/discussion', focusedSession.label);
   });
 
+  it.each(['question', 'todo'])('does not duplicate the visible %s session opener', (surface) => {
+    locale.value = 'en';
+    const source = {
+      adapter: 'hyperneo',
+      id: 'source',
+      name: 'Session source',
+      label: 'HyperNeo · Session source',
+      provider: 'Anthropic',
+      link: '/session/source',
+    };
+    const value = entry({
+      questions: surface === 'question' ? [question('q', { sourceSession: source })] : [],
+      todos: surface === 'todo' ? [todo('t', { link: source.link })] : [],
+    });
+    const onOpen = vi.fn();
+    const app = render(
+      <NeoAskTodos
+        entry={{ ...value, ask: { ...value.ask, focusedSession: source } }}
+        onAnswer={vi.fn()}
+        onOpen={onOpen}
+      />
+    );
+    expect(app.container.querySelector('[data-ask-focused-session] button')).toBeNull();
+    const opens = app.getAllByRole('button', { name: /^Open / });
+    expect(opens).toHaveLength(1);
+    fireEvent.click(opens[0]);
+    expect(onOpen.mock.calls[0][0]).toBe('/session/source');
+  });
+
   it.each(['codex://threads/worker', 'https://claude.ai/code/synthetic-bridge', '/session/worker'])(
     'opens a question source through the existing opener: %s',
     async (link) => {
