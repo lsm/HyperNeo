@@ -19,3 +19,8 @@ worker. Inspect spoken-replies.json and the wrapper's exit status.
 synthetic PCM, no model or microphone. The iOS spoken-replies journey owns it and
 drives actual drawer controls and playback; protocol proof alone does not prove
 the phone speaker, rendered UI, a real model's wording or native audio routes.
+
+Speech and playback events reuse the existing accepted-operation SQLite audit.
+Deduplication covers the last1024 utterances of the current daemon process,
+including client reconnects; it is not a crash-recovery/outbox protocol. Startup
+never replays stored audit history, and no audio or new schema is stored.

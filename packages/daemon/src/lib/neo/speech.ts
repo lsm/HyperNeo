@@ -48,11 +48,12 @@ export class NeoSpeech {
     private readonly write: RunDbOp,
     private readonly isNeo: (sessionId: string) => boolean
   ) {
-    this.unsubscribe = hub.onClientDisconnect((id) => {
-      void this.disconnect(id).catch(() =>
-        new Logger('NeoSpeech').warn('Playback disconnect record failed')
-      );
-    });
+    this.unsubscribe =
+      hub.onClientDisconnect?.((id) => {
+        void this.disconnect(id).catch(() =>
+          new Logger('NeoSpeech').warn('Playback disconnect record failed')
+        );
+      }) ?? (() => {});
     const route = (action: 'listen' | 'say' | 'ack') =>
       (superpipe({})(`neo.speech.${action}`) as PipelineAPI)
         .input(['input', 'caller'])
@@ -156,7 +157,13 @@ export class NeoSpeech {
       return { ok: false, reason: 'speech_receipt_mismatch' };
     if (old && old.state !== 'queued' && old.state !== 'playing')
       return { ok: true, id: old.id, state: old.state };
-    const row: Entry = { ...(old ?? input), id: input.id, state: input.state };
+    const row: Entry = {
+      id: input.id,
+      sessionId: input.sessionId,
+      clientId: input.clientId,
+      text: old?.text ?? input.text,
+      state: input.state,
+    };
     await this.write(recordOperationRefusal, {
       refusal: { operation: 'neo.speech', reason: JSON.stringify(row), accepted: true },
       sessionId: input.sessionId,
