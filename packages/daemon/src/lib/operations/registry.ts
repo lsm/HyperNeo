@@ -11,6 +11,7 @@ export type OperationCallerRole =
 
 export interface OperationCaller {
   readonly consumedInputId?: string;
+  readonly clientId?: string;
   readonly source: 'rpc' | 'mcp' | 'internal';
   readonly principal?: string;
   readonly device?: { readonly deviceId: string; readonly kind: 'human' | 'relay' | 'daemon' };

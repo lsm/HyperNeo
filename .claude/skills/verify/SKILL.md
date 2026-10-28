@@ -358,3 +358,5 @@ The workflow configures that permission on its disposable CI VMs and runs a
 bubblewrap startup probe before testing. Local Ubuntu verification requires a
 host policy allowing those namespaces; this journey changes no local host policy.
 The cleanup OS boundary stays enabled during these tests.
+
+For opt-in speech separate from publications, follow [spoken replies](journeys/spoken-replies.md).
