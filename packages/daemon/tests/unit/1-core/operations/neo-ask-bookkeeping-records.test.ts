@@ -271,14 +271,24 @@ describe('todo and ask bookkeeping records through MCP', () => {
         todos: ['short-a', 'short-b'].map((id) => ({
           title: id,
           check: pendingTodoCheck,
-          target: { verb: 'bind', ref: { adapter: 'hyperneo', id } },
+          instruction: `Task ${id}`,
+          target: { verb: 'send', ref: { adapter: 'hyperneo', id } },
         })),
       });
       expect(result.ok).toBe(true);
       expect(lookups).toEqual(['short-a', 'short-b']);
-      expect(
-        result.todos.map((todo: { id: string }) => h.sessions.readRef(todo.id)?.id).sort()
-      ).toEqual(['10000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000002']);
+      const stored = (id: string) =>
+        JSON.parse(
+          (
+            h.db.prepare('SELECT target FROM neo_todo_sessions WHERE todo_id = ?').get(id) as {
+              target: string;
+            }
+          ).target
+        ).ref.id;
+      expect(result.todos.map((todo: { id: string }) => stored(todo.id)).sort()).toEqual([
+        '10000000-0000-4000-8000-000000000001',
+        '10000000-0000-4000-8000-000000000002',
+      ]);
       expect(h.calls).toEqual([]);
     } finally {
       h.db.close();
