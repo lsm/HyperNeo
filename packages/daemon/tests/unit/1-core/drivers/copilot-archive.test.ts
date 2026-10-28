@@ -116,7 +116,7 @@ describe('Copilot owned archive', () => {
     await f.restart();
     expect(await f.adapter.status!(work.ref)).toMatchObject({
       ok: true,
-      value: { status: 'done' },
+      value: { status: 'stopped', lastReply: 'REPLY_1' },
     });
     expect(existsSync(join(f.run, 'owned', work.ref.id, 'session-state', work.ref.id))).toBe(true);
   });

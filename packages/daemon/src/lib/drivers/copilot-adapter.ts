@@ -209,8 +209,9 @@ export function createCopilotAdapter(
       ok: true,
       value: {
         ...work,
-        status:
-          snapshot.status === 'unreachable' || (!live.has(work.ref.id) && input?.outcome)
+        status: record.archived
+          ? 'stopped'
+          : snapshot.status === 'unreachable' || (!live.has(work.ref.id) && input?.outcome)
             ? input!.outcome!
             : snapshot.status,
         startReceipt: work.receipt,
