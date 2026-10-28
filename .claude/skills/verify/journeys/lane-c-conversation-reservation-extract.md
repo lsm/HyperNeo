@@ -27,7 +27,10 @@ reservation SQL hash and counts its two old sites versus one extracted site.
 The standalone extraction removes prepare 1 / run 1. The later receipt SELECT
 will make the combined sequence net prepare 0 / run -1; do not raise or edit the
 baseline. Reuse the separately audited 277-line core append subtree contract.
-Run the focused strict checker and pairing/core Neo repository tests.
+Run lane-c-conversation-reservation-compare.cjs after preserving before/after JSON.
+It requires identical semantic evidence on each runtime and identical SQL hashes,
+while retaining timing/memory measurements separately. Run the focused strict
+checker and pairing/core Neo repository tests.
 
 Before opening, list every open PR and its files read-only through GitHub REST.
 The coordinator explicitly permits the existing NeoRepository draft overlap to

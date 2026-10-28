@@ -11,6 +11,7 @@ import type { NeoBinding, NeoProject } from '@hyperneo/shared/types/neo-context'
 import { neoProjectMoveReason, neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
 import type { NeoProjectFacts } from '../../lib/neo/project-cleanup.ts';
 import type { Database } from '../sqlite-compat.ts';
+import { reserveHumanResetConversation } from './human-reset-conversation-reservation.ts';
 import { NeoProjectMergeRepository } from './neo-project-merge-repository.ts';
 
 const concernColumns = `id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,
@@ -359,11 +360,7 @@ export class NeoRepository {
     if (stored) return stored.id;
     const session = this.defaultBinding()?.sessionId;
     if (!session?.startsWith('neo:')) return null;
-    this.db
-      .prepare(
-        'INSERT OR IGNORE INTO neo_conversation (singleton, id, created_at) VALUES (1, ?, ?)'
-      )
-      .run(session.slice(4), Date.now());
+    reserveHumanResetConversation(this.db, session.slice(4), Date.now());
     return (this.db.prepare('SELECT id FROM neo_conversation').get() as { id: string }).id;
   }
 }

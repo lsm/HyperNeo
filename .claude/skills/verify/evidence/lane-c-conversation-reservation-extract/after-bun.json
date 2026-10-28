@@ -1,0 +1,69 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "boundConversationFallbackPreserved": true,
+  "coldMs": 2.2228340000000344,
+  "atomicReceiptAndCodeInvalidation": true,
+  "publicReaderRetainsChunkedNoticeWithoutSecrets": true,
+  "realCliRetainsDeviceHistory": true,
+  "existingObserverSeesCommittedReset": true,
+  "oneReplacementConsumesRecovery": true,
+  "rollbackFailure": "Error: synthetic second notice failure",
+  "boundConversationReservationRolledBackWithNotice": true,
+  "secondNoticeFailureRollsBackAllState": true,
+  "healthWhileHeldMs": 3.985875000000078,
+  "heldMs": 30.276458000000048,
+  "currentHumansSelectedAfterWriterWait": true,
+  "concurrentMs": 0.7727909999998701,
+  "distinctEmptyResetsRetainNotices": true,
+  "beforeCommitFailure": "Error: synthetic human-reset admission rejected before commit",
+  "lostReceiptFailure": "Error: synthetic committed human-reset reply lost; outcome unknown",
+  "unknownOutcomeNotReplayed": true,
+  "writerRecovered": true,
+  "maxLoopLagMs": 3.7128329999999323,
+  "rssBytes": 162399312,
+  "walBytes": 37112,
+  "publicResetOperationUnwired": true,
+  "commandPosts": 8,
+  "mainSqlAttempts": 0,
+  "timings": [
+    {
+      "roundTripMs": 2.1493749999999636,
+      "requestBytes": 41,
+      "replyBytes": 1775,
+      "encodeMs": 0.005999999999971806
+    },
+    {
+      "roundTripMs": 30.158790999999837,
+      "requestBytes": 41,
+      "replyBytes": 1860,
+      "encodeMs": 0.01695900000004258
+    },
+    {
+      "roundTripMs": 0.4758750000000873,
+      "requestBytes": 41,
+      "replyBytes": 138,
+      "encodeMs": 0.002040999999962878
+    },
+    {
+      "roundTripMs": 0.699542000000065,
+      "requestBytes": 41,
+      "replyBytes": 138,
+      "encodeMs": 0.001125000000001819
+    },
+    {
+      "roundTripMs": 6.896417000000156,
+      "requestBytes": 41,
+      "replyBytes": 215,
+      "encodeMs": 0.0028330000000096334
+    },
+    {
+      "roundTripMs": 6.823167000000012,
+      "requestBytes": 41,
+      "replyBytes": 138,
+      "encodeMs": 0.002207999999882304
+    }
+  ],
+  "runtime": "Bun 1.4.3",
+  "temporaryDataRemoved": true,
+  "exitCode": 0
+}
