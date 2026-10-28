@@ -42,6 +42,7 @@ type Producer = {
 type Proof = Producer;
 interface NeoPublicationRuntime {
   receivedHumanInput(sessionId: string, messageId: string): boolean;
+  currentHumanInputs(sessionId: string): string[];
   getBinding(id: string): NeoBinding | null;
   getRootBinding(): NeoBinding | null;
   hasProject(id: string): boolean;
@@ -106,19 +107,30 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     .pipe(() => runtime.getRootBinding(), 'caller', 'root')
     .pipe(requirePublicationProducer, ['caller', 'binding', 'root'], 'result:publication')
     .pipe(
-      (draft: Draft, caller: OperationCaller) => ({
-        ...draft,
-        replyTo: draft.replyTo?.filter((id) => runtime.receivedHumanInput(caller.sessionId!, id)),
-        cardReply: draft.cardReply?.sourceMessageIds.every((id) =>
-          runtime.receivedHumanInput(caller.sessionId!, id)
-        )
-          ? draft.cardReply
-          : undefined,
-        links: draft.links.filter((link) => link.kind === 'project' && runtime.hasProject(link.id)),
-        artifacts: draft.artifacts?.filter(
-          (ref) => !unregisteredArtifact([ref], [runtime.artifact(ref.artifactId, caller)])
-        ),
-      }),
+      (draft: Draft, caller: OperationCaller) => {
+        const sessionId = caller.sessionId!;
+        const explicit = draft.replyTo?.filter((id) => runtime.receivedHumanInput(sessionId, id));
+        const inferred = draft.cardReply
+          ? []
+          : runtime
+              .currentHumanInputs(sessionId)
+              .filter((id) => runtime.receivedHumanInput(sessionId, id));
+        return {
+          ...draft,
+          replyTo: explicit ?? (inferred.length ? [...new Set(inferred)] : undefined),
+          cardReply: draft.cardReply?.sourceMessageIds.every((id) =>
+            runtime.receivedHumanInput(sessionId, id)
+          )
+            ? draft.cardReply
+            : undefined,
+          links: draft.links.filter(
+            (link) => link.kind === 'project' && runtime.hasProject(link.id)
+          ),
+          artifacts: draft.artifacts?.filter(
+            (ref) => !unregisteredArtifact([ref], [runtime.artifact(ref.artifactId, caller)])
+          ),
+        };
+      },
       ['submitted', 'caller'],
       'draft'
     )
@@ -162,7 +174,7 @@ export function createNeoPublicationOperation(publish: ReturnType<typeof createN
   return defineOperation({
     name: 'neo.publication.publish',
     description:
-      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. Pass verbatim: true to send the message as one field: the full content in fullText with no shortText; a request with both verbatim and shortText is rejected. Optional replyTo lists the received human message ids this publication answers; omit it to leave inputs unanswered. Unknown, foreign, queued and non-human reply ids are omitted. Non-project and unavailable links are omitted, including work and consultation links. Unavailable artifact references are omitted. For a document or evidence file, pass the reference artifact.file.register returned in artifacts and say in one sentence what it is.',
+      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. Pass verbatim: true to send the message as one field: the full content in fullText with no shortText; a request with both verbatim and shortText is rejected. Optional replyTo lists the received human message ids this publication answers; when omitted, the human inputs whose turn produced this publication are recorded as answered when they are known. Unknown, foreign, queued and non-human reply ids are omitted. Non-project and unavailable links are omitted, including work and consultation links. Unavailable artifact references are omitted. For a document or evidence file, pass the reference artifact.file.register returned in artifacts and say in one sentence what it is.',
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
     resultSchema: NeoPublicationResultSchema,
