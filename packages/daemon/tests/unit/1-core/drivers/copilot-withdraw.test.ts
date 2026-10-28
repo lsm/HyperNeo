@@ -108,6 +108,28 @@ describe('Copilot owned withdraw', () => {
     });
   });
 
+  test('withdrawing the last unsettled input after the turn idles settles the session', async () => {
+    const f = setup();
+    const work = await f.start('serial:first');
+    const queued = await f.queue(work, 'queued');
+    writeFileSync(join(f.run, 'release-serial'), 'release');
+    let first = '';
+    for (let poll = 0; poll < 200 && first !== 'done'; poll++) {
+      const result = await f.adapter.status!(work.ref, undefined, work.receipt);
+      if (result.ok) first = result.value.inputEvidence?.state === 'observed' ? 'done' : '';
+      await new Promise((done) => setTimeout(done, 5));
+    }
+    expect(await f.adapter.status!(work.ref)).toMatchObject({
+      ok: true,
+      value: { status: 'running' },
+    });
+    expect(await f.withdraw(work, queued)).toMatchObject({ ok: true, value: { withdrawn: true } });
+    expect(await f.adapter.status!(work.ref)).toMatchObject({
+      ok: true,
+      value: { status: 'done' },
+    });
+  });
+
   test('reports an input Copilot already consumed as not queued without removing anything', async () => {
     const f = setup();
     const work = await f.start('serial:first');

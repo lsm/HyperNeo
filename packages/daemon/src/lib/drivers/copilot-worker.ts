@@ -344,7 +344,13 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
       const input = Object.hasOwn(state.inputs, inputId) ? state.inputs[inputId] : undefined;
       if (removed && input && !input.outcome) {
         input.outcome = 'stopped';
+        if (
+          ['queued', 'running'].includes(state.status) &&
+          Object.values(state.inputs).every((entry) => entry.outcome)
+        )
+          state.status = 'done';
         prune();
+        if (state.status === 'done') terminal.resolve();
       }
       return removed;
     },
