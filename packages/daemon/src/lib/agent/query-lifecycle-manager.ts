@@ -331,7 +331,9 @@ export class QueryLifecycleManager {
     }
   }
 
-  async reset(options?: { restartAfter?: boolean }): Promise<{ success: boolean; error?: string }> {
+  async reset(options?: {
+    restartAfter?: boolean;
+  }): Promise<{ success: boolean; error?: string; blocked?: boolean }> {
     const { restartAfter = true } = options ?? {};
     const { session, db, messageQueue, internalEventBus, stateManager, messageHandler } = this.ctx;
 
@@ -381,7 +383,10 @@ export class QueryLifecycleManager {
 
       await this.ctx.clearModelsCache();
 
-      if (restartAfter && (await this.gateOnMissingTranscript('reset'))) {
+      if (restartAfter && !(await this.gateOnMissingTranscript('reset'))) {
+        return { success: true, blocked: true };
+      }
+      if (restartAfter) {
         await this.ctx.startStreamingQuery();
       }
 
@@ -694,6 +699,14 @@ export class QueryLifecycleManager {
       const resetResult = await this.reset({ restartAfter: true });
       if (!resetResult.success) {
         throw new Error(resetResult.error || 'Agent query reset failed.');
+      }
+      if (resetResult.blocked) {
+        await stateManager.setQueued(messageId);
+        this.logger.info(
+          `Timeout recovery for ${messageId} is blocked on sdk_resume_choice; ` +
+            'leaving the message enqueued for replay after the choice.'
+        );
+        return;
       }
       await stateManager.setQueued(messageId);
       if (!messageQueue.isRunning() || !this.ctx.queryPromise) {

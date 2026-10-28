@@ -1507,6 +1507,29 @@ describe('QueryLifecycleManager', () => {
       expect(setIdleSpy).toHaveBeenCalled();
     });
 
+    test('keeps the message replayable when timeout reset blocks on sdk_resume_choice', async () => {
+      const tmpTestDir = mkdtempSync(join(tmpdir(), 'kai-test-'));
+      try {
+        process.env.TEST_SDK_SESSION_DIR = tmpTestDir;
+        const timeoutError = new Error('Queue timeout');
+        timeoutError.name = 'MessageQueueTimeoutError';
+
+        spyOn(messageQueue, 'enqueueWithId').mockImplementation(async () => {
+          mockContext.session.sdkSessionId = 'missing-sdk-session';
+          throw timeoutError;
+        });
+
+        await manager.startQueryAndEnqueue('msg-123', 'Hello');
+        await new Promise((r) => setTimeout(r, 200));
+
+        expect(saveHyperNeoActionMessageSpy).toHaveBeenCalled();
+        expect(updateMessageStatusSpy).not.toHaveBeenCalled();
+      } finally {
+        delete process.env.TEST_SDK_SESSION_DIR;
+        rmSync(tmpTestDir, { recursive: true, force: true });
+      }
+    });
+
     test('marks enqueued message failed when timeout retry fails', async () => {
       const timeoutError = new Error('Queue timeout');
       timeoutError.name = 'MessageQueueTimeoutError';
