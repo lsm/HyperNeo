@@ -20,6 +20,9 @@ unchanged 142-line reset/receipt and 277-line core append subtrees as audited
 dependencies; pin their source hashes/contracts and include them in the PR body.
 No app.ts, service/publication, WorkerLane or shared gateway edits are allowed.
 
+Before mutation, exercise operations.list and operations.describe over the real
+WebSocket with no reset admission. Unit contracts also require catalog discovery
+to work before database initialization; refused callers must not open it.
 Drive real CLI devices reset-human against the isolated daemon, with target SQL
 still denied on main. A paired network caller must stay refused. The local CLI
 must clear only humans, retain history and reply fields, expire old codes, permit

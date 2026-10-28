@@ -153,6 +153,7 @@ try {
   assert.throws(()=>cached.run(Date.now()),/human-reset SQL reached main/);assert.throws(()=>raw.prepare('SELECT id FROM neo_conversation').get(),/human-reset SQL reached main/);assert.throws(()=>raw.prepare('SELECT r.id FROM human_device_resets r').get(),/human-reset SQL reached main/);
   assert.equal(mainSqlAttempts,3);mainSqlAttempts=0;evidence.mainGuardSelfCheckPassed=true;
   let previous=performance.now();let maxLoopLagMs=0;timer=setInterval(()=>{const now=performance.now();maxLoopLagMs=Math.max(maxLoopLagMs,now-previous-5);previous=now;},5);
+  const listing=await phone.hub.request<{name:string}[]>('operation.invoke',{name:'operations.list',input:{}});assert(listing.some(item=>item.name==='device.reset_human'));const description=await phone.hub.request<{found:boolean;name:string}>('operation.invoke',{name:'operations.describe',input:{name:'device.reset_human'}});assert.equal(description.found,true);assert.equal(description.name,'device.reset_human');assert.equal(commandPosts,0);evidence.publicDiscoveryBeforeMutation=true;
   const refused=await phone.hub.request<{ok:boolean}>('operation.invoke',{name:'device.reset_human',input:{}});assert.equal(refused.ok,false);assert.equal(commandPosts,0);assert.equal(revoked.length,0);evidence.networkResetRefusedWithoutAdmission=true;
   const at=performance.now();const first=await reset();
   if(first.exit!==0){evidence.publicMutationFailure='CLI reset failed while target main SQL was denied';throw new Error(first.error);}

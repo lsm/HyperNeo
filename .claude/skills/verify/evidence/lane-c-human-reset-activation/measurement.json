@@ -4,8 +4,8 @@
     {
       "file": "packages/daemon/src/lib/pairing/human-device-reset.ts",
       "name": "whole local business module including closures and pipelines",
-      "lines": 66,
-      "sha256": "90aa19745ccde0bc55cada473d362772e8b09ad1d7d811188a8e0f500dee9b03"
+      "lines": 73,
+      "sha256": "de425fb8bc898f3bded2f3f6d5a683b14c537307666350c389ab623140855544"
     },
     {
       "file": "packages/daemon/src/lib/pairing/human-reset-coordinator.ts",
@@ -134,13 +134,13 @@
       "sha256": "4ec2853d2cd8a129e146009d9144ae92a3d27055ffac652fe1c65a8b29cb3e34"
     }
   ],
-  "totalLines": 182,
-  "productionLines": 22,
+  "totalLines": 189,
+  "productionLines": 27,
   "smokeRegistrationLines": 1,
   "delta": [
     {
       "file": "packages/daemon/src/lib/pairing/human-device-reset.ts",
-      "lines": 22
+      "lines": 27
     },
     {
       "file": "scripts/deno-smoke.sh",

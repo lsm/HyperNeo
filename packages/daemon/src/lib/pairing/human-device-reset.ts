@@ -17,10 +17,7 @@ export function onHumanDevicesReset(listener: (conversationId: string) => void):
 }
 
 export function createHumanDeviceResetOperation(db: () => Database) {
-  const coordinate = createHumanResetCoordinator(gatewayFor(db()), (receipt) => {
-    for (const device of receipt.devices) announceDeviceRevoked(device.id);
-    for (const listener of listeners) listener(receipt.conversationId);
-  });
+  let coordinate: ReturnType<typeof createHumanResetCoordinator> | undefined;
   const reset = (superpipe({})('device.reset_human') as PipelineAPI)
     .input(['caller'])
     .pipe(
@@ -36,7 +33,17 @@ export function createHumanDeviceResetOperation(db: () => Database) {
       'caller',
       'result:reset'
     )
-    .pipe(coordinate, 'reset', 'reset')
+    .pipe(
+      (now: number) => {
+        coordinate ??= createHumanResetCoordinator(gatewayFor(db()), (receipt) => {
+          for (const device of receipt.devices) announceDeviceRevoked(device.id);
+          for (const listener of listeners) listener(receipt.conversationId);
+        });
+        return coordinate(now);
+      },
+      'reset',
+      'reset'
+    )
     .pipe(
       (receipt: ReturnType<typeof resetHumanDevices>) => ({
         ok: true,

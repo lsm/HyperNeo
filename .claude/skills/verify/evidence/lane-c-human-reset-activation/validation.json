@@ -1,8 +1,9 @@
 {
   "focusedTests": {
-    "files": 18,
-    "passed": 146,
-    "exitCode": 0
+    "files": 23,
+    "passed": 333,
+    "exitCode": 0,
+    "scope": "Pairing and gateway contracts plus all five CI-failing catalog/runtime files."
   },
   "repositoryCheck": {
     "command": "bun run check",
@@ -20,5 +21,16 @@
   "limitations": [
     "Pinned native Bun 1.4.2 not run locally",
     "Browser layout and deployment smoke not run; deployment remains with Neo"
-  ]
+  ],
+  "ciRegression": {
+    "cause": "Eager coordinator construction invoked the database supplier during catalog discovery.",
+    "failingRegressionCommit": "5bf78398bff1fe0e03a7fb28d0c4035735ea3532",
+    "before": {
+      "failed": 7,
+      "passed": 4,
+      "filesFailed": 6
+    },
+    "after": "Catalog list/describe and refused callers do not initialize the database. First authorized reset lazily creates one reused coordinator.",
+    "repositoryCheckExitCode": 0
+  }
 }
