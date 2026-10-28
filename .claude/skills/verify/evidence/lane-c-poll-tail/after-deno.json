@@ -1,0 +1,214 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "healthAfterPollsMs": 5.805582999999842,
+  "scenarios": [
+    {
+      "failedPosition": 1,
+      "page": "issues",
+      "firstJobMs": 138.27133400000002,
+      "job": "completed",
+      "repeatJob": "completed",
+      "retainedRows": 6,
+      "committedNotices": 5,
+      "writeAttempts": 6,
+      "errorLoggedOnce": true,
+      "conditionalRepeatDoesNotReplay": true
+    },
+    {
+      "failedPosition": 2,
+      "page": "issues",
+      "firstJobMs": 132.19150000000013,
+      "job": "completed",
+      "repeatJob": "completed",
+      "retainedRows": 6,
+      "committedNotices": 5,
+      "writeAttempts": 6,
+      "errorLoggedOnce": true,
+      "conditionalRepeatDoesNotReplay": true
+    },
+    {
+      "failedPosition": 4,
+      "page": "comments",
+      "firstJobMs": 134.40525000000002,
+      "job": "completed",
+      "repeatJob": "completed",
+      "retainedRows": 6,
+      "committedNotices": 5,
+      "writeAttempts": 6,
+      "errorLoggedOnce": true,
+      "conditionalRepeatDoesNotReplay": true
+    },
+    {
+      "failedPosition": 5,
+      "page": "comments",
+      "firstJobMs": 133.74512500000014,
+      "job": "completed",
+      "repeatJob": "completed",
+      "retainedRows": 6,
+      "committedNotices": 5,
+      "writeAttempts": 6,
+      "errorLoggedOnce": true,
+      "conditionalRepeatDoesNotReplay": true
+    }
+  ],
+  "maxLoopLagMs": 3.0460830000001806,
+  "rssBytes": 530153472,
+  "walBytes": 4128272,
+  "commandPosts": 24,
+  "deliveryFailuresLogged": 4,
+  "actualRegisteredPollJobsExercised": true,
+  "credentialBootstrapExercised": false,
+  "servicePollStartupBridgeExercised": false,
+  "pendingReadsRemainMain": true,
+  "pass": true,
+  "mainSqlAttempts": 0,
+  "workerMetrics": [
+    {
+      "roundTripMs": 0.22858399999995527,
+      "requestBytes": 629,
+      "replyBytes": 663,
+      "encodeMs": 0.006125000000110958
+    },
+    {
+      "roundTripMs": 2.456625000000031,
+      "requestBytes": 629,
+      "replyBytes": 663,
+      "encodeMs": 0.008375000000114596
+    },
+    {
+      "roundTripMs": 0.13995800000020608,
+      "requestBytes": 629,
+      "replyBytes": 663,
+      "encodeMs": 0.0018749999999272404
+    },
+    {
+      "roundTripMs": 0.11666599999989558,
+      "requestBytes": 645,
+      "replyBytes": 679,
+      "encodeMs": 0.00220900000022084
+    },
+    {
+      "roundTripMs": 0.12750000000005457,
+      "requestBytes": 645,
+      "replyBytes": 679,
+      "encodeMs": 0.0031249999997271516
+    },
+    {
+      "roundTripMs": 0.10191600000007384,
+      "requestBytes": 645,
+      "replyBytes": 679,
+      "encodeMs": 0.0028749999999035936
+    },
+    {
+      "roundTripMs": 0.069374999999809,
+      "requestBytes": 629,
+      "replyBytes": 663,
+      "encodeMs": 0.0017920000000231084
+    },
+    {
+      "roundTripMs": 0.07258300000012241,
+      "requestBytes": 629,
+      "replyBytes": 663,
+      "encodeMs": 0.0012500000000272848
+    },
+    {
+      "roundTripMs": 2.3799169999999776,
+      "requestBytes": 629,
+      "replyBytes": 663,
+      "encodeMs": 0.00416599999994105
+    },
+    {
+      "roundTripMs": 0.11545900000010079,
+      "requestBytes": 645,
+      "replyBytes": 679,
+      "encodeMs": 0.0019160000001647859
+    },
+    {
+      "roundTripMs": 0.1117909999998119,
+      "requestBytes": 645,
+      "replyBytes": 679,
+      "encodeMs": 0.0026250000000800355
+    },
+    {
+      "roundTripMs": 0.10674999999991996,
+      "requestBytes": 645,
+      "replyBytes": 679,
+      "encodeMs": 0.0019170000000485743
+    },
+    {
+      "roundTripMs": 0.07500000000027285,
+      "requestBytes": 629,
+      "replyBytes": 663,
+      "encodeMs": 0.0017919999997957348
+    },
+    {
+      "roundTripMs": 0.06379100000003746,
+      "requestBytes": 629,
+      "replyBytes": 663,
+      "encodeMs": 0.0012499999997999112
+    },
+    {
+      "roundTripMs": 0.06995800000004238,
+      "requestBytes": 629,
+      "replyBytes": 663,
+      "encodeMs": 0.0025829999999587017
+    },
+    {
+      "roundTripMs": 0.10479200000008859,
+      "requestBytes": 645,
+      "replyBytes": 679,
+      "encodeMs": 0.0013750000000527507
+    },
+    {
+      "roundTripMs": 2.399207999999817,
+      "requestBytes": 645,
+      "replyBytes": 679,
+      "encodeMs": 0.004000000000132786
+    },
+    {
+      "roundTripMs": 0.11316600000009203,
+      "requestBytes": 645,
+      "replyBytes": 679,
+      "encodeMs": 0.0018749999999272404
+    },
+    {
+      "roundTripMs": 0.0780419999998685,
+      "requestBytes": 629,
+      "replyBytes": 663,
+      "encodeMs": 0.002124999999978172
+    },
+    {
+      "roundTripMs": 0.06445899999994253,
+      "requestBytes": 629,
+      "replyBytes": 663,
+      "encodeMs": 0.0013750000000527507
+    },
+    {
+      "roundTripMs": 0.061916999999994005,
+      "requestBytes": 629,
+      "replyBytes": 663,
+      "encodeMs": 0.0010830000001078588
+    },
+    {
+      "roundTripMs": 0.09837499999980537,
+      "requestBytes": 645,
+      "replyBytes": 679,
+      "encodeMs": 0.003042000000277767
+    },
+    {
+      "roundTripMs": 0.07745900000008987,
+      "requestBytes": 645,
+      "replyBytes": 679,
+      "encodeMs": 0.0024160000000392756
+    },
+    {
+      "roundTripMs": 2.4146249999998872,
+      "requestBytes": 645,
+      "replyBytes": 679,
+      "encodeMs": 0.0032919999998739513
+    }
+  ],
+  "runtime": "deno",
+  "runtimeVersion": "2.9.4",
+  "temporaryDaemonDataRemoved": true
+}

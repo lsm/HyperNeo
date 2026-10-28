@@ -25,7 +25,8 @@ job with both page validators returning 304: zero extra writes/notices/rejection
 retained validators and since cutoff. No callback retry or ETag/cursor reset.
 
 Unit contracts also cover synchronous throws, asynchronous rejections and a
-blocked callback that must finish before later events start. Pin the full polling
+blocked callback that must finish before later events start. Preserve the existing
+polling-service receiver for ordinary callbacks as well. Pin the full polling
 module outside its constructor, source/normalizer/job-handler roots and merged
 event(185)/writer(84) subtrees by exact hashes/contracts in audited-dependencies.json.
 The new constructor/wrapper graph must remain below 40 lines; only that production
