@@ -1,0 +1,62 @@
+{
+  "base": "f0c02b9c1a5d13287e59054013c75277b9fb340d",
+  "units": [
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-repository.ts",
+      "name": "save",
+      "start": 29,
+      "end": 57,
+      "lines": 29,
+      "sha256": "481b021c4fff54bd5ed71d13c023f3fc4394e50ae2277712700474370b29b89d"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-receipt.ts",
+      "name": "serializeArtifactReceipt",
+      "start": 4,
+      "end": 17,
+      "lines": 14,
+      "sha256": "3e010c7fa1a7017ca0752b89dfa7280be65c3c176392aa1df279f07eb58c1c86"
+    }
+  ],
+  "fullLocalGraphLines": 43,
+  "productionLines": 52,
+  "smokeLines": 1,
+  "delta": [
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-receipt.ts",
+      "lines": 17
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-repository.ts",
+      "lines": 35
+    },
+    {
+      "file": "scripts/deno-smoke.sh",
+      "lines": 1
+    }
+  ],
+  "sql": [
+    {
+      "bytes": 67,
+      "sha256": "eac1cee78f2d247d7b5f5f75075c325b077ff5453ab9079b49dcb0e31deb49f0"
+    }
+  ],
+  "serializationAstSha256": "8e767474a2c8a1c66baf6009be91cf3168db67199650204090ebc01e2a51718f",
+  "serializationExpressionUnchanged": true,
+  "clockExpressionUnchanged": true,
+  "stableConstructorAndReceipt": [
+    {
+      "name": "constructor",
+      "sha256": "56b63cd0413fe3ab057a3ad1e26012d3f0aace9d49b80d1a8ad7f95af34c551d"
+    },
+    {
+      "name": "receipt",
+      "sha256": "25ac85a867820cc62b38c48debf8e4a043dd7b38721f8a47cc12fb3ac17dda9e"
+    }
+  ],
+  "contract": "serializeArtifactReceipt(artifact,revision?,bundle?,logicalRequestId?): same JSON.stringify expression/optional-field truthiness/key order; no SQL/clock/UUID/I/O. save retains exact SQL/arg order, prepare-before-serialization-before-clock-before-run and original result reference/caller-owned rollback.",
+  "netPrepare": 0,
+  "netRun": 0,
+  "mainThreadMovementClaim": false,
+  "auditLimit": "Only save and pure serializer are changed/measured. Public registration receipt/bytes on Bun and existing Deno refusal are characterized. Full capture/binding/source/native-runtime/OS graph is outside this extraction. Row writer construction and activation follow separately."
+}

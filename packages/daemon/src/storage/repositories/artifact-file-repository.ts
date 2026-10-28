@@ -1,3 +1,4 @@
+import { serializeArtifactReceipt } from './artifact-file-receipt.ts';
 import { ensureArtifactFileIdentity } from './artifact-file-identity.ts';
 import type { ArtifactBundleEntry } from '../../lib/artifacts/bundle.ts';
 import type { ArtifactRef, ArtifactFileMetadata } from '@hyperneo/shared/types/artifact-file';
@@ -37,25 +38,21 @@ export class ArtifactFileRepository {
     bundle?: readonly ArtifactBundleEntry[],
     logicalRequestId?: string
   ) {
-    this.db.prepare(`INSERT INTO artifact_files VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-      artifact.artifactId,
-      context.kind,
-      context.id,
-      requestId,
-      fingerprint,
-      sha256,
-      artifact.byteLength,
-      JSON.stringify({
-        accepted: true,
-        ...(logicalRequestId ? { requestId: logicalRequestId } : {}),
-        artifact,
-        ...(revision ? { revision } : {}),
-        ...(bundle ? { bundle } : {}),
-      }),
-      producer,
-      sourcePath,
-      Date.now()
-    );
+    this.db
+      .prepare(`INSERT INTO artifact_files VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(
+        artifact.artifactId,
+        context.kind,
+        context.id,
+        requestId,
+        fingerprint,
+        sha256,
+        artifact.byteLength,
+        serializeArtifactReceipt(artifact, revision, bundle, logicalRequestId),
+        producer,
+        sourcePath,
+        Date.now()
+      );
     return { accepted: true as const, artifact };
   }
 }
