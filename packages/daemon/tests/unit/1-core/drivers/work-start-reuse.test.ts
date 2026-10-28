@@ -15,7 +15,7 @@ function harness(
     id: string;
     status: WorkStatus;
     folder?: string;
-    refusal?: 'not_open' | 'uncertain';
+    refusal?: 'not_open' | 'uncertain' | 'throws';
   }[],
   free: string[]
 ) {
@@ -60,6 +60,7 @@ function harness(
       sent.push(ref.id);
       await Promise.resolve();
       const refusal = workers.find((worker) => worker.id === ref.id)?.refusal;
+      if (refusal === 'throws') throw new Error('synthetic transport fault');
       if (refusal === 'uncertain') return { ok: false, reason: 'not_delivered', detail: 'unknown' };
       return refusal
         ? { ok: false, reason: 'not_open', detail: 'archived', notSent: true }
@@ -139,6 +140,16 @@ describe('work.start reuses an idle worker', () => {
     expect(result.ok).toBe(false);
     expect(run.started).toEqual([]);
     expect(run.unusable).toEqual([{ adapter: 'claude-desktop', id: 'maybe' }]);
+  });
+
+  test('a send that throws releases its hold so the worker stays reusable', async () => {
+    const workers: Parameters<typeof harness>[0] = [
+      { id: 'flaky', status: 'done', refusal: 'throws' },
+    ];
+    const run = harness(workers, ['flaky']);
+    await expect(run.start()).rejects.toThrow();
+    delete workers[0].refusal;
+    expect((await run.start()).value?.ref.id).toBe('flaky');
   });
 
   test('the human starting work always gets a new session', async () => {

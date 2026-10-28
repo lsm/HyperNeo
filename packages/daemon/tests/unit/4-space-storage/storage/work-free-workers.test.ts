@@ -57,6 +57,18 @@ describe('readFreeWorkers', () => {
     expect([...readFreeWorkers(db, 'claude-desktop')].sort()).toEqual(['w-done', 'w-new']);
   });
 
+  test('an unusable mark expires after an hour', () => {
+    recordStartedWork(db, { adapter: 'claude-desktop', id: 'w-old' });
+    recordStartedWork(
+      db,
+      { adapter: 'claude-desktop', id: 'w-old' },
+      Date.now() - 61 * 60_000,
+      true
+    );
+
+    expect([...readFreeWorkers(db, 'claude-desktop')]).toEqual(['w-old']);
+  });
+
   test('a worker bound only through a todo can be marked unusable', () => {
     bind('finished', 'w-done', 'done');
     markWorkUnusable(db, { adapter: 'claude-desktop', id: 'w-done' });
