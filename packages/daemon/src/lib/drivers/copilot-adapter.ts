@@ -295,6 +295,44 @@ export function createCopilotAdapter(
     .pipe(admitSend, 'delivery', 'result:delivery')
     .pipe(deliver, ['delivery', 'message'], 'delivery')
     .endAsync('delivery') as (ref: W.WorkRef, message: string) => Promise<W.Result<W.WorkDelivery>>;
+  const withdrawal = (queuedSubmissionId: string, withdrawn: boolean): W.WorkWithdrawal => ({
+    queuedSubmissionId,
+    withdrawn,
+    ...(!withdrawn ? { reason: 'not_queued' as const } : {}),
+  });
+  const admitWithdraw = (record: Record, inputId: string): Gate<Record> => {
+    if (
+      !Object.hasOwn(record.snapshot.inputs, inputId) &&
+      !fs.existsSync(inputPath(record.work.ref.id, inputId))
+    )
+      return { reason: reject('not_found', 'Not a queued input of this owned session.') };
+    if (['done', 'failed', 'stopped'].includes(record.snapshot.status)) return { value: record };
+    if (closed || record.snapshot.status === 'unreachable' || !live.has(record.work.ref.id))
+      return { reason: unavailable() };
+    return { value: record };
+  };
+  const applyWithdraw = async (
+    record: Record,
+    inputId: string
+  ): Promise<W.Result<W.WorkWithdrawal>> => {
+    const owned = live.get(record.work.ref.id);
+    if (!owned) return { ok: true, value: withdrawal(inputId, false) };
+    const withdrawn = await owned.withdraw(inputId);
+    record.snapshot = await owned.snapshot();
+    if (withdrawn && record.latestReceipt?.inputId === inputId) delete record.latestReceipt;
+    save(record);
+    return { ok: true, value: withdrawal(inputId, withdrawn) };
+  };
+  const withdraw = (superpipe({})('copilot-withdraw') as PipelineAPI)
+    .input(['ref', 'inputId'])
+    .pipe(lookup, 'ref', 'result:withdrawn')
+    .pipe(refresh, 'withdrawn', 'withdrawn')
+    .pipe(admitWithdraw, ['withdrawn', 'inputId'], 'result:withdrawn')
+    .pipe(applyWithdraw, ['withdrawn', 'inputId'], 'withdrawn')
+    .endAsync('withdrawn') as (
+    ref: W.WorkRef,
+    inputId: string
+  ) => Promise<W.Result<W.WorkWithdrawal>>;
   const stop = (superpipe({})('copilot-stop') as PipelineAPI)
     .input(['ref'])
     .pipe(lookup, 'ref', 'result:stopped')
@@ -391,7 +429,7 @@ export function createCopilotAdapter(
         cursor
       );
     },
-    capabilities: ['find', 'start', 'send', 'queue', 'status', 'stop'] as const,
+    capabilities: ['find', 'start', 'send', 'queue', 'withdraw', 'status', 'stop'] as const,
     unsupportedCapabilities: {
       steer:
         'Copilot strict same-turn steering is unsupported: immediate input can fall back to a later turn; the pinned protocol has no expected-active-turn precondition. Use auto or queue for explicit enqueue delivery.',
@@ -404,6 +442,7 @@ export function createCopilotAdapter(
     },
     send: (ref, message) => guard(() => send(ref, message), ref.id),
     queue: (ref, message) => guard(() => send(ref, message), ref.id),
+    withdraw: (ref, inputId) => guard(() => withdraw(ref, inputId), ref.id),
     status: (ref, _since, receipt) => guard(() => status(ref, receipt), ref.id),
     stop: (ref) => guard(() => stop(ref), ref.id),
     async close() {
