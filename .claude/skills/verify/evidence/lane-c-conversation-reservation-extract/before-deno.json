@@ -1,0 +1,69 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "boundConversationFallbackPreserved": true,
+  "coldMs": 2.1854580000001533,
+  "atomicReceiptAndCodeInvalidation": true,
+  "publicReaderRetainsChunkedNoticeWithoutSecrets": true,
+  "realCliRetainsDeviceHistory": true,
+  "existingObserverSeesCommittedReset": true,
+  "oneReplacementConsumesRecovery": true,
+  "rollbackFailure": "Error: synthetic second notice failure",
+  "boundConversationReservationRolledBackWithNotice": true,
+  "secondNoticeFailureRollsBackAllState": true,
+  "healthWhileHeldMs": 2.518707999999606,
+  "heldMs": 29.605749999999716,
+  "currentHumansSelectedAfterWriterWait": true,
+  "concurrentMs": 0.37712499999997817,
+  "distinctEmptyResetsRetainNotices": true,
+  "beforeCommitFailure": "Error: synthetic human-reset admission rejected before commit",
+  "lostReceiptFailure": "Error: synthetic committed human-reset reply lost; outcome unknown",
+  "unknownOutcomeNotReplayed": true,
+  "writerRecovered": true,
+  "maxLoopLagMs": 3.8443749999996726,
+  "rssBytes": 533233664,
+  "walBytes": 4128272,
+  "publicResetOperationUnwired": true,
+  "commandPosts": 8,
+  "mainSqlAttempts": 0,
+  "timings": [
+    {
+      "roundTripMs": 1.9894580000000133,
+      "requestBytes": 41,
+      "replyBytes": 1775,
+      "encodeMs": 0.007959000000028027
+    },
+    {
+      "roundTripMs": 29.53970799999979,
+      "requestBytes": 41,
+      "replyBytes": 1860,
+      "encodeMs": 0.009250000000065484
+    },
+    {
+      "roundTripMs": 0.19470899999987523,
+      "requestBytes": 41,
+      "replyBytes": 138,
+      "encodeMs": 0.0015830000002097222
+    },
+    {
+      "roundTripMs": 0.3309169999997721,
+      "requestBytes": 41,
+      "replyBytes": 138,
+      "encodeMs": 0.002457999999933236
+    },
+    {
+      "roundTripMs": 4.446292000000085,
+      "requestBytes": 41,
+      "replyBytes": 215,
+      "encodeMs": 0.004582999999911408
+    },
+    {
+      "roundTripMs": 4.391291999999794,
+      "requestBytes": 41,
+      "replyBytes": 138,
+      "encodeMs": 0.0027920000002268353
+    }
+  ],
+  "runtime": "Deno 2.9.4",
+  "temporaryDataRemoved": true,
+  "exitCode": 0
+}
