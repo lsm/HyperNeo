@@ -54,6 +54,15 @@ it('demotes image links whose alt text contains a > without leaking attribute te
   expect(bar.textContent ?? '').not.toContain('b">');
 });
 
+it('shows the new excerpt immediately when the quoted message changes', async () => {
+  const app = render(<NeoQuoteBar author="Neo" excerpt={'**boldA**'} onOpen={() => {}} />);
+  const bar = app.container.querySelector('[data-quote-bar]') as HTMLElement;
+  await waitFor(() => expect(bar.querySelector('strong')?.textContent).toBe('boldA'));
+  app.rerender(<NeoQuoteBar author="Neo" excerpt={'plainB'} onOpen={() => {}} />);
+  expect(bar.textContent).toContain('plainB');
+  expect(bar.textContent).not.toContain('boldA');
+});
+
 it('keeps the missing-original placeholder as plain italic text', () => {
   const app = render(<NeoQuoteBar author="Neo" onOpen={() => {}} />);
   const bar = app.container.querySelector('[data-quote-bar]') as HTMLElement;
