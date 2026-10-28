@@ -39,7 +39,7 @@ try {
   });
   const adapters = await rpc('work.adapters', {});
   assert(adapters && typeof adapters === 'object' && 'value' in adapters);
-  assert.deepEqual((adapters.value as { id: string; capabilities: string[] }[]).find(a => a.id === 'copilot-cli'), { id: 'copilot-cli', capabilities: ['find', 'start', 'send', 'queue', 'status', 'stop'] });
+  assert.deepEqual((adapters.value as { id: string; capabilities: string[] }[]).find(a => a.id === 'copilot-cli'), { id: 'copilot-cli', capabilities: ['find', 'start', 'send', 'queue', 'status', 'stop', 'archive'] });
   const find = await rpc('work.find', { adapters: ['copilot-cli'], folder: copilotFolder, includeClosed: true, localOnly: true });
   assert(find && typeof find === 'object' && 'places' in find);
   const work = (find.places as { work: { ref: { id: string; adapter: string }; title: string }[] }[]).flatMap(p => p.work);
