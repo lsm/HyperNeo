@@ -67,7 +67,7 @@ try{
  record=true;const raced=await Promise.all([call(input('one')),call(input('two'))]);record=false;assert(raced.every(item=>item.ok));
  assert.deepEqual(store.listQuestions('ask').map(card=>card.startTodos),[['held','one','two']]);result.concurrentQuestionMembership=true;
  const start=input('start');start.draft.start=true;record=true;const intent=await call(start);record=false;assert(intent.ok && intent.start==='start');assert.equal(store.listQuestions('ask')[0].startTodos?.includes('start'),false);result.dispatchDeferred=true;
- const bound=input('bound');bound.draft.target={verb:'bind',ref:{adapter:'hyperneo',id:'existing-worker'}};record=true;const bind=await call(bound);record=false;assert(bind.ok && bind.todo?.state==='doing');assert.deepEqual(sessions.readRef('bound'),{adapter:'hyperneo',id:'existing-worker'});result.bindAtomic=true;
+ 
  const count=tables.length;const invalid=input('invalid');invalid.draft.check={pack:'missing',kind:'unknown',params:{}};record=true;const rejected=await call(invalid);record=false;assert(!rejected.ok);assert.equal(tables.length,count);assert.equal(store.getTodo('invalid'),null);result.refusalQuiet=true;
  record=true;await assert.rejects(call(args),/UNIQUE constraint/);record=false;assert.equal(tables.length,count);assert.equal(store.listTodos('ask').filter(todo=>todo.id==='held').length,1);result.noReplayDuplicateId=true;
  const ghost=(phase:'before'|'after')=>{

@@ -75,28 +75,34 @@ function setup() {
 }
 
 describe('bind an already running worker without dispatch', () => {
-  test.each([{}, { instruction: 'Work is already running', start: true }])(
-    'ask-open binds immediately without dispatch even with options %j',
-    async (options) => {
+  test.each(['neo.ask.open', 'neo.todo.add', 'neo.todo.edit'])(
+    '%s refuses a bind target and points to neo.todo.bind or a send target',
+    async (name) => {
       const { db, sessions, calls, invoke } = setup();
       try {
-        const result = await invoke('neo.ask.open', {
-          title: 'Synthetic work',
-          request: 'Track work already in progress',
-          todos: [
-            {
-              check: pendingTodoCheck,
-              title: 'Running work',
-              doneWhen: 'Result verified',
-              ...options,
-              target: { verb: 'bind', ref },
-            },
-          ],
-        });
-        expect(result.ok).toBe(true);
-        expect(result.todos[0].state).toBe('doing');
-        expect(result.todos[0].instruction).toBe(options.instruction ?? null);
-        expect(sessions.readRef(result.todos[0].id)).toEqual(ref);
+        const target = { verb: 'bind', ref };
+        const input =
+          name === 'neo.ask.open'
+            ? {
+                title: 'Synthetic work',
+                request: 'Give the worker a task',
+                todos: [
+                  {
+                    check: pendingTodoCheck,
+                    title: 'Running work',
+                    instruction: 'Do the task',
+                    target,
+                  },
+                ],
+              }
+            : name === 'neo.todo.add'
+              ? { askId: 'ask', title: 'Running work', check: pendingTodoCheck, target }
+              : { todoId: 'todo', instruction: 'Do the task', target };
+        await expect(invoke(name, input)).rejects.toThrow(
+          'bind is its own operation: use neo.todo.bind {todoId, ref} for work already running; to give a worker a new task use target {verb: send, ref}.'
+        );
+        expect(db.prepare('SELECT COUNT(*) AS n FROM neo_todo_sessions').get()).toEqual({ n: 0 });
+        expect(sessions.readRef('todo')).toBeNull();
         expect(calls).toEqual([]);
       } finally {
         db.close();
@@ -158,10 +164,45 @@ describe('bind an already running worker without dispatch', () => {
         todos: [{ check: pendingTodoCheck, title: 'Held step', doneWhen: 'Result verified' }],
       });
       const todo = opened.todos[0];
-      await invoke('neo.todo.edit', { todoId: todo.id, hold: 'The human said wait.' });
+      await invoke('neo.todo.hold', { todoId: todo.id, reason: 'The human said wait.' });
       const bound = await invoke('neo.todo.bind', { todoId: todo.id, ref });
       expect(bound.ok).toBe(false);
       expect(store.getTodo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'held' });
+      expect(calls).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('hold is its own operation: neo.todo.hold holds and releases, edit refuses hold', async () => {
+    const { db, store, calls, invoke } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Synthetic work',
+        request: 'Track work',
+        todos: [{ check: pendingTodoCheck, title: 'Waiting step', doneWhen: 'Result verified' }],
+      });
+      const todo = opened.todos[0];
+      await expect(
+        invoke('neo.todo.edit', { todoId: todo.id, hold: 'The human said wait.' })
+      ).rejects.toThrow('hold is its own operation: use neo.todo.hold {todoId, reason}');
+      expect(store.getTodo(todo.id)?.blockedBy).not.toBe('held');
+      const held = await invoke('neo.todo.hold', {
+        todoId: todo.id,
+        reason: 'The human said wait.',
+      });
+      expect(held.ok).toBe(true);
+      expect(store.getTodo(todo.id)).toMatchObject({
+        state: 'blocked',
+        blockedBy: 'held',
+        blockedReason: 'The human said wait.',
+      });
+      const released = await invoke('neo.todo.hold', { todoId: todo.id, reason: null });
+      expect(released.ok).toBe(true);
+      expect(store.getTodo(todo.id)).toMatchObject({ state: 'todo', blockedBy: null });
+      expect(await invoke('neo.todo.hold', { todoId: todo.id, reason: null })).toMatchObject({
+        ok: false,
+      });
       expect(calls).toEqual([]);
     } finally {
       db.close();

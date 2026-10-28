@@ -100,15 +100,6 @@ describe('Whole todo-add writer', () => {
     });
     expect(store.listQuestions('ask')).toEqual([]);
   });
-  test('bind records an existing worker atomically without a start card', async () => {
-    const ref = { adapter: 'hyperneo', id: 'existing-worker' };
-    expect(await add('one', { ...draft(), target: { verb: 'bind', ref } })).toMatchObject({
-      ok: true,
-      todo: { state: 'doing', startedAt: 10 },
-    });
-    expect(new NeoTodoSessionRepository(db).readRef('one')).toEqual(ref);
-    expect(store.listQuestions('ask')).toEqual([]);
-  });
   test('unsupported check refuses without side effects', async () => {
     expect(
       await add('one', { ...draft(), check: { pack: 'missing', kind: 'unknown', params: {} } })

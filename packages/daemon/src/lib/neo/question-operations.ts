@@ -875,7 +875,7 @@ export function createNeoQuestionOperations(
                 .map((todo) => todo!.title);
               return held.length
                 ? [
-                    `${store.getTodo(id)?.title ?? id} waits for held steps: ${held.join(', ')}. Ask the human whether to release them (neo.todo.edit hold: null).`,
+                    `${store.getTodo(id)?.title ?? id} waits for held steps: ${held.join(', ')}. Ask the human whether to release them (neo.todo.hold reason: null).`,
                   ]
                 : [];
             }),
