@@ -37,3 +37,13 @@ actual inputs and differ across follow-ups. Unit regressions use receiptless
 sends to a shared worker: another todo's input cannot land the lost send or
 supply its reply, even with identical task text and observed identity. Repeated
 identical follow-ups on the same todo also get distinct openings.
+
+A synthetic Codex state DB is seeded before daemon creation so the production
+Codex adapter is registered. Its public work.status returns no model/effort;
+refreshing a bound todo must retain the pair previously confirmed at start.
+This identity-silent read supplies no newer observation. A successful partial
+observation still replaces the pair together (missing effort becomes unknown),
+and an explicit identityObservation with no fields clears both to unknown.
+The unit follow-up regression checks the delivered Codex Agent line as well.
+Codex status does not yet observe model/effort changes; the brief labels retained
+values as last observed, rather than asserting they are newly confirmed.
