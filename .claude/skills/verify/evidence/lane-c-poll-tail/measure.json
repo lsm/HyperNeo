@@ -1,0 +1,26 @@
+{
+  "base": "845bf24cb3ef189f1709da720067ee1f16c76188",
+  "file": "packages/daemon/src/lib/github/polling-service.ts",
+  "constructor": {
+    "start": 34,
+    "end": 55,
+    "lines": 22,
+    "sha256": "2c9dc7036e0f910071e82d2760b60addc0b409c95d8874ea5fc350be5cfa63ee"
+  },
+  "changedGraphLines": 22,
+  "productionLines": 14,
+  "delta": [
+    {
+      "file": "packages/daemon/src/lib/github/polling-service.ts",
+      "lines": 14
+    }
+  ],
+  "sourceBundleSha256": "25ffc5b8157868b2532b7365c98d5e08f26b2d814af7105946e236815ec52054",
+  "eventWriterBundleSha256": "070050a7e70102082c5f82d33cbc0814b6b2a8ba8c7824ef8c1c07079162d519",
+  "auditedEventLines": 185,
+  "auditedWriterLines": 84,
+  "fullTransitiveGraphMeasured": false,
+  "auditLimit": "Exact masked polling-module/source/normalizer/job-handler and merged event/writer subtree hashes are pinned. External SDK, GitHub CLI/permission helpers, collector internals and generic queue/SQLite/runtime implementations are not an exhaustive transitive audit. No real GitHub, credential bootstrap or deployment claim.",
+  "sharedCoreChanges": false,
+  "sqlBaselineChanged": false
+}
