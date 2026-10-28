@@ -290,7 +290,7 @@ export class QueryLifecycleManager {
   async restart(options?: {
     beforeStart?: () => void | Promise<void>;
     skipTranscriptGuard?: boolean;
-  }): Promise<void> {
+  }): Promise<{ blocked: boolean }> {
     const { session, internalEventBus, messageHandler } = this.ctx;
     let reachedSuppressedIdle = false;
 
@@ -316,12 +316,14 @@ export class QueryLifecycleManager {
       }
 
       if (!options?.skipTranscriptGuard && !(await this.gateOnMissingTranscript('restart'))) {
-        return;
+        this.ctx.stateManager.releaseIdleWaiters();
+        return { blocked: true };
       }
 
       await this.ctx.clearModelsCache();
 
       await this.ctx.startStreamingQuery();
+      return { blocked: false };
     } catch (error) {
       if (reachedSuppressedIdle) {
         this.ctx.stateManager.releaseIdleWaiters();
@@ -384,6 +386,7 @@ export class QueryLifecycleManager {
       await this.ctx.clearModelsCache();
 
       if (restartAfter && !(await this.gateOnMissingTranscript('reset'))) {
+        this.ctx.stateManager.releaseIdleWaiters();
         return { success: true, blocked: true };
       }
       if (restartAfter) {
@@ -741,28 +744,28 @@ export class QueryLifecycleManager {
     }
   }
 
-  async restartQuery(): Promise<void> {
+  async restartQuery(): Promise<{ blocked: boolean }> {
     const { messageQueue, stateManager } = this.ctx;
 
     if (!messageQueue.isRunning() || !this.ctx.queryObject) {
-      return;
+      return { blocked: false };
     }
 
     const currentState = stateManager.getState();
     if (currentState.status === 'processing') {
       this.ctx.pendingRestartReason = 'settings.local.json';
-      return;
+      return { blocked: false };
     }
 
-    await this.restart();
+    return await this.restart();
   }
 
-  async restartWhenIdle(): Promise<void> {
+  async restartWhenIdle(): Promise<{ blocked: boolean }> {
     if (this.ctx.stateManager.getState().status !== 'idle') {
       this.ctx.pendingRestartReason = 'settings.local.json';
-      return;
+      return { blocked: false };
     }
-    await this.restartQuery();
+    return await this.restartQuery();
   }
 
   async executeDeferredRestartIfPending(): Promise<boolean> {

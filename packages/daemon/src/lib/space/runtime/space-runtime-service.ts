@@ -685,9 +685,14 @@ export class SpaceRuntimeService {
     if (!result.success) {
       throw new Error(result.error ?? 'Failed to refresh long-horizon agent session');
     }
-    await session.restart({
+    const restarted = await session.restart({
       beforeStart: () => session.reevaluateContextBudgetAfterModelSwitch?.(),
     });
+    if (restarted.blocked) {
+      log.warn(
+        `Long-horizon agent ${session.getSessionData().id} restart held pending a transcript resume choice`
+      );
+    }
   }
 
   private readonly agentSessionEnsuresInFlight = new Map<

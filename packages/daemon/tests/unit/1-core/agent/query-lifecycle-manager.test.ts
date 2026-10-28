@@ -1789,6 +1789,16 @@ describe('QueryLifecycleManager', () => {
         expect(mockContext.queryObject).toBeNull();
       });
 
+      test('reports blocked and releases delivery waiters when the gate stops the restart', async () => {
+        mockContext.session.sdkSessionId = 'missing-sdk-session';
+        manager = new QueryLifecycleManager(mockContext);
+
+        const result = await manager.restart();
+
+        expect(result.blocked).toBe(true);
+        expect(releaseIdleWaitersSpy).toHaveBeenCalledTimes(1);
+      });
+
       test('starts anyway when the caller resolves the resume choice (skipTranscriptGuard)', async () => {
         mockContext.session.sdkSessionId = 'missing-sdk-session';
         manager = new QueryLifecycleManager(mockContext);
@@ -1873,8 +1883,10 @@ describe('QueryLifecycleManager', () => {
         const result = await manager.reset({ restartAfter: true });
 
         expect(result.success).toBe(true);
+        expect(result.blocked).toBe(true);
         expect(startStreamingCalled).toBe(false);
         expect(saveHyperNeoActionMessageSpy).toHaveBeenCalled();
+        expect(releaseIdleWaitersSpy).toHaveBeenCalledTimes(1);
       });
 
       test(
