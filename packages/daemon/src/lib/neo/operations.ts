@@ -69,6 +69,7 @@ import {
 } from './session-watch.ts';
 import { findNeoSessionNotice } from './session-track.ts';
 import { createNeoQuestionOperations } from './question-operations.ts';
+import type { NeoInputReads } from './input-ask.ts';
 import { createNeoTodoOperations, type NeoTodoControls } from './todo-operations.ts';
 import { resolveNeoTodoTarget } from './todo-target.ts';
 import { wireNeoTodoMutations } from './todo-mutation-operation.ts';
@@ -629,6 +630,14 @@ export function createNeoOperations(service: NeoService) {
         }
       : { ok: true as const, pack: { id: pack.id, describe: pack.describe }, instructions };
   });
+  const inputReads: NeoInputReads = {
+    input: (caller, id) =>
+      caller.sessionId ? receivedNeoHumanInput(service, caller.sessionId, id) : null,
+    publication: (id) => {
+      const conversationId = service.repo.conversationId();
+      return conversationId ? service.publications.get(conversationId, id) : null;
+    },
+  };
   const todoControls: NeoTodoControls = {
     resolveTarget: (ref) =>
       resolveNeoTodoTarget(ref, (name, input) =>
@@ -700,7 +709,8 @@ export function createNeoOperations(service: NeoService) {
         todoControls,
         () => service.installedPacks(),
         createArtifactRefReader(() => service.db.getDatabase()),
-        (todos) => service.todoWorkers(todos)
+        (todos) => service.todoWorkers(todos),
+        inputReads
       ),
       {
         gateway: mutationGateway,
@@ -783,7 +793,8 @@ export function createNeoOperations(service: NeoService) {
       },
       (id) => service.notifyPublicationsChanged(id),
       (questionId) => service.deliverQuestionAnswers(questionId),
-      () => neoStandingRules(service.db.getGlobalSettings().neo)
+      () => neoStandingRules(service.db.getGlobalSettings().neo),
+      inputReads
     ),
     defineOperation({
       name: 'neo.open',

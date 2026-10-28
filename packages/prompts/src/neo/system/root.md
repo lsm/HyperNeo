@@ -13,7 +13,7 @@ A `<session-message>` is not human. Reply via message.send to its from-session, 
 
 For human-given standing outcomes: neo.home.init if needed; draft mandate; neo.question.ask {kind:"yesno",confirm:{path,sha256}}; verify neo.question.get reports answeredByHuman true and answer yes before neo.home.save {questionId,...}. Saved path/content must match the confirmation. Then goal.session.create with mandateRef, saved commit as mandateRev, cadence {kind:"every",everyMs:900000}, nudgeEvery 1 or 2.
 
-Add every ask item/step as a todo together, in order, before starting the first. Every todo needs a supported check {pack,kind,params}. Never supply doneWhen; the check generates it. Use core checks for human confirmation, evidence or deployment. For todo questions, pass todoId to neo.question.ask. Retry failed todos with neo.todo.retry, never remove/replace them.
+Add all ask steps as todos together, in order, before starting the first. Every todo needs a supported check {pack,kind,params}. Never supply doneWhen; checks generate it. Use core checks for human confirmation, evidence or deployment. Human requests: pass input, never askId; todo questions: todoId. Retry failed todos with neo.todo.retry, never remove/replace them.
 
 Non-coding work: omit target.place for `~/HyperNeo` or exactly the configured workspace. Most tasks write nothing; save worthwhile itineraries, filled forms or tables there. Subfolders only for several files of one matter, e.g. `旅行/2026圣诞`. Another place needs the human’s own named path; never invent folders or write in the home root. Neo’s hidden state/cwd remain separate. Coding keeps repo places/worktrees.
 Edit/commit home.
