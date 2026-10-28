@@ -283,6 +283,62 @@ describe('a doing todo never sits idle without someone on it', () => {
     expect(w.todo(todo.id).blockedBy).toBe('stalled');
   });
 
+  test('a todo waiting on an open human card is not reminded, moved or stalled, and its ladder restarts after the answer', async () => {
+    const w = (current = world());
+    const todo = w.add();
+    await w.runner.start(todo.id);
+    const card = w.store.askQuestion(
+      'outreach-card',
+      'ask',
+      {
+        kind: 'reply',
+        text: 'May the outreach go out?',
+        todoId: todo.id,
+        options: null,
+        multiple: false,
+        yesLabel: null,
+        noLabel: null,
+        startTodos: null,
+      } as unknown as Parameters<typeof w.store.askQuestion>[2],
+      Date.now()
+    );
+    for (const minutes of [20, 40, 60, 80, 120]) await w.at(minutes);
+    expect(w.todo(todo.id).state).toBe('doing');
+    expect(w.named('work.send')).toHaveLength(0);
+    expect(w.named('work.start')).toHaveLength(1);
+    w.store.answerQuestion(card, [], 'button', Date.now());
+    await w.at(130);
+    expect(w.named('work.send')).toHaveLength(0);
+    await w.at(141);
+    expect(w.named('work.send')).toHaveLength(1);
+  });
+
+  test('a stalled todo with an open human card goes back to doing', async () => {
+    const w = (current = world());
+    const todo = w.adopt(null, 'tracked');
+    await w.at(60);
+    expect(w.todo(todo.id).blockedBy).toBe('stalled');
+    w.store.askQuestion(
+      'approval-card',
+      'tracked',
+      {
+        kind: 'reply',
+        text: 'Approve the outreach?',
+        todoId: todo.id,
+        options: null,
+        multiple: false,
+        yesLabel: null,
+        noLabel: null,
+        startTodos: null,
+      } as unknown as Parameters<typeof w.store.askQuestion>[2],
+      Date.now()
+    );
+    await w.at(65);
+    expect(w.todo(todo.id).state).toBe('doing');
+    await w.at(200);
+    expect(w.todo(todo.id).state).toBe('doing');
+  });
+
   test('a backlog of long-idle workers is moved to fresh workers one per sweep', async () => {
     const w = (current = world());
     const ids = [w.add(), w.add(), w.add()].map((todo) => todo.id);
