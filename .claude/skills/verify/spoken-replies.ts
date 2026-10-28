@@ -62,10 +62,18 @@ const fixture = createServer(async (request,response) => {
     response.statusCode=404; response.end('{}');
   } catch { response.statusCode=500; response.end('{}'); }
 });
+const asrFixture = mode === 'serve' ? Bun.serve<{sent:boolean}>({port:18556, hostname:'127.0.0.1',
+  fetch(request, server) { if(server.upgrade(request,{data:{sent:false}})) return; return new Response('fixture'); },
+  websocket:{ message(ws, data) {
+    const result=(final:boolean)=>JSON.stringify({type:'Results',is_final:final,channel:{alternatives:[{transcript:'Public live transcript'}]}});
+    if(typeof data==='string' && data.includes('CloseStream')) { ws.send(result(true)); ws.close(); }
+    else if(typeof data!=='string' && !ws.data.sent) { ws.data.sent=true; ws.send(result(false)); }
+  }}
+}) : null;
 try {
   await new Promise<void>(done => fixture.listen(18555,'127.0.0.1',done));
   if (mode === 'serve') {
-    app.db.updateGlobalSettings({voice:{enabled:true,endpoint:'http://127.0.0.1:18555/v1/audio/transcriptions',model:'fixture',mode:'batch',allowPrivateNetwork:true}});
+    app.db.updateGlobalSettings({voice:{enabled:true,endpoint:'http://127.0.0.1:18555/v1/audio/transcriptions',model:'fixture',mode:'streaming',streamEndpoint:'ws://127.0.0.1:18556/v1/listen',streamProtocol:'deepgram',allowPrivateNetwork:true}});
     console.log('ready: daemon=18554 fixture=18555');
     process.once('SIGTERM',finish); process.once('SIGINT',finish);
     await Promise.race([finished,new Promise(done=>setTimeout(done,30*60_000).unref())]);
@@ -108,6 +116,7 @@ try {
   }
 } finally {
   writeFileSync(join(run,'evidence/spoken-replies.json'),JSON.stringify(evidence(),null,2));
+  asrFixture?.stop(true);
   fixture.closeAllConnections(); await new Promise<void>(done=>fixture.close(()=>done()));
   for(const client of clients) { await client.transport.close(); client.hub.cleanup(); }
   await app.cleanup(); globalThis.fetch=network;
