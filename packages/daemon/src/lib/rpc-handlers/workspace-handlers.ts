@@ -25,7 +25,7 @@ export function setupWorkspaceHandlers(
       throw new Error('path is required');
     }
     const workspacePath = await validateWorkspaceDirectory(path);
-    workspaceHistoryRepo.upsert(workspacePath);
+    await workspaceHistoryRepo.upsertAsync(workspacePath);
 
     if (mcpImportService) {
       try {

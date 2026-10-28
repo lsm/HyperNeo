@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { MessageHub, WorkspaceHistoryEntry } from '@hyperneo/shared';
@@ -194,4 +195,24 @@ describe('workspace.add DB writer', () => {
     expect(refresh).not.toHaveBeenCalled();
     expect(mainSql).toBe(0);
   });
+});
+
+test('workspace.add audited dependency files keep their exact source contract', () => {
+  const root = new URL('../../../../../../', import.meta.url);
+  const manifest = JSON.parse(
+    readFileSync(
+      new URL(
+        '.claude/skills/verify/evidence/lane-c-workspace-add/audited-dependencies.json',
+        root
+      ),
+      'utf8'
+    )
+  ) as { fullTransitiveGraphMeasured: boolean; units: { file: string; sha256: string }[] };
+  expect(manifest.fullTransitiveGraphMeasured).toBe(false);
+  for (const unit of manifest.units)
+    expect(
+      createHash('sha256')
+        .update(readFileSync(new URL(unit.file, root)))
+        .digest('hex')
+    ).toBe(unit.sha256);
 });

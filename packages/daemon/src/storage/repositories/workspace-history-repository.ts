@@ -1,4 +1,5 @@
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { workspaceHistoryUpsertWrites } from './workspace-history-upsert-write.ts';
 import { workspaceHistoryRemoveWrites } from './workspace-history-remove-write.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { WorkspaceHistoryEntry } from '@hyperneo/shared';
@@ -60,6 +61,10 @@ export class WorkspaceHistoryRepository {
       useCount: row.use_count,
       ...(projects.has(row.path) ? { project: projects.get(row.path) } : {}),
     }));
+  }
+
+  upsertAsync(path: string) {
+    return gatewayFor(this.db).call(workspaceHistoryUpsertWrites, 'upsert', path, Date.now());
   }
 
   upsert(path: string, now = Date.now()): WorkspaceHistoryRow {

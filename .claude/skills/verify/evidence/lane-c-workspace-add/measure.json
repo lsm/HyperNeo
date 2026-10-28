@@ -1,0 +1,104 @@
+{
+  "base": "1cfb0cf459942b6045dcd55fe3d64b61d9a36f4e",
+  "units": [
+    {
+      "file": "packages/daemon/src/storage/repositories/workspace-history-repository.ts",
+      "name": "constructor",
+      "start": 14,
+      "end": 14,
+      "lines": 1,
+      "sha256": "37ae8ea2954cf392605c195037a07d4abd1b4658eb5c923aaa06862a17a0101d"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/workspace-history-repository.ts",
+      "name": "projects",
+      "start": 16,
+      "end": 28,
+      "lines": 13,
+      "sha256": "72ccd1bfea734cf1e56510644287cacf3581b6793629ed756c1c5d5b5a5cc915"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/workspace-history-repository.ts",
+      "name": "entries",
+      "start": 54,
+      "end": 64,
+      "lines": 11,
+      "sha256": "4f6c6d45e188764c84378cdcb8603a5f5bbb147aa50926675f310e389e1135d2"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/workspace-history-repository.ts",
+      "name": "upsertAsync",
+      "start": 66,
+      "end": 68,
+      "lines": 3,
+      "sha256": "58bc1547bc108fec1f7a01f267276f11d719bf87214f8bdc4807b343e5a57bef"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/workspace-history-repository.ts",
+      "name": "upsert",
+      "start": 70,
+      "end": 81,
+      "lines": 12,
+      "sha256": "4bf96c1052073e21c2c2c22c8899c7453c12d325cf032984dcbb7dede7ccba60"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/workspace-history-repository.ts",
+      "name": "get",
+      "start": 83,
+      "end": 88,
+      "lines": 6,
+      "sha256": "d50ee99179a2cc65d8be3cc9023ff0a718bb87e73ed5dcc73e6230e30c3346f9"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/workspace-history-repository.ts",
+      "name": "listAll",
+      "start": 98,
+      "end": 104,
+      "lines": 7,
+      "sha256": "fba612401eac7991c397a21740b2e4b037222bff5e9e65e455fce2b38ef39978"
+    },
+    {
+      "file": "packages/daemon/src/lib/workspace-path.ts",
+      "name": "normalizeWorkspacePath",
+      "start": 5,
+      "end": 17,
+      "lines": 13,
+      "sha256": "01601035b5150ec4638e4c33c20338a303795e1378e8b472ec9178179956960c"
+    },
+    {
+      "file": "packages/daemon/src/lib/workspace-path.ts",
+      "name": "validateWorkspaceDirectory",
+      "start": 19,
+      "end": 31,
+      "lines": 13,
+      "sha256": "c9e848bc98be9154eb4e0ef99a54bc2822ad2857aab927ad48366adea4823f95"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/workspace-history-upsert-write.ts",
+      "name": "complete registered writer module",
+      "lines": 18,
+      "sha256": "67676583861b10d88722885b90c3817485bde826ee74e7bdfd35d182abec7b39"
+    }
+  ],
+  "totalLines": 97,
+  "productionLines": 7,
+  "smokeRegistrationLines": 1,
+  "delta": [
+    {
+      "file": "packages/daemon/src/lib/rpc-handlers/workspace-handlers.ts",
+      "lines": 2
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/workspace-history-repository.ts",
+      "lines": 5
+    },
+    {
+      "file": "scripts/deno-smoke.sh",
+      "lines": 1
+    }
+  ],
+  "dependencyManifest": ".claude/skills/verify/evidence/lane-c-workspace-add/audited-dependencies.json",
+  "fullMcpTransitiveGraphMeasured": false,
+  "boundary": "Full local RPC/validation/history write/response graph above. Unchanged MCP refresh/import/tool-default roots pinned separately by whole-file source hashes and behavioral contracts; complete transitive closure is not claimed. Generic gateway/SQLite/runtime/event implementation remains shared infrastructure.",
+  "sqlBaselineChanged": false
+}

@@ -1,0 +1,97 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "firstRpcMs": 3.790749999999889,
+  "committedHistoryBeforeRealMcpImport": true,
+  "disabledImportedCanonicalDefault": true,
+  "changeEventAfterImportCommit": true,
+  "normalizedLiteralPath": true,
+  "repeatedAndConcurrentCounters": true,
+  "malformedImportRetainsHistoryAndCatalog": true,
+  "scanExceptionDoesNotUndoHistory": true,
+  "failedWritePreventsScan": true,
+  "healthWhileWriterHeldMs": 2.0828330000001642,
+  "deliberatelyHeldWriterMs": 1251.509083,
+  "admissionTimestampAndCommitOrdering": true,
+  "preCommitFailurePreventsScan": true,
+  "unknownOutcomeNeverReplayedOrScanned": true,
+  "invalidPathRejectedBeforeWriter": true,
+  "maxLoopLagMs": 6.425999999999931,
+  "rssBytes": 540426240,
+  "walBytes": 4128272,
+  "commandPosts": 13,
+  "publicWorkspaceAddExercised": true,
+  "historyAndMcpSourceReadsRemainMain": true,
+  "pass": true,
+  "mainSqlAttempts": 0,
+  "workerMetrics": [
+    {
+      "roundTripMs": 0.16404199999988123,
+      "requestBytes": 106,
+      "replyBytes": 115,
+      "encodeMs": 0.23254100000008293
+    },
+    {
+      "roundTripMs": 0.08491700000013225,
+      "requestBytes": 106,
+      "replyBytes": 115,
+      "encodeMs": 0.0049579999999878055
+    },
+    {
+      "roundTripMs": 0.07691699999986668,
+      "requestBytes": 100,
+      "replyBytes": 109,
+      "encodeMs": 0.0013330000001587905
+    },
+    {
+      "roundTripMs": 0.19041599999991377,
+      "requestBytes": 100,
+      "replyBytes": 109,
+      "encodeMs": 0.001042000000097687
+    },
+    {
+      "roundTripMs": 0.2905420000001868,
+      "requestBytes": 100,
+      "replyBytes": 109,
+      "encodeMs": 0.0008329999998295534
+    },
+    {
+      "roundTripMs": 0.3614580000000842,
+      "requestBytes": 100,
+      "replyBytes": 109,
+      "encodeMs": 0.0007089999999152496
+    },
+    {
+      "roundTripMs": 0.06741699999975026,
+      "requestBytes": 106,
+      "replyBytes": 115,
+      "encodeMs": 0.002917000000252301
+    },
+    {
+      "roundTripMs": 0.08020799999985684,
+      "requestBytes": 102,
+      "replyBytes": 111,
+      "encodeMs": 0.00200000000018008
+    },
+    {
+      "roundTripMs": 1248.8656660000001,
+      "requestBytes": 94,
+      "replyBytes": 103,
+      "encodeMs": 0.02641700000003766
+    },
+    {
+      "roundTripMs": 2.33849999999984,
+      "requestBytes": 97,
+      "replyBytes": 106,
+      "encodeMs": 0.003125000000181899
+    },
+    {
+      "roundTripMs": 2.375083999999788,
+      "requestBytes": 97,
+      "replyBytes": 106,
+      "encodeMs": 0.0029160000003685127
+    }
+  ],
+  "runtime": "deno",
+  "runtimeVersion": "2.9.4",
+  "temporaryDaemonDataRemoved": true
+}

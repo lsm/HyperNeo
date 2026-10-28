@@ -64,7 +64,7 @@ try{
  const entry=async(path:string)=>(await history()).entries.find(e=>e.path===path);
  const workspace=(name:string)=>{const path=join(run,'workspace',name);mkdirSync(path);return path;};
  const catalog=()=>hub.request<{servers:{id:string;name:string;enabled:boolean;sourcePath?:string}[]}>('mcp.registry.list',{});
- let notices=0;stopEvents=app.internalEventBus.subscribe('mcp.registry.changed',()=>{notices++;},{subscriberName:'workspace-add-proof'});
+ let notices=0;stopEvents=app.internalEventBus.subscribe('mcp.registry.changed',()=>{assert(app!.db.appMcpServers.listImported().some(server=>server.sourcePath===join(first,'.mcp.json')),'notification must observe committed import');notices++;},{subscriberName:'workspace-add-proof'});
  const wait=async(predicate:()=>boolean)=>{const deadline=performance.now()+4000;while(!predicate()){assert(performance.now()<deadline);await new Promise(done=>setTimeout(done,5));}};
  const first=workspace("first-'工作区");writeFileSync(join(first,'.mcp.json'),JSON.stringify({mcpServers:{probe:{command:'synthetic-never-executed'}}}));
  const cached=main.prepare('INSERT INTO workspace_history(path,last_used_at,use_count)VALUES(?,?,1)');measuring=true;
