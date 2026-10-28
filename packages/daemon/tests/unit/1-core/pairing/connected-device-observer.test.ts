@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { MessageHubRouter } from '@hyperneo/shared';
 import { WebSocketServerTransport } from '../../../../src/lib/websocket-server-transport';
 import type { RuntimeSocket } from '../../../../src/lib/runtime-server';
+import { onDeviceRevoked } from '../../../../src/lib/pairing/upgrade-auth';
 
 describe('connected device revocation observation', () => {
   let transport: WebSocketServerTransport;
@@ -36,7 +37,6 @@ describe('connected device revocation observation', () => {
     const first = socket('revoked');
     const second = socket('revoked');
     const unknown = socket();
-    await transport.initialize();
     await vi.advanceTimersByTimeAsync(1000);
     expect(read).toHaveBeenCalledWith(['active', 'revoked']);
     expect(first.ws.close).toHaveBeenCalledWith(1008, 'Device revoked');
@@ -101,5 +101,43 @@ describe('connected device revocation observation', () => {
     await vi.advanceTimersByTimeAsync(3000);
     expect(read).toHaveBeenCalledTimes(1);
     expect(target.ws.close).not.toHaveBeenCalled();
+  });
+  test('last disconnect suppresses a held inactive result and reconnection shares its flight', async () => {
+    let resolve!: (ids: readonly string[]) => void;
+    read.mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        })
+    );
+    const target = socket('revoked');
+    const notified = vi.fn();
+    const unsubscribe = onDeviceRevoked(notified);
+    try {
+      await vi.advanceTimersByTimeAsync(1000);
+      transport.unregisterClient(target.clientId);
+      resolve(['revoked']);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(notified).not.toHaveBeenCalled();
+      expect(read).toHaveBeenCalledTimes(1);
+      let finish!: (ids: readonly string[]) => void;
+      read.mockImplementationOnce(
+        () =>
+          new Promise((done) => {
+            finish = done;
+          })
+      );
+      const first = socket('active');
+      await vi.advanceTimersByTimeAsync(1000);
+      transport.unregisterClient(first.clientId);
+      socket('active');
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(read).toHaveBeenCalledTimes(2);
+      finish([]);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(read).toHaveBeenCalledTimes(3);
+    } finally {
+      unsubscribe();
+    }
   });
 });
