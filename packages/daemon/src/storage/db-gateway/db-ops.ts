@@ -160,6 +160,7 @@ import { workspaceHistoryRemoveWrites } from '../repositories/workspace-history-
 import { workspaceHistoryUpsertWrites } from '../repositories/workspace-history-upsert-write.ts';
 import { inboxCreateWrites } from '../repositories/inbox-create-write.ts';
 import { artifactIdentityWrites } from '../repositories/artifact-file-identity-write.ts';
+import { artifactFileRowWrites } from '../repositories/artifact-file-row-write.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -297,5 +298,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     workspaceHistoryUpsertWrites,
     inboxCreateWrites,
     artifactIdentityWrites,
+    artifactFileRowWrites,
   ].map((op) => [op.name, op])
 );

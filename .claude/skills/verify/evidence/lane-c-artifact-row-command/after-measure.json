@@ -1,0 +1,106 @@
+{
+  "base": "7c4e224d227e995e1cc747f5b00e7172e1b75186",
+  "units": [
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-repository.ts",
+      "name": "constructor",
+      "start": 10,
+      "end": 15,
+      "lines": 6,
+      "sha256": "56b63cd0413fe3ab057a3ad1e26012d3f0aace9d49b80d1a8ad7f95af34c551d"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-repository.ts",
+      "name": "save",
+      "start": 29,
+      "end": 57,
+      "lines": 29,
+      "sha256": "481b021c4fff54bd5ed71d13c023f3fc4394e50ae2277712700474370b29b89d"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-read-repository.ts",
+      "name": "constructor",
+      "start": 17,
+      "end": 17,
+      "lines": 1,
+      "sha256": "f3497513bcf32938aa5f7db1373dbba49a8a21a482ff030c347fc6d96437a2db"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-read-repository.ts",
+      "name": "get",
+      "start": 27,
+      "end": 31,
+      "lines": 5,
+      "sha256": "f6bf95a5d8d837994257d239f91779ca96479e03a5f2eadca7e543342e903133"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-receipt.ts",
+      "name": "serializeArtifactReceipt",
+      "start": 4,
+      "end": 17,
+      "lines": 14,
+      "sha256": "3e010c7fa1a7017ca0752b89dfa7280be65c3c176392aa1df279f07eb58c1c86"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-identity.ts",
+      "name": "ensureArtifactFileIdentity",
+      "start": 4,
+      "end": 10,
+      "lines": 7,
+      "sha256": "86dfda497e8e13b6b918b767aba241180efa5983e2e8afb1180265ee44c1bc63"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-row-write.ts",
+      "name": "complete new module (including types/imports/op)",
+      "lines": 73,
+      "sha256": "04f3d4417be0190bcd9d2bf1139acecb61f7237a54fa2322e2741fa47d17c4e4"
+    }
+  ],
+  "fullLocalGraphLines": 135,
+  "productionLines": 76,
+  "shared": [
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-ops.ts",
+      "lines": 2
+    },
+    {
+      "file": "scripts/deno-smoke.sh",
+      "lines": 1
+    }
+  ],
+  "delta": [
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-ops.ts",
+      "lines": 2
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-row-write.ts",
+      "lines": 73
+    },
+    {
+      "file": "scripts/deno-smoke.sh",
+      "lines": 1
+    }
+  ],
+  "infrastructure": [
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-op.ts",
+      "sha256": "459703e0371a0b1c351bf571a7a73126f6fd81a824e2ecdfbe0a7916986fbd3c",
+      "changed": false
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-gateway.ts",
+      "sha256": "54b7739518ba9c5c58bda82f7627a76d8483511949cd3469adc07e5643e09858",
+      "changed": false
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-gateway-worker.ts",
+      "sha256": "fbaeb4d89aa03a8dcc1e7aa686dedce502c0b279ebb6c2f7f5ef865bda3644b1",
+      "changed": false
+    }
+  ],
+  "netPrepare": 0,
+  "netRun": 0,
+  "contract": "publish(...legacySaveArgs): no identity initialization; unchanged worker-local save and clock, exact retained row/canonical receipt check in same transaction, result carries reference/receipt/createdAt only after commit; no retry/conflict recovery. No public mutation callers changed.",
+  "auditLimit": "Entire new module and invoked local repository/helper bodies counted, including unused default-identity branch conservatively. Shared worker transaction/dispatch shells pinned, not re-audited transitively. SQLite/runtime/superpipe internals and full capture/ownership/OS graph outside this construction. Public metadata reader remains on main outside command SQL count."
+}
