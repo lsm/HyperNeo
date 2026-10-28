@@ -1,4 +1,5 @@
 import { neoTodoReady } from '../../lib/neo/todo-dependencies.ts';
+import { neoTodoAwaitsHuman } from '../../lib/neo/todo-state.ts';
 import { NeoTurnReportReceipts } from '../../lib/neo/turn-report-receipts.ts';
 import {
   advanceFollowThrough,
@@ -240,7 +241,11 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       !context ||
       context.todo.updatedAt !== updatedAt ||
       JSON.stringify(context.ref) !== JSON.stringify(ref) ||
-      live.status === 'queued'
+      live.status === 'queued' ||
+      neoTodoAwaitsHuman(
+        context.todo,
+        new NeoAskTodoRepository(this.db).listQuestions(context.todo.askId)
+      )
     )
       return null;
     const since = Math.max(

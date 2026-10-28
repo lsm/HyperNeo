@@ -1,5 +1,5 @@
 import { neoTodoDependencyNodes, neoTodoReady } from './todo-dependencies.ts';
-import { neoTodoStalledCard } from './todo-runner.ts';
+import { neoTodoStalledCard } from './todo-state.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { WorkRefSchema, type WorkRef } from '../drivers/types.ts';

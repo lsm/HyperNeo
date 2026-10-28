@@ -1,4 +1,4 @@
-import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoTodoPatch } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoJudgement } from './pack-contract.ts';
@@ -13,6 +13,22 @@ export interface TodoStateFacts {
   live: string | null;
   change: NeoTodoPatch;
   judgement: NeoTodoJudgement;
+}
+
+export const neoTodoStalledCard = (todo: Pick<NeoTodo, 'title'>) =>
+  `"${todo.title}" has nobody working on it, and HyperNeo cannot restart it on its own. Where should it continue, or should it close?`;
+
+export function neoTodoAwaitsHuman(
+  todo: Pick<NeoTodo, 'id' | 'title'>,
+  questions: readonly Pick<NeoQuestion, 'state' | 'todoId' | 'kind' | 'startTodos' | 'text'>[]
+): boolean {
+  return questions.some(
+    (question) =>
+      question.state === 'open' &&
+      question.text !== neoTodoStalledCard(todo) &&
+      (!question.todoId || question.todoId === todo.id) &&
+      (question.kind !== 'start' || !!question.startTodos?.includes(todo.id))
+  );
 }
 
 export interface TodoStateDecision {
@@ -74,8 +90,10 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
     ) {
       if (
         facts.questionOpen &&
-        !facts.dispatched &&
-        (todo.state === 'todo' || todo.blockedBy === 'question')
+        (todo.blockedBy === 'question' ||
+          (facts.dispatched
+            ? todo.state === 'doing' && ['done', 'stopped'].includes(facts.live ?? '')
+            : todo.state === 'todo'))
       )
         patch = {
           ...patch,

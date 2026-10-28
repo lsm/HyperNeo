@@ -1,4 +1,5 @@
 import { createWorkQueue } from '../work-queue/sweep.ts';
+import { neoTodoAwaitsHuman, neoTodoStalledCard } from './todo-state.ts';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { neoTodoRunnerWrites } from '../../storage/repositories/neo-todo-runner-state.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -206,9 +207,6 @@ const neoTodoMovedNote = (todo: Pick<NeoTodo, 'title'>, minutes: number) =>
 
 const neoTodoHandoff = (todo: Pick<NeoTodo, 'title' | 'doneWhen'>) =>
   `Take over the todo "${todo.title}". It is done when: ${todo.doneWhen}. Its previous worker stopped making progress; read what it did, then finish the work.`;
-
-export const neoTodoStalledCard = (todo: Pick<NeoTodo, 'title'>) =>
-  `"${todo.title}" has nobody working on it, and HyperNeo cannot restart it on its own. Where should it continue, or should it close?`;
 
 export function neoTodoIdleReminder(todo: Pick<NeoTodo, 'title' | 'doneWhen'>, minutes: number) {
   return `Todo "${todo.title}" is not done yet (done when: ${todo.doneWhen}), and your session has been stopped for ${minutes} min. Continue it, or report what blocks you.`;
@@ -678,16 +676,44 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       ...(prior?.live ? { live: prior.live } : {}),
     });
   };
-  const awaitsHuman = (todo: NeoTodo) =>
-    store
-      .listQuestions(todo.askId)
-      .some(
-        (question) =>
-          question.state === 'open' &&
-          (!question.todoId || question.todoId === todo.id) &&
-          (question.kind !== 'start' || !!question.startTodos?.includes(todo.id)) &&
-          question.text !== neoTodoStalledCard(todo)
-      );
+  const awaitsHuman = (todo: NeoTodo) => neoTodoAwaitsHuman(todo, store.listQuestions(todo.askId));
+  const waitOnHuman = (superpipe({})('neo.todo.wait-on-human') as PipelineAPI)
+    .input(['todo', 'now'])
+    .pipe(
+      (listed: NeoTodo) => {
+        const todo = store.getTodo(listed.id) ?? listed;
+        const waits =
+          todo.startedAt !== null &&
+          ['doing', 'blocked'].includes(todo.state) &&
+          [null, 'question', 'stalled'].includes(todo.blockedBy);
+        return waits ? { value: todo } : { reason: null };
+      },
+      'todo',
+      'result:todo'
+    )
+    .pipe(
+      (todo: NeoTodo, now: number) => {
+        const waiting = awaitsHuman(todo);
+        if (waiting || todo.blockedBy === 'question') restartLadder(todo.id, now);
+        const change =
+          todo.blockedBy === 'question'
+            ? !waiting && { state: 'doing' as const }
+            : waiting &&
+              (todo.blockedBy === 'stalled' || sessions.workerIdle(todo.id)) && {
+                state: 'blocked' as const,
+                blockedBy: 'question' as const,
+                blockedReason: 'Waiting for the human to answer.',
+                nextAction: 'Answer the question.',
+              };
+        if (!change) return { value: todo };
+        const next = store.updateTodo(todo, change, now);
+        deps.changed();
+        return { value: next };
+      },
+      ['todo', 'now'],
+      'result:todo'
+    )
+    .endAsync('todo') as (todo: NeoTodo, now: number) => Promise<NeoTodo | null>;
 
   const follow = (superpipe({})('neo-todo-follow') as PipelineAPI)
     .input(['todo', 'now'])
@@ -938,15 +964,6 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'live'
     )
     .pipe(
-      (context: NudgeContext, now: number) => {
-        if (!awaitsHuman(context.todo)) return { value: context };
-        restartLadder(context.todo.id, now);
-        return { reason: null };
-      },
-      ['admission', 'now'],
-      'result:admission'
-    )
-    .pipe(
       async (context: NudgeContext) => {
         for (const pack of deps.packs())
           if (
@@ -1047,17 +1064,6 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           : { reason: null };
       },
       'todo',
-      'result:rescue'
-    )
-    .pipe(
-      (stalled: Stalled, now: number): { value: Stalled } | { reason: null } => {
-        if (!awaitsHuman(stalled.todo)) return { value: stalled };
-        restartLadder(stalled.todo.id, now);
-        store.updateTodo(stalled.todo, { state: 'doing' }, now);
-        deps.changed();
-        return { reason: null };
-      },
-      ['rescue', 'now'],
       'result:rescue'
     )
     .pipe(
@@ -1283,6 +1289,9 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       for (const { todoId, ref } of await sessions.read('awaitingReports'))
         await settle(todoId, ref).catch((error) => warn('Todo session refresh pending', error));
       for (const todo of await store.read('listCheckable')) {
+        await waitOnHuman(todo, Date.now()).catch((error) =>
+          warn('Todo human wait pending', error)
+        );
         await follow(todo, Date.now()).catch((error) => warn('Todo follow pending', error));
         await check(store.getTodo(todo.id) ?? todo, Date.now()).catch((error) =>
           warn('Todo check pending', error)
