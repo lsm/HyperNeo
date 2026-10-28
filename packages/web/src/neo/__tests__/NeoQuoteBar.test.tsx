@@ -30,6 +30,20 @@ it('renders real anchors in the static bar', async () => {
   );
 });
 
+it('renders no nested buttons when the excerpt contains a code block', async () => {
+  const app = render(
+    <NeoQuoteBar
+      author="Neo"
+      excerpt={'Here is code:\n\n```ts\nconst x = 1;\n```'}
+      onOpen={() => {}}
+    />
+  );
+  const bar = app.container.querySelector('[data-quote-bar]') as HTMLElement;
+  await waitFor(() => expect(bar.querySelector('code')?.textContent).toContain('const x'));
+  expect(bar.querySelector('button')).toBeNull();
+  expect(bar.querySelector('.code-block-wrapper')).toBeNull();
+});
+
 it('keeps the missing-original placeholder as plain italic text', () => {
   const app = render(<NeoQuoteBar author="Neo" onOpen={() => {}} />);
   const bar = app.container.querySelector('[data-quote-bar]') as HTMLElement;
