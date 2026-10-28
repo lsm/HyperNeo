@@ -1,3 +1,4 @@
+import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
@@ -50,6 +51,17 @@ for (const args of [
 const evidence: unknown[] = [];
 const events = () => readFileSync(join(run, 'evidence/native-events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line) as Record<string, unknown>);
 const scope = join(run, 'home/Library/Application Support/Claude/claude-code-sessions/synthetic/account');
+    const codexHome = join(run, 'home/.codex');
+    mkdirSync(codexHome, { recursive: true });
+    const native = new Database(join(codexHome, 'state_5.sqlite'));
+    const codexRef = { adapter: 'codex-desktop', id: 'synthetic-provenance-codex' };
+    const rollout = join(run, 'codex-rollout.jsonl');
+    writeFileSync(rollout, JSON.stringify({ type: 'event_msg', timestamp: new Date().toISOString(), payload: { type: 'task_complete', turn_id: 'fixture' } }) + '\n');
+    native.exec(`CREATE TABLE threads (id TEXT, name TEXT, title TEXT, first_user_message TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT);
+      CREATE TABLE projects (id TEXT, name TEXT, updated_at_ms INTEGER);
+      CREATE TABLE project_roots (project_id TEXT, path TEXT);`);
+    native.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(codexRef.id, 'Synthetic Codex', '', '', join(run, 'workspace'), 'desktop', 0, Date.now(), rollout);
+    native.close();
 const app = await createDaemonApp({ config: getConfig({ port, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
 assert.notEqual(app.server.port, 8399);
 let ws: WebSocket | undefined;
@@ -205,6 +217,17 @@ try {
       assert.equal(sessions.readCard(todo.id)?.model, model);
       evidence.push({ deliveredTask: task, card });
     }
+    const codexStatus = await rpc<Result<WorkDetail>>('work.status', { ref: codexRef });
+    assert(codexStatus.ok, JSON.stringify(codexStatus));
+    assert.equal(codexStatus.value.model, undefined);
+    assert.equal(codexStatus.value.effort, undefined);
+    const codexTodo = store.addTodo(crypto.randomUUID(), askId, { title: 'Codex observation retention', doneWhen: 'confirmed identity retained', check, instruction: null, named: null }, Date.now());
+    sessions.bind(codexTodo.id, codexRef, Date.now());
+    sessions.recordRef(codexTodo.id, codexRef, Date.now(), undefined, { model: 'gpt-6.1-sol', effort: 'high' });
+    await runner.refreshIdentity(codexTodo.id);
+    assert.equal(sessions.readCard(codexTodo.id)?.model, 'gpt-6.1-sol', 'identity-silent real Codex status must retain the confirmed model');
+    assert.equal(sessions.readCard(codexTodo.id)?.effort, 'high');
+    evidence.push({ codexStatus, retainedCodexIdentity: sessions.readCard(codexTodo.id) });
     sessions.bind(todo.id, { ...ref, id: 'replacement' }, Date.now());
     assert.equal(sessions.readCard(todo.id)?.model, null);
     assert.equal(sessions.readCard(todo.id)?.effort, null);

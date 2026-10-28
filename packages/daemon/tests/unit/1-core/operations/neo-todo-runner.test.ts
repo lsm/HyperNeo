@@ -383,6 +383,52 @@ describe('neo todo runner', () => {
     }
   );
 
+  test('Codex identity-silent follow-ups retain the pair confirmed at start', async () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      await h.runner.start(todo.id);
+      const worker = { adapter: 'codex-desktop', id: 'codex-thread' };
+      h.sessions.recordRef(todo.id, worker, 1, undefined, { model: 'gpt-6.1-sol', effort: 'high' });
+      h.setStatus({
+        ok: true,
+        value: { ref: worker, status: 'done', lastActivityAt: 2, recentInputs: [] },
+      });
+      await h.runner.proceed(todo.id, 'Continue coding.');
+      expect(h.sessions.readCard(todo.id)).toMatchObject({ model: 'gpt-6.1-sol', effort: 'high' });
+      expect(h.calls.findLast((call) => call.name === 'work.send')!.input.message).toContain(
+        'Agent: gpt-6.1-sol (effort: high) via Codex'
+      );
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('an explicit observation with unknown identity clears the prior pair', async () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      await h.runner.start(todo.id);
+      h.sessions.recordRef(todo.id, ref, 1, undefined, { model: 'previous-model', effort: 'high' });
+      h.setStatus({
+        ok: true,
+        value: {
+          ref,
+          status: 'done',
+          lastActivityAt: 2,
+          identityObservation: { source: 'assistant-transcript', messageId: 'unknown-observation' },
+        },
+      });
+      await h.runner.proceed(todo.id, 'Continue.');
+      expect(h.sessions.readCard(todo.id)).toMatchObject({ model: null, effort: null });
+      expect(h.calls.findLast((call) => call.name === 'work.send')!.input.message).toContain(
+        'Agent: unknown (effort: unknown) via HyperNeo'
+      );
+    } finally {
+      h.db.close();
+    }
+  });
+
   test.each(['landed', 'reply'])(
     'does not attribute another todo input by the provenance opening: %s',
     async (match) => {
