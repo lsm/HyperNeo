@@ -1,20 +1,21 @@
-import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
-import { parkDeliveryJob } from '../../../../src/storage/repositories/job-delivery-parking';
-import type { Database as RawDatabase } from '../../../../src/storage/sqlite-compat';
 import { describe, expect, it, mock } from 'bun:test';
 import type {
   DeliveryOutcome,
   MessageDeliverySession,
 } from '../../../../src/lib/agent/message-delivery';
+import { MessageDeliveryTerminalTurnError } from '../../../../src/lib/agent/message-delivery';
 import type { DeliveryMetrics } from '../../../../src/lib/agent/message-delivery-metrics';
 import {
   createMessageDeliveryHandler,
   type MessageDeliveryHandlerDeps,
 } from '../../../../src/lib/job-handlers/message-delivery.handler';
+import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
+import { parkDeliveryJob } from '../../../../src/storage/repositories/job-delivery-parking';
 import type {
   Job,
   JobQueueRepository,
 } from '../../../../src/storage/repositories/job-queue-repository';
+import type { Database as RawDatabase } from '../../../../src/storage/sqlite-compat';
 
 import { createTestDb, createTestSession } from '../../../helpers/database';
 
@@ -33,7 +34,7 @@ const LEGACY_PAYLOAD: Record<string, unknown> = {
 };
 
 function makeJob(payload: Record<string, unknown>): Job {
-  return { id: 'job-1', claimToken: 'claim-1', payload } as unknown as Job;
+  return { id: 'job-1', claimToken: 'claim-1', payload: { ...payload } } as unknown as Job;
 }
 
 class MockSession implements MessageDeliverySession {
@@ -440,6 +441,64 @@ describe('createMessageDeliveryHandler', () => {
       expect(result).toEqual({ outcome: 'completed' });
       expect(jobQueue.requeueParked).not.toHaveBeenCalled();
       expect(session.settleCalls).toEqual([]);
+    });
+  });
+
+  describe('park budget', () => {
+    const EXHAUSTED_PARKS = 360;
+
+    it('dead-letters a blocked requeue once the park count is exhausted', async () => {
+      const { handler, session, jobQueue, job } = makeHarness();
+      session.driveResult = { outcome: 'blocked', retryAt: Date.now() + 5000 };
+      job.payload.__parkCount = EXHAUSTED_PARKS;
+      await expect(handler(job, { signal: new AbortController().signal })).rejects.toThrow(
+        MessageDeliveryTerminalTurnError
+      );
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
+    });
+
+    it('dead-letters a blocked requeue once the parked window is exhausted', async () => {
+      const { handler, session, jobQueue, job } = makeHarness();
+      session.driveResult = { outcome: 'blocked', retryAt: Date.now() + 5000 };
+      job.payload.__parkCount = 1;
+      job.payload.__parkedSince = Date.now() - 31 * 60_000;
+      await expect(handler(job, { signal: new AbortController().signal })).rejects.toThrow(
+        MessageDeliveryTerminalTurnError
+      );
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
+    });
+
+    it('dead-letters an interrupted delivery once the park budget is exhausted', async () => {
+      const { handler, session, jobQueue, job } = makeHarness();
+      session.driveDeliveryTurn = async () => {
+        throw new Error('Interrupted by user');
+      };
+      job.payload.__parkCount = EXHAUSTED_PARKS;
+      await expect(handler(job, { signal: new AbortController().signal })).rejects.toThrow(
+        MessageDeliveryTerminalTurnError
+      );
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
+    });
+
+    it('dead-letters a cooldown hold once the park budget is exhausted', async () => {
+      const { handler, session, jobQueue, job } = makeHarness({
+        getSessionCooldownRetryAt: () => Date.now() + 60_000,
+      });
+      job.payload.__parkCount = EXHAUSTED_PARKS;
+      await expect(handler(job, { signal: new AbortController().signal })).rejects.toThrow(
+        MessageDeliveryTerminalTurnError
+      );
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
+      expect(session.driveCalls).toBe(0);
+    });
+
+    it('still parks while the budget has room', async () => {
+      const { handler, session, jobQueue, job } = makeHarness();
+      session.driveResult = { outcome: 'blocked', retryAt: 4321 };
+      job.payload.__parkCount = EXHAUSTED_PARKS - 1;
+      const result = await handler(job, { signal: new AbortController().signal });
+      expect(result).toEqual({ parked: 'sdk_resume_choice', retryAt: 4321 });
+      expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', 4321, 'claim-1');
     });
   });
 });

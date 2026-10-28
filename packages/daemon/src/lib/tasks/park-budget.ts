@@ -19,6 +19,11 @@ export const DIRECT_TASK_PARK_BUDGET: ParkBudget = {
   maxParkedMs: 30 * 60_000,
 };
 
+export const MESSAGE_DELIVERY_PARK_BUDGET: ParkBudget = {
+  maxParks: 360,
+  maxParkedMs: 30 * 60_000,
+};
+
 export function decideParkAdmission(
   input: ParkAdmissionInput
 ): { value: 'park' } | { reason: ParkBudgetExhausted } {
