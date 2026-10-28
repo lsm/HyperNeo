@@ -35,6 +35,7 @@ let rejectNextWrite = false;
 let loseNextReceipt = false;
 let commandPosts = 0;
 let readPosts = 0;
+let observerReadPosts = 0;
 let rejectReads = 0;
 let rejectReadsUntilClose = false;
 const notifications: string[] = [];
@@ -80,10 +81,12 @@ globalThis.Worker = function (url: string | URL, options?: WorkerOptions) {
       receive?.call(worker, event);
     });
     worker.postMessage = ((message: { id: number; op?: string; lane?: string; args?: unknown }) => {
-      if (message.op === 'pairing.state.read') {
-        assert.equal(message.lane, 'read'); readPosts++;
-        if (rejectReads > 0 || rejectReadsUntilClose) {
-          rejectReads--;
+      if (message.op === 'pairing.state.read' || message.op === 'pairing.connectedDevices.read') {
+        assert.equal(message.lane, 'read');
+        const foreground = message.op === 'pairing.state.read';
+        if (foreground) readPosts++; else observerReadPosts++;
+        if ((foreground && rejectReads > 0) || rejectReadsUntilClose) {
+          if (foreground) rejectReads--;
           queueMicrotask(() => worker.dispatchEvent(new ErrorEvent('error', { message: 'synthetic revocation read unavailable', cancelable: true })));
           return;
         }
@@ -175,21 +178,23 @@ try {
   rejectNextWrite = true; evidence.beforeCommitFailure = await revoke(protectedTarget.device.id, nextHuman).then(() => 'unexpected success', String); assert.match(String(evidence.beforeCommitFailure), /before commit/); assert.equal(active(protectedTarget.device.id), true); assert(!notifications.includes(protectedTarget.device.id));
   const lostVictim = await connect(protectedTarget.credential); const beforePosts = commandPosts; const beforeReads = readPosts; loseNextReceipt = true; rejectReads = 2;
   evidence.lostReceiptFailure = await revoke(protectedTarget.device.id, nextHuman).then(() => 'unexpected success', String); assert.match(String(evidence.lostReceiptFailure), /outcome unknown/); assert.equal(active(protectedTarget.device.id), false); await wait(lostVictim.closed);
-  assert.equal(commandPosts, beforePosts + 1); assert.equal(readPosts, beforeReads + 3); assert.equal(notifications.filter((id) => id === protectedTarget.device.id).length, 1); evidence.readOnlyRetryClosesAfterLostReceipt = true;
+  assert.equal(commandPosts, beforePosts + 1); assert.equal(readPosts, beforeReads + 3); assert(notifications.includes(protectedTarget.device.id)); evidence.readOnlyRetryClosesAfterLostReceipt = true;
   const recovered = seed(); assert.deepEqual(await revoke(recovered.device.id, nextHuman), { ok: true }); assert.equal(active(recovered.device.id), false); evidence.writerRecovered = true;
-  if (process.argv.includes('--persistent-read-outage')) {
+  {
     const delayedTarget = seed(); const delayedVictim = await connect(delayedTarget.credential);
-    const writesBeforeOutage = commandPosts; const readsBeforeOutage = readPosts;
+    const writesBeforeOutage = commandPosts; const readsBeforeOutage = readPosts; const observerReadsBeforeOutage = observerReadPosts;
     loseNextReceipt = true; rejectReadsUntilClose = true; let settled = false;
     const delayed = revoke(delayedTarget.device.id, nextHuman).then(() => 'unexpected success', String).finally(() => { settled = true; });
     await new Promise((done) => setTimeout(done, 1000));
     const settledDuringOutage = settled; assert.equal(active(delayedTarget.device.id), false);
-    evidence.persistentReadOutage = { rpcSettledWithinOneSecond: settledDuringOutage, readAdmissionsWithinOneSecond: readPosts - readsBeforeOutage, writeAdmissions: commandPosts - writesBeforeOutage, targetStillConnectedDuringOutage: !delayedVictim.closed(), persistedInactive: true };
+    evidence.persistentReadOutage = { rpcSettledWithinOneSecond: settledDuringOutage, readAdmissionsWithinOneSecond: readPosts - readsBeforeOutage, observerReadAdmissionsWithinOneSecond: observerReadPosts - observerReadsBeforeOutage, writeAdmissions: commandPosts - writesBeforeOutage, targetStillConnectedDuringOutage: !delayedVictim.closed(), persistedInactive: true };
     rejectReadsUntilClose = false;
     assert.match(await delayed, /outcome unknown/);
     try { await wait(delayedVictim.closed); } catch (error) { evidence.eventualClosureAfterReadRecovery = false; throw error; }
     assert.equal(commandPosts, writesBeforeOutage + 1); evidence.eventualClosureAfterReadRecovery = true;
     assert.equal(settledDuringOutage, true, 'persistent read failure must release the RPC caller without abandoning eventual socket closure');
+    assert.equal(readPosts, readsBeforeOutage + 3); assert(observerReadPosts - observerReadsBeforeOutage <= 3);
+    assert.equal(evidence.persistentReadOutage && (evidence.persistentReadOutage as { targetStillConnectedDuringOutage: boolean }).targetStillConnectedDuringOutage, true);
   }
   const shutdownTarget = seed(); const beforeShutdownReads = readPosts; const beforeShutdownWrites = commandPosts; loseNextReceipt = true; rejectReadsUntilClose = true;
   const closingCall = revoke(shutdownTarget.device.id, nextHuman).then(() => 'unexpected success', String);

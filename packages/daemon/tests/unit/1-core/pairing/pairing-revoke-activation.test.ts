@@ -11,6 +11,11 @@ import type { DbOp } from '../../../../src/storage/db-gateway/db-op';
 import { DevicePairingRepository } from '../../../../src/storage/repositories/device-pairing-repository';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { MessageHubRouter } from '@hyperneo/shared';
+import { WebSocketServerTransport } from '../../../../src/lib/websocket-server-transport';
+import type { RuntimeSocket } from '../../../../src/lib/runtime-server';
+import { announceDeviceRevoked } from '../../../../src/lib/pairing/upgrade-auth';
+import { connectedDeviceReads } from '../../../../src/storage/repositories/connected-device-read';
 
 class FaultGateway extends DbGateway {
   writes = 0;
@@ -32,8 +37,8 @@ class FaultGateway extends DbGateway {
       }
       return result;
     }
-    if (op.name === 'pairing.state.read') {
-      this.reads++;
+    if (op.name === 'pairing.state.read' || op.name === 'pairing.connectedDevices.read') {
+      if (op.name === 'pairing.state.read') this.reads++;
       if (this.failedReads > 0) {
         this.failedReads--;
         throw new Error('synthetic read unavailable');
@@ -91,6 +96,7 @@ describe('public pairing revocation activation', () => {
           revoked: (target) => {
             expect(repo.isActiveDevice(target)).toBe(false);
             notifications.push(target);
+            announceDeviceRevoked(target);
           },
         })
       ),
@@ -186,6 +192,22 @@ describe('public pairing revocation activation', () => {
   });
   test('persistent read failure releases the caller while retaining eventual connection closure', async () => {
     const target = seed();
+    const transport = new WebSocketServerTransport({
+      router: new MessageHubRouter(),
+      readInactiveDevices: (ids) => gateway.call(connectedDeviceReads, 'inactive', ids),
+    });
+    let closed = false;
+    let clientId = '';
+    const socket = {
+      data: { device: { deviceId: target, kind: 'relay' } },
+      readyState: 1,
+      send: () => 1,
+      close: () => {
+        closed = true;
+        transport.unregisterClient(clientId);
+      },
+    } satisfies RuntimeSocket;
+    clientId = transport.registerClient(socket, 'synthetic');
     gateway.loseReceipt = true;
     gateway.failedReads = Infinity;
     let settled = false;
@@ -195,18 +217,24 @@ describe('public pairing revocation activation', () => {
     try {
       await new Promise((done) => setTimeout(done, 1000));
       expect(settled).toBe(true);
+      expect(gateway.reads).toBe(3);
+      expect(closed).toBe(false);
       expect(await pending).toMatchObject({
         kind: 'failed',
         message: expect.stringContaining('outcome unknown'),
       });
     } finally {
-      gateway.failedReads = 0;
-      await pending;
-      const until = Date.now() + 2000;
-      while (!notifications.includes(target) && Date.now() < until)
-        await new Promise((done) => setTimeout(done, 5));
-      expect(notifications).toEqual([target]);
-      expect(gateway.writes).toBe(1);
+      try {
+        gateway.failedReads = 0;
+        await pending;
+        const until = Date.now() + 2000;
+        while (!closed && Date.now() < until) await new Promise((done) => setTimeout(done, 5));
+        expect(closed).toBe(true);
+        expect(gateway.writes).toBe(1);
+        expect(mainSql).toBe(0);
+      } finally {
+        await transport.close();
+      }
     }
   });
   test('gateway close cancels read recovery without an unconfirmed notification', async () => {
