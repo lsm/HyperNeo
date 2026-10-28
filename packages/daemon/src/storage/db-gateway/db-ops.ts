@@ -159,6 +159,7 @@ import { humanDeviceResetReads } from '../repositories/human-device-reset-read.t
 import { workspaceHistoryRemoveWrites } from '../repositories/workspace-history-remove-write.ts';
 import { workspaceHistoryUpsertWrites } from '../repositories/workspace-history-upsert-write.ts';
 import { inboxCreateWrites } from '../repositories/inbox-create-write.ts';
+import { artifactIdentityWrites } from '../repositories/artifact-file-identity-write.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -295,5 +296,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     workspaceHistoryRemoveWrites,
     workspaceHistoryUpsertWrites,
     inboxCreateWrites,
+    artifactIdentityWrites,
   ].map((op) => [op.name, op])
 );

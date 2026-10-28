@@ -1,0 +1,80 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "firstInitializationBatchMs": 0.3246249999999691,
+  "concurrentInitializationRetainsOneCommittedIdentity": true,
+  "laterCandidateCannotReplaceIdentity": true,
+  "committedIdentityConstructorExecutesNoSql": true,
+  "healthWhileWriterHeldMs": 3.4099999999998545,
+  "deliberatelyHeldWriterMs": 1256.3805000000002,
+  "receiptWaitsForCommit": true,
+  "preCommitFailureKeepsIdentity": true,
+  "unknownOutcomeNeverAutomaticallyReplayed": true,
+  "missingReceiptRollsBackCreationAndTriggerEffects": true,
+  "syntheticEmptyIdentityResetCount": 1,
+  "maxLoopLagMs": 4.81408300000021,
+  "rssBytes": 535429120,
+  "walBytes": 4128272,
+  "commandPosts": 11,
+  "publicArtifactActivationExercised": false,
+  "fullCaptureOwnershipGraphMeasured": false,
+  "pass": true,
+  "mainSqlAttempts": 0,
+  "workerMetrics": [
+    {
+      "roundTripMs": 0.11666599999989558,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0071250000000873115
+    },
+    {
+      "roundTripMs": 0.1179580000000442,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0027079999999841675
+    },
+    {
+      "roundTripMs": 0.12541600000008657,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0009589999999661813
+    },
+    {
+      "roundTripMs": 0.12929200000007768,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0005830000000059954
+    },
+    {
+      "roundTripMs": 0.06691599999999198,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0020839999999680003
+    },
+    {
+      "roundTripMs": 1256.1702080000002,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.028083999999580556
+    },
+    {
+      "roundTripMs": 2.2317079999997986,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.00204200000007404
+    },
+    {
+      "roundTripMs": 2.240124999999807,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0019999999999527063
+    },
+    {
+      "roundTripMs": 1.5975840000000971,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0010830000001078588
+    }
+  ],
+  "runtime": "Deno 2.9.4",
+  "temporaryDaemonDataRemoved": true
+}

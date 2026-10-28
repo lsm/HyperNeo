@@ -6,8 +6,11 @@ import type { ArtifactContext } from '../../lib/artifacts/file-policy.ts';
 
 export class ArtifactFileRepository {
   readonly daemonId: string;
-  constructor(private readonly db: Database) {
-    this.daemonId = ensureArtifactFileIdentity(db);
+  constructor(
+    private readonly db: Database,
+    committedDaemonId?: string
+  ) {
+    this.daemonId = committedDaemonId ?? ensureArtifactFileIdentity(db);
   }
   receipt(context: ArtifactContext, requestId: string) {
     return this.db

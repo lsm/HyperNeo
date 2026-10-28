@@ -1,0 +1,10 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "mainSqlAttempts": 0,
+  "workerMetrics": [],
+  "runtime": "Deno 2.9.4",
+  "expectedFailure": "Unknown write DB op: artifact.identity.ensure.write",
+  "publicArtifactActivationExercised": false,
+  "passBeforeFix": false,
+  "temporaryDaemonDataRemoved": true
+}

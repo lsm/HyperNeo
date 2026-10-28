@@ -1,0 +1,78 @@
+{
+  "base": "baae6ec8d28d54d5b9587d8cca29af2f3bfacb25",
+  "units": [
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-repository.ts",
+      "name": "constructor",
+      "start": 9,
+      "end": 14,
+      "lines": 6,
+      "sha256": "56b63cd0413fe3ab057a3ad1e26012d3f0aace9d49b80d1a8ad7f95af34c551d"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-identity.ts",
+      "name": "ensureArtifactFileIdentity",
+      "start": 4,
+      "end": 10,
+      "lines": 7,
+      "sha256": "86dfda497e8e13b6b918b767aba241180efa5983e2e8afb1180265ee44c1bc63"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-identity-write.ts",
+      "name": "complete data-only identity writer",
+      "lines": 18,
+      "sha256": "56a8d823058eb4e4cc82cd9572db06f07a3fecf7b874cabfd0cc1fea499a51f3"
+    }
+  ],
+  "fullLocalGraphLines": 31,
+  "productionLines": 33,
+  "smokeLines": 1,
+  "delta": [
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-ops.ts",
+      "lines": 2
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-identity-write.ts",
+      "lines": 18
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-identity.ts",
+      "lines": 6
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-repository.ts",
+      "lines": 7
+    },
+    {
+      "file": "scripts/deno-smoke.sh",
+      "lines": 1
+    }
+  ],
+  "sql": [
+    {
+      "bytes": 58,
+      "sha256": "8cb8d4d56c4500e7e9878d1f19030340785f48efecfdbfe8aa53c742417bdb55"
+    },
+    {
+      "bytes": 44,
+      "sha256": "d2a23547820de87d09904aab32e258c6f615bc2e78cc1d99beae38bb3cdddc0d"
+    }
+  ],
+  "sqlBytesUnchanged": true,
+  "stableReceiptAndSave": [
+    {
+      "name": "receipt",
+      "sha256": "25ac85a867820cc62b38c48debf8e4a043dd7b38721f8a47cc12fb3ac17dda9e"
+    },
+    {
+      "name": "save",
+      "sha256": "05548ba597a1998859c48ca08fb1be869175627db83a14db9b6d34775439357d"
+    }
+  ],
+  "contract": "artifact.identity.ensure.write / write / ensure(callerUuid): retained identity string after immediate transaction commit; one singleton under concurrency; lookup failure rolls back creation/trigger effects; no automatic replay after unknown outcome. Optional committed-identity constructor parameter performs no identity SQL. Legacy helper/default constructor preserve UUID allocation order and prior behavior.",
+  "publicArtifactActivation": false,
+  "fullCaptureOwnershipGraphMeasured": false,
+  "auditLimit": "Construction helper/constructor/registered command subtree only; generic gateway/SQLite/crypto plumbing unchanged. Public artifact registration/reference/Git capture/policy/ownership/FS graph is not wired or fully audited here.",
+  "sqlBaselineChanged": false
+}
