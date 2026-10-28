@@ -15,17 +15,22 @@ export interface TodoStateFacts {
   judgement: NeoTodoJudgement;
 }
 
+export const NEO_TODO_STALLED_CARD_TAIL =
+  ' has nobody working on it, and HyperNeo cannot restart it on its own. Where should it continue, or should it close?';
+
 export const neoTodoStalledCard = (todo: Pick<NeoTodo, 'title'>) =>
-  `"${todo.title}" has nobody working on it, and HyperNeo cannot restart it on its own. Where should it continue, or should it close?`;
+  `"${todo.title}"${NEO_TODO_STALLED_CARD_TAIL}`;
+
+export const isNeoTodoStalledCard = (text: string) => text.endsWith(NEO_TODO_STALLED_CARD_TAIL);
 
 export function neoTodoAwaitsHuman(
-  todo: Pick<NeoTodo, 'id' | 'title'>,
+  todo: Pick<NeoTodo, 'id'>,
   questions: readonly Pick<NeoQuestion, 'state' | 'todoId' | 'kind' | 'startTodos' | 'text'>[]
 ): boolean {
   return questions.some(
     (question) =>
       question.state === 'open' &&
-      question.text !== neoTodoStalledCard(todo) &&
+      !isNeoTodoStalledCard(question.text) &&
       (!question.todoId || question.todoId === todo.id) &&
       (question.kind !== 'start' || !!question.startTodos?.includes(todo.id))
   );

@@ -1,5 +1,5 @@
 import { neoTodoDependencyNodes, neoTodoReady } from './todo-dependencies.ts';
-import { neoTodoStalledCard } from './todo-state.ts';
+import { isNeoTodoStalledCard } from './todo-state.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { WorkRefSchema, type WorkRef } from '../drivers/types.ts';
@@ -115,7 +115,7 @@ export function createNeoWorkerQuestionWriter(
           const open = store
             .listQuestions(todo.askId)
             .find((q) => q.todoId === todo.id && q.state === 'open');
-          const daemonCard = open?.text === neoTodoStalledCard(todo);
+          const daemonCard = !!open && isNeoTodoStalledCard(open.text);
           if (open && daemonCard)
             store.retireQuestion(open, 'its worker asked its own question', null, Date.now());
           const existing = daemonCard ? null : open;
