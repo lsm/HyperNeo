@@ -1,0 +1,19 @@
+{
+  "mainThreadMovementClaim": false,
+  "phase": "pure receipt serialization extraction; legacy row publication remains on its supplied connection",
+  "firstRpcMs": 12.565374999999904,
+  "existingDenoCaptureFailsClosed": true,
+  "successfulDenoCaptureAndReadVerified": false,
+  "optionalFieldMatrixPreserved": true,
+  "matrixCases": 6,
+  "callerOwnedRollbackPreserved": true,
+  "serializationErrorsBeforeWritePreserved": true,
+  "healthMs": 0.5778749999999491,
+  "rssBytes": 539312128,
+  "walBytes": 4128272,
+  "pass": true,
+  "mainInsertRuns": 0,
+  "publicMainInsertBindCounts": [],
+  "runtime": "Deno 2.9.4",
+  "temporaryDaemonDataRemoved": true
+}
