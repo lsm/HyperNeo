@@ -155,6 +155,7 @@ import { pairingRevokeWrites } from '../repositories/pairing-revoke-write.ts';
 import { connectedDeviceReads } from '../repositories/connected-device-read.ts';
 import { pairingStateReads } from '../repositories/pairing-state-read.ts';
 import { humanDeviceResetWrites } from '../repositories/human-device-reset-write.ts';
+import { humanDeviceResetReads } from '../repositories/human-device-reset-read.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -287,5 +288,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     connectedDeviceReads,
     pairingStateReads,
     humanDeviceResetWrites,
+    humanDeviceResetReads,
   ].map((op) => [op.name, op])
 );

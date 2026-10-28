@@ -4,9 +4,9 @@ import { NeoRepository } from './neo-repository.ts';
 import { NeoPublicationRepository } from './neo-publication-repository.ts';
 import { reserveNeoConversation } from './neo-conversation-reservation.ts';
 
-export function resetHumanDevices(db: Database, now: number) {
+export function resetHumanDevices(db: Database, now: number, requestId?: string) {
   return db.transaction(() => {
-    const id = randomUUID();
+    const id = requestId ?? randomUUID();
     const devices = db
       .prepare(
         "UPDATE paired_devices SET revoked_at = ? WHERE kind = 'human' AND revoked_at IS NULL RETURNING id, name"
