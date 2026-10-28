@@ -19,7 +19,7 @@ while health remains responsive and uncommitted state stays invisible.
 
 Lose a successful writer reply and reject the first two read-worker admissions.
 The original mutation must reject as unknown while read-only retries recover the
-authoritative inactive state and close the target exactly once. Assert one write,
+authoritative inactive state and close the target. Assert one write,
 not a replay. A later independent request must recover. During a final lost reply,
 keep read admission unavailable and close the real daemon: its gateway close signal
 must stop retries without notifying an unconfirmed target. The last RPC must
@@ -36,9 +36,18 @@ RPC/health latency, loop lag and RSS; queue, SQL and clone time are not isolated
 Save flags and numeric data only, never raw codes, credentials or CLI output.
 Public browser layout and deployment remain outside this proof.
 
-Use --persistent-read-outage to reproduce the review finding. Keep the read lane
-unavailable for one second after losing a committed writer reply. Record caller
-settlement, reader admissions and actual victim connection state. Restore the
+Every run includes the persistent-read-outage regression. Reject both foreground
+state reads and independent connected-device reads for 2.2 seconds after losing a
+committed writer reply. At one second the caller must have failed with its original
+unknown-outcome error after exactly three foreground reads. The connection must
+stay open without authoritative confirmation while the independent observer keeps
+its one-per-second, single-flight cadence. Record caller settlement, each reader
+admission count and actual victim connection state. Restore the
 reader and require eventual closure with exactly one write admission. This pins
 both a finite foreground recovery budget and the revocation fence; a cap that
 simply drops recovery must not strand the revoked connection.
+
+The independent observer is supplied by merged #9304. Foreground recovery stops
+after three reads; its 25 ms delays are abortable through the authorized gateway
+close signal. Fixture-owned clients are closed before daemon cleanup so their
+connection-owned observer also stops. Neither recovery path replays a write.

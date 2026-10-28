@@ -8,7 +8,7 @@ const log = new Logger('pairing-revocation');
 type Receipt = Awaited<ReturnType<DevicePairingRepository['revokeAsync']>>;
 
 async function reconcile(repo: DevicePairingRepository, id: string): Promise<boolean> {
-  while (!repo.closeSignal.aborted) {
+  for (let attempt = 0; attempt < 3 && !repo.closeSignal.aborted; attempt++) {
     try {
       const active = await repo.isActiveDeviceAsync(id);
       return !repo.closeSignal.aborted && !active;

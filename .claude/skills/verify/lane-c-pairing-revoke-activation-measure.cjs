@@ -1,5 +1,6 @@
 const ts = require(process.cwd() + '/node_modules/typescript');
 const fs = require('node:fs');
+const { execFileSync } = require('node:child_process');
 const groups = {
  'packages/daemon/src/lib/pairing/pairing-operations.ts': ['fromDoor','SESSION_DOOR_PRINCIPAL','NEEDS_PAIRED_HUMAN','refused'],
  'packages/daemon/src/lib/pairing/upgrade-auth.ts': ['announceDeviceRevoked','revocationListeners','revokedDuringLookups','lookups'],
@@ -66,5 +67,9 @@ for (const [file, className, names] of [
  };visit(source);
 }
 const total=units.reduce((n,u)=>n+u.lines,0);
-console.log(JSON.stringify({units,totalLines:total,sharedGateway:'Only the authorized DbGateway lifetime hook changes; worker lanes, transaction executor and registered command transport are reused.'},null,2));
-if(total>200) process.exitCode=1;
+const base = execFileSync('git', ['merge-base', 'HEAD', 'origin/dev'], {encoding:'utf8'}).trim();
+const delta = execFileSync('git', ['diff', '--numstat', base, '--', 'packages/daemon/src', 'scripts/deno-smoke.sh'], {encoding:'utf8'}).trim().split('\n').filter(Boolean).map(line => { const [added, removed, file] = line.split('\t'); return {file,lines:Number(added)+Number(removed)}; });
+const productionLines = delta.filter(d => d.file.startsWith('packages/daemon/src/')).reduce((n,d)=>n+d.lines,0);
+const smokeRegistrationLines = delta.filter(d => d.file === 'scripts/deno-smoke.sh').reduce((n,d)=>n+d.lines,0);
+console.log(JSON.stringify({units,totalLines:total,productionLines,smokeRegistrationLines,delta,independentObserver:'Merged #9304 owns the separately measured connection-lifetime recovery path; the mutation does not create or retain background retries.',sharedGateway:'Only the authorized DbGateway lifetime hook changes; worker lanes, transaction executor and registered command transport are reused.'},null,2));
+if(total>200||productionLines+smokeRegistrationLines>200) process.exitCode=1;

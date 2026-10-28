@@ -186,25 +186,27 @@ try {
     loseNextReceipt = true; rejectReadsUntilClose = true; let settled = false;
     const delayed = revoke(delayedTarget.device.id, nextHuman).then(() => 'unexpected success', String).finally(() => { settled = true; });
     await new Promise((done) => setTimeout(done, 1000));
-    const settledDuringOutage = settled; assert.equal(active(delayedTarget.device.id), false);
-    evidence.persistentReadOutage = { rpcSettledWithinOneSecond: settledDuringOutage, readAdmissionsWithinOneSecond: readPosts - readsBeforeOutage, observerReadAdmissionsWithinOneSecond: observerReadPosts - observerReadsBeforeOutage, writeAdmissions: commandPosts - writesBeforeOutage, targetStillConnectedDuringOutage: !delayedVictim.closed(), persistedInactive: true };
+    const settledDuringOutage = settled; const foregroundReadsWithinOneSecond = readPosts - readsBeforeOutage;
+    await new Promise((done) => setTimeout(done, 1200)); assert.equal(active(delayedTarget.device.id), false);
+    evidence.persistentReadOutage = { rpcSettledWithinOneSecond: settledDuringOutage, readAdmissionsWithinOneSecond: foregroundReadsWithinOneSecond, observerReadAdmissionsDuring2200msOutage: observerReadPosts - observerReadsBeforeOutage, writeAdmissions: commandPosts - writesBeforeOutage, targetStillConnectedDuringOutage: !delayedVictim.closed(), persistedInactive: true };
     rejectReadsUntilClose = false;
     assert.match(await delayed, /outcome unknown/);
     try { await wait(delayedVictim.closed); } catch (error) { evidence.eventualClosureAfterReadRecovery = false; throw error; }
     assert.equal(commandPosts, writesBeforeOutage + 1); evidence.eventualClosureAfterReadRecovery = true;
     assert.equal(settledDuringOutage, true, 'persistent read failure must release the RPC caller without abandoning eventual socket closure');
-    assert.equal(readPosts, readsBeforeOutage + 3); assert(observerReadPosts - observerReadsBeforeOutage <= 3);
+    assert.equal(readPosts, readsBeforeOutage + 3); assert(observerReadPosts - observerReadsBeforeOutage >= 2); assert(observerReadPosts - observerReadsBeforeOutage <= 3);
     assert.equal(evidence.persistentReadOutage && (evidence.persistentReadOutage as { targetStillConnectedDuringOutage: boolean }).targetStillConnectedDuringOutage, true);
   }
   const shutdownTarget = seed(); const beforeShutdownReads = readPosts; const beforeShutdownWrites = commandPosts; loseNextReceipt = true; rejectReadsUntilClose = true;
   const closingCall = revoke(shutdownTarget.device.id, nextHuman).then(() => 'unexpected success', String);
   await wait(() => readPosts > beforeShutdownReads);
   evidence.walBytes = statSync(`${app.db.getDbPath()}-wal`).size;
+  await Promise.all(transports.map((transport) => transport.close()));
   await app.cleanup(); app = undefined; assert.notEqual(await closingCall, 'unexpected success'); evidence.shutdownRpcRejected = true; assert(!notifications.includes(shutdownTarget.device.id)); assert.equal(commandPosts, beforeShutdownWrites + 1);
   const readsAfterClose = readPosts; await new Promise((done) => setTimeout(done, 80)); assert.equal(readPosts, readsAfterClose); evidence.cleanupStopsReadRetryWithoutNotification = true;
   assert.equal(mainSqlAttempts, 0); evidence.maxLoopLagMs = maxLoopLagMs; assert(maxLoopLagMs < 1000);
   evidence.latencyUnder250ms = [evidence.coldMs, evidence.concurrentMs, evidence.healthWhileHeldMs, evidence.heldMs].every((ms) => Number(ms) < 250); assert.equal(evidence.latencyUnder250ms, true);
-  evidence.rssBytes = process.memoryUsage().rss; evidence.writeCommands = commandPosts; evidence.readCommands = readPosts;
+  evidence.rssBytes = process.memoryUsage().rss; evidence.writeCommands = commandPosts; evidence.readCommands = readPosts; evidence.observerReadCommands = observerReadPosts;
 } finally {
   measuring = false; if (timer) clearInterval(timer); if (lock) { try { lock.exec('ROLLBACK'); } catch {} lock.close(); }
   try { await Promise.all(transports.map((transport) => transport.close())); await Promise.all([...processors].map((processor) => processor.stop())); await app?.cleanup(); }

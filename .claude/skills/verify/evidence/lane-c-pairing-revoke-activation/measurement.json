@@ -59,8 +59,8 @@
     {
       "file": "packages/daemon/src/lib/websocket-server-transport.ts",
       "name": "closeDevice",
-      "start": 258,
-      "end": 262,
+      "start": 287,
+      "end": 291,
       "lines": 5
     },
     {
@@ -151,8 +151,8 @@
     {
       "file": "packages/daemon/src/lib/websocket-server-transport.ts",
       "name": "WebSocketServerTransport.stopRevocations",
-      "start": 33,
-      "end": 33,
+      "start": 42,
+      "end": 42,
       "lines": 1
     },
     {
@@ -178,5 +178,38 @@
     }
   ],
   "totalLines": 196,
+  "productionLines": 115,
+  "smokeRegistrationLines": 1,
+  "delta": [
+    {
+      "file": "packages/daemon/src/lib/pairing/pairing-operations.ts",
+      "lines": 12
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/revoke-device.ts",
+      "lines": 57
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-gateway.ts",
+      "lines": 6
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-ops.ts",
+      "lines": 2
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/device-pairing-repository.ts",
+      "lines": 20
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/pairing-state-read.ts",
+      "lines": 18
+    },
+    {
+      "file": "scripts/deno-smoke.sh",
+      "lines": 1
+    }
+  ],
+  "independentObserver": "Merged #9304 owns the separately measured connection-lifetime recovery path; the mutation does not create or retain background retries.",
   "sharedGateway": "Only the authorized DbGateway lifetime hook changes; worker lanes, transaction executor and registered command transport are reused."
 }
