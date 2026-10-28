@@ -287,7 +287,10 @@ export class QueryLifecycleManager {
     }
   }
 
-  async restart(options?: { beforeStart?: () => void | Promise<void> }): Promise<void> {
+  async restart(options?: {
+    beforeStart?: () => void | Promise<void>;
+    skipTranscriptGuard?: boolean;
+  }): Promise<void> {
     const { session, internalEventBus, messageHandler } = this.ctx;
     let reachedSuppressedIdle = false;
 
@@ -312,15 +315,8 @@ export class QueryLifecycleManager {
         await options.beforeStart();
       }
 
-      if (session.config.provider !== 'acp' && session.sdkSessionId) {
-        const isValid = await this.validateAndRepairWithMigration();
-        if (!isValid) {
-          this.logger.warn(
-            `SDK session file missing/invalid for ${session.sdkSessionId}. ` +
-              'Emitting sdk_resume_choice for user, but starting query anyway.'
-          );
-          await this.emitSdkResumeChoiceMessage();
-        }
+      if (!options?.skipTranscriptGuard && !(await this.gateOnMissingTranscript('restart'))) {
+        return;
       }
 
       await this.ctx.clearModelsCache();
@@ -385,18 +381,7 @@ export class QueryLifecycleManager {
 
       await this.ctx.clearModelsCache();
 
-      if (restartAfter) {
-        if (session.config.provider !== 'acp' && session.sdkSessionId) {
-          const isValid = await this.validateAndRepairWithMigration();
-          if (!isValid) {
-            this.logger.warn(
-              `SDK session file missing/invalid for ${session.sdkSessionId}. ` +
-                'Emitting sdk_resume_choice for user, but starting query anyway.'
-            );
-            await this.emitSdkResumeChoiceMessage();
-          }
-        }
-
+      if (restartAfter && (await this.gateOnMissingTranscript('reset'))) {
         await this.ctx.startStreamingQuery();
       }
 
@@ -409,6 +394,28 @@ export class QueryLifecycleManager {
       }
       return { success: false, error: errorMessage };
     }
+  }
+
+  private async gateOnMissingTranscript(caller: string): Promise<boolean> {
+    const { session } = this.ctx;
+    if (session.config.provider === 'acp' || !session.sdkSessionId) {
+      return true;
+    }
+    if (await this.validateAndRepairWithMigration()) {
+      return true;
+    }
+    this.logger.warn(
+      `SDK session file missing/invalid for sdkSessionId=${session.sdkSessionId} (${caller}). ` +
+        'Emitting sdk_resume_choice action message for user.'
+    );
+    const recoveryPromptAvailable = await this.emitSdkResumeChoiceMessage();
+    if (!recoveryPromptAvailable) {
+      throw new Error(
+        `Unable to start session: SDK transcript ${session.sdkSessionId} is missing ` +
+          'and the recovery prompt could not be persisted.'
+      );
+    }
+    return false;
   }
 
   private async emitSdkResumeChoiceMessage(): Promise<boolean> {
@@ -517,22 +524,8 @@ export class QueryLifecycleManager {
 
     throwIfDeliveryAborted(signal);
 
-    if (session.config.provider !== 'acp' && session.sdkSessionId) {
-      const isValid = await this.validateAndRepairWithMigration();
-      if (!isValid) {
-        this.logger.warn(
-          `SDK session file missing for sdkSessionId=${session.sdkSessionId}. ` +
-            'Emitting sdk_resume_choice action message for user.'
-        );
-        const recoveryPromptAvailable = await this.emitSdkResumeChoiceMessage();
-        if (!recoveryPromptAvailable) {
-          throw new Error(
-            `Unable to start session: SDK transcript ${session.sdkSessionId} is missing ` +
-              'and the recovery prompt could not be persisted.'
-          );
-        }
-        return 'blocked';
-      }
+    if (!(await this.gateOnMissingTranscript('ensureQueryStarted'))) {
+      return 'blocked';
     }
 
     await this.ctx.clearModelsCache();

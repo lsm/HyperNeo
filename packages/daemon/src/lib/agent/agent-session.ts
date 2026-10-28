@@ -1914,7 +1914,10 @@ export class AgentSession
     await this.lifecycleManager.restartQuery();
   }
 
-  async restart(options?: { beforeStart?: () => void | Promise<void> }): Promise<void> {
+  async restart(options?: {
+    beforeStart?: () => void | Promise<void>;
+    skipTranscriptGuard?: boolean;
+  }): Promise<void> {
     this.rateLimitWatchdog.cancel();
     this.networkPause.stop();
     await this.lifecycleManager.restart(options);
