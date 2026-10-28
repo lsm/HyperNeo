@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
@@ -123,6 +124,14 @@ try {
   };
   const phone = await connect(humans[0].credential); const connectedRelay = await connect(relay.credential);
   const wait = async (predicate: () => boolean) => { const until = performance.now() + 2500; while (!predicate()) { assert(performance.now() < until, 'synthetic reset observation deadline exceeded'); await new Promise((done) => setTimeout(done, 5)); } };
+  let reservationConversation: string | undefined;
+  if (process.argv.includes('--conversation-reservation')) inspect(() => {
+    const binding = raw.prepare("SELECT session_id AS id FROM neo_session_bindings WHERE kind = 'neo'").get() as { id: string } | null;
+    const session = binding?.id ?? `neo:${randomUUID()}`;
+    assert.match(session, /^neo:[0-9a-f-]{36}$/i); reservationConversation = session.slice(4);
+    if (!binding) raw.prepare("INSERT INTO neo_session_bindings(session_id, concern_id, kind) VALUES (?, NULL, 'neo')").run(session);
+    raw.exec('DELETE FROM neo_conversation');
+  });
   const cached = raw.prepare("UPDATE paired_devices SET revoked_at = ? WHERE kind = 'human' AND revoked_at IS NULL"); measuring = true;
   assert.throws(() => cached.run(Date.now()), /human-reset SQL reached main/);
   assert.throws(() => raw.prepare('SELECT id FROM neo_conversation').get(), /human-reset SQL reached main/);
@@ -131,6 +140,11 @@ try {
   timer = setInterval(() => { const now = performance.now(); maxLoopLagMs = Math.max(maxLoopLagMs, now - previous - 5); previous = now; }, 5);
   const beforeNotices = count('neo_publications'); const beforeResets = count('human_device_resets'); const at = performance.now();
   let receipt: Receipt; try { receipt = await reset(); } catch (error) { evidence.commandFailure = String(error); throw error; }
+  if (reservationConversation) {
+    assert.equal(receipt.conversationId, reservationConversation);
+    const stored = inspect(() => raw.prepare('SELECT id, created_at AS at FROM neo_conversation').get() as { id: string; at: number });
+    assert.equal(stored.id, reservationConversation); assert(stored.at >= receipt.resetAt && stored.at <= Date.now()); evidence.boundConversationFallbackPreserved = true;
+  }
   evidence.coldMs = performance.now() - at; assert.equal(receipt.devices.length, 21); assert.deepEqual(new Set(receipt.devices.map((d) => d.id)), new Set(humans.map((d) => d.device.id)));
   for (const human of humans) assert.equal(active(human.device.id), false);
   assert.equal(active(relay.device.id), true); assert.equal(count('neo_publications'), beforeNotices + 2); assert.equal(count('human_device_resets'), beforeResets + 1);
@@ -150,8 +164,10 @@ try {
   assert((await repo.redeemAsync(firstCode.code, 'Synthetic replacement', Date.now())).paired); assert.deepEqual(await repo.redeemAsync(secondCode.code, 'Synthetic extra', Date.now()), { paired: null, awaitingApproval: true }); evidence.oneReplacementConsumesRecovery = true;
   const rollbackHumans = Array.from({ length: 21 }, () => seed()); const rollbackCode = inspect(() => repo.createCode('human', null, true, Date.now()));
   const rollbackNotices = count('neo_publications'); const rollbackResets = count('human_device_resets');
+  if (reservationConversation) inspect(() => raw.exec('DELETE FROM neo_conversation'));
   raw.exec("CREATE TRIGGER reject_second_notice BEFORE INSERT ON neo_publications WHEN json_extract(NEW.payload_json, '$.fullText') LIKE '%(part 2)%' BEGIN SELECT RAISE(ABORT, 'synthetic second notice failure'); END");
   evidence.rollbackFailure = await reset().then(() => 'unexpected success', String); assert.match(String(evidence.rollbackFailure), /synthetic second notice failure/);
+  if (reservationConversation) { assert.equal(inspect(() => raw.prepare('SELECT id FROM neo_conversation').get()) ?? null, null); evidence.boundConversationReservationRolledBackWithNotice = true; }
   for (const human of rollbackHumans) assert.equal(active(human.device.id), true);
   assert.equal(count('neo_publications'), rollbackNotices); assert.equal(count('human_device_resets'), rollbackResets);
   assert((await repo.redeemAsync(rollbackCode.code, 'Synthetic valid after rollback', Date.now())).paired); evidence.secondNoticeFailureRollsBackAllState = true; raw.exec('DROP TRIGGER reject_second_notice');
