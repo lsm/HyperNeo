@@ -190,6 +190,9 @@ describe('a doing todo never sits idle without someone on it', () => {
     expect(w.todo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
     const stalled = w.told.filter((note) => note.includes('stalled'));
     expect(stalled).toHaveLength(1);
+    expect(
+      w.db.prepare('SELECT id FROM work_started_sessions WHERE unusable_at IS NOT NULL').all()
+    ).toEqual([{ id: 'worker-1' }, { id: 'worker-2' }]);
 
     for (const minutes of [180, 300]) await w.at(minutes);
     expect(w.told.filter((note) => note.includes('stalled'))).toHaveLength(1);
