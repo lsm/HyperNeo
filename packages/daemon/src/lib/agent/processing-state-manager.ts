@@ -452,6 +452,7 @@ export class ProcessingStateManager {
       phase: this.streamingPhase,
       streamingStartedAt: this.streamingStartedAt ?? undefined,
       isCompacting: this.isCompacting,
+      messageIds: this.processingState.messageIds,
     };
 
     this.persistToDatabase();
