@@ -1,0 +1,212 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "GitAdmissionFailureNeverLooksUpCapturesOrFallsBack": true,
+  "GitUnknownOutcomeNeverAutomaticallyReplayed": true,
+  "healthWhileGitIdentityWriterHeldMs": 2.4291249999998854,
+  "deliberatelyHeldGitInitializationMs": 1337.643542,
+  "sourceRecheckedAfterGitIdentityReceiptBeforeLookup": true,
+  "uncontendedConcurrentGitResolutionMs": 305.5276249999997,
+  "concurrentGitCaptureRetainsOneReceipt": true,
+  "explicitOfflineRetryUsesCommittedGitReceiptWithoutLookup": true,
+  "completeBytes": 1680000,
+  "readChunks": 7,
+  "sha256": "a609ccb90bccb5ce6c7055eb39c626b6008b8518bc19a5690b13578ef49ffeb8",
+  "commitProvenanceAndSnapshotBytesRetained": true,
+  "successfulCaptureAndSnapshotReadVerified": true,
+  "existingReadOnlyIdentitySelectsOutsideGitCapture": 15,
+  "foreignOrNonSourceReferenceRefusedBeforeLookup": true,
+  "maxLoopLagMs": 2.6835829999999987,
+  "rssBytes": 214729832,
+  "walBytes": 74192,
+  "mainRowSaves": 1,
+  "commandPosts": 23,
+  "fixtureGhCalls": 3,
+  "fullTransitiveGitCaptureGraphMeasured": false,
+  "pass": true,
+  "diagnosticSteps": [
+    "post:1",
+    "reply:1",
+    "post:2",
+    "post:3",
+    "reply:3",
+    "post:4",
+    "reply:4",
+    "post:5",
+    "reply:5",
+    "post:6",
+    "reply:6",
+    "post:7",
+    "reply:7",
+    "post:8",
+    "reply:8",
+    "post:9",
+    "post:10",
+    "reply:9",
+    "post:11",
+    "reply:10",
+    "reply:11",
+    "post:12",
+    "reply:12",
+    "post:13",
+    "reply:13",
+    "post:14",
+    "reply:14",
+    "post:15",
+    "post:16",
+    "reply:15",
+    "reply:16",
+    "post:17",
+    "reply:17",
+    "post:18",
+    "reply:18",
+    "post:19",
+    "reply:19",
+    "post:20",
+    "reply:20",
+    "post:21",
+    "reply:21",
+    "post:22",
+    "reply:22",
+    "post:23",
+    "reply:23"
+  ],
+  "GitMainIdentitySqlAttempts": 0,
+  "workerMetrics": [
+    {
+      "roundTripMs": 1.8199999999999363,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.005041000000005624
+    },
+    {
+      "roundTripMs": 4.810416000000032,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.007875000000012733
+    },
+    {
+      "roundTripMs": 0.1349169999998594,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0014160000000629225
+    },
+    {
+      "roundTripMs": 4.686832999999979,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.003459000000020751
+    },
+    {
+      "roundTripMs": 1238.3517920000002,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.006499999999959982
+    },
+    {
+      "roundTripMs": 1.1294589999997697,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.002791000000343047
+    },
+    {
+      "roundTripMs": 0.14345800000000963,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0021669999996447586
+    },
+    {
+      "roundTripMs": 0.21212500000001455,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0025000000000545697
+    },
+    {
+      "roundTripMs": 1.5240829999997914,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0011250000002291927
+    },
+    {
+      "roundTripMs": 0.7153339999999844,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0007079999995767139
+    },
+    {
+      "roundTripMs": 0.09420799999998053,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0005419999997684499
+    },
+    {
+      "roundTripMs": 0.11704199999985576,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0014999999998508429
+    },
+    {
+      "roundTripMs": 0.08804200000031415,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0011249999997744453
+    },
+    {
+      "roundTripMs": 0.07254100000000108,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0005420000002231973
+    },
+    {
+      "roundTripMs": 0.8353329999999914,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0008749999997235136
+    },
+    {
+      "roundTripMs": 0.04550000000017462,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0004169999997429841
+    },
+    {
+      "roundTripMs": 0.037083000000166066,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0004169999997429841
+    },
+    {
+      "roundTripMs": 0.044957999999951426,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0005420000002231973
+    },
+    {
+      "roundTripMs": 0.04775000000017826,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.00041599999985919567
+    },
+    {
+      "roundTripMs": 0.03429199999982302,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0006670000002486631
+    },
+    {
+      "roundTripMs": 0.0569590000000062,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.000875000000178261
+    },
+    {
+      "roundTripMs": 0.0711250000003929,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0009579999996276456
+    }
+  ],
+  "runtime": "Bun 1.4.3",
+  "verifiedBase": "057eaa0cebad9a0c5177716d3412f91e1e8024f1",
+  "scope": "Git identity/source fences, concurrent/offline receipt, full provenance/bytes",
+  "temporaryDaemonDataRemoved": true
+}

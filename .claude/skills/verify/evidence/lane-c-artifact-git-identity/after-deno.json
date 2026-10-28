@@ -1,0 +1,167 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "GitAdmissionFailureNeverLooksUpCapturesOrFallsBack": true,
+  "GitUnknownOutcomeNeverAutomaticallyReplayed": true,
+  "healthWhileGitIdentityWriterHeldMs": 2.9514170000002196,
+  "deliberatelyHeldGitInitializationMs": 1531.9373330000003,
+  "sourceRecheckedAfterGitIdentityReceiptBeforeLookup": true,
+  "uncontendedConcurrentGitResolutionMs": 485.3229590000001,
+  "existingDenoDuplicateBlobFailsClosed": true,
+  "existingDenoCaptureFailsClosed": true,
+  "successfulCaptureAndSnapshotReadVerified": false,
+  "foreignOrNonSourceReferenceRefusedBeforeLookup": true,
+  "maxLoopLagMs": 6.133707999999842,
+  "rssBytes": 598818816,
+  "walBytes": 4128272,
+  "mainRowSaves": 0,
+  "commandPosts": 18,
+  "fixtureGhCalls": 6,
+  "fullTransitiveGitCaptureGraphMeasured": false,
+  "pass": true,
+  "diagnosticSteps": [
+    "post:1",
+    "reply:1",
+    "post:2",
+    "post:3",
+    "reply:3",
+    "post:4",
+    "reply:4",
+    "post:5",
+    "reply:5",
+    "post:6",
+    "reply:6",
+    "post:7",
+    "reply:7",
+    "post:8",
+    "reply:8",
+    "post:9",
+    "post:10",
+    "reply:9",
+    "post:11",
+    "reply:10",
+    "reply:11",
+    "post:12",
+    "reply:12",
+    "post:13",
+    "reply:13",
+    "post:14",
+    "post:15",
+    "reply:14",
+    "reply:15",
+    "post:16",
+    "reply:16",
+    "post:17",
+    "reply:17",
+    "post:18",
+    "reply:18"
+  ],
+  "GitMainIdentitySqlAttempts": 0,
+  "workerMetrics": [
+    {
+      "roundTripMs": 0.3472919999999249,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.012750000000096406
+    },
+    {
+      "roundTripMs": 4.164291999999932,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.038457999999991443
+    },
+    {
+      "roundTripMs": 0.30220799999960946,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0032089999999698193
+    },
+    {
+      "roundTripMs": 4.474917000000005,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.010333000000173342
+    },
+    {
+      "roundTripMs": 1224.574792,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.01937499999985448
+    },
+    {
+      "roundTripMs": 0.39600000000018554,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0072909999998955755
+    },
+    {
+      "roundTripMs": 0.3794580000003407,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.004332999999860476
+    },
+    {
+      "roundTripMs": 0.3042499999996835,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0026670000002013694
+    },
+    {
+      "roundTripMs": 2.036040999999841,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.00220900000022084
+    },
+    {
+      "roundTripMs": 1.2086659999999938,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.004625000000032742
+    },
+    {
+      "roundTripMs": 0.22487499999988358,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.001708000000235188
+    },
+    {
+      "roundTripMs": 0.21841700000004494,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.002915999999459018
+    },
+    {
+      "roundTripMs": 0.39666699999997945,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0024169999996956903
+    },
+    {
+      "roundTripMs": 1.6005830000003698,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.003666999999950349
+    },
+    {
+      "roundTripMs": 0.2530830000005153,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0036250000002837623
+    },
+    {
+      "roundTripMs": 0.15983400000004622,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.002666000000317581
+    },
+    {
+      "roundTripMs": 0.13579100000060862,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0027920000002268353
+    }
+  ],
+  "runtime": "Deno 2.9.4",
+  "verifiedBase": "057eaa0cebad9a0c5177716d3412f91e1e8024f1",
+  "scope": "Git identity/source fences and unsupported backend refusal/duplicate-blob rejection; successful capture/read unverified",
+  "temporaryDaemonDataRemoved": true
+}
