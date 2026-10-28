@@ -21,6 +21,8 @@ export function markWorkUnusable(db: BunDatabase, ref: StartedWork): void {
   recordStartedWork(db, ref, Date.now(), true);
 }
 
+const UNUSABLE_FOR_MS = 60 * 60_000;
+
 export function readStartedWork(db: BunDatabase, freeOn: string | null = null): StartedWork[] {
   return db
     .prepare(
@@ -32,7 +34,7 @@ export function readStartedWork(db: BunDatabase, freeOn: string | null = null): 
        WHERE ?1 IS NULL OR (worker.adapter = ?1
          AND NOT EXISTS (SELECT 1 FROM work_started_sessions marked
            WHERE marked.adapter = worker.adapter AND marked.id = worker.id
-             AND marked.unusable_at IS NOT NULL)
+             AND marked.unusable_at > ?2)
          AND NOT EXISTS (SELECT 1 FROM neo_todo_sessions bound
            JOIN neo_todos todo ON todo.id = bound.todo_id
            JOIN neo_asks ask ON ask.id = todo.ask_id
@@ -41,7 +43,7 @@ export function readStartedWork(db: BunDatabase, freeOn: string | null = null): 
              AND ask.status = 'open'
              AND todo.state NOT IN ('done', 'closed_unverified', 'failed', 'removed')))`
     )
-    .all(freeOn) as StartedWork[];
+    .all(freeOn, Date.now() - UNUSABLE_FOR_MS) as StartedWork[];
 }
 
 export function readFreeWorkers(db: BunDatabase, adapter: string): Set<string> {

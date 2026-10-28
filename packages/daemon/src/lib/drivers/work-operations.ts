@@ -426,7 +426,12 @@ export async function reuseIdleWorker(
     const key = `${work.ref.adapter}\u0000${work.ref.id}`;
     if (reuseHolds.has(key)) continue;
     reuseHolds.add(key);
-    const sent = await adapter.send(work.ref, input.message, { from, caller });
+    const sent = await adapter
+      .send(work.ref, input.message, { from, caller })
+      .catch((error: unknown) => {
+        reuseHolds.delete(key);
+        throw error;
+      });
     if (sent.ok) {
       setTimeout(() => reuseHolds.delete(key), REUSE_HOLD_MS).unref?.();
       return {
