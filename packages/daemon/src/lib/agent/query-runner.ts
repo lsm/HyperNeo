@@ -767,6 +767,7 @@ export class QueryRunner {
     const nudgeThresholdMs = DEFAULT_SDK_STARTUP_NUDGE_THRESHOLD_MS;
     const silenceThresholdMs = getStreamSilenceTimeoutMs();
     const openToolStallMs = getOpenToolStallTimeoutMs();
+    let lastStall: { silentMs: number; openToolCount: number } | null = null;
     this.streamSilence = { lastActivityAt: Date.now(), openTools: [] };
 
     let processExitInfo: SdkStartExitInfo = { code: null, signal: null };
@@ -1194,6 +1195,7 @@ export class QueryRunner {
             const planned = silence();
             if (!planned.stalled) continue;
             const openTools = this.streamSilence.openTools;
+            lastStall = { silentMs: planned.silentMs, openToolCount: openTools.length };
             logger.warn(
               openTools.length
                 ? `Model stream silent for ${planned.silentMs}ms with ${openTools.length} open tool call(s) [${openTools.join(', ')}]; aborting the request.`
@@ -1707,7 +1709,10 @@ export class QueryRunner {
           idleFirst: true,
           snapshotLastConsumed: true,
           snapshotRequeueLabel: 'model stream stall retry',
-          notice: `⚠️ The model sent nothing for ${Math.round(silenceThresholdMs / 1000)} s. Retrying…`,
+          notice:
+            lastStall && lastStall.openToolCount > 0
+              ? `⚠️ ${lastStall.openToolCount} tool call(s) ran without a result for ${Math.round(lastStall.silentMs / 1000)} s. Retrying…`
+              : `⚠️ The model sent nothing for ${Math.round((lastStall?.silentMs ?? silenceThresholdMs) / 1000)} s. Retrying…`,
           guardAfterExit: true,
           restartQueue: true,
         });
