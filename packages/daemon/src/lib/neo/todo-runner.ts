@@ -297,7 +297,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
     .pipe(
       async (todoId: string, ref: WorkRef, status: OperationOutcome) => {
-        await sessions.write('recordIdentity', todoId, ref, readDriverIdentity(status));
+        const identity = readDriverIdentity(status);
+        if (identity) await sessions.write('recordIdentity', todoId, ref, identity);
         return status;
       },
       ['todoId', 'ref', 'status'],

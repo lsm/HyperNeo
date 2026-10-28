@@ -187,7 +187,8 @@ export function readDriverOutcome(
 
 export function readDriverIdentity(outcome: OperationOutcome) {
   const status = parseDriverStatusReply(outcome);
-  const value = status?.ok ? status.value : null;
+  if (!status?.ok) return null;
+  const value = status.value;
   return {
     model: typeof value?.model === 'string' ? value.model : null,
     effort: typeof value?.effort === 'string' ? value.effort : null,

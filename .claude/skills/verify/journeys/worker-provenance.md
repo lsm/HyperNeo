@@ -22,3 +22,11 @@ RPC replies, native frames and delivered text; run-status.json confirms cleanup.
 Native UI rendering, real provider turns, remote daemon forwarding and real
 Codex/Copilot clients are unverified. Unit adapter tests cover the other first-input
 boundaries and HyperNeo effort without request.effort.
+
+The same helper also enters the real daemon's production MCP operation registry:
+neo.ask.open and neo.todo.add with bind targets must immediately store observed
+identity. neo.todo.bind to a second synthetic Claude worker must re-read that
+worker's Sonnet/high identity. This exercises production todoControls wiring,
+not just a runner supplied by a test harness. Failed/malformed status responses
+preserve the last observed pair; a successful status with absent fields still
+records explicit unknown (unit regression coverage).

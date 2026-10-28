@@ -648,6 +648,7 @@ export function createNeoOperations(service: NeoService) {
       ),
     recompute: (todo, patch) => service.todoRunner.recompute(todo, patch),
     start: (todoId) => service.todoRunner.start(todoId),
+    refreshIdentity: (todoId) => service.todoRunner.refreshIdentity(todoId),
     proceed: (todoId, message) => service.todoRunner.proceed(todoId, message),
     retry: (todoId) => service.todoRunner.retry(todoId),
     stop: (todo) => service.todoRunner.stop(todo),
