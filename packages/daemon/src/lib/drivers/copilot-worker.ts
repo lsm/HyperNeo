@@ -325,6 +325,10 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
         ),
       });
     },
+    async rename(name: string) {
+      requireOpen();
+      await bounded(session.rpc.name.set({ name }), timeoutMs);
+    },
     async abort() {
       requireOpen();
       try {
