@@ -79,7 +79,7 @@ try {
     const queued=await speak('second'); assert(queued.ok);
     await clients[0].transport.close();
     await wait(()=>evidence().speech.some((row:unknown)=>(row as {id:string;state:string}).id===queued.id && (row as {state:string}).state==='cancelled'));
-    assert.equal((await speak('no-listener')).reason,'voice_replies_off');
+    assert.match((await speak('no-listener')).reason,/^voice_replies_off:/);
     assert((await call('listen',{sessionId,enabled:true},1)).ok);
     assert.equal((await speak('second')).created,false);
     assert.equal(clients[1].events.length,0);
