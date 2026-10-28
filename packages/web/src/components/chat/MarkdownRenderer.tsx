@@ -15,8 +15,20 @@ interface MarkdownRendererProps {
   content: string;
   class?: string;
   artifactLinks?: boolean;
+  demoteLinks?: boolean;
+  pendingContent?: string;
+  bare?: boolean;
   references?: readonly string[];
   onReference?: (reference: string) => void;
+}
+
+function demoteAnchorLinks(container: HTMLElement) {
+  container.querySelectorAll('a').forEach((anchor) => {
+    const span = document.createElement('span');
+    span.setAttribute('data-demoted-link', '');
+    while (anchor.firstChild) span.appendChild(anchor.firstChild);
+    anchor.replaceWith(span);
+  });
 }
 
 type MarkdownModules = {
@@ -469,6 +481,9 @@ export default function MarkdownRenderer({
   content,
   class: className,
   artifactLinks = false,
+  demoteLinks = false,
+  pendingContent,
+  bare = false,
   references,
   onReference,
 }: MarkdownRendererProps) {
@@ -519,6 +534,7 @@ export default function MarkdownRenderer({
     if (html == null || !containerRef.current) return;
     const container = containerRef.current;
     container.innerHTML = html;
+    if (demoteLinks) demoteAnchorLinks(container);
 
     const handleImageActivate = (event: Event) => {
       if (event instanceof MouseEvent && event.type === 'auxclick' && event.button !== 1) return;
@@ -549,14 +565,13 @@ export default function MarkdownRenderer({
     container.addEventListener('click', handleReference);
     container.addEventListener('keydown', handleReference);
 
-    const copyMounts = [
-      ...attachQuoteCopyButtons(container),
-      ...attachCodeBlockCopyButtons(container),
-    ];
+    const copyMounts = bare
+      ? []
+      : [...attachQuoteCopyButtons(container), ...attachCodeBlockCopyButtons(container)];
 
     let mermaidCancelled = false;
     const mermaidMounts: Array<HTMLElement> = [];
-    if (!artifactLinks)
+    if (!artifactLinks && !bare)
       renderMermaidBlocks(containerRef.current, mermaidMounts, () => mermaidCancelled).catch(
         () => undefined
       );
@@ -592,7 +607,11 @@ export default function MarkdownRenderer({
       });
       mermaidCancelled = true;
     };
-  }, [html, theme, artifactLinks, referenceKey]);
+  }, [html, theme, artifactLinks, demoteLinks, bare, referenceKey]);
 
-  return <div ref={containerRef} class={`prose ${className || ''}`} />;
+  return (
+    <div ref={containerRef} class={`prose ${className || ''}`}>
+      {html == null ? pendingContent : null}
+    </div>
+  );
 }
