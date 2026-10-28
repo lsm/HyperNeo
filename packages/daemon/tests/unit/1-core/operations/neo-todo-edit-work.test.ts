@@ -162,4 +162,47 @@ describe('todos given work later', () => {
       db.close();
     }
   });
+
+  test('coding work with a start target but no place is refused when added or edited', async () => {
+    const { db, store, invoke, step } = setup();
+    try {
+      const ask = store.openAsk({
+        id: 'coding-ask',
+        projectId: null,
+        goalId: null,
+        sessionId: caller.sessionId!,
+        originMessageId: 'coding-origin',
+        title: 'Coding',
+        request: 'Coding',
+        createdAt: 1,
+        repo: 'synthetic/repo',
+      });
+      const placeless = {
+        instruction: 'Do it.',
+        target: { verb: 'start', adapter: 'hyperneo' },
+      };
+      expect(
+        await invoke('neo.todo.add', { askId: ask.id, ...step('New'), ...placeless })
+      ).toMatchObject({ ok: false, reason: expect.stringContaining('place_required') });
+      const waiting = store.addTodo(
+        'waiting',
+        ask.id,
+        {
+          title: 'Waiting',
+          doneWhen: 'Result verified',
+          check: null,
+          instruction: null,
+          named: null,
+        },
+        2,
+        'synthetic/repo'
+      );
+      expect(await invoke('neo.todo.edit', { todoId: waiting.id, ...placeless })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('place_required'),
+      });
+    } finally {
+      db.close();
+    }
+  });
 });
