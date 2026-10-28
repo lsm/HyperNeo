@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 
 export function micMetrics(value) {
-  return { ...value, radius: parseFloat(value.radiusCss) };
+  const radius = value.radiusCss.includes('infinity')
+    ? Math.min(value.width, value.height) / 2
+    : parseFloat(value.radiusCss);
+  return { ...value, radius };
 }
 
 export async function verifyMicRadiusSerialization(page) {
