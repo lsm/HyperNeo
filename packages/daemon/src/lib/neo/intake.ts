@@ -129,7 +129,7 @@ export function neoIntakeMessage(
     ? `Preview context: registered artifact ${previewContext.artifactId}, exact SHA-256 snapshot ${previewContext.snapshot}.`
     : null;
   const speechFact = input.speech
-    ? 'Voice replies are enabled on the current phone. Use neo.speech.say for natural spoken acknowledgments and answers; screen publications are independent.'
+    ? 'Voice replies are enabled on the current phone. Briefly acknowledge time-consuming requests with neo.speech.say before doing the work. Publish substantive answers on screen with neo.publication.publish and speak a natural version with neo.speech.say; a brief acknowledgment alone needs no screen publication.'
     : null;
   const facts = [identifier, localTime, fact, previewFact, speechFact].flatMap((text) =>
     text ? [{ type: 'text' as const, text }] : []
