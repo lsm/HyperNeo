@@ -359,6 +359,16 @@ describe('a doing todo never sits idle without someone on it', () => {
     expect(w.store.updateTodo(w.todo(todo.id), {}, Date.now()).state).toBe('doing');
   });
 
+  test("a retitled stalled todo still knows its card is the daemon's own", async () => {
+    const w = (current = world());
+    const todo = w.adopt(null, 'tracked');
+    await w.at(60);
+    expect(w.todo(todo.id).blockedBy).toBe('stalled');
+    w.store.updateTodo(w.todo(todo.id), { title: 'Watch the rollout' }, Date.now());
+    await w.at(65);
+    expect(w.todo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
+  });
+
   test('a stalled todo with an open human card waits on the human instead', async () => {
     const w = (current = world());
     const todo = w.adopt(null, 'tracked');
