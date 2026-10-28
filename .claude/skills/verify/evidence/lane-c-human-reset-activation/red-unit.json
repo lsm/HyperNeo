@@ -1,0 +1,6 @@
+{
+  "passed": 1,
+  "failed": 5,
+  "failure": "human-reset SQL reached main",
+  "networkCallerRefusalPreserved": true
+}

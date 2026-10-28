@@ -8,7 +8,8 @@ Record runtime versions; Bun 1.4.3 does not establish pinned Bun 1.4.2 coverage.
 
 This construction keeps reset(now) and adds an optional request UUID. A read-only
 command returns that reset's receipt only when a matching recovery notice exists.
-The public reset operation is unchanged until a separate wiring slice. Reset and
+This construction journey calls commands directly; use
+[reset activation](lane-c-human-reset-activation.md) for public CLI/events. Reset and
 all human-visible notice chunks must remain one atomic transaction. Never replay
 a reset whose commit outcome is unknown; recovery retries are reads only.
 
@@ -22,7 +23,7 @@ responds. Same-time concurrent resets must retain separate receipts. Before-post
 refusal and second-notice rollback must yield no receipt. The legacy one-argument
 command must still work. Real CLI devices/public neo.publication.read must show
 retained history and chunked notices without credentials. Existing connection
-observation is not proof of the future direct public-reset notification wiring.
+observation is not proof of direct public-reset notification wiring; use the activation journey.
 
 Unit cases additionally pin duplicate-ID rollback, both producer-origin fields,
 missing notices, and the original notice conversation after the current one
@@ -32,4 +33,5 @@ core append contract separately, without editing core publication/service files.
 Keep the SQL ratchet baseline unchanged. Save flags and timings/bytes/RSS/WAL,
 never device IDs, codes, credentials or raw CLI output. Close clients, processors,
 locks and daemon before the wrapper saves evidence and removes its temporary data.
-Public mutation wiring, browser layout and deployment are not verified here.
+Public mutation wiring is covered by the activation journey. This construction
+journey does not exercise it; browser layout and deployment are not verified here.
