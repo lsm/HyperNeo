@@ -29,6 +29,8 @@ Screenshots and composer-layout.json are retained.
 
 Inspect screenshots for readable text, a heavier mic glyph, capsule proportions
 and no overflow. Native iOS parity needs separate inspection of its implementation.
+Mic hover, focus and pointer-down rounding in both themes is covered separately
+by neo-composer-mic-shape.md, including fake-media activation and cancellation.
 A browser launch failure is not a layout pass: retain its error, say screenshots
 are unverified and leave browser proof pending. Do not bypass host restrictions.
 
