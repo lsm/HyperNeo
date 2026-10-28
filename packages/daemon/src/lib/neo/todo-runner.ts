@@ -675,8 +675,19 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       since: now,
       nudges: 0,
       ...(prior?.redispatched ? { redispatched: true } : {}),
+      ...(prior?.live ? { live: prior.live } : {}),
     });
   };
+  const awaitsHuman = (todo: NeoTodo) =>
+    store
+      .listQuestions(todo.askId)
+      .some(
+        (question) =>
+          question.state === 'open' &&
+          (!question.todoId || question.todoId === todo.id) &&
+          (question.kind !== 'start' || !!question.startTodos?.includes(todo.id)) &&
+          question.text !== neoTodoStalledCard(todo)
+      );
 
   const follow = (superpipe({})('neo-todo-follow') as PipelineAPI)
     .input(['todo', 'now'])
@@ -927,6 +938,15 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'live'
     )
     .pipe(
+      (context: NudgeContext, now: number) => {
+        if (!awaitsHuman(context.todo)) return { value: context };
+        restartLadder(context.todo.id, now);
+        return { reason: null };
+      },
+      ['admission', 'now'],
+      'result:admission'
+    )
+    .pipe(
       async (context: NudgeContext) => {
         for (const pack of deps.packs())
           if (
@@ -1027,6 +1047,17 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           : { reason: null };
       },
       'todo',
+      'result:rescue'
+    )
+    .pipe(
+      (stalled: Stalled, now: number): { value: Stalled } | { reason: null } => {
+        if (!awaitsHuman(stalled.todo)) return { value: stalled };
+        restartLadder(stalled.todo.id, now);
+        store.updateTodo(stalled.todo, { state: 'doing' }, now);
+        deps.changed();
+        return { reason: null };
+      },
+      ['rescue', 'now'],
       'result:rescue'
     )
     .pipe(
