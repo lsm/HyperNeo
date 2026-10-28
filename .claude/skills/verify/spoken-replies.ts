@@ -46,6 +46,10 @@ let sequence=0, asrActive=0, asrAccepted=0, asrRejected=0;
 const fixture = createServer(async (request,response) => {
   try {
     response.setHeader('Content-Type','application/json');
+    if (request.url === '/working' || request.url === '/idle') {
+      await app.internalEventBus.publish('session.updated', {sessionId, processingState:{status:request.url === '/working' ? 'processing' : 'idle'}});
+      response.end('{}'); return;
+    }
     if (request.url === '/speak-long') { response.end(JSON.stringify(await speak('ui-'+(++sequence),'Public long voice comparison fixture.'))); return; }
     if (request.url === '/speak') { response.end(JSON.stringify(await speak('ui-'+(++sequence)))); return; }
     if (request.url === '/evidence') { response.end(JSON.stringify(evidence())); return; }
