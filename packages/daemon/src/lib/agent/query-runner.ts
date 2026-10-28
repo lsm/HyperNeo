@@ -442,6 +442,8 @@ export class QueryRunner {
   private _turnConsumedUserMessages: Array<{ uuid: string; content: string | MessageContent[] }> =
     [];
 
+  private _turnConsumedGeneration: number | null = null;
+
   private fedAfterTurnEnd: Array<{
     uuid: string;
     content: string | MessageContent[];
@@ -1953,6 +1955,7 @@ export class QueryRunner {
 
         this._lastConsumedUserMessage = null;
         this._turnConsumedUserMessages = [];
+        this._turnConsumedGeneration = null;
 
         if (
           this.ctx.getQueryGeneration() === queryGeneration &&
@@ -2332,6 +2335,10 @@ export class QueryRunner {
           uuid: message.uuid ?? '',
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
         };
+        if (this._turnConsumedGeneration !== queryGeneration) {
+          this._turnConsumedUserMessages = [];
+          this._turnConsumedGeneration = queryGeneration;
+        }
         this._turnConsumedUserMessages.push({
           uuid: message.uuid ?? '',
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
