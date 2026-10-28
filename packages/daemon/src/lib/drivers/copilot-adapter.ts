@@ -393,10 +393,11 @@ export function createCopilotAdapter(
     .endAsync('stopped') as (ref: W.WorkRef) => Promise<W.Result<{ stopped: boolean }>>;
   const admitArchive = (record: Record, admit: W.ArchiveAdmission): Gate<Record> => {
     if (
-      live.has(record.work.ref.id) &&
-      !['done', 'failed', 'stopped'].includes(record.snapshot.status)
+      launching.has(record.work.ref.id) ||
+      (live.has(record.work.ref.id) &&
+        !['done', 'failed', 'stopped'].includes(record.snapshot.status))
     )
-      return { reason: reject('busy', 'Copilot work still has a live turn.') };
+      return { reason: reject('busy', 'Copilot work still has a live turn.', true) };
     const refused = admit();
     return refused ? { reason: refused } : { value: record };
   };

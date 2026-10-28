@@ -17,14 +17,14 @@ import type { WorkCallContext, WorkStarted } from '../../../../src/lib/drivers/t
 
 const context = { from: 'chat', caller: { source: 'rpc' } } as WorkCallContext;
 const runs: { run: string; close: () => Promise<void> }[] = [];
-function setup() {
+function setup(flag = '') {
   const run = mkdtempSync(join(tmpdir(), 'copilot-archive-'));
   mkdirSync(join(run, 'home'));
   const source = fileURLToPath(new URL('../../../fixtures/copilot-sdk.ts', import.meta.url));
   const cliPath = join(run, 'copilot');
   writeFileSync(
     cliPath,
-    `#!/usr/bin/env bun\nprocess.argv.push('--production-version', '--durable-inputs'); await import(${JSON.stringify(source)});\n`,
+    `#!/usr/bin/env bun\nprocess.argv.push('--production-version', '--durable-inputs', ${JSON.stringify(flag)}); await import(${JSON.stringify(source)});\n`,
     { mode: 0o700 }
   );
   const deps = {
@@ -132,6 +132,28 @@ describe('Copilot owned archive', () => {
       })
     ).toMatchObject({ ok: false, reason: 'busy' });
     expect(admitted).toBe(0);
+  });
+
+  test('refuses archive while start has saved the record but not connected yet', async () => {
+    const f = setup('--held-connect');
+    const starting = f.start('settled');
+    let id: string | undefined;
+    for (let poll = 0; poll < 400 && !id; poll++) {
+      const found = (await f.find(true)).flatMap((group) => group.work);
+      id = found[0]?.ref.id;
+      if (!id) await new Promise((done) => setTimeout(done, 5));
+    }
+    let admitted = 0;
+    expect(
+      await f.adapter.archive!({ adapter: 'copilot-cli', id: id! }, () => {
+        admitted++;
+        return null;
+      })
+    ).toMatchObject({ ok: false, reason: 'busy', notSent: true });
+    expect(admitted).toBe(0);
+    writeFileSync(join(f.run, 'release-connect'), 'release');
+    await starting;
+    expect((await f.find(false)).flatMap((group) => group.work)).toHaveLength(1);
   });
 
   test('returns the admission refusal and leaves orphaned work open', async () => {
