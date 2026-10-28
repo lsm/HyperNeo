@@ -4,6 +4,7 @@ import {
   onHumanDevicesReset,
 } from '../../../../src/lib/pairing/human-device-reset';
 import { onDeviceRevoked } from '../../../../src/lib/pairing/upgrade-auth';
+import { createDiscoveryOperations } from '../../../../src/lib/operations/discovery';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import {
   createOperationRegistry,
@@ -105,6 +106,54 @@ describe('public human reset DB worker activation', () => {
       await pause(5);
     }
   };
+
+  test('catalog discovery and refused reset calls stay lazy until first authorized execution', async () => {
+    let accesses = 0;
+    let initialized = false;
+    const operation = createHumanDeviceResetOperation(() => {
+      accesses++;
+      if (!initialized) throw new Error('Synthetic database is not initialized');
+      return main;
+    });
+    const lazyRegistry = createOperationRegistry([
+      operation,
+      ...createDiscoveryOperations(() => lazyRegistry),
+    ]);
+    const caller: OperationCaller = { source: 'rpc', principal: 'local' };
+    expect(await invokeOperation(lazyRegistry, 'operations.list', {}, caller)).toMatchObject({
+      kind: 'completed',
+      value: expect.arrayContaining([expect.objectContaining({ name: 'device.reset_human' })]),
+    });
+    expect(
+      await invokeOperation(
+        lazyRegistry,
+        'operations.describe',
+        { name: 'device.reset_human' },
+        caller
+      )
+    ).toMatchObject({
+      kind: 'completed',
+      value: { found: true, name: 'device.reset_human' },
+    });
+    expect(await invokeOperation(lazyRegistry, 'device.reset_human', {}, caller)).toMatchObject({
+      kind: 'completed',
+      value: { ok: false, reason: expect.stringContaining('local_cli_only:') },
+    });
+    expect(accesses).toBe(0);
+    initialized = true;
+    pair();
+    expect(await invokeOperation(lazyRegistry, 'device.reset_human', {}, door)).toMatchObject({
+      kind: 'completed',
+      value: { ok: true },
+    });
+    expect(await invokeOperation(lazyRegistry, 'device.reset_human', {}, door)).toMatchObject({
+      kind: 'completed',
+      value: { ok: true, devices: [] },
+    });
+    expect(accesses).toBe(1);
+    expect(gateway.writes).toBe(2);
+    expect(mainSql).toBe(0);
+  });
 
   test('local reset preserves its public reply and announces only committed state without main SQL', async () => {
     const phone = pair();
