@@ -118,8 +118,7 @@ try {
     app = await createDaemonApp({ config: { ...getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db'), workspaceRoot: join(run, 'workspace') }), disableWorktrees: true, disableGoalProcessing: true }, verbose: false });
   } finally { JobQueueProcessor.prototype.start = start; }
   assert.notEqual(app.server.port, 8399); await Promise.all([...processors].map((p) => p.stop()));
-  const coordinatorModule = await import('../../../packages/daemon/src/lib/pairing/human-reset-coordinator.ts').catch(() => null);
-  if (!coordinatorModule) { evidence.coordinatorFailure = 'human reset receipt coordinator is not built'; throw new Error(String(evidence.coordinatorFailure)); }
+  const coordinatorModule = await import('../../../packages/daemon/src/lib/pairing/human-reset-coordinator.ts');
   const { announceDeviceRevoked } = await import('../../../packages/daemon/src/lib/pairing/upgrade-auth.ts');
   const coordinatorNotices: Receipt[] = [];
   const coordinate = coordinatorModule.createHumanResetCoordinator(app.db.gateway, (receipt: Receipt) => { for (const device of receipt.devices) announceDeviceRevoked(device.id); coordinatorNotices.push(receipt); });
