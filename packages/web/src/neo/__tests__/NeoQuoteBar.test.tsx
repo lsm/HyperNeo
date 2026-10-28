@@ -44,6 +44,20 @@ it('renders no nested buttons when the excerpt contains a code block', async () 
   expect(bar.querySelector('.code-block-wrapper')).toBeNull();
 });
 
+it('demotes image links whose alt text contains a > without leaking attribute text', async () => {
+  const app = render(
+    <NeoQuoteBar
+      author="Neo"
+      excerpt={'![a">b](https://example.com/x.png)'}
+      onOpen={() => {}}
+    />
+  );
+  const bar = app.container.querySelector('[data-quote-bar]') as HTMLElement;
+  await waitFor(() => expect(bar.querySelector('[data-demoted-link]')).not.toBeNull());
+  expect(bar.querySelector('a')).toBeNull();
+  expect(bar.textContent ?? '').not.toContain('b">');
+});
+
 it('keeps the missing-original placeholder as plain italic text', () => {
   const app = render(<NeoQuoteBar author="Neo" onOpen={() => {}} />);
   const bar = app.container.querySelector('[data-quote-bar]') as HTMLElement;
