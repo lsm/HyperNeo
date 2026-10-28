@@ -30,3 +30,10 @@ worker's Sonnet/high identity. This exercises production todoControls wiring,
 not just a runner supplied by a test harness. Failed/malformed status responses
 preserve the last observed pair; a successful status with absent fields still
 records explicit unknown (unit regression coverage).
+
+Each provenance brief leads with a fresh delivery UUID within the first 80
+characters. The native-inbox proof checks that stored openings appear in their
+actual inputs and differ across follow-ups. Unit regressions use receiptless
+sends to a shared worker: another todo's input cannot land the lost send or
+supply its reply, even with identical task text and observed identity. Repeated
+identical follow-ups on the same todo also get distinct openings.

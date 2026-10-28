@@ -8,6 +8,7 @@ export function withWorkerProvenance(
   const effort = identity.effort ?? 'unknown';
   const harness = workerEngine(identity.harness);
   return [
+    `Worker delivery: ${crypto.randomUUID()}`,
     'Worker provenance (last observed runtime identity):',
     `Agent: ${model} (effort: ${effort}) via ${harness}`,
     identity.model && identity.effort
