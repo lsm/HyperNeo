@@ -645,6 +645,7 @@ export function createNeoOperations(service: NeoService) {
   };
   return [
     ...service.packOperations,
+    ...service.speech.operations,
     createNeoProjectForgetOperation(service.repo, (repos) => {
       for (const pack of service.installedPacks()) pack.forgetRepositories?.(repos);
     }),

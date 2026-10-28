@@ -1,4 +1,7 @@
 export const NEO_OPERATION_NAMES = [
+  'neo.speech.listen',
+  'neo.speech.say',
+  'neo.speech.ack',
   'neo.ask.doneTodos',
   'neo.ask.history',
   'neo.ask.open',

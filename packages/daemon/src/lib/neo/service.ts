@@ -1,3 +1,4 @@
+import { NeoSpeech } from './speech.ts';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { neoSessionTrackWrites } from '../../storage/repositories/neo-session-track-write.ts';
 import { createNeoQuestionAnswerDelivery } from './question-answer-delivery.ts';
@@ -91,6 +92,7 @@ const MODEL_CHANGE_SOURCES = new Set([
 
 export class NeoService {
   readonly repo: NeoRepository;
+  readonly speech: NeoSpeech;
   readonly publications: NeoPublicationRepository;
   readonly asks: NeoConversationAskRepository;
   readonly publish: ReturnType<typeof createNeoPublisher>;
@@ -168,6 +170,11 @@ export class NeoService {
       notifyChanged: () => this.notifyChanged(),
     });
     this.repo = new NeoRepository(db.getDatabase(), this.notifyChanged);
+    this.speech = new NeoSpeech(
+      hub,
+      this.runDbOp,
+      (id) => this.repo.getBindingBySession(id)?.kind === 'neo'
+    );
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
     this.todos = new NeoAskTodoRepository(db.getDatabase(), this.notifyChanged, () =>
@@ -415,6 +422,7 @@ export class NeoService {
     this.triggerDeliveryRetryAt.clear();
     if (this.watching) await this.watching;
     await this.sessionWatcher.flushSessionNoticeGroup();
+    await this.speech.dispose();
   }
 
   readWorker(ref: WorkRef) {
