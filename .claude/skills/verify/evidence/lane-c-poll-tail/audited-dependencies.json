@@ -1,0 +1,150 @@
+{
+  "base": "845bf24cb3ef189f1709da720067ee1f16c76188",
+  "pollingFile": "packages/daemon/src/lib/github/polling-service.ts",
+  "pollingWithoutConstructorSha256": "45dcd72bfc8c4a407ab5c3499eec9425220f4869f681058f71bf6a4c950d30b4",
+  "sourceRoots": [
+    {
+      "file": "packages/daemon/src/lib/github/poll-source.ts",
+      "lines": 125,
+      "sha256": "e4fdec71396d97060b24e91357bb13b2bf00a8142f3bb86bdf0933f826645a23"
+    },
+    {
+      "file": "packages/daemon/src/lib/github/event-normalizer.ts",
+      "lines": 293,
+      "sha256": "a94749db0fc82767a13e7bbbad0d49d4cbaca1fdab49ed9fc9b4e33b742f82fd"
+    },
+    {
+      "file": "packages/daemon/src/lib/job-handlers/github-poll.handler.ts",
+      "lines": 55,
+      "sha256": "ea5fff12dc630827767831aed641c3fcf43352e72145cd4244c46583bb88437d"
+    }
+  ],
+  "sourceBundleSha256": "25ffc5b8157868b2532b7365c98d5e08f26b2d814af7105946e236815ec52054",
+  "eventSubtree": [
+    {
+      "file": "packages/daemon/src/lib/github/github-service.ts",
+      "name": "GitHubService.processEvent",
+      "start": 232,
+      "end": 353,
+      "lines": 122,
+      "sha256": "12708cf04f9f62fbebd44a84798c44ad5c56c4dfcdf2196488264dc77cd5024e",
+      "wholeFile": false
+    },
+    {
+      "file": "packages/daemon/src/lib/github/github-service.ts",
+      "name": "GitHubService.filterEvent",
+      "start": 355,
+      "end": 357,
+      "lines": 3,
+      "sha256": "54158d9848de9d68b2003421f56bfce66366903ee4bae85527a79367aa05ad96",
+      "wholeFile": false
+    },
+    {
+      "file": "packages/daemon/src/lib/github/github-service.ts",
+      "name": "GitHubService.checkSecurity",
+      "start": 359,
+      "end": 367,
+      "lines": 9,
+      "sha256": "6eeed87b2770e1ed1d48a27ad4ff717e4409ce117086f775a79c10704611533c",
+      "wholeFile": false
+    },
+    {
+      "file": "packages/daemon/src/lib/github/github-service.ts",
+      "name": "GitHubService.addToInbox",
+      "start": 369,
+      "end": 375,
+      "lines": 7,
+      "sha256": "87bcb67d3b36fe769d6cbb31b3c9e7a8846626d122061d0c0de11b831526c355",
+      "wholeFile": false
+    },
+    {
+      "file": "packages/daemon/src/lib/github/github-service.ts",
+      "name": "GitHubService.emitEvent",
+      "start": 377,
+      "end": 387,
+      "lines": 11,
+      "sha256": "323cc24c24695a1a4d1bb81a5e249f6930105c93054301d081710b7078327cf9",
+      "wholeFile": false
+    },
+    {
+      "file": "packages/daemon/src/lib/github/inbox-manager.ts",
+      "name": "InboxManager.constructor",
+      "start": 20,
+      "end": 20,
+      "lines": 1,
+      "sha256": "a412277283455b92254e0a0c36ac4595fb4d6aaea87d190828c95c2ebe7c3410",
+      "wholeFile": false
+    },
+    {
+      "file": "packages/daemon/src/lib/github/inbox-manager.ts",
+      "name": "InboxManager.addToInbox",
+      "start": 22,
+      "end": 44,
+      "lines": 23,
+      "sha256": "2882b0cf2178ec05989e34cf03a5c84d7f29d788c378f1ad6b778695e4737fe2",
+      "wholeFile": false
+    },
+    {
+      "file": "packages/daemon/src/lib/github/inbox-manager.ts",
+      "name": "InboxManager.getEventType",
+      "start": 62,
+      "end": 70,
+      "lines": 9,
+      "sha256": "b4a7eafed08e663156efceac5a7f8c485b6f4445d8b97055fe404a5a089ecf76",
+      "wholeFile": false
+    }
+  ],
+  "writerSubtree": [
+    {
+      "file": "packages/daemon/src/storage/repositories/inbox-item-repository.ts",
+      "name": "constructor",
+      "start": 29,
+      "end": 29,
+      "lines": 1,
+      "sha256": "37ae8ea2954cf392605c195037a07d4abd1b4658eb5c923aaa06862a17a0101d",
+      "wholeFile": false
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/inbox-item-repository.ts",
+      "name": "createItem",
+      "start": 31,
+      "end": 61,
+      "lines": 31,
+      "sha256": "55afe51131636d1a9ff5bde0b3172040b9a30f2e77cb5f474fc8283719385c01",
+      "wholeFile": false
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/inbox-item-repository.ts",
+      "name": "getItem",
+      "start": 63,
+      "end": 69,
+      "lines": 7,
+      "sha256": "1f68f353725ed98648d56a2d22d68798deb394201e4f847659c290becb345cae",
+      "wholeFile": false
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/inbox-item-repository.ts",
+      "name": "rowToItem",
+      "start": 145,
+      "end": 165,
+      "lines": 21,
+      "sha256": "2accadf0a088d331a035b87ba4e1fbc8ddfe34f93631a29f08f1221862398bee",
+      "wholeFile": false
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/inbox-create-write.ts",
+      "name": "whole typed data-only create command",
+      "lines": 24,
+      "sha256": "58a99e1fcefdb96af89497e34057f4b5e2b8ecc82a24ff18686684d8652e3958",
+      "wholeFile": true
+    }
+  ],
+  "eventWriterBundleSha256": "070050a7e70102082c5f82d33cbc0814b6b2a8ba8c7824ef8c1c07079162d519",
+  "contracts": [
+    "Polling code outside constructor remains byte-identical: retain per-repository ETags, issue/comment order, since cursor and sequential delivery. The supplied callback is invoked once per event; its rejection is logged and isolated, with no automatic retry or validator reset.",
+    "Merged event(185)/writer(84) subtrees accept plain inbox data with caller UUID/time, return exact committed receipts, notify after receipt and never enter fallback after an unknown-outcome write.",
+    "Native proof registers the existing production poll handler with the production poller and event-service callback on an isolated daemon. Credential bootstrap and GitHubService startup registration remain unverified."
+  ],
+  "fullTransitiveGraphMeasured": false,
+  "auditLimit": "Exact masked polling-module/source/normalizer/job-handler and merged event/writer subtree hashes are pinned. External SDK, GitHub CLI/permission helpers, collector internals and generic queue/SQLite/runtime implementations are not an exhaustive transitive audit. No real GitHub, credential bootstrap or deployment claim."
+}
