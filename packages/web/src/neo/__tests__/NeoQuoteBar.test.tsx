@@ -46,11 +46,7 @@ it('renders no nested buttons when the excerpt contains a code block', async () 
 
 it('demotes image links whose alt text contains a > without leaking attribute text', async () => {
   const app = render(
-    <NeoQuoteBar
-      author="Neo"
-      excerpt={'![a">b](https://example.com/x.png)'}
-      onOpen={() => {}}
-    />
+    <NeoQuoteBar author="Neo" excerpt={'![a">b](https://example.com/x.png)'} onOpen={() => {}} />
   );
   const bar = app.container.querySelector('[data-quote-bar]') as HTMLElement;
   await waitFor(() => expect(bar.querySelector('[data-demoted-link]')).not.toBeNull());
