@@ -1,0 +1,41 @@
+{
+  "fullSubsystemOffMainClaim": false,
+  "phase": "historical helper extraction contracts; current resolver identity is worker-backed, direct legacy helper remains on its supplied connection",
+  "firstRpcMs": 6.394999999999982,
+  "realRpcRefusalAndRetainedIdentity": true,
+  "referenceRpcIdentityNowWorkerBacked": true,
+  "extractedHelperRetainsRpcIdentity": true,
+  "directLegacyHelperStillMainSide": true,
+  "sqlAndBoundUuidShapeIdentical": true,
+  "retainedSingletonStable": true,
+  "callerOwnedRollbackPreserved": true,
+  "outsideTransactionPartialInsertPreserved": true,
+  "insertAndReceiptErrorsPreserved": true,
+  "publicRpcAfterHelperStillUnchanged": true,
+  "healthMs": 0.5724159999999756,
+  "rssBytes": 525516800,
+  "walBytes": 4128272,
+  "pass": true,
+  "mainStatementTrace": [
+    {
+      "kind": "insert",
+      "bindCount": 1
+    },
+    {
+      "kind": "select",
+      "bindCount": 0
+    }
+  ],
+  "sql": [
+    {
+      "bytes": 58,
+      "sha256": "8cb8d4d56c4500e7e9878d1f19030340785f48efecfdbfe8aa53c742417bdb55"
+    },
+    {
+      "bytes": 44,
+      "sha256": "d2a23547820de87d09904aab32e258c6f615bc2e78cc1d99beae38bb3cdddc0d"
+    }
+  ],
+  "runtime": "Deno 2.9.4",
+  "temporaryDaemonDataRemoved": true
+}

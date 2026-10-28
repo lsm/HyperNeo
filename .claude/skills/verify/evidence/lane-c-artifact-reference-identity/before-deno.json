@@ -1,0 +1,11 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "nonHumanAndDiscoveryDoNotInitialize": true,
+  "retryIdValidationBeforeInitialization": true,
+  "resolverMainIdentitySqlAttempts": 1,
+  "workerMetrics": [],
+  "runtime": "Deno 2.9.4",
+  "expectedFailure": "Real artifact.reference.resolve RPC initializes identity on main before writer admission.",
+  "passBeforeFix": false,
+  "temporaryDaemonDataRemoved": true
+}
