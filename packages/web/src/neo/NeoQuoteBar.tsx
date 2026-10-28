@@ -1,5 +1,6 @@
 import type { ComponentChildren } from 'preact';
 import { t } from '../lib/i18n/index.ts';
+import { NeoQuoteExcerpt } from './NeoQuoteExcerpt.tsx';
 
 export function NeoQuoteBar({
   author,
@@ -15,6 +16,15 @@ export function NeoQuoteBar({
   children?: ComponentChildren;
 }) {
   const name = author === 'You' ? t('chat.you') : author;
+  const tappable = !!onOpen && excerpt !== undefined;
+  const excerptBody =
+    excerpt === undefined ? (
+      <span class="line-clamp-2 block break-words text-sm italic text-fg-muted">
+        {t('chat.originalUnavailable')}
+      </span>
+    ) : (
+      <NeoQuoteExcerpt excerpt={excerpt} demoteLinks={tappable} />
+    );
   const body = (
     <>
       <span
@@ -37,16 +47,12 @@ export function NeoQuoteBar({
             {name}
           </span>
         )}
-        <span
-          class={`line-clamp-2 block break-words text-sm ${excerpt === undefined ? 'italic text-fg-muted' : 'text-fg'}`}
-        >
-          {excerpt ?? t('chat.originalUnavailable')}
-        </span>
+        {excerptBody}
       </span>
     </>
   );
   const frame = 'mb-2 flex items-start gap-2.5 rounded-xl bg-surface py-1.5 pl-2.5';
-  return onOpen && excerpt !== undefined ? (
+  return tappable ? (
     <button
       type="button"
       data-quote-bar

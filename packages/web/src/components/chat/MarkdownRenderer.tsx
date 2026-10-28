@@ -15,8 +15,14 @@ interface MarkdownRendererProps {
   content: string;
   class?: string;
   artifactLinks?: boolean;
+  demoteLinks?: boolean;
+  pendingContent?: string;
   references?: readonly string[];
   onReference?: (reference: string) => void;
+}
+
+function demoteAnchorLinks(html: string) {
+  return html.replace(/<a\b[^>]*>([\s\S]*?)<\/a>/g, '<span data-demoted-link="">$1</span>');
 }
 
 type MarkdownModules = {
@@ -469,6 +475,8 @@ export default function MarkdownRenderer({
   content,
   class: className,
   artifactLinks = false,
+  demoteLinks = false,
+  pendingContent,
   references,
   onReference,
 }: MarkdownRendererProps) {
@@ -518,7 +526,7 @@ export default function MarkdownRenderer({
   useLayoutEffect(() => {
     if (html == null || !containerRef.current) return;
     const container = containerRef.current;
-    container.innerHTML = html;
+    container.innerHTML = demoteLinks ? demoteAnchorLinks(html) : html;
 
     const handleImageActivate = (event: Event) => {
       if (event instanceof MouseEvent && event.type === 'auxclick' && event.button !== 1) return;
@@ -592,7 +600,11 @@ export default function MarkdownRenderer({
       });
       mermaidCancelled = true;
     };
-  }, [html, theme, artifactLinks, referenceKey]);
+  }, [html, theme, artifactLinks, demoteLinks, referenceKey]);
 
-  return <div ref={containerRef} class={`prose ${className || ''}`} />;
+  return (
+    <div ref={containerRef} class={`prose ${className || ''}`}>
+      {html == null ? pendingContent : null}
+    </div>
+  );
 }
