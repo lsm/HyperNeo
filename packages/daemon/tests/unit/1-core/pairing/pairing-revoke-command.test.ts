@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { OperationCaller } from '../../../../src/lib/operations/registry';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
-import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops';
 import { DevicePairingRepository } from '../../../../src/storage/repositories/device-pairing-repository';
+import { pairingRevokeWrites } from '../../../../src/storage/repositories/pairing-revoke-write';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
@@ -32,11 +32,8 @@ describe('pairing revocation command', () => {
     ...local,
     device: { deviceId: id, kind: 'human' },
   });
-  const revoke = async (id: string, caller = door) => {
-    const command = DB_OPS.get('pairing.revokeDevice.write');
-    if (!command) throw new Error('Unknown write DB op: pairing.revokeDevice.write');
-    return gateway.run(command, { method: 'revoke', args: [id, caller, now] });
-  };
+  const revoke = (id: string, caller = door) =>
+    gateway.call(pairingRevokeWrites, 'revoke', id, caller, now);
   test('an active human receives success after target revocation commits', async () => {
     const actor = seed('human');
     const target = seed();

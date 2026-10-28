@@ -4,7 +4,10 @@ Remeasure the full local call graph with lane-c-pairing-revoke-command-measure.c
 it must stay within 200 lines. Run lane-c-pairing-revoke-command-types.cjs with
 Bun from the repository root to typecheck the focused test and its imports using
 the daemon tests' strict configuration. The construction test must use the typed
-repository command, so its arguments and receipt remain checked.
+repository command, so its arguments and receipt remain checked. Report the full
+`bun run typecheck:tests` result separately: its existing diagnostic backlog and
+missing CI coverage are tracked in https://github.com/lsm/HyperNeo/issues/4691.
+The focused check is not evidence that the whole test suite typechecks.
 
 This construction slice registers a data-only command. The public device.revoke
 mutation and its connection-closing callback stay unchanged; activation must prove
@@ -15,6 +18,13 @@ VERIFY_PROOF_RUNTIME=deno. The wrapper supplies disposable HOME/data, no provide
 credentials, a refusing GitHub stub and ephemeral listeners. The helper refuses
 external HTTP and launches only the real Bun CLI's devices reader against its
 explicit owned session-door socket. No live daemon or port 8399 is used.
+
+The committed local Bun evidence was produced with Bun 1.4.3, rather than the
+repository's pinned release runtime 1.4.2. It proves that local runtime only;
+native-daemon proof under Bun 1.4.2 remains unverified here. CI pins Bun 1.4.2
+for its tests and for the CLI readback in the Deno smoke. The separate Deno
+daemon evidence uses the pinned Deno 2.9.4. Reuse an existing pinned runtime
+when available; do not install a runtime merely to relabel these results.
 
 Commit the failing native-command proof first: the baseline rejects the missing
 registered command. Deny new and cached main statements for active-device lookup

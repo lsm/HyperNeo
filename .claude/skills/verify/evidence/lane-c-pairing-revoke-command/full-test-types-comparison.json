@@ -1,0 +1,10 @@
+{
+  "command": "bun run typecheck:tests",
+  "beforeTargetErrors": 1,
+  "afterTargetErrors": 0,
+  "remainingDiagnostics": 4068,
+  "remainingDiagnosticHeadersUnchanged": true,
+  "remainingDiagnosticHeadersSha256": "e474d73d934ed70aa95c3e3a7c82f4322a55d22f74ecd31af010679d8af3afa9",
+  "existingCoverageIssue": "https://github.com/lsm/HyperNeo/issues/4691",
+  "fullSuiteTypecheckPassed": false
+}
