@@ -192,6 +192,10 @@ try {
     rejectReadsUntilClose = false;
     assert.match(await delayed, /outcome unknown/);
     try { await wait(delayedVictim.closed); } catch (error) { evidence.eventualClosureAfterReadRecovery = false; throw error; }
+    const observerReadsAtRecovery = observerReadPosts;
+    await wait(() => observerReadPosts > observerReadsAtRecovery);
+    evidence.observerContinuesAfterRecovery = true;
+    evidence.observerReadAdmissionsAfterRecovery = observerReadPosts - observerReadsBeforeOutage;
     assert.equal(commandPosts, writesBeforeOutage + 1); evidence.eventualClosureAfterReadRecovery = true;
     assert.equal(settledDuringOutage, true, 'persistent read failure must release the RPC caller without abandoning eventual socket closure');
     assert.equal(readPosts, readsBeforeOutage + 3); assert(observerReadPosts - observerReadsBeforeOutage >= 2); assert(observerReadPosts - observerReadsBeforeOutage <= 3);
