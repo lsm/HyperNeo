@@ -22,8 +22,13 @@ interface MarkdownRendererProps {
   onReference?: (reference: string) => void;
 }
 
-function demoteAnchorLinks(html: string) {
-  return html.replace(/<a\b[^>]*>([\s\S]*?)<\/a>/g, '<span data-demoted-link="">$1</span>');
+function demoteAnchorLinks(container: HTMLElement) {
+  container.querySelectorAll('a').forEach((anchor) => {
+    const span = document.createElement('span');
+    span.setAttribute('data-demoted-link', '');
+    while (anchor.firstChild) span.appendChild(anchor.firstChild);
+    anchor.replaceWith(span);
+  });
 }
 
 type MarkdownModules = {
@@ -528,7 +533,8 @@ export default function MarkdownRenderer({
   useLayoutEffect(() => {
     if (html == null || !containerRef.current) return;
     const container = containerRef.current;
-    container.innerHTML = demoteLinks ? demoteAnchorLinks(html) : html;
+    container.innerHTML = html;
+    if (demoteLinks) demoteAnchorLinks(container);
 
     const handleImageActivate = (event: Event) => {
       if (event instanceof MouseEvent && event.type === 'auxclick' && event.button !== 1) return;

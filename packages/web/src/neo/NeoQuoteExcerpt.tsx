@@ -7,9 +7,12 @@ let rendererPromise: Promise<Renderer> | null = null;
 
 function loadMarkdownRenderer(): Promise<Renderer> {
   if (!rendererPromise) {
-    rendererPromise = import('../components/chat/MarkdownRenderer.tsx').then(
-      (module) => module.default
-    );
+    rendererPromise = import('../components/chat/MarkdownRenderer.tsx')
+      .then((module) => module.default)
+      .catch((error) => {
+        rendererPromise = null;
+        throw error;
+      });
   }
   return rendererPromise;
 }
