@@ -50,9 +50,19 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
   );
   const reply = (result: unknown) => send({ jsonrpc: '2.0', id: msg.id, result });
   switch (msg.method) {
-    case 'connect':
-      reply({ protocolVersion: process.argv.includes('--bad-protocol') ? 99 : 3 });
+    case 'connect': {
+      const answer = () =>
+        reply({ protocolVersion: process.argv.includes('--bad-protocol') ? 99 : 3 });
+      if (!process.argv.includes('--held-connect')) answer();
+      else {
+        const timer = setInterval(() => {
+          if (!existsSync(join(process.cwd(), 'release-connect'))) return;
+          clearInterval(timer);
+          answer();
+        }, 5);
+      }
       break;
+    }
     case 'status.get':
       reply({
         version: process.argv.includes('--wrong-version')
