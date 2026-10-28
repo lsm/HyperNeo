@@ -1,0 +1,36 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "admissionFailureNeverCapturesOrFallsBack": true,
+  "unknownOutcomeNeverAutomaticallyReplayed": true,
+  "healthWhileWriterHeldMs": 2.484875000000102,
+  "deliberatelyHeldInitializationMs": 1384.220417,
+  "existingDenoCaptureFailsClosed": true,
+  "successfulCaptureAndSnapshotReadVerified": false,
+  "concurrentInitializationShared": true,
+  "pathRefusalsPreserved": true,
+  "currentOwnershipRechecked": true,
+  "maxLoopLagMs": 4.315541999999823,
+  "rssBytes": 545341440,
+  "walBytes": 4128272,
+  "commandPosts": 3,
+  "fullTransitiveCaptureOwnershipGraphMeasured": false,
+  "pass": true,
+  "registrationMainIdentitySqlAttempts": 0,
+  "workerMetrics": [
+    {
+      "roundTripMs": 2.6207500000000437,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.01308300000005147
+    },
+    {
+      "roundTripMs": 1232.33025,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.022832999999991443
+    }
+  ],
+  "runtime": "Deno 2.9.4",
+  "scope": "Identity activation/recovery plus existing safe_open_unavailable refusal; successful capture/bytes unverified",
+  "temporaryDaemonDataRemoved": true
+}

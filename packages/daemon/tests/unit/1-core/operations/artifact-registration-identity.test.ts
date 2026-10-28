@@ -96,12 +96,13 @@ describe('artifact registration committed identity admission', () => {
     await new Promise((done) => setTimeout(done, 10));
     const posts = gateway.writes;
     release();
-    expect(await results).toEqual(
-      Array.from({ length: 3 }, () => ({
+    const outcomes = await results;
+    expect(outcomes).toHaveLength(3);
+    for (const outcome of outcomes)
+      expect(outcome).toEqual({
         status: 'fulfilled',
         value: { accepted: false, reason: 'unsafe_path' },
-      }))
-    );
+      });
     expect(posts).toBe(1);
     expect(gateway.writes).toBe(1);
     expect(attempts).toBe(0);

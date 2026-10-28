@@ -13,11 +13,19 @@ and never replay automatically. Only a later explicit RPC may try initialization
 
 Hold a competing writer lock during two concurrent first successful registrations.
 Both wait for one identity command; health remains responsive. After release, both
-return exactly one receipt and one immutable row, proving the existing capture lane
+on Bun return exactly one receipt and one immutable row, proving the existing capture lane
 is shared. A repeated request retains the receipt. Current ownership and sensitive/
 traversal refusals remain authoritative; changing source produces a new immutable
 revision and retries return that revision. Read the first snapshot through the
-public read operation and observe the original bytes.
+public read operation and observe the original bytes on Bun.
+
+The native descriptor journey documents the existing Deno behavior: artifact reads
+use the Bun FFI backend, so Deno capture must refuse safe_open_unavailable. Assert
+that exact public refusal, no immutable row and no cached-initialization replay;
+retain its committed identity. Successful Deno capture/bytes are unverified, not a
+pass. No fallback or backend change is allowed here. A first fixed Deno proof
+incorrectly expected capture success; retain that failure and correct only this
+proof expectation to match the existing documented runtime contract.
 
 Scope the SQL guard honestly: registration must make zero main identity attempts.
 Existing read-only snapshot authorization performs separate main identity SELECTs;

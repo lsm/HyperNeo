@@ -6,6 +6,8 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { ArtifactRef, ArtifactRefusal } from '@hyperneo/shared/types/artifact-file';
 import type { Database } from '../../storage/sqlite-compat.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { artifactIdentityWrites } from '../../storage/repositories/artifact-file-identity-write.ts';
 import { ArtifactFileRepository } from '../../storage/repositories/artifact-file-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { getDataDir } from '../data-dir.ts';
@@ -68,8 +70,9 @@ export function storedKind(root: string, hash: string, path: string) {
   });
 }
 
-function registrationService(db: Database, data: string, home: string) {
-  const registry = new ArtifactFileRepository(db);
+async function registrationService(db: Database, data: string, home: string) {
+  const daemonId = await gatewayFor(db).call(artifactIdentityWrites, 'ensure', randomUUID());
+  const registry = new ArtifactFileRepository(db, daemonId);
   const root = join(data, 'artifacts');
   let lane = Promise.resolve();
   const policy = {
@@ -206,10 +209,13 @@ export function createArtifactRegistration(
       const db = database();
       let service = instances.get(db);
       if (!service) {
-        service = registrationService(db, data, home);
+        service = registrationService(db, data, home).catch((error) => {
+          instances.delete(db);
+          throw error;
+        });
         instances.set(db, service);
       }
-      return service(input, caller);
+      return (await service)(input, caller);
     },
   });
 }
