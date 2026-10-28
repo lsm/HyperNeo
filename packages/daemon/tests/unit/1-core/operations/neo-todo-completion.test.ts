@@ -134,7 +134,7 @@ describe('one completion rule for Neo todos', () => {
       const blocked = {
         state: 'blocked',
         blockedBy: 'check',
-        blockedReason: 'check_unmet: lsm/hyperneo#1, lsm/hyperneo#2 merged has not passed.',
+        blockedReason: 'check_unmet: "Both merged" has not passed.',
         finishedAt: null,
       };
 

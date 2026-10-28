@@ -239,8 +239,7 @@ export function planNeoTodoSettled(
 export function planNeoTodoCheck(
   todo: NeoTodo,
   result: NeoTodoCheckResult | null,
-  now: number,
-  started: boolean
+  now: number
 ): NeoTodoPatch | null {
   if (!result || todo.state === 'done') return null;
   if (result.done && !result.failed)
@@ -252,9 +251,7 @@ export function planNeoTodoCheck(
     return todo.state === 'blocked' && todo.blockedBy !== 'check'
       ? null
       : planNeoTodoBlocked(todo, 'check', result.blocked.reason, result.blocked.nextAction);
-  return todo.state === 'blocked' && todo.blockedBy === 'check'
-    ? { state: started ? 'doing' : 'todo' }
-    : null;
+  return null;
 }
 
 export function neoTodoNote(todo: NeoTodo): string {
@@ -266,7 +263,7 @@ export function neoTodoNote(todo: NeoTodo): string {
   if (todo.state === 'closed_unverified')
     return `Todo "${todo.title}" is closed unverified, never done: ${todo.reason ?? 'Its outcome check has not passed.'}`;
   if (todo.state === 'doing')
-    return `Todo "${todo.title}" reported, and nothing checks it: record evidence for "${todo.doneWhen}"; closing it without a passed outcome check is closed unverified, never done.\nIts report:\n${todo.report ?? ''}`;
+    return `Todo "${todo.title}" reported, and nothing checks it: record evidence for "${todo.doneWhen}"; closing it without a passed outcome check leaves it blocked, never done.\nIts report:\n${todo.report ?? ''}`;
   return `Todo "${todo.title}" is blocked: ${todo.blockedReason ?? ''}\nNext: ${
     todo.nextAction ?? ''
   }\nIts last report:\n${todo.report ?? '(none)'}`;
@@ -603,12 +600,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         continue;
       const next = completion
         ? await recompute(live, {}, now, completion)
-        : await finish(
-            live,
-            ask,
-            planNeoTodoCheck(live, result, now, sessions.readRef(live.id) !== null),
-            now
-          );
+        : await finish(live, ask, planNeoTodoCheck(live, result, now), now);
       if (
         completion &&
         next.state !== live.state &&

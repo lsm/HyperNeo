@@ -425,7 +425,8 @@ export function requireNeoTodoCardsAnswered<T extends TodoPlan>(
   questions: readonly NeoQuestion[]
 ): Gate<T> {
   const card =
-    ['done', 'closed_unverified'].includes(plan.patch.state ?? '') &&
+    (['done', 'closed_unverified'].includes(plan.patch.state ?? '') ||
+      plan.patch.blockedBy === 'check') &&
     questions.find((question) => question.state === 'open' && question.todoId === plan.todo.id);
   return card
     ? fail(`card_unanswered: card ${card.id} is still waiting for the human.`)
@@ -548,7 +549,10 @@ export function createNeoTodoOperations(
       if ('reason' in rebased) return rebased.reason;
       plan = rebased.value;
     }
-    if (['done', 'closed_unverified'].includes(plan.patch.state ?? '')) {
+    if (
+      ['done', 'closed_unverified'].includes(plan.patch.state ?? '') ||
+      plan.patch.blockedBy === 'check'
+    ) {
       const latest = requireNeoOpenTodo(todos.getTodo(plan.todo.id), todos.getAsk(plan.todo.askId));
       if ('reason' in latest) return latest.reason;
       if (!sameNeoTodoCheck(checked, input?.addUrls || input?.check ? plan.todo : latest.value))
@@ -728,7 +732,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.edit',
       description:
-        'Change a todo on an open ask you own: title or check {pack, kind, params}; the completion sentence is generated from the check, or reword it directly with doneWhen. addUrls appends PR URLs to its PR-merge check. Duplicate claims and URLs unsupported by the check are recorded without blocking the edit. Prefer editing to adding a duplicate PR todo. Or record completion evidence (done met for what you read, reported for a claim you cannot read); without a passed outcome check it closes unverified rather than done; attach a document or evidence file as the reference artifact.file.register returned in artifacts, with one sentence of evidence, not the pasted document. A todo with an unanswered card is refused until the human answers it. hold: "<reason>" holds a todo that has not started, so nothing starts it; hold: null releases it. Hold only what the human said must wait. priority changes where waiting work starts in the queue. instruction with target gives a todo that has not started and has no instruction its work; the queue then starts it like any approved step. A start target for a coding todo needs target.place from work.find.',
+        'Change a todo on an open ask you own: title or check {pack, kind, params}; the completion sentence is generated from the check, or reword it directly with doneWhen. addUrls appends PR URLs to its PR-merge check. Duplicate claims and URLs unsupported by the check are recorded without blocking the edit. Prefer editing to adding a duplicate PR todo. Or record completion evidence (done met for what you read, reported for a claim you cannot read); without a passed outcome check it stays open, blocked by its check, and finishes by itself once the check passes; attach a document or evidence file as the reference artifact.file.register returned in artifacts, with one sentence of evidence, not the pasted document. A todo with an unanswered card is refused until the human answers it. hold: "<reason>" holds a todo that has not started, so nothing starts it; hold: null releases it. Hold only what the human said must wait. priority changes where waiting work starts in the queue. instruction with target gives a todo that has not started and has no instruction its work; the queue then starts it like any approved step. A start target for a coding todo needs target.place from work.find.',
       inputSchema: Edit,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -764,7 +768,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.close',
       description:
-        'Close a todo with your reason. It is done only when its outcome check passes; otherwise it is visibly closed unverified, with the unmet check recorded. Its session stops if it is running, unless the todo only follows a session the human tracked. A todo with an unanswered card is refused until the human answers it.',
+        'Close a todo with your reason. It is done only when its outcome check passes; otherwise it stays open, blocked by its check with the unmet reason, and finishes by itself once the check passes; if the check is wrong, fix it with neo.todo.edit check. Its session stops if it is running, unless the todo only follows a session the human tracked. A todo with an unanswered card is refused until the human answers it.',
       inputSchema: Close,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

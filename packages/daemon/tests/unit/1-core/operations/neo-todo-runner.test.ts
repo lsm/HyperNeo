@@ -1323,23 +1323,23 @@ describe('planNeoTodoCheck', () => {
   };
   test('a passing check finishes an unfinished todo; a failing one fails it', () => {
     const doing = { state: 'doing', reason: null } as NeoTodo;
-    expect(planNeoTodoCheck(doing, { done: true, evidence: 'ok' }, 1, true)).toMatchObject({
+    expect(planNeoTodoCheck(doing, { done: true, evidence: 'ok' }, 1)).toMatchObject({
       state: 'done',
       evidence: 'ok',
       finishedAt: 1,
     });
-    expect(planNeoTodoCheck(doing, { done: false, evidence: null }, 1, true)).toBeNull();
+    expect(planNeoTodoCheck(doing, { done: false, evidence: null }, 1)).toBeNull();
     expect(
-      planNeoTodoCheck(doing, { done: false, evidence: null, failed: '#2 closed' }, 1, true)
+      planNeoTodoCheck(doing, { done: false, evidence: null, failed: '#2 closed' }, 1)
     ).toMatchObject({ state: 'failed', reason: '#2 closed', finishedAt: 1 });
     expect(
-      planNeoTodoCheck({ state: 'done' } as NeoTodo, { done: true, evidence: 'ok' }, 1, true)
+      planNeoTodoCheck({ state: 'done' } as NeoTodo, { done: true, evidence: 'ok' }, 1)
     ).toBeNull();
   });
 
-  test('a pack block blocks once and its clearing unblocks; other blockers stay', () => {
+  test('a pack block blocks once and stays until the check passes or fails', () => {
     const doing = { state: 'doing', reason: null } as NeoTodo;
-    const patch = planNeoTodoCheck(doing, { done: false, evidence: null, blocked }, 1, true);
+    const patch = planNeoTodoCheck(doing, { done: false, evidence: null, blocked }, 1);
     expect(patch).toEqual({
       state: 'blocked',
       blockedBy: 'check',
@@ -1347,22 +1347,19 @@ describe('planNeoTodoCheck', () => {
       nextAction: blocked.nextAction,
     });
     const held = { ...doing, ...patch } as NeoTodo;
-    expect(planNeoTodoCheck(held, { done: false, evidence: null, blocked }, 2, true)).toBeNull();
-    expect(planNeoTodoCheck(held, { done: false, evidence: null }, 2, false)).toEqual({
-      state: 'todo',
-    });
-    expect(planNeoTodoCheck(held, { done: false, evidence: null }, 2, true)).toEqual({
-      state: 'doing',
+    expect(planNeoTodoCheck(held, { done: false, evidence: null, blocked }, 2)).toBeNull();
+    expect(planNeoTodoCheck(held, { done: false, evidence: null }, 2)).toBeNull();
+    expect(planNeoTodoCheck(held, { done: true, evidence: 'ok' }, 3)).toMatchObject({
+      state: 'done',
     });
     expect(
-      planNeoTodoCheck({ ...held, blockedBy: 'worker' }, { done: false, evidence: null }, 2, true)
+      planNeoTodoCheck({ ...held, blockedBy: 'worker' }, { done: false, evidence: null }, 2)
     ).toBeNull();
     expect(
       planNeoTodoCheck(
         { ...held, blockedBy: 'worker' },
         { done: false, evidence: null, blocked },
-        2,
-        true
+        2
       )
     ).toBeNull();
   });
@@ -1391,7 +1388,7 @@ describe('neoTodoNote', () => {
         report: 'Waiting on CI',
       } as NeoTodo)
     ).toBe(
-      'Todo "T" reported, and nothing checks it: record evidence for "Lane merged"; closing it without a passed outcome check is closed unverified, never done.\nIts report:\nWaiting on CI'
+      'Todo "T" reported, and nothing checks it: record evidence for "Lane merged"; closing it without a passed outcome check leaves it blocked, never done.\nIts report:\nWaiting on CI'
     );
   });
 
@@ -1487,7 +1484,7 @@ describe('blocked todos', () => {
   };
   const warn = () => {};
 
-  test('a pack block is stored once, survives a restart and clears on progress', async () => {
+  test('a pack block is stored once, survives a restart and stays until the check passes', async () => {
     const { db, store, runner, told, add, setResult } = setup();
     const todo = add({ pack: 'coding', kind: 'pr_merged', params: {} });
     await runner.start(todo.id);
@@ -1506,8 +1503,14 @@ describe('blocked todos', () => {
     });
     setResult({ done: false, evidence: null });
     await runner.checkNow([todo.id], warn);
-    expect(store.getTodo(todo.id)).toMatchObject({ state: 'doing', blockedReason: null });
-    expect(told).toHaveLength(1);
+    expect(store.getTodo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'check' });
+    setResult({ done: true, evidence: '#1 merged' });
+    await runner.checkNow([todo.id], warn);
+    expect(store.getTodo(todo.id)).toMatchObject({ state: 'done', blockedReason: null });
+    expect(told).toEqual([
+      expect.stringContaining('is blocked:'),
+      'Todo "Rows" is done: #1 merged',
+    ]);
   });
 
   test('the same failure twice blocks instead of failing, and continuing unblocks it', async () => {
@@ -1624,15 +1627,18 @@ describe('blocked todos', () => {
     });
   });
 
-  test('unblocking a todo that never started sends no note', async () => {
+  test('a check block on a todo that never started finishes once its check passes', async () => {
     const { store, runner, told, add, setResult } = setup();
     const todo = add({ pack: 'coding', kind: 'pr_merged', params: {} });
     setResult({ done: false, evidence: null, blocked });
     await runner.checkNow([todo.id], warn);
-    setResult({ done: false, evidence: null });
+    setResult({ done: true, evidence: '#1 merged' });
     await runner.checkNow([todo.id], warn);
-    expect(store.getTodo(todo.id)).toMatchObject({ state: 'todo', blockedBy: null });
-    expect(told).toEqual([expect.stringContaining('is blocked: No progress for 2 hours')]);
+    expect(store.getTodo(todo.id)).toMatchObject({ state: 'done', blockedBy: null });
+    expect(told).toEqual([
+      expect.stringContaining('is blocked: No progress for 2 hours'),
+      'Todo "Rows" is done: #1 merged',
+    ]);
   });
 });
 

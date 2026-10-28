@@ -143,7 +143,7 @@ describe('a held todo', () => {
     const id = w.add('first');
     await w.edit(id, 'Wait for the human.');
     expect(
-      planNeoTodoCheck(w.todo(id), { done: false, failed: 'CI failed', evidence: null }, 5, false)
+      planNeoTodoCheck(w.todo(id), { done: false, failed: 'CI failed', evidence: null }, 5)
     ).toBe(null);
   });
 
