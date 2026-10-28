@@ -1,0 +1,24 @@
+{
+  "failingCommit": "a958d023246421fa85042e423d8319b718046c15",
+  "red": "7 expected unit failures; 10 characterization/source-pin tests pass; signed webhook acknowledges 200 but initial insertion and fallback both hit main SQL guard, no row commits",
+  "focusedTests": 72,
+  "strictTypeScript": "6.0.3: zero errors",
+  "repositoryCheck": "bun run check: exit 0; SQL ratchet unchanged",
+  "productionLines": 39,
+  "smokeRegistrationLines": 1,
+  "localEventAndMapperGraphLines": 185,
+  "auditedWriterSubtreeLines": 84,
+  "fullTransitiveFilterSecurityGraphMeasured": false,
+  "unverified": [
+    "Credential bootstrap and app webhook bridge (proof uses owned production GitHubService and signed listener sharing real daemon DB/bus)",
+    "Main-side counts and filter/config reads",
+    "Native Bun 1.4.2 (local Bun is 1.4.3)",
+    "Browser layout",
+    "Neo-owned deployment smoke"
+  ],
+  "existingWebhookProcessingErrorAcknowledgement": "HTTP 200 preserved; direct processEvent rejects original write error",
+  "legacyStorageFacade": "Retained unchanged for core cleanup",
+  "noInstalls": true,
+  "oneCheckout": true,
+  "proofDataRemoved": true
+}
