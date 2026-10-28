@@ -23,7 +23,7 @@ const measure = (file, names, classes = {}, whole = false) => {
  };visit(source);return units;
 };
 const localUnits = [
- ...(fs.existsSync('packages/daemon/src/storage/repositories/human-reset-conversation-reservation.ts') ? measure('packages/daemon/src/storage/repositories/human-reset-conversation-reservation.ts',[],{},true) : []),
+ ...(fs.existsSync('packages/daemon/src/storage/repositories/neo-conversation-reservation.ts') ? measure('packages/daemon/src/storage/repositories/neo-conversation-reservation.ts',[],{},true) : []),
  ...measure('packages/daemon/src/storage/repositories/human-device-reset-repository.ts',[],{},true),
  ...(fs.existsSync('packages/daemon/src/storage/repositories/human-device-reset-write.ts') ? measure('packages/daemon/src/storage/repositories/human-device-reset-write.ts',[],{},true) : []),
  ...measure('packages/daemon/src/storage/repositories/neo-repository.ts',['bindingColumns'],{NeoRepository:['constructor','defaultBinding','conversationId']}),

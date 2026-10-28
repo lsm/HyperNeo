@@ -1,7 +1,7 @@
 {
   "mainGuardSelfCheckPassed": true,
   "boundConversationFallbackPreserved": true,
-  "coldMs": 2.2228340000000344,
+  "coldMs": 2.087582999999995,
   "atomicReceiptAndCodeInvalidation": true,
   "publicReaderRetainsChunkedNoticeWithoutSecrets": true,
   "realCliRetainsDeviceHistory": true,
@@ -10,57 +10,57 @@
   "rollbackFailure": "Error: synthetic second notice failure",
   "boundConversationReservationRolledBackWithNotice": true,
   "secondNoticeFailureRollsBackAllState": true,
-  "healthWhileHeldMs": 3.985875000000078,
-  "heldMs": 30.276458000000048,
+  "healthWhileHeldMs": 3.3291249999999764,
+  "heldMs": 27.04733299999998,
   "currentHumansSelectedAfterWriterWait": true,
-  "concurrentMs": 0.7727909999998701,
+  "concurrentMs": 0.7047919999999976,
   "distinctEmptyResetsRetainNotices": true,
   "beforeCommitFailure": "Error: synthetic human-reset admission rejected before commit",
   "lostReceiptFailure": "Error: synthetic committed human-reset reply lost; outcome unknown",
   "unknownOutcomeNotReplayed": true,
   "writerRecovered": true,
-  "maxLoopLagMs": 3.7128329999999323,
-  "rssBytes": 162399312,
+  "maxLoopLagMs": 3.980625000000032,
+  "rssBytes": 182289536,
   "walBytes": 37112,
   "publicResetOperationUnwired": true,
   "commandPosts": 8,
   "mainSqlAttempts": 0,
   "timings": [
     {
-      "roundTripMs": 2.1493749999999636,
+      "roundTripMs": 2.0233749999999873,
       "requestBytes": 41,
       "replyBytes": 1775,
-      "encodeMs": 0.005999999999971806
+      "encodeMs": 0.005208000000038737
     },
     {
-      "roundTripMs": 30.158790999999837,
+      "roundTripMs": 26.975374999999985,
       "requestBytes": 41,
       "replyBytes": 1860,
-      "encodeMs": 0.01695900000004258
+      "encodeMs": 0.011415999999826454
     },
     {
-      "roundTripMs": 0.4758750000000873,
+      "roundTripMs": 0.4351249999999709,
       "requestBytes": 41,
       "replyBytes": 138,
-      "encodeMs": 0.002040999999962878
+      "encodeMs": 0.0012500000000272848
     },
     {
-      "roundTripMs": 0.699542000000065,
+      "roundTripMs": 0.6410000000000764,
       "requestBytes": 41,
       "replyBytes": 138,
-      "encodeMs": 0.001125000000001819
+      "encodeMs": 0.0010829999998804851
     },
     {
-      "roundTripMs": 6.896417000000156,
+      "roundTripMs": 6.909709000000021,
       "requestBytes": 41,
       "replyBytes": 215,
-      "encodeMs": 0.0028330000000096334
+      "encodeMs": 0.003332999999884123
     },
     {
-      "roundTripMs": 6.823167000000012,
+      "roundTripMs": 7.353833000000122,
       "requestBytes": 41,
       "replyBytes": 138,
-      "encodeMs": 0.002207999999882304
+      "encodeMs": 0.007500000000163709
     }
   ],
   "runtime": "Bun 1.4.3",

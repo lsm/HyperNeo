@@ -1,7 +1,7 @@
 {
   "mainGuardSelfCheckPassed": true,
   "boundConversationFallbackPreserved": true,
-  "coldMs": 2.3984999999997854,
+  "coldMs": 2.124917000000096,
   "atomicReceiptAndCodeInvalidation": true,
   "publicReaderRetainsChunkedNoticeWithoutSecrets": true,
   "realCliRetainsDeviceHistory": true,
@@ -10,57 +10,57 @@
   "rollbackFailure": "Error: synthetic second notice failure",
   "boundConversationReservationRolledBackWithNotice": true,
   "secondNoticeFailureRollsBackAllState": true,
-  "healthWhileHeldMs": 2.974166999999852,
-  "heldMs": 30.653583000000253,
+  "healthWhileHeldMs": 5.495750000000044,
+  "heldMs": 47.11845800000037,
   "currentHumansSelectedAfterWriterWait": true,
-  "concurrentMs": 0.6406669999996666,
+  "concurrentMs": 0.5461669999999685,
   "distinctEmptyResetsRetainNotices": true,
   "beforeCommitFailure": "Error: synthetic human-reset admission rejected before commit",
   "lostReceiptFailure": "Error: synthetic committed human-reset reply lost; outcome unknown",
   "unknownOutcomeNotReplayed": true,
   "writerRecovered": true,
-  "maxLoopLagMs": 3.489166999999725,
-  "rssBytes": 535789568,
+  "maxLoopLagMs": 3.936999999999898,
+  "rssBytes": 549830656,
   "walBytes": 4128272,
   "publicResetOperationUnwired": true,
   "commandPosts": 8,
   "mainSqlAttempts": 0,
   "timings": [
     {
-      "roundTripMs": 2.1695420000000922,
+      "roundTripMs": 1.9353330000001279,
       "requestBytes": 41,
       "replyBytes": 1775,
-      "encodeMs": 0.01295799999979863
+      "encodeMs": 0.008166999999957625
     },
     {
-      "roundTripMs": 30.50316699999985,
+      "roundTripMs": 46.99520900000016,
       "requestBytes": 41,
       "replyBytes": 1860,
-      "encodeMs": 0.01670800000010786
+      "encodeMs": 0.012874999999894499
     },
     {
-      "roundTripMs": 0.34408299999995506,
+      "roundTripMs": 0.3040000000000873,
       "requestBytes": 41,
       "replyBytes": 138,
-      "encodeMs": 0.002250000000003638
+      "encodeMs": 0.0019999999999527063
     },
     {
-      "roundTripMs": 0.543999999999869,
+      "roundTripMs": 0.48012500000004366,
       "requestBytes": 41,
       "replyBytes": 138,
-      "encodeMs": 0.003707999999733147
+      "encodeMs": 0.0016249999998763087
     },
     {
-      "roundTripMs": 5.1963339999997515,
+      "roundTripMs": 4.121041999999761,
       "requestBytes": 41,
       "replyBytes": 215,
-      "encodeMs": 0.012375000000247383
+      "encodeMs": 0.0034160000000156288
     },
     {
-      "roundTripMs": 4.945665999999619,
+      "roundTripMs": 4.225540999999794,
       "requestBytes": 41,
       "replyBytes": 138,
-      "encodeMs": 0.007750000000214641
+      "encodeMs": 0.0034590000004754984
     }
   ],
   "runtime": "Deno 2.9.4",
