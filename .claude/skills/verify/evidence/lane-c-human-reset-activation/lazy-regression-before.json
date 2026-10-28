@@ -1,0 +1,11 @@
+{
+  "head": "b67062e7859cd1de1a01f246cd0c6fb0a4b15623",
+  "ciFailure": "Operation catalog construction eagerly invokes the database supplier from human-reset coordinator initialization.",
+  "localCommand": "daemon Vitest human-reset activation plus the five failing catalog/runtime files, filtered to discover|lazy",
+  "exitCode": 1,
+  "failed": 7,
+  "passed": 4,
+  "skipped": 182,
+  "newRegression": "catalog discovery and refused reset calls stay lazy until first authorized execution",
+  "observed": "Both synthetic-uninitialized discovery and all six CI lazy-discovery contracts fail before mutation execution."
+}

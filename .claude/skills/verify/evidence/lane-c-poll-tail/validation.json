@@ -1,0 +1,27 @@
+{
+  "failingCommit": "2fdcf517c256bf8e74e48287ee2d0c02b4ee93b0",
+  "receiverCharacterizationCommit": "13822a6996adb90b80497427ebbb96be561ae99e",
+  "red": "9 expected delivery failures; dependency contract passes; actual native poll job keeps one uncertain commit instead of six rows",
+  "focusedTests": 67,
+  "callbackReceiverPreserved": true,
+  "strictTypeScript": "6.0.3: zero errors",
+  "repositoryCheck": "bun run check: exit 0; SQL ratchet unchanged",
+  "productionLines": 14,
+  "changedConstructorAndWrapperGraphLines": 22,
+  "auditedEventLines": 185,
+  "auditedWriterLines": 84,
+  "fullTransitiveGraphMeasured": false,
+  "sharedCoreChanges": false,
+  "unverified": [
+    "Credential bootstrap and GitHubService startup registration (fixture directly registers production poll handler with production poller and event-service callback)",
+    "Full SDK/network/collector transitive closure",
+    "Main-side counts/filter reads",
+    "Native Bun 1.4.2 (local Bun is 1.4.3)",
+    "Real GitHub and browser layout",
+    "Neo-owned deployment smoke"
+  ],
+  "initialFixtureFailure": "Existing global filter upsert conflict stopped the first setup before polling; those logs retained and not counted as reproduction",
+  "noInstalls": true,
+  "oneCheckout": true,
+  "proofDataRemoved": true
+}

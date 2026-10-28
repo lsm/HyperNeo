@@ -52,6 +52,7 @@ import {
 } from './lib/internal-command-bus.ts';
 import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus.ts';
 import { setupRPCHandlers } from './lib/rpc-handlers/index.ts';
+import { connectedDeviceReads } from './storage/repositories/connected-device-read.ts';
 import { applyProviderModelAllowlistsToEnv } from './lib/rpc-handlers/settings-handlers.ts';
 import { WebSocketServerTransport } from './lib/websocket-server-transport.ts';
 import { createWebSocketHandlers } from './routes/setup-websocket.ts';
@@ -694,6 +695,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       name: 'websocket-server',
       debug: config.nodeEnv === 'development',
       router,
+      readInactiveDevices: (ids) => db.gateway.call(connectedDeviceReads, 'inactive', ids),
     });
 
     messageHub.registerTransport(transport);
@@ -772,6 +774,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         defaultModel: config.defaultModel,
         maxTokens: config.maxTokens,
         temperature: config.temperature,
+        disableWorktrees: config.disableWorktrees,
       },
       jobQueue,
       jobProcessor,

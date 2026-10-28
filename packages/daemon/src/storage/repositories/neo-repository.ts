@@ -1,3 +1,4 @@
+import type { NeoProjectSaveRequest } from '../../lib/neo/project-save.ts';
 import { neoProjectMoveWrites } from './neo-project-move-writes.ts';
 import type { OperationCaller } from '../../lib/operations/registry.ts';
 import { neoProjectForgetWrites } from './neo-project-forget-writes.ts';
@@ -10,6 +11,7 @@ import type { NeoBinding, NeoProject } from '@hyperneo/shared/types/neo-context'
 import { neoProjectMoveReason, neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
 import type { NeoProjectFacts } from '../../lib/neo/project-cleanup.ts';
 import type { Database } from '../sqlite-compat.ts';
+import { reserveNeoConversation } from './neo-conversation-reservation.ts';
 import { NeoProjectMergeRepository } from './neo-project-merge-repository.ts';
 
 const concernColumns = `id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,
@@ -134,6 +136,16 @@ export class NeoRepository {
     return this.db
       .prepare(`SELECT ${concernColumns} FROM neo_concerns WHERE id = ?`)
       .get(id) as NeoProject | null;
+  }
+
+  async saveProjectCurrent(input: NeoProjectSaveRequest, caller: OperationCaller) {
+    const reply = await gatewayFor(this.db).call(neoProjectMoveWrites, 'save', input, {
+      source: caller.source,
+      principal: caller.principal,
+      sessionId: caller.sessionId,
+    });
+    if (reply.changed) this.notify();
+    return reply.result;
   }
 
   saveProject(input: NeoProjectInput, expectedRevision: number): NeoProject | null {
@@ -348,11 +360,7 @@ export class NeoRepository {
     if (stored) return stored.id;
     const session = this.defaultBinding()?.sessionId;
     if (!session?.startsWith('neo:')) return null;
-    this.db
-      .prepare(
-        'INSERT OR IGNORE INTO neo_conversation (singleton, id, created_at) VALUES (1, ?, ?)'
-      )
-      .run(session.slice(4), Date.now());
+    reserveNeoConversation(this.db, session.slice(4), Date.now());
     return (this.db.prepare('SELECT id FROM neo_conversation').get() as { id: string }).id;
   }
 }

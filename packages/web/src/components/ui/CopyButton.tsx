@@ -62,7 +62,7 @@ export function CopyButton({
       onClick={handleCopy}
       title={copied ? (copiedLabel ?? 'Copied!') : label}
       aria-label={showFeedback ? label : undefined}
-      class={`p-1.5 rounded transition-colors ${stateClasses} ${className}`}
+      class={`copy-button p-1.5 rounded transition-colors ${stateClasses} ${className}`}
     >
       {copied ? (
         <CheckGlyph

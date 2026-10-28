@@ -1,0 +1,22 @@
+{
+  "native": [
+    {
+      "runtime": "Bun 1.4.3",
+      "semanticEvidenceIdentical": true,
+      "targetMainSqlAttempts": 0,
+      "temporaryDataRemoved": true
+    },
+    {
+      "runtime": "Deno 2.9.4",
+      "semanticEvidenceIdentical": true,
+      "targetMainSqlAttempts": 0,
+      "temporaryDataRemoved": true
+    }
+  ],
+  "sqlBytesIdentical": true,
+  "coreAppendSubtreeUnchanged": true,
+  "lexicalDelta": {
+    "prepare": -1,
+    "run": -1
+  }
+}

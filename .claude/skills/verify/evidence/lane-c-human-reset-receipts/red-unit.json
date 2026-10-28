@@ -1,0 +1,11 @@
+{
+  "exitCode": 1,
+  "passed": 1,
+  "failed": 7,
+  "observations": [
+    "Reader command is not registered",
+    "Supplied request UUID is ignored",
+    "Duplicate request UUID starts a second reset instead of rejecting"
+  ],
+  "legacyResetPreserved": true
+}

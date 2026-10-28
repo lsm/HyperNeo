@@ -309,6 +309,15 @@ temporary daemon data and run directory you created.
 
 ## Metadata-only daemon proofs
 
+For in-process helpers, `disableWorktrees` belongs inside the `config` supplied
+to `createDaemonApp`, not among the app options. Verify it through session.create
+in a disposable Git repository when worktree isolation matters. The parsed
+`disableGoalProcessing` field currently has no runtime consumer; it is not an
+isolation control. Metadata-only helpers that do not exercise jobs must await
+`app.jobProcessor.stop()` before seeding fixtures, and use the fresh synthetic DB
+without saved goal work. Job journeys explicitly start the processor they test.
+
+
 Construction-only writer journeys may invoke a registered command through the
 isolated daemon gateway and verify its receipt through a public reader. Record
 that public mutation callers remain unchanged; repeat the proof through those
@@ -349,3 +358,5 @@ The workflow configures that permission on its disposable CI VMs and runs a
 bubblewrap startup probe before testing. Local Ubuntu verification requires a
 host policy allowing those namespaces; this journey changes no local host policy.
 The cleanup OS boundary stays enabled during these tests.
+
+For opt-in speech separate from publications, follow [spoken replies](journeys/spoken-replies.md).

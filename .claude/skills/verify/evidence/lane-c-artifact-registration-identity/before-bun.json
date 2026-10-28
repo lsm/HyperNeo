@@ -1,0 +1,9 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "registrationMainIdentitySqlAttempts": 1,
+  "workerMetrics": [],
+  "runtime": "Bun 1.4.3",
+  "expectedFailure": "Public artifact.file.register executes identity SQL on main instead of awaiting writer admission.",
+  "passBeforeFix": false,
+  "temporaryDaemonDataRemoved": true
+}

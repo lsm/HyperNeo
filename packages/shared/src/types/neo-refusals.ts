@@ -1,4 +1,16 @@
 export const NEO_REFUSALS: Readonly<Record<string, string>> = {
+  neo_speech_not_available:
+    'Spoken replies require a bound Neo session and an opted-in human client. Continue with a screen reply if unavailable.',
+  speech_receipt_mismatch:
+    'The speech receipt belongs to a different request or client. Reuse a requestId only for identical speech and acknowledge only speech delivered to this client.',
+  voice_replies_off:
+    'No connected human client has enabled spoken replies for this Neo session. Reply on screen instead.',
+  speech_queue_full:
+    'The connected client already has four utterances awaiting playback. Keep the remaining answer on screen instead of retrying in a loop.',
+  speech_client_disconnected:
+    'The spoken reply could not be delivered to its client. Reply on screen and wait for the human to reconnect.',
+  invalid_speech:
+    'Pass a nonempty natural spoken utterance of at most 500 characters with a stable requestId.',
   merge_receipt_changed:
     'The durable merge receipt does not match these assignments. Re-read the todo and its current-head assignments before preparing a merge.',
   head_changed_before_manual_merge:

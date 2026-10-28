@@ -1,6 +1,12 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Database } from '../sqlite-compat.ts';
 import { defineDbOp } from '../db-gateway/db-op.ts';
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { pairingApproveWrite } from './pairing-approve-write.ts';
+import { pairingRedeemWrite } from './pairing-redeem-write.ts';
+import { pairingCodeCreateWrites, type PairingCodeCaller } from './pairing-code-create-write.ts';
+import { pairingRevokeWrites } from './pairing-revoke-write.ts';
+import { pairingStateReads } from './pairing-state-read.ts';
 
 export type DeviceKind = 'human' | 'relay' | 'daemon';
 
@@ -120,6 +126,24 @@ export const recordWouldRefuse = defineDbOp({
 export class DevicePairingRepository {
   constructor(private readonly db: Database) {}
 
+  get closeSignal(): AbortSignal {
+    return gatewayFor(this.db).closeSignal;
+  }
+
+  isActiveDeviceAsync(id: string) {
+    return gatewayFor(this.db).call(pairingStateReads, 'isActiveDevice', id);
+  }
+
+  revokeAsync(id: string, caller: PairingCodeCaller, now: number) {
+    const { source, principal, device } = caller;
+    const actor = {
+      source,
+      principal,
+      device: device && { deviceId: device.deviceId, kind: device.kind },
+    };
+    return gatewayFor(this.db).call(pairingRevokeWrites, 'revoke', id, actor, now);
+  }
+
   listWouldRefuse(): {
     reason: 'host_not_allowed' | 'origin_not_allowed';
     kind: 'http' | 'ws' | 'preflight';
@@ -205,6 +229,10 @@ export class DevicePairingRepository {
       .get() as { all: number; humans: number };
   }
 
+  createCodeAsync(kind: DeviceKind, name: string | null, caller: PairingCodeCaller, now: number) {
+    return gatewayFor(this.db).call(pairingCodeCreateWrites, 'create', kind, name, caller, now);
+  }
+
   createCode(
     kind: DeviceKind,
     name: string | null,
@@ -234,6 +262,10 @@ export class DevicePairingRepository {
       .all(now) as { id: string; kind: DeviceKind; name: string | null; expiresAt: number }[];
   }
 
+  approveAsync(codeId: string, deviceId: string, now: number) {
+    return gatewayFor(this.db).run(pairingApproveWrite, { codeId, deviceId, now });
+  }
+
   approve(id: string, now: number): boolean {
     return (
       this.db
@@ -260,6 +292,10 @@ export class DevicePairingRepository {
         'SELECT 1 FROM (SELECT recovered_at FROM human_device_resets ORDER BY rowid DESC LIMIT 1) WHERE recovered_at IS NULL'
       )
       .get();
+  }
+
+  redeemAsync(code: string, name: string, now: number) {
+    return gatewayFor(this.db).call(pairingRedeemWrite, 'redeem', code, name, now);
   }
 
   redeem(

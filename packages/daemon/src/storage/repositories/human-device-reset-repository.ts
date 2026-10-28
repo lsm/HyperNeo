@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoRepository } from './neo-repository.ts';
 import { NeoPublicationRepository } from './neo-publication-repository.ts';
+import { reserveNeoConversation } from './neo-conversation-reservation.ts';
 
-export function resetHumanDevices(db: Database, now: number) {
+export function resetHumanDevices(db: Database, now: number, requestId?: string) {
   return db.transaction(() => {
-    const id = randomUUID();
+    const id = requestId ?? randomUUID();
     const devices = db
       .prepare(
         "UPDATE paired_devices SET revoked_at = ? WHERE kind = 'human' AND revoked_at IS NULL RETURNING id, name"
@@ -20,9 +21,7 @@ export function resetHumanDevices(db: Database, now: number) {
       JSON.stringify(devices)
     );
     const conversationId = new NeoRepository(db).conversationId() ?? randomUUID();
-    db.prepare(
-      'INSERT OR IGNORE INTO neo_conversation (singleton, id, created_at) VALUES (1, ?, ?)'
-    ).run(conversationId, now);
+    reserveNeoConversation(db, conversationId, now);
     const origin = { sessionId: 'daemon:device-recovery', messageId: id };
     const shortText = `Human-device pairing reset at ${new Date(now).toISOString()}. Cleared ${devices.length} active human devices. The next human device may pair without Allow.`;
     for (let start = 0; start < Math.max(devices.length, 1); start += 20) {

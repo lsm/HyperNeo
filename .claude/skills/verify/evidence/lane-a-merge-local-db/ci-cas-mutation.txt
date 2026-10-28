@@ -1,0 +1,38 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/coding-merge-receipt-writer.test.ts:
+(pass) manual merge receipt records and validates on the writer with guarded main [5.18ms]
+(pass) manual merge receipt records and validates on the writer with read-only main [1.75ms]
+116 |     };
+117 |     try {
+118 |       const state = await repo.mergeLocalCurrent(input);
+119 |       expect(state.live).toBe(true);
+120 |       writer.prepare("UPDATE neo_todos SET state='done' WHERE id=?").run(input.todoId);
+121 |       expect(await repo.recordGateCurrent(input.todoId, gate, { input, state })).toBe(false);
+                                                                                       ^
+error: expect(received).toBe(expected)
+
+Expected: false
+Received: true
+
+      at <anonymous> (/Users/lsm/.codex/worktrees/lane-a-merge-local/neokai/packages/daemon/tests/unit/1-core/operations/coding-merge-receipt-writer.test.ts:121:82)
+(fail) a closed todo cannot receive a queued merge receipt with guarded main [546.06ms]
+116 |     };
+117 |     try {
+118 |       const state = await repo.mergeLocalCurrent(input);
+119 |       expect(state.live).toBe(true);
+120 |       writer.prepare("UPDATE neo_todos SET state='done' WHERE id=?").run(input.todoId);
+121 |       expect(await repo.recordGateCurrent(input.todoId, gate, { input, state })).toBe(false);
+                                                                                       ^
+error: expect(received).toBe(expected)
+
+Expected: false
+Received: true
+
+      at <anonymous> (/Users/lsm/.codex/worktrees/lane-a-merge-local/neokai/packages/daemon/tests/unit/1-core/operations/coding-merge-receipt-writer.test.ts:121:82)
+(fail) a closed todo cannot receive a queued merge receipt with read-only main [589.09ms]
+
+ 2 pass
+ 2 fail
+ 12 expect() calls
+Ran 4 tests across 1 file. [1197.00ms]

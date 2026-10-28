@@ -22,7 +22,12 @@ import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { simpleGit } from 'simple-git';
 import type { WorkChatKind, WorkChatMatch } from '../../../storage/work-chat-search.ts';
-import { recordStartedWork, type StartedWork } from '../../../storage/work-started-sessions.ts';
+import {
+  markWorkUnusable,
+  readFreeWorkers,
+  recordStartedWork,
+  type StartedWork,
+} from '../../../storage/work-started-sessions.ts';
 import {
   ACP_AGENTS,
   createAcpAgentAdapter,
@@ -63,7 +68,11 @@ import {
   taskOperationRejection,
 } from '../../drivers/space-adapter.ts';
 import type { PlaceGroup, WorkAdapter } from '../../drivers/types.ts';
-import { createWorkVerbOperations } from '../../drivers/work-operations.ts';
+import {
+  createWorkVerbOperations,
+  type WorkSendUncertainty,
+} from '../../drivers/work-operations.ts';
+import { sessionSender } from '../../messaging/message-send.ts';
 import { renderAddress } from '../../mailbox/address.ts';
 import { createNeoSessionArchiveOperation } from '../../neo/session-archive-operation.ts';
 import { reject } from '../../drivers/work-operations.ts';
@@ -654,6 +663,30 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       return ask?.status === 'open' && ask.sessionId === sessionId;
     },
     recordStarted: (ref: StartedWork) => recordStartedWork(db(), ref),
+    freeWorkers: (adapter: string) => readFreeWorkers(db(), adapter),
+    markUnusable: (ref: StartedWork) => markWorkUnusable(db(), ref),
+    reportUncertain: async (report: WorkSendUncertainty) => {
+      const to = sessionSender(report.from) ?? new NeoRepository(db()).defaultBinding()?.sessionId;
+      if (!to) throw new Error('No originating session or default Neo for the uncertainty report.');
+      const completion =
+        report.lastCompletion === undefined
+          ? 'unavailable'
+          : new Date(report.lastCompletion).toISOString();
+      const outcome = await invokeOperation(
+        context.deps.sessionManager.getOperationRegistry(),
+        'message.send',
+        {
+          to,
+          kind: 'blocked',
+          text: `Codex Desktop handoff uncertain for ${report.ref.id}. ${report.detail} Last confirmed engine completion: ${completion}. Inspect work.status and the Desktop queue; do not automatically replay or start another writer. Engine completion does not prove this input was consumed.`,
+          idempotencyKey: `desktop-send-uncertain:${report.id}`,
+          from: `session:codex-desktop:${report.ref.id}`,
+        },
+        { source: 'rpc' }
+      );
+      if (outcome.kind !== 'completed' || (outcome.value as { kind: string }).kind !== 'accepted')
+        throw new Error(JSON.stringify(outcome));
+    },
     namedFolder: {
       machine,
       homeDir: homedir(),

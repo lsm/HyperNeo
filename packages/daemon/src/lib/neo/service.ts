@@ -1,3 +1,6 @@
+import { NeoSpeech } from './speech.ts';
+import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
+import { neoSessionTrackWrites } from '../../storage/repositories/neo-session-track-write.ts';
 import { createNeoQuestionAnswerDelivery } from './question-answer-delivery.ts';
 import { wakeFailedHyperneoSession } from './query-failure.ts';
 import type { UUID } from 'node:crypto';
@@ -21,6 +24,7 @@ import { wakeStalledAsks } from './stalled-asks.ts';
 import type { SessionSchedule } from '../../storage/repositories/session-schedule-repository.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { receivedNeoHumanInput } from './human-input.ts';
+import { parseProcessingState } from '../session/space-session-reads.ts';
 import { workerIdentity, workerEngine } from '@hyperneo/shared/types/worker-identity';
 import { z } from 'zod';
 import { WorkSummarySchema } from '../drivers/types.ts';
@@ -89,12 +93,14 @@ const MODEL_CHANGE_SOURCES = new Set([
 
 export class NeoService {
   readonly repo: NeoRepository;
+  readonly speech: NeoSpeech;
   readonly publications: NeoPublicationRepository;
   readonly asks: NeoConversationAskRepository;
   readonly publish: ReturnType<typeof createNeoPublisher>;
   readonly todos: NeoAskTodoRepository;
   readonly todoSessions: NeoTodoSessionRepository;
   readonly todoRunner: NeoTodoRunner;
+  readonly runDbOp: RunDbOp;
   get sessionNotices(): NeoSessionNotice[] {
     return this.sessionWatcher.sessionNotices;
   }
@@ -136,6 +142,7 @@ export class NeoService {
     readonly events: InternalEventBus<DaemonInternalEventMap>,
     readonly publishSettings?: (settings: GlobalSettings) => void
   ) {
+    this.runDbOp = gatewayFor(db.getDatabase()).run.bind(gatewayFor(db.getDatabase()));
     this.notifyChanged = () => {
       hub.event('neo.changed', {});
       void events.publish('neo.changed', {});
@@ -164,6 +171,11 @@ export class NeoService {
       notifyChanged: () => this.notifyChanged(),
     });
     this.repo = new NeoRepository(db.getDatabase(), this.notifyChanged);
+    this.speech = new NeoSpeech(
+      hub,
+      this.runDbOp,
+      (id) => this.repo.getBindingBySession(id)?.kind === 'neo'
+    );
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
     this.todos = new NeoAskTodoRepository(db.getDatabase(), this.notifyChanged, () =>
@@ -212,6 +224,13 @@ export class NeoService {
     };
     this.publish = createNeoPublisher({
       receivedHumanInput: (sessionId, id) => !!receivedNeoHumanInput(this, sessionId, id),
+      currentHumanInputs: (sessionId) => {
+        const state = parseProcessingState(this.db.getSession(sessionId)?.processingState);
+        if (state.status !== 'processing') return [];
+        if (Array.isArray(state.messageIds))
+          return state.messageIds.filter((id): id is string => typeof id === 'string');
+        return typeof state.messageId === 'string' ? [state.messageId] : [];
+      },
       getBinding: (id) => this.repo.getBindingBySession(id),
       getRootBinding: () => this.repo.defaultBinding(),
       hasProject: (id) => !!this.repo.getProject(id),
@@ -411,6 +430,7 @@ export class NeoService {
     this.triggerDeliveryRetryAt.clear();
     if (this.watching) await this.watching;
     await this.sessionWatcher.flushSessionNoticeGroup();
+    await this.speech.dispose();
   }
 
   readWorker(ref: WorkRef) {
@@ -751,36 +771,26 @@ export class NeoService {
     await this.watching;
   }
 
-  async trackSession(root: string, notice: NeoSessionNotice, now: number): Promise<{ ok: true }> {
-    const askId = crypto.randomUUID();
-    const messageId = `neo-track:${notice.key}:${askId}`;
-    const done = 'The session finishes its work';
-    const ask = this.todos.openAsk({
-      id: askId,
-      projectId: null,
-      sessionId: root,
-      originMessageId: messageId,
-      title: notice.title,
-      request: `See ${notice.title} through.`,
-      createdAt: now,
+  async trackSession(
+    _root: string,
+    notice: NeoSessionNotice,
+    now: number
+  ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const receipt = await this.runDbOp(neoSessionTrackWrites, {
+      askId: crypto.randomUUID(),
+      todoId: crypto.randomUUID(),
+      notice,
+      now,
     });
-    const todo = this.todos.addTodo(
-      crypto.randomUUID(),
-      ask.id,
-      { title: done, doneWhen: done, check: null, instruction: null, named: null },
-      now
-    );
-    this.todoSessions.create(todo.id, { verb: 'adopt', ref: notice.ref });
-    this.todoSessions.recordRef(todo.id, notice.ref, now, notice.link);
-    this.todoSessions.recordFollowAnchor(todo.id, now);
-    await this.todoRunner.recompute(todo, { state: 'doing', startedAt: now }, now);
+    if (!receipt.ok) return receipt;
+    this.notifyChanged();
     const content = fillPrompt(NEO_SESSION_TRACK, {
-      title: JSON.stringify(notice.title),
-      ref: JSON.stringify(notice.ref),
-      askId: JSON.stringify(ask.id),
-      todoId: JSON.stringify(todo.id),
+      title: JSON.stringify(receipt.ask.title),
+      ref: JSON.stringify(receipt.ref),
+      askId: JSON.stringify(receipt.ask.id),
+      todoId: JSON.stringify(receipt.todo.id),
     });
-    await this.deliver(root, messageId, content, root);
+    await this.deliver(receipt.root, receipt.messageId, content, receipt.root);
     return { ok: true };
   }
 

@@ -129,11 +129,11 @@ try {
   };
   const path = join(run, 'result.txt');
   const fileTodo = await add('evidence', { path });
-  await close(fileTodo, 'closed_unverified');
+  await close(fileTodo, 'blocked');
   writeFileSync(path, 'Synthetic result');
   await close(fileTodo, 'done');
   const artifactTodo = await add('evidence', { artifact: 'synthetic-artifact' });
-  await close(artifactTodo, 'closed_unverified');
+  await close(artifactTodo, 'blocked');
   const artifacts = new ArtifactFileRepository(db);
   artifacts.save(
     { kind: 'ask', id: 'ask' },
@@ -177,7 +177,7 @@ try {
   writeFileSync(compare, JSON.stringify({ status: 'diverged' }));
   await close(
     await add('deployed', { repo: 'lsm/HyperNeo', sha: 'b'.repeat(40) }),
-    'closed_unverified'
+    'blocked'
   );
   receipts.push({
     state: store.listTodos('ask'),

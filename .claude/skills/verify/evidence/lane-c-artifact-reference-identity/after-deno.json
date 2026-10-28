@@ -1,0 +1,87 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "nonHumanAndDiscoveryDoNotInitialize": true,
+  "retryIdValidationBeforeInitialization": true,
+  "admissionFailureNeverCapturesOrFallsBack": true,
+  "unknownOutcomeNeverAutomaticallyReplayed": true,
+  "healthWhileWriterHeldMs": 2.8545829999998205,
+  "deliberatelyHeldInitializationMs": 1459.478,
+  "sourceLoadedAfterCommittedIdentityReceipt": true,
+  "uncontendedConcurrentResolutionMs": 13.016250000000127,
+  "existingDenoCaptureFailsClosed": true,
+  "successfulCaptureAndSnapshotReadVerified": false,
+  "sourceAndSensitiveRefusalsPreserved": true,
+  "maxLoopLagMs": 7.022417000000132,
+  "rssBytes": 542457856,
+  "walBytes": 4128272,
+  "mainRowSaves": 0,
+  "commandPosts": 11,
+  "fullTransitiveSourceCaptureGraphMeasured": false,
+  "pass": true,
+  "resolverMainIdentitySqlAttempts": 0,
+  "workerMetrics": [
+    {
+      "roundTripMs": 3.0702500000002146,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.018875000000207365
+    },
+    {
+      "roundTripMs": 1295.569125,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.016541999999844847
+    },
+    {
+      "roundTripMs": 0.20895800000016607,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0033330000001114968
+    },
+    {
+      "roundTripMs": 1.3447919999998703,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.003792000000430562
+    },
+    {
+      "roundTripMs": 0.1904170000002523,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0028750000001309672
+    },
+    {
+      "roundTripMs": 0.23504199999979392,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.003250000000207365
+    },
+    {
+      "roundTripMs": 0.9546660000000884,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.004083999999693333
+    },
+    {
+      "roundTripMs": 0.1274159999998119,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.001374999999825377
+    },
+    {
+      "roundTripMs": 0.13266599999997197,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0017090000001189765
+    },
+    {
+      "roundTripMs": 0.14000000000032742,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0016249999998763087
+    }
+  ],
+  "runtime": "Deno 2.9.4",
+  "scope": "Identity/recovery/source refusal and existing safe_open_unavailable; successful capture unverified",
+  "temporaryDaemonDataRemoved": true
+}

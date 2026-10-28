@@ -1,0 +1,50 @@
+{
+  "failingCommit": "21fe51d2f835eb5de8c84a61a82db0b54272fcf9",
+  "red": "Five unit contracts fail. Both native Git resolver RPC proofs complete reference identity on the worker then trip the Git main identity SQL guard, with zero fixture lookups.",
+  "focusedTests": 22,
+  "strictTypeScript": "6.0.3: zero errors",
+  "repositoryCheck": "bun run check: exit 0; SQL ratchet unchanged",
+  "fullLocalGraphLines": 86,
+  "productionLines": 16,
+  "smokeRegistrationLines": 1,
+  "netPrepare": 0,
+  "netRun": 0,
+  "existingPublishBodyByteIdentical": true,
+  "contract": "Reserve the existing per-DB lane synchronously, then await committed identity inside it. Carry the known repository only through the main-side pipeline; no callback/resource crosses the identity transaction. Failure or unknown outcome invokes no Git callback/fallback/automatic replay. Later explicit request can recover.",
+  "nativeBun": "Real RPC verifies identity/source fences, one row/receipt for concurrent requests, offline explicit retry without lookup, exact commit/blob provenance, 1680000 bytes in seven <=256-KiB chunks; Git identity target main SQL zero.",
+  "nativeDeno": "Real RPC verifies identity/recovery/source fences and zero target main SQL. First capture refuses safe_open_unavailable; explicit duplicate rejects artifact_blob_conflict because the unavailable descriptor backend cannot verify the retained blob. Zero registered rows, successful capture/read unverified.",
+  "earlierProofFailures": [
+    "An early held-lock placement before source planning reached the pre-existing core NeoTurnReportReceipts constructor immediate transaction on main, timed out before Git admission; retained failed/diagnostic evidence and filed #9342. Final lock proof isolates own Git identity admission after planning; no core code changed.",
+    "First Deno Git proof incorrectly expected two safe-open refusal values. The unchanged capture store rejects the second retained-blob verification as artifact_blob_conflict. Corrected strict proof expectations and reran both runtimes; no backend/fallback change."
+  ],
+  "sourcePlanningDependencyIssue": 9342,
+  "latencyLimits": "Held Git identity initialization exceeds 250 ms on both runtimes. Uncontended concurrent full Git resolution batch also exceeds 250 ms; no full affected-RPC latency pass is claimed. Health and max loop lag remain responsive at own Git admission boundary. Queue/SQL split and full RPC encode not separately measured; command round-trip/payload/JSON encode recorded.",
+  "oneCheckout": true,
+  "noInstalls": true,
+  "proofDataRemoved": true,
+  "unverified": [
+    "Complete transitive repository/runtime/OS/library graph; exact boundary source/import pins only",
+    "General responsiveness under writer locks before source planning (core-owned #9342)",
+    "Successful Deno/native Windows registration and bytes",
+    "Source reads, row publication and read-only identity authorization movement",
+    "Native Bun 1.4.2 (local is 1.4.3)",
+    "Browser and Neo-owned deployment smoke"
+  ],
+  "originalFailingCommitBeforeRebase": "ea0a20d1b3c56c75eb52ba70c839c2bbd1a1efc7",
+  "rebasedOn": "057eaa0cebad9a0c5177716d3412f91e1e8024f1",
+  "rebaseVerification": "Re-signed test-first and implementation commits; focused/strict/root checks and both native proofs rerun on updated dev. Original failing proof evidence remains historical on e50159428c.",
+  "measuredNativeTimings": {
+    "bun": {
+      "healthWhileGitIdentityWriterHeldMs": 2.4291249999998854,
+      "deliberatelyHeldGitInitializationMs": 1337.643542,
+      "uncontendedConcurrentGitResolutionMs": 305.5276249999997,
+      "maxLoopLagMs": 2.6835829999999987
+    },
+    "deno": {
+      "healthWhileGitIdentityWriterHeldMs": 2.9514170000002196,
+      "deliberatelyHeldGitInitializationMs": 1531.9373330000003,
+      "uncontendedConcurrentGitResolutionMs": 485.3229590000001,
+      "maxLoopLagMs": 6.133707999999842
+    }
+  }
+}

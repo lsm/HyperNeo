@@ -1,3 +1,4 @@
+import { neoSessionTrackRootRead } from '../../storage/repositories/neo-session-track-write.ts';
 import { createNeoCardSearchOperation } from './card-search-operation.ts';
 import { readNeoReply } from './intake.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
@@ -66,12 +67,9 @@ import {
   neoSessionNoticeLine,
   type NeoSessionNotice,
 } from './session-watch.ts';
-import {
-  findNeoSessionNotice,
-  requireNeoTrackRoot,
-  requireNeoTrackableSession,
-} from './session-track.ts';
+import { findNeoSessionNotice } from './session-track.ts';
 import { createNeoQuestionOperations } from './question-operations.ts';
+import type { NeoInputReads } from './input-ask.ts';
 import { createNeoTodoOperations, type NeoTodoControls } from './todo-operations.ts';
 import { resolveNeoTodoTarget } from './todo-target.ts';
 import { wireNeoTodoMutations } from './todo-mutation-operation.ts';
@@ -225,21 +223,7 @@ const Save = z.object({
 });
 type SaveRequest = z.infer<typeof Save>;
 
-export function requireNeoProjectSaveId(
-  input: Pick<SaveRequest, 'id' | 'expectedRevision'>,
-  caller: OperationCaller
-): { value: OperationCaller } | { reason: z.infer<typeof Failure> } {
-  if (input.id && input.expectedRevision === 0)
-    return {
-      reason: {
-        ok: false,
-        reason: 'Omit id to create a project; the daemon assigns its id and returns it.',
-      },
-    };
-  if (!input.id && input.expectedRevision > 0)
-    return { reason: { ok: false, reason: 'Pass the id of the project you are updating.' } };
-  return { value: caller };
-}
+export { requireNeoProjectSaveId } from './project-save.ts';
 const SessionMute = z.object({ key: z.string().trim().min(1).max(400), muted: z.boolean() });
 const SessionMuteResult = z.union([
   Failure,
@@ -528,18 +512,12 @@ export function createNeoOperations(service: NeoService) {
       'caller',
       'result:track'
     )
-    .pipe(() => requireNeoTrackRoot(service.defaultSessionId()), 'caller', 'result:track')
+    .pipe(() => service.runDbOp(neoSessionTrackRootRead, null), 'caller', 'result:track')
     .pipe((root: string) => root, 'track', 'root')
     .pipe(
       (input: z.infer<typeof SessionTrack>) =>
         findNeoSessionNotice(service.trackableNotices, input.key),
       'input',
-      'result:track'
-    )
-    .pipe(
-      (notice: NeoSessionNotice) =>
-        requireNeoTrackableSession(notice, service.todos.followedRefs()),
-      'track',
       'result:track'
     )
     .pipe(
@@ -638,55 +616,8 @@ export function createNeoOperations(service: NeoService) {
     );
     return { ...view, sessionId };
   });
-  const save = (superpipe({})('neo.project.save') as PipelineAPI)
-    .input(['input', 'caller'])
-    .pipe(
-      (input: SaveRequest, caller: OperationCaller) =>
-        admitNeoCaller(service, caller, 'neo.project.save'),
-      ['input', 'caller'],
-      'result:admission'
-    )
-    .pipe(
-      (input: SaveRequest, caller: OperationCaller) => requireNeoProjectSaveId(input, caller),
-      ['input', 'admission'],
-      'result:admission'
-    )
-    .pipe(
-      (input: SaveRequest) => ({
-        ...input,
-        id: input.id ?? crypto.randomUUID(),
-      }),
-      ['input', 'admission'],
-      'request'
-    )
-    .pipe(
-      (input: SaveRequest, request: SaveRequest & { id: string }, caller: OperationCaller) => {
-        const created = input.id ? null : service.repo.getProject(request.id);
-        return created ? { reason: { ok: true as const, project: created } } : { value: caller };
-      },
-      ['input', 'request', 'admission'],
-      'result:admission'
-    )
-    .pipe(
-      (input: SaveRequest & { id: string }) => {
-        const project = service.repo.saveProject(input, input.expectedRevision);
-        return project
-          ? { ok: true as const, project }
-          : {
-              ok: false as const,
-              reason: 'superseded: read the current project before saving again',
-            };
-      },
-      'request',
-      'admission'
-    )
-    .endAsync('admission') as (
-    input: SaveRequest,
-    caller: OperationCaller
-  ) => Promise<
-    | z.infer<typeof Failure>
-    | { ok: true; project: NonNullable<ReturnType<NeoService['repo']['getProject']>> }
-  >;
+  const save = (input: SaveRequest, caller: OperationCaller) =>
+    service.repo.saveProjectCurrent(input, caller);
   const readPack = path('neo.pack.read', ({ id }: z.infer<typeof PackRead>) => {
     const pack = service.pack(id);
     if (!pack)
@@ -699,6 +630,14 @@ export function createNeoOperations(service: NeoService) {
         }
       : { ok: true as const, pack: { id: pack.id, describe: pack.describe }, instructions };
   });
+  const inputReads: NeoInputReads = {
+    input: (caller, id) =>
+      caller.sessionId ? receivedNeoHumanInput(service, caller.sessionId, id) : null,
+    publication: (id) => {
+      const conversationId = service.repo.conversationId();
+      return conversationId ? service.publications.get(conversationId, id) : null;
+    },
+  };
   const todoControls: NeoTodoControls = {
     resolveTarget: (ref) =>
       resolveNeoTodoTarget(ref, (name, input) =>
@@ -715,6 +654,7 @@ export function createNeoOperations(service: NeoService) {
   };
   return [
     ...service.packOperations,
+    ...service.speech.operations,
     createNeoProjectForgetOperation(service.repo, (repos) => {
       for (const pack of service.installedPacks()) pack.forgetRepositories?.(repos);
     }),
@@ -738,7 +678,7 @@ export function createNeoOperations(service: NeoService) {
         service.notifyPublicationsChanged(conversationId);
       },
     }),
-    createNeoPublicationReadOperation(service.repo, service.publications),
+    createNeoPublicationReadOperation(service.publications),
     createNeoConversationReadOperation(
       service.repo,
       new NeoConversationReader(service.db.getDatabase(), messageStatuses),
@@ -769,7 +709,8 @@ export function createNeoOperations(service: NeoService) {
         todoControls,
         () => service.installedPacks(),
         createArtifactRefReader(() => service.db.getDatabase()),
-        (todos) => service.todoWorkers(todos)
+        (todos) => service.todoWorkers(todos),
+        inputReads
       ),
       {
         gateway: mutationGateway,
@@ -777,6 +718,7 @@ export function createNeoOperations(service: NeoService) {
         packs: () => service.installedPacks(),
         artifact: createArtifactRefReader(() => service.db.getDatabase()),
         stop: (todo) => service.todoRunner.stop(todo),
+        resolveTarget: todoControls.resolveTarget,
         advance: () => service.todoRunner.advance(),
         changed: () => service.notifyChanged(),
         project: (todos) => service.todoWorkers(todos),
@@ -850,7 +792,9 @@ export function createNeoOperations(service: NeoService) {
           : null;
       },
       (id) => service.notifyPublicationsChanged(id),
-      (questionId) => service.deliverQuestionAnswers(questionId)
+      (questionId) => service.deliverQuestionAnswers(questionId),
+      () => neoStandingRules(service.db.getGlobalSettings().neo),
+      inputReads
     ),
     defineOperation({
       name: 'neo.open',
@@ -950,7 +894,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.snapshot',
       description:
-        'Read durable project summaries and todo asks. Pass projectId to load that project’s full context. RPC includes every open/attention-needed ask plus the ten most recently updated finished/dropped asks; historyCursor pages older outcomes through neo.ask.history. RPC todoAsks are summaries with counts, todo states and one-line statuses; instructions, reports and question text load through neo.ask.read when the card is opened. MCP todoAsks retain full todo details, ordered blocked, failed, doing, not started, done, then removed, and open questions; doneCount is how many of its todos are done, and an ask with more than 3 done todos (20 for RPC clients) lists none of its done todos, so read them with neo.ask.doneTodos; packRows holds pack facts, such as the coding pack’s pull request ledger with each PR’s state and owner. A list that does not hold every ask says so in omitted ({asks}: how many were left out), so never answer all or none from it. MCP snapshots over 40 KB are trimmed and carry a trimmed note saying what was cut. Every snapshot carries rev; pass it back as sinceRev and an unchanged snapshot answers only {unchanged: true, rev}, so read again only after something happened.',
+        'Read durable project summaries and todo asks. Pass projectId to load that project’s full context. RPC includes every open/attention-needed ask plus the ten most recently updated finished/dropped asks; historyCursor pages older outcomes through neo.ask.history. RPC todoAsks are summaries with counts, todo states, one-line statuses and open questions with full text and answer metadata; question documents carry up to 2000 preview characters plus a truncation notice, and neo.ask.read returns the full document. Todo instructions, reports and answered or retired question details load through neo.ask.read when the card is opened. MCP todoAsks retain full todo details, ordered blocked, failed, doing, not started, done, then removed, and open questions; doneCount is how many of its todos are done, and an ask with more than 3 done todos (20 for RPC clients) lists none of its done todos, so read them with neo.ask.doneTodos; packRows holds pack facts, such as the coding pack’s pull request ledger with each PR’s state and owner. A list that does not hold every ask says so in omitted ({asks}: how many were left out), so never answer all or none from it. MCP snapshots over 40 KB are trimmed and carry a trimmed note saying what was cut. Every snapshot carries rev; pass it back as sinceRev and an unchanged snapshot answers only {unchanged: true, rev}, so read again only after something happened.',
       inputSchema: Scope,
       resultSchema: Snapshot,
       policy: { safetyClass: 'read', roles: ['neo'] },

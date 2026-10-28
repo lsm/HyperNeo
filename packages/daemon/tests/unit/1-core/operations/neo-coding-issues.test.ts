@@ -109,7 +109,9 @@ function fixture() {
                         receipt: { executionId: 'cli-w', inputId: 'in-w' },
                       },
                     }
-                  : { ok: reachable }
+                  : reachable
+                    ? { ok: true }
+                    : { ok: false, reason: 'not_delivered', notSent: true }
                 : {
                     ok: true,
                     value: { status: 'stopped', lastActivityAt: progress, lastReplyAt: progress },
@@ -222,17 +224,23 @@ test.each(['Could not start: needs_you', 'Failed twice: unavailable'])(
   }
 );
 
-test.each(['worker', 'check'] as const)(
-  'a stale %s block clears without a current blocker',
-  async (blockedBy) => {
-    const f = fixture();
-    const todo = f.add('first', true);
-    f.store.updateTodo(todo, { state: 'blocked', blockedBy }, 100_000);
-    f.issue('OPEN');
-    await f.at(2);
-    expect(f.store.getTodo('first')).toMatchObject({ state: 'doing', blockedBy: null });
-  }
-);
+test('a stale worker block clears without a current blocker', async () => {
+  const f = fixture();
+  const todo = f.add('first', true);
+  f.store.updateTodo(todo, { state: 'blocked', blockedBy: 'worker' }, 100_000);
+  f.issue('OPEN');
+  await f.at(2);
+  expect(f.store.getTodo('first')).toMatchObject({ state: 'doing', blockedBy: null });
+});
+
+test('a check block stays while its issue is open', async () => {
+  const f = fixture();
+  const todo = f.add('first', true);
+  f.store.updateTodo(todo, { state: 'blocked', blockedBy: 'check' }, 100_000);
+  f.issue('OPEN');
+  await f.at(2);
+  expect(f.store.getTodo('first')).toMatchObject({ state: 'blocked', blockedBy: 'check' });
+});
 
 test('a COMPLETED issue advances its next todo before a stopped worker can be nudged', async () => {
   const f = fixture();
@@ -308,14 +316,14 @@ test('20/40 reminders persist across reopen and ignore metadata edits; 60 moves 
   expect(f.store.getTodo('first')?.state).toBe('doing');
 });
 
-test('unreachable reminder delivery escalates without turning time into a block fact', async () => {
+test('a reminder that does not reach the worker stalls the todo instead of waiting it out', async () => {
   const f = fixture();
   f.add('first', true);
   f.issue('OPEN', []);
   f.unreachable();
   await f.at(20);
-  expect(f.store.getTodo('first')?.state).toBe('doing');
-  expect(f.notes.some((text) => text.includes('could not be reached'))).toBe(true);
+  expect(f.store.getTodo('first')?.blockedBy).toBe('stalled');
+  expect(f.notes.some((text) => text.includes('did not reach its worker'))).toBe(true);
 });
 
 test('a reminder sent but not yet confirmed counts as delivered: no resend and no unreachable', async () => {
@@ -326,7 +334,7 @@ test('a reminder sent but not yet confirmed counts as delivered: no resend and n
   await f.at(20);
   await f.at(21);
   expect(f.calls.filter((name) => name === 'work.send')).toHaveLength(1);
-  expect(f.notes.some((text) => text.includes('could not be reached'))).toBe(false);
+  expect(f.notes.some((text) => text.includes('did not reach its worker'))).toBe(false);
 });
 
 test('a first refresh after 60 minutes moves it to a fresh worker without inventing sent reminders', async () => {

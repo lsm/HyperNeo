@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach, mock, afterEach, jest } from 'bun:test';
+import { prepareClaudeWorkEnvironment } from '../../../../src/lib/drivers/claude-native-writes';
 import { open } from 'node:fs/promises';
 import {
   writeFileSync,
@@ -132,6 +133,55 @@ describe('SettingsManager', () => {
   });
 
   describe('writeFileOnlySettings (via prepareSDKOptions)', () => {
+    it.each(['direct', 'linked'])(
+      'keeps native location and SDK deltas during concurrent %s writes',
+      async (kind) => {
+        const directory = join(workspacePath, '.claude');
+        mkdirSync(directory);
+        const path = join(directory, 'settings.local.json');
+        const target = kind === 'linked' ? join(tempDir, 'shared-settings.json') : path;
+        writeFileSync(target, JSON.stringify({ attribution: {}, custom: 'retained' }));
+        if (kind === 'linked') symlinkSync(target, path);
+        const persist = await prepareClaudeWorkEnvironment(workspacePath);
+        jest
+          .spyOn(mockDb, 'getGlobalSettings')
+          .mockReturnValue({ ...DEFAULT_GLOBAL_SETTINGS, outputStyle: 'concise' });
+        const reader = settingsManager as unknown as {
+          readLocalSettings(path: string): Promise<Record<string, unknown>>;
+        };
+        const read = reader.readLocalSettings.bind(settingsManager);
+        let release!: () => void;
+        let entered!: () => void;
+        const ready = new Promise<void>((resolve) => {
+          entered = resolve;
+        });
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const spy = jest.spyOn(reader, 'readLocalSettings').mockImplementationOnce(async (file) => {
+          const value = await read(file);
+          entered();
+          await gate;
+          return value;
+        });
+        const sdk = settingsManager.prepareSDKOptions();
+        await ready;
+        const native = persist();
+        try {
+          await Promise.race([native, new Promise((resolve) => setTimeout(resolve, 100))]);
+        } finally {
+          release();
+        }
+        await Promise.all([sdk, native]);
+        spy.mockRestore();
+        const result = JSON.parse(readFileSync(target, 'utf8'));
+        expect(result.outputStyle).toBe('concise');
+        expect(result.env.HYPERNEO_WORKTREES).toEqual(expect.any(String));
+        expect(result.custom).toBe('retained');
+        if (kind === 'linked') expect(lstatSync(path).isSymbolicLink()).toBe(true);
+      }
+    );
+
     it('leaves invalid existing settings untouched and reports the error', async () => {
       const directory = join(workspacePath, '.claude');
       const path = join(directory, 'settings.local.json');

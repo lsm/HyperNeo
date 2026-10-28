@@ -612,9 +612,10 @@ describe('session kind injected text', () => {
             'card-agent-instructions',
             'owner-review-contract',
             'scheduling-guardrail',
+            'runtime-location',
           ],
         },
-        { kind: 'unowned_space', shape: 'claude-code-preset', says: [] },
+        { kind: 'unowned_space', shape: 'claude-code-preset+append', says: ['runtime-location'] },
         {
           kind: 'workflow_worker',
           shape: 'claude-code-preset+append',
@@ -625,6 +626,7 @@ describe('session kind injected text', () => {
             'operations-discovery',
             'space-standing-instructions',
             'worker-agent-instructions',
+            'runtime-location',
           ],
         },
         {
@@ -636,11 +638,32 @@ describe('session kind injected text', () => {
             'operations-door-tool',
             'operations-discovery',
             'space-standing-instructions',
+            'runtime-location',
           ],
         },
-        { kind: 'non_space', shape: 'claude-code-preset', says: [] },
+        { kind: 'non_space', shape: 'claude-code-preset+append', says: ['runtime-location'] },
       ]);
     });
+
+    test.each(['workflow_worker', 'direct_task_worker'] as const)(
+      'gives %s exactly one runtime location section across model inputs',
+      async (kind) => {
+        const { session, briefing } = await provision(kind);
+        const options = await new QueryOptionsBuilder(
+          makeBuilderContext(session, briefing)
+        ).build();
+        const message = buildCustomAgentTaskMessage({
+          task: makeSessionKindTask({ description: 'Pin the complete model input.' }),
+          space: SPACE,
+          workspacePath: WORKSPACE_PATH,
+        });
+        const prompt = options.systemPrompt as { append?: string };
+        const modelInput = [prompt.append ?? '', message].join('\n');
+        expect(modelInput.split('## Runtime Location')).toHaveLength(2);
+        expect(modelInput).toContain('HYPERNEO_WORKTREES');
+        expect(options.env?.HYPERNEO_WORKTREES).toBeTruthy();
+      }
+    );
 
     test('keeps every host-authored prompt unrecorded so a resumed session re-reads it (#4824)', async () => {
       const recording: Array<{ kind: SessionKind; recorded: boolean | 'none' }> = [];
@@ -658,10 +681,10 @@ describe('session kind injected text', () => {
 
       expect(recording).toEqual([
         { kind: 'agent_card', recorded: false },
-        { kind: 'unowned_space', recorded: true },
+        { kind: 'unowned_space', recorded: false },
         { kind: 'workflow_worker', recorded: false },
         { kind: 'direct_task_worker', recorded: false },
-        { kind: 'non_space', recorded: true },
+        { kind: 'non_space', recorded: false },
       ]);
     });
 
@@ -777,7 +800,7 @@ describe('session kind injected text', () => {
   });
 
   describe('buildCustomAgentTaskMessage', () => {
-    test('gives a direct task worker the task, the workspace and the Space prose, but never the Space identity or the operations door', () => {
+    test('gives a direct task worker the task and the Space prose, but never the Space identity or the operations door', () => {
       const message = buildCustomAgentTaskMessage({
         task: makeSessionKindTask({ description: 'Pin what the model receives.' }),
         space: SPACE,
@@ -788,7 +811,6 @@ describe('session kind injected text', () => {
         'space-standing-instructions',
         'space-background-context',
         'task-heading',
-        'runtime-location',
       ]);
       expect(message).toContain('**Title:** Session kinds task');
       expect(message).toContain('**Description:** Pin what the model receives.');
@@ -810,7 +832,6 @@ describe('session kind injected text', () => {
         'space-standing-instructions',
         'space-background-context',
         'task-heading',
-        'runtime-location',
         'workflow-role',
         'workflow-standing-instructions',
       ]);

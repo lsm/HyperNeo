@@ -1,7 +1,9 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import type { AppSkill } from '@hyperneo/shared';
 import { useSkills } from '../../hooks/useSkills';
 import { skillsStore } from '../../lib/skills-store';
+import { globalStore } from '../../lib/global-store';
+import { catalogSkillChoiceKey, saveCatalogToolDefault } from '../../lib/catalog-tool-defaults';
 import { toast } from '../../lib/toast';
 import { SettingsGroup, SettingsSection, SettingsToggle } from './SettingsSection';
 import { ConfirmModal } from '../ui/ConfirmModal';
@@ -25,6 +27,12 @@ const SOURCE_TYPE_LABELS: Record<string, string> = {
 
 export function SkillsRegistry() {
   const { skills: skillsList, isLoading: isLoadingVal, error: errorVal } = useSkills();
+
+  const settings = globalStore.settings.value;
+  const defaults = settings?.toolSelectionDefaults;
+  useEffect(() => {
+    globalStore.refresh().catch(() => toast.error('Could not refresh new-session defaults'));
+  }, [skillsList]);
 
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showInstallFromGitDialog, setShowInstallFromGitDialog] = useState(false);
@@ -50,10 +58,10 @@ export function SkillsRegistry() {
   };
 
   const handleToggle = async (skill: AppSkill, enabled: boolean) => {
-    setTogglingId(skill.id);
+    setTogglingId(catalogSkillChoiceKey(skill));
     try {
-      await skillsStore.setEnabled(skill.id, enabled);
-      toast.success(`${enabled ? 'Enabled' : 'Disabled'} "${skill.displayName}"`);
+      await saveCatalogToolDefault(catalogSkillChoiceKey(skill), enabled);
+      toast.success(`New-session default ${enabled ? 'on' : 'off'}: ${skill.displayName}`);
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : `Failed to ${enabled ? 'enable' : 'disable'} skill`
@@ -82,8 +90,9 @@ export function SkillsRegistry() {
   return (
     <>
       <SettingsSection
+        class="max-sm:[&>.st-sec-head]:flex-col max-sm:[&>.st-sec-head]:items-start"
         title="Skills"
-        description="Application-level skills are available to any space or session. Built-in skills ship with HyperNeo; plugin and MCP server skills can be added from external sources."
+        description="Defaults for new sessions. Existing sessions keep their own choices; change a session in Tools → Use here. Built-in skills ship with HyperNeo; plugin and MCP server skills can be added from external sources."
         actions={
           <>
             <Button variant="secondary" size="sm" onClick={() => setShowInstallFromGitDialog(true)}>
@@ -160,9 +169,14 @@ export function SkillsRegistry() {
                     </button>
                   )}
                   <SettingsToggle
-                    checked={skill.enabled}
+                    aria-label={`New-session default: ${skill.displayName}`}
+                    checked={defaults?.choices[catalogSkillChoiceKey(skill)]?.selected ?? false}
                     onChange={(enabled) => handleToggle(skill, enabled)}
-                    disabled={togglingId === skill.id}
+                    disabled={
+                      !settings ||
+                      defaults?.version !== 1 ||
+                      togglingId === catalogSkillChoiceKey(skill)
+                    }
                   />
                 </div>
               </div>

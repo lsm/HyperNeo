@@ -1,0 +1,8 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "mainSqlAttempts": 1,
+  "workerMetrics": [],
+  "runtime": "deno",
+  "expectedFailure": "Real workspace.add reached refused history INSERT on main before the fix",
+  "exitCode": 1
+}

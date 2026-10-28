@@ -21,7 +21,7 @@ try {
       await question.waitFor();
       const header = question.locator('[data-question-source]');
       assert.equal(await header.innerText(), 'Open');
-      assert.equal(await header.locator('svg').count(), 0);
+      assert.equal(await header.locator('svg').count(), 1);
       const joined = page.locator(`[data-ask-question="${saved.start.question.id}"]:visible`);
       assert.equal(await joined.locator('[data-question-source]').innerText(), 'Open');
       await joined.getByRole('button', { name: 'Open session: Review worker', exact: true }).click();
@@ -60,5 +60,5 @@ try {
     } finally { await page.close(); }
   }
   writeFileSync(`${run}/evidence/question-source-web.json`, JSON.stringify(observed, null, 2));
-  console.log('PASS: short Open button without source title/provider, adapter opener and answer controls at desktop/mobile widths');
+  console.log('PASS: logo + Open button without source title/provider, adapter opener and answer controls at desktop/mobile widths');
 } finally { await browser.close(); }

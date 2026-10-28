@@ -1,0 +1,20 @@
+Pageouts: 12018740
+
+System-wide memory free percentage: 43%
+Filesystem      Size    Used   Avail Capacity iused ifree %iused  Mounted on
+/dev/disk3s5   926Gi   714Gi   181Gi    80%     17M  1.9G    1%   /System/Volumes/Data
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:7:14). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/.codex/worktrees/lane-a-project-save/neokai/packages/daemon
+
+
+ Test Files  4 passed (4)
+      Tests  6 passed (6)
+   Start at  16:33:03
+   Duration  4.00s (transform 55%, tests 22%, import 21%, setup 2%)
+
+  Transform  transforming modules took 2.01s · 55% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns

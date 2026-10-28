@@ -115,6 +115,13 @@ export function workResultSchema<Value extends z.ZodType>(value: Value) {
       ok: z.literal(false),
       reason: WorkRejectionSchema,
       detail: z.string(),
+      uncertainDesktopInputId: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          'Client input ID of an uncertain Desktop handoff; not a delivery receipt. Reconcile before retrying.'
+        ),
       notSent: z
         .literal(true)
         .optional()
@@ -185,6 +192,7 @@ export const WorkInputEvidenceSchema = z.discriminatedUnion('state', [
 
 export const WorkStartedSchema = WorkSummarySchema.extend({
   receipt: WorkInputReceiptSchema.optional(),
+  reused: z.literal(true).optional(),
 });
 
 export const WorkTurnEndSchema = z.object({
@@ -230,7 +238,13 @@ export type WorkRejection = z.infer<typeof WorkRejectionSchema>;
 export type WorkDetail = z.infer<typeof WorkDetailSchema>;
 export type WorkInput = z.infer<typeof WorkInputSchema>;
 export type WorkExchangeEntry = z.infer<typeof WorkExchangeEntrySchema>;
-export type Rejected = { ok: false; reason: WorkRejection; detail: string; notSent?: true };
+export type Rejected = {
+  ok: false;
+  reason: WorkRejection;
+  detail: string;
+  notSent?: true;
+  uncertainDesktopInputId?: string;
+};
 export type Result<T> = { ok: true; value: T; records?: string[] } | Rejected;
 
 export type WorkVerb =

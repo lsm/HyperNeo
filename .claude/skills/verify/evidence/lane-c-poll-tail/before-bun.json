@@ -1,0 +1,17 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "mainSqlAttempts": 0,
+  "workerMetrics": [
+    {
+      "roundTripMs": 0.22958300000004783,
+      "requestBytes": 629,
+      "replyBytes": 663,
+      "encodeMs": 0.005374999999958163
+    }
+  ],
+  "runtime": "bun",
+  "exitCode": 1,
+  "expectedFailure": "Actual completed poll job retains only the first uncertain commit: 1 row instead of 6; later issue/comment delivery skipped",
+  "observedRetainedRows": 1,
+  "expectedRetainedRows": 6
+}

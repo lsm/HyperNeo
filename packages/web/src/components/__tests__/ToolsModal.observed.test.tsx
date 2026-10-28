@@ -1,4 +1,4 @@
-import { cleanup, render, waitFor, act, fireEvent } from '@testing-library/preact';
+import { cleanup, render, waitFor, act, fireEvent, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Session, GetSessionToolInventoryResponse } from '@hyperneo/shared';
 import { skillsStore } from '../../lib/skills-store.ts';
@@ -116,6 +116,12 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+function primaryStatus(view: ReturnType<typeof render>, title: string) {
+  const region = view.getByRole('region', { name: 'Use tools in this session' });
+  const row = within(region).getByText(title).closest('.rounded-lg') as HTMLElement;
+  return within(row).getByText(/Attached|Configured|Connected|Instructions/);
+}
+
 describe('ToolsModal observed running inventory', () => {
   it('enables a globally-off linked browser through one canonical Use here action', async () => {
     const current = {
@@ -170,9 +176,7 @@ describe('ToolsModal observed running inventory', () => {
     response = attached();
     const view = render(<ToolsModal isOpen onClose={() => {}} session={session} />);
     await waitFor(() =>
-      expect(view.getByTestId('skill-runtime-browser-alias').textContent).toContain(
-        'Attached · 1 tool'
-      )
+      expect(primaryStatus(view, 'Synthetic Browser').textContent).toContain('Attached · 1 tool')
     );
     let finish!: (value: GetSessionToolInventoryResponse) => void;
     response = new Promise((done) => {
@@ -185,17 +189,13 @@ describe('ToolsModal observed running inventory', () => {
           .length
       ).toBe(2)
     );
-    expect(view.getByTestId('skill-runtime-browser-alias').textContent).toContain(
-      'Attached · 1 tool'
-    );
+    expect(primaryStatus(view, 'Synthetic Browser').textContent).toContain('Attached · 1 tool');
     await act(async () => {
       finish(closed);
       await Promise.resolve();
     });
     await waitFor(() =>
-      expect(view.getByTestId('skill-runtime-playwright').textContent).toMatch(
-        /session not running/
-      )
+      expect(primaryStatus(view, 'Playwright').textContent).toMatch(/session not running/)
     );
   });
 
@@ -206,7 +206,7 @@ describe('ToolsModal observed running inventory', () => {
     );
     expect(view.queryByText('configured-only')).toBeNull();
     expect(view.queryByText('Active in this session')).toBeNull();
-    expect(view.getByTestId('skill-runtime-playwright').textContent).toMatch(
+    expect(primaryStatus(view, 'Playwright').textContent).toMatch(
       /not attached yet.*session not running/i
     );
   });
@@ -215,9 +215,7 @@ describe('ToolsModal observed running inventory', () => {
     response = attached();
     const view = render(<ToolsModal isOpen onClose={() => {}} session={session} />);
     await waitFor(() =>
-      expect(view.getByTestId('skill-runtime-browser-alias').textContent).toContain(
-        'Attached · 1 tool'
-      )
+      expect(primaryStatus(view, 'Synthetic Browser').textContent).toContain('Attached · 1 tool')
     );
   });
 
@@ -225,7 +223,7 @@ describe('ToolsModal observed running inventory', () => {
     response = { ...closed, state: 'observed', skills: ['playwright'], plugins: ['playwright'] };
     const view = render(<ToolsModal isOpen onClose={() => {}} session={session} />);
     await waitFor(() =>
-      expect(view.getByTestId('skill-runtime-playwright').textContent).toMatch(
+      expect(primaryStatus(view, 'Playwright').textContent).toMatch(
         /Instructions loaded.*prerequisites unverified/
       )
     );
@@ -235,21 +233,17 @@ describe('ToolsModal observed running inventory', () => {
     response = attached();
     const view = render(<ToolsModal isOpen onClose={() => {}} session={session} />);
     await waitFor(() =>
-      expect(view.getByTestId('skill-runtime-browser-alias').textContent).toContain('Attached')
+      expect(primaryStatus(view, 'Synthetic Browser').textContent).toContain('Attached')
     );
     response = closed;
     await act(() => backend.event.get('session.toolInventory.changed')?.({ sessionId: 'one' }));
     await waitFor(() =>
-      expect(view.getByTestId('skill-runtime-playwright').textContent).toMatch(
-        /session not running/i
-      )
+      expect(primaryStatus(view, 'Playwright').textContent).toMatch(/session not running/i)
     );
     response = attached(2);
     await act(() => backend.connection?.('connected'));
     await waitFor(() =>
-      expect(view.getByTestId('skill-runtime-browser-alias').textContent).toContain(
-        'Attached · 2 tools'
-      )
+      expect(primaryStatus(view, 'Synthetic Browser').textContent).toContain('Attached · 2 tools')
     );
   });
 
@@ -265,17 +259,13 @@ describe('ToolsModal observed running inventory', () => {
     response = attached(2);
     view.rerender(<ToolsModal isOpen onClose={() => {}} session={{ ...session, id: 'two' }} />);
     await waitFor(() =>
-      expect(view.getByTestId('skill-runtime-browser-alias').textContent).toContain(
-        'Attached · 2 tools'
-      )
+      expect(primaryStatus(view, 'Synthetic Browser').textContent).toContain('Attached · 2 tools')
     );
     await act(async () => {
       finish(attached(1));
       await Promise.resolve();
     });
-    expect(view.getByTestId('skill-runtime-browser-alias').textContent).toContain(
-      'Attached · 2 tools'
-    );
+    expect(primaryStatus(view, 'Synthetic Browser').textContent).toContain('Attached · 2 tools');
   });
 
   it.each([
@@ -288,18 +278,16 @@ describe('ToolsModal observed running inventory', () => {
     response = { ...attached(), mcpServers: [{ name: 'browser-alias', status, tools: null }] };
     const view = render(<ToolsModal isOpen onClose={() => {}} session={session} />);
     await waitFor(() =>
-      expect(view.getByTestId('skill-runtime-browser-alias').textContent).toContain(reason)
+      expect(primaryStatus(view, 'Synthetic Browser').textContent).toContain(reason)
     );
-    expect(view.getByTestId('skill-runtime-browser-alias').textContent).not.toContain('Attached ·');
+    expect(primaryStatus(view, 'Synthetic Browser').textContent).not.toContain('Attached ·');
   });
 
   it('does not describe a connected server with zero tools as tool availability', async () => {
     response = attached(0);
     const view = render(<ToolsModal isOpen onClose={() => {}} session={session} />);
     await waitFor(() =>
-      expect(view.getByTestId('skill-runtime-browser-alias').textContent).toBe(
-        'Connected · 0 tools'
-      )
+      expect(primaryStatus(view, 'Synthetic Browser').textContent).toContain('Connected · 0 tools')
     );
   });
 
@@ -307,15 +295,41 @@ describe('ToolsModal observed running inventory', () => {
     response = { ...closed, state: 'unverified' };
     const view = render(<ToolsModal isOpen onClose={() => {}} session={session} />);
     await waitFor(() =>
-      expect(view.getByTestId('skill-runtime-playwright').textContent).toMatch(
-        /provider cannot confirm/i
-      )
+      expect(primaryStatus(view, 'Playwright').textContent).toMatch(/provider cannot confirm/i)
     );
     expect(view.queryByText(/next respawn/)).toBeNull();
     response = attached();
     fireEvent.click(view.getByRole('button', { name: 'Refresh running tools' }));
     await waitFor(() =>
-      expect(view.getByTestId('skill-runtime-browser-alias').textContent).toContain('Attached')
+      expect(primaryStatus(view, 'Synthetic Browser').textContent).toContain('Attached')
     );
   });
+});
+
+it('keeps legacy Advanced selectors from making a second attachment claim', async () => {
+  const view = render(<ToolsModal isOpen onClose={() => {}} session={session} />);
+  await waitFor(() =>
+    expect(primaryStatus(view, 'Synthetic Browser').textContent).toMatch(/session not running/)
+  );
+  fireEvent.click(view.getByRole('button', { name: 'Advanced settings' }));
+  expect(view.queryAllByText('Off · skill disabled — not injected')).toHaveLength(0);
+  expect(view.getByText('Claude Code Preset')).toBeTruthy();
+  expect(view.queryAllByRole('checkbox').length).toBeGreaterThan(0);
+});
+
+it('uses the canonical skill picker without a second Advanced skills group', async () => {
+  const current = {
+    ...session,
+    config: { ...session.config, toolSelection: { version: 1 as const, choices: {} } },
+  };
+  const view = render(<ToolsModal isOpen onClose={() => {}} session={current} />);
+  await view.findByRole('button', { name: 'Use here: Synthetic Browser' });
+  fireEvent.click(view.getByRole('button', { name: 'Advanced settings' }));
+  expect(view.queryByRole('button', { name: /^Skills \(/ })).toBeNull();
+  expect(view.queryByRole('checkbox', { name: 'Synthetic Browser MCP', exact: true })).toBeNull();
+  expect(view.getByRole('button', { name: 'Use here: Synthetic Browser' })).toBeTruthy();
+  expect(view.getByText('Claude Code Preset')).toBeTruthy();
+  expect(
+    view.getByRole('checkbox', { name: 'User settings (~/.claude/settings.json)' })
+  ).toBeTruthy();
 });

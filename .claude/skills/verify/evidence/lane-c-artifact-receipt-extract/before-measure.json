@@ -1,0 +1,41 @@
+{
+  "base": "f0c02b9c1a5d13287e59054013c75277b9fb340d",
+  "units": [
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-repository.ts",
+      "name": "save",
+      "start": 28,
+      "end": 60,
+      "lines": 33,
+      "sha256": "05548ba597a1998859c48ca08fb1be869175627db83a14db9b6d34775439357d"
+    }
+  ],
+  "fullLocalGraphLines": 33,
+  "productionLines": 0,
+  "smokeLines": 0,
+  "delta": [],
+  "sql": [
+    {
+      "bytes": 67,
+      "sha256": "eac1cee78f2d247d7b5f5f75075c325b077ff5453ab9079b49dcb0e31deb49f0"
+    }
+  ],
+  "serializationAstSha256": "8e767474a2c8a1c66baf6009be91cf3168db67199650204090ebc01e2a51718f",
+  "serializationExpressionUnchanged": true,
+  "clockExpressionUnchanged": true,
+  "stableConstructorAndReceipt": [
+    {
+      "name": "constructor",
+      "sha256": "56b63cd0413fe3ab057a3ad1e26012d3f0aace9d49b80d1a8ad7f95af34c551d"
+    },
+    {
+      "name": "receipt",
+      "sha256": "25ac85a867820cc62b38c48debf8e4a043dd7b38721f8a47cc12fb3ac17dda9e"
+    }
+  ],
+  "contract": "serializeArtifactReceipt(artifact,revision?,bundle?,logicalRequestId?): same JSON.stringify expression/optional-field truthiness/key order; no SQL/clock/UUID/I/O. save retains exact SQL/arg order, prepare-before-serialization-before-clock-before-run and original result reference/caller-owned rollback.",
+  "netPrepare": 0,
+  "netRun": 0,
+  "mainThreadMovementClaim": false,
+  "auditLimit": "Only save and pure serializer are changed/measured. Public registration receipt/bytes on Bun and existing Deno refusal are characterized. Full capture/binding/source/native-runtime/OS graph is outside this extraction. Row writer construction and activation follow separately."
+}

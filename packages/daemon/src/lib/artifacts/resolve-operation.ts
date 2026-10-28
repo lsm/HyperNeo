@@ -3,7 +3,9 @@ import { join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../storage/sqlite-compat.ts';
-import { ArtifactFileRepository } from '../../storage/repositories/artifact-file-repository.ts';
+import { randomUUID } from 'node:crypto';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { artifactIdentityWrites } from '../../storage/repositories/artifact-file-identity-write.ts';
 import { ArtifactReferenceSourceRepository } from '../../storage/repositories/artifact-reference-source.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { isLocalUser } from '../operations/caller.ts';
@@ -45,7 +47,7 @@ export function createArtifactReferenceResolve(
 ) {
   async function plan(input: Input, caller: OperationCaller) {
     const db = database();
-    const daemonId = new ArtifactFileRepository(db).daemonId;
+    const daemonId = await gatewayFor(db).call(artifactIdentityWrites, 'ensure', randomUUID());
     const sources = new ArtifactReferenceSourceRepository(db, daemonId, home);
     const selected = await planStoredReference(
       { source: input.sourceMessageOrCard, reference: input.reference, context: input.context },

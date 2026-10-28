@@ -1,4 +1,5 @@
-import { neoTodoStalledCard } from './todo-runner.ts';
+import { neoTodoDependencyNodes, neoTodoReady } from './todo-dependencies.ts';
+import { isNeoTodoStalledCard } from './todo-state.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { WorkRefSchema, type WorkRef } from '../drivers/types.ts';
@@ -9,7 +10,7 @@ import type {
   NeoQuestionAnswer,
   NeoTodo,
 } from '@hyperneo/shared/types/neo-ask';
-import { neoLabelledOptions } from '@hyperneo/shared/types/neo-ask';
+import { neoLabelledOptions, isAgentResolvedQuestion } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type {
@@ -17,10 +18,11 @@ import type {
   NeoQuestionDraft,
   NeoCardReplyContext,
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
-import { requireLocalUser } from '../operations/caller.ts';
+import { requireLocalUser, isLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { isVisibleHomeProposal, requireHomePath } from './home/save.ts';
 import { requireNeoOpenAsk } from './todo-operations.ts';
+import { noNeoInputReads, resolveNeoInputAsk, type NeoInputReads } from './input-ask.ts';
 import { ArtifactRefSchema, unregisteredArtifact } from '../artifacts/file-contracts.ts';
 import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 import type { LanguageSetting } from '@hyperneo/shared/types/settings';
@@ -114,7 +116,7 @@ export function createNeoWorkerQuestionWriter(
           const open = store
             .listQuestions(todo.askId)
             .find((q) => q.todoId === todo.id && q.state === 'open');
-          const daemonCard = open?.text === neoTodoStalledCard(todo);
+          const daemonCard = !!open && isNeoTodoStalledCard(open.text);
           if (open && daemonCard)
             store.retireQuestion(open, 'its worker asked its own question', null, Date.now());
           const existing = daemonCard ? null : open;
@@ -187,14 +189,19 @@ const Asked = {
   todoId: Text.optional().describe(
     'One open question per todo. A distinct question returns todo_question_open; use replaces with the existing question id to change it explicitly.'
   ),
-  askId: Text,
+  askId: Text.optional().describe(
+    'Only for follow-up work with no human input (worker reports, checks). For a human request pass input instead.'
+  ),
+  input: Text.optional().describe(
+    'The [message id] of the human message this question serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else a new one.'
+  ),
   text: Text,
   replyTo: z.array(z.uuid()).max(100).optional(),
   replaces: Text.optional(),
   confirm: Confirmation.optional(),
 };
 
-const Ask = z.discriminatedUnion('kind', [
+const AskKinds = z.discriminatedUnion('kind', [
   z.object({ ...Asked, kind: z.literal('yesno'), noLabel: Text, yesLabel: Text }),
   z.object({
     ...Asked,
@@ -214,10 +221,21 @@ const Ask = z.discriminatedUnion('kind', [
     replyTo: Asked.replyTo,
   }),
 ]);
+const Ask = AskKinds.refine((input) => input.askId || ('input' in input && input.input), {
+  message: 'Pass input for a human request, or askId for follow-up work.',
+});
+
+type Bound = z.infer<typeof Ask> & { askId: string };
 
 const Retire = z.object({ questionId: Text, reason: Text });
 
 const Answer = z.object({ questionId: Text, answer: z.union([z.string(), z.array(z.string())]) });
+const Resolve = Answer.extend({
+  source: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('rule'), text: z.string().min(1) }),
+    z.object({ kind: z.literal('answer'), questionId: Text }),
+  ]),
+});
 
 const Get = z.object({
   questionId: z
@@ -233,7 +251,7 @@ const AnswerDelivery = z.object({
   todoId: z.string(),
   sourceSession: WorkerIdentitySchema.extend({ provider: z.string(), link: z.string().nullable() }),
   answer: z.union([z.string(), z.array(z.string())]).nullable(),
-  answeredBy: z.enum(['button', 'chat', 'rule']).nullable(),
+  answeredBy: z.enum(['button', 'chat', 'agent']).nullable(),
   answeredAt: z.number().nullable(),
   receipt: z.string().nullable(),
   acceptedAt: z.number().nullable(),
@@ -279,6 +297,7 @@ const QuestionReadResult = z.union([
       state: true,
       answer: true,
       answeredAt: true,
+      retiredReason: true,
       confirm: true,
       document: true,
       replyTo: true,
@@ -287,6 +306,7 @@ const QuestionReadResult = z.union([
       sourceSession: true,
     }),
     answeredByHuman: z.boolean(),
+    resolvedByAgent: z.boolean(),
     answerDelivery: z.array(AnswerDelivery).optional(),
   }),
 ]);
@@ -300,6 +320,7 @@ export function readNeoQuestion(question: NeoQuestion | null): z.infer<typeof Qu
     state,
     answer,
     answeredAt,
+    retiredReason,
     confirm,
     document,
     replyTo,
@@ -316,6 +337,7 @@ export function readNeoQuestion(question: NeoQuestion | null): z.infer<typeof Qu
       state,
       answer,
       answeredAt,
+      retiredReason,
       confirm,
       document,
       ...(artifacts ? { artifacts } : {}),
@@ -324,6 +346,7 @@ export function readNeoQuestion(question: NeoQuestion | null): z.infer<typeof Qu
       ...(todoId ? { todoId } : {}),
     },
     answeredByHuman: state === 'answered',
+    resolvedByAgent: isAgentResolvedQuestion(question),
   };
 }
 
@@ -472,7 +495,9 @@ export function neoQuestionAnsweredNote(question: NeoQuestion, todos: NeoTodo[])
               .join(', ') || 'none'
           }`
         : neoLabelledOptions(question.options ?? [], [answer].flat()) || 'none';
-  return `The human answered "${question.text}": ${said}.`;
+  return isAgentResolvedQuestion(question)
+    ? `Neo resolved "${question.text}": ${said}. ${question.retiredReason}`
+    : `The human answered "${question.text}": ${said}.`;
 }
 
 export function createNeoQuestionOperations(
@@ -488,20 +513,39 @@ export function createNeoQuestionOperations(
     askId: string
   ) => NeoCardReplyContext | null = () => null,
   publicationChanged: (conversationId: string) => void = () => {},
-  deliverAnswers: (questionId: string) => Promise<void> = async () => {}
+  deliverAnswers: (questionId: string) => Promise<void> = async () => {},
+  standingRules: () => readonly string[] = () => [],
+  inputs: NeoInputReads = noNeoInputReads
 ) {
   const ask = (superpipe({})('neo.question.ask') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      (input: z.infer<typeof Ask>, caller: OperationCaller) => ({
+      (input: z.infer<typeof Ask>, caller: OperationCaller) =>
+        resolveNeoInputAsk(store, inputs, caller, input, input.text),
+      ['input', 'caller'],
+      'binding'
+    )
+    .pipe(
+      (binding: ReturnType<typeof resolveNeoInputAsk>) =>
+        'reason' in binding ? binding : { value: null },
+      'binding',
+      'result:outcome'
+    )
+    .pipe(
+      (
+        input: z.infer<typeof Ask>,
+        caller: OperationCaller,
+        binding: { value: { askId: string } }
+      ) => ({
         ...input,
+        askId: binding.value.askId,
         replyTo: input.replyTo?.filter((id) => receivedHumanInput(caller, id)),
       }),
-      ['input', 'caller'],
+      ['input', 'caller', 'binding'],
       'input'
     )
     .pipe(
-      (input: z.infer<typeof Ask>, caller: OperationCaller) => {
+      (input: Bound, caller: OperationCaller) => {
         const context = replyContext(caller, input.replyTo, input.askId);
         return {
           context,
@@ -530,11 +574,7 @@ export function createNeoQuestionOperations(
       'reply',
       'result:outcome'
     )
-    .pipe(
-      (input: z.infer<typeof Ask>) => requireNeoOpenAsk(store.getAsk(input.askId)),
-      'input',
-      'result:outcome'
-    )
+    .pipe((input: Bound) => requireNeoOpenAsk(store.getAsk(input.askId)), 'input', 'result:outcome')
     .pipe(
       (owned: NeoAsk, input: z.infer<typeof Ask>, caller: OperationCaller) => {
         const unknown = unregisteredArtifact(
@@ -638,12 +678,17 @@ export function createNeoQuestionOperations(
       'outcome'
     )
     .pipe(
-      (result: QuestionReceipt | Rejection, input: z.infer<typeof Ask>) => {
+      (
+        result: QuestionReceipt | Rejection,
+        input: z.infer<typeof Ask>,
+        binding: { value: { records: string[] } }
+      ) => {
         if (result.ok && input.focused && result.question.sourceSession)
           store.focusAsk(result.question.askId, result.question.sourceSession, Date.now());
-        return result;
+        const records = [...binding.value.records, ...((result.ok && result.records) || [])];
+        return result.ok && records.length ? { ...result, records } : result;
       },
-      ['outcome', 'input'],
+      ['outcome', 'input', 'binding'],
       'outcome'
     )
     .endAsync('outcome') as (
@@ -687,6 +732,97 @@ export function createNeoQuestionOperations(
     caller: OperationCaller
   ) => QuestionReceipt | Rejection;
 
+  const resolve = (superpipe({})('neo.question.resolve') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (
+        input: z.infer<typeof Resolve>,
+        caller: OperationCaller
+      ): Gate<{ question: NeoQuestion; ask: NeoAsk }> => {
+        let reason = 'question_closed: this question is no longer open.';
+        const question = store.writeCardReply(null, crypto.randomUUID(), () => {
+          const current = store.getQuestion(input.questionId);
+          const ask = current && store.getAsk(current.askId);
+          if (!current || !ask) {
+            reason = 'not_found: no such question.';
+            return null;
+          }
+          if (
+            !isLocalUser(caller) &&
+            (caller.role !== 'neo' || caller.sessionId !== ask.sessionId)
+          ) {
+            reason = 'not_owner: only this ask’s Neo or the user may resolve its worker card.';
+            return null;
+          }
+          const open = requireNeoOpenAsk(ask);
+          if ('reason' in open) {
+            reason = open.reason.reason;
+            return null;
+          }
+          if (
+            !['choice', 'reply'].includes(current.kind) ||
+            current.confirm ||
+            !store.questionAnswers.list(current.id).length
+          ) {
+            reason =
+              'worker_question_required: resolve only routed worker decisions, never approval cards.';
+            return null;
+          }
+          const plan = planNeoQuestionAnswer(current, input.answer);
+          if ('reason' in plan) {
+            reason = plan.reason.reason;
+            return null;
+          }
+          let citation: string;
+          if (input.source.kind === 'rule') {
+            if (!standingRules().includes(input.source.text)) {
+              reason = 'rule_not_found: cite a currently saved standing rule.';
+              return null;
+            }
+            citation = `Resolved by Neo from saved rule: ${input.source.text}`;
+          } else {
+            const prior = store.getQuestion(input.source.questionId);
+            if (
+              !prior ||
+              prior.state !== 'answered' ||
+              !['button', 'chat'].includes(prior.answeredBy ?? '') ||
+              prior.answer === null ||
+              store.getAsk(prior.askId)?.sessionId !== ask.sessionId
+            ) {
+              reason = 'human_answer_required: cite an earlier human answer owned by this Neo.';
+              return null;
+            }
+            const title = prior.text.length > 200 ? `${prior.text.slice(0, 200)}…` : prior.text;
+            citation = `Resolved by Neo from human answer "${title}" (${prior.id})`;
+          }
+          return store.resolveQuestion(current, plan.value.answer, citation, Date.now());
+        });
+        const ask = question && store.getAsk(question.askId);
+        return question && ask ? { value: { question, ask } } : fail(reason);
+      },
+      ['input', 'caller'],
+      'result:outcome'
+    )
+    .pipe(
+      async ({
+        question,
+        ask,
+      }: {
+        question: NeoQuestion;
+        ask: NeoAsk;
+      }): Promise<QuestionReceipt> => {
+        await told(ask, question, neoQuestionAnsweredNote(question, []));
+        await deliverAnswers(question.id);
+        return { ok: true, question };
+      },
+      'outcome',
+      'outcome'
+    )
+    .endAsync('outcome') as (
+    input: z.infer<typeof Resolve>,
+    caller: OperationCaller
+  ) => Promise<QuestionReceipt | Rejection>;
+
   const answer = (superpipe({})('neo.question.answer') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(requireLocalUser, 'caller', 'result:outcome')
@@ -708,18 +844,41 @@ export function createNeoQuestionOperations(
     .pipe(
       async (answered: { question: NeoQuestion; ask: NeoAsk }): Promise<QuestionReceipt> => {
         const refused: string[] = [];
-        if (answered.question.kind === 'start')
-          for (const todoId of [answered.question.answer ?? []].flat()) {
-            const started = await start(todoId);
-            if (!started.ok)
-              refused.push(`${store.getTodo(todoId)?.title ?? todoId}: ${started.reason}`);
-          }
+        const ticked =
+          answered.question.kind === 'start' ? [answered.question.answer ?? []].flat() : [];
+        const waiting = ticked.filter(
+          (id) => !neoTodoReady(store.listFamilyTodos(answered.ask.id), id)
+        );
+        for (const todoId of ticked.filter((id) => !waiting.includes(id))) {
+          const started = await start(todoId);
+          if (!started.ok)
+            refused.push(`${store.getTodo(todoId)?.title ?? todoId}: ${started.reason}`);
+        }
         await told(
           answered.ask,
           answered.question,
           [
             neoQuestionAnsweredNote(answered.question, store.listTodos(answered.ask.id)),
             ...(refused.length ? [`These did not start: ${refused.join(' ')}`] : []),
+            ...(waiting.length
+              ? [
+                  `Waiting for earlier steps: ${waiting.map((id) => store.getTodo(id)?.title ?? id).join(', ')}.`,
+                ]
+              : []),
+            ...waiting.flatMap((id) => {
+              const family = store.listFamilyTodos(answered.ask.id);
+              const held = (
+                neoTodoDependencyNodes(family).find((node) => node.id === id)?.dependsOn ?? []
+              )
+                .map((dep) => family.find((todo) => todo.id === dep))
+                .filter((todo) => todo?.blockedBy === 'held')
+                .map((todo) => todo!.title);
+              return held.length
+                ? [
+                    `${store.getTodo(id)?.title ?? id} waits for held steps: ${held.join(', ')}. Ask the human whether to release them (neo.todo.edit hold: null).`,
+                  ]
+                : [];
+            }),
           ].join('\n')
         );
         await deliverAnswers(answered.question.id);
@@ -735,9 +894,18 @@ export function createNeoQuestionOperations(
 
   return [
     defineOperation({
+      name: 'neo.question.resolve',
+      description:
+        'Resolve an open worker card from a cited saved standing rule or earlier human answer owned by this Neo. Retires the card, stores the answer and citation, and uses its existing worker delivery/hold path. Neo or the local user on its behalf may call this. This is agent resolution, never human approval; start and confirmation cards are refused. source is {kind:"rule",text} with the exact saved text or {kind:"answer",questionId} for a human-answered card. Leave the card open when neither source applies.',
+      inputSchema: Resolve,
+      resultSchema: QuestionResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: (input, caller) => resolve(input, caller),
+    }),
+    defineOperation({
       name: 'neo.question.ask',
       description:
-        'Ask the human one question on an open ask you own. When it derives from one worker output, pass sourceSession {adapter,id,daemon?} from that worker; omit it for mixed or absent sources. The card opens that session without changing the answer controls. For a prepared human-led focused discussion, also pass focused:true: retain its sourceSession on the ask after this card retires, and relay its turns as status only. Optional artifacts attaches up to 16 registered file references (daemonId, artifactId, title, kind, byteLength) returned by artifact.file.register or artifact.file.get; the card opens them in the existing preview. Keep the question short instead of pasting the document. For a question about one todo, pass its todoId; the card retires automatically when that todo is done, closed unverified, removed or gone. If a supplied todoId is unknown, belongs to another ask, or is done, closed unverified or removed, return a todo_closed record and open the question on the ask without linking that todo. Optional replyTo cites received human message ids this question asks back about; it does not mark those inputs answered. Unknown, foreign, queued and non-human ids are omitted. Format text as Markdown: short title line, a few bullets or a small table, bold key choice; no walls of text. A home proposal uses kind yesno with confirm:{path,sha256}; the question text must show that exact path and 64-character lowercase content hash alongside the proposed change. This records the proposal, not permission to save. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any; the card labels them A, B, C… in order and the human may answer by letter, so never put letters in the option text. Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option. reply: answered in chat. start: rewords the start question the daemon opens on this ask for todos waiting to start; the human unticks any they do not want, and answering starts the ticked ones. It never opens a second one. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step; a closed question id is ignored and the new question opens on its own. A successful question reply to a consumed human input automatically records one linked chat notice; do not publish a second notice. Options stay on the card and this does not mark the input answered.',
+        'Ask the human one question on an open ask you own. For a human request, pass input (its [message id]) and the daemon picks the ask; never pick an ask yourself. askId alone is only for follow-up work with no human input; if both differ, the ask of the input wins and an ask_rebound record says so. When it derives from one worker output, pass sourceSession {adapter,id,daemon?} from that worker; omit it for mixed or absent sources. The card opens that session without changing the answer controls. For a prepared human-led focused discussion, also pass focused:true: retain its sourceSession on the ask after this card retires, and relay its turns as status only. Optional artifacts attaches up to 16 registered file references (daemonId, artifactId, title, kind, byteLength) returned by artifact.file.register or artifact.file.get; the card opens them in the existing preview. Keep the question short instead of pasting the document. For a question about one todo, pass its todoId; the card retires automatically when that todo is done, closed unverified, removed or gone. If a supplied todoId is unknown, belongs to another ask, or is done, closed unverified or removed, return a todo_closed record and open the question on the ask without linking that todo. Optional replyTo cites received human message ids this question asks back about; it does not mark those inputs answered. Unknown, foreign, queued and non-human ids are omitted. Format text as Markdown: short title line, a few bullets or a small table, bold key choice; no walls of text. A home proposal uses kind yesno with confirm:{path,sha256}; the question text must show that exact path and 64-character lowercase content hash alongside the proposed change. This records the proposal, not permission to save. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any; the card labels them A, B, C… in order and the human may answer by letter, so never put letters in the option text. Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option. reply: answered in chat. start: rewords the start question the daemon opens on this ask for todos waiting to start; the human unticks any they do not want, and answering starts the ticked ones. It never opens a second one. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step; a closed question id is ignored and the new question opens on its own. A successful question reply to a consumed human input automatically records one linked chat notice; do not publish a second notice. Options stay on the card and this does not mark the input answered.',
       inputSchema: Ask,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -755,7 +923,7 @@ export function createNeoQuestionOperations(
     defineOperation({
       name: 'neo.question.get',
       description:
-        "Read one of Neo's questions to the human by id: its text, state, answer and optional home path/hash binding. answeredByHuman is true only when the human answered it, by button or in their own chat; use it to check a decision another session reports.",
+        "Read one of Neo's questions to the human by id: its text, state, answer and optional home path/hash binding. answeredByHuman is true only when the human answered it, by button or in their own chat; use it to check a decision another session reports. resolvedByAgent marks a cited Neo resolution, whose durable citation is in retiredReason; it is never human approval.",
       inputSchema: Get,
       resultSchema: QuestionReadResult,
       policy: { safetyClass: 'read' },

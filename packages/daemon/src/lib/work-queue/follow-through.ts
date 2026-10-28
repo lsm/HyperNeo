@@ -5,17 +5,18 @@ export type FollowThroughIncident = {
   nudges: number;
   at?: number;
   redispatched?: boolean;
+  live?: string;
 };
 
-export function mayRedispatch(running: number, lastMovedAt: number, now: number) {
-  return running < 6 && now - lastMovedAt >= 60_000;
+export function mayRedispatch(running: number, lastMovedAt: number, now: number, limit: number) {
+  return running < limit && now - lastMovedAt >= 60_000;
 }
 
-export function continuesIncident(prior: FollowThroughIncident, since: number) {
+function continuesIncident(prior: FollowThroughIncident, since: number) {
   return since <= prior.since || (prior.at !== undefined && since - prior.at < STEP / 2);
 }
 
-export function planFollowThrough(
+function planFollowThrough(
   incident: FollowThroughIncident,
   now: number,
   follow: { remind: boolean; redispatch: boolean; move: boolean }
@@ -25,4 +26,27 @@ export function planFollowThrough(
   if (due < 3) return follow.remind ? { kind: 'remind' as const, nudges: due } : null;
   if (!follow.redispatch || incident.redispatched) return { kind: 'stall' as const, nudges: 3 };
   return follow.move ? { kind: 'redispatch' as const, nudges: 3 } : null;
+}
+
+export function advanceFollowThrough(
+  prior: FollowThroughIncident | null,
+  worker: { since: number; live: string; idle: boolean },
+  now: number,
+  follow: { remind: boolean; redispatch: boolean; move: boolean }
+) {
+  const incident =
+    prior && continuesIncident(prior, worker.since)
+      ? { ...prior, nudges: Math.min(prior.nudges, 2) }
+      : { since: worker.since, nudges: 0, ...(prior?.redispatched ? { redispatched: true } : {}) };
+  const plan = worker.idle ? planFollowThrough(incident, now, follow) : null;
+  const next: FollowThroughIncident =
+    plan?.kind === 'redispatch'
+      ? { since: now, nudges: 0, redispatched: true }
+      : {
+          ...incident,
+          live: worker.live,
+          nudges: plan?.nudges ?? incident.nudges,
+          ...(plan ? { at: now } : {}),
+        };
+  return { incident, plan, next };
 }

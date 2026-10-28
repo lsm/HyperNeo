@@ -156,6 +156,57 @@ test('new publishes reject triggerId while legacy publications keep it readable'
   });
 });
 
+test('a publication without explicit references answers the human input being processed', async () => {
+  const id = await received();
+  await db.updateSession(sessionId, {
+    processingState: JSON.stringify({ status: 'processing', messageId: id }),
+  });
+  expect(await invoke('neo.publication.publish', publication)).toMatchObject({
+    value: { accepted: true, publication: { replyTo: [id] } },
+  });
+  expect(
+    service.publications.toldSince(conversationId, { sessionId, messageId: id }, '1970-01-01')
+  ).toBe(true);
+});
+
+test('a publication answers every human input consumed in the current turn', async () => {
+  const first = await received();
+  const second = await received();
+  const foreign = crypto.randomUUID();
+  await db.updateSession(sessionId, {
+    processingState: JSON.stringify({
+      status: 'processing',
+      messageId: second,
+      messageIds: [first, second, foreign],
+    }),
+  });
+  expect(await invoke('neo.publication.publish', publication)).toMatchObject({
+    value: { accepted: true, publication: { replyTo: [first, second] } },
+  });
+  for (const id of [first, second])
+    expect(
+      service.publications.toldSince(conversationId, { sessionId, messageId: id }, '1970-01-01')
+    ).toBe(true);
+});
+
+test('explicit references win over inference, and an idle session infers none', async () => {
+  const chosen = await received();
+  const processing = await received();
+  await db.updateSession(sessionId, {
+    processingState: JSON.stringify({ status: 'processing', messageId: processing }),
+  });
+  expect(
+    await invoke('neo.publication.publish', { ...publication, replyTo: [chosen] })
+  ).toMatchObject({ value: { accepted: true, publication: { replyTo: [chosen] } } });
+  await db.updateSession(sessionId, {
+    processingState: JSON.stringify({ status: 'idle' }),
+  });
+  expect(
+    await invoke('neo.publication.publish', { ...publication, requestId: 'two' })
+  ).toMatchObject({ value: { accepted: true } });
+  expect(service.publications.list(conversationId)?.[1].replyTo).toBeUndefined();
+});
+
 test('mixed references retain only received human inputs in both tools', async () => {
   const replyTo = [await received(), crypto.randomUUID()];
   expect(await invoke('neo.publication.publish', { ...publication, replyTo })).toMatchObject({

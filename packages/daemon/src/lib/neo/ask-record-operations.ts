@@ -1,3 +1,4 @@
+import { NEO_TODO_NOT_READY, neoTodoAfterRefusal, neoTodoReady } from './todo-dependencies.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -202,6 +203,27 @@ export function createNeoAskRecordOperations(
           .map((todo) => planNeoTodoDraft(todo, packs()))
           .find((planned) => 'reason' in planned);
         if (refused && 'reason' in refused) return refused.reason;
+        const existing = priorAsk ? store.listFamilyTodos(priorAsk.id) : [];
+        const badAfter = input.todos
+          .map((todo, index) => {
+            const row = recordedRow(todo);
+            if (row)
+              return todo.start && isNeoTodoStartable(row) && !neoTodoReady(existing, row.id)
+                ? NEO_TODO_NOT_READY
+                : null;
+            return neoTodoAfterRefusal(
+              existing,
+              index,
+              todo.after?.map((ref) =>
+                typeof ref === 'number' && ref < index && input.todos[ref]
+                  ? (recordedRow(input.todos[ref])?.id ?? ref)
+                  : ref
+              ),
+              todo.start
+            );
+          })
+          .find(Boolean);
+        if (badAfter) return { ok: false as const, reason: badAfter };
         const drafts: typeof input.todos = [];
         for (const todo of input.todos) {
           const repo = neoTodoRepo(todo, packs(), priorAsk ?? { repo: null });
@@ -238,15 +260,19 @@ export function createNeoAskRecordOperations(
           store.listChildAsks(ask.id).length > 0 ||
           new Set(drafts.map((todo) => neoTodoRepo(todo, packs(), ask)).filter(Boolean)).size > 1;
         const records: string[] = [];
-        for (const todo of drafts) {
+        const ids: (string | undefined)[] = [];
+        for (const [index, todo] of drafts.entries()) {
           const row = recordedRow(todo, ask);
+          const after = todo.after?.map((ref) =>
+            typeof ref === 'number' ? (ref < index ? (ids[ref] ?? `#${ref}`) : `#${ref}`) : ref
+          );
           const added = !row
             ? await recordNeoTodo(
                 store,
                 sessions,
                 controls,
                 store.getAsk(ask.id)!,
-                todo,
+                { ...todo, ...(after ? { after } : {}) },
                 packs(),
                 split
               )
@@ -254,6 +280,11 @@ export function createNeoAskRecordOperations(
               ? await controls.start(row.id)
               : { ok: true as const };
           if (!added.ok) return added;
+          if (row && todo.after)
+            records.push(
+              `after_ignored: "${row.title}" already exists; change what it waits for with neo.todo.edit.`
+            );
+          ids.push(row?.id ?? ('todo' in added ? added.todo?.id : undefined));
           if ('records' in added && added.records) records.push(...added.records);
         }
         const settled = split
@@ -397,7 +428,7 @@ export function createNeoAskRecordOperations(
     defineOperation({
       name: 'neo.ask.open',
       description:
-        "Record a human request as an ask: a short title, request in the human's words, and optionally its todos (as in neo.todo.add). Any daemon session opens asks; goalId links work in a goal cycle to a goal any session owns. projectId names the project by its id (with or without the project: prefix) or its title; an unknown one is refused with the list of projects. A retry in the same turn returns the same ask. Reuse an open ask for the same request instead of opening another.",
+        "Record a human request as an ask: a short title, request in the human's words, and optionally its todos (as in neo.todo.add; give every step that needs work an instruction and target). Any daemon session opens asks; goalId links work in a goal cycle to a goal any session owns. projectId names the project by its id (with or without the project: prefix) or its title; an unknown one is refused with the list of projects. A retry in the same turn returns the same ask. Reuse an open ask for the same request instead of opening another.",
       inputSchema: Open,
       resultSchema: AskResult,
       policy: {

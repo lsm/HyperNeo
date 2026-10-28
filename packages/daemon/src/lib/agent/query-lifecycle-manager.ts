@@ -764,13 +764,21 @@ export class QueryLifecycleManager {
       return false;
     }
 
-    const _reason = this.ctx.pendingRestartReason;
+    const reason = this.ctx.pendingRestartReason;
     this.ctx.pendingRestartReason = null;
 
     try {
       await this.restart();
       return true;
-    } catch {
+    } catch (error) {
+      this.logger.warn(`Deferred restart (${reason}) failed:`, error);
+      await this.ctx.errorManager.handleError(
+        this.ctx.session.id,
+        error instanceof Error ? error : new Error(String(error)),
+        ErrorCategory.SESSION,
+        'The agent failed to restart after a settings change. Try "Reset Agent" if the chat stays unresponsive.',
+        this.ctx.stateManager.getState()
+      );
       return false;
     }
   }

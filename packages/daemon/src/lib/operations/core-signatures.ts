@@ -2,6 +2,8 @@ import { operationSignature } from './discovery.ts';
 import type { OperationRegistry } from './registry.ts';
 
 const rules = {
+  'neo.speech.say':
+    'requestId is stable on retry; text is a natural spoken reply, not the screen text',
   'work.send': 'ref is an object; message, not text',
   'neo.publication.publish': 'shortText and fullText required',
   'neo.todo.add': 'instruction and target pair unless bind; start needs target',

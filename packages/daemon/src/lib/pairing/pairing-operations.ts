@@ -3,12 +3,13 @@ import type { DevicePairingRepository } from '../../storage/repositories/device-
 import { isLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { PairingLimiter } from './pairing-limiter.ts';
+import { createDeviceRevoker } from './revoke-device.ts';
 
 export const SESSION_DOOR_PRINCIPAL = 'session-door';
 
 const Kind = z.enum(['human', 'relay', 'daemon']);
 const Refused = z.object({ ok: z.literal(false), reason: z.string() });
-const refused = { ok: false as const, reason: 'This action needs the user.' };
+export const refused = { ok: false as const, reason: 'This action needs the user.' };
 
 export interface PairingOperationDeps {
   readonly repo: () => DevicePairingRepository;
@@ -48,6 +49,7 @@ export function createDevicePairingOperations({
   now,
   revoked,
 }: PairingOperationDeps) {
+  const revoke = createDeviceRevoker(pairing, now, revoked);
   const isPairedHuman = (caller: OperationCaller) =>
     isLocalUser(caller) &&
     caller.device?.kind === 'human' &&
@@ -71,24 +73,19 @@ export function createDevicePairingOperations({
         }),
         Refused,
       ]),
-      execute: async (input, caller) => {
-        const plan = planPairingCode(
-          caller,
-          pairing().countDevices(),
-          isPairedHuman(caller),
-          input.kind === 'human' && pairing().humanRecoveryOpen()
-        );
-        if (!plan) return refused;
-        if ('reason' in plan) return { ok: false as const, reason: plan.reason };
-        const made = pairing().createCode(input.kind, input.name ?? null, plan.approved, now());
-        return {
-          ok: true as const,
-          codeId: made.id,
-          code: made.code,
-          expiresAt: made.expiresAt,
-          approval: plan.approved ? ('approved' as const) : ('pending' as const),
-        };
-      },
+      execute: async (input, caller) =>
+        pairing().createCodeAsync(
+          input.kind,
+          input.name ?? null,
+          {
+            source: caller.source,
+            principal: caller.principal,
+            device: caller.device
+              ? { deviceId: caller.device.deviceId, kind: caller.device.kind }
+              : undefined,
+          },
+          now()
+        ),
     }),
     defineOperation({
       name: 'device.pair.pending',
@@ -123,8 +120,12 @@ export function createDevicePairingOperations({
       resultSchema: z.union([z.object({ ok: z.literal(true) }), Refused]),
       execute: async (input, caller) => {
         if (!isLocalUser(caller)) return refused;
-        if (!isPairedHuman(caller)) return { ok: false as const, reason: ALLOW_NEEDS_PAIRED_HUMAN };
-        return pairing().approve(input.codeId, now())
+        if (caller.device?.kind !== 'human')
+          return { ok: false as const, reason: ALLOW_NEEDS_PAIRED_HUMAN };
+        const approved = await pairing().approveAsync(input.codeId, caller.device.deviceId, now());
+        if (approved === 'not_paired')
+          return { ok: false as const, reason: ALLOW_NEEDS_PAIRED_HUMAN };
+        return approved === 'approved'
           ? { ok: true as const }
           : { ok: false as const, reason: 'not_pending: no pending code with that id.' };
       },
@@ -229,15 +230,7 @@ export function createDevicePairingOperations({
       policy: { safetyClass: 'human_only' },
       inputSchema: z.object({ deviceId: z.string().min(1) }).strict(),
       resultSchema: z.union([z.object({ ok: z.literal(true) }), Refused]),
-      execute: async (input, caller) => {
-        if (!isLocalUser(caller) && !fromDoor(caller)) return refused;
-        if (!fromDoor(caller) && !isPairedHuman(caller))
-          return { ok: false as const, reason: NEEDS_PAIRED_HUMAN };
-        if (!pairing().revokeDevice(input.deviceId, now()))
-          return { ok: false as const, reason: 'not_found: no paired device with that id.' };
-        revoked(input.deviceId);
-        return { ok: true as const };
-      },
+      execute: async (input, caller) => revoke(input.deviceId, caller),
     }),
     defineOperation({
       name: 'device.pair.reset_lockout',

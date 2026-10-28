@@ -1,7 +1,12 @@
+import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
 import { releaseWorkerSandbox, workerSandboxOn } from './worker-sandbox.ts';
 import { createHash } from 'node:crypto';
 import { getDataDir } from '../data-dir.ts';
-import { installClaudeNativeWrites, readClaudeWorkerSandbox } from './claude-native-writes.ts';
+import {
+  installClaudeNativeWrites,
+  prepareClaudeWorkEnvironment,
+  readClaudeWorkerSandbox,
+} from './claude-native-writes.ts';
 import { collectDescendantPids, listProcesses, type ProcessLister } from '../process-watchdog.ts';
 import { readClaudeReceiverMode } from './claude-receiver-mode.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
@@ -1253,7 +1258,14 @@ export async function resumeIdleClaudeSession(
       record.cliSessionId,
       '--permission-mode',
       mode,
-      ...(sandbox ? ['--settings', join(folder, '.claude/settings.local.json')] : []),
+      ...(sandbox
+        ? [
+            '--settings',
+            join(folder, '.claude/settings.local.json'),
+            '--append-system-prompt',
+            workerWorkLocationsBrief(folder),
+          ]
+        : []),
       '--',
       message,
     ],
@@ -1428,19 +1440,10 @@ export async function launchInClaudeDesktop(
   deps: Pick<ClaudeDesktopAdapterDeps, 'spawn'>
 ): Promise<number> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const sandbox = await readClaudeWorkerSandbox(cwd);
+  await readClaudeWorkerSandbox(cwd);
   try {
     const proc = deps.spawn(
-      [
-        'script',
-        '-q',
-        '/dev/null',
-        'claude',
-        '--desktop',
-        '--resume',
-        cliSessionId,
-        ...(sandbox ? ['--settings', join(cwd, '.claude/settings.local.json')] : []),
-      ],
+      ['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', cliSessionId],
       {
         cwd,
         stdout: 'ignore',
@@ -1598,6 +1601,16 @@ export async function startClaudeSession(
     placement.kind === 'worktree' && worktree
       ? join(placement.repo, '.claude', 'worktrees', worktree)
       : (prepared?.value.directory ?? folder);
+  let writeEnvironment: (() => Promise<void>) | null = null;
+  if (!worktree) {
+    try {
+      writeEnvironment = await prepareClaudeWorkEnvironment(cwd);
+    } catch (error) {
+      await prepared?.value.release();
+      if (prepared) await releaseWorkerSandbox(prepared.value.directory);
+      return reject('preparation_failed', `Could not persist work locations: ${String(error)}`);
+    }
+  }
   const opened = await runToExit(
     deps,
     [
@@ -1617,7 +1630,12 @@ export async function startClaudeSession(
       '--mcp-config',
       '{"mcpServers":{}}',
       ...(worktree ? ['--worktree', worktree] : []),
-      ...(sandboxed ? ['--settings', join(cwd, '.claude/settings.local.json')] : []),
+      '--settings',
+      sandboxed
+        ? join(cwd, '.claude/settings.local.json')
+        : JSON.stringify({ env: workerWorkEnvironment(cwd) }),
+      '--append-system-prompt',
+      workerWorkLocationsBrief(cwd),
       '--',
       CLAUDE_DESKTOP_PREPARE,
     ],
@@ -1650,7 +1668,14 @@ export async function startClaudeSession(
     permissionMode,
   };
   cache.set(`${STARTED_KEY}${sessionId}`, { modifiedAt: 0, records: [record] });
-  const imported = await importClaudeDesktopSession(cliSessionId, cwd, deps);
+  const imported = await (writeEnvironment
+    ? writeEnvironment()
+    : prepareClaudeWorkEnvironment(cwd).then((write) => write())
+  )
+    .then(() => importClaudeDesktopSession(cliSessionId, cwd, deps))
+    .catch((error: unknown) =>
+      reject('not_delivered', `Could not open prepared worker: ${String(error)}`)
+    );
   if (!imported.ok)
     return {
       ...imported,

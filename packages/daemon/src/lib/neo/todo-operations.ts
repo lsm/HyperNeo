@@ -1,3 +1,8 @@
+import {
+  neoTodoAfterRefusal,
+  neoTodoDependencyRefusal,
+  planNeoTodoDependencies,
+} from './todo-dependencies.ts';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -13,6 +18,7 @@ import { type WorkRef, WorkRefSchema } from '../drivers/types.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { NeoTodoTargetSchema } from './driver-work.ts';
+import { noNeoInputReads, resolveNeoInputAsk, type NeoInputReads } from './input-ask.ts';
 import type { NeoPack } from './pack-contract.ts';
 import {
   readNeoTodoCompletion,
@@ -58,6 +64,13 @@ const TodoDraft = z.object({
   named: z.record(z.string(), z.unknown()).nullable().default(null),
   start: z.boolean().default(false),
   priority: TodoPriority.default('normal'),
+  after: z
+    .array(z.union([Text, z.number().int().min(0)]))
+    .max(20)
+    .optional()
+    .describe(
+      'Earlier steps of this ask this todo waits for: indexes of earlier todos in the same neo.ask.open call, or todo ids. [] lets it run alongside the others; omit it to wait for the step before it. The daemon starts each step once everything it waits for is done.'
+    ),
 });
 
 function refineNeoTodoDraft(
@@ -75,7 +88,28 @@ function refineNeoTodoDraft(
 
 export const NeoTodoDraftSchema = TodoDraft.superRefine(refineNeoTodoDraft);
 
-const Add = TodoDraft.extend({ askId: Text }).superRefine(refineNeoTodoDraft);
+const Add = TodoDraft.extend({
+  askId: Text.optional().describe(
+    'Only for follow-up work with no human input (worker reports, checks). For a human request pass input instead.'
+  ),
+  input: Text.optional().describe(
+    'The [message id] of the human message this todo serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else a new one.'
+  ),
+  after: z
+    .array(Text)
+    .max(20)
+    .optional()
+    .describe(
+      'Ids of todos in this ask this one waits for. [] lets it run alongside the others; omit it to wait for the step before it. The daemon starts it once everything it waits for is done.'
+    ),
+}).superRefine((input, context) => {
+  refineNeoTodoDraft(input, context);
+  if (!input.askId && !input.input)
+    context.addIssue({
+      code: 'custom',
+      message: 'Pass input for a human request, or askId for follow-up work.',
+    });
+});
 
 export type NeoTodoPolicy = {
   id: string;
@@ -118,6 +152,15 @@ export async function resolveNeoTodoDraft(
     : { value: { ...input, target: { ...input.target, ref: resolved.value } } };
 }
 
+export function neoTodoPlaceRefusal(
+  target: z.infer<typeof NeoTodoTargetSchema> | undefined,
+  repo: string | null | undefined
+): string | null {
+  return target?.verb === 'start' && !target.place && repo
+    ? `place_required: coding work for ${repo} starts in its repository; pass target.place from work.find.`
+    : null;
+}
+
 export async function addNeoTodo(
   todos: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
@@ -147,6 +190,8 @@ export async function recordNeoTodo(
   if ('reason' in planned) return planned.reason;
   const draft = planned.value;
   const repo = neoTodoRepo(draft, packs, ask);
+  const placeless = neoTodoPlaceRefusal(draft.target, repo);
+  if (placeless) return { ok: false, reason: placeless };
   const home = neoTodoHome(todos, ask, repo, split || todos.listChildAsks(ask.id).length > 0);
   if (home.status !== 'open')
     return {
@@ -156,7 +201,20 @@ export async function recordNeoTodo(
   const accepted = planNeoTodoDraft(draft, packs, todos.listTodos(home.id));
   if ('reason' in accepted) return accepted.reason;
   const records = accepted.value.records ? { records: accepted.value.records } : {};
-  const added = todos.addTodo(crypto.randomUUID(), home.id, draft, Date.now(), repo);
+  const refused = neoTodoAfterRefusal(
+    todos.listFamilyTodos(home.id),
+    null,
+    draft.after,
+    draft.start
+  );
+  if (refused) return { ok: false, reason: refused };
+  const id = crypto.randomUUID();
+  const dependsOn = draft.after
+    ? planNeoTodoDependencies(todos.listFamilyTodos(home.id), id, draft.after.map(String))
+    : null;
+  if (typeof dependsOn === 'string')
+    return { ok: false, reason: neoTodoDependencyRefusal(dependsOn) };
+  const added = todos.addTodo(id, home.id, { ...draft, dependsOn }, Date.now(), repo);
   if (draft.target?.verb === 'bind')
     return { ...bindNeoTodo(todos, sessions, added, draft.target.ref), ...records };
   if (draft.target) sessions.create(added.id, draft.target);
@@ -234,7 +292,14 @@ const Edit = z.object({
   evidence: Text.optional(),
   artifacts: z.array(ArtifactRefSchema).min(1).max(16).optional(),
   priority: TodoPriority.optional(),
+  instruction: Text.optional(),
+  target: NeoTodoTargetSchema.optional(),
   hold: Text.nullable().optional(),
+  after: z
+    .array(Text)
+    .max(20)
+    .optional()
+    .describe('Replace the todo ids this todo waits for; [] lets it run alongside the others.'),
 });
 
 const Remove = z.object({
@@ -262,6 +327,7 @@ export const NeoTodoSchema = z.object({
     .enum(['check', 'worker', 'failure', 'question', 'needs-human', 'stalled', 'held'])
     .nullable(),
   priority: TodoPriority,
+  dependsOn: z.array(z.string()).nullable(),
   replacedBy: z.string().nullable(),
   addedAfterStart: z.boolean(),
   report: z.string().nullable(),
@@ -305,7 +371,22 @@ export function planNeoTodoEdit(
     return fail('evidence_missing: ticking a todo needs evidence.');
   if (input.artifacts && !input.done)
     return fail('evidence_missing: artifacts are evidence; pass them with done.');
+  if (input.after && todo.startedAt !== null)
+    return fail(
+      'already_started: what a started todo waits for cannot change; its worker is already running.'
+    );
   const held = todo.state === 'blocked' && todo.blockedBy === 'held';
+  if (!input.instruction !== !input.target)
+    return fail('work_incomplete: give a todo work with instruction and target together.');
+  if (input.target?.verb === 'bind')
+    return fail('bind_target: attach running work with neo.todo.bind instead.');
+  if (
+    input.instruction &&
+    (todo.startedAt !== null || todo.instruction || !(isNeoTodoStartable(todo) || held))
+  )
+    return fail(
+      'has_work: only a todo that has not started and has no instruction yet can be given work.'
+    );
   if (input.hold !== undefined && (input.done || input.artifacts))
     return fail('hold_with_done: hold or release a todo separately from ticking it done.');
   if (input.hold && !isNeoTodoStartable(todo) && !held)
@@ -324,6 +405,7 @@ export function planNeoTodoEdit(
         ...(input.done === 'reported' ? { report: input.evidence } : {}),
         ...(input.artifacts ? { artifacts: input.artifacts } : {}),
         ...(input.priority ? { priority: input.priority } : {}),
+        ...(input.instruction ? { instruction: input.instruction } : {}),
         ...(input.hold
           ? {
               state: 'blocked',
@@ -333,6 +415,7 @@ export function planNeoTodoEdit(
             }
           : {}),
         ...(input.hold === null ? { state: 'todo' } : {}),
+        ...(input.after ? { dependsOn: input.after } : {}),
       },
     },
   };
@@ -355,7 +438,8 @@ export function requireNeoTodoCardsAnswered<T extends TodoPlan>(
   questions: readonly NeoQuestion[]
 ): Gate<T> {
   const card =
-    ['done', 'closed_unverified'].includes(plan.patch.state ?? '') &&
+    (['done', 'closed_unverified'].includes(plan.patch.state ?? '') ||
+      plan.patch.blockedBy === 'check') &&
     questions.find((question) => question.state === 'open' && question.todoId === plan.todo.id);
   return card
     ? fail(`card_unanswered: card ${card.id} is still waiting for the human.`)
@@ -411,7 +495,8 @@ export function createNeoTodoOperations(
   controls: NeoTodoControls,
   packs: () => readonly NeoPack[],
   artifact: ArtifactRefReader,
-  project: <T extends NeoTodo>(todos: readonly T[]) => Promise<T[]> = async (todos) => [...todos]
+  project: <T extends NeoTodo>(todos: readonly T[]) => Promise<T[]> = async (todos) => [...todos],
+  inputs: NeoInputReads = noNeoInputReads
 ) {
   const present = async (result: TodoReceipt | Rejection) => {
     if (!result.ok) return result;
@@ -478,7 +563,10 @@ export function createNeoTodoOperations(
       if ('reason' in rebased) return rebased.reason;
       plan = rebased.value;
     }
-    if (['done', 'closed_unverified'].includes(plan.patch.state ?? '')) {
+    if (
+      ['done', 'closed_unverified'].includes(plan.patch.state ?? '') ||
+      plan.patch.blockedBy === 'check'
+    ) {
       const latest = requireNeoOpenTodo(todos.getTodo(plan.todo.id), todos.getAsk(plan.todo.askId));
       if ('reason' in latest) return latest.reason;
       if (!sameNeoTodoCheck(checked, input?.addUrls || input?.check ? plan.todo : latest.value))
@@ -541,14 +629,28 @@ export function createNeoTodoOperations(
   const add = (superpipe({})('neo.todo.add') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      (input: z.infer<typeof Add>) => admit(todos.getAsk(input.askId)),
-      'input',
+      (input: z.infer<typeof Add>, caller: OperationCaller) =>
+        resolveNeoInputAsk(todos, inputs, caller, input, input.title),
+      ['input', 'caller'],
+      'binding'
+    )
+    .pipe(
+      (binding: ReturnType<typeof resolveNeoInputAsk>) =>
+        'reason' in binding ? binding : admit(todos.getAsk(binding.value.askId)),
+      'binding',
       'result:outcome'
     )
     .pipe(
-      async (ask: NeoAsk, input: z.infer<typeof Add>): Promise<TodoReceipt | Rejection> =>
-        ran(await addNeoTodo(todos, sessions, controls, ask, input, packs())),
-      ['outcome', 'input'],
+      async (
+        ask: NeoAsk,
+        input: z.infer<typeof Add>,
+        binding: { value: { records: string[] } }
+      ): Promise<TodoReceipt | Rejection> => {
+        const result = await ran(await addNeoTodo(todos, sessions, controls, ask, input, packs()));
+        const records = [...binding.value.records, ...((result.ok && result.records) || [])];
+        return result.ok && records.length ? { ...result, records } : result;
+      },
+      ['outcome', 'input', 'binding'],
       'outcome'
     )
     .endAsync('outcome') as (
@@ -640,7 +742,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.add',
       description:
-        'Add a todo to an open ask you own. A coding PR already tracked by another live todo on that ask is recorded without blocking; prefer continuing the original todo. neo.todo.edit addUrls only pins URLs to an existing PR-merge check. Pass title and a required check {pack, kind, params}; doneWhen is generated, never supplied. Use a completion check the installed pack supports; core.human_confirmed {questionId}, core.evidence {artifact: registered artifact ID} or {path: absolute file path}, or core.deployed {repo: lsm/HyperNeo, sha: full commit}. A pack may reject malformed checks or record bookkeeping conditions. Workers are long-lived sessions: name them for the matter, never a task title; use work.rename after starting if the session inherits this todo title. instruction is the task for a session and target says where it runs ({verb: start, adapter, place?} or {verb: send, ref}); non-coding todos share one visible user folder across projects when place is omitted: ~/HyperNeo by default, or exactly the instance workspace path. A different place needs an exact path the user named in chat, even inside the workspace; never invent folders under home. Coding keeps its repository place; use target {verb: bind, ref} to bind already running work immediately without dispatch, with no instruction or start flag needed; without them the daemon checks the todo itself. named records what the human named for it (engine, session, repository, folder). A session the human named is sent to only through the ref work.find {session} returns as an exact match. start:true starts it now; otherwise the daemon lists it, ticked, in the start question of the ask. priority (urgent, high, normal, low; default normal) orders waiting work, urgent first: set it from how urgent the human made it; it can change later with neo.todo.edit. Steps the human approved start themselves in order as worker slots free; do not start them yourself. A step added after the ask started still waits for its own start answer.',
+        'Add a todo to an open ask you own. For a human request, pass input (its [message id]) and the daemon picks the ask; never pick an ask yourself. askId alone is only for follow-up work with no human input; if both differ, the ask of the input wins and an ask_rebound record says so. A coding PR already tracked by another live todo on that ask is recorded without blocking; prefer continuing the original todo. neo.todo.edit addUrls only pins URLs to an existing PR-merge check. Pass title and a required check {pack, kind, params}; doneWhen is generated, never supplied. Use a completion check the installed pack supports; core.human_confirmed {questionId}, core.evidence {artifact: registered artifact ID} or {path: absolute file path}, or core.deployed {repo: lsm/HyperNeo, sha: full commit}. A pack may reject malformed checks or record bookkeeping conditions. Workers are long-lived sessions: name them for the matter, never a task title; use work.rename after starting if the session inherits this todo title. instruction is the task for a session and target says where it runs ({verb: start, adapter, place?} or {verb: send, ref}). Spell out the task: every step that needs work done gets its instruction and target when you add it; leave both out only for a step that just waits on its check, such as a merge or a deploy, since nothing runs a step without them. non-coding todos share one visible user folder across projects when place is omitted: ~/HyperNeo by default, or exactly the instance workspace path. A different place needs an exact path the user named in chat, even inside the workspace; never invent folders under home. Coding keeps its repository place; use target {verb: bind, ref} to bind already running work immediately without dispatch, with no instruction or start flag needed; without them the daemon checks the todo itself. named records what the human named for it (engine, session, repository, folder). A session the human named is sent to only through the ref work.find {session} returns as an exact match. start:true starts it now; otherwise the daemon lists it, ticked, in the start question of the ask. priority (urgent, high, normal, low; default normal) orders waiting work, urgent first: set it from how urgent the human made it; it can change later with neo.todo.edit. Steps the human approved start themselves in order as worker slots free; do not start them yourself. A step added after the ask started still waits for its own start answer.',
       inputSchema: Add,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -658,7 +760,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.edit',
       description:
-        'Change a todo on an open ask you own: title or check {pack, kind, params}; the completion sentence is generated from the check, or reword it directly with doneWhen. addUrls appends PR URLs to its PR-merge check. Duplicate claims and URLs unsupported by the check are recorded without blocking the edit. Prefer editing to adding a duplicate PR todo. Or record completion evidence (done met for what you read, reported for a claim you cannot read); without a passed outcome check it closes unverified rather than done; attach a document or evidence file as the reference artifact.file.register returned in artifacts, with one sentence of evidence, not the pasted document. A todo with an unanswered card is refused until the human answers it. hold: "<reason>" holds a todo that has not started, so nothing starts it; hold: null releases it. Hold only what the human said must wait. priority changes where waiting work starts in the queue.',
+        'Change a todo on an open ask you own: title or check {pack, kind, params}; the completion sentence is generated from the check, or reword it directly with doneWhen. addUrls appends PR URLs to its PR-merge check. Duplicate claims and URLs unsupported by the check are recorded without blocking the edit. Prefer editing to adding a duplicate PR todo. Or record completion evidence (done met for what you read, reported for a claim you cannot read); without a passed outcome check it stays open, blocked by its check, and finishes by itself once the check passes; attach a document or evidence file as the reference artifact.file.register returned in artifacts, with one sentence of evidence, not the pasted document. A todo with an unanswered card is refused until the human answers it. hold: "<reason>" holds a todo that has not started, so nothing starts it; hold: null releases it. Hold only what the human said must wait. priority changes where waiting work starts in the queue. instruction with target gives a todo that has not started and has no instruction its work; the queue then starts it like any approved step. A start target for a coding todo needs target.place from work.find.',
       inputSchema: Edit,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -694,7 +796,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.close',
       description:
-        'Close a todo with your reason. It is done only when its outcome check passes; otherwise it is visibly closed unverified, with the unmet check recorded. Its session stops if it is running, unless the todo only follows a session the human tracked. A todo with an unanswered card is refused until the human answers it.',
+        'Close a todo with your reason. It is done only when its outcome check passes; otherwise it stays open, blocked by its check with the unmet reason, and finishes by itself once the check passes; if the check is wrong, fix it with neo.todo.edit check. Its session stops if it is running, unless the todo only follows a session the human tracked. A todo with an unanswered card is refused until the human answers it.',
       inputSchema: Close,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

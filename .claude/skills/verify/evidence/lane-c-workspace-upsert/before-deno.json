@@ -1,0 +1,6 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "commandFailure": "Error: Unknown write DB op: workspace.history.upsert.write",
+  "mainSqlAttempts": 0,
+  "workerMetrics": []
+}

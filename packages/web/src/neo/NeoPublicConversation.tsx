@@ -379,8 +379,10 @@ function ReplyQuote({
   replyTo,
   labels,
   onSeek,
+  onOpenWork,
 }: {
   replyTo: NeoReplyTo;
+  onOpenWork?: (anchor: string) => void;
   labels?: ReadonlyMap<string, { label: string; askId: string }>;
   onSeek?: (messageId: string) => void;
 }) {
@@ -392,10 +394,12 @@ function ReplyQuote({
         author={excerpt === undefined ? undefined : 'Neo'}
         excerpt={excerpt}
         onOpen={() =>
-          (
-            document.getElementById(`neo-ref-${replyTo.kind}-${replyTo.id}`) ??
-            document.querySelector(`[data-ask="${label?.askId}"]`)
-          )?.scrollIntoView({ block: 'center' })
+          onOpenWork
+            ? onOpenWork(`neo-ref-${replyTo.kind}-${replyTo.id}`)
+            : (
+                document.getElementById(`neo-ref-${replyTo.kind}-${replyTo.id}`) ??
+                document.querySelector(`[data-ask="${label?.askId}"]`)
+              )?.scrollIntoView({ block: 'center' })
         }
       />
     );
@@ -549,7 +553,12 @@ function PublicEntry({
         <NeoPreviewReference reference={ask?.previewContext} />
         {ask?.replyTo && (
           <div data-reply-to={`${ask.replyTo.kind}:${ask.replyTo.id}`}>
-            <ReplyQuote replyTo={ask.replyTo} labels={replyLabels} onSeek={onSeek} />
+            <ReplyQuote
+              replyTo={ask.replyTo}
+              labels={replyLabels}
+              onSeek={onSeek}
+              onOpenWork={onOpenWork}
+            />
           </div>
         )}
         {photos.length > 0 && (
@@ -597,18 +606,19 @@ function PublicEntry({
               </button>
             );
           const fold = (
-            <ContentDisclosureControl expanded={expanded} onToggle={() => setExpanded(!expanded)} />
+            <div class="mt-1 flow-root">
+              <ContentDisclosureControl
+                expanded={expanded}
+                onToggle={() => setExpanded(!expanded)}
+              />
+            </div>
           );
           const more = hasDetails && !expanded ? fold : undefined;
           const body = /^[\s]*\d+[.)]?[\s]*$/.test(text) ? (
-            <p class="whitespace-pre-wrap text-base leading-relaxed">
-              {text}
-              {more}
-            </p>
+            <p class="whitespace-pre-wrap text-base leading-relaxed">{text}</p>
           ) : (
             <MarkdownRenderer
               content={text}
-              trailing={more}
               references={references.text}
               onReference={openReference}
               class={`neo-markdown neo-markdown-${ask ? 'user' : 'assistant'} text-base leading-relaxed`}
@@ -619,6 +629,7 @@ function PublicEntry({
               <div ref={bubbleText}>
                 {ask ? <NeoClampedText text={text}>{body}</NeoClampedText> : body}
               </div>
+              {more}
               {hasDetails && expanded && (
                 <div
                   data-publication-details
@@ -631,11 +642,11 @@ function PublicEntry({
                   </div>
                   <MarkdownRenderer
                     content={full}
-                    trailing={fold}
                     references={references.full}
                     onReference={openReference}
                     class="neo-markdown neo-markdown-assistant text-sm leading-relaxed"
                   />
+                  {fold}
                 </div>
               )}
               {publication && <ArtifactCards artifacts={publication.artifacts} />}
@@ -697,7 +708,7 @@ function PublicEntry({
               setRestoring(true);
               void result.then(settle, () => settle(false));
             }}
-            class="rounded-full p-1.5 text-fg-muted hover:bg-fill-soft hover:text-fg"
+            class="neo-message-action rounded-full p-1.5 text-fg-muted hover:bg-fill-soft hover:text-fg"
           >
             <NeoIcon name="edit" class="!h-4 !w-4" />
           </button>
@@ -713,7 +724,7 @@ function PublicEntry({
             type="button"
             aria-label={t(ask ? 'chat.replyYours' : 'chat.replyNeo')}
             title={t('chat.reply')}
-            class="rounded p-1.5 text-fg-muted transition-colors hover:bg-fill-strong hover:text-fg-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            class="neo-message-action rounded p-1.5 text-fg-muted transition-colors hover:bg-fill-strong hover:text-fg-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             onClick={() =>
               onQuote({
                 author: ask ? 'You' : 'Neo',
@@ -859,7 +870,7 @@ export function PendingAsk({
             aria-label={t('chat.retry')}
             title={t('chat.retry')}
             onClick={() => onRetry?.(ask.requestId)}
-            class="rounded-full p-1.5 text-fg-muted hover:bg-fill-soft hover:text-fg"
+            class="neo-message-action rounded-full p-1.5 text-fg-muted hover:bg-fill-soft hover:text-fg"
           >
             <NeoIcon name="retry" class="!h-4 !w-4" />
           </button>
@@ -868,7 +879,7 @@ export function PendingAsk({
             aria-label={t('chat.edit')}
             title={t('chat.edit')}
             onClick={() => onEdit?.(ask.requestId)}
-            class="rounded-full p-1.5 text-fg-muted hover:bg-fill-soft hover:text-fg"
+            class="neo-message-action rounded-full p-1.5 text-fg-muted hover:bg-fill-soft hover:text-fg"
           >
             <NeoIcon name="edit" class="!h-4 !w-4" />
           </button>

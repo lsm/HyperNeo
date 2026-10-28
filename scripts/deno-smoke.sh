@@ -508,6 +508,9 @@ env -i HOME="$DELIVERY_PARKING_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$DELIVERY_PARKING_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-delivery-parking.ts" "$DELIVERY_PARKING_RUN"
 
+AGENT_REMINDER_DELETE_RUN="$WORK_DIR/agent-reminder-delete-writer"
+mkdir -p "$AGENT_REMINDER_DELETE_RUN/home"
+env -i HOME="$AGENT_REMINDER_DELETE_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$AGENT_REMINDER_DELETE_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/agent-reminder-delete-writer.ts" verify "$AGENT_REMINDER_DELETE_RUN"
 WORKFLOW_DELETE_WRITER_RUN="$WORK_DIR/workflow-delete-writer"
 mkdir -p "$WORKFLOW_DELETE_WRITER_RUN/home"
 env -i HOME="$WORKFLOW_DELETE_WRITER_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_DELETE_WRITER_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-delete-writer.ts" verify "$WORKFLOW_DELETE_WRITER_RUN"
@@ -616,6 +619,12 @@ env -i HOME="$TRANSCRIPT_SESSION_READER_RUN/home" PATH="$PATH" TMPDIR="$TRANSCRI
 	HYPERNEO_DATA_DIR="$TRANSCRIPT_SESSION_READER_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-transcript-session-reader.ts" --defer-body-copy "$TRANSCRIPT_SESSION_READER_RUN"
 
+HISTORY_SNAPSHOT_READER_RUN="$WORK_DIR/history-snapshot-reader"
+mkdir -p "$HISTORY_SNAPSHOT_READER_RUN/home" "$HISTORY_SNAPSHOT_READER_RUN/tmp"
+env -i HOME="$HISTORY_SNAPSHOT_READER_RUN/home" PATH="$PATH" TMPDIR="$HISTORY_SNAPSHOT_READER_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$HISTORY_SNAPSHOT_READER_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/history-snapshot-reader.ts" "$HISTORY_SNAPSHOT_READER_RUN"
+
 SESSION_LIST_READER_RUN="$WORK_DIR/session-list-reader"
 mkdir -p "$SESSION_LIST_READER_RUN/home" "$SESSION_LIST_READER_RUN/tmp"
 env -i HOME="$SESSION_LIST_READER_RUN/home" PATH="$PATH" TMPDIR="$SESSION_LIST_READER_RUN/tmp" NODE_ENV=test \
@@ -665,6 +674,12 @@ env -i HOME="$TODO_MUTATION_COMMIT_RUN/home" PATH="$PATH" TMPDIR="$TODO_MUTATION
 	HYPERNEO_DATA_DIR="$TODO_MUTATION_COMMIT_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-mutation-commit.ts" verify "$TODO_MUTATION_COMMIT_RUN"
 
+TODO_REMOVE_WRITER_RUN="$WORK_DIR/todo-remove-writer"
+mkdir -p "$TODO_REMOVE_WRITER_RUN/home" "$TODO_REMOVE_WRITER_RUN/tmp"
+env -i HOME="$TODO_REMOVE_WRITER_RUN/home" PATH="$PATH" TMPDIR="$TODO_REMOVE_WRITER_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$TODO_REMOVE_WRITER_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-remove-writer.ts" verify "$TODO_REMOVE_WRITER_RUN"
+
 TODO_MUTATION_ACTIVATION_RUN="$WORK_DIR/todo-mutation-activation"
 mkdir -p "$TODO_MUTATION_ACTIVATION_RUN/home" "$TODO_MUTATION_ACTIVATION_RUN/tmp"
 env -i HOME="$TODO_MUTATION_ACTIVATION_RUN/home" PATH="$PATH" TMPDIR="$TODO_MUTATION_ACTIVATION_RUN/tmp" NODE_ENV=test \
@@ -707,6 +722,12 @@ env -i HOME="$TRACK_ADMISSION_RUN/home" PATH="$PATH" TMPDIR="$TRACK_ADMISSION_RU
 	HYPERNEO_DATA_DIR="$TRACK_ADMISSION_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/neo-track-admission-build.ts" verify "$TRACK_ADMISSION_RUN"
 
+TRACK_ACTIVATION_RUN="$WORK_DIR/neo-track-admission-activation"
+mkdir -p "$TRACK_ACTIVATION_RUN/home" "$TRACK_ACTIVATION_RUN/tmp"
+env -i HOME="$TRACK_ACTIVATION_RUN/home" PATH="$PATH" TMPDIR="$TRACK_ACTIVATION_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$TRACK_ACTIVATION_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/neo-track-admission-activation.ts" verify "$TRACK_ACTIVATION_RUN"
+
 TODO_ADD_BUILD_RUN="$WORK_DIR/todo-add-build"
 mkdir -p "$TODO_ADD_BUILD_RUN/home" "$TODO_ADD_BUILD_RUN/tmp"
 env -i HOME="$TODO_ADD_BUILD_RUN/home" PATH="$PATH" TMPDIR="$TODO_ADD_BUILD_RUN/tmp" NODE_ENV=test \
@@ -734,16 +755,50 @@ env -i HOME="$HUMAN_CONFIRMED_RUN/home" PATH="$PATH" TMPDIR="$HUMAN_CONFIRMED_RU
 env -i HOME="$WORK_DIR/message-count-reader/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/message-count-reader/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-message-count-reader.ts" "$WORK_DIR/message-count-reader"
 env -i HOME="$WORK_DIR/session-export-reader/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/session-export-reader/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-export-reader.ts" "$WORK_DIR/session-export-reader"
 env -i HOME="$WORK_DIR/session-schedule-create/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/session-schedule-create/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-schedule-create.ts" "$WORK_DIR/session-schedule-create"
+WORKFLOW_NODE_CONFIG_CONTRACT_RUN="$WORK_DIR/workflow-node-config-contract"
+mkdir -p "$WORKFLOW_NODE_CONFIG_CONTRACT_RUN/home"
+env -i HOME="$WORKFLOW_NODE_CONFIG_CONTRACT_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_NODE_CONFIG_CONTRACT_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-node-config-contract.ts" verify "$WORKFLOW_NODE_CONFIG_CONTRACT_RUN"
 WORKFLOW_EXISTING_RUN_PIN_RUN="$WORK_DIR/workflow-existing-run-pin"
 mkdir -p "$WORKFLOW_EXISTING_RUN_PIN_RUN/home"
 env -i HOME="$WORKFLOW_EXISTING_RUN_PIN_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_EXISTING_RUN_PIN_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-existing-run-pin.ts" verify "$WORKFLOW_EXISTING_RUN_PIN_RUN"
 WORKFLOW_SNAPSHOT_WRITER_RUN="$WORK_DIR/workflow-snapshot-writer"
 mkdir -p "$WORKFLOW_SNAPSHOT_WRITER_RUN/home"
 env -i HOME="$WORKFLOW_SNAPSHOT_WRITER_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_SNAPSHOT_WRITER_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-snapshot-writer.ts" verify "$WORKFLOW_SNAPSHOT_WRITER_RUN"
+DIRECT_START_REQUEUE_RUN="$WORK_DIR/direct-start-requeue-writer"
+mkdir -p "$DIRECT_START_REQUEUE_RUN/home"
+env -i HOME="$DIRECT_START_REQUEUE_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$DIRECT_START_REQUEUE_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/direct-start-requeue-writer.ts" verify "$DIRECT_START_REQUEUE_RUN"
 JOB_REQUEUE_WRITER_RUN="$WORK_DIR/job-requeue-writer"
 mkdir -p "$JOB_REQUEUE_WRITER_RUN/home"
 env -i HOME="$JOB_REQUEUE_WRITER_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$JOB_REQUEUE_WRITER_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/job-requeue-writer.ts" verify "$JOB_REQUEUE_WRITER_RUN"
+TASK_SCHEDULE_DELETE_RUN="$WORK_DIR/task-schedule-delete-writer"
+mkdir -p "$TASK_SCHEDULE_DELETE_RUN/home"
+env -i HOME="$TASK_SCHEDULE_DELETE_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$TASK_SCHEDULE_DELETE_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/task-schedule-delete-writer.ts" verify "$TASK_SCHEDULE_DELETE_RUN"
 TASK_SCHEDULE_PAUSE_RUN="$WORK_DIR/task-schedule-pause-writer"
 mkdir -p "$TASK_SCHEDULE_PAUSE_RUN/home"
 env -i HOME="$TASK_SCHEDULE_PAUSE_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$TASK_SCHEDULE_PAUSE_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/task-schedule-pause-writer.ts" verify "$TASK_SCHEDULE_PAUSE_RUN"
+WORKFLOW_OPTIONS_CONTRACT_RUN="$WORK_DIR/workflow-options-contract"
+mkdir -p "$WORKFLOW_OPTIONS_CONTRACT_RUN/home"
+env -i HOME="$WORKFLOW_OPTIONS_CONTRACT_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_OPTIONS_CONTRACT_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-options-contract.ts" verify "$WORKFLOW_OPTIONS_CONTRACT_RUN"
+env -i HOME="$WORK_DIR/pairing-approve/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/pairing-approve/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-pairing-approve.ts" "$WORK_DIR/pairing-approve"
+env -i HOME="$WORK_DIR/pairing-redeem/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/pairing-redeem/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-pairing-redeem.ts" "$WORK_DIR/pairing-redeem"
+env -i HOME="$WORK_DIR/pairing-code-create/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/pairing-code-create/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-pairing-code-create.ts" "$WORK_DIR/pairing-code-create"
+env -i HOME="$WORK_DIR/pairing-revoke-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/pairing-revoke-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-pairing-revoke-command.ts" "$WORK_DIR/pairing-revoke-command"
+env -i HOME="$WORK_DIR/connected-device-observer/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/connected-device-observer/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-connected-device-observer.ts" "$WORK_DIR/connected-device-observer"
+env -i HOME="$WORK_DIR/pairing-revoke-activation/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/pairing-revoke-activation/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-pairing-revoke-activation.ts" "$WORK_DIR/pairing-revoke-activation"
+env -i HOME="$WORK_DIR/human-reset-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/human-reset-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-human-reset-command.ts" "$WORK_DIR/human-reset-command"
+env -i HOME="$WORK_DIR/conversation-reservation/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/conversation-reservation/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-conversation-reservation-extract.ts" "$WORK_DIR/conversation-reservation"
+env -i HOME="$WORK_DIR/human-reset-receipts/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/human-reset-receipts/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-human-reset-receipts.ts" "$WORK_DIR/human-reset-receipts"
+env -i HOME="$WORK_DIR/human-reset-coordinator/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/human-reset-coordinator/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-human-reset-coordinator.ts" "$WORK_DIR/human-reset-coordinator"
+env -i HOME="$WORK_DIR/human-reset-activation/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/human-reset-activation/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-human-reset-activation.ts" "$WORK_DIR/human-reset-activation"
+env -i HOME="$WORK_DIR/workspace-remove/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/workspace-remove/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-workspace-remove.ts" "$WORK_DIR/workspace-remove"
+env -i HOME="$WORK_DIR/workspace-upsert/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/workspace-upsert/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-workspace-upsert.ts" "$WORK_DIR/workspace-upsert"
+env -i HOME="$WORK_DIR/workspace-add/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/workspace-add/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-workspace-add.ts" "$WORK_DIR/workspace-add"
+env -i HOME="$WORK_DIR/inbox-create/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/inbox-create/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-inbox-create.ts" "$WORK_DIR/inbox-create"
+env -i HOME="$WORK_DIR/inbox-event/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/inbox-event/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-inbox-event.ts" "$WORK_DIR/inbox-event"
+env -i HOME="$WORK_DIR/artifact-identity-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-identity-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-identity-extract.ts" "$WORK_DIR/artifact-identity-extract"
+env -i HOME="$WORK_DIR/artifact-identity-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-identity-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-identity-command.ts" "$WORK_DIR/artifact-identity-command"
+env -i HOME="$WORK_DIR/artifact-registration-identity/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-registration-identity/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-registration-identity.ts" "$WORK_DIR/artifact-registration-identity"
+env -i HOME="$WORK_DIR/artifact-reference-identity/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-reference-identity/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-reference-identity.ts" "$WORK_DIR/artifact-reference-identity"
+env -i HOME="$WORK_DIR/artifact-git-identity/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-git-identity/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-git-identity.ts" "$WORK_DIR/artifact-git-identity"
+env -i HOME="$WORK_DIR/artifact-receipt-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-receipt-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-receipt-extract.ts" "$WORK_DIR/artifact-receipt-extract"
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"

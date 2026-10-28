@@ -1,4 +1,4 @@
-# Reopen a focused discussion after its preparation card is retired
+# Retain focused discussion context after its preparation card is retired
 
 Read shared isolation rules. Build web, pick a fresh RUN, and run this proof. Preflight port 8000 for its owned loopback model; never stop another
 process. The daemon and web server use ephemeral ports:
@@ -22,8 +22,12 @@ An ordinary source card must not bind the ask. A prepared card with focused:true
 must save ask.focusedSession; a missing source is refused. After retiring all
 questions and restarting only this test daemon, neo.snapshot retains the captured
 session identity, provider and safe opener on the ask, with no question present.
-Headless 1440px/390px checks reopen the correct session through the existing opener
-and return to the ask. Retain screenshots, observed.json, web.json and receipts.
+Headless 1440px/390px checks retain the captured session context without the
+duplicate header Open session pill. The retained Human-led discussion todo's
+logo + Open reopens the session and Back returns; no duplicate card fallback is
+rendered. Cases with no remaining visible opener use the card fallback in
+neo-open-controls.md. Question-card and per-todo openers are
+covered by neo-open-controls.md, including both light and dark themes. Retain screenshots, observed.json, web.json and receipts.
 
 A synthetic tracked dispatch and work.status turn end exercise the actual daemon
 refresh job and relay delivery into Neo's stored input. Its report names ask, todo
@@ -35,3 +39,13 @@ It does not drive native Desktop or add outcome integration (#8411).
 Run neo-questions, neo-todo-runner, neo-ask-record, neo-ask-entries, neo-reply-to and
 neo-prompt unit contracts, NeoAskTodos web contracts, and bun run check. The helper
 owns and closes its daemons, server and browser in finally; keep cleanup.json.
+
+Regression recipe for the Open dedup: run both ordinary and outcome modes. The
+fixture's Human-led discussion todo remains doing and linked to the focused
+session after its questions retire. Its todo Open must be the sole opener; the
+card fallback must be absent. The old browser step instead waits for Open
+session: Positioning discussion and times out. Preserve that before failure,
+then verify the todo opener enters the session and Back restores the same card.
+Await asynchronous delivery-input fixture writes before using the dispatch ID;
+an unawaited ID is a Promise that cannot cross the DB-worker boundary and fails
+before the browser surface is reached.

@@ -1,0 +1,9 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "firstWebhookMs": 6.704749999999876,
+  "mainSqlAttempts": 2,
+  "workerMetrics": [],
+  "runtime": "deno",
+  "exitCode": 1,
+  "expectedFailure": "Signed webhook acknowledges 200 but inserts no row: initial write and fallback both hit main SQL guard"
+}

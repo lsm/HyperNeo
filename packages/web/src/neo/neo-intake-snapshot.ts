@@ -162,6 +162,20 @@ const encode = (superpipe({})('neo-intake-snapshot-encode') as PipelineAPI)
   .end('encoded') as (entries: unknown) => string | Refusal;
 
 export const neoIntakeSnapshots = {
+  voiceContext(value: unknown): boolean {
+    return (
+      shape(value, 'images,quote,suffix,attachmentIds') &&
+      text(value.suffix, MAX_JSON) &&
+      Array.isArray(value.attachmentIds) &&
+      value.attachmentIds.every((id) => text(id, 200, true)) &&
+      (value.images === undefined ||
+        (Array.isArray(value.images) &&
+          value.images.length <= 6 &&
+          value.images.every(image) &&
+          value.images.reduce((sum, item) => sum + item.data.length, 0) <= MAX_IMAGES)) &&
+      (value.quote === undefined || quote(value.quote))
+    );
+  },
   encode,
   decode,
   limits: Object.freeze({ entries: MAX_ENTRIES, serializedCharacters: MAX_JSON }),

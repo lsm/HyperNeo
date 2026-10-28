@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
 import {
   admitNeoIntake,
+  neoIntakeMessage,
   createNeoIntakeOperation,
   requireNeoIntakeTarget,
   requireNeoRootTarget,
@@ -31,6 +32,12 @@ const target = { id: input.sessionId, status: 'active' as const, config: {} };
 const binding = { sessionId: input.sessionId, projectId: null, kind: 'neo' as const };
 
 describe('Neo intake gates', () => {
+  test('voice instructions reach the model without changing the public human text', () => {
+    const spoken = neoIntakeMessage({ ...input, speech: true });
+    expect(JSON.stringify(spoken.message.content)).toContain('neo.speech.say');
+    expect(spoken.humanContent).toEqual([{ type: 'text', text: input.content }]);
+    expect(JSON.stringify(neoIntakeMessage(input).message.content)).not.toContain('neo.speech.say');
+  });
   test.each([
     { source: 'mcp', role: 'neo', sessionId: input.sessionId },
     { source: 'rpc' },
@@ -124,6 +131,7 @@ describe('durable Neo intake operation', () => {
         repo,
         installedPacks: () => [],
         packOperations: [],
+        speech: { operations: [] },
       } as unknown as NeoService)
     );
     expect(registry.get('neo.message.send')?.policy?.safetyClass).toBe('human_only');

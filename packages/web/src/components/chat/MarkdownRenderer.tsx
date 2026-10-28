@@ -1,6 +1,6 @@
 import { escapeRawHtmlBlocks, hasCodeBlock, renderPlainText } from './markdown-escape.ts';
 export { renderPlainText } from './markdown-escape.ts';
-import { type ComponentChildren, render } from 'preact';
+import { render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { resolvedTheme } from '../../lib/theme.ts';
 import { CopyButton } from '../ui/CopyButton.tsx';
@@ -14,10 +14,21 @@ import { attachQuoteCopyButtons } from './markdown-quote-copy.tsx';
 interface MarkdownRendererProps {
   content: string;
   class?: string;
-  trailing?: ComponentChildren;
   artifactLinks?: boolean;
+  demoteLinks?: boolean;
+  pendingContent?: string;
+  bare?: boolean;
   references?: readonly string[];
   onReference?: (reference: string) => void;
+}
+
+function demoteAnchorLinks(container: HTMLElement) {
+  container.querySelectorAll('a').forEach((anchor) => {
+    const span = document.createElement('span');
+    span.setAttribute('data-demoted-link', '');
+    while (anchor.firstChild) span.appendChild(anchor.firstChild);
+    anchor.replaceWith(span);
+  });
 }
 
 type MarkdownModules = {
@@ -469,14 +480,14 @@ async function renderMarkdown(content: string, artifactLinks: boolean) {
 export default function MarkdownRenderer({
   content,
   class: className,
-  trailing,
   artifactLinks = false,
+  demoteLinks = false,
+  pendingContent,
+  bare = false,
   references,
   onReference,
 }: MarkdownRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const trailingMount = useRef<HTMLElement | null>(null);
-  const hasTrailing = trailing != null;
   const overlayOwner = useRef({});
   const referenceHandler = useRef(onReference);
   referenceHandler.current = onReference;
@@ -523,6 +534,7 @@ export default function MarkdownRenderer({
     if (html == null || !containerRef.current) return;
     const container = containerRef.current;
     container.innerHTML = html;
+    if (demoteLinks) demoteAnchorLinks(container);
 
     const handleImageActivate = (event: Event) => {
       if (event instanceof MouseEvent && event.type === 'auxclick' && event.button !== 1) return;
@@ -553,14 +565,13 @@ export default function MarkdownRenderer({
     container.addEventListener('click', handleReference);
     container.addEventListener('keydown', handleReference);
 
-    const copyMounts = [
-      ...attachQuoteCopyButtons(container),
-      ...attachCodeBlockCopyButtons(container),
-    ];
+    const copyMounts = bare
+      ? []
+      : [...attachQuoteCopyButtons(container), ...attachCodeBlockCopyButtons(container)];
 
     let mermaidCancelled = false;
     const mermaidMounts: Array<HTMLElement> = [];
-    if (!artifactLinks)
+    if (!artifactLinks && !bare)
       renderMermaidBlocks(containerRef.current, mermaidMounts, () => mermaidCancelled).catch(
         () => undefined
       );
@@ -583,14 +594,6 @@ export default function MarkdownRenderer({
       lastP.style.marginBottom = '0';
     }
 
-    const last = container.lastElementChild;
-    const mount = hasTrailing ? document.createElement(last?.tagName === 'P' ? 'span' : 'p') : null;
-    if (mount) {
-      mount.style.marginBottom = '0';
-      (last?.tagName === 'P' ? last : container).appendChild(mount);
-    }
-    trailingMount.current = mount;
-
     return () => {
       container.removeEventListener('click', handleImageActivate);
       container.removeEventListener('auxclick', handleImageActivate);
@@ -603,16 +606,12 @@ export default function MarkdownRenderer({
         render(null, mount);
       });
       mermaidCancelled = true;
-      if (mount) render(null, mount);
-      trailingMount.current = null;
     };
-  }, [html, theme, hasTrailing, artifactLinks, referenceKey]);
-
-  useLayoutEffect(() => {
-    if (trailingMount.current) render(trailing ?? null, trailingMount.current);
-  });
+  }, [html, theme, artifactLinks, demoteLinks, bare, referenceKey]);
 
   return (
-    <div ref={containerRef} class={`prose ${hasTrailing ? 'flow-root' : ''} ${className || ''}`} />
+    <div ref={containerRef} class={`prose ${className || ''}`}>
+      {html == null ? pendingContent : null}
+    </div>
   );
 }

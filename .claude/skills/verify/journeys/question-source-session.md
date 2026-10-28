@@ -30,7 +30,8 @@ NODE_PATH=<directory containing playwright> VERIFY_BROWSER=<Chromium executable>
 `VERIFY_PLAYWRIGHT` optionally selects an existing Playwright package path.
 
 At 1440px and 390px, the source question shows only a short "Open" button at top-right,
-without visible source title, provider or icon. Its accessible name still identifies
+with its harness/app logo and no visible source title or provider.
+See neo-open-controls.md for both-theme visual proof and color checks. Its accessible name still identifies
 the destination as "Open session: Review worker",
 and the start question keeps its working opener after the todo join. Open enters the existing HyperNeo session pane. Back retains the
 answer buttons. The general question has no session opener. A synthetic persisted source with

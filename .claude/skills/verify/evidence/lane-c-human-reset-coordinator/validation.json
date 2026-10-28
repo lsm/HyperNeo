@@ -1,0 +1,23 @@
+{
+  "focusedTests": {
+    "files": 17,
+    "passed": 140,
+    "exitCode": 0
+  },
+  "repositoryCheck": {
+    "command": "bun run check",
+    "exitCode": 0
+  },
+  "nativeRuntimes": {
+    "bun": "1.4.3",
+    "deno": "deno 2.9.4 (stable, release, aarch64-apple-darwin)"
+  },
+  "publicMutationWired": false,
+  "sqlBaselineChanged": false,
+  "cleanup": "Each native proof saved evidence and removed synthetic daemon data.",
+  "limitations": [
+    "Pinned native Bun 1.4.2 not run locally",
+    "Public operation wiring is separate",
+    "Browser layout and deployment smoke not run"
+  ]
+}

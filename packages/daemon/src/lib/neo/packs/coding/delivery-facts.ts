@@ -1,3 +1,4 @@
+import type { CodingMergeLocalAdmission, CodingMergeLocalRequest } from './merge-local-state.ts';
 import { codingSmokeWrites } from './smoke-admission-db.ts';
 import type { CodingSmokeRequest } from './smoke-operation.ts';
 import { codingMergeReceiptWrites } from './merge-receipt-db.ts';
@@ -49,8 +50,15 @@ export class CodingDeliveryFactsRepository {
         }
       : null;
   }
-  recordGateCurrent(todoId: string, gate: CodingMergeGate): Promise<boolean> {
-    return gatewayFor(this.db).call(codingMergeReceiptWrites, 'record', todoId, gate);
+  mergeLocalCurrent(input: CodingMergeLocalRequest) {
+    return gatewayFor(this.db).call(codingMergeReceiptWrites, 'snapshot', input);
+  }
+  recordGateCurrent(
+    todoId: string,
+    gate: CodingMergeGate,
+    admission?: CodingMergeLocalAdmission
+  ): Promise<boolean> {
+    return gatewayFor(this.db).call(codingMergeReceiptWrites, 'record', todoId, gate, admission);
   }
   recordGate(todoId: string, input: CodingMergeGate): void {
     const gate = CodingMergeGate.parse(input);

@@ -1,0 +1,77 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "firstRpcMs": 2.0957079999998314,
+  "publicHistoryAndProjectCleanupCommitted": true,
+  "workspaceFilesRetained": true,
+  "sharedProjectRetainedUntilLastFolder": true,
+  "missingPathFalseAndLegacyCleanupPreserved": true,
+  "cleanupFailureRollsBackHistoryAndMembership": true,
+  "concurrentRemovalHasOneWinner": true,
+  "healthWhileWriterHeldMs": 2.0700419999998303,
+  "deliberatelyHeldWriterMs": 1254.9037909999997,
+  "publicReplyWaitsForCommit": true,
+  "preCommitFailureLeavesMetadata": true,
+  "unknownOutcomeNotAutomaticallyReplayed": true,
+  "maxLoopLagMs": 5.733625000000302,
+  "rssBytes": 541605888,
+  "walBytes": 4128272,
+  "commandPosts": 11,
+  "publicHistoryReadRemainsSeparate": true,
+  "mainSqlAttempts": 0,
+  "workerMetrics": [
+    {
+      "roundTripMs": 0.17191699999989396,
+      "requestBytes": 81,
+      "replyBytes": 4,
+      "encodeMs": 0.0050420000000030996
+    },
+    {
+      "roundTripMs": 0.08787500000016735,
+      "requestBytes": 82,
+      "replyBytes": 4,
+      "encodeMs": 0.0032499999997526174
+    },
+    {
+      "roundTripMs": 0.08649999999988722,
+      "requestBytes": 89,
+      "replyBytes": 4,
+      "encodeMs": 0.0009589999999661813
+    },
+    {
+      "roundTripMs": 0.07900000000017826,
+      "requestBytes": 82,
+      "replyBytes": 5,
+      "encodeMs": 0.0006669999997939158
+    },
+    {
+      "roundTripMs": 1.8293750000000273,
+      "requestBytes": 86,
+      "replyBytes": 4,
+      "encodeMs": 0.001125000000001819
+    },
+    {
+      "roundTripMs": 1.8695000000000164,
+      "requestBytes": 86,
+      "replyBytes": 5,
+      "encodeMs": 0.0004999999998744897
+    },
+    {
+      "roundTripMs": 1253.599625,
+      "requestBytes": 80,
+      "replyBytes": 4,
+      "encodeMs": 0.019209000000046217
+    },
+    {
+      "roundTripMs": 2.2755419999998594,
+      "requestBytes": 83,
+      "replyBytes": 4,
+      "encodeMs": 0.002375000000029104
+    },
+    {
+      "roundTripMs": 2.269792000000052,
+      "requestBytes": 83,
+      "replyBytes": 5,
+      "encodeMs": 0.001374999999825377
+    }
+  ]
+}

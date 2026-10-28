@@ -1,6 +1,8 @@
+import { buildWorkflowOptionsPatch } from './workflow-options-patch.ts';
+import { buildWorkflowNodeConfig, type WorkflowNodeConfig } from './workflow-node-config.ts';
+import { buildWorkflowNodeView } from './workflow-node-view.ts';
 import type {
   CreateSpaceWorkflowParams,
-  HandoffTransition,
   PostApprovalRoute,
   SpaceAutonomyLevel,
   SpaceWorkflow,
@@ -9,7 +11,6 @@ import type {
   WorkflowChannel,
   WorkflowHook,
   WorkflowNode,
-  WorkflowNodeAgent,
   WorkflowNodeInput,
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
@@ -66,10 +67,7 @@ interface NodeRow {
   updated_at: number;
 }
 
-interface NodeConfigJson {
-  agents?: WorkflowNodeAgent[];
-  postApproval?: PostApprovalRoute;
-  transitions?: HandoffTransition[];
+interface NodeConfigJson extends WorkflowNodeConfig {
   completionActions?: unknown;
 }
 
@@ -88,25 +86,13 @@ interface NodeMigrationContext {
 
 function rowToNode(row: NodeRow, ctx?: NodeMigrationContext): WorkflowNode {
   const cfg = parseJson<NodeConfigJson>(row.config, {});
-  const agents: WorkflowNodeAgent[] =
-    cfg.agents && cfg.agents.length > 0
-      ? cfg.agents.map((a: WorkflowNodeAgent) => ({
-          ...a,
-          name: a.name?.trim() ? a.name : a.agentId,
-        }))
-      : [];
+  const node = buildWorkflowNodeView(row, cfg);
 
   if (cfg.completionActions !== undefined && ctx) {
     ctx.strippedFields.add('completionActions');
   }
 
-  return {
-    id: row.id,
-    name: row.name,
-    agents,
-    ...(cfg.postApproval ? { postApproval: cfg.postApproval } : {}),
-    ...(cfg.transitions && cfg.transitions.length > 0 ? { transitions: cfg.transitions } : {}),
-  };
+  return node;
 }
 
 function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
@@ -351,52 +337,9 @@ export class SpaceWorkflowRepository {
     const now = Math.max(Date.now(), row.updated_at + 1);
     const { fields, values } = buildWorkflowIdentityPatch(params);
 
-    if (params.channels !== undefined) {
-      fields.push('channels = ?');
-      values.push(
-        params.channels && params.channels.length > 0 ? JSON.stringify(params.channels) : null
-      );
-    }
-
-    if (params.hooks !== undefined) {
-      fields.push('hooks = ?');
-      values.push(params.hooks && params.hooks.length > 0 ? JSON.stringify(params.hooks) : null);
-    }
-
-    if (params.layout !== undefined) {
-      fields.push('layout = ?');
-      values.push(params.layout ? JSON.stringify(params.layout) : null);
-    }
-
-    if (params.templateName !== undefined) {
-      fields.push('template_name = ?');
-      values.push(params.templateName ?? null);
-    }
-    if (params.templateHash !== undefined) {
-      fields.push('template_hash = ?');
-      values.push(params.templateHash ?? null);
-    }
-    if (params.instructions !== undefined) {
-      fields.push('instructions = ?');
-      values.push(params.instructions ?? null);
-    }
-    if (params.completionAutonomyLevel !== undefined) {
-      fields.push('completion_autonomy_level = ?');
-      values.push(params.completionAutonomyLevel);
-    }
-
-    if (params.postApproval !== undefined) {
-      fields.push('post_approval = ?');
-      values.push(params.postApproval ? JSON.stringify(params.postApproval) : null);
-    }
-    if (params.disabled !== undefined && params.disabled !== null) {
-      fields.push('disabled = ?');
-      values.push(params.disabled ? 1 : 0);
-    }
-    if (params.handle !== undefined) {
-      fields.push('handle = ?');
-      values.push(params.handle ?? null);
-    }
+    const options = buildWorkflowOptionsPatch(params);
+    fields.push(...options.fields);
+    values.push(...options.values);
 
     const hasNodeReplacement = params.nodes !== undefined;
 
@@ -573,7 +516,7 @@ export class SpaceWorkflowRepository {
         continue;
       }
       rowOrderByNodeId.set(node.id, i + 1);
-      const configJson = JSON.stringify(this.buildNodeConfig(node));
+      const configJson = JSON.stringify(buildWorkflowNodeConfig(node));
       if (existingNodeIds.has(node.id)) {
         const result = updateNode.run(node.name, configJson, now, workflowId, node.id);
         if (result.changes === 0) {
@@ -640,29 +583,6 @@ export class SpaceWorkflowRepository {
     })();
   }
 
-  private buildNodeConfig(input: WorkflowNodeInput): NodeConfigJson {
-    const nodeCfg: NodeConfigJson = {};
-
-    const legacyAgentId = (input as unknown as Record<string, unknown>)['agentId'] as
-      | string
-      | undefined;
-    let resolvedAgents = input.agents && input.agents.length > 0 ? input.agents : undefined;
-    if (!resolvedAgents && legacyAgentId) {
-      resolvedAgents = [{ agentId: legacyAgentId, name: input.name }];
-    }
-    if (resolvedAgents && resolvedAgents.length > 0) {
-      nodeCfg.agents = resolvedAgents;
-    }
-    if (input.postApproval) {
-      nodeCfg.postApproval = input.postApproval;
-    }
-    if (input.transitions && input.transitions.length > 0) {
-      nodeCfg.transitions = input.transitions;
-    }
-
-    return nodeCfg;
-  }
-
   private insertNode(
     workflowId: string,
     input: WorkflowNodeInput,
@@ -681,7 +601,7 @@ export class SpaceWorkflowRepository {
         workflowId,
         input.name,
         '',
-        JSON.stringify(this.buildNodeConfig(input)),
+        JSON.stringify(buildWorkflowNodeConfig(input)),
         now,
         now
       );

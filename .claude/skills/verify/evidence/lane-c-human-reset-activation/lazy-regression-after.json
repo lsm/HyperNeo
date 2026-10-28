@@ -1,0 +1,13 @@
+{
+  "localTestsPassed": 333,
+  "localFilesPassed": 23,
+  "strictTypeErrors": 0,
+  "repositoryCheckExitCode": 0,
+  "nativeBunProofExitCode": 0,
+  "nativeDenoProofExitCode": 0,
+  "mainTargetSqlAttempts": 0,
+  "localGraphLines": 189,
+  "productionDiffLines": 27,
+  "smokeRegistrationLines": 1,
+  "auditedDependencyHashesUnchanged": true
+}

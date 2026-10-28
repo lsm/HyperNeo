@@ -1,0 +1,17 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "GitMainIdentitySqlAttempts": 1,
+  "workerMetrics": [
+    {
+      "roundTripMs": 0.3840829999999187,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.012709000000086235
+    }
+  ],
+  "runtime": "Deno 2.9.4",
+  "expectedFailure": "Real Git resolver RPC completes worker-backed reference planning, then Git capture initializes identity on main.",
+  "fixtureGhCalls": 0,
+  "passBeforeFix": false,
+  "temporaryDaemonDataRemoved": true
+}

@@ -72,118 +72,6 @@ export const computeObservedRuntimeState = (superpipe({})('observed-tool-row') a
   .pipe(projectObservedRuntime, ['inventory', 'name'], 'state')
   .end('state') as (inventory: SessionToolInventory | null, name: string) => McpSkillRuntimeState;
 
-export function computeMcpSkillRuntimeState(
-  skill: AppSkill,
-  sessionMcpList: SessionMcpServerEntry[],
-  sessionMcpLoaded: boolean,
-  inventory: SessionToolInventory | null = null,
-  disabledSkills: ReadonlySet<string> = new Set()
-): McpSkillRuntimeState {
-  const observed = computeObservedRuntimeState(inventory, skill.name);
-  if (inventory?.mcpServers.some((server) => server.name === skill.name)) return observed;
-  if (skill.sourceType !== 'mcp_server' || skill.config.type !== 'mcp_server') {
-    const name = skill.config.type === 'builtin' ? skill.config.commandName : skill.name;
-    if (inventory?.skills.includes(name) || inventory?.plugins.includes(name)) {
-      return {
-        status: 'instructions-loaded',
-        label: 'Instructions loaded · prerequisites unverified',
-      };
-    }
-    return !skill.enabled || disabledSkills.has(skill.id)
-      ? { status: 'skill-disabled', label: 'Off · skill disabled' }
-      : observed;
-  }
-
-  const appMcpServerId = skill.config.appMcpServerId;
-
-  if (!sessionMcpLoaded) {
-    return { ...observed, appMcpServerId };
-  }
-
-  if (!skill.enabled || disabledSkills.has(skill.id)) {
-    const entry = sessionMcpList.find((e) => e.server.id === appMcpServerId);
-    if (!entry) {
-      return {
-        status: 'server-missing',
-        appMcpServerId,
-        label: 'No backing MCP server',
-      };
-    }
-    return {
-      status: 'skill-disabled',
-      appMcpServerId,
-      label: 'Off · skill disabled — not injected',
-    };
-  }
-
-  const entry = sessionMcpList.find((e) => e.server.id === appMcpServerId);
-  if (!entry) {
-    return {
-      status: 'server-missing',
-      appMcpServerId,
-      label: 'No backing MCP server',
-    };
-  }
-
-  if (!entry.enabled) {
-    const where =
-      entry.source === 'session' ? 'this session' : entry.source === 'space' ? 'space' : 'registry';
-    return {
-      status: 'server-off',
-      appMcpServerId,
-      overrideSource: entry.source,
-      label: `MCP server disabled at ${where}`,
-    };
-  }
-
-  return {
-    ...observed,
-    appMcpServerId,
-  };
-}
-
-export interface McpSkillRuntimeClasses {
-  dot: string;
-  text: string;
-}
-
-export function getMcpSkillRuntimeClasses(status: McpSkillRuntimeStatus): McpSkillRuntimeClasses {
-  switch (status) {
-    case 'instructions-loaded':
-    case 'active':
-      return { dot: 'bg-emerald-400', text: 'text-emerald-500/70' };
-    case 'server-off':
-      return { dot: 'bg-warning', text: 'text-warning/70' };
-    case 'server-missing':
-      return { dot: 'bg-red-400', text: 'text-danger' };
-    case 'skill-disabled':
-    case 'pending':
-    case 'unknown':
-      return { dot: 'bg-fg-faint', text: 'text-fg-faint' };
-  }
-}
-
-export function computeMcpServerSkillLinkage(skills: AppSkill[]): Map<string, AppSkill> {
-  const map = new Map<string, AppSkill>();
-  for (const skill of skills) {
-    if (skill.sourceType !== 'mcp_server' || skill.config.type !== 'mcp_server') continue;
-    const serverId = skill.config.appMcpServerId;
-    if (!serverId) continue;
-    if (!map.has(serverId)) {
-      map.set(serverId, skill);
-    }
-  }
-  return map;
-}
-
-export function isSkillEnabledForSession(
-  skill: AppSkill,
-  pendingDisabledSkills: ReadonlySet<string>
-): boolean {
-  if (!skill.enabled) return false;
-  return !pendingDisabledSkills.has(skill.id);
-}
-
 export function buildDisabledSkillsList(
   skills: AppSkill[],
   pendingDisabledSkills: ReadonlySet<string>
@@ -198,17 +86,6 @@ export function buildDisabledSkillsList(
 export interface SourceBadgeStyle {
   label: string;
   className: string;
-}
-
-export function getSkillSourceBadge(skill: AppSkill): SourceBadgeStyle {
-  switch (skill.sourceType) {
-    case 'builtin':
-      return { label: 'Built-in', className: 'text-accent/80 bg-accent-soft/10' };
-    case 'plugin':
-      return { label: 'Plugin', className: 'text-violet-400/80 bg-violet-400/10' };
-    case 'mcp_server':
-      return { label: 'MCP', className: 'text-warning/80 bg-warning/10' };
-  }
 }
 
 export function getMcpServerProvenanceBadge(server: AppMcpServer): SourceBadgeStyle {

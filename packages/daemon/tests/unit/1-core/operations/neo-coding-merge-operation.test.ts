@@ -126,7 +126,6 @@ function fixture(bot = true) {
   const registry = createOperationRegistry([
     createCodingMergeOperation({
       db,
-      ledger,
       todos,
       review: runCodingReview,
       prepareMerge: prepareCodingMerge,

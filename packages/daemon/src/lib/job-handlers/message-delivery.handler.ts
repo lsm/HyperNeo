@@ -1,17 +1,23 @@
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
-import { parkDeliveryJob } from '../../storage/repositories/job-delivery-parking.ts';
 import { DeadLetterImmediatelyError, type JobHandler } from '../../storage/job-queue-processor.ts';
+import { parkDeliveryJob } from '../../storage/repositories/job-delivery-parking.ts';
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import { routeDriveTurnOutcome } from '../agent/handler-outcome-routing.ts';
 import {
   asMessageDeliveryPayload,
-  MESSAGE_DELIVERY_PARK_MS,
-  type DeliveryOutcome,
   type DeliveryLoadResult,
+  type DeliveryOutcome,
+  MESSAGE_DELIVERY_PARK_MS,
   type MessageDeliverySession,
+  MessageDeliveryTerminalTurnError,
 } from '../agent/message-delivery.ts';
 import { type DeliveryMetrics, deliveryMetrics } from '../agent/message-delivery-metrics.ts';
 import { Logger } from '../logger.ts';
+import {
+  decideParkAdmission,
+  MESSAGE_DELIVERY_PARK_BUDGET,
+  parkAdmissionInput,
+} from '../tasks/park-budget.ts';
 
 export interface MessageDeliveryHandlerDeps {
   jobQueue: JobQueueRepository;
@@ -36,6 +42,24 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     if (!payload) {
       throw new Error(`message_delivery: invalid payload ${JSON.stringify(job.payload)}`);
     }
+    const park = async (runAt: number): Promise<boolean> => {
+      const admission = decideParkAdmission(
+        parkAdmissionInput(job, MESSAGE_DELIVERY_PARK_BUDGET, Date.now())
+      );
+      if ('reason' in admission) {
+        throw new MessageDeliveryTerminalTurnError(
+          `message_delivery park budget exhausted for ${payload.messageUuid}: ${admission.reason}`,
+          'delivery_parked'
+        );
+      }
+      return gatewayFor(deps.jobQueue.db).call(
+        parkDeliveryJob,
+        'park',
+        job.id,
+        runAt,
+        job.claimToken
+      );
+    };
 
     const claimCurrent = () => deps.jobQueue.isClaimCurrent(job.id, job.claimToken);
     if (!claimCurrent()) return { outcome: 'stale_attempt' };
@@ -61,13 +85,7 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     const cooldownRetryAt = deps.getSessionCooldownRetryAt?.(payload.sessionId) ?? null;
     if (cooldownRetryAt !== null) {
       if (!claimCurrent()) return { outcome: 'stale_attempt' };
-      const parked = await gatewayFor(deps.jobQueue.db).call(
-        parkDeliveryJob,
-        'park',
-        job.id,
-        cooldownRetryAt,
-        job.claimToken
-      );
+      const parked = await park(cooldownRetryAt);
       if (!parked) return { outcome: 'stale_attempt' };
       return { parked: 'rate_limit_cooldown', retryAt: cooldownRetryAt };
     }
@@ -106,13 +124,7 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       if (!(error instanceof Error) || error.message !== 'Interrupted by user') throw error;
       if (!claimCurrent()) return { outcome: 'stale_attempt' };
       const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
-      const parked = await gatewayFor(deps.jobQueue.db).call(
-        parkDeliveryJob,
-        'park',
-        job.id,
-        retryAt,
-        job.claimToken
-      );
+      const parked = await park(retryAt);
       if (!parked) return { outcome: 'stale_attempt' };
       return { parked: 'user_interrupt', retryAt };
     }
@@ -124,13 +136,7 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       await session.settleSkippedDelivery?.(payload.messageUuid);
     }
     if (route.mutation === 'requeue' && route.retryAt !== undefined) {
-      const parked = await gatewayFor(deps.jobQueue.db).call(
-        parkDeliveryJob,
-        'park',
-        job.id,
-        route.retryAt,
-        job.claimToken
-      );
+      const parked = await park(route.retryAt);
       if (!parked) return { outcome: 'stale_attempt' };
     }
     return route.result;

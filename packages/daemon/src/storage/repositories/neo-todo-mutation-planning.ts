@@ -1,9 +1,14 @@
+import {
+  neoTodoDependencyRefusal,
+  planNeoTodoDependencies,
+} from '../../lib/neo/todo-dependencies.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import { neoTodoPolicies } from '../../lib/neo/packs/todo-policies.ts';
 import { sameNeoTodoCheck } from '../../lib/neo/todo-completion.ts';
 import {
+  neoTodoPlaceRefusal,
   planNeoTodoDraft,
   planNeoTodoEdit,
   planNeoTodoClose,
@@ -16,6 +21,7 @@ import {
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoAskTodoRepository, type NeoTodoPatch } from './neo-ask-todo-repository.ts';
+import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 
 type Input =
   | ({ kind: 'edit' } & Parameters<typeof planNeoTodoEdit>[1])
@@ -29,7 +35,7 @@ type Outcome =
 class NeoTodoMutationPlanner {
   private readonly todos: NeoAskTodoRepository;
   private readonly policies: readonly NeoTodoPolicy[];
-  constructor(db: Database) {
+  constructor(private readonly db: Database) {
     this.todos = new NeoAskTodoRepository(db);
     this.policies = neoTodoPolicies(db);
   }
@@ -122,6 +128,53 @@ class NeoTodoMutationPlanner {
         'result:outcome'
       )
       .pipe(requireNeoTodoArtifacts, ['outcome', 'registered'], 'result:outcome')
+      .pipe(
+        (plan: Plan, input: Input) => {
+          const placeless =
+            input.kind === 'edit' &&
+            neoTodoPlaceRefusal(
+              input.target,
+              plan.todo.repo ?? todos.getAsk(plan.todo.askId)?.repo
+            );
+          return placeless
+            ? { reason: { ok: false as const, reason: placeless } }
+            : { value: plan };
+        },
+        ['outcome', 'input'],
+        'result:outcome'
+      )
+      .pipe(
+        (plan: Plan, input: Input) =>
+          input.kind === 'edit' &&
+          input.target &&
+          new NeoTodoSessionRepository(this.db).get(plan.todo.id)
+            ? {
+                reason: {
+                  ok: false as const,
+                  reason:
+                    'has_work: this todo already has a worker target; it cannot be given new work.',
+                },
+              }
+            : { value: plan },
+        ['outcome', 'input'],
+        'result:outcome'
+      )
+      .pipe(
+        (plan: Plan) => {
+          const after = plan.patch.dependsOn;
+          if (!after) return { value: plan };
+          const dependsOn = planNeoTodoDependencies(
+            todos.listFamilyTodos(plan.todo.askId),
+            plan.todo.id,
+            after
+          );
+          return typeof dependsOn === 'string'
+            ? { reason: { ok: false as const, reason: neoTodoDependencyRefusal(dependsOn) } }
+            : { value: { ...plan, patch: { ...plan.patch, dependsOn } } };
+        },
+        'outcome',
+        'result:outcome'
+      )
       .pipe(
         (plan: Plan, input: Input) => this.withCheck(plan, input),
         ['outcome', 'input'],

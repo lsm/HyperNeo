@@ -13,6 +13,7 @@ import type { OperationCaller, OperationDefinition } from '../operations/registr
 import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 import type { NeoPack, NeoTodoCheckResult } from './pack-contract.ts';
 import { readNeoTodoCompletion } from './todo-completion.ts';
+import type { NeoTodoControls } from './todo-operations.ts';
 
 type Input = Parameters<InstanceType<typeof neoTodoMutationReads.Repository>['plan']>[0];
 type Plan = { todo: NeoTodo; patch: NeoTodoPatch; records?: string[] };
@@ -24,6 +25,7 @@ interface Dependencies {
   packs(): readonly NeoPack[];
   artifact: ArtifactRefReader;
   stop(todo: NeoTodo): Promise<string | null>;
+  resolveTarget: NeoTodoControls['resolveTarget'];
   advance(): Promise<unknown>;
   changed(): void;
   project<T extends NeoTodo>(todos: readonly T[]): Promise<T[]>;
@@ -60,7 +62,19 @@ export function wireNeoTodoMutations(
     )
     .endAsync('outcome') as (result: Result) => Promise<Result>;
   const mutate = (superpipe({})('neo.todo.mutate-through-writer') as PipelineAPI)
-    .input(['input', 'caller'])
+    .input(['request', 'caller'])
+    .pipe(
+      async (request: Input) => {
+        if (request.kind !== 'edit' || request.target?.verb !== 'send') return { value: request };
+        const resolved = await deps.resolveTarget(request.target.ref);
+        return 'reason' in resolved
+          ? { reason: resolved.reason }
+          : { value: { ...request, target: { ...request.target, ref: resolved.value } } };
+      },
+      'request',
+      'result:outcome'
+    )
+    .pipe((outcome: Input) => outcome, 'outcome', 'input')
     .pipe(
       (input: Input, caller: OperationCaller) =>
         input.kind === 'edit'
@@ -126,10 +140,10 @@ export function wireNeoTodoMutations(
       'result:outcome'
     )
     .pipe(
-      async (receipt: Receipt) => {
+      async (receipt: Receipt, input: Input) => {
         if ('startNext' in receipt) {
           deps.changed();
-          if (receipt.startNext) {
+          if (receipt.startNext || (input.kind === 'edit' && input.instruction)) {
             await deps.advance();
             receipt = {
               ...receipt,
@@ -141,7 +155,7 @@ export function wireNeoTodoMutations(
         }
         return receipt;
       },
-      'outcome',
+      ['outcome', 'input'],
       'outcome'
     )
     .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<Result>;

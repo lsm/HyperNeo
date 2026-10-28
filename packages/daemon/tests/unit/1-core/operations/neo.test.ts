@@ -317,6 +317,7 @@ describe('Neo MVP', () => {
     ).toEqual([
       'neo.project.move',
       'neo.project.section',
+      'neo.speech.say',
       'neo.project.forget',
       'neo.message.send',
       'neo.projects.reorganize',
@@ -347,6 +348,7 @@ describe('Neo MVP', () => {
       'neo.ask.open',
       'neo.ask.outcome',
       'neo.ask.settle',
+      'neo.question.resolve',
       'neo.question.ask',
       'neo.question.retire',
       'neo.question.get',

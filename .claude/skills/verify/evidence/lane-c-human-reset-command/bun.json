@@ -1,0 +1,67 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "coldMs": 2.1670420000000377,
+  "atomicReceiptAndCodeInvalidation": true,
+  "publicReaderRetainsChunkedNoticeWithoutSecrets": true,
+  "realCliRetainsDeviceHistory": true,
+  "existingObserverSeesCommittedReset": true,
+  "oneReplacementConsumesRecovery": true,
+  "rollbackFailure": "Error: synthetic second notice failure",
+  "secondNoticeFailureRollsBackAllState": true,
+  "healthWhileHeldMs": 2.0322080000000824,
+  "heldMs": 25.795708000000104,
+  "currentHumansSelectedAfterWriterWait": true,
+  "concurrentMs": 0.3289999999999509,
+  "distinctEmptyResetsRetainNotices": true,
+  "beforeCommitFailure": "Error: synthetic human-reset admission rejected before commit",
+  "lostReceiptFailure": "Error: synthetic committed human-reset reply lost; outcome unknown",
+  "unknownOutcomeNotReplayed": true,
+  "writerRecovered": true,
+  "maxLoopLagMs": 3.0423749999999927,
+  "rssBytes": 183911504,
+  "walBytes": 37112,
+  "publicResetOperationUnwired": true,
+  "commandPosts": 8,
+  "mainSqlAttempts": 0,
+  "timings": [
+    {
+      "roundTripMs": 2.1237090000000762,
+      "requestBytes": 41,
+      "replyBytes": 1775,
+      "encodeMs": 0.006957999999940512
+    },
+    {
+      "roundTripMs": 25.733249999999998,
+      "requestBytes": 41,
+      "replyBytes": 1860,
+      "encodeMs": 0.009000000000014552
+    },
+    {
+      "roundTripMs": 0.1828330000000733,
+      "requestBytes": 41,
+      "replyBytes": 138,
+      "encodeMs": 0.0008749999999508873
+    },
+    {
+      "roundTripMs": 0.2831660000001648,
+      "requestBytes": 41,
+      "replyBytes": 138,
+      "encodeMs": 0.0011669999998957792
+    },
+    {
+      "roundTripMs": 10.328167000000121,
+      "requestBytes": 41,
+      "replyBytes": 215,
+      "encodeMs": 0.0037919999999758147
+    },
+    {
+      "roundTripMs": 8.788000000000011,
+      "requestBytes": 41,
+      "replyBytes": 138,
+      "encodeMs": 0.0054169999998521234
+    }
+  ],
+  "runtime": "Bun 1.4.3",
+  "temporaryDataRemoved": true,
+  "exitCode": 0
+}

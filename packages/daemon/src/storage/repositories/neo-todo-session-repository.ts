@@ -1,10 +1,12 @@
+import { neoTodoReady } from '../../lib/neo/todo-dependencies.ts';
+import { neoTodoAwaitsHuman } from '../../lib/neo/todo-state.ts';
 import { NeoTurnReportReceipts } from '../../lib/neo/turn-report-receipts.ts';
 import {
-  continuesIncident,
+  advanceFollowThrough,
   type FollowThroughIncident,
-  planFollowThrough,
 } from '../../lib/work-queue/follow-through.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { markWorkUnusable } from '../work-started-sessions.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import type { WorkRef } from '../../lib/drivers/types.ts';
@@ -178,33 +180,38 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
             {
               group: asks.find((ask) => ask.id === todo.askId)?.projectId ?? null,
               worker: worker(this.readRef(todo.id)),
+              idle: this.workerIdle(todo.id),
             },
           ]
         : []
     );
-    const candidates = asks.flatMap((ask) => {
-      const plan = todos
-        .filter((todo) => todo.askId === ask.id)
-        .sort((a, b) => a.position - b.position);
-      const next = plan.find(
-        (todo) => !['done', 'closed_unverified', 'removed'].includes(todo.state)
-      );
-      const target = next && this.get(next.id);
-      return next?.state === 'todo' &&
-        next.startedAt === null &&
-        next.instruction &&
-        plan.some(
+    const waiting = asks.flatMap((ask) => {
+      const plan = todos.filter((todo) => todo.askId === ask.id);
+      const asked = store.listQuestions(ask.id);
+      if (
+        !plan.some(
           (todo) => todo.startedAt !== null || ['done', 'closed_unverified'].includes(todo.state)
         ) &&
-        !store
-          .listQuestions(ask.id)
-          .some(
-            (question) =>
-              question.state === 'open' &&
-              (!question.todoId || question.todoId === next.id) &&
-              (question.kind !== 'start' || !!question.startTodos?.includes(next.id))
-          ) &&
-        (target?.verb === 'start' || target?.verb === 'send')
+        !asked.some((question) => question.kind === 'start' && question.state === 'answered')
+      )
+        return [];
+      const questions = asked.filter((question) => question.state === 'open');
+      const family = store.listFamilyTodos(ask.id);
+      return plan.flatMap((next) =>
+        next.state === 'todo' &&
+        next.startedAt === null &&
+        neoTodoReady(family, next.id) &&
+        !questions.some(
+          (question) =>
+            (!question.todoId || question.todoId === next.id) &&
+            (question.kind !== 'start' || !!question.startTodos?.includes(next.id))
+        )
+          ? [{ ask, next, target: this.get(next.id) }]
+          : []
+      );
+    });
+    const candidates = waiting.flatMap(({ ask, next, target }) =>
+      next.instruction && (target?.verb === 'start' || target?.verb === 'send')
         ? [
             {
               id: next.id,
@@ -214,9 +221,12 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
               worker: target.verb === 'send' ? worker(target.ref) : null,
             },
           ]
-        : [];
-    });
-    return { candidates, running };
+        : []
+    );
+    const unworked = waiting.flatMap(({ next, target }) =>
+      !next.instruction && !target ? [next.id] : []
+    );
+    return { candidates, running, unworked };
   }
 
   claimNudge(
@@ -232,27 +242,24 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       !context ||
       context.todo.updatedAt !== updatedAt ||
       JSON.stringify(context.ref) !== JSON.stringify(ref) ||
-      live.status === 'queued'
+      live.status === 'queued' ||
+      neoTodoAwaitsHuman(
+        context.todo,
+        new NeoAskTodoRepository(this.db).listQuestions(context.todo.askId)
+      )
     )
       return null;
     const since = Math.max(
       context.todo.startedAt ?? context.todo.createdAt,
       live.lastReplyAt ?? live.lastActivityAt
     );
-    const prior = this.readNudge(todoId);
-    const incident =
-      prior && continuesIncident(prior, since)
-        ? { ...prior, nudges: Math.min(prior.nudges, 2) }
-        : { since, nudges: 0, ...(prior?.redispatched ? { redispatched: true } : {}) };
-    const plan = ['done', 'stopped'].includes(live.status)
-      ? planFollowThrough(incident, now, { ...context.follow, move })
-      : null;
-    this.recordNudge(
-      todoId,
-      plan?.kind === 'redispatch'
-        ? { since: now, nudges: 0, redispatched: true }
-        : { ...incident, nudges: plan?.nudges ?? incident.nudges, ...(plan ? { at: now } : {}) }
+    const { incident, plan, next } = advanceFollowThrough(
+      this.readNudge(todoId),
+      { since, live: live.status, idle: ['done', 'stopped'].includes(live.status) },
+      now,
+      { ...context.follow, move }
     );
+    this.recordNudge(todoId, next);
     return plan ? { ...context, incident, plan } : null;
   }
 
@@ -260,6 +267,23 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     const current = this.readNudge(todoId);
     if (current?.since === since && current.nudges === expectedNudges)
       this.recordNudge(todoId, { ...current, nudges });
+  }
+
+  noteWorkerStatus(todoId: string, status: string): void {
+    const prior = this.readNudge(todoId);
+    if (prior?.live !== status)
+      this.recordNudge(
+        todoId,
+        prior ? { ...prior, live: status } : { since: 0, nudges: 0, live: status }
+      );
+  }
+
+  markWorkerUnusable(ref: WorkRef): void {
+    markWorkUnusable(this.db, ref);
+  }
+
+  workerIdle(todoId: string): boolean {
+    return ['done', 'stopped', 'failed', 'needs_you'].includes(this.readNudge(todoId)?.live ?? '');
   }
 
   readNudge(todoId: string): FollowThroughIncident | null {
@@ -380,5 +404,14 @@ export const neoTodoSessionWrites = defineRepositoryOp(
   'neo.todoSessionWrites',
   'write',
   NeoTodoSessionRepository,
-  ['recordLive', 'recordDispatch', 'recordProgress', 'claimNeedsYou', 'claimNudge', 'finishNudge']
+  [
+    'recordLive',
+    'recordDispatch',
+    'recordProgress',
+    'claimNeedsYou',
+    'claimNudge',
+    'finishNudge',
+    'noteWorkerStatus',
+    'markWorkerUnusable',
+  ]
 );
