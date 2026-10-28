@@ -91,7 +91,7 @@ try {
   await assert.rejects(rpc('verify.copilot', { action: 'hold' }), /permission/);
   assert.equal((await rpc('verify.copilot', { action: 'snapshot' }) as { status: string }).status, 'needs_you');
   const adapters = await rpc('operation.invoke', { name: 'work.adapters', input: {} }) as { value: { id: string; capabilities: string[] }[] };
-  assert.deepEqual(adapters.value.find(a => a.id === 'copilot-cli')?.capabilities, ['find', 'start', 'send', 'queue', 'status', 'stop']);
+  assert.deepEqual(adapters.value.find(a => a.id === 'copilot-cli')?.capabilities, ['find', 'start', 'rename', 'send', 'queue', 'status', 'stop']);
   const calls = readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
   assert(calls.every(call => !call.secretPresent));
   evidence.push({ sdkProtocolCalls: calls });
