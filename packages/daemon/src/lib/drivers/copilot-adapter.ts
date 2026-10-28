@@ -350,8 +350,10 @@ export function createCopilotAdapter(
   };
   const applyArchive = (record: Record): W.Result<{ archived: boolean }> => {
     if (record.archived) return { ok: true, value: { archived: false } };
+    const { mtime } = fs.statSync(path(record.work.ref.id));
     record.archived = true;
     save(record);
+    fs.utimesSync(path(record.work.ref.id), mtime, mtime);
     return { ok: true, value: { archived: true } };
   };
   const archive = (superpipe({})('copilot-archive') as PipelineAPI)

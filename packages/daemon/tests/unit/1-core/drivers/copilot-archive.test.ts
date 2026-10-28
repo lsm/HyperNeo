@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -85,7 +94,10 @@ describe('Copilot owned archive', () => {
     const work = await f.start('settled');
     await settled(f, work);
     const before = f.calls().length;
+    const record = join(f.run, 'owned', `${work.ref.id}.json`);
+    utimesSync(record, 1_000, 1_000);
     expect(await f.archive(work)).toEqual({ ok: true, value: { archived: true } });
+    expect(statSync(record).mtimeMs).toBe(1_000_000);
     expect(await f.archive(work)).toEqual({ ok: true, value: { archived: false } });
     expect((await f.find(false)).flatMap((group) => group.work)).toEqual([]);
     const [group] = await f.find(true);
