@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { ensureArtifactFileIdentity } from './artifact-file-identity.ts';
 import type { ArtifactBundleEntry } from '../../lib/artifacts/bundle.ts';
 import type { ArtifactRef, ArtifactFileMetadata } from '@hyperneo/shared/types/artifact-file';
 import type { Database } from '../sqlite-compat.ts';
@@ -7,10 +7,7 @@ import type { ArtifactContext } from '../../lib/artifacts/file-policy.ts';
 export class ArtifactFileRepository {
   readonly daemonId: string;
   constructor(private readonly db: Database) {
-    db.prepare('INSERT OR IGNORE INTO artifact_file_identity VALUES (1, ?)').run(randomUUID());
-    this.daemonId = (
-      db.prepare('SELECT daemon_id FROM artifact_file_identity').get() as { daemon_id: string }
-    ).daemon_id;
+    this.daemonId = ensureArtifactFileIdentity(db);
   }
   receipt(context: ArtifactContext, requestId: string) {
     return this.db

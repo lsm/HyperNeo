@@ -1,0 +1,27 @@
+{
+  "failingCommit": "f8cbdd4feac2dc6eced4a560726a4a91b0d21e2c",
+  "red": "4 helper-availability contracts fail; 2 legacy constructor characterizations pass. Native existing artifact.reference.resolve RPC retains identity/refusal, then fails at missing helper seam.",
+  "focusedTests": 17,
+  "strictTypeScript": "6.0.3: zero errors",
+  "repositoryCheck": "bun run check: exit 0; SQL ratchet unchanged",
+  "productionLines": 15,
+  "smokeRegistrationLines": 1,
+  "constructorHelperGraphLines": 8,
+  "netPrepare": 0,
+  "netRun": 0,
+  "identitySqlBytesAndArgumentsUnchanged": true,
+  "mainThreadMovementClaim": false,
+  "nativeMainTrace": "First two legacy RPC calls execute 4 target statements both before and after. Fixed proof additionally calls helper and a third RPC, totaling 8 expected main statements.",
+  "rollbackContract": "Caller-owned transactions roll back. Without an outer transaction, a receipt read error preserves the preceding insert exactly as before.",
+  "unverified": [
+    "DB-writer construction/public activation (later rungs)",
+    "Full artifact capture/FS/ownership/source call graph",
+    "Successful snapshot publication and browser",
+    "Native Bun 1.4.2 (local Bun is 1.4.3)",
+    "Neo-owned deployment smoke"
+  ],
+  "initialFixtureFailure": "Wrong artifact.file.resolve operation name; corrected to artifact.reference.resolve before collecting failing extraction evidence. Setup logs retained, not counted as proof.",
+  "noInstalls": true,
+  "oneCheckout": true,
+  "proofDataRemoved": true
+}
