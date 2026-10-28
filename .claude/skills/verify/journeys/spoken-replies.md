@@ -29,3 +29,12 @@ Speech and playback events reuse the existing accepted-operation SQLite audit.
 Deduplication covers the last1024 utterances of the current daemon process,
 including client reconnects; it is not a crash-recovery/outbox protocol. Startup
 never replays stored audit history, and no audio or new schema is stored.
+
+For server-pushed PCM, reserve18555 for the helper's synthetic TTS server.
+`verify` also opts into audio on the second client and requires40 ordered PCM
+chunks, the first before `end`, then a persisted played receipt. The production
+daemon configures HYPERNEO_SPEECH_URL; the phone sends only a voice id. Catalog
+and preview go through the operation door. Synthesis runs outside the admission
+serial queue, with one upstream request at a time; terminal acknowledgments and
+disconnect abort it. No audio or credentials are persisted. Phone playback and
+buffering are separately proved by the native spoken-replies journey.

@@ -8,17 +8,19 @@ import { NeoRepository } from '../../../packages/daemon/src/storage/repositories
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 
-const [mode, directory] = process.argv.slice(2), run = resolve(directory);
-assert(['verify','serve'].includes(mode)); assert.equal(process.env.NODE_ENV,'test');
+const [mode, ...args] = process.argv.slice(2), run = resolve(args.at(-1)!);
+const upstream = mode === 'upstream' ? new URL(args[0]) : null;
+assert(['verify','serve','upstream'].includes(mode)); assert.equal(process.env.NODE_ENV,'test');
 assert.equal(process.env.HOME, join(run,'home'));
 for (const dir of ['workspace','bin','evidence']) mkdirSync(join(run,dir), { recursive:true });
 writeFileSync(join(run,'bin/gh'), '#!/bin/sh\nexit 1\n', { mode:0o700 });
 const network = globalThis.fetch;
 globalThis.fetch = ((input, init) => {
   const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url);
-  assert(['127.0.0.1','localhost'].includes(url.hostname), 'external network disabled');
+  assert(['127.0.0.1','localhost', ...(upstream ? [upstream.hostname] : [])].includes(url.hostname), 'external network disabled');
   return network(input, init);
 }) as typeof fetch;
+process.env.HYPERNEO_SPEECH_URL = upstream?.href ?? 'http://127.0.0.1:18555';
 const app = await createDaemonApp({ config: { ...getConfig({ port:mode === 'serve' ? 18554 : 0, host:'127.0.0.1', dbPath:join(run,'data/daemon.db') }), disableWorktrees:true, disableGoalProcessing:true }, verbose:false });
 assert.notEqual(app.server.port,8399);
 const sessionId = 'neo:10000000-0000-4000-8000-000000000001';
@@ -31,7 +33,7 @@ const speak = async (requestId: string) => {
   return JSON.parse(response.content[0].text);
 };
 const evidence = () => ({ speech:[...new Map((app.db.getDatabase().prepare("SELECT reason FROM operation_refusals WHERE operation='neo.speech' ORDER BY rowid").all() as {reason:string}[]).map(row=>{const value=JSON.parse(row.reason); return [value.id,value];})).values()], publications:app.db.getDatabase().prepare('SELECT COUNT(*) AS n FROM neo_publications').get() });
-const wait = async (check: () => boolean) => { for(let i=0;i<200 && !check();i++) await new Promise(done => setTimeout(done,20)); assert(check()); };
+const wait = async (check: () => boolean) => { for(let i=0;i<1500 && !check();i++) await new Promise(done => setTimeout(done,20)); assert(check()); };
 const clients: { hub:MessageHub; transport:WebSocketClientTransport; events:unknown[] }[] = [];
 let finish = () => {};
 const finished = new Promise<void>(done => { finish = done; });
@@ -61,8 +63,8 @@ const fixture = createServer(async (request,response) => {
   } catch { response.statusCode=500; response.end('{}'); }
 });
 try {
+  await new Promise<void>(done => fixture.listen(18555,'127.0.0.1',done));
   if (mode === 'serve') {
-    await new Promise<void>(done => fixture.listen(18555,'127.0.0.1',done));
     app.db.updateGlobalSettings({voice:{enabled:true,endpoint:'http://127.0.0.1:18555/v1/audio/transcriptions',model:'fixture',mode:'batch',allowPrivateNetwork:true}});
     console.log('ready: daemon=18554 fixture=18555');
     process.once('SIGTERM',finish); process.once('SIGINT',finish);
@@ -91,7 +93,18 @@ try {
     assert((await call('listen',{sessionId,enabled:true},1)).ok);
     assert.equal((await speak('second')).created,false);
     assert.equal(clients[1].events.length,0);
-    console.log(JSON.stringify({passed:true, realWebSocket:true, mcp:true, writerWorker:true, unrelatedClientSilent:true, noReplay:true, fullQueueRetry:true, ...evidence()}));
+    assert((await call('listen',{sessionId,enabled:true,audio:true,voice:'vivian'},1)).ok);
+    const streamed=await speak('streamed'); assert(streamed.ok);
+    const streamEvents=()=>clients[1].events.filter((event:any)=>event.id===streamed.id) as any[];
+    await wait(()=>streamEvents().some(event=>event.type==='audio'));
+    assert(!streamEvents().some(event=>event.type==='end'), 'first audio arrives before synthesis completes');
+    await wait(()=>streamEvents().some(event=>event.type==='end'));
+    const frames=streamEvents().filter(event=>event.type==='audio');
+    if (!upstream) assert.equal(frames.length,40); else assert(frames.length>0); frames.forEach((event,index)=>assert.equal(event.seq,index));
+    const audioBytes=Buffer.concat(frames.map(event=>Buffer.from(event.pcm,'base64'))).length;
+    if(!upstream) assert.equal(audioBytes,153600); else assert(audioBytes>0);
+    assert((await call('ack',{sessionId,id:streamed.id,state:'played'},1)).ok);
+    console.log(JSON.stringify({serverAudioStreaming:true, upstream:upstream?.origin, audioBytes, chunks:frames.length, passed:true, realWebSocket:true, mcp:true, writerWorker:true, unrelatedClientSilent:true, noReplay:true, fullQueueRetry:true, ...evidence()}));
   }
 } finally {
   writeFileSync(join(run,'evidence/spoken-replies.json'),JSON.stringify(evidence(),null,2));

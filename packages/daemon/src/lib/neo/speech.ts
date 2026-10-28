@@ -5,6 +5,7 @@ import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { recordOperationRefusal } from '../../storage/repositories/operation-refusal-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { Logger } from '../logger.ts';
+import { NeoSpeechAudio } from './speech-audio.ts';
 import { neoDerivedId } from './derived-id.ts';
 
 const Result = z.object({
@@ -14,7 +15,16 @@ const Result = z.object({
   created: z.boolean().optional(),
   reason: z.string().optional(),
 });
-const Listen = z.object({ sessionId: z.string().min(1).max(160), enabled: z.boolean() });
+const Listen = z.object({
+  sessionId: z.string().min(1).max(160),
+  enabled: z.boolean(),
+  audio: z.boolean().optional(),
+  voice: z
+    .string()
+    .regex(/^[a-zA-Z0-9_-]{1,80}$/)
+    .optional(),
+});
+const Preview = z.object({ sessionId: z.string().min(1).max(160), requestId: z.uuid() });
 const Say = z.object({
   requestId: z.string().min(1).max(160),
   text: z.string().trim().min(1).max(500),
@@ -24,7 +34,11 @@ const Ack = z.object({
   id: z.uuid(),
   state: z.enum(['playing', 'played', 'cancelled', 'failed']),
 });
-type Input = z.infer<typeof Listen> | z.infer<typeof Say> | z.infer<typeof Ack>;
+type Input =
+  | z.infer<typeof Listen>
+  | z.infer<typeof Say>
+  | z.infer<typeof Ack>
+  | z.infer<typeof Preview>;
 type SpeechState = 'queued' | 'playing' | 'played' | 'cancelled' | 'failed';
 type SpeechReceipt = {
   ok: boolean;
@@ -34,20 +48,35 @@ type SpeechReceipt = {
   reason?: string;
 };
 type Entry = { id: string; sessionId: string; clientId: string; text: string; state: SpeechState };
-type Listener = { clientId: string; pending: Set<string> };
+type Listener = { clientId: string; pending: Set<string>; audio: boolean; voice: string };
 
 export class NeoSpeech {
   private readonly receipts = new Map<string, Entry>();
   private readonly listeners = new Map<string, Listener>();
   readonly operations;
+  private readonly audio: NeoSpeechAudio;
   private readonly unsubscribe: () => void;
   private serial: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly hub: MessageHub,
     private readonly write: RunDbOp,
-    private readonly isNeo: (sessionId: string) => boolean
+    private readonly isNeo: (sessionId: string) => boolean,
+    audioBase?: string,
+    audioRequest?: typeof fetch
   ) {
+    this.audio = new NeoSpeechAudio(
+      (client, data) => this.send(client, data),
+      (target) =>
+        this.enqueue(
+          'ack',
+          target.sessionId,
+          { sessionId: target.sessionId, id: target.id, state: 'failed' },
+          { source: 'rpc', principal: 'local', clientId: target.clientId }
+        ),
+      audioBase,
+      audioRequest
+    );
     this.unsubscribe =
       hub.onClientDisconnect?.((id) => {
         const result = this.serial.then(() => this.disconnect(id));
@@ -55,7 +84,7 @@ export class NeoSpeech {
           new Logger('NeoSpeech').warn('Playback disconnect record failed')
         );
       }) ?? (() => {});
-    const route = (action: 'listen' | 'say' | 'ack') =>
+    const route = (action: 'listen' | 'say' | 'ack' | 'preview') =>
       (superpipe({})(`neo.speech.${action}`) as PipelineAPI)
         .input(['input', 'caller'])
         .pipe(
@@ -99,6 +128,22 @@ export class NeoSpeech {
         execute: route('say'),
       }),
       defineOperation({
+        name: 'neo.speech.preview',
+        description: 'Preview the selected voice through this server.',
+        inputSchema: Preview,
+        resultSchema: Result,
+        policy: { safetyClass: 'human_only', caller: 'local_user' },
+        execute: route('preview'),
+      }),
+      defineOperation({
+        name: 'neo.speech.catalog',
+        description: 'List the voices available through this server.',
+        inputSchema: z.object({}),
+        resultSchema: z.object({ ok: z.boolean(), catalog: z.unknown().optional() }),
+        policy: { safetyClass: 'human_only', caller: 'local_user' },
+        execute: async () => ({ ok: true, catalog: await this.audio.catalog() }),
+      }),
+      defineOperation({
         name: 'neo.speech.ack',
         description: 'Record playback state for speech delivered to this exact client.',
         inputSchema: Ack,
@@ -113,6 +158,7 @@ export class NeoSpeech {
     this.unsubscribe();
     await this.serial;
     await Promise.all([...this.listeners.values()].map((item) => this.disconnect(item.clientId)));
+    await this.audio.dispose();
   }
 
   private enqueue(
@@ -163,6 +209,7 @@ export class NeoSpeech {
       at: Date.now(),
     });
     this.receipts.set(row.id, row);
+    if (row.state !== 'queued' && row.state !== 'playing') this.audio.cancel(row.id);
     if (this.receipts.size > 1024) {
       const terminal = [...this.receipts.values()].find(
         (item) => !['queued', 'playing'].includes(item.state)
@@ -199,7 +246,12 @@ export class NeoSpeech {
         await this.disconnect(prior.clientId, sessionId);
       }
       if (input.enabled && this.hub.getRouter()?.getClientById(clientId))
-        this.listeners.set(sessionId, { clientId, pending: new Set() });
+        this.listeners.set(sessionId, {
+          clientId,
+          pending: new Set(),
+          audio: input.audio ?? false,
+          voice: input.voice ?? 'vivian',
+        });
       return { ok: true };
     }
     if (action === 'ack' && 'state' in input) {
@@ -214,6 +266,16 @@ export class NeoSpeech {
       if (result.ok && input.state !== 'playing')
         this.listeners.get(sessionId)?.pending.delete(input.id);
       return result;
+    }
+    if (action === 'preview' && 'requestId' in input) {
+      const target = this.listeners.get(sessionId);
+      if (target?.clientId !== clientId) return { ok: false, reason: 'voice_replies_off' };
+      input = {
+        requestId: input.requestId,
+        text: ['ryan', 'aiden'].includes(target.voice)
+          ? 'Hello. This is Neo speaking.'
+          : '你好，这是 Neo 的语音试听。',
+      };
     }
     if (!('text' in input)) return { ok: false, reason: 'invalid_speech' };
     const target = this.listeners.get(sessionId);
@@ -233,9 +295,21 @@ export class NeoSpeech {
     target.pending.add(id);
     if (
       this.listeners.get(sessionId) === target &&
-      this.send(target.clientId, { type: 'say', id, sessionId, text: input.text })
-    )
+      this.send(target.clientId, {
+        type: 'say',
+        id,
+        sessionId,
+        text: input.text,
+        ...(target.audio ? { format: 'pcm16', sampleRate: 24000 } : {}),
+      })
+    ) {
+      if (target.audio)
+        this.audio.start(
+          { id, sessionId, clientId: target.clientId, text: input.text },
+          target.voice
+        );
       return saved;
+    }
     target.pending.delete(id);
     await this.record({
       action: 'ack',
