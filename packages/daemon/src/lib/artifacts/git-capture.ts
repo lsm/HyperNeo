@@ -5,6 +5,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { artifactIdentityWrites } from '../../storage/repositories/artifact-file-identity-write.ts';
+import { artifactFileRowWrites } from '../../storage/repositories/artifact-file-row-write.ts';
 import { ArtifactFileRepository } from '../../storage/repositories/artifact-file-repository.ts';
 import type { ArtifactContext } from './file-policy.ts';
 import { loadRegistrationBinding } from './registration-binding.ts';
@@ -32,19 +33,20 @@ export function captureGitArtifact(
   ) {
     const binding = loadRegistrationBinding(db, repo.daemonId, plan.context, home);
     if (!binding || !(await current())) return unavailable();
+    const matches = async () =>
+      (await current()) &&
+      JSON.stringify(loadRegistrationBinding(db, repo.daemonId, plan.context, home)) ===
+        JSON.stringify(binding);
     const snapshot = await (await artifactCaptureOwner(db, data)).capture(blob.bytes);
     if (!snapshot.accepted) return snapshot;
     if (snapshot.sha256 !== blob.sha256) return unavailable();
     const kind = await storedKind(join(data, 'artifacts'), snapshot.sha256, plan.path);
     if (!kind.accepted) return kind;
     if (!kind.value) return { accepted: false, reason: 'unsupported_type' };
-    if (
-      !(await current()) ||
-      JSON.stringify(loadRegistrationBinding(db, repo.daemonId, plan.context, home)) !==
-        JSON.stringify(binding)
-    )
-      return unavailable();
-    return repo.save(
+    if (!(await matches())) return unavailable();
+    const saved = await gatewayFor(db).call(
+      artifactFileRowWrites,
+      'publish',
       plan.context,
       key,
       fingerprint,
@@ -65,6 +67,7 @@ export function captureGitArtifact(
       plan.path,
       { kind: 'commit', repository: plan.repository, commitSha: plan.sha, blobSha: blob.blobSha }
     );
+    return (await matches()) ? { accepted: true, artifact: saved.artifact } : unavailable();
   }
   const run = (superpipe({})('artifact-git-capture') as PipelineAPI)
     .input(['plan', 'repo'])
