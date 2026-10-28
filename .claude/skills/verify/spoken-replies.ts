@@ -28,8 +28,8 @@ await app.spaceRuntimeService.ready(); await app.jobProcessor.stop();
 await app.db.createSession({ id:sessionId, title:'Public speech fixture', workspacePath:join(run,'workspace'), createdAt:new Date().toISOString(), lastActiveAt:new Date().toISOString(), status:'active', config:{queryMode:'manual'}, metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0} });
 new NeoRepository(app.db.getDatabase()).reserveBinding({ sessionId, kind:'neo', projectId:null });
 const mcp = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({sessionId, role:'neo'}));
-const speak = async (requestId: string) => {
-  const response = await mcp({ name:'neo.speech.say', input:{requestId,text:'好，我帮你查一下订单。'} });
+const speak = async (requestId: string, text = '好，我帮你查一下订单。') => {
+  const response = await mcp({ name:'neo.speech.say', input:{requestId,text} });
   return JSON.parse(response.content[0].text);
 };
 const inputFacts = () => app.db.getSDKMessageRepo().getUserMessages(sessionId).flatMap(row=>{
@@ -46,6 +46,7 @@ let sequence=0, asrActive=0, asrAccepted=0, asrRejected=0;
 const fixture = createServer(async (request,response) => {
   try {
     response.setHeader('Content-Type','application/json');
+    if (request.url === '/speak-long') { response.end(JSON.stringify(await speak('ui-'+(++sequence),'Public long voice comparison fixture.'))); return; }
     if (request.url === '/speak') { response.end(JSON.stringify(await speak('ui-'+(++sequence)))); return; }
     if (request.url === '/evidence') { response.end(JSON.stringify(evidence())); return; }
     if (request.url === '/stop') { response.end('{}'); finish(); return; }
@@ -57,11 +58,12 @@ const fixture = createServer(async (request,response) => {
       response.end(JSON.stringify({text:'Public conversation fixture'})); return;
     }
     if (request.url === '/v1/audio/speech') {
-      for await (const _ of request) {}
+      let body=''; for await (const part of request) body+=part;
+      const blocks=JSON.parse(body).input==='Public long voice comparison fixture.' ? 150 : 40;
       response.setHeader('Content-Type','audio/pcm');
       const pcm=Buffer.alloc(3840);
       for(let i=0;i<1920;i++) pcm.writeInt16LE(Math.round(Math.sin(i*2*Math.PI*220/24000)*3000),i*2);
-      for(let i=0;i<40 && !response.destroyed;i++) { response.write(pcm); await new Promise(done=>setTimeout(done,80)); }
+      for(let i=0;i<blocks && !response.destroyed;i++) { response.write(pcm); await new Promise(done=>setTimeout(done,80)); }
       response.end(); return;
     }
     response.statusCode=404; response.end('{}');
