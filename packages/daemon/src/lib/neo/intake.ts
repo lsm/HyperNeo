@@ -52,6 +52,7 @@ const Input = z
     replyTo: NeoReplyRefSchema.optional(),
     previewContext: NeoPreviewContextSchema.optional(),
     speech: z.boolean().optional(),
+    inputMode: z.enum(['text', 'dictation', 'live_voice']).optional(),
   })
   .superRefine((input, context) => {
     const projected = toMailboxMessage({
@@ -128,9 +129,11 @@ export function neoIntakeMessage(
   const previewFact = previewContext
     ? `Preview context: registered artifact ${previewContext.artifactId}, exact SHA-256 snapshot ${previewContext.snapshot}.`
     : null;
-  const speechFact = input.speech
-    ? 'Voice replies are enabled on the current phone. Briefly acknowledge time-consuming requests with neo.speech.say before doing the work. Publish substantive answers on screen with neo.publication.publish and speak a natural version with neo.speech.say; a brief acknowledgment alone needs no screen publication.'
-    : null;
+  const voiceState = [
+    input.inputMode ? `input: ${input.inputMode}` : null,
+    input.speech === undefined ? null : `speech: ${input.speech ? 'on' : 'off'}`,
+  ].filter(Boolean);
+  const speechFact = voiceState.length ? `[${voiceState.join('; ')}]` : null;
   const facts = [identifier, localTime, fact, previewFact, speechFact].flatMap((text) =>
     text ? [{ type: 'text' as const, text }] : []
   );

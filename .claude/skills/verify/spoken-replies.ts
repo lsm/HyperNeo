@@ -32,7 +32,12 @@ const speak = async (requestId: string) => {
   const response = await mcp({ name:'neo.speech.say', input:{requestId,text:'好，我帮你查一下订单。'} });
   return JSON.parse(response.content[0].text);
 };
-const evidence = () => ({ asr:{active:asrActive,accepted:asrAccepted,rejected:asrRejected}, speech:[...new Map((app.db.getDatabase().prepare("SELECT reason FROM operation_refusals WHERE operation='neo.speech' ORDER BY rowid").all() as {reason:string}[]).map(row=>{const value=JSON.parse(row.reason); return [value.id,value];})).values()], publications:app.db.getDatabase().prepare('SELECT COUNT(*) AS n FROM neo_publications').get() });
+const inputFacts = () => app.db.getSDKMessageRepo().getUserMessages(sessionId).flatMap(row=>{
+  const message=app.db.getSDKMessageRepo().getMessageByUuid(sessionId,row.uuid);
+  const content=message?.type==='user' ? message.message.content : [];
+  return Array.isArray(content) ? content.filter(block=>block.type==='text' && block.text.startsWith('[input:')).map(block=>(block as {text:string}).text) : [];
+});
+const evidence = () => ({ inputFacts:inputFacts(), asr:{active:asrActive,accepted:asrAccepted,rejected:asrRejected}, speech:[...new Map((app.db.getDatabase().prepare("SELECT reason FROM operation_refusals WHERE operation='neo.speech' ORDER BY rowid").all() as {reason:string}[]).map(row=>{const value=JSON.parse(row.reason); return [value.id,value];})).values()], publications:app.db.getDatabase().prepare('SELECT COUNT(*) AS n FROM neo_publications').get() });
 const wait = async (check: () => boolean) => { for(let i=0;i<1500 && !check();i++) await new Promise(done => setTimeout(done,20)); assert(check()); };
 const clients: { hub:MessageHub; transport:WebSocketClientTransport; events:unknown[] }[] = [];
 let finish = () => {};
@@ -88,6 +93,15 @@ try {
       await transport.initialize(); clients.push({hub,transport,events});
     }
     const call=(name:string,input:unknown,index=0)=>clients[index].hub.request<{ok:boolean;state?:string}>('operation.invoke',{name:'neo.speech.'+name,input});
+    await clients[0].hub.request('operation.invoke',{name:'neo.open',input:{}});
+    const inputId='20000000-0000-4000-8000-000000000001';
+    const intake=await clients[0].hub.request<{ok:boolean}>('operation.invoke',{name:'neo.message.send',input:{sessionId,requestId:inputId,content:'Public short voice input',inputMode:'live_voice',speech:true}});
+    assert(intake.ok);
+    await wait(()=>inputFacts().includes('[input: live_voice; speech: on]'));
+    const raw=app.db.getSDKMessageRepo().getMessageByUuid(sessionId,inputId);
+    assert(!JSON.stringify(raw).includes('Briefly acknowledge'));
+    const shown=JSON.stringify(app.db.getDatabase().prepare('SELECT payload_json FROM neo_conversation_asks').all());
+    assert(shown.includes('Public short voice input')); assert(!shown.includes('[input:'));
     assert((await call('listen',{sessionId,enabled:true})).ok);
     const saved=await speak('first'); assert(saved.ok && saved.created);
     await wait(()=>clients[0].events.length===1); assert.equal(clients[1].events.length,0);
@@ -116,7 +130,7 @@ try {
     const audioBytes=Buffer.concat(frames.map(event=>Buffer.from(event.pcm,'base64'))).length;
     if(!upstream) assert.equal(audioBytes,153600); else assert(audioBytes>0);
     assert((await call('ack',{sessionId,id:streamed.id,state:'played'},1)).ok);
-    console.log(JSON.stringify({serverAudioStreaming:true, upstream:upstream?.origin, audioBytes, chunks:frames.length, passed:true, realWebSocket:true, mcp:true, writerWorker:true, unrelatedClientSilent:true, noReplay:true, fullQueueRetry:true, ...evidence()}));
+    console.log(JSON.stringify({voiceMetadataShort:true, serverAudioStreaming:true, upstream:upstream?.origin, audioBytes, chunks:frames.length, passed:true, realWebSocket:true, mcp:true, writerWorker:true, unrelatedClientSilent:true, noReplay:true, fullQueueRetry:true, ...evidence()}));
   }
 } finally {
   writeFileSync(join(run,'evidence/spoken-replies.json'),JSON.stringify(evidence(),null,2));

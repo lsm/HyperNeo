@@ -40,10 +40,10 @@ describe('Neo intake gates', () => {
     expect(JSON.stringify(neoIntakeMessage(input).message.content)).not.toContain('neo.speech.say');
   });
   test('live voice is explicit source metadata and is independent of reply playback', () => {
-    const live = neoIntakeMessage({...input, speech:false, inputMode:'live_voice'});
+    const live = neoIntakeMessage({ ...input, speech: false, inputMode: 'live_voice' });
     expect(JSON.stringify(live.message.content)).toContain('[input: live_voice; speech: off]');
-    expect(live.humanContent).toEqual([{type:'text',text:input.content}]);
-    const typed = neoIntakeMessage({...input, speech:true, inputMode:'text'});
+    expect(live.humanContent).toEqual([{ type: 'text', text: input.content }]);
+    const typed = neoIntakeMessage({ ...input, speech: true, inputMode: 'text' });
     expect(JSON.stringify(typed.message.content)).toContain('[input: text; speech: on]');
   });
   test.each([
