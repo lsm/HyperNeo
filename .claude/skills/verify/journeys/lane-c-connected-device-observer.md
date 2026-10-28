@@ -24,11 +24,15 @@ connection may close on an unconfirmed state and starts remain at most one per
 second. Restore the reader: both revoked connections close, active/unpaired stay
 open, CLI reports revocation, and the mutation is never replayed.
 
-Hold a later confirmed-inactive reply and release it from the real transport close
-hook during daemon cleanup. No late revocation notification or later polling may
-occur. Save flags, byte/timing metrics, RSS and WAL only, never IDs, credentials,
+Hold a later confirmed-inactive reply and release it from the last real transport
+connection-disconnected hook while closing the fixture-owned clients. Then clean
+up the daemon. No late revocation notification or later polling may occur. Save flags, byte/timing metrics, RSS and WAL only, never IDs, credentials,
 codes or CLI output. Loop lag and health latency are measurements of this synthetic
 fixture; SQL/queue/clone time are not isolated. Remeasure the full observer call
 graph and changed production lines before publishing; each slice must fit 200.
 Native cleanup must complete without database-close errors. Browser layout,
 public mutation activation and deployment remain unverified in this foundation.
+
+Observation starts on the first registered connection without requiring initialize().
+The last disconnect stops its timer and suppresses held results. Reconnection resumes
+the same observer flight, so it cannot overlap an earlier pending read.

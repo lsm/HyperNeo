@@ -153,9 +153,11 @@ try {
   const listed = JSON.parse(output) as { ok: boolean; devices: { id: string; revokedAt: number | null }[] }; assert(listed.ok); assert.equal(typeof listed.devices.find((d) => d.id === victim.device.id)?.revokedAt, 'number'); evidence.realCliConfirmsPersistedRevocation = true;
   const late = seed(); const lateClient = await connect(late.credential); holdInactiveId = late.device.id; assert.deepEqual(await revoke(late.device.id), { ok: true });
   assert(await wait(() => heldReply !== undefined)); assert(heldResult.includes(late.device.id)); assert.equal(lateClient.closed(), false); assert(!notified.includes(late.device.id));
-  let transportStopped = false; const closeTransport = app.transport.close.bind(app.transport);
-  app.transport.close = async () => { await closeTransport(); transportStopped = true; heldReply?.(); };
-  evidence.walBytes = statSync(`${app.db.getDbPath()}-wal`).size; await app.cleanup(); app = undefined; assert(transportStopped); assert(!notified.includes(late.device.id));
+  let connectionsStopped = false;
+  app.transport.onConnectionChange((state) => { if (state === 'disconnected') { connectionsStopped = true; heldReply?.(); } });
+  await Promise.all(transports.map((t) => t.close())); assert(await wait(() => connectionsStopped));
+  await sleep(20); assert(!notified.includes(late.device.id));
+  evidence.walBytes = statSync(`${app.db.getDbPath()}-wal`).size; await app.cleanup(); app = undefined;
   const afterClose = readPosts; await sleep(1200); assert.equal(readPosts, afterClose); evidence.cleanupStopsPollsAndLateNotification = true;
   assert.equal(mainSqlAttempts, 0); assert(maxLoopLagMs < 1000); evidence.maxLoopLagMs = maxLoopLagMs; evidence.rssBytes = process.memoryUsage().rss; evidence.readAdmissions = readPosts; evidence.writeAdmissions = commandPosts;
 } finally {
