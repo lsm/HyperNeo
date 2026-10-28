@@ -184,7 +184,7 @@ export function createCopilotAdapter(
     return record;
   };
   const detail = (record: Record, receipt?: Receipt): W.Result<W.WorkDetail> => {
-    if (record.pendingSubmission && !receipt) return unavailable();
+    if (record.pendingSubmission && !receipt && !record.archived) return unavailable();
     receipt ??= record.latestReceipt ?? record.work.receipt;
     const { work, snapshot } = record;
     if (receipt && receipt.executionId !== work.ref.id)

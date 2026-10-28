@@ -184,4 +184,25 @@ describe('Copilot owned archive', () => {
     expect(status.value.waitingFor).toBeUndefined();
     expect(status.value.inputEvidence?.state).not.toBe('pending');
   });
+
+  test('archived work left with an uncertain submission reports stopped', async () => {
+    const f = setup();
+    const work = await f.start('settled');
+    await f.restart();
+    const path = join(f.run, 'owned', `${work.ref.id}.json`);
+    writeFileSync(
+      path,
+      JSON.stringify({
+        ...JSON.parse(readFileSync(path, 'utf8')),
+        pendingSubmission: true,
+        snapshot: { status: 'unreachable', inputs: {} },
+      })
+    );
+    expect(await f.adapter.status!(work.ref)).toMatchObject({ ok: false, reason: 'unreachable' });
+    expect(await f.archive(work)).toEqual({ ok: true, value: { archived: true } });
+    expect(await f.adapter.status!(work.ref)).toMatchObject({
+      ok: true,
+      value: { status: 'stopped' },
+    });
+  });
 });
