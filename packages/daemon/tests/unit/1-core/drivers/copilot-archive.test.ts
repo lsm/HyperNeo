@@ -172,4 +172,16 @@ describe('Copilot owned archive', () => {
     expect(archived).toMatchObject({ status: 'stopped' });
     expect(archived.watchHint).not.toContain('owner unavailable');
   });
+
+  test('archived work that awaited permission no longer reports a pending request', async () => {
+    const f = setup();
+    const work = await f.start('permission');
+    await f.restart();
+    expect(await f.archive(work)).toEqual({ ok: true, value: { archived: true } });
+    const status = await f.adapter.status!(work.ref, undefined, work.receipt);
+    expect(status).toMatchObject({ ok: true, value: { status: 'stopped' } });
+    if (!status.ok) throw new Error(status.detail);
+    expect(status.value.waitingFor).toBeUndefined();
+    expect(status.value.inputEvidence?.state).not.toBe('pending');
+  });
 });

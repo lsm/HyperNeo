@@ -219,7 +219,7 @@ export function createCopilotAdapter(
         execution: { directory: record.directory, machine: deps.machine },
         ...(input?.replyReport ? { lastReply: input.replyReport } : {}),
         inputEvidence:
-          receipt && input
+          receipt && input && !(record.archived && input.state === 'pending')
             ? input.state === 'pending'
               ? { receipt, state: 'pending' }
               : {
@@ -231,7 +231,8 @@ export function createCopilotAdapter(
                   replyAvailability: input.replyAvailability,
                 }
             : undefined,
-        waitingFor: snapshot.status === 'needs_you' ? 'Permission denied.' : undefined,
+        waitingFor:
+          !record.archived && snapshot.status === 'needs_you' ? 'Permission denied.' : undefined,
       },
     };
   };
