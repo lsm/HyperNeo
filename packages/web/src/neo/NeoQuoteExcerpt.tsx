@@ -41,6 +41,7 @@ export function NeoQuoteExcerpt({
   }
   return (
     <Renderer
+      key={excerpt}
       content={excerpt}
       demoteLinks={demoteLinks}
       pendingContent={excerpt}
