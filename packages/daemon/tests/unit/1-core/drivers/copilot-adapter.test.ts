@@ -310,6 +310,7 @@ describe('owned Copilot lifecycle', () => {
     expect(fixture.adapter.capabilities).toEqual([
       'find',
       'start',
+      'rename',
       'send',
       'queue',
       'withdraw',
