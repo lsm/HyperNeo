@@ -31,3 +31,9 @@ evidence; the wrapper removes synthetic data. Run the existing Voice/Composer
 tests, build and full check. After merge, verify a containing served build and
 hover/focus in the explicitly permitted read-only live UI; never record live or
 restart the daemon. Live speech capture/transcription is not claimed.
+
+Run verifyMicRadiusSerialization from the same browser helper on a separate
+blank page. It reads both authored and computed CSSOM values for a 48x44 button
+with calc(infinity * 1px) rounding. Both serializations must count as fully
+rounded. Some Chromium builds resolve the computed value to a large pixel value;
+keep the raw CSS value in browser receipts rather than assuming either format.

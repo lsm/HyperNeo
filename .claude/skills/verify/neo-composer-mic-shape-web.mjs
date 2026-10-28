@@ -1,5 +1,21 @@
 import assert from 'node:assert/strict';
 
+export function micMetrics(value) {
+  return { ...value, radius: parseFloat(value.radiusCss) };
+}
+
+export async function verifyMicRadiusSerialization(page) {
+  await page.setContent('<button style="width:48px;height:44px;border-radius:calc(infinity * 1px)">Mic</button>');
+  const values = await page.locator('button').evaluate(e => ({
+    width: e.offsetWidth, height: e.offsetHeight,
+    authored: e.style.borderTopRightRadius,
+    computed: getComputedStyle(e).borderTopRightRadius,
+  }));
+  for (const radiusCss of [values.authored, values.computed])
+    assert(micMetrics({ ...values, radiusCss }).radius >= 22, radiusCss);
+  return values;
+}
+
 export async function verifyMicShape(page, fixture, { phase, theme, touch = false, evidence }) {
   const use = control => touch ? control.tap() : control.click();
   await page.goto(fixture.url);
@@ -16,8 +32,8 @@ export async function verifyMicShape(page, fixture, { phase, theme, touch = fals
     await page.waitForFunction(() => document.getAnimations().every(a => a.effect?.getComputedTiming().iterations === Infinity || a.playState !== 'running'), null, { timeout: 10000 });
     const metrics = () => mic.evaluate(e => {
       const style = getComputedStyle(e), box = e.getBoundingClientRect();
-      return { width: box.width, height: box.height, targetWidth: e.offsetWidth, targetHeight: e.offsetHeight, radius: parseFloat(style.borderTopRightRadius), background: style.backgroundColor, shadow: style.boxShadow, outline: style.outlineStyle };
-    });
+      return { width: box.width, height: box.height, targetWidth: e.offsetWidth, targetHeight: e.offsetHeight, radiusCss: style.borderTopRightRadius, background: style.backgroundColor, shadow: style.boxShadow, outline: style.outlineStyle };
+    }).then(micMetrics);
     const check = value => {
       assert(value.targetWidth >= 44 && value.targetHeight >= 44);
       assert.equal(value.radius >= Math.min(value.width, value.height) / 2, phase === 'after', JSON.stringify(value));
@@ -39,8 +55,8 @@ export async function verifyMicShape(page, fixture, { phase, theme, touch = fals
     await form.screenshot({ path: `${evidence}/${phase}-${theme}-${touch ? 'touch' : 'desktop'}-${surface}-focus.png`, scale: 'css' });
     const pressed = mic.evaluate(e => new Promise(resolve => e.addEventListener('pointerdown', () => {
       const style = getComputedStyle(e), box = e.getBoundingClientRect();
-      resolve({ width: box.width, height: box.height, targetWidth: e.offsetWidth, targetHeight: e.offsetHeight, radius: parseFloat(style.borderTopRightRadius) });
-    }, { once: true })));
+      resolve({ width: box.width, height: box.height, targetWidth: e.offsetWidth, targetHeight: e.offsetHeight, radiusCss: style.borderTopRightRadius });
+    }, { once: true }))).then(micMetrics);
     await use(mic);
     states.push({ name: 'pressed', ...await pressed });
     check(states.at(-1));
