@@ -1,0 +1,27 @@
+{
+  "failingCommit": "de17c5226e3509d036a9208af4a09fe5b679f61d",
+  "red": "Five focused contracts fail; both native public RPC proofs reach the main identity guard instead of writer admission.",
+  "focusedTests": 29,
+  "strictTypeScript": "6.0.3: zero errors",
+  "repositoryCheck": "bun run check: exit 0, SQL ratchet unchanged",
+  "fullLocalGraphLines": 196,
+  "productionLines": 14,
+  "smokeRegistrationLines": 1,
+  "netPrepare": 0,
+  "netRun": 0,
+  "contract": "One pending per-DB registration service awaits one committed identity and preserves the existing capture lane. Initialization rejection clears only the initialization cache; no fallback or automatic replay. A later explicit call may retry and retain the already committed identity.",
+  "nativeBun": "Public artifact.file.register failure/recovery/concurrency/receipt/revision tests and public snapshot byte read pass. Zero main identity SQL during registration. Main row publication and separate read-only identity SELECTs are explicitly counted, unchanged.",
+  "nativeDeno": "Public registration identity failure/recovery/concurrency and existing safe_open_unavailable refusal pass. Zero main identity SQL during registration; no artifact row. Successful capture/bytes are NOT verified.",
+  "initialDenoProofFailure": "The first fixed Deno proof incorrectly required capture success. The existing native descriptor journey and unchanged backend loadSafeFsBackend() contract document unavailable Bun FFI on Deno. The proof expectation alone was corrected, no backend/fallback change. Original failed log retained separately.",
+  "unitTypeCorrection": "Replace tuple-to-array toEqual comparison with per-result assertions; strict test types now pass.",
+  "oneCheckout": true,
+  "noInstalls": true,
+  "proofDataRemoved": true,
+  "unverified": [
+    "Full transitive policy/binding/capture repository/native-runtime/OS/library call graph; boundary modules and direct imports pinned exactly",
+    "Successful Deno/native Windows capture and bytes (existing fail-closed backend)",
+    "Remaining reference/Git identity callers and immutable row publication movement",
+    "Native Bun 1.4.2 (local is 1.4.3)",
+    "Browser and Neo-owned deployment smoke"
+  ]
+}

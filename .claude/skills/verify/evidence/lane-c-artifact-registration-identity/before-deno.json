@@ -1,0 +1,9 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "registrationMainIdentitySqlAttempts": 1,
+  "workerMetrics": [],
+  "runtime": "Deno 2.9.4",
+  "expectedFailure": "Public artifact.file.register executes identity SQL on main instead of awaiting writer admission.",
+  "passBeforeFix": false,
+  "temporaryDaemonDataRemoved": true
+}
