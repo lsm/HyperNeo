@@ -1,8 +1,11 @@
-import { describe, expect, it, beforeEach } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { InboxManager } from '../../../../src/lib/github/inbox-manager';
 import type { Database } from '../../../../src/storage/database';
-import type { GitHubEvent, InboxItem, SecurityCheckResult } from '@hyperneo/shared';
-import { mock } from 'bun:test';
+import { Database as SqliteDatabase } from '../../../../src/storage/sqlite-compat';
+import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
+import { InboxItemRepository } from '../../../../src/storage/repositories/inbox-item-repository';
+import { createTables, runMigrations } from '../../../../src/storage/schema';
+import type { GitHubEvent, SecurityCheckResult, InboxItemStatus } from '@hyperneo/shared';
 
 function createGitHubEvent(overrides: Partial<GitHubEvent> = {}): GitHubEvent {
   return {
@@ -10,192 +13,108 @@ function createGitHubEvent(overrides: Partial<GitHubEvent> = {}): GitHubEvent {
     source: 'webhook',
     eventType: 'issues',
     action: 'opened',
-    repository: {
-      owner: 'testowner',
-      repo: 'test-repo',
-      fullName: 'testowner/test-repo',
-    },
-    issue: {
-      number: 42,
-      title: 'Test Issue',
-      body: 'Test body',
-      labels: ['bug'],
-    },
-    sender: {
-      login: 'testuser',
-      type: 'User',
-    },
+    repository: { owner: 'testowner', repo: 'test-repo', fullName: 'testowner/test-repo' },
+    issue: { number: 42, title: 'Test Issue', body: 'Test body', labels: ['bug'] },
+    sender: { login: 'testuser', type: 'User' },
     rawPayload: { test: true },
     receivedAt: Date.now(),
     ...overrides,
   };
 }
-
-function createSecurityCheck(overrides: Partial<SecurityCheckResult> = {}): SecurityCheckResult {
-  return {
-    passed: true,
-    injectionRisk: 'none',
-    ...overrides,
-  };
-}
-
-function createInboxItem(overrides: Partial<InboxItem> = {}): InboxItem {
-  return {
-    id: 'inbox-123',
-    source: 'github_issue',
-    repository: 'testowner/test-repo',
-    issueNumber: 42,
-    title: 'Test Issue',
-    body: 'Test body',
-    author: 'testuser',
-    labels: ['bug'],
-    status: 'pending',
-    securityCheck: createSecurityCheck(),
-    rawEvent: { test: true },
-    receivedAt: Date.now(),
-    updatedAt: Date.now(),
-    ...overrides,
-  };
-}
-
-function createMockDatabase(): Database {
-  return {
-    createInboxItem: mock(() => createInboxItem()),
-    countInboxItemsByStatus: mock(() => 1),
-  } as unknown as Database;
-}
-
+const security: SecurityCheckResult = { passed: true, injectionRisk: 'none' };
 describe('InboxManager', () => {
-  let mockDb: Database;
+  let raw: SqliteDatabase;
+  let gateway: DbGateway;
+  let repository: InboxItemRepository;
   let manager: InboxManager;
-
   beforeEach(() => {
-    mockDb = createMockDatabase();
-    manager = new InboxManager(mockDb);
+    raw = new SqliteDatabase(':memory:');
+    runMigrations(raw, () => {});
+    createTables(raw);
+    gateway = new DbGateway(':memory:', raw);
+    repository = new InboxItemRepository(raw);
+    const db = {
+      gateway,
+      createInboxItem: (params: Parameters<InboxItemRepository['createItem']>[0]) =>
+        repository.createItem(params),
+      countInboxItemsByStatus: (status: InboxItemStatus) => repository.countByStatus(status),
+    } as unknown as Database;
+    manager = new InboxManager(db);
   });
-
-  describe('addToInbox', () => {
-    it('should add issue event to inbox', () => {
-      const event = createGitHubEvent({ eventType: 'issues' });
-      const securityResult = createSecurityCheck();
-
-      manager.addToInbox(event, securityResult, 'Test reason');
-
-      expect(mockDb.createInboxItem).toHaveBeenCalledWith(
-        expect.objectContaining({
-          source: 'github_issue',
-          repository: 'testowner/test-repo',
-          issueNumber: 42,
-          title: 'Test Issue',
-          body: 'Test body',
-          author: 'testuser',
-          labels: ['bug'],
-        })
-      );
-    });
-
-    it('should add comment event to inbox', () => {
-      const event = createGitHubEvent({
-        eventType: 'issue_comment',
-        comment: { id: 'comment-1', body: 'Comment body' },
-      });
-
-      manager.addToInbox(event, createSecurityCheck(), 'Test reason');
-
-      expect(mockDb.createInboxItem).toHaveBeenCalledWith(
-        expect.objectContaining({
-          source: 'github_comment',
-          commentId: 'comment-1',
-          body: 'Comment body',
-        })
-      );
-    });
-
-    it('should add PR event to inbox', () => {
-      const event = createGitHubEvent({
+  afterEach(async () => {
+    await gateway.close();
+    raw.close();
+  });
+  const cases: {
+    name: string;
+    overrides: Partial<GitHubEvent>;
+    expected: Record<string, unknown>;
+    security?: SecurityCheckResult;
+  }[] = [
+    {
+      name: 'issue fields',
+      overrides: {},
+      expected: {
+        source: 'github_issue',
+        repository: 'testowner/test-repo',
+        issueNumber: 42,
+        title: 'Test Issue',
+        body: 'Test body',
+        author: 'testuser',
+        labels: ['bug'],
+      },
+    },
+    {
+      name: 'comment body and identity',
+      overrides: { eventType: 'issue_comment', comment: { id: 'comment-1', body: 'Comment body' } },
+      expected: { source: 'github_comment', commentId: 'comment-1', body: 'Comment body' },
+    },
+    {
+      name: 'PR fields',
+      overrides: {
         eventType: 'pull_request',
         issue: { number: 10, title: 'PR Title', body: 'PR body', labels: [] },
-      });
-
-      manager.addToInbox(event, createSecurityCheck(), 'Test reason');
-
-      expect(mockDb.createInboxItem).toHaveBeenCalledWith(
-        expect.objectContaining({
-          source: 'github_pr',
-          issueNumber: 10,
-          title: 'PR Title',
-        })
+      },
+      expected: { source: 'github_pr', issueNumber: 10, title: 'PR Title' },
+    },
+    {
+      name: 'issue body without a comment',
+      overrides: { issue: { number: 1, title: 'Title', body: 'Issue body', labels: [] } },
+      expected: { body: 'Issue body' },
+    },
+    {
+      name: 'security rejection metadata',
+      overrides: {},
+      security: { passed: false, injectionRisk: 'high', reason: 'Suspicious content' },
+      expected: {
+        securityCheck: { passed: false, injectionRisk: 'high', reason: 'Suspicious content' },
+      },
+    },
+    {
+      name: 'raw event payload',
+      overrides: { rawPayload: { custom: 'payload', data: 123 } },
+      expected: { rawEvent: { custom: 'payload', data: 123 } },
+    },
+  ];
+  for (const scenario of cases)
+    it('persists ' + scenario.name, async () => {
+      const item = await manager.addToInbox(
+        createGitHubEvent(scenario.overrides),
+        scenario.security ?? security,
+        'synthetic reason'
       );
+      expect(item).toMatchObject({ ...scenario.expected, status: 'pending' });
+      expect(repository.getItem(item.id)).toEqual(item);
     });
-
-    it('should use issue body when no comment', () => {
-      const event = createGitHubEvent({
-        eventType: 'issues',
-        issue: { number: 1, title: 'Title', body: 'Issue body', labels: [] },
-      });
-
-      manager.addToInbox(event, createSecurityCheck(), 'reason');
-
-      expect(mockDb.createInboxItem).toHaveBeenCalledWith(
-        expect.objectContaining({
-          body: 'Issue body',
-        })
-      );
-    });
-
-    it('should include security check result', () => {
-      const event = createGitHubEvent();
-      const securityResult = createSecurityCheck({
-        passed: false,
-        injectionRisk: 'high',
-        reason: 'Suspicious content',
-      });
-
-      manager.addToInbox(event, securityResult, 'reason');
-
-      expect(mockDb.createInboxItem).toHaveBeenCalledWith(
-        expect.objectContaining({
-          securityCheck: {
-            passed: false,
-            injectionRisk: 'high',
-            reason: 'Suspicious content',
-          },
-        })
-      );
-    });
-
-    it('should include raw event payload', () => {
-      const event = createGitHubEvent({
-        rawPayload: { custom: 'payload', data: 123 },
-      });
-
-      manager.addToInbox(event, createSecurityCheck(), 'reason');
-
-      expect(mockDb.createInboxItem).toHaveBeenCalledWith(
-        expect.objectContaining({
-          rawEvent: { custom: 'payload', data: 123 },
-        })
-      );
-    });
+  it('counts each persisted status', async () => {
+    const statuses: InboxItemStatus[] = ['pending', 'routed', 'dismissed', 'blocked'];
+    for (const status of statuses) {
+      const item = await manager.addToInbox(createGitHubEvent(), security, 'synthetic');
+      repository.updateItemStatus(item.id, status);
+    }
+    expect(manager.countByStatus()).toEqual({ pending: 1, routed: 1, dismissed: 1, blocked: 1 });
   });
-
-  describe('countByStatus', () => {
-    it('should count all statuses', () => {
-      const counts = manager.countByStatus();
-
-      expect(mockDb.countInboxItemsByStatus).toHaveBeenCalledWith('pending');
-      expect(mockDb.countInboxItemsByStatus).toHaveBeenCalledWith('routed');
-      expect(mockDb.countInboxItemsByStatus).toHaveBeenCalledWith('dismissed');
-      expect(mockDb.countInboxItemsByStatus).toHaveBeenCalledWith('blocked');
-    });
-
-    it('should return counts record', () => {
-      const counts = manager.countByStatus();
-
-      expect(counts).toHaveProperty('pending');
-      expect(counts).toHaveProperty('routed');
-      expect(counts).toHaveProperty('dismissed');
-      expect(counts).toHaveProperty('blocked');
-    });
+  it('returns zero counts for an empty inbox', () => {
+    expect(manager.countByStatus()).toEqual({ pending: 0, routed: 0, dismissed: 0, blocked: 0 });
   });
 });
