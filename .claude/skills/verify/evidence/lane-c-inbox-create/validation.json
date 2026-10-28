@@ -1,0 +1,22 @@
+{
+  "failingCommit": "8ead501a494fc3bba24ca47993d931e3164f6085",
+  "red": "8 expected unit failures; legacy UUID/default-time behavior passes; both native workers reject the missing registered command",
+  "focusedTests": 76,
+  "strictTypeScript": "6.0.3: zero errors",
+  "repositoryCheck": "bun run check: exit 0; SQL ratchet unchanged",
+  "productionLines": 31,
+  "smokeRegistrationLines": 1,
+  "fullConstructionGraphLines": 84,
+  "sqlBytesUnchanged": true,
+  "committedTableChangeMetadataVerified": true,
+  "unverified": [
+    "Public GitHub event delivery remains synchronous until separate wiring PR",
+    "Full filter/security event graph not audited",
+    "Native Bun 1.4.2 (local Bun is 1.4.3)",
+    "Browser layout",
+    "Neo-owned deployment smoke"
+  ],
+  "noInstalls": true,
+  "oneCheckout": true,
+  "proofDataRemoved": true
+}

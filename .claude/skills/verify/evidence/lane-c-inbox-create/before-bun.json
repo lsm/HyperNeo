@@ -1,0 +1,8 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "mainSqlAttempts": 0,
+  "workerMetrics": [],
+  "runtime": "bun",
+  "expectedFailure": "Unknown write DB op: github.inbox.create.write",
+  "exitCode": 1
+}
