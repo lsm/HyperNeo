@@ -8,7 +8,8 @@ All notable changes to HyperNeo will be documented in this file.
 
 ### Voice replies
 
-- Add opt-in spoken Neo replies and queue Send while transcription is pending (#9298, #9261).
+- Add spoken Neo replies for the opted-in client and session; cancel pending speech on disconnect without replaying it on reconnect (#9298).
+- Queue Send while transcription is pending (#9261).
 - Use explicit batch/live ASR endpoints; move recording storage and tool recovery writes off the daemon main thread (#9209, #9214, #9222).
 
 ### Quote Markdown and conversations
