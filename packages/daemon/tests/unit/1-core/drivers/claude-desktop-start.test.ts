@@ -87,6 +87,7 @@ describe('claude-desktop start', () => {
       prepareExecution?: WorkExecutionPreparer;
       exit?: number;
       silent?: boolean;
+      bootstrapIdentity?: boolean;
       checkout?: { repo: string; linked: boolean };
       permissionMode?: string;
       importedPermissionMode?: string;
@@ -162,6 +163,11 @@ describe('claude-desktop start', () => {
               timestamp: '2026-10-18T20:00:00.000Z',
               message: { content: args.at(-1) },
             })}\n`
+          );
+        if (args[1] === '-p' && options.bootstrapIdentity)
+          appendFileSync(
+            join(transcripts, 'u1.jsonl'),
+            `${JSON.stringify({ type: 'assistant', uuid: 'bootstrap', timestamp: '2026-10-18T20:00:01.000Z', effort: 'medium', perTurnEffort: 'medium', message: { model: 'claude-opus-5-5', content: [{ type: 'text', text: 'effort: low' }], stop_reason: 'end_turn' } })}\n`
           );
         return {
           stdout: null,
@@ -248,6 +254,19 @@ describe('claude-desktop start', () => {
       'u1',
     ]);
     expect(inbox).toEqual([]);
+  });
+
+  test('returns observed bootstrap identity in the start receipt without another model turn', async () => {
+    const result = await adapter({ bootstrapIdentity: true }).start!(request, user);
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        model: 'claude-opus-5-5',
+        effort: 'medium',
+        identityObservation: { source: 'assistant-transcript', messageId: 'bootstrap' },
+      },
+    });
+    expect(spawned.filter((args) => args[1] === '-p')).toHaveLength(1);
   });
 
   test('B1 refuses an unconfirmed import without running the task headlessly', async () => {
