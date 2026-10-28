@@ -171,7 +171,7 @@ export function createCopilotAdapter(
     .pipe(launch, ['started', 'request'], 'started')
     .endAsync('started') as (request: W.StartRequest) => Promise<W.Result<W.WorkStarted>>;
   const refresh = async (record: Record) => {
-    const owned = !closed && live.get(record.work.ref.id);
+    const owned = !closed && !launching.has(record.work.ref.id) && live.get(record.work.ref.id);
     if (owned) {
       record.snapshot = await owned.snapshot();
       save(record);

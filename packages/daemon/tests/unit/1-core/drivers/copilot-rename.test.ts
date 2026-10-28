@@ -150,9 +150,22 @@ describe('Copilot owned rename', () => {
       id = found[0]?.ref.id;
       if (!id) await new Promise((done) => setTimeout(done, 5));
     }
+    for (let poll = 0; poll < 400; poll++) {
+      if (
+        existsSync(join(f.run, 'calls.jsonl')) &&
+        f.calls().some((c) => c.method === 'session.send')
+      )
+        break;
+      await new Promise((done) => setTimeout(done, 5));
+    }
     expect(
       await f.adapter.rename!({ adapter: 'copilot-cli', id: id! }, 'Raced', context)
     ).toMatchObject({ ok: false, reason: 'busy', notSent: true });
+    expect(await f.adapter.status!({ adapter: 'copilot-cli', id: id! })).toMatchObject({
+      ok: true,
+      value: { status: 'queued' },
+    });
+    expect(f.calls().filter((call) => call.method === 'ping')).toHaveLength(0);
     writeFileSync(join(f.run, 'release-ack'), 'release');
     const work = await starting;
     expect(f.names()).toHaveLength(0);
