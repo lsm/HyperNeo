@@ -53,7 +53,7 @@ try{
  new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
  for(const id of ['ask','settled'])store.openAsk({id,projectId:null,sessionId:root,originMessageId:null,title:id,request:'Keep work',createdAt:1});
  seed('close');watch=true;const closed=await mutate('close','close');watch=false;
- assert(closed.ok && closed.todo.state==='closed_unverified');assert.equal(closed.todo.report,report);
+ assert(closed.ok && closed.todo.state==='blocked' && closed.todo.blockedBy==='check');assert.equal(closed.todo.report,report);
  assert((await visible()).entry.todos.some(todo=>todo.id==='close' && todo.report===report));result.realClose=true;
  seed('remove');watch=true;const removed=await mutate('remove','remove');watch=false;
  assert(removed.ok && removed.todo.state==='removed');assert.equal(removed.todo.report,report);
