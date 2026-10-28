@@ -43,9 +43,14 @@ const clients: { hub:MessageHub; transport:WebSocketClientTransport; events:unkn
 let finish = () => {};
 const finished = new Promise<void>(done => { finish = done; });
 let sequence=0, asrActive=0, asrAccepted=0, asrRejected=0;
+const asrConnections = new Set<{send(data:string):unknown}>();
 const fixture = createServer(async (request,response) => {
   try {
     response.setHeader('Content-Type','application/json');
+    if (request.url === '/grow-transcript') {
+      for (const ws of asrConnections) ws.send(JSON.stringify({type:'Results',is_final:false,channel:{alternatives:[{transcript:'Public live transcript. These are additional public fixture words that continue across several lines while the person keeps speaking. The indicator must keep its original size while only the text capsule grows taller.'}]}}));
+      response.end('{}'); return;
+    }
     if (request.url === '/working' || request.url === '/idle') {
       await app.internalEventBus.publish('session.updated', {sessionId, processingState:{status:request.url === '/working' ? 'processing' : 'idle'}});
       response.end('{}'); return;
@@ -76,15 +81,15 @@ const fixture = createServer(async (request,response) => {
 const asrFixture = mode === 'serve' ? Bun.serve<{sent:boolean;transcript:boolean;voiced:boolean}>({port:18556, hostname:'127.0.0.1',
   fetch(request, server) {
     if(asrActive) { asrRejected++; return new Response('Busy',{status:403}); }
-    if(server.upgrade(request,{data:{sent:false,transcript:asrAccepted%2===0,voiced:false}})) { asrActive++; asrAccepted++; return; }
+    if(server.upgrade(request,{data:{sent:false,transcript:true,voiced:false}})) { asrActive++; asrAccepted++; return; }
     return new Response('fixture');
   },
-  websocket:{ message(ws, data) {
-    const result=(final:boolean)=>JSON.stringify({type:'Results',is_final:final,channel:{alternatives:[{transcript:ws.data.voiced ? 'Public live transcript' : ''}]}});
+  websocket:{ open(ws) { asrConnections.add(ws); }, message(ws, data) {
+    const result=(final:boolean)=>JSON.stringify({type:'Results',is_final:final,channel:{alternatives:[{transcript:ws.data.voiced && ws.data.transcript ? 'Public live transcript' : ''}]}});
     if(typeof data!=='string' && Buffer.from(data).some(byte=>byte!==0)) ws.data.voiced=true;
     if(typeof data==='string' && data.includes('CloseStream')) { ws.send(result(true)); ws.close(); }
     else if(typeof data!=='string' && Buffer.from(data).some(byte=>byte!==0) && ws.data.transcript && !ws.data.sent) { ws.data.sent=true; ws.send(result(false)); }
-  }, close() { asrActive--; }}
+  }, close(ws) { asrConnections.delete(ws); asrActive--; }}
 }) : null;
 try {
   await new Promise<void>(done => fixture.listen(18555,'127.0.0.1',done));
