@@ -351,6 +351,37 @@ describe('neo todo runner', () => {
     }
   });
 
+  test.each([
+    { ok: false, reason: 'unreachable', detail: 'Synthetic remote outage' },
+    { ok: false, reason: 'not_found', detail: 'Synthetic missing worker' },
+    null,
+    { ok: true, value: { status: 'done' } },
+  ])(
+    'keeps last observed identity when status is unsuccessful or malformed: %j',
+    async (status) => {
+      const h = setup();
+      try {
+        const todo = h.add();
+        await h.runner.start(todo.id);
+        h.sessions.recordRef(todo.id, ref, 1, undefined, {
+          model: 'claude-opus-5-5',
+          effort: 'medium',
+        });
+        h.setStatus(status);
+        await h.runner.proceed(todo.id, 'Continue.');
+        expect(h.sessions.readCard(todo.id)).toMatchObject({
+          model: 'claude-opus-5-5',
+          effort: 'medium',
+        });
+        expect(h.calls.findLast((call) => call.name === 'work.send')!.input.message).toContain(
+          'Agent: claude-opus-5-5 (effort: medium) via HyperNeo'
+        );
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
   test('a late identity refresh cannot overwrite a replacement binding', async () => {
     const h = setup();
     try {

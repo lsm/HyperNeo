@@ -1,3 +1,5 @@
+import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
+import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import { createNeoTodoRunner } from '../../../packages/daemon/src/lib/neo/todo-runner.ts';
@@ -147,6 +149,30 @@ try {
   try {
     const db = app.db.getDatabase();
     const store = new NeoAskTodoRepository(db), sessions = new NeoTodoSessionRepository(db);
+    new NeoRepository(db).reserveBinding({ sessionId: caller, kind: 'neo', projectId: null });
+    const handler = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: caller, role: 'neo' }));
+    const invokeTodo = async (name: string, input: unknown) => {
+      const reply = await handler({ name, input });
+      const result = JSON.parse(reply.content[0].text);
+      evidence.push({ name, input, result });
+      assert(!reply.isError && result.ok, JSON.stringify(result));
+      return result;
+    };
+    appendFileSync(transcript, JSON.stringify({ type: 'assistant', uuid: crypto.randomUUID(), effort: 'medium', message: { model: 'claude-opus-5-5', content: [] } }) + '\n');
+    const check = { pack: 'core', kind: 'evidence', params: { path: join(run, 'report.md') } };
+    const opened = await invokeTodo('neo.ask.open', { title: 'Production bind', request: 'Track coding work', todos: [{ title: 'Bound worker', check, target: { verb: 'bind', ref } }] });
+    const boundId = opened.todos[0].id;
+    assert.equal(sessions.readCard(boundId)?.model, 'claude-opus-5-5', 'production ask-open bind must refresh observed identity');
+    assert.equal(sessions.readCard(boundId)?.effort, 'medium');
+    const added = await invokeTodo('neo.todo.add', { askId: opened.todos[0].askId, title: 'Added binding', check, target: { verb: 'bind', ref } });
+    assert.equal(sessions.readCard(added.todo.id)?.model, 'claude-opus-5-5', 'production todo-add bind must refresh observed identity');
+    const replacementRef = { adapter: 'claude-desktop', id: `local_${rcId}` };
+    const replacementTranscript = join(run, 'home/.claude/projects', join(run, 'workspace').replace(/[/.]/g, '-'), `${rcId}.jsonl`);
+    appendFileSync(replacementTranscript, JSON.stringify({ type: 'assistant', uuid: crypto.randomUUID(), perTurnEffort: 'high', message: { model: 'claude-sonnet-5', content: [] } }) + '\n');
+    await invokeTodo('neo.todo.bind', { todoId: boundId, ref: replacementRef });
+    assert.equal(sessions.readCard(boundId)?.model, 'claude-sonnet-5', 'production rebind must read the replacement worker');
+    assert.equal(sessions.readCard(boundId)?.effort, 'high');
+    evidence.push({ productionBind: sessions.readCard(boundId), productionAddedBind: sessions.readCard(added.todo.id) });
     const askId = crypto.randomUUID();
     store.openAsk({ id: askId, sessionId: caller, projectId: null, originMessageId: 'fixture', title: 'Provenance', request: 'Write code and a report', createdAt: Date.now() });
     const todo = store.addTodo(crypto.randomUUID(), askId, { title: 'File evidence coding', doneWhen: 'report exists', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'report.md') } }, instruction: 'Write code and a report', named: null }, Date.now());
