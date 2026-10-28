@@ -127,6 +127,7 @@ describe('Copilot owned rename', () => {
     expect(await f.rename(work, 'x'.repeat(101))).toMatchObject({
       ok: false,
       reason: 'not_delivered',
+      notSent: true,
     });
     expect(
       await f.rename({ ...work, ref: { adapter: 'copilot-cli', id: crypto.randomUUID() } }, 'Other')
@@ -136,5 +137,26 @@ describe('Copilot owned rename', () => {
     expect(f.names()).toHaveLength(0);
     const owned = JSON.parse(readFileSync(join(f.run, 'owned', `${work.ref.id}.json`), 'utf8'));
     expect(owned.work.title).toBe('Original');
+  });
+
+  test('refuses a rename while start is still writing its record', async () => {
+    const f = setup();
+    const starting = f.start('held-ack');
+    let id: string | undefined;
+    for (let poll = 0; poll < 400 && !id; poll++) {
+      const found = (await f.adapter.find({ includeClosed: true, limit: 20 })).flatMap(
+        (group) => group.work
+      );
+      id = found[0]?.ref.id;
+      if (!id) await new Promise((done) => setTimeout(done, 5));
+    }
+    expect(
+      await f.adapter.rename!({ adapter: 'copilot-cli', id: id! }, 'Raced', context)
+    ).toMatchObject({ ok: false, reason: 'busy', notSent: true });
+    writeFileSync(join(f.run, 'release-ack'), 'release');
+    const work = await starting;
+    expect(f.names()).toHaveLength(0);
+    const owned = JSON.parse(readFileSync(join(f.run, 'owned', `${work.ref.id}.json`), 'utf8'));
+    expect(owned.work).toMatchObject({ title: 'Original', receipt: work.receipt });
   });
 });

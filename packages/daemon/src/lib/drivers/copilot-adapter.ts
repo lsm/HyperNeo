@@ -37,6 +37,7 @@ export function createCopilotAdapter(
   const live = new Map<string, Worker>();
   const transactions = new Map<string, Promise<unknown>>();
   const starts = new Set<Promise<W.Result<W.WorkStarted>>>();
+  const launching = new Set<string>();
   let closed = false;
   const path = (id: string) => join(deps.directory, `${id}.json`);
   const write = (file: string, value: unknown) => {
@@ -105,7 +106,7 @@ export function createCopilotAdapter(
       ? { value: { id: crypto.randomUUID(), directory } }
       : { reason: reject('invalid_place', 'Copilot execution needs a directory.') };
   };
-  const launch = async (
+  const launchOwned = async (
     location: { id: string; directory: string },
     request: W.StartRequest
   ): Promise<W.Result<W.WorkStarted>> => {
@@ -150,6 +151,14 @@ export function createCopilotAdapter(
         'unreachable',
         `copilot-cli:${location.id}: ${failures.map(String).join('; ')}. Check work.status; do not replay this start automatically.`
       );
+    }
+  };
+  const launch = async (location: { id: string; directory: string }, request: W.StartRequest) => {
+    launching.add(location.id);
+    try {
+      return await launchOwned(location, request);
+    } finally {
+      launching.delete(location.id);
     }
   };
   const selectFolder = (request: W.StartRequest) =>
@@ -297,7 +306,13 @@ export function createCopilotAdapter(
     .endAsync('delivery') as (ref: W.WorkRef, message: string) => Promise<W.Result<W.WorkDelivery>>;
   const admitRename = (record: Record, title: string): Gate<Record> => {
     if (title.length > 100)
-      return { reason: reject('not_delivered', 'Copilot session names are 1–100 characters.') };
+      return {
+        reason: reject('not_delivered', 'Copilot session names are 1–100 characters.', true),
+      };
+    if (launching.has(record.work.ref.id))
+      return {
+        reason: reject('busy', 'Copilot work is still starting; rename after work.start.', true),
+      };
     if (closed || record.pendingSubmission || record.snapshot.status === 'unreachable')
       return { reason: unavailable() };
     if (
