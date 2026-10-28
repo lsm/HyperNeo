@@ -34,7 +34,7 @@ preparation refusal. Run it serially with the worker and discovery tests using t
 daemon Vitest runner. No real Copilot, account session, credentials, provider or
 unattended GUI is used. This is protocol/operation proof with synthetic data.
 
-The accepted runtime is exactly CLI 1.0.83, matching installed SDK 1.0.13 package
+The accepted runtime is exactly CLI 1.0.105, matching installed SDK 1.0.28 package
 metadata; the fixture impersonates that version. A real pair has not been run in
 this slice. Other versions fail before creating a session. Models require an exact
 runtime catalog ID; no default/effort is inferred. Preparation packs, strict steering, history and owned find overlay remain unwired.

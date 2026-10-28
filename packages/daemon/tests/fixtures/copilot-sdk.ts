@@ -2,6 +2,13 @@
 import { appendFileSync, mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+const sdkCliVersion: string = JSON.parse(
+  readFileSync(
+    new URL('../../node_modules/@github/copilot-sdk/package.json', import.meta.url),
+    'utf8'
+  )
+).copilotCliVersion;
+
 let buffer = Buffer.alloc(0);
 let sessionId = '';
 let input = 0;
@@ -57,7 +64,7 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
         version: process.argv.includes('--wrong-version')
           ? 'unsupported-fixture'
           : process.argv.includes('--production-version')
-            ? '1.0.105'
+            ? sdkCliVersion
             : 'fixture-1',
         protocolVersion: 3,
       });
