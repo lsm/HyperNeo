@@ -3,6 +3,7 @@ import type { DevicePairingRepository } from '../../storage/repositories/device-
 import { isLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { PairingLimiter } from './pairing-limiter.ts';
+import { createDeviceRevoker } from './revoke-device.ts';
 
 export const SESSION_DOOR_PRINCIPAL = 'session-door';
 
@@ -48,6 +49,7 @@ export function createDevicePairingOperations({
   now,
   revoked,
 }: PairingOperationDeps) {
+  const revoke = createDeviceRevoker(pairing, now, revoked);
   const isPairedHuman = (caller: OperationCaller) =>
     isLocalUser(caller) &&
     caller.device?.kind === 'human' &&
@@ -228,15 +230,7 @@ export function createDevicePairingOperations({
       policy: { safetyClass: 'human_only' },
       inputSchema: z.object({ deviceId: z.string().min(1) }).strict(),
       resultSchema: z.union([z.object({ ok: z.literal(true) }), Refused]),
-      execute: async (input, caller) => {
-        if (!isLocalUser(caller) && !fromDoor(caller)) return refused;
-        if (!fromDoor(caller) && !isPairedHuman(caller))
-          return { ok: false as const, reason: NEEDS_PAIRED_HUMAN };
-        if (!pairing().revokeDevice(input.deviceId, now()))
-          return { ok: false as const, reason: 'not_found: no paired device with that id.' };
-        revoked(input.deviceId);
-        return { ok: true as const };
-      },
+      execute: async (input, caller) => revoke(input.deviceId, caller),
     }),
     defineOperation({
       name: 'device.pair.reset_lockout',

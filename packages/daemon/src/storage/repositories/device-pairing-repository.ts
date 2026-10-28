@@ -5,6 +5,8 @@ import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { pairingApproveWrite } from './pairing-approve-write.ts';
 import { pairingRedeemWrite } from './pairing-redeem-write.ts';
 import { pairingCodeCreateWrites, type PairingCodeCaller } from './pairing-code-create-write.ts';
+import { pairingRevokeWrites } from './pairing-revoke-write.ts';
+import { pairingStateReads } from './pairing-state-read.ts';
 
 export type DeviceKind = 'human' | 'relay' | 'daemon';
 
@@ -123,6 +125,24 @@ export const recordWouldRefuse = defineDbOp({
 
 export class DevicePairingRepository {
   constructor(private readonly db: Database) {}
+
+  get closeSignal(): AbortSignal {
+    return gatewayFor(this.db).closeSignal;
+  }
+
+  isActiveDeviceAsync(id: string) {
+    return gatewayFor(this.db).call(pairingStateReads, 'isActiveDevice', id);
+  }
+
+  revokeAsync(id: string, caller: PairingCodeCaller, now: number) {
+    const { source, principal, device } = caller;
+    const actor = {
+      source,
+      principal,
+      device: device && { deviceId: device.deviceId, kind: device.kind },
+    };
+    return gatewayFor(this.db).call(pairingRevokeWrites, 'revoke', id, actor, now);
+  }
 
   listWouldRefuse(): {
     reason: 'host_not_allowed' | 'origin_not_allowed';

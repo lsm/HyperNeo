@@ -1,0 +1,215 @@
+{
+  "units": [
+    {
+      "file": "packages/daemon/src/lib/pairing/pairing-operations.ts",
+      "name": "SESSION_DOOR_PRINCIPAL",
+      "start": 8,
+      "end": 8,
+      "lines": 1
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/pairing-operations.ts",
+      "name": "refused",
+      "start": 12,
+      "end": 12,
+      "lines": 1
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/pairing-operations.ts",
+      "name": "fromDoor",
+      "start": 24,
+      "end": 25,
+      "lines": 2
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/pairing-operations.ts",
+      "name": "NEEDS_PAIRED_HUMAN",
+      "start": 27,
+      "end": 28,
+      "lines": 2
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/upgrade-auth.ts",
+      "name": "revocationListeners",
+      "start": 11,
+      "end": 11,
+      "lines": 1
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/upgrade-auth.ts",
+      "name": "revokedDuringLookups",
+      "start": 14,
+      "end": 14,
+      "lines": 1
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/upgrade-auth.ts",
+      "name": "lookups",
+      "start": 15,
+      "end": 15,
+      "lines": 1
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/upgrade-auth.ts",
+      "name": "announceDeviceRevoked",
+      "start": 17,
+      "end": 20,
+      "lines": 4
+    },
+    {
+      "file": "packages/daemon/src/lib/websocket-server-transport.ts",
+      "name": "closeDevice",
+      "start": 287,
+      "end": 291,
+      "lines": 5
+    },
+    {
+      "file": "packages/daemon/src/lib/operations/caller.ts",
+      "name": "isLocalUser",
+      "start": 11,
+      "end": 13,
+      "lines": 3
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/device-pairing-repository.ts",
+      "name": "constructor",
+      "start": 127,
+      "end": 127,
+      "lines": 1
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/device-pairing-repository.ts",
+      "name": "closeSignal",
+      "start": 129,
+      "end": 131,
+      "lines": 3
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/device-pairing-repository.ts",
+      "name": "isActiveDeviceAsync",
+      "start": 133,
+      "end": 135,
+      "lines": 3
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/device-pairing-repository.ts",
+      "name": "revokeAsync",
+      "start": 137,
+      "end": 145,
+      "lines": 9
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/device-pairing-repository.ts",
+      "name": "isActiveDevice",
+      "start": 165,
+      "end": 169,
+      "lines": 5
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/device-pairing-repository.ts",
+      "name": "revokeDevice",
+      "start": 216,
+      "end": 222,
+      "lines": 7
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/pairing-revoke-write.ts",
+      "name": "whole typed writer command",
+      "lines": 55
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/revoke-device.ts",
+      "name": "whole local module",
+      "lines": 57
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/pairing-state-read.ts",
+      "name": "whole local module",
+      "lines": 18
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-gateway.ts",
+      "name": "DbGateway.closing",
+      "start": 152,
+      "end": 152,
+      "lines": 1
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-gateway.ts",
+      "name": "DbGateway.closeSignal",
+      "start": 222,
+      "end": 224,
+      "lines": 3
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-gateway.ts",
+      "name": "DbGateway.close",
+      "start": 226,
+      "end": 229,
+      "lines": 4
+    },
+    {
+      "file": "packages/daemon/src/lib/websocket-server-transport.ts",
+      "name": "WebSocketServerTransport.stopRevocations",
+      "start": 42,
+      "end": 42,
+      "lines": 1
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/pairing-operations.ts",
+      "name": "revoker binding",
+      "start": 52,
+      "end": 52,
+      "lines": 1
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/pairing-operations.ts",
+      "name": "device.revoke execute",
+      "start": 233,
+      "end": 233,
+      "lines": 1
+    },
+    {
+      "file": "packages/daemon/src/lib/operations/database-catalog.ts",
+      "name": "real daemon pairing dependency binding",
+      "start": 124,
+      "end": 129,
+      "lines": 6
+    }
+  ],
+  "totalLines": 196,
+  "productionLines": 115,
+  "smokeRegistrationLines": 1,
+  "delta": [
+    {
+      "file": "packages/daemon/src/lib/pairing/pairing-operations.ts",
+      "lines": 12
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/revoke-device.ts",
+      "lines": 57
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-gateway.ts",
+      "lines": 6
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-ops.ts",
+      "lines": 2
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/device-pairing-repository.ts",
+      "lines": 20
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/pairing-state-read.ts",
+      "lines": 18
+    },
+    {
+      "file": "scripts/deno-smoke.sh",
+      "lines": 1
+    }
+  ],
+  "independentObserver": "Merged #9304 owns the separately measured connection-lifetime recovery path; the mutation does not create or retain background retries.",
+  "sharedGateway": "Only the authorized DbGateway lifetime hook changes; worker lanes, transaction executor and registered command transport are reused."
+}
