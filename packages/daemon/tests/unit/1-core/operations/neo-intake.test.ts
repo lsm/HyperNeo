@@ -32,11 +32,19 @@ const target = { id: input.sessionId, status: 'active' as const, config: {} };
 const binding = { sessionId: input.sessionId, projectId: null, kind: 'neo' as const };
 
 describe('Neo intake gates', () => {
-  test('voice instructions reach the model without changing the public human text', () => {
+  test('voice state reaches the model as one short fact without repeating prompt instructions', () => {
     const spoken = neoIntakeMessage({ ...input, speech: true });
-    expect(JSON.stringify(spoken.message.content)).toContain('neo.speech.say');
+    expect(JSON.stringify(spoken.message.content)).toContain('[speech: on]');
+    expect(JSON.stringify(spoken.message.content)).not.toContain('neo.speech.say');
     expect(spoken.humanContent).toEqual([{ type: 'text', text: input.content }]);
     expect(JSON.stringify(neoIntakeMessage(input).message.content)).not.toContain('neo.speech.say');
+  });
+  test('live voice is explicit source metadata and is independent of reply playback', () => {
+    const live = neoIntakeMessage({...input, speech:false, inputMode:'live_voice'});
+    expect(JSON.stringify(live.message.content)).toContain('[input: live_voice; speech: off]');
+    expect(live.humanContent).toEqual([{type:'text',text:input.content}]);
+    const typed = neoIntakeMessage({...input, speech:true, inputMode:'text'});
+    expect(JSON.stringify(typed.message.content)).toContain('[input: text; speech: on]');
   });
   test.each([
     { source: 'mcp', role: 'neo', sessionId: input.sessionId },
