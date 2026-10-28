@@ -1,0 +1,78 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "firstWebhookMs": 8.320791999999983,
+  "signedWebhookPublishesCommittedReceipt": true,
+  "commentMappingRetained": true,
+  "securityRejectedEventPersistsBeforeNotice": true,
+  "filteredOrInvalidSignatureNeverWrites": true,
+  "filterErrorHasOneCommittedFallback": true,
+  "healthWhileWriterHeldMs": 3.1747080000000096,
+  "deliberatelyHeldWriterMs": 1258.0861250000003,
+  "webhookAndNoticeWaitForReceipt": true,
+  "receiptFailureRollsBackWithoutFallback": true,
+  "admissionFailureNoFallback": true,
+  "unknownOutcomeNeverFallbacksOrPublishesFalseReceipt": true,
+  "maxLoopLagMs": 4.0347499999998035,
+  "rssBytes": 539377664,
+  "walBytes": 4128272,
+  "commandPosts": 10,
+  "publicSignedWebhookExercised": true,
+  "credentialBootstrapAndAppWebhookBridgeExercised": false,
+  "existingWebhookErrorAcknowledgementPreserved": true,
+  "pendingReadsRemainMain": true,
+  "pass": true,
+  "mainSqlAttempts": 0,
+  "workerMetrics": [
+    {
+      "roundTripMs": 2.1271670000000995,
+      "requestBytes": 631,
+      "replyBytes": 665,
+      "encodeMs": 0.00804100000004837
+    },
+    {
+      "roundTripMs": 0.13525000000004184,
+      "requestBytes": 688,
+      "replyBytes": 722,
+      "encodeMs": 0.005874999999832653
+    },
+    {
+      "roundTripMs": 0.15949999999998,
+      "requestBytes": 678,
+      "replyBytes": 712,
+      "encodeMs": 0.0027090000000953296
+    },
+    {
+      "roundTripMs": 0.12579200000004676,
+      "requestBytes": 575,
+      "replyBytes": 609,
+      "encodeMs": 0.0035830000001624285
+    },
+    {
+      "roundTripMs": 1256.6625,
+      "requestBytes": 631,
+      "replyBytes": 665,
+      "encodeMs": 0.015750000000025466
+    },
+    {
+      "roundTripMs": 2.4668329999999514,
+      "requestBytes": 631,
+      "replyBytes": 665,
+      "encodeMs": 0.00383300000021336
+    },
+    {
+      "roundTripMs": 2.4106669999996484,
+      "requestBytes": 678,
+      "replyBytes": 712,
+      "encodeMs": 0.0037080000001878943
+    },
+    {
+      "roundTripMs": 2.4630409999999756,
+      "requestBytes": 575,
+      "replyBytes": 609,
+      "encodeMs": 0.003624999999829015
+    }
+  ],
+  "runtime": "deno",
+  "runtimeVersion": "2.9.4",
+  "temporaryDaemonDataRemoved": true
+}

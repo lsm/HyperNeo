@@ -242,6 +242,7 @@ export class GitHubService {
       event,
     });
 
+    let inboxWriteStarted = false;
     try {
       const filterResult = await this.filterEvent(event);
       if (!filterResult.passed) {
@@ -281,7 +282,8 @@ export class GitHubService {
           securityResult,
         });
 
-        const item = this.addToInbox(event, securityResult, 'Security check failed');
+        inboxWriteStarted = true;
+        const item = await this.addToInbox(event, securityResult, 'Security check failed');
         this.emitEvent('github.inboxItemAdded', {
           sessionId: 'global',
           item,
@@ -303,7 +305,8 @@ export class GitHubService {
         securityCheck: securityResult,
       };
 
-      const item = this.addToInbox(event, securityResult, routingResult.reason);
+      inboxWriteStarted = true;
+      const item = await this.addToInbox(event, securityResult, routingResult.reason);
       log.info('Event added to inbox', {
         eventId: event.id,
         inboxItemId: item.id,
@@ -323,7 +326,8 @@ export class GitHubService {
         error: error instanceof Error ? error.message : error,
       });
 
-      const item = this.addToInbox(
+      if (inboxWriteStarted) throw error;
+      const item = await this.addToInbox(
         event,
         { passed: true, injectionRisk: 'low' },
         `Processing error: ${error instanceof Error ? error.message : 'Unknown error'}`
@@ -362,7 +366,11 @@ export class GitHubService {
     });
   }
 
-  private addToInbox(event: GitHubEvent, security: SecurityCheckResult, reason: string): InboxItem {
+  private addToInbox(
+    event: GitHubEvent,
+    security: SecurityCheckResult,
+    reason: string
+  ): Promise<InboxItem> {
     return this.inboxManager.addToInbox(event, security, reason);
   }
 

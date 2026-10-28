@@ -1,3 +1,5 @@
+import { generateUUID } from '@hyperneo/shared';
+import { inboxCreateWrites } from '../../storage/repositories/inbox-create-write.ts';
 import type { Database } from '../../storage/database.ts';
 import type { InboxItem, InboxItemStatus, GitHubEvent, SecurityCheckResult } from './types.ts';
 
@@ -17,7 +19,11 @@ interface CreateInboxItemParams {
 export class InboxManager {
   constructor(private db: Database) {}
 
-  addToInbox(event: GitHubEvent, securityResult: SecurityCheckResult, _reason: string): InboxItem {
+  addToInbox(
+    event: GitHubEvent,
+    securityResult: SecurityCheckResult,
+    _reason: string
+  ): Promise<InboxItem> {
     const source = this.getEventType(event);
     const body = event.comment?.body ?? event.issue?.body ?? '';
 
@@ -34,20 +40,7 @@ export class InboxManager {
       rawEvent: event.rawPayload,
     };
 
-    const item = this.db.createInboxItem({
-      source: params.source,
-      repository: params.repository,
-      issueNumber: params.issueNumber,
-      commentId: params.commentId,
-      title: params.title,
-      body: params.body,
-      author: params.author,
-      labels: params.labels,
-      securityCheck: params.securityCheck,
-      rawEvent: params.rawEvent,
-    });
-
-    return item;
+    return this.db.gateway.call(inboxCreateWrites, 'create', params, generateUUID(), Date.now());
   }
 
   countByStatus(): Record<InboxItemStatus, number> {

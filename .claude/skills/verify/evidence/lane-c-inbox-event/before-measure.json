@@ -1,0 +1,120 @@
+{
+  "base": "c7826a1225bd9fcc0188c4ef8f1a8cd9030e3093",
+  "units": [
+    {
+      "file": "packages/daemon/src/lib/github/github-service.ts",
+      "name": "GitHubService.processEvent",
+      "start": 232,
+      "end": 349,
+      "lines": 118,
+      "sha256": "4b65d7a849bf3f1695b0a3530b7289306f5bbc5ac906267801e1efc3330bab24"
+    },
+    {
+      "file": "packages/daemon/src/lib/github/github-service.ts",
+      "name": "GitHubService.filterEvent",
+      "start": 351,
+      "end": 353,
+      "lines": 3,
+      "sha256": "54158d9848de9d68b2003421f56bfce66366903ee4bae85527a79367aa05ad96"
+    },
+    {
+      "file": "packages/daemon/src/lib/github/github-service.ts",
+      "name": "GitHubService.checkSecurity",
+      "start": 355,
+      "end": 363,
+      "lines": 9,
+      "sha256": "6eeed87b2770e1ed1d48a27ad4ff717e4409ce117086f775a79c10704611533c"
+    },
+    {
+      "file": "packages/daemon/src/lib/github/github-service.ts",
+      "name": "GitHubService.addToInbox",
+      "start": 365,
+      "end": 367,
+      "lines": 3,
+      "sha256": "7873272cef4ca51d5f011b38ab6d25fb5a64586bf473d5c4a6f2ec0e8f4b3d24"
+    },
+    {
+      "file": "packages/daemon/src/lib/github/github-service.ts",
+      "name": "GitHubService.emitEvent",
+      "start": 369,
+      "end": 379,
+      "lines": 11,
+      "sha256": "323cc24c24695a1a4d1bb81a5e249f6930105c93054301d081710b7078327cf9"
+    },
+    {
+      "file": "packages/daemon/src/lib/github/inbox-manager.ts",
+      "name": "InboxManager.constructor",
+      "start": 18,
+      "end": 18,
+      "lines": 1,
+      "sha256": "a412277283455b92254e0a0c36ac4595fb4d6aaea87d190828c95c2ebe7c3410"
+    },
+    {
+      "file": "packages/daemon/src/lib/github/inbox-manager.ts",
+      "name": "InboxManager.addToInbox",
+      "start": 20,
+      "end": 51,
+      "lines": 32,
+      "sha256": "3c3a2688c748a513049102269d253aeb77c17c0a12f18de0c76ab8fc5f17b9f7"
+    },
+    {
+      "file": "packages/daemon/src/lib/github/inbox-manager.ts",
+      "name": "InboxManager.getEventType",
+      "start": 69,
+      "end": 77,
+      "lines": 9,
+      "sha256": "b4a7eafed08e663156efceac5a7f8c485b6f4445d8b97055fe404a5a089ecf76"
+    }
+  ],
+  "totalLines": 186,
+  "productionLines": 0,
+  "smokeRegistrationLines": 0,
+  "delta": [],
+  "writerAuditedLines": 84,
+  "writerSubtree": [
+    {
+      "file": "packages/daemon/src/storage/repositories/inbox-item-repository.ts",
+      "name": "constructor",
+      "start": 29,
+      "end": 29,
+      "lines": 1,
+      "sha256": "37ae8ea2954cf392605c195037a07d4abd1b4658eb5c923aaa06862a17a0101d"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/inbox-item-repository.ts",
+      "name": "createItem",
+      "start": 31,
+      "end": 61,
+      "lines": 31,
+      "sha256": "55afe51131636d1a9ff5bde0b3172040b9a30f2e77cb5f474fc8283719385c01"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/inbox-item-repository.ts",
+      "name": "getItem",
+      "start": 63,
+      "end": 69,
+      "lines": 7,
+      "sha256": "1f68f353725ed98648d56a2d22d68798deb394201e4f847659c290becb345cae"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/inbox-item-repository.ts",
+      "name": "rowToItem",
+      "start": 145,
+      "end": 165,
+      "lines": 21,
+      "sha256": "2accadf0a088d331a035b87ba4e1fbc8ddfe34f93631a29f08f1221862398bee"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/inbox-create-write.ts",
+      "name": "whole typed data-only create command",
+      "lines": 24,
+      "sha256": "58a99e1fcefdb96af89497e34057f4b5e2b8ecc82a24ff18686684d8652e3958"
+    }
+  ],
+  "writerContract": "github.inbox.create.write / write / create(params, callerUuid, callerTime): exact committed plain InboxItem; INSERT and receipt decode in one immediate writer transaction; caller identity/time preserved; legacy createItem(params) defaults retained; duplicate identity fails rather than rewriting; no unknown-outcome replay.",
+  "rootBundleSha256": "96897399f559eef65139caa83d20353851cf06711917565f41dc6349dd2824d8",
+  "manifestSha256": "c90ced0707ac82da9d6c197ee6a780fc098dbad1d90192f3f7b1b63232a13e94",
+  "fullTransitiveFilterSecurityGraphMeasured": false,
+  "auditLimit": "Full source files above are pinned byte-for-byte; this does not enumerate every imported SDK/library, filter permission network helper, polling transport or bootstrap/startup subtree. No full transitive graph or credential/app webhook bridge completion claim.",
+  "sqlBaselineChanged": false
+}
