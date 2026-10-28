@@ -8,6 +8,7 @@ import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import { neoTodoPolicies } from '../../lib/neo/packs/todo-policies.ts';
 import { sameNeoTodoCheck } from '../../lib/neo/todo-completion.ts';
 import {
+  neoTodoPlaceRefusal,
   planNeoTodoDraft,
   planNeoTodoEdit,
   planNeoTodoClose,
@@ -127,6 +128,21 @@ class NeoTodoMutationPlanner {
         'result:outcome'
       )
       .pipe(requireNeoTodoArtifacts, ['outcome', 'registered'], 'result:outcome')
+      .pipe(
+        (plan: Plan, input: Input) => {
+          const placeless =
+            input.kind === 'edit' &&
+            neoTodoPlaceRefusal(
+              input.target,
+              plan.todo.repo ?? todos.getAsk(plan.todo.askId)?.repo
+            );
+          return placeless
+            ? { reason: { ok: false as const, reason: placeless } }
+            : { value: plan };
+        },
+        ['outcome', 'input'],
+        'result:outcome'
+      )
       .pipe(
         (plan: Plan, input: Input) =>
           input.kind === 'edit' &&

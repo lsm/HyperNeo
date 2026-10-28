@@ -139,6 +139,15 @@ export async function resolveNeoTodoDraft(
     : { value: { ...input, target: { ...input.target, ref: resolved.value } } };
 }
 
+export function neoTodoPlaceRefusal(
+  target: z.infer<typeof NeoTodoTargetSchema> | undefined,
+  repo: string | null | undefined
+): string | null {
+  return target?.verb === 'start' && !target.place && repo
+    ? `place_required: coding work for ${repo} starts in its repository; pass target.place from work.find.`
+    : null;
+}
+
 export async function addNeoTodo(
   todos: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
@@ -168,6 +177,8 @@ export async function recordNeoTodo(
   if ('reason' in planned) return planned.reason;
   const draft = planned.value;
   const repo = neoTodoRepo(draft, packs, ask);
+  const placeless = neoTodoPlaceRefusal(draft.target, repo);
+  if (placeless) return { ok: false, reason: placeless };
   const home = neoTodoHome(todos, ask, repo, split || todos.listChildAsks(ask.id).length > 0);
   if (home.status !== 'open')
     return {
@@ -717,7 +728,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.edit',
       description:
-        'Change a todo on an open ask you own: title or check {pack, kind, params}; the completion sentence is generated from the check, or reword it directly with doneWhen. addUrls appends PR URLs to its PR-merge check. Duplicate claims and URLs unsupported by the check are recorded without blocking the edit. Prefer editing to adding a duplicate PR todo. Or record completion evidence (done met for what you read, reported for a claim you cannot read); without a passed outcome check it closes unverified rather than done; attach a document or evidence file as the reference artifact.file.register returned in artifacts, with one sentence of evidence, not the pasted document. A todo with an unanswered card is refused until the human answers it. hold: "<reason>" holds a todo that has not started, so nothing starts it; hold: null releases it. Hold only what the human said must wait. priority changes where waiting work starts in the queue. instruction with target gives a todo that has not started and has no instruction its work; the queue then starts it like any approved step.',
+        'Change a todo on an open ask you own: title or check {pack, kind, params}; the completion sentence is generated from the check, or reword it directly with doneWhen. addUrls appends PR URLs to its PR-merge check. Duplicate claims and URLs unsupported by the check are recorded without blocking the edit. Prefer editing to adding a duplicate PR todo. Or record completion evidence (done met for what you read, reported for a claim you cannot read); without a passed outcome check it closes unverified rather than done; attach a document or evidence file as the reference artifact.file.register returned in artifacts, with one sentence of evidence, not the pasted document. A todo with an unanswered card is refused until the human answers it. hold: "<reason>" holds a todo that has not started, so nothing starts it; hold: null releases it. Hold only what the human said must wait. priority changes where waiting work starts in the queue. instruction with target gives a todo that has not started and has no instruction its work; the queue then starts it like any approved step. A start target for a coding todo needs target.place from work.find.',
       inputSchema: Edit,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
