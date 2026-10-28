@@ -16,8 +16,8 @@ construction slice. Do not claim runtime activation or completion of #8712.
 Require the entire instruction in the receipt and opened Work card, including
 its byte length and hash. A late start-question insert failure must roll back
 the todo, target, ask stamp and notifications. Concurrent additions must join
-one start card with every todo selected. Bind commits its current worker and
-doing state; start returns only an intent, with no worker dispatch or start card.
+one start card with every todo selected. Start returns only an intent, with no
+worker dispatch or start card.
 Invalid checks stay quiet. Repeating the same committed todo ID must fail rather
 than create another card. Worker failure before dispatch must reject without a
 main fallback. Losing a committed worker reply must report outcome unknown;

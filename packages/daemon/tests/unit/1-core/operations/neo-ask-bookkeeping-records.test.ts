@@ -3,7 +3,6 @@ import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/sch
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { describe, expect, test } from 'bun:test';
 import { pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
-import type { WorkRef } from '../../../../src/lib/drivers/types.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
@@ -54,30 +53,14 @@ function setup(overrides: Partial<Pick<NeoTodoControls, 'resolveTarget' | 'start
     1
   );
   const calls: string[] = [];
-  const statusRefs: WorkRef[] = [];
   const runner = createNeoTodoRunner({
     limits: () => ({ running: 99, perGroup: 99 }),
     write: gatewayFor(db).run.bind(gatewayFor(db)),
     store,
     sessions,
     packs: () => [],
-    invoke: async (_caller, name, input) => {
+    invoke: async (_caller, name) => {
       calls.push(name);
-      if (name === 'work.status') {
-        statusRefs.push(input.ref as WorkRef);
-        return {
-          kind: 'completed',
-          value: {
-            ok: true,
-            value: {
-              status: 'running',
-              lastActivityAt: 2,
-              model: 'claude-opus-5-5',
-              effort: 'medium',
-            },
-          },
-        };
-      }
       throw new Error('Unexpected worker call');
     },
     tell: async () => {},
@@ -126,7 +109,7 @@ function setup(overrides: Partial<Pick<NeoTodoControls, 'resolveTarget' | 'start
     if (reply.isError) throw new Error(reply.content[0].text);
     return JSON.parse(reply.content[0].text);
   };
-  return { db, store, sessions, ask, todo, runner, calls, statusRefs, call, audits };
+  return { db, store, sessions, ask, todo, runner, calls, call, audits };
 }
 
 describe('todo and ask bookkeeping records through MCP', () => {
@@ -288,25 +271,25 @@ describe('todo and ask bookkeeping records through MCP', () => {
         todos: ['short-a', 'short-b'].map((id) => ({
           title: id,
           check: pendingTodoCheck,
-          target: { verb: 'bind', ref: { adapter: 'hyperneo', id } },
+          instruction: `Task ${id}`,
+          target: { verb: 'send', ref: { adapter: 'hyperneo', id } },
         })),
       });
       expect(result.ok).toBe(true);
       expect(lookups).toEqual(['short-a', 'short-b']);
-      expect(
-        result.todos.map((todo: { id: string }) => h.sessions.readRef(todo.id)?.id).sort()
-      ).toEqual(['10000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000002']);
-      expect(h.calls).toEqual(['work.status', 'work.status']);
-      expect(h.statusRefs).toEqual([
-        { adapter: 'hyperneo', id: '10000000-0000-4000-8000-000000000001' },
-        { adapter: 'hyperneo', id: '10000000-0000-4000-8000-000000000002' },
+      const stored = (id: string) =>
+        JSON.parse(
+          (
+            h.db.prepare('SELECT target FROM neo_todo_sessions WHERE todo_id = ?').get(id) as {
+              target: string;
+            }
+          ).target
+        ).ref.id;
+      expect(result.todos.map((todo: { id: string }) => stored(todo.id)).sort()).toEqual([
+        '10000000-0000-4000-8000-000000000001',
+        '10000000-0000-4000-8000-000000000002',
       ]);
-      for (const todo of result.todos) {
-        expect(h.sessions.readCard(todo.id)).toMatchObject({
-          model: 'claude-opus-5-5',
-          effort: 'medium',
-        });
-      }
+      expect(h.calls).toEqual([]);
     } finally {
       h.db.close();
     }

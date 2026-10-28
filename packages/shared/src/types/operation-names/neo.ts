@@ -54,6 +54,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.todo.close',
   'neo.todo.continue',
   'neo.todo.edit',
+  'neo.todo.hold',
   'neo.todo.remove',
   'neo.todo.retry',
   'pack.preferences.applyAnswer',

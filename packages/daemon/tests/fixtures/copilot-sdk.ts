@@ -8,6 +8,7 @@ let input = 0;
 let eventId = 0;
 let pendingAck: (() => void) | undefined;
 const serial: { id: string; interaction: string; prompt: string }[] = [];
+const queueItems: { id: string; messageId: string }[] = [];
 const fixtureState = () => join(process.cwd(), `${sessionId}.fixture.json`);
 const send = (message: unknown) => {
   const data = JSON.stringify(message);
@@ -144,6 +145,7 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
         reply({ messageId: id });
         break;
       }
+      if (prompt === 'queued') queueItems.push({ id: `queue-item-${input}`, messageId: id });
       if (prompt === 'crash') {
         reply({ messageId: id });
         setTimeout(() => process.exit(1), 5);
@@ -310,6 +312,23 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
       } else if (prompt === 'ping-ack') pendingAck = () => reply({ messageId: id });
       else if (prompt === 'late-ack') setTimeout(() => reply({ messageId: id }), 20);
       else if (prompt !== 'lost-ack') reply({ messageId: id });
+      break;
+    }
+    case 'session.queue.pendingItems':
+      reply({
+        items: queueItems.map((item) => ({
+          ...item,
+          kind: 'message',
+          displayText: 'queued',
+          agentMode: 'interactive',
+        })),
+        steeringMessages: [],
+      });
+      break;
+    case 'session.queue.removeAt': {
+      const index = queueItems.findIndex((item) => item.id === msg.params?.id);
+      if (index >= 0) queueItems.splice(index, 1);
+      if (!process.argv.includes('--lost-remove-ack')) reply({ removed: index >= 0 });
       break;
     }
     case 'session.abort':

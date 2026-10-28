@@ -160,12 +160,14 @@ try {
     };
     appendFileSync(transcript, JSON.stringify({ type: 'assistant', uuid: crypto.randomUUID(), effort: 'medium', message: { model: 'claude-opus-5-5', content: [] } }) + '\n');
     const check = { pack: 'core', kind: 'evidence', params: { path: join(run, 'report.md') } };
-    const opened = await invokeTodo('neo.ask.open', { title: 'Production bind', request: 'Track coding work', todos: [{ title: 'Bound worker', check, target: { verb: 'bind', ref } }] });
+    const opened = await invokeTodo('neo.ask.open', { title: 'Production bind', request: 'Track coding work', todos: [{ title: 'Bound worker', check }] });
     const boundId = opened.todos[0].id;
-    assert.equal(sessions.readCard(boundId)?.model, 'claude-opus-5-5', 'production ask-open bind must refresh observed identity');
+    await invokeTodo('neo.todo.bind', { todoId: boundId, ref });
+    assert.equal(sessions.readCard(boundId)?.model, 'claude-opus-5-5', 'production bind of an ask-open todo must refresh observed identity');
     assert.equal(sessions.readCard(boundId)?.effort, 'medium');
-    const added = await invokeTodo('neo.todo.add', { askId: opened.todos[0].askId, title: 'Added binding', check, target: { verb: 'bind', ref } });
-    assert.equal(sessions.readCard(added.todo.id)?.model, 'claude-opus-5-5', 'production todo-add bind must refresh observed identity');
+    const added = await invokeTodo('neo.todo.add', { askId: opened.todos[0].askId, title: 'Added binding', check });
+    await invokeTodo('neo.todo.bind', { todoId: added.todo.id, ref });
+    assert.equal(sessions.readCard(added.todo.id)?.model, 'claude-opus-5-5', 'production bind of an added todo must refresh observed identity');
     const replacementRef = { adapter: 'claude-desktop', id: `local_${rcId}` };
     const replacementTranscript = join(run, 'home/.claude/projects', join(run, 'workspace').replace(/[/.]/g, '-'), `${rcId}.jsonl`);
     appendFileSync(replacementTranscript, JSON.stringify({ type: 'assistant', uuid: crypto.randomUUID(), perTurnEffort: 'high', message: { model: 'claude-sonnet-5', content: [] } }) + '\n');

@@ -29,8 +29,8 @@ proof expectation to match the existing documented runtime contract.
 
 Scope the SQL guard honestly: registration must make zero main identity attempts.
 Existing read-only snapshot authorization performs separate main identity SELECTs;
-permit/count only that explicit verification phase. Row publication INSERTs also
-remain on main until their later construction/activation rung. No claim is made
+permit/count only that explicit verification phase. Registration row publication now uses its separately activated worker command;
+assert zero main row INSERTs in this current proof as well. No claim is made
 that the complete artifact subsystem has moved off main.
 
 Pin the merged identity command/helper/constructor contract and exact hashes; measure
