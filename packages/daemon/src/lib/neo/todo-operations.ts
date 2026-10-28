@@ -47,6 +47,7 @@ type Ran = Promise<{ ok: true; todo: NeoTodo; records?: string[] } | Rejection>;
 
 export interface NeoTodoControls {
   resolveTarget(ref: WorkRef): Promise<Gate<WorkRef>>;
+  refreshIdentity?(todoId: string): Promise<void>;
   start(todoId: string): Ran;
   recompute(todo: NeoTodo, patch: NeoTodoPatch): Promise<NeoTodo>;
   proceed(todoId: string, message: string): Ran;
@@ -164,7 +165,7 @@ export function neoTodoPlaceRefusal(
 export async function addNeoTodo(
   todos: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
-  controls: Pick<NeoTodoControls, 'start' | 'resolveTarget'>,
+  controls: Pick<NeoTodoControls, 'start' | 'resolveTarget' | 'refreshIdentity'>,
   ask: NeoAsk,
   input: z.infer<typeof NeoTodoDraftSchema>,
   packs: readonly NeoPack[],
@@ -180,7 +181,7 @@ export async function addNeoTodo(
 export async function recordNeoTodo(
   todos: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
-  controls: Pick<NeoTodoControls, 'start'>,
+  controls: Pick<NeoTodoControls, 'start' | 'refreshIdentity'>,
   ask: NeoAsk,
   input: z.infer<typeof NeoTodoDraftSchema>,
   packs: readonly NeoPack[],
@@ -215,8 +216,11 @@ export async function recordNeoTodo(
   if (typeof dependsOn === 'string')
     return { ok: false, reason: neoTodoDependencyRefusal(dependsOn) };
   const added = todos.addTodo(id, home.id, { ...draft, dependsOn }, Date.now(), repo);
-  if (draft.target?.verb === 'bind')
-    return { ...bindNeoTodo(todos, sessions, added, draft.target.ref), ...records };
+  if (draft.target?.verb === 'bind') {
+    const result = bindNeoTodo(todos, sessions, added, draft.target.ref);
+    if (result.ok) await controls.refreshIdentity?.(added.id);
+    return { ...result, ...records };
+  }
   if (draft.target) sessions.create(added.id, draft.target);
   if (draft.start) return { ...(await controls.start(added.id)), ...records };
   if (added.instruction) joinNeoStartQuestion(todos, added);
@@ -666,7 +670,17 @@ export function createNeoTodoOperations(
         const latest = todos.getTodo(todo.id);
         const current = requireNeoOpenTodo(latest, latest ? todos.getAsk(latest.askId) : null);
         if ('reason' in current) return current.reason;
-        return ran(bindNeoTodo(todos, sessions, current.value, resolved.value));
+        const previous = sessions.readRef(todo.id);
+        const result = bindNeoTodo(todos, sessions, current.value, resolved.value);
+        const ref = resolved.value;
+        if (
+          result.ok &&
+          (previous?.id !== ref.id ||
+            previous.adapter !== ref.adapter ||
+            previous.daemon !== ref.daemon)
+        )
+          await controls.refreshIdentity?.(todo.id);
+        return ran(result);
       },
       ['outcome', 'input'],
       'outcome'

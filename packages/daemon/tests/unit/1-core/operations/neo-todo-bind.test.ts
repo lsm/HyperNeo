@@ -36,7 +36,15 @@ function setup() {
       calls.push(name);
       return {
         kind: 'completed',
-        value: { ok: true, value: { status: 'running', lastActivityAt: Date.now() } },
+        value: {
+          ok: true,
+          value: {
+            status: 'running',
+            lastActivityAt: Date.now(),
+            model: 'claude-opus-5-5',
+            effort: 'medium',
+          },
+        },
       };
     },
   });
@@ -97,7 +105,11 @@ describe('bind an already running worker without dispatch', () => {
         expect(result.todos[0].state).toBe('doing');
         expect(result.todos[0].instruction).toBe(options.instruction ?? null);
         expect(sessions.readRef(result.todos[0].id)).toEqual(ref);
-        expect(calls).toEqual([]);
+        expect(calls).toEqual(['work.status']);
+        expect(sessions.readCard(result.todos[0].id)).toMatchObject({
+          model: 'claude-opus-5-5',
+          effort: 'medium',
+        });
       } finally {
         db.close();
       }

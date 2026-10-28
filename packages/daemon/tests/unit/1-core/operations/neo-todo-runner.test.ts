@@ -251,7 +251,7 @@ describe('neo todo runner', () => {
       await h.runner.start(todo.id);
       const opening = h.calls.find((call) => call.name === 'work.start')!.input.message as string;
       expect(opening).not.toContain('<exact model id>');
-      expect(opening).toContain('Never guess');
+      expect(h.calls.find((call) => call.name === 'work.start')!.input.provenance).toBe(true);
       expect(opening).toContain('Even when told to stay quiet');
       expect(opening).toContain(`todoId: "${todo.id}"`);
       expect(opening).toContain('2–6 short options');
@@ -346,6 +346,24 @@ describe('neo todo runner', () => {
       });
       h.sessions.bind(todo.id, { ...ref, id: 'other' }, 3);
       expect(h.sessions.readCard(todo.id)).toMatchObject({ model: null, effort: null });
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a late identity refresh cannot overwrite a replacement binding', async () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      h.sessions.bind(todo.id, ref, 1);
+      const replacement = { ...ref, id: 'replacement' };
+      h.sessions.bind(todo.id, replacement, 2);
+      await h.sessions.write('recordIdentity', todo.id, ref, { model: 'stale', effort: 'low' });
+      expect(h.sessions.readCard(todo.id)).toMatchObject({
+        ref: replacement,
+        model: null,
+        effort: null,
+      });
     } finally {
       h.db.close();
     }

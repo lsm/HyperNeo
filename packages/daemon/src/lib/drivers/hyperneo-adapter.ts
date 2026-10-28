@@ -1,3 +1,4 @@
+import { withWorkerProvenance } from './worker-provenance.ts';
 import { installClaudeNativeWrites } from './claude-native-writes.ts';
 import { releaseWorkerSandbox, workerSandboxOn } from './worker-sandbox.ts';
 import { WorktreeManager } from '../worktree-manager.ts';
@@ -489,6 +490,8 @@ export async function describeHyperneoWork(
   since?: number
 ): Promise<Result<WorkDetail>> {
   const work = toWork(row, deps.machine);
+  const model = deps.sessions.model(row.id);
+  const effort = deps.sessions.effort?.(row.id);
   const turnEnds = since === undefined ? [] : await deps.readTurnEnds(row.id, since);
   const last = row.queryFailureId
     ? { reply: row.queryFailureError, failed: 1, at: row.lastActiveAt }
@@ -497,6 +500,8 @@ export async function describeHyperneoWork(
     ok: true,
     value: {
       ...work,
+      ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
       ...(turnEnds.length ? { turnEnds } : {}),
       status: work.status === 'done' && last?.failed ? 'failed' : work.status,
       ...(last?.reply
@@ -631,14 +636,15 @@ function confirmHyperneoStart(
   sessionId: string,
   request: StartRequest,
   deps: HyperneoAdapterDeps
-): Gate<{ sessionId: string; model: string | null }> {
+): Gate<{ sessionId: string; model: string | null; effort: string | null }> {
   const model = deps.sessions.model(sessionId);
+  const effort = deps.sessions.effort?.(sessionId) ?? null;
   const confirmed = workStartConfiguration.confirm(request, {
     ...(model ? { model } : {}),
-    ...(request.effort ? { effort: deps.sessions.effort?.(sessionId) ?? undefined } : {}),
+    ...(effort ? { effort } : {}),
   });
   return confirmed.ok
-    ? { value: { sessionId, model } }
+    ? { value: { sessionId, model, effort } }
     : {
         reason: reject(
           confirmed.reason,
@@ -648,16 +654,23 @@ function confirmHyperneoStart(
 }
 
 export async function openHyperneoWork(
-  confirmed: { sessionId: string; model: string | null },
+  confirmed: { sessionId: string; model: string | null; effort?: string | null },
   request: StartRequest,
   context: WorkCallContext,
   deps: HyperneoAdapterDeps
 ): Promise<Result<WorkStarted>> {
-  const { sessionId, model } = confirmed;
+  const { sessionId, model, effort } = confirmed;
+  const message = request.provenance
+    ? withWorkerProvenance(request.message, {
+        model,
+        effort: effort ?? null,
+        harness: 'hyperneo',
+      })
+    : request.message;
   const inputId = crypto.randomUUID();
   const outcome = await deps.handoff(
     sessionId,
-    withReplyLine(request.message, context.from),
+    withReplyLine(message, context.from),
     context.from,
     inputId
   );
@@ -676,7 +689,7 @@ export async function openHyperneoWork(
       ...work,
       ...(work.status === 'done' ? { status: 'queued' as const } : {}),
       ...(model ? { model } : {}),
-      ...(request.effort ? { effort: request.effort } : {}),
+      ...(effort ? { effort } : {}),
       receipt: { executionId: sessionId, inputId },
     },
   };

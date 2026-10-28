@@ -1,3 +1,4 @@
+import { withWorkerProvenance } from './worker-provenance.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -108,6 +109,7 @@ export const StartWorkInputSchema = z.object({
   title: z.string().trim().min(1).max(200),
   message: MessageSchema,
   createFolder: z.boolean().optional(),
+  provenance: z.boolean().optional(),
   preparation: workStartPreparation.schema.optional(),
   model: z.string().trim().min(1).max(200).optional(),
   effort: workStartConfiguration.schema.shape.effort,
@@ -370,7 +372,19 @@ export async function startWork(
   deps: WorkVerbDeps
 ): Promise<StartResult> {
   if ('local' in route) {
-    const result = await route.local(input, { from, caller });
+    const request =
+      input.provenance && !['hyperneo', 'codex-desktop', 'claude-desktop'].includes(input.adapter)
+        ? {
+            ...input,
+            message: withWorkerProvenance(input.message, {
+              model: null,
+              effort: null,
+              harness: input.adapter,
+            }),
+            provenance: false,
+          }
+        : input;
+    const result = await route.local(request, { from, caller });
     if (result.ok) deps.recordStarted?.(result.value.ref);
     return result;
   }
@@ -426,18 +440,26 @@ export async function reuseIdleWorker(
     const key = `${work.ref.adapter}\u0000${work.ref.id}`;
     if (reuseHolds.has(key)) continue;
     reuseHolds.add(key);
-    const sent = await adapter
-      .send(work.ref, input.message, { from, caller })
-      .catch((error: unknown) => {
-        reuseHolds.delete(key);
-        throw error;
-      });
+    const status = input.provenance ? await adapter.status?.(work.ref).catch(() => null) : null;
+    const identity = status?.ok ? status.value : null;
+    const message = input.provenance
+      ? withWorkerProvenance(input.message, {
+          model: identity?.model ?? null,
+          effort: identity?.effort ?? null,
+          harness: adapter.id,
+        })
+      : input.message;
+    const sent = await adapter.send(work.ref, message, { from, caller }).catch((error: unknown) => {
+      reuseHolds.delete(key);
+      throw error;
+    });
     if (sent.ok) {
       setTimeout(() => reuseHolds.delete(key), REUSE_HOLD_MS).unref?.();
       return {
         ok: true,
         value: {
           ...work,
+          ...(input.provenance ? { model: identity?.model, effort: identity?.effort } : {}),
           ...(sent.value.receipt ? { receipt: sent.value.receipt } : {}),
           reused: true,
         },
@@ -446,12 +468,7 @@ export async function reuseIdleWorker(
     reuseHolds.delete(key);
     deps.markUnusable?.(work.ref);
     if (sent.notSent || sent.reason === 'not_open' || sent.reason === 'not_found') continue;
-    const reported = await reportUncertainWorkSend(
-      sent,
-      { ref: work.ref, message: input.message },
-      from,
-      deps
-    );
+    const reported = await reportUncertainWorkSend(sent, { ref: work.ref, message }, from, deps);
     return reported.ok ? sent : reported;
   }
   return null;

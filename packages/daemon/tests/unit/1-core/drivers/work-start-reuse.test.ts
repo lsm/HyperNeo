@@ -20,6 +20,7 @@ function harness(
   free: string[]
 ) {
   const sent: string[] = [];
+  const messages: string[] = [];
   const started: string[] = [];
   const unusable: WorkRef[] = [];
   const adapter: WorkAdapter = {
@@ -56,7 +57,20 @@ function harness(
         },
       };
     },
-    send: async (ref) => {
+    status: async (ref) => ({
+      ok: true,
+      value: {
+        ref,
+        title: 'fixture',
+        place,
+        status: 'done',
+        lastActivityAt: 1,
+        model: 'claude-opus-5-5',
+        effort: 'medium',
+      },
+    }),
+    send: async (ref, message) => {
+      messages.push(message);
       sent.push(ref.id);
       await Promise.resolve();
       const refusal = workers.find((worker) => worker.id === ref.id)?.refusal;
@@ -76,17 +90,17 @@ function harness(
       markUnusable: (ref) => void unusable.push(ref),
     })
   );
-  const start = async (caller: OperationCaller = neo) => {
+  const start = async (caller: OperationCaller = neo, provenance = false) => {
     const outcome = await invokeOperation(
       registry,
       'work.start',
-      { adapter: 'claude-desktop', place, title: 'loader', message: 'Fix the loader.' },
+      { adapter: 'claude-desktop', place, title: 'loader', message: 'Fix the loader.', provenance },
       caller
     );
     if (outcome.kind !== 'completed') throw new Error(outcome.message);
     return outcome.value as { ok: boolean; value?: { ref: WorkRef; reused?: true } };
   };
-  return { start, sent, started, unusable };
+  return { start, sent, started, unusable, messages };
 }
 
 describe('work.start reuses an idle worker', () => {
@@ -98,6 +112,12 @@ describe('work.start reuses an idle worker', () => {
     expect(result.value?.reused).toBe(true);
     expect(run.sent).toEqual(['idle']);
     expect(run.started).toEqual([]);
+  });
+
+  test('refreshes identity before delivering a new todo to a reused worker', async () => {
+    const run = harness([{ id: 'provenance-idle', status: 'done' }], ['provenance-idle']);
+    expect((await run.start(neo, true)).value?.reused).toBe(true);
+    expect(run.messages[0]).toContain('Agent: claude-opus-5-5 (effort: medium) via Claude');
   });
 
   test('starts a new worker when the only same-place worker is busy', async () => {
