@@ -788,6 +788,10 @@ html {
   color: var(--prose-link-hover);
 }
 
+.prose [data-demoted-link] {
+  color: var(--prose-link);
+}
+
 .prose [data-preview-reference]:not(a) {
   color: var(--prose-link);
   text-decoration: underline dotted;

@@ -41,6 +41,7 @@ export function NeoQuoteExcerpt({
       content={excerpt}
       demoteLinks={demoteLinks}
       pendingContent={excerpt}
+      bare
       class="neo-quote-excerpt line-clamp-2 block break-words text-sm text-fg"
     />
   );

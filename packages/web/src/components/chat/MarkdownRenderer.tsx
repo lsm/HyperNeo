@@ -17,6 +17,7 @@ interface MarkdownRendererProps {
   artifactLinks?: boolean;
   demoteLinks?: boolean;
   pendingContent?: string;
+  bare?: boolean;
   references?: readonly string[];
   onReference?: (reference: string) => void;
 }
@@ -477,6 +478,7 @@ export default function MarkdownRenderer({
   artifactLinks = false,
   demoteLinks = false,
   pendingContent,
+  bare = false,
   references,
   onReference,
 }: MarkdownRendererProps) {
@@ -557,14 +559,13 @@ export default function MarkdownRenderer({
     container.addEventListener('click', handleReference);
     container.addEventListener('keydown', handleReference);
 
-    const copyMounts = [
-      ...attachQuoteCopyButtons(container),
-      ...attachCodeBlockCopyButtons(container),
-    ];
+    const copyMounts = bare
+      ? []
+      : [...attachQuoteCopyButtons(container), ...attachCodeBlockCopyButtons(container)];
 
     let mermaidCancelled = false;
     const mermaidMounts: Array<HTMLElement> = [];
-    if (!artifactLinks)
+    if (!artifactLinks && !bare)
       renderMermaidBlocks(containerRef.current, mermaidMounts, () => mermaidCancelled).catch(
         () => undefined
       );
@@ -600,7 +601,7 @@ export default function MarkdownRenderer({
       });
       mermaidCancelled = true;
     };
-  }, [html, theme, artifactLinks, demoteLinks, referenceKey]);
+  }, [html, theme, artifactLinks, demoteLinks, bare, referenceKey]);
 
   return (
     <div ref={containerRef} class={`prose ${className || ''}`}>
