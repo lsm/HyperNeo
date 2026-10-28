@@ -1,12 +1,20 @@
 export const STREAM_STALL_ERROR = 'Model stream stalled';
 
 const DEFAULT_STREAM_SILENCE_TIMEOUT_MS = 180_000;
+const DEFAULT_OPEN_TOOL_STALL_TIMEOUT_MS = 30 * 60_000;
 
 export function getStreamSilenceTimeoutMs(): number {
   const raw = process.env.HYPERNEO_SDK_STREAM_SILENCE_TIMEOUT_MS;
   if (!raw) return DEFAULT_STREAM_SILENCE_TIMEOUT_MS;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STREAM_SILENCE_TIMEOUT_MS;
+}
+
+export function getOpenToolStallTimeoutMs(): number {
+  const raw = process.env.HYPERNEO_SDK_OPEN_TOOL_STALL_TIMEOUT_MS;
+  if (!raw) return DEFAULT_OPEN_TOOL_STALL_TIMEOUT_MS;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_OPEN_TOOL_STALL_TIMEOUT_MS;
 }
 
 export interface StreamSilenceState {
@@ -71,11 +79,13 @@ export function planStreamSilence(input: {
   processing: boolean;
   now: number;
   thresholdMs: number;
+  openToolStallMs: number;
 }): { stalled: true; silentMs: number } | { stalled: false; waitMs: number } {
-  const { state, processing, now, thresholdMs } = input;
-  if (!processing || state.openTools.length) return { stalled: false, waitMs: thresholdMs };
+  const { state, processing, now, thresholdMs, openToolStallMs } = input;
+  if (!processing) return { stalled: false, waitMs: thresholdMs };
   const silentMs = now - state.lastActivityAt;
-  return silentMs >= thresholdMs
+  const boundMs = state.openTools.length ? openToolStallMs : thresholdMs;
+  return silentMs >= boundMs
     ? { stalled: true, silentMs }
-    : { stalled: false, waitMs: thresholdMs - silentMs };
+    : { stalled: false, waitMs: boundMs - silentMs };
 }

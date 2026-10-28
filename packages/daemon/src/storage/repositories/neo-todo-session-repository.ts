@@ -6,6 +6,7 @@ import {
   type FollowThroughIncident,
 } from '../../lib/work-queue/follow-through.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { markWorkUnusable } from '../work-started-sessions.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import type { WorkRef } from '../../lib/drivers/types.ts';
@@ -277,6 +278,10 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       );
   }
 
+  markWorkerUnusable(ref: WorkRef): void {
+    markWorkUnusable(this.db, ref);
+  }
+
   workerIdle(todoId: string): boolean {
     return ['done', 'stopped', 'failed', 'needs_you'].includes(this.readNudge(todoId)?.live ?? '');
   }
@@ -407,5 +412,6 @@ export const neoTodoSessionWrites = defineRepositoryOp(
     'claimNudge',
     'finishNudge',
     'noteWorkerStatus',
+    'markWorkerUnusable',
   ]
 );

@@ -32,9 +32,16 @@ interface Dependencies {
 }
 const kinds = new Map<string, Input['kind']>([
   ['neo.todo.edit', 'edit'],
+  ['neo.todo.hold', 'edit'],
   ['neo.todo.close', 'close'],
   ['neo.todo.remove', 'remove'],
 ]);
+
+const holdAsEdit = (name: string, input: unknown): object => {
+  if (name !== 'neo.todo.hold') return input as object;
+  const { todoId, reason } = input as { todoId: string; reason: string | null };
+  return { todoId, hold: reason };
+};
 
 export function wireNeoTodoMutations(
   definitions: readonly OperationDefinition[],
@@ -165,7 +172,7 @@ export function wireNeoTodoMutations(
       ? {
           ...entry,
           execute: (input, caller) =>
-            mutate({ ...(input as object), kind } as Input, caller).then(present),
+            mutate({ ...holdAsEdit(entry.name, input), kind } as Input, caller).then(present),
         }
       : entry;
   });

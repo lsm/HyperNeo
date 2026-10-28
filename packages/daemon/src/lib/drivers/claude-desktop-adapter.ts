@@ -64,6 +64,11 @@ import {
 } from './work-messages.ts';
 import { matchChatsBy } from './match-chats.ts';
 import { claudeOpenedPrs } from './opened-prs.ts';
+import {
+  observeClaudeIdentity,
+  withClaudeIdentity,
+  type ClaudeRuntimeIdentity,
+} from './claude-runtime-identity.ts';
 import { readTailLines } from './transcript-tail.ts';
 import { claudeInboxText, type ClaudeInboxSubmission } from './claude-inbox.ts';
 import { planWorkPlacement, type GitCheckout } from './work-placement.ts';
@@ -446,7 +451,7 @@ function assistantText(line: string): string | null {
   }
 }
 
-export interface ClaudeTranscriptState {
+export interface ClaudeTranscriptState extends ClaudeRuntimeIdentity {
   turnEnds?: WorkDetail['turnEnds'];
   reply: string | null;
   replyAt?: number;
@@ -465,7 +470,9 @@ interface ClaudeTranscriptEntry {
   turnOrigin?: unknown;
   origin?: unknown;
   attachment?: unknown;
-  message?: { content?: unknown };
+  effort?: unknown;
+  perTurnEffort?: unknown;
+  message?: { content?: unknown; model?: unknown };
 }
 
 function queuedPeerText(entry: ClaudeTranscriptEntry): string | null {
@@ -508,6 +515,7 @@ export function claudeTranscriptState(
   let lastAt = 0;
   let earliest: number | undefined;
   let startedAt: number | undefined;
+  let identity: ClaudeRuntimeIdentity = {};
   for (const line of lines) {
     let entry: ClaudeTranscriptEntry | null;
     try {
@@ -517,6 +525,7 @@ export function claudeTranscriptState(
     }
     if (!entry) continue;
     const at = workEntryTime(entry.timestamp);
+    identity = observeClaudeIdentity(entry, at) ?? identity;
     if (at !== undefined) lastAt = Math.max(lastAt, at);
     earliest ??= at;
     if (entry.type === 'user' && entry.isSidechain !== true && ended) startedAt = at;
@@ -576,6 +585,7 @@ export function claudeTranscriptState(
   const openedPrs = claudeOpenedPrs(lines);
   const reply = turnReply(turn);
   return {
+    ...identity,
     ...(turnEnds.length ? { turnEnds } : {}),
     reply,
     ...(reply !== null && replyAt !== undefined ? { replyAt } : {}),
@@ -622,7 +632,7 @@ export function describeClaudeSession(
   record: ClaudeDesktopRecord,
   liveSessions: readonly ClaudeLiveSession[],
   transcript: ClaudeTranscriptState | null,
-  deps: ClaudeDesktopAdapterDeps
+  deps: Pick<ClaudeDesktopAdapterDeps, 'machine'>
 ): Result<WorkDetail> {
   const live = new Map(liveSessions.map((session) => [session.sessionId, session.status]));
   const waitingFor = liveSessions.find(
@@ -638,6 +648,7 @@ export function describeClaudeSession(
     ok: true,
     value: {
       ...work,
+      ...withClaudeIdentity(transcript),
       lastActivityAt: Math.max(work.lastActivityAt, transcript.lastAt),
       ...(transcript.turnEnds?.length ? { turnEnds: transcript.turnEnds } : {}),
       ...(transcript.reply ? { lastReply: transcript.reply } : {}),
@@ -1684,6 +1695,7 @@ export async function startClaudeSession(
     ok: true,
     value: {
       ...toClaudeWork(imported.value, new Map(), deps.machine),
+      ...withClaudeIdentity(await readClaudeTranscript(location, deps)),
       place: { machine: deps.machine, folder, name: request.place.name },
       status: 'queued',
     },

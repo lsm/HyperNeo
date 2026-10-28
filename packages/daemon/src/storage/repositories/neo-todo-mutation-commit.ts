@@ -61,7 +61,7 @@ const commit = (superpipe({})('neo.todo.commit-mutation') as PipelineAPI)
       const committed = todos.commitState(plan.todo.id, plan.patch, args.now, {
         state: 'no_opinion',
       });
-      if (args.input.kind === 'edit' && args.input.target && args.input.target.verb !== 'bind')
+      if (args.input.kind === 'edit' && args.input.target)
         new NeoTodoSessionRepository(db).create(plan.todo.id, args.input.target);
       return {
         ok: true,

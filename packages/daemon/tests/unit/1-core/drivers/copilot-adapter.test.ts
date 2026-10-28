@@ -310,10 +310,13 @@ describe('owned Copilot lifecycle', () => {
     expect(fixture.adapter.capabilities).toEqual([
       'find',
       'start',
+      'rename',
       'send',
       'queue',
+      'withdraw',
       'status',
       'stop',
+      'archive',
     ]);
     const work = await start(fixture, 'settled');
     const detail = await fixture.adapter.status!(work.ref, undefined, work.receipt);

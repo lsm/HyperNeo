@@ -22,7 +22,12 @@ import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { simpleGit } from 'simple-git';
 import type { WorkChatKind, WorkChatMatch } from '../../../storage/work-chat-search.ts';
-import { recordStartedWork, type StartedWork } from '../../../storage/work-started-sessions.ts';
+import {
+  markWorkUnusable,
+  readFreeWorkers,
+  recordStartedWork,
+  type StartedWork,
+} from '../../../storage/work-started-sessions.ts';
 import {
   ACP_AGENTS,
   createAcpAgentAdapter,
@@ -651,6 +656,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       return ask?.status === 'open' && ask.sessionId === sessionId;
     },
     recordStarted: (ref: StartedWork) => recordStartedWork(db(), ref),
+    freeWorkers: (adapter: string) => readFreeWorkers(db(), adapter),
+    markUnusable: (ref: StartedWork) => markWorkUnusable(db(), ref),
     reportUncertain: async (report: WorkSendUncertainty) => {
       const to = sessionSender(report.from) ?? new NeoRepository(db()).defaultBinding()?.sessionId;
       if (!to) throw new Error('No originating session or default Neo for the uncertainty report.');

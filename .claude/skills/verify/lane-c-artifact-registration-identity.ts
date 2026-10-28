@@ -84,7 +84,7 @@ try{
  main.prepare('UPDATE neo_asks SET session_id=? WHERE id=?').run('synthetic-neo',input.context.id);
  if(!deno){
  const revisedText='# Revised immutable artifact\n';writeFileSync(source,revisedText);const revised=await invoke();assert.equal(revised.accepted,true);assert.notEqual(revised.artifact.artifactId,first.artifact.artifactId);assert.equal(revised.artifact.daemonId,retained);assert.equal(count(),2);assert.deepEqual(await invoke(),revised);evidence.immutableRevisionAndRetryPreserved=true;
- assert.equal(mainSqlAttempts,0);assert(mainRowSaves>0);evidence.rowPublicationStillMainSide=true;evidence.mainRowSaves=mainRowSaves;
+ assert.equal(mainSqlAttempts,0);assert.equal(mainRowSaves,0);evidence.rowPublicationStillMainSide=false;evidence.mainRowSaves=mainRowSaves;
  readOnlyVerification=true;try{const read=await hub.request<{accepted:boolean;data:string}>('operation.invoke',{name:'artifact.file.read',input:{artifactId:first.artifact.artifactId}});assert.equal(read.accepted,true);assert.equal(Buffer.from(read.data,'base64').toString(),text);}finally{readOnlyVerification=false;}evidence.publicSnapshotBytesRetained=true;assert(readOnlyIdentitySelects>0);evidence.existingReadOnlyIdentitySelectsOutsideRegistration=readOnlyIdentitySelects;
  evidence.successfulCaptureAndSnapshotReadVerified=true;
  }

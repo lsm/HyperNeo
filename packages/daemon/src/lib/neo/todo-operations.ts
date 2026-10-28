@@ -77,7 +77,7 @@ function refineNeoTodoDraft(
   input: Pick<z.infer<typeof TodoDraft>, 'instruction' | 'target' | 'start'>,
   context: z.RefinementCtx
 ): void {
-  if (input.target?.verb !== 'bind' && !input.instruction !== !input.target)
+  if (!input.instruction !== !input.target)
     context.addIssue({
       code: 'custom',
       message: 'A todo with an instruction needs a target, and a target needs an instruction.',
@@ -215,8 +215,6 @@ export async function recordNeoTodo(
   if (typeof dependsOn === 'string')
     return { ok: false, reason: neoTodoDependencyRefusal(dependsOn) };
   const added = todos.addTodo(id, home.id, { ...draft, dependsOn }, Date.now(), repo);
-  if (draft.target?.verb === 'bind')
-    return { ...bindNeoTodo(todos, sessions, added, draft.target.ref), ...records };
   if (draft.target) sessions.create(added.id, draft.target);
   if (draft.start) return { ...(await controls.start(added.id)), ...records };
   if (added.instruction) joinNeoStartQuestion(todos, added);
@@ -294,12 +292,22 @@ const Edit = z.object({
   priority: TodoPriority.optional(),
   instruction: Text.optional(),
   target: NeoTodoTargetSchema.optional(),
-  hold: Text.nullable().optional(),
+  hold: z
+    .never({
+      error: 'hold is its own operation: use neo.todo.hold {todoId, reason}; reason null releases.',
+    })
+    .optional(),
   after: z
     .array(Text)
     .max(20)
     .optional()
     .describe('Replace the todo ids this todo waits for; [] lets it run alongside the others.'),
+});
+type EditPlan = Omit<z.infer<typeof Edit>, 'hold'> & { hold?: string | null };
+
+const Hold = z.object({
+  todoId: Text,
+  reason: Text.nullable().describe('Why it must wait; null releases it.'),
 });
 
 const Remove = z.object({
@@ -361,11 +369,7 @@ export function requireNeoOpenTodo(todo: NeoTodo | null, ask: NeoAsk | null): Ga
   return 'reason' in open ? open : { value: todo };
 }
 
-export function planNeoTodoEdit(
-  todo: NeoTodo,
-  input: z.infer<typeof Edit>,
-  now = Date.now()
-): Gate<TodoPlan> {
+export function planNeoTodoEdit(todo: NeoTodo, input: EditPlan, now = Date.now()): Gate<TodoPlan> {
   if (todo.state === 'removed') return fail('todo_removed: this todo was removed.');
   if (input.done && !input.evidence)
     return fail('evidence_missing: ticking a todo needs evidence.');
@@ -378,8 +382,6 @@ export function planNeoTodoEdit(
   const held = todo.state === 'blocked' && todo.blockedBy === 'held';
   if (!input.instruction !== !input.target)
     return fail('work_incomplete: give a todo work with instruction and target together.');
-  if (input.target?.verb === 'bind')
-    return fail('bind_target: attach running work with neo.todo.bind instead.');
   if (
     input.instruction &&
     (todo.startedAt !== null || todo.instruction || !(isNeoTodoStartable(todo) || held))
@@ -507,7 +509,7 @@ export function createNeoTodoOperations(
   const completion = (plan: TodoPlan) =>
     plan.patch.state === 'done' ? readNeoTodoCompletion(packs(), plan.todo) : null;
   const cards = (plan: { todo: NeoTodo }) => todos.listQuestions(plan.todo.askId);
-  const withCheck = (plan: TodoPlan, input: z.infer<typeof Edit>): Gate<TodoPlan> => {
+  const withCheck = (plan: TodoPlan, input: EditPlan): Gate<TodoPlan> => {
     if (!input.addUrls && !input.check) return { value: plan };
     const requested = { ...plan.todo, check: input.check ?? plan.todo.check };
     const pack = packs().find((pack) => pack.id === requested.check?.pack)?.todos;
@@ -549,10 +551,7 @@ export function createNeoTodoOperations(
       },
     };
   };
-  const write = async (
-    plan: TodoPlan,
-    input?: z.infer<typeof Edit>
-  ): Promise<TodoReceipt | Rejection> => {
+  const write = async (plan: TodoPlan, input?: EditPlan): Promise<TodoReceipt | Rejection> => {
     const checked = plan.todo;
     if (input?.addUrls || input?.check || input?.hold !== undefined) {
       const latest = requireNeoOpenTodo(todos.getTodo(plan.todo.id), todos.getAsk(plan.todo.askId));
@@ -690,7 +689,7 @@ export function createNeoTodoOperations(
     .pipe(requireNeoTodoMayFinish, ['outcome', 'completion'], 'result:outcome')
     .pipe(write, ['outcome', 'input'], 'outcome')
     .endAsync('outcome') as (
-    input: z.infer<typeof Edit>,
+    input: EditPlan,
     caller: OperationCaller
   ) => Promise<TodoReceipt | Rejection>;
 
@@ -742,7 +741,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.add',
       description:
-        'Add a todo to an open ask you own. For a human request, pass input (its [message id]) and the daemon picks the ask; never pick an ask yourself. askId alone is only for follow-up work with no human input; if both differ, the ask of the input wins and an ask_rebound record says so. A coding PR already tracked by another live todo on that ask is recorded without blocking; prefer continuing the original todo. neo.todo.edit addUrls only pins URLs to an existing PR-merge check. Pass title and a required check {pack, kind, params}; doneWhen is generated, never supplied. Use a completion check the installed pack supports; core.human_confirmed {questionId}, core.evidence {artifact: registered artifact ID} or {path: absolute file path}, or core.deployed {repo: lsm/HyperNeo, sha: full commit}. A pack may reject malformed checks or record bookkeeping conditions. Workers are long-lived sessions: name them for the matter, never a task title; use work.rename after starting if the session inherits this todo title. instruction is the task for a session and target says where it runs ({verb: start, adapter, place?} or {verb: send, ref}). Spell out the task: every step that needs work done gets its instruction and target when you add it; leave both out only for a step that just waits on its check, such as a merge or a deploy, since nothing runs a step without them. non-coding todos share one visible user folder across projects when place is omitted: ~/HyperNeo by default, or exactly the instance workspace path. A different place needs an exact path the user named in chat, even inside the workspace; never invent folders under home. Coding keeps its repository place; use target {verb: bind, ref} to bind already running work immediately without dispatch, with no instruction or start flag needed; without them the daemon checks the todo itself. named records what the human named for it (engine, session, repository, folder). A session the human named is sent to only through the ref work.find {session} returns as an exact match. start:true starts it now; otherwise the daemon lists it, ticked, in the start question of the ask. priority (urgent, high, normal, low; default normal) orders waiting work, urgent first: set it from how urgent the human made it; it can change later with neo.todo.edit. Steps the human approved start themselves in order as worker slots free; do not start them yourself. A step added after the ask started still waits for its own start answer.',
+        'Add a todo to an open ask you own. For a human request, pass input (its [message id]) and the daemon picks the ask; never pick an ask yourself. askId alone is only for follow-up work with no human input; if both differ, the ask of the input wins and an ask_rebound record says so. A coding PR already tracked by another live todo on that ask is recorded without blocking; prefer continuing the original todo. neo.todo.edit addUrls only pins URLs to an existing PR-merge check. Pass title and a required check {pack, kind, params}; doneWhen is generated, never supplied. Use a completion check the installed pack supports; core.human_confirmed {questionId}, core.evidence {artifact: registered artifact ID} or {path: absolute file path}, or core.deployed {repo: lsm/HyperNeo, sha: full commit}. A pack may reject malformed checks or record bookkeeping conditions. Workers are long-lived sessions: name them for the matter, never a task title; use work.rename after starting if the session inherits this todo title. instruction is the task for a session and target says where it runs ({verb: start, adapter, place?} or {verb: send, ref}). Spell out the task: every step that needs work done gets its instruction and target when you add it; leave both out only for a step that just waits on its check, such as a merge or a deploy, since nothing runs a step without them. non-coding todos share one visible user folder across projects when place is omitted: ~/HyperNeo by default, or exactly the instance workspace path. A different place needs an exact path the user named in chat, even inside the workspace; never invent folders under home. Coding keeps its repository place. To give a running worker this task use target {verb: send, ref}; to attach work that is already doing it, add the todo without instruction or target and call neo.todo.bind {todoId, ref}; without them the daemon checks the todo itself. named records what the human named for it (engine, session, repository, folder). A session the human named is sent to only through the ref work.find {session} returns as an exact match. start:true starts it now; otherwise the daemon lists it, ticked, in the start question of the ask. priority (urgent, high, normal, low; default normal) orders waiting work, urgent first: set it from how urgent the human made it; it can change later with neo.todo.edit. Steps the human approved start themselves in order as worker slots free; do not start them yourself. A step added after the ask started still waits for its own start answer.',
       inputSchema: Add,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -760,11 +759,21 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.edit',
       description:
-        'Change a todo on an open ask you own: title or check {pack, kind, params}; the completion sentence is generated from the check, or reword it directly with doneWhen. addUrls appends PR URLs to its PR-merge check. Duplicate claims and URLs unsupported by the check are recorded without blocking the edit. Prefer editing to adding a duplicate PR todo. Or record completion evidence (done met for what you read, reported for a claim you cannot read); without a passed outcome check it stays open, blocked by its check, and finishes by itself once the check passes; attach a document or evidence file as the reference artifact.file.register returned in artifacts, with one sentence of evidence, not the pasted document. A todo with an unanswered card is refused until the human answers it. hold: "<reason>" holds a todo that has not started, so nothing starts it; hold: null releases it. Hold only what the human said must wait. priority changes where waiting work starts in the queue. instruction with target gives a todo that has not started and has no instruction its work; the queue then starts it like any approved step. A start target for a coding todo needs target.place from work.find.',
+        'Change a todo on an open ask you own: title or check {pack, kind, params}; the completion sentence is generated from the check, or reword it directly with doneWhen. addUrls appends PR URLs to its PR-merge check. Duplicate claims and URLs unsupported by the check are recorded without blocking the edit. Prefer editing to adding a duplicate PR todo. Or record completion evidence (done met for what you read, reported for a claim you cannot read); without a passed outcome check it stays open, blocked by its check, and finishes by itself once the check passes; attach a document or evidence file as the reference artifact.file.register returned in artifacts, with one sentence of evidence, not the pasted document. A todo with an unanswered card is refused until the human answers it. To hold or release a todo use neo.todo.hold. priority changes where waiting work starts in the queue. instruction with target gives a todo that has not started and has no instruction its work; the queue then starts it like any approved step. A start target for a coding todo needs target.place from work.find.',
       inputSchema: Edit,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => present(await edit(input, caller)),
+    }),
+    defineOperation({
+      name: 'neo.todo.hold',
+      description:
+        'Hold a todo that has not started so nothing starts it: reason says why. reason null releases a held todo. Hold only what the human said must wait.',
+      inputSchema: Hold,
+      resultSchema: TodoResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: async (input, caller) =>
+        present(await edit({ todoId: input.todoId, hold: input.reason }, caller)),
     }),
     defineOperation({
       name: 'neo.todo.remove',
