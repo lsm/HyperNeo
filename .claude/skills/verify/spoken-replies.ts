@@ -32,12 +32,12 @@ const speak = async (requestId: string) => {
   const response = await mcp({ name:'neo.speech.say', input:{requestId,text:'好，我帮你查一下订单。'} });
   return JSON.parse(response.content[0].text);
 };
-const evidence = () => ({ speech:[...new Map((app.db.getDatabase().prepare("SELECT reason FROM operation_refusals WHERE operation='neo.speech' ORDER BY rowid").all() as {reason:string}[]).map(row=>{const value=JSON.parse(row.reason); return [value.id,value];})).values()], publications:app.db.getDatabase().prepare('SELECT COUNT(*) AS n FROM neo_publications').get() });
+const evidence = () => ({ asr:{active:asrActive,accepted:asrAccepted,rejected:asrRejected}, speech:[...new Map((app.db.getDatabase().prepare("SELECT reason FROM operation_refusals WHERE operation='neo.speech' ORDER BY rowid").all() as {reason:string}[]).map(row=>{const value=JSON.parse(row.reason); return [value.id,value];})).values()], publications:app.db.getDatabase().prepare('SELECT COUNT(*) AS n FROM neo_publications').get() });
 const wait = async (check: () => boolean) => { for(let i=0;i<1500 && !check();i++) await new Promise(done => setTimeout(done,20)); assert(check()); };
 const clients: { hub:MessageHub; transport:WebSocketClientTransport; events:unknown[] }[] = [];
 let finish = () => {};
 const finished = new Promise<void>(done => { finish = done; });
-let sequence=0;
+let sequence=0, asrActive=0, asrAccepted=0, asrRejected=0;
 const fixture = createServer(async (request,response) => {
   try {
     response.setHeader('Content-Type','application/json');
@@ -62,13 +62,17 @@ const fixture = createServer(async (request,response) => {
     response.statusCode=404; response.end('{}');
   } catch { response.statusCode=500; response.end('{}'); }
 });
-const asrFixture = mode === 'serve' ? Bun.serve<{sent:boolean}>({port:18556, hostname:'127.0.0.1',
-  fetch(request, server) { if(server.upgrade(request,{data:{sent:false}})) return; return new Response('fixture'); },
+const asrFixture = mode === 'serve' ? Bun.serve<{sent:boolean;transcript:boolean}>({port:18556, hostname:'127.0.0.1',
+  fetch(request, server) {
+    if(asrActive) { asrRejected++; return new Response('Busy',{status:403}); }
+    if(server.upgrade(request,{data:{sent:false,transcript:asrAccepted%2===0}})) { asrActive++; asrAccepted++; return; }
+    return new Response('fixture');
+  },
   websocket:{ message(ws, data) {
     const result=(final:boolean)=>JSON.stringify({type:'Results',is_final:final,channel:{alternatives:[{transcript:'Public live transcript'}]}});
     if(typeof data==='string' && data.includes('CloseStream')) { ws.send(result(true)); ws.close(); }
-    else if(typeof data!=='string' && !ws.data.sent) { ws.data.sent=true; ws.send(result(false)); }
-  }}
+    else if(typeof data!=='string' && ws.data.transcript && !ws.data.sent) { ws.data.sent=true; ws.send(result(false)); }
+  }, close() { asrActive--; }}
 }) : null;
 try {
   await new Promise<void>(done => fixture.listen(18555,'127.0.0.1',done));
