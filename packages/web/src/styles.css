@@ -798,7 +798,7 @@ html {
   margin-bottom: 0;
 }
 
-.prose.neo-quote-excerpt :is(ul, ol, blockquote, table) {
+.prose.neo-quote-excerpt :is(p, ul, ol, blockquote, table) {
   margin-top: 0;
   margin-bottom: 0;
 }
