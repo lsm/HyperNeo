@@ -1,0 +1,113 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "coldMs": 6.2498749999999745,
+  "rpcCommitsAndCloses": true,
+  "realCliReaderSeesRevocation": true,
+  "realCliRevokesAndCloses": true,
+  "unpairedRefused": true,
+  "concurrentMs": 0.6780420000000049,
+  "healthWhileHeldMs": 2.226083000000017,
+  "writerIsolation": {
+    "outside": 0,
+    "inside": 1
+  },
+  "heldMs": 26.768249999999966,
+  "authorizationRecheckedAfterWait": true,
+  "rollbackFailure": "MessageHubResponseError: synthetic revocation trigger failure",
+  "beforeCommitFailure": "MessageHubResponseError: synthetic revocation admission rejected before commit",
+  "lostReceiptFailure": "MessageHubResponseError: synthetic committed revocation reply lost; outcome unknown",
+  "readOnlyRetryClosesAfterLostReceipt": true,
+  "writerRecovered": true,
+  "walBytes": 0,
+  "shutdownRpcRejected": true,
+  "cleanupStopsReadRetryWithoutNotification": true,
+  "maxLoopLagMs": 2.7769579999999223,
+  "latencyUnder250ms": true,
+  "rssBytes": 152159312,
+  "writeCommands": 15,
+  "readCommands": 6,
+  "mainSqlAttempts": 0,
+  "timings": [
+    {
+      "roundTripMs": 0.4189579999999751,
+      "requestBytes": 194,
+      "replyBytes": 11,
+      "encodeMs": 0.006250000000022737
+    },
+    {
+      "roundTripMs": 0.13208400000007714,
+      "requestBytes": 194,
+      "replyBytes": 65,
+      "encodeMs": 0.003375000000005457
+    },
+    {
+      "roundTripMs": 0.2071250000000191,
+      "requestBytes": 125,
+      "replyBytes": 11,
+      "encodeMs": 0.0016669999999976426
+    },
+    {
+      "roundTripMs": 0.12395900000001348,
+      "requestBytes": 118,
+      "replyBytes": 99,
+      "encodeMs": 0.0009160000000747459
+    },
+    {
+      "roundTripMs": 0.1322499999999991,
+      "requestBytes": 194,
+      "replyBytes": 11,
+      "encodeMs": 0.0005419999999958236
+    },
+    {
+      "roundTripMs": 0.10920799999996689,
+      "requestBytes": 194,
+      "replyBytes": 11,
+      "encodeMs": 0.0003330000000687505
+    },
+    {
+      "roundTripMs": 0.10079200000006949,
+      "requestBytes": 194,
+      "replyBytes": 11,
+      "encodeMs": 0.0001659999999219508
+    },
+    {
+      "roundTripMs": 0.09333300000002964,
+      "requestBytes": 194,
+      "replyBytes": 11,
+      "encodeMs": 0.00016699999991942605
+    },
+    {
+      "roundTripMs": 0.07195899999999256,
+      "requestBytes": 194,
+      "replyBytes": 11,
+      "encodeMs": 0.0008330000000569271
+    },
+    {
+      "roundTripMs": 26.31245899999999,
+      "requestBytes": 194,
+      "replyBytes": 99,
+      "encodeMs": 0.004874999999969987
+    },
+    {
+      "roundTripMs": 0.7924579999998969,
+      "requestBytes": 194,
+      "replyBytes": 11,
+      "encodeMs": 0.0037500000000818545
+    },
+    {
+      "roundTripMs": 5.001833000000033,
+      "requestBytes": 194,
+      "replyBytes": 11,
+      "encodeMs": 0.005499999999983629
+    },
+    {
+      "roundTripMs": 0.09312500000010004,
+      "requestBytes": 194,
+      "replyBytes": 11,
+      "encodeMs": 0.0008749999999508873
+    }
+  ],
+  "runtime": "bun",
+  "runtimeVersion": "1.4.3",
+  "temporaryDataRemoved": true
+}

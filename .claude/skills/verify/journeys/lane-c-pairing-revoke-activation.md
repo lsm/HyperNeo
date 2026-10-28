@@ -22,7 +22,9 @@ The original mutation must reject as unknown while read-only retries recover the
 authoritative inactive state and close the target exactly once. Assert one write,
 not a replay. A later independent request must recover. During a final lost reply,
 keep read admission unavailable and close the real daemon: its gateway close signal
-must stop retries without notifying an unconfirmed target. Preserve the existing
+must stop retries without notifying an unconfirmed target. The last RPC must
+reject; an undeliverable response after its connection closes is expected in this
+shutdown case. Database-close errors or continued retries are failures. Preserve the existing
 upgrade-lookup fence through its focused tests. Callbacks and lifecycle signals
 stay on main; native requests contain only scalar identity data.
 

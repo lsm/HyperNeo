@@ -90,6 +90,10 @@ globalThis.Worker = function (url: string | URL, options?: WorkerOptions) {
       }
       if (message.op === 'pairing.revokeDevice.write') {
         assert.equal(message.lane, 'write'); commandPosts++;
+        const args = message.args as { method: string; args: [string, { source: string; principal?: string; device?: { deviceId: string; kind: string } }, number] };
+        assert.equal(args.method, 'revoke'); assert.deepEqual(Object.keys(args.args[1]).sort(), ['device','principal','source']);
+        assert.equal(typeof args.args[0], 'string'); assert.equal(typeof args.args[1].source, 'string'); assert.equal(typeof args.args[2], 'number');
+        if (args.args[1].device) assert.deepEqual(Object.keys(args.args[1].device).sort(), ['deviceId','kind']);
         if (rejectNextWrite) {
           rejectNextWrite = false;
           queueMicrotask(() => worker.dispatchEvent(new ErrorEvent('error', { message: 'synthetic revocation admission rejected before commit', cancelable: true })));
@@ -176,7 +180,8 @@ try {
   const shutdownTarget = seed(); const beforeShutdownReads = readPosts; const beforeShutdownWrites = commandPosts; loseNextReceipt = true; rejectReadsUntilClose = true;
   const closingCall = revoke(shutdownTarget.device.id, nextHuman).then(() => 'unexpected success', String);
   await wait(() => readPosts > beforeShutdownReads);
-  await app.cleanup(); app = undefined; await closingCall; assert(!notifications.includes(shutdownTarget.device.id)); assert.equal(commandPosts, beforeShutdownWrites + 1);
+  evidence.walBytes = statSync(`${app.db.getDbPath()}-wal`).size;
+  await app.cleanup(); app = undefined; assert.notEqual(await closingCall, 'unexpected success'); evidence.shutdownRpcRejected = true; assert(!notifications.includes(shutdownTarget.device.id)); assert.equal(commandPosts, beforeShutdownWrites + 1);
   const readsAfterClose = readPosts; await new Promise((done) => setTimeout(done, 80)); assert.equal(readPosts, readsAfterClose); evidence.cleanupStopsReadRetryWithoutNotification = true;
   assert.equal(mainSqlAttempts, 0); evidence.maxLoopLagMs = maxLoopLagMs; assert(maxLoopLagMs < 1000);
   evidence.latencyUnder250ms = [evidence.coldMs, evidence.concurrentMs, evidence.healthWhileHeldMs, evidence.heldMs].every((ms) => Number(ms) < 250); assert.equal(evidence.latencyUnder250ms, true);
