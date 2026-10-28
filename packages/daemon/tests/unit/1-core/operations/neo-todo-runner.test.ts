@@ -250,7 +250,7 @@ describe('neo todo runner', () => {
       const todo = h.add({ pack: 'coding', kind: 'pr', params: {} });
       await h.runner.start(todo.id);
       const opening = h.calls.find((call) => call.name === 'work.start')!.input.message as string;
-      expect(opening).toContain('Agent: <exact model id> (effort: <effort>) via HyperNeo');
+      expect(opening).not.toContain('<exact model id>');
       expect(opening).toContain('Never guess');
       expect(opening).toContain('Even when told to stay quiet');
       expect(opening).toContain(`todoId: "${todo.id}"`);
@@ -259,16 +259,98 @@ describe('neo todo runner', () => {
         model: 'gpt-6.1-sol',
         effort: 'high',
       });
+      h.setStatus({
+        ok: true,
+        value: {
+          ref,
+          status: 'done',
+          lastActivityAt: 1000,
+          model: 'claude-opus-5-5',
+          effort: 'medium',
+        },
+      });
       await h.runner.proceed(todo.id, 'Write the PR body.');
       const followup = h.calls.findLast((call) => call.name === 'work.send')!.input
         .message as string;
-      expect(followup).toContain('Agent: gpt-6.1-sol (effort: high) via HyperNeo');
+      expect(followup).toContain('Agent: claude-opus-5-5 (effort: medium) via HyperNeo');
       expect(followup).not.toContain('<effort>');
-      expect(h.sessions.readCard(todo.id)).toMatchObject({ model: 'gpt-6.1-sol', effort: 'high' });
+      expect(h.sessions.readCard(todo.id)).toMatchObject({
+        model: 'claude-opus-5-5',
+        effort: 'medium',
+      });
     } finally {
       h.db.close();
     }
   });
+  test('refreshes an existing Claude ref for a file-check task and clears missing effort', async () => {
+    const h = setup();
+    try {
+      const todo = h.add({ pack: 'core', kind: 'evidence', params: { path: '/tmp/report' } });
+      const worker = { adapter: 'claude-desktop', id: 'local-fixture' };
+      h.sessions.bind(todo.id, worker, 1);
+      h.sessions.recordRef(
+        todo.id,
+        worker,
+        1,
+        undefined,
+        { model: 'old-model', effort: 'low' },
+        { verb: 'send', ref: worker }
+      );
+      h.setStatus({
+        ok: true,
+        value: {
+          ref: worker,
+          status: 'done',
+          lastActivityAt: 1000,
+          model: 'claude-opus-5-5',
+          effort: 'medium',
+        },
+      });
+      await h.runner.start(todo.id);
+      const message = h.calls.findLast((call) => call.name === 'work.send')!.input
+        .message as string;
+      expect(message).toContain('Agent: claude-opus-5-5 (effort: medium) via Claude');
+      expect(h.sessions.readCard(todo.id)).toMatchObject({
+        model: 'claude-opus-5-5',
+        effort: 'medium',
+      });
+      h.setStatus({
+        ok: true,
+        value: { ref: worker, status: 'done', lastActivityAt: 1000, model: 'claude-sonnet-5' },
+      });
+      await h.runner.proceed(todo.id, 'Continue coding.');
+      const next = h.calls.findLast((call) => call.name === 'work.send')!.input.message as string;
+      expect(next).toContain('Agent: claude-sonnet-5 (effort: unknown) via Claude');
+      expect(next).not.toContain('effort: medium');
+      expect(h.sessions.readCard(todo.id)).toMatchObject({
+        model: 'claude-sonnet-5',
+        effort: null,
+      });
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('binding the same ref retains identity but a different ref clears it', () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      h.sessions.recordRef(todo.id, ref, 1, undefined, {
+        model: 'claude-opus-5-5',
+        effort: 'medium',
+      });
+      h.sessions.bind(todo.id, ref, 2);
+      expect(h.sessions.readCard(todo.id)).toMatchObject({
+        model: 'claude-opus-5-5',
+        effort: 'medium',
+      });
+      h.sessions.bind(todo.id, { ...ref, id: 'other' }, 3);
+      expect(h.sessions.readCard(todo.id)).toMatchObject({ model: null, effort: null });
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('refuses the external effect if accepting its durable input fails', async () => {
     const h = setup();
     try {

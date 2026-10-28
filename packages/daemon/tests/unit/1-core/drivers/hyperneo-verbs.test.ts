@@ -783,6 +783,21 @@ describe('hyperneo adapter start and stop', () => {
     ]);
   });
 
+  test('injects actual identity before the first input without a requested effort', async () => {
+    const result = await adapter({ effort: () => 'medium' }).start!(
+      {
+        place: place('/focus/notes'),
+        title: 'task',
+        message: 'write it',
+        provenance: true,
+      } as never,
+      from
+    );
+    expect(result).toMatchObject({ ok: true, value: { effort: 'medium' } });
+    expect(handed.at(-1)).toContain('(effort: medium) via HyperNeo');
+    expect(handed.at(-1)).toContain('write it');
+  });
+
   test('starts HyperNeo work with the requested effort applied before delivery', async () => {
     const result = await adapter({ effort: () => 'high' }).start!(
       { place: place('/focus/notes'), title: 'task', message: 'write it', effort: 'high' },
