@@ -173,3 +173,13 @@ test('polling and merged event/writer dependencies retain their audited source c
     expect(hash(content)).toBe(unit.sha256);
   }
 });
+
+test('preserves the polling service receiver supplied to an ordinary callback', async () => {
+  const receivers: unknown[] = [];
+  const { service } = fixture(function (this: unknown, _event) {
+    receivers.push(this);
+  });
+  await service.triggerPoll();
+  expect(receivers).toHaveLength(6);
+  expect(receivers.every((receiver) => receiver === service)).toBe(true);
+});
