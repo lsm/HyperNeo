@@ -85,10 +85,7 @@ describe('artifact identity writer construction', () => {
       attempts++;
       throw new Error('identity SQL reached main');
     };
-    const repository = Reflect.construct(ArtifactFileRepository, [
-      main,
-      committed,
-    ]) as ArtifactFileRepository;
+    const repository = new ArtifactFileRepository(main, committed);
     expect(repository.daemonId).toBe(committed);
     expect(attempts).toBe(0);
   });

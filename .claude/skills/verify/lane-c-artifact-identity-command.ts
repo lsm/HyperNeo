@@ -58,7 +58,7 @@ try{
  assert.notEqual(app.server.port,8399);await Promise.all([...processors].map(p=>p.stop()));main=app.db.getDatabase();await waitForSdkBodyCopy(main);
  const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();
  const ensure=(candidate:string)=>app!.db.gateway.run(command,{method:'ensure',args:[candidate]});
- const row=()=>main!.prepare('SELECT singleton, daemon_id AS retained FROM artifact_file_identity').get() as {singleton:number;retained:string}|null;
+ const row=()=>{const value=main!.prepare('SELECT singleton, daemon_id AS retained FROM artifact_file_identity').get() as {singleton:number;retained:string}|null;return value?{...value}:null;};
  const count=()=>Number(main!.prepare('SELECT COUNT(*) AS n FROM artifact_file_identity').get()!.n);
  const uuid=()=>crypto.randomUUID();const wait=async(predicate:()=>boolean)=>{const until=performance.now()+5000;while(!predicate()){assert(performance.now()<until);await new Promise(done=>setTimeout(done,5));}};
  assert.equal(count(),0);assert.equal(main.prepare('SELECT COUNT(*) AS n FROM artifact_files').get()!.n,0);
