@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { waitForSdkBodyCopy } from './wait-for-sdk-body-copy.ts';
 
@@ -13,9 +12,7 @@ const {createDaemonApp}=await import('../../../packages/daemon/src/app.ts');
 const {getConfig}=await import('../../../packages/daemon/src/config.ts');
 const {JobQueueProcessor}=await import('../../../packages/daemon/src/storage/job-queue-processor.ts');
 const {Database:SQLite}=await import('../../../packages/daemon/src/storage/sqlite-compat.ts');
-const {defineDbOp}=await import('../../../packages/daemon/src/storage/db-gateway/db-op.ts');
-const workspaceHistoryUpsertWrites=defineDbOp<{method:'upsert';args:[string,number]},{path:string;last_used_at:number;use_count:number}>({name:'workspace.history.upsert.write',mode:'write',run:()=>{throw new Error('native worker required');}});
-const {WorkspaceHistoryRepository}=await import('../../../packages/daemon/src/storage/repositories/workspace-history-repository.ts');
+const {workspaceHistoryUpsertWrites}=await import('../../../packages/daemon/src/storage/repositories/workspace-history-upsert-write.ts');
 const {MessageHub,WebSocketClientTransport}=await import('../../../packages/shared/src/mod.ts');
 const NativeWorker=globalThis.Worker;const nativeFetch=globalThis.fetch;const prepare=SQLite.prototype.prepare;const start=JobQueueProcessor.prototype.start;
 const processors=new Set<InstanceType<typeof JobQueueProcessor>>();
@@ -42,7 +39,7 @@ globalThis.Worker=function(url:string|URL,options?:WorkerOptions){
   worker.postMessage=((message:{id:number;op?:string;lane?:string;args?:unknown})=>{
    if(message.op==='workspace.history.upsert.write'){
     commandPosts++;assert.equal(message.lane,'write');assert.deepEqual(message.args&&Object.keys(message.args).sort(),['args','method']);const args=message.args as {method:string;args:[string,number]};assert.equal(args.method,'upsert');assert.equal(args.args.length,2);assert.equal(typeof args.args[0],'string');assert.equal(typeof args.args[1],'number');
-    if(rejectNext){rejectNext=false;queueMicrotask(()=>worker.dispatchEvent(new ErrorEvent('error',{message:'synthetic workspace removal rejected before commit',cancelable:true})));return;}
+    if(rejectNext){rejectNext=false;queueMicrotask(()=>worker.dispatchEvent(new ErrorEvent('error',{message:'synthetic workspace upsert rejected before commit',cancelable:true})));return;}
     sent.set(message.id,{at:performance.now(),bytes:Buffer.byteLength(JSON.stringify(message.args))});if(loseNext){loseNext=false;lost.add(message.id);}
    }
    post(message);
@@ -57,9 +54,9 @@ try{
  JobQueueProcessor.prototype.start=function(){processors.add(this);return start.call(this);};
  try{app=await createDaemonApp({config:{...getConfig({host:'127.0.0.1',port:0,dbPath:join(run,'data/daemon.db'),workspaceRoot:join(run,'workspace')}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});}finally{JobQueueProcessor.prototype.start=start;}
  assert.notEqual(app.server.port,8399);await Promise.all([...processors].map(p=>p.stop()));main=app.db.getDatabase();await waitForSdkBodyCopy(main);
- const repo=new WorkspaceHistoryRepository(main);const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();
+ const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();
  type Row={path:string;last_used_at:number;use_count:number};
- const upsert=(path:string,now:number)=>app!.db.gateway.run(workspaceHistoryUpsertWrites,{method:'upsert',args:[path,now]});
+ const upsert=(path:string,now:number)=>app!.db.gateway.call(workspaceHistoryUpsertWrites,'upsert',path,now);
  const history=()=>hub.request<{entries:{path:string;lastUsedAt:number;useCount:number}[]}>('workspace.history',{});
  const entry=async(path:string)=>(await history()).entries.find(e=>e.path===path);
  const at=Date.now();const first=join(run,'workspace','first');const cached=main.prepare('INSERT INTO workspace_history(path,last_used_at,use_count)VALUES(?,?,1)');measuring=true;
