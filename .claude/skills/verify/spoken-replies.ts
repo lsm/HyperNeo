@@ -77,13 +77,16 @@ try {
     assert.equal((await call('ack',{sessionId,id:saved.id,state:'playing'})).state,'playing');
     assert.equal((await call('ack',{sessionId,id:saved.id,state:'played'})).state,'played');
     const queued=await speak('second'); assert(queued.ok);
+    for(let i=0;i<3;i++) assert((await speak('fill-'+i)).created);
+    assert.equal((await speak('second')).created,false);
+    assert.match((await speak('overflow')).reason,/^speech_queue_full:/);
     await clients[0].transport.close();
     await wait(()=>evidence().speech.some((row:unknown)=>(row as {id:string;state:string}).id===queued.id && (row as {state:string}).state==='cancelled'));
     assert.match((await speak('no-listener')).reason,/^voice_replies_off:/);
     assert((await call('listen',{sessionId,enabled:true},1)).ok);
     assert.equal((await speak('second')).created,false);
     assert.equal(clients[1].events.length,0);
-    console.log(JSON.stringify({passed:true, realWebSocket:true, mcp:true, writerWorker:true, unrelatedClientSilent:true, noReplay:true, ...evidence()}));
+    console.log(JSON.stringify({passed:true, realWebSocket:true, mcp:true, writerWorker:true, unrelatedClientSilent:true, noReplay:true, fullQueueRetry:true, ...evidence()}));
   }
 } finally {
   writeFileSync(join(run,'evidence/spoken-replies.json'),JSON.stringify(evidence(),null,2));

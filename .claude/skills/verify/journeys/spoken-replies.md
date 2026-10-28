@@ -15,6 +15,11 @@ refusal, separately saved playing/played states, cancellation on disconnect,
 no reconnect replay and zero extra publications. All writes use the real writer
 worker. Inspect spoken-replies.json and the wrapper's exit status.
 
+The replay also fills the queue and retries an existing request without replay,
+and disconnects with pending speech, which must finish as cancelled. The
+focused speech suite additionally checks independent session opt-out and delays
+the real audit write to reproduce an acknowledgment racing a client disconnect.
+
 `serve` mode is the companion native Simulator fixture: ports18554/18555, public
 synthetic PCM, no model or microphone. The iOS spoken-replies journey owns it and
 drives actual drawer controls and playback; protocol proof alone does not prove

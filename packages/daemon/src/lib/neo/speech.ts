@@ -50,7 +50,8 @@ export class NeoSpeech {
   ) {
     this.unsubscribe =
       hub.onClientDisconnect?.((id) => {
-        void this.disconnect(id).catch(() =>
+        const result = this.serial.then(() => this.disconnect(id));
+        this.serial = result.catch(() =>
           new Logger('NeoSpeech').warn('Playback disconnect record failed')
         );
       }) ?? (() => {});
@@ -136,15 +137,7 @@ export class NeoSpeech {
     );
   }
 
-  private async record(
-    input: Entry & { action: 'reserve' | 'ack' | 'disconnect' }
-  ): Promise<SpeechReceipt> {
-    if (input.action === 'disconnect') {
-      for (const row of [...this.receipts.values()])
-        if (row.clientId === input.clientId && (row.state === 'queued' || row.state === 'playing'))
-          await this.record({ ...row, action: 'ack', state: 'cancelled' });
-      return { ok: true };
-    }
+  private async record(input: Entry & { action: 'reserve' | 'ack' }): Promise<SpeechReceipt> {
     const old = this.receipts.get(input.id);
     if (input.action === 'reserve' && old)
       return old.text === input.text && old.sessionId === input.sessionId
@@ -179,17 +172,17 @@ export class NeoSpeech {
     return { ok: true, id: row.id, state: row.state, created: input.action === 'reserve' };
   }
 
-  private async disconnect(clientId: string): Promise<void> {
+  private async disconnect(clientId: string, sessionId?: string): Promise<void> {
     for (const [session, listener] of this.listeners)
-      if (listener.clientId === clientId) this.listeners.delete(session);
-    await this.record({
-      action: 'disconnect',
-      clientId,
-      id: '',
-      sessionId: '',
-      text: '',
-      state: 'cancelled',
-    });
+      if (listener.clientId === clientId && (!sessionId || session === sessionId))
+        this.listeners.delete(session);
+    for (const row of [...this.receipts.values()])
+      if (
+        row.clientId === clientId &&
+        (!sessionId || row.sessionId === sessionId) &&
+        (row.state === 'queued' || row.state === 'playing')
+      )
+        await this.record({ ...row, action: 'ack', state: 'cancelled' });
   }
 
   private async dispatch(
@@ -203,7 +196,7 @@ export class NeoSpeech {
       const prior = this.listeners.get(sessionId);
       if (prior && (prior.clientId === clientId || input.enabled)) {
         this.send(prior.clientId, { type: 'stop', sessionId });
-        await this.disconnect(prior.clientId);
+        await this.disconnect(prior.clientId, sessionId);
       }
       if (input.enabled && this.hub.getRouter()?.getClientById(clientId))
         this.listeners.set(sessionId, { clientId, pending: new Set() });
@@ -225,8 +218,9 @@ export class NeoSpeech {
     if (!('text' in input)) return { ok: false, reason: 'invalid_speech' };
     const target = this.listeners.get(sessionId);
     if (!target) return { ok: false, reason: 'voice_replies_off' };
-    if (target.pending.size >= 4) return { ok: false, reason: 'speech_queue_full' };
     const id = neoDerivedId(`speech:${sessionId}:${input.requestId}`);
+    if (!this.receipts.has(id) && target.pending.size >= 4)
+      return { ok: false, reason: 'speech_queue_full' };
     const saved = await this.record({
       action: 'reserve',
       id,

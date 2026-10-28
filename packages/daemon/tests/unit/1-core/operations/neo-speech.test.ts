@@ -54,11 +54,18 @@ describe('spoken replies separate from publications', () => {
         send: (data) => messages.push({ client: id, message: JSON.parse(data) }),
       });
     writeGate = undefined;
-    hub.onClientDisconnect = (handler) => { disconnected = handler; return () => {}; };
-    speech = new NeoSpeech(hub, async (op, args) => {
-      await writeGate?.();
-      return runDbOpOn(mailbox.db)(op, args);
-    }, (id) => id.startsWith('neo:'));
+    hub.onClientDisconnect = (handler) => {
+      disconnected = handler;
+      return () => {};
+    };
+    speech = new NeoSpeech(
+      hub,
+      async (op, args) => {
+        await writeGate?.();
+        return runDbOpOn(mailbox.db)(op, args);
+      },
+      (id) => id.startsWith('neo:')
+    );
     registry = createOperationRegistry(speech.operations);
   });
   afterEach(async () => {
@@ -151,20 +158,44 @@ describe('spoken replies separate from publications', () => {
     mailbox.db.prepare('INSERT INTO sessions(id) VALUES (?)').run(second);
     await listen();
     await call('listen', { sessionId: second, enabled: true });
-    const queued = await call('say', { requestId: 'second', text: 'Second session.' }, { ...neo, sessionId: second });
+    const queued = await call(
+      'say',
+      { requestId: 'second', text: 'Second session.' },
+      { ...neo, sessionId: second }
+    );
     await listen(false);
-    expect(await call('ack', { sessionId: second, id: queued.id, state: 'playing' })).toMatchObject({ state: 'playing' });
-    expect(await call('say', { requestId: 'next', text: 'Still opted in.' }, { ...neo, sessionId: second })).toMatchObject({ ok: true });
-    expect(messages.filter((item) => item.message.data.type === 'stop').map((item) => item.message.data.sessionId)).toEqual([sessionId]);
+    expect(await call('ack', { sessionId: second, id: queued.id, state: 'playing' })).toMatchObject(
+      { state: 'playing' }
+    );
+    expect(
+      await call(
+        'say',
+        { requestId: 'next', text: 'Still opted in.' },
+        { ...neo, sessionId: second }
+      )
+    ).toMatchObject({ ok: true });
+    expect(
+      messages
+        .filter((item) => item.message.data.type === 'stop')
+        .map((item) => item.message.data.sessionId)
+    ).toEqual([sessionId]);
   });
   test('disconnect after an in-flight playing acknowledgment leaves a cancelled receipt', async () => {
     await listen();
     const queued = await say();
     let entered!: () => void;
     let release!: () => void;
-    const started = new Promise<void>((done) => { entered = done; });
-    const blocked = new Promise<void>((done) => { release = done; });
-    writeGate = () => { writeGate = undefined; entered(); return blocked; };
+    const started = new Promise<void>((done) => {
+      entered = done;
+    });
+    const blocked = new Promise<void>((done) => {
+      release = done;
+    });
+    writeGate = () => {
+      writeGate = undefined;
+      entered();
+      return blocked;
+    };
     const playing = call('ack', { sessionId, id: queued.id, state: 'playing' });
     await started;
     disconnected('phone');
@@ -172,8 +203,15 @@ describe('spoken replies separate from publications', () => {
     release();
     await playing;
     await say('after-disconnect');
-    const rows = mailbox.db.prepare('SELECT reason FROM operation_refusals ORDER BY rowid').all() as { reason: string }[];
-    expect(rows.map((row) => JSON.parse(row.reason)).filter((row) => row.id === queued.id).at(-1)).toMatchObject({ state: 'cancelled' });
+    const rows = mailbox.db
+      .prepare('SELECT reason FROM operation_refusals ORDER BY rowid')
+      .all() as { reason: string }[];
+    expect(
+      rows
+        .map((row) => JSON.parse(row.reason))
+        .filter((row) => row.id === queued.id)
+        .at(-1)
+    ).toMatchObject({ state: 'cancelled' });
   });
   test('a worker cannot speak as Neo, and an agent cannot enable a phone', async () => {
     await listen();
