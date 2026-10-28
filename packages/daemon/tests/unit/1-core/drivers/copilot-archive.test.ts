@@ -164,5 +164,12 @@ describe('Copilot owned archive', () => {
     expect(await f.archive(work, () => refusal)).toEqual(refusal);
     expect((await f.find(false)).flatMap((group) => group.work)).toHaveLength(1);
     expect(await f.archive(work)).toEqual({ ok: true, value: { archived: true } });
+    expect(await f.adapter.status!(work.ref)).toMatchObject({
+      ok: true,
+      value: { status: 'stopped' },
+    });
+    const [archived] = (await f.find(true)).flatMap((group) => group.work);
+    expect(archived).toMatchObject({ status: 'stopped' });
+    expect(archived.watchHint).not.toContain('owner unavailable');
   });
 });

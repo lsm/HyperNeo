@@ -200,6 +200,7 @@ export function createCopilotAdapter(
       if (!input) return reject('not_found', 'Receipt does not belong to this owned input.');
     }
     if (
+      !record.archived &&
       !input?.outcome &&
       (snapshot.status === 'unreachable' ||
         (!live.has(work.ref.id) && !['done', 'failed', 'stopped'].includes(snapshot.status)))
@@ -436,7 +437,8 @@ export function createCopilotAdapter(
           record.work.place.folder ??
           record.directory;
         const unavailable =
-          status === 'unreachable' || (!owner && !['done', 'failed', 'stopped'].includes(status));
+          !record.archived &&
+          (status === 'unreachable' || (!owner && !['done', 'failed', 'stopped'].includes(status)));
         return {
           ok: true,
           value: {
