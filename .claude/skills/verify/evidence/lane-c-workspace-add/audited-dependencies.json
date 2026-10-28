@@ -1,0 +1,89 @@
+{
+  "base": "1cfb0cf459942b6045dcd55fe3d64b61d9a36f4e",
+  "hashScope": "Exact complete source bytes of each listed dependency file; not a complete transitive call graph.",
+  "fullTransitiveGraphMeasured": false,
+  "units": [
+    {
+      "file": "packages/daemon/src/lib/mcp/mcp-import-service.ts",
+      "lines": 1016,
+      "sha256": "5aa7d9956296babfbc0adcb00d63ca045c49f596d86215642a625bf4eac620c5"
+    },
+    {
+      "file": "packages/daemon/src/lib/mcp/mcp-server-namespace.ts",
+      "lines": 23,
+      "sha256": "7e14ef92233377defeb227c6dbed83a29e2d9c0ec9b637a8cd4f7529e689cc5b"
+    },
+    {
+      "file": "packages/daemon/src/lib/mcp/built-in-servers.ts",
+      "lines": 78,
+      "sha256": "fcfc8be1a92389f1e94b1589e392865d7bd62723dc3002f5ad50dc331de69fbf"
+    },
+    {
+      "file": "packages/daemon/src/lib/tools/write-tool-defaults.ts",
+      "lines": 41,
+      "sha256": "fcb0791280c64fb5a612d0e931ce18f7730ffded0250db70a962dc7d433a142c"
+    },
+    {
+      "file": "packages/daemon/src/lib/tools/legacy-tool-preferences.ts",
+      "lines": 150,
+      "sha256": "df373dd45aa0bfe59c9fd9fd872c625949094b7d11bc9d53af76da3b839bf676"
+    },
+    {
+      "file": "packages/daemon/src/lib/tools/session-tool-choice.ts",
+      "lines": 173,
+      "sha256": "5b39b39d9f1467a94bd5e2f03743cc159f53105fe5de86128b1114f099af6744"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/tool-default-transition.ts",
+      "lines": 252,
+      "sha256": "cfd1b005040ee2c67de16eaa7a5aeae26cfa1c2bc8f13801a69e2a9498cab857"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/tool-preference-commit.ts",
+      "lines": 106,
+      "sha256": "c8689af3b69d6afc5a410af030acb275e426fbf5eee2708619eb51546dc93f71"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/mcp-import-persistence.ts",
+      "lines": 34,
+      "sha256": "65767d98f2e83d2df4bbcc1914cf2d8503baedffbd6121ce1315fb8ceefa02f3"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/app-mcp-server-repository.ts",
+      "lines": 291,
+      "sha256": "ec9dd598d882c0afdec8c15cefe4717e1b75c9c60d832f782af412056f911692"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/mcp-enablement-repository.ts",
+      "lines": 121,
+      "sha256": "8c5a8cdcc60a991b0d1aef97b19820e0acb196446fcc05af86c5eaacec2e7ef8"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/skill-repository.ts",
+      "lines": 147,
+      "sha256": "0bd122a18274df718350975aedc133bd5e93f2d5df8e2ee6b750074b61fba133"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/space-repository.ts",
+      "lines": 329,
+      "sha256": "ff9d444afa8e5c0efc89636dd4f1ba812a8c256ec7e4e5d6d284d3292e8ced68"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/space-workspace-repository.ts",
+      "lines": 139,
+      "sha256": "32d490d9a4defcc88fa4fcd73b3b1e72679c1028f2ace62a6b341c6edee036fe"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/workspace-history-upsert-write.ts",
+      "lines": 18,
+      "sha256": "67676583861b10d88722885b90c3817485bde826ee74e7bdfd35d182abec7b39"
+    }
+  ],
+  "contracts": [
+    "workspace.history.upsert.write write/upsert(path, now) returns committed plain row; one increment, captured caller time and receipt in the same immediate transaction; no replay on uncertain outcome.",
+    "refreshAllForPath reads sources and filesystem on main, disables user config and orphan pruning for this path, snapshots plain import data; commitImport delegates existing tool_defaults.transition apply with imports/sources mutation and no explicit edits.",
+    "tool_defaults.transition commits registry and canonical defaults atomically in its existing worker; imported defaults remain disabled; no filesystem or event callback is supplied to its transaction.",
+    "workspace.add publishes mcp.registry.changed only for nonzero committed import counts; scan failure retains history success; response remains the enriched history read after scan."
+  ],
+  "auditLimit": "Full source hashes cover the known MCP refresh, import persistence, namespace, registry and default-projection roots. Dynamic repository dispatch, unrelated sibling methods and transitive schema/runtime/library dependencies are not exhaustively measured. No full-subtree graph-size or global main-thread-read completion claim."
+}
