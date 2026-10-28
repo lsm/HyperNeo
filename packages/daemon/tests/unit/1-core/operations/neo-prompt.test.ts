@@ -14,8 +14,9 @@ describe('root Neo system prompt', () => {
   test.each([false, true])('limits worker messages with packs: %s', (enabled) => {
     const prompt = neoPrompt(enabled ? neoSettingsPackBriefs() : []);
     expect(prompt).toContain(
-      'otherwise start a new worker there, named for the matter, never across projects'
+      "work.start may reuse an existing idle worker of the same project; trust the receipt's ref."
     );
+    expect(prompt).not.toContain('Give a new item to an idle worker');
     if (enabled) {
       expect(prompt).toContain('named for the project and a number');
       expect(prompt).toContain('work.rename');

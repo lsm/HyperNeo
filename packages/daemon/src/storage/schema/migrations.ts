@@ -2,6 +2,7 @@ import { runMigration461 } from './m461-neo-card-search-fts.ts';
 import { runMigration462 } from './m462-trigram-fts.ts';
 import { runMigration463 } from './m463-neo-todo-priority.ts';
 import { runMigration464 } from './m464-neo-todo-dependencies.ts';
+import { runMigration465 } from './m465-work-unusable.ts';
 import { runMigration459 } from './m459-operation-accepted-records.ts';
 import { runMigration460 } from './m460-neo-session-message-kind.ts';
 import { runMigration458 } from './m458-neo-todo-closed-unverified.ts';
@@ -983,6 +984,7 @@ export function runMigrations(
   run(migrationMarkerKey(462), () => runMigration462(db));
   run(migrationMarkerKey(463), () => runMigration463(db));
   run(migrationMarkerKey(464), () => runMigration464(db));
+  run(migrationMarkerKey(465), () => runMigration465(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
