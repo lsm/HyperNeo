@@ -45,6 +45,10 @@ const fixture = createServer(async (request,response) => {
     if (request.url === '/v1/audio/voices') {
       response.end(JSON.stringify({ model:'fixture', data:[{id:'vivian',name_en:'Vivian',name_zh:'薇薇安'},{id:'ryan',name_en:'Ryan',name_zh:'瑞恩'}] })); return;
     }
+    if (request.url === '/v1/audio/transcriptions') {
+      for await (const _ of request) {}
+      response.end(JSON.stringify({text:'Public conversation fixture'})); return;
+    }
     if (request.url === '/v1/audio/speech') {
       for await (const _ of request) {}
       response.setHeader('Content-Type','audio/pcm');
@@ -59,6 +63,7 @@ const fixture = createServer(async (request,response) => {
 try {
   if (mode === 'serve') {
     await new Promise<void>(done => fixture.listen(18555,'127.0.0.1',done));
+    app.db.updateGlobalSettings({voice:{enabled:true,endpoint:'http://127.0.0.1:18555/v1/audio/transcriptions',model:'fixture',mode:'batch',allowPrivateNetwork:true}});
     console.log('ready: daemon=18554 fixture=18555');
     process.once('SIGTERM',finish); process.once('SIGINT',finish);
     await Promise.race([finished,new Promise(done=>setTimeout(done,30*60_000).unref())]);
