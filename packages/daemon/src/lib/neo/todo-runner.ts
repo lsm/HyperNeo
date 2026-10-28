@@ -790,6 +790,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
 
   const stallTodo = (superpipe({})('neo.todo.stall') as PipelineAPI)
     .input(['claim', 'reason', 'now'])
+    .pipe((claim: NudgeClaim) => sessions.write('markWorkerUnusable', claim.ref), 'claim', 'retired')
     .pipe(
       (claim: NudgeClaim) =>
         ['done', 'closed_unverified', 'failed', 'removed'].includes(
@@ -831,6 +832,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
 
   const redispatchTodo = (superpipe({})('neo.todo.redispatch') as PipelineAPI)
     .input(['claim', 'now'])
+    .pipe((claim: NudgeClaim) => sessions.write('markWorkerUnusable', claim.ref), 'claim', 'retired')
     .pipe(({ todo }: NudgeClaim) => stop(todo), 'claim', 'refused')
     .pipe(
       (refused: string | null) =>
