@@ -140,6 +140,9 @@ jobs:
       - name: Test npm packaging script
         run: bun run test:package-npm
 
+      - name: Test CI gate script
+        run: bun run test:ci-gate
+
       # Folded in from the former test-cli job: ~2s of tests that used to occupy
       # a whole runner. Gated to the same events test-cli ran on (push to dev
       # or a release tag, workflow_dispatch) — skipped on PRs, exactly as
@@ -710,12 +713,16 @@ jobs:
   # which is skipped on PRs) — no serialized tail after
   # the last test. Path-filtered suites report "skipped" and pass. The
   # balance report intentionally lags outside this gate.
+  # Every need must report 'success' or 'skipped': needs.<job>.result can
+  # also be 'cancelled' (superseding push or timeout) — a cancelled leg
+  # must fail the gate, not pass it. Logic lives in scripts/ci-gate.sh so
+  # it is unit-testable (scripts/ci-gate.test.ts).
   # ============================================
 
   all-tests-pass:
     name: All Tests Pass
     runs-on: ubuntu-latest
-    timeout-minutes: 1
+    timeout-minutes: 2
     if: always()
     needs:
       - check
@@ -728,68 +735,16 @@ jobs:
       - windows-compiled-smoke
 
     steps:
+      - uses: actions/checkout@v6
+
       - name: Check all jobs passed
-        run: |
-          FAILED=0
-
-          # Check job: PR to dev, push to dev
-          if [[ "${{ needs.check.result }}" == "failure" ]]; then
-            echo "❌ check failed"
-            FAILED=1
-          fi
-
-          # changes: PR only — a failed path filter means the daemon/web
-          # booleans are unknown, so the suites were skipped unsafely.
-          if [[ "${{ needs.changes.result }}" == "failure" ]]; then
-            echo "❌ changes (path filter) failed"
-            FAILED=1
-          fi
-
-          # test-daemon-online: PR to dev (online paths), push to dev
-          if [[ "${{ needs.test-daemon-online.result }}" == "failure" ]]; then
-            echo "❌ test-daemon-online failed"
-            FAILED=1
-          fi
-
-          # test-daemon-shared-unit: PR to dev (daemon paths), push to dev
-          if [[ "${{ needs.test-daemon-shared-unit.result }}" == "failure" ]]; then
-            echo "❌ test-daemon-shared-unit failed"
-            FAILED=1
-          fi
-
-          # test-web: PR to dev (web paths), push to dev
-          if [[ "${{ needs.test-web.result }}" == "failure" ]]; then
-            echo "❌ test-web failed"
-            FAILED=1
-          fi
-
-          # build: push to dev, workflow_dispatch
-          if [[ "${{ needs.build.result }}" == "failure" ]]; then
-            echo "❌ build failed"
-            FAILED=1
-          fi
-
-          # deno-boot-smoke: PR to dev, push to dev, workflow_dispatch
-          if [[ "${{ needs.deno-boot-smoke.result }}" == "failure" ]]; then
-            echo "❌ deno-boot-smoke failed"
-            FAILED=1
-          fi
-
-          if [[ "${{ needs.windows-compiled-smoke.result }}" != "success" && "${{ needs.windows-compiled-smoke.result }}" != "skipped" ]]; then
-            echo "Windows compiled worker smoke did not pass"
-            FAILED=1
-          fi
-
-          if [ $FAILED -eq 1 ]; then
-            echo ""
-            echo "One or more required jobs failed:"
-            echo "  check: ${{ needs.check.result }}"
-            echo "  changes: ${{ needs.changes.result }}"
-            echo "  test-daemon-online: ${{ needs.test-daemon-online.result }}"
-            echo "  test-daemon-shared-unit: ${{ needs.test-daemon-shared-unit.result }}"
-            echo "  test-web: ${{ needs.test-web.result }}"
-            echo "  build: ${{ needs.build.result }}"
-            echo "  deno-boot-smoke: ${{ needs.deno-boot-smoke.result }}"
-            exit 1
-          fi
-          echo "All tests passed!"
+        env:
+          CI_GATE_RESULT_CHECK: ${{ needs.check.result }}
+          CI_GATE_RESULT_CHANGES: ${{ needs.changes.result }}
+          CI_GATE_RESULT_TEST_DAEMON_ONLINE: ${{ needs.test-daemon-online.result }}
+          CI_GATE_RESULT_TEST_DAEMON_SHARED_UNIT: ${{ needs.test-daemon-shared-unit.result }}
+          CI_GATE_RESULT_TEST_WEB: ${{ needs.test-web.result }}
+          CI_GATE_RESULT_BUILD: ${{ needs.build.result }}
+          CI_GATE_RESULT_DENO_BOOT_SMOKE: ${{ needs.deno-boot-smoke.result }}
+          CI_GATE_RESULT_WINDOWS_COMPILED_SMOKE: ${{ needs.windows-compiled-smoke.result }}
+        run: bash scripts/ci-gate.sh
