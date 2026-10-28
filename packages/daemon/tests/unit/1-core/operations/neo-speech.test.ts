@@ -19,6 +19,9 @@ describe('spoken replies separate from publications', () => {
   let router: MessageHubRouter;
   let registry: ReturnType<typeof createOperationRegistry>;
   let messages: { client: string; message: { data: Record<string, string> } }[];
+  let speech: NeoSpeech;
+  let disconnected: (id: string) => void;
+  let writeGate: (() => Promise<void>) | undefined;
   const call = async (name: string, input: unknown, caller = human) => {
     const result = await invokeOperation(registry, 'neo.speech.' + name, input, caller);
     expect(result.kind).toBe('completed');
@@ -50,11 +53,16 @@ describe('spoken replies separate from publications', () => {
         isOpen: () => true,
         send: (data) => messages.push({ client: id, message: JSON.parse(data) }),
       });
-    registry = createOperationRegistry(
-      new NeoSpeech(hub, runDbOpOn(mailbox.db), (id) => id === sessionId).operations
-    );
+    writeGate = undefined;
+    hub.onClientDisconnect = (handler) => { disconnected = handler; return () => {}; };
+    speech = new NeoSpeech(hub, async (op, args) => {
+      await writeGate?.();
+      return runDbOpOn(mailbox.db)(op, args);
+    }, (id) => id.startsWith('neo:'));
+    registry = createOperationRegistry(speech.operations);
   });
-  afterEach(() => {
+  afterEach(async () => {
+    await speech.dispose();
     hub.cleanup();
     mailbox.close();
   });
@@ -130,6 +138,42 @@ describe('spoken replies separate from publications', () => {
     const results = await Promise.all(Array.from({ length: 5 }, (_, i) => say(String(i))));
     expect(results.filter((r) => r.ok)).toHaveLength(4);
     expect(results[4]).toMatchObject({ reason: 'speech_queue_full' });
+  });
+  test('retrying queued speech remains idempotent when the queue is full', async () => {
+    await listen();
+    const first = await say('first');
+    for (let i = 0; i < 3; i++) await say('fill-' + i);
+    expect(await say('first')).toMatchObject({ ok: true, id: first.id, created: false });
+    expect(messages.filter((item) => item.message.data.type === 'say')).toHaveLength(4);
+  });
+  test('disabling one session preserves another session on the same phone', async () => {
+    const second = 'neo:10000000-0000-4000-8000-000000000002';
+    mailbox.db.prepare('INSERT INTO sessions(id) VALUES (?)').run(second);
+    await listen();
+    await call('listen', { sessionId: second, enabled: true });
+    const queued = await call('say', { requestId: 'second', text: 'Second session.' }, { ...neo, sessionId: second });
+    await listen(false);
+    expect(await call('ack', { sessionId: second, id: queued.id, state: 'playing' })).toMatchObject({ state: 'playing' });
+    expect(await call('say', { requestId: 'next', text: 'Still opted in.' }, { ...neo, sessionId: second })).toMatchObject({ ok: true });
+    expect(messages.filter((item) => item.message.data.type === 'stop').map((item) => item.message.data.sessionId)).toEqual([sessionId]);
+  });
+  test('disconnect after an in-flight playing acknowledgment leaves a cancelled receipt', async () => {
+    await listen();
+    const queued = await say();
+    let entered!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((done) => { entered = done; });
+    const blocked = new Promise<void>((done) => { release = done; });
+    writeGate = () => { writeGate = undefined; entered(); return blocked; };
+    const playing = call('ack', { sessionId, id: queued.id, state: 'playing' });
+    await started;
+    disconnected('phone');
+    await new Promise((done) => setTimeout(done, 20));
+    release();
+    await playing;
+    await say('after-disconnect');
+    const rows = mailbox.db.prepare('SELECT reason FROM operation_refusals ORDER BY rowid').all() as { reason: string }[];
+    expect(rows.map((row) => JSON.parse(row.reason)).filter((row) => row.id === queued.id).at(-1)).toMatchObject({ state: 'cancelled' });
   });
   test('a worker cannot speak as Neo, and an agent cannot enable a phone', async () => {
     await listen();
