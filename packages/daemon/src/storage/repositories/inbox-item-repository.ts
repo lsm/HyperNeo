@@ -28,10 +28,7 @@ export interface InboxItemFilter {
 export class InboxItemRepository {
   constructor(private db: BunDatabase) {}
 
-  createItem(params: CreateInboxItemParams): InboxItem {
-    const id = generateUUID();
-    const now = Date.now();
-
+  createItem(params: CreateInboxItemParams, id = generateUUID(), now = Date.now()): InboxItem {
     const stmt = this.db.prepare(
       `INSERT INTO inbox_items (
         id, source, repository, issue_number, comment_id, title, body,

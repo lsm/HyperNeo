@@ -1,0 +1,82 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "firstCommandMs": 0.3117499999999609,
+  "exactCommittedReceiptAndCount": true,
+  "callerIdentityTimeAndJsonPreserved": true,
+  "literalOptionalMetadataRoundTrip": true,
+  "concurrentDuplicateOneWinner": true,
+  "distinctConcurrentRequestsRetainIdentity": true,
+  "receiptDecodeFailureRollsBackInsertAndTrigger": true,
+  "healthWhileWriterHeldMs": 2.539625000000001,
+  "deliberatelyHeldWriterMs": 1235.651875,
+  "admissionIdentityAndTimeRetainedAcrossWait": true,
+  "preCommitFailureLeavesNoRow": true,
+  "unknownOutcomeNeverAutomaticallyReplayed": true,
+  "maxLoopLagMs": 3.1644580000000815,
+  "rssBytes": 183223352,
+  "walBytes": 0,
+  "commandPosts": 13,
+  "publicGithubEventCallerWired": false,
+  "pendingReadsRemainMain": true,
+  "pass": true,
+  "mainSqlAttempts": 0,
+  "workerMetrics": [
+    {
+      "roundTripMs": 0.23737499999992906,
+      "requestBytes": 348,
+      "replyBytes": 382,
+      "encodeMs": 0.006625000000099135
+    },
+    {
+      "roundTripMs": 0.10808299999996507,
+      "requestBytes": 446,
+      "replyBytes": 480,
+      "encodeMs": 0.0031669999999621723
+    },
+    {
+      "roundTripMs": 0.12333300000000236,
+      "requestBytes": 348,
+      "replyBytes": 382,
+      "encodeMs": 0.0012920000000349319
+    },
+    {
+      "roundTripMs": 0.08737500000006548,
+      "requestBytes": 348,
+      "replyBytes": 382,
+      "encodeMs": 0.0015829999999823485
+    },
+    {
+      "roundTripMs": 0.13762500000007094,
+      "requestBytes": 348,
+      "replyBytes": 382,
+      "encodeMs": 0.002375000000029104
+    },
+    {
+      "roundTripMs": 0.16887499999995725,
+      "requestBytes": 348,
+      "replyBytes": 382,
+      "encodeMs": 0.0012500000000272848
+    },
+    {
+      "roundTripMs": 0.20566700000006222,
+      "requestBytes": 348,
+      "replyBytes": 382,
+      "encodeMs": 0.001249999999913598
+    },
+    {
+      "roundTripMs": 1235.404416,
+      "requestBytes": 348,
+      "replyBytes": 382,
+      "encodeMs": 0.02141699999992852
+    },
+    {
+      "roundTripMs": 5.471207999999933,
+      "requestBytes": 348,
+      "replyBytes": 382,
+      "encodeMs": 0.005000000000109139
+    }
+  ],
+  "runtime": "bun",
+  "runtimeVersion": "1.4.3",
+  "temporaryDaemonDataRemoved": true
+}
