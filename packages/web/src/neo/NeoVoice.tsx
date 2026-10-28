@@ -312,7 +312,7 @@ export function NeoVoice({
         enabled && (
           <Button
             size="sm"
-            class="h-11 min-w-11 shrink-0"
+            class="h-11 min-w-11 shrink-0 !rounded-full"
             variant="ghost"
             disabled={!connected || !isVoiceRecordingSupported()}
             title={
