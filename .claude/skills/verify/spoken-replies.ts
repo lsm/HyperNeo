@@ -69,16 +69,17 @@ const fixture = createServer(async (request,response) => {
     response.statusCode=404; response.end('{}');
   } catch { response.statusCode=500; response.end('{}'); }
 });
-const asrFixture = mode === 'serve' ? Bun.serve<{sent:boolean;transcript:boolean}>({port:18556, hostname:'127.0.0.1',
+const asrFixture = mode === 'serve' ? Bun.serve<{sent:boolean;transcript:boolean;voiced:boolean}>({port:18556, hostname:'127.0.0.1',
   fetch(request, server) {
     if(asrActive) { asrRejected++; return new Response('Busy',{status:403}); }
-    if(server.upgrade(request,{data:{sent:false,transcript:asrAccepted%2===0}})) { asrActive++; asrAccepted++; return; }
+    if(server.upgrade(request,{data:{sent:false,transcript:asrAccepted%2===0,voiced:false}})) { asrActive++; asrAccepted++; return; }
     return new Response('fixture');
   },
   websocket:{ message(ws, data) {
-    const result=(final:boolean)=>JSON.stringify({type:'Results',is_final:final,channel:{alternatives:[{transcript:'Public live transcript'}]}});
+    const result=(final:boolean)=>JSON.stringify({type:'Results',is_final:final,channel:{alternatives:[{transcript:ws.data.voiced ? 'Public live transcript' : ''}]}});
+    if(typeof data!=='string' && Buffer.from(data).some(byte=>byte!==0)) ws.data.voiced=true;
     if(typeof data==='string' && data.includes('CloseStream')) { ws.send(result(true)); ws.close(); }
-    else if(typeof data!=='string' && ws.data.transcript && !ws.data.sent) { ws.data.sent=true; ws.send(result(false)); }
+    else if(typeof data!=='string' && Buffer.from(data).some(byte=>byte!==0) && ws.data.transcript && !ws.data.sent) { ws.data.sent=true; ws.send(result(false)); }
   }, close() { asrActive--; }}
 }) : null;
 try {
