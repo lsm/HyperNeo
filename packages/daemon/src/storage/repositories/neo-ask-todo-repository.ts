@@ -6,6 +6,7 @@ import type { LanguageSetting } from '@hyperneo/shared/types/settings';
 import { NeoPublicationRepository } from './neo-publication-repository.ts';
 import { neoDerivedId } from '../../lib/neo/derived-id.ts';
 import {
+  neoTodoStalledCard,
   recomputeTodoState,
   recomputeTodoStateAsync,
   type TodoStateFacts,
@@ -656,9 +657,9 @@ export class NeoAskTodoRepository {
         .all(todo.askId) as TodoStateFacts['order'],
       questionOpen: !!this.db
         .prepare(`SELECT 1 FROM neo_questions WHERE ask_id = ? AND state = 'open'
-        AND (todo_id IS NULL OR todo_id = ?)
+        AND (todo_id IS NULL OR todo_id = ?) AND text != ?
         AND (kind != 'start' OR EXISTS (SELECT 1 FROM json_each(start_todos) WHERE value = ?)) LIMIT 1`)
-        .get(todo.askId, todo.id, todo.id),
+        .get(todo.askId, todo.id, neoTodoStalledCard(todo), todo.id),
       dispatched: !!live?.ref || todo.startedAt !== null,
       live: live?.status ?? null,
     };
