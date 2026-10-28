@@ -101,7 +101,7 @@ function setup() {
   return { db, store, publications, human, reads, slow, open, ask, add };
 }
 
-describe('resolveNeoInputAsk', () => {
+describe('neo ask binding from human input', () => {
   test('a new human request opens its own ask even when Neo names an unrelated one', async () => {
     const f = setup();
     try {
@@ -144,16 +144,19 @@ describe('resolveNeoInputAsk', () => {
       const origin = f.human('Make the query fast');
       const bound = resolveNeoInputAsk(f.store, f.reads, owner, { input: origin }, 'Speed');
       if ('reason' in bound) throw new Error(bound.reason.reason);
-      f.publications.append({
+      const publicationId = crypto.randomUUID();
+      const told = f.publications.append({
         conversationId,
-        publicationId: 'pub-1',
+        publicationId,
         askOrigin: { sessionId: session, messageId: origin },
+        shortText: 'Working on it',
         fullText: 'Working on it',
         links: [],
       });
+      expect(told.accepted).toBe(true);
       const input = f.human('Also the count query', {
         kind: 'message',
-        id: 'pub-1',
+        id: publicationId,
         author: 'neo',
       });
       const again = resolveNeoInputAsk(f.store, f.reads, owner, { input }, 'Count');

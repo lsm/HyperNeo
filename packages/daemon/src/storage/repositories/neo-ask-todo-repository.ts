@@ -374,13 +374,13 @@ export class NeoAskTodoRepository {
   findAsk(
     sessionId: string,
     originMessageId: string | null,
-    title: string,
+    title: string | null,
     goalId: string | null = null
   ): NeoAsk | null {
     return foundAsk(
       (this.db
         .prepare(
-          `${ASK_SELECT} WHERE session_id = ? AND origin_message_id IS ? AND title = ? AND goal_id IS ?
+          `${ASK_SELECT} WHERE session_id = ?1 AND origin_message_id IS ?2 AND (?3 IS NULL OR title = ?3) AND (?3 IS NOT NULL OR parent_id IS NULL) AND goal_id IS ?4
            AND (status = 'open' OR (status = 'done'
              AND EXISTS (SELECT 1 FROM neo_asks c WHERE c.parent_id = neo_asks.id)))`
         )
