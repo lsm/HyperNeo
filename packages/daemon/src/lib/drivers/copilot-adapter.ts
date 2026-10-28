@@ -525,8 +525,6 @@ export function createCopilotAdapter(
       'withdraw',
       'status',
       'stop',
-      'status',
-      'stop',
       'archive',
     ] as const,
     unsupportedCapabilities: {
