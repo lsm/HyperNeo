@@ -89,6 +89,8 @@ const MessageSchema = z
       });
   });
 const REMOTE_START_TIMEOUT_MS = 360_000;
+const REUSE_HOLD_MS = 60_000;
+const reuseHolds = new Set<string>();
 const REMOTE_SEND_TIMEOUT_MS = 180_000;
 const ForwardedOriginSchema = z.string().min(1).max(REPLY_ORIGIN_MAX).optional();
 
@@ -421,8 +423,12 @@ export async function reuseIdleWorker(
         free.has(work.ref.id)
     );
   for (const work of idle) {
+    const key = `${work.ref.adapter}\u0000${work.ref.id}`;
+    if (reuseHolds.has(key)) continue;
+    reuseHolds.add(key);
     const sent = await adapter.send(work.ref, input.message, { from, caller });
-    if (sent.ok)
+    if (sent.ok) {
+      setTimeout(() => reuseHolds.delete(key), REUSE_HOLD_MS).unref?.();
       return {
         ok: true,
         value: {
@@ -431,8 +437,17 @@ export async function reuseIdleWorker(
           reused: true,
         },
       };
-    if (!sent.notSent && sent.reason !== 'not_open' && sent.reason !== 'not_found') return sent;
+    }
+    reuseHolds.delete(key);
     deps.markUnusable?.(work.ref);
+    if (sent.notSent || sent.reason === 'not_open' || sent.reason === 'not_found') continue;
+    const reported = await reportUncertainWorkSend(
+      sent,
+      { ref: work.ref, message: input.message },
+      from,
+      deps
+    );
+    return reported.ok ? sent : reported;
   }
   return null;
 }

@@ -127,10 +127,10 @@ describe('work.start reuses an idle worker', () => {
   });
 
   test('two concurrent starts never send to the same idle worker', async () => {
-    const run = harness([{ id: 'idle', status: 'done' }], ['idle']);
+    const run = harness([{ id: 'raced', status: 'done' }], ['raced']);
     const results = await Promise.all([run.start(), run.start()]);
-    expect(results.map((result) => result.value?.ref.id).sort()).toEqual(['fresh', 'idle']);
-    expect(run.sent).toEqual(['idle']);
+    expect(results.map((result) => result.value?.ref.id).sort()).toEqual(['fresh', 'raced']);
+    expect(run.sent).toEqual(['raced']);
   });
 
   test('an uncertain send marks the worker for reconciliation and starts nothing new', async () => {
