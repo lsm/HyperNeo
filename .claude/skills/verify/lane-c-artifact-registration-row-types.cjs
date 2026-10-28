@@ -5,7 +5,7 @@ const target = 'packages/daemon/tests/unit/1-core/operations/artifact-registrati
 const config = ts.readConfigFile(configFile, ts.sys.readFile);
 if (config.error) throw new Error(ts.flattenDiagnosticMessageText(config.error.messageText, '\n'));
 const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, path.dirname(configFile), { incremental: false, composite: false }, configFile);
-const program = ts.createProgram([path.resolve(target)], parsed.options);
+const program = ts.createProgram([path.resolve(target), path.resolve('packages/daemon/src/lib/artifacts/register-operation.ts')], parsed.options);
 const diagnostics = [...parsed.errors, ...ts.getPreEmitDiagnostics(program)];
 console.log(JSON.stringify({ compiler: ts.version, config: 'packages/daemon/tsconfig.tests.json', root: target, errors: diagnostics.map((d) => ({ code: d.code, file: d.file ? path.relative(process.cwd(), d.file.fileName) : null, line: d.file && d.start !== undefined ? d.file.getLineAndCharacterOfPosition(d.start).line + 1 : null, message: ts.flattenDiagnosticMessageText(d.messageText, '\n') })) }, null, 2));
 if (diagnostics.length) process.exitCode = 1;
