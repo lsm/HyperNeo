@@ -1,0 +1,46 @@
+{
+  "publicPublicationActivationExercised": false,
+  "publicReaderStillMain": true,
+  "filesystemCaptureExercised": false,
+  "mainGuardSelfCheckPassed": true,
+  "exactCommittedRowReceipt": true,
+  "publicMetadataMatchesCommittedRow": true,
+  "concurrentPairMs": 0.6840420000000904,
+  "duplicateRequestNeverOverwrites": true,
+  "healthWhileWriterHeldMs": 3.0107080000000224,
+  "deliberatelyHeldWriterMs": 1253.967,
+  "receiptWaitsForCommit": true,
+  "preCommitFailureHasNoRow": true,
+  "unknownOutcomeNeverAutomaticallyReplayed": true,
+  "explicitDuplicateStillRejects": true,
+  "invalidPublicationRollsBack": true,
+  "missingExactReceiptRollsBackTriggerEffects": true,
+  "maxLoopLagMs": 15.971791999999823,
+  "rssBytes": 534085632,
+  "walBytes": 4128272,
+  "commandPosts": 9,
+  "pass": true,
+  "mainSqlAttempts": 0,
+  "workerMetrics": [
+    {
+      "roundTripMs": 0.5939169999999194,
+      "requestBytes": 504,
+      "replyBytes": 541
+    },
+    {
+      "roundTripMs": 0.15237499999989268,
+      "requestBytes": 468,
+      "replyBytes": 523
+    },
+    {
+      "roundTripMs": 1253.7608340000002,
+      "requestBytes": 504,
+      "replyBytes": 541
+    },
+    {
+      "roundTripMs": 3.1152499999998327,
+      "requestBytes": 504,
+      "replyBytes": 541
+    }
+  ]
+}

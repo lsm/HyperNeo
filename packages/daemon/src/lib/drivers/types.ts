@@ -64,6 +64,14 @@ export const WorkSummarySchema = z.object({
     .optional(),
   model: z.string().optional(),
   effort: z.string().optional(),
+  identityObservation: z
+    .object({
+      source: z.literal('assistant-transcript'),
+      at: z.number().optional(),
+      messageId: z.string().optional(),
+    })
+    .describe('Last observed assistant runtime identity; not a prediction of the next turn.')
+    .optional(),
   remoteLink: z.string().optional(),
   remoteControl: z
     .boolean()

@@ -6,6 +6,7 @@ import {
   type ClaudeLiveSession,
   type ClaudeTranscriptState,
 } from './claude-desktop-adapter.ts';
+import { withClaudeIdentity } from './claude-runtime-identity.ts';
 import { requireClaudeCliOwner } from './claude-session-owner.ts';
 import type { Rejected, Result, WorkDelivery, WorkDetail, WorkRef, WorkStatus } from './types.ts';
 import { reject } from './work-operations.ts';
@@ -71,6 +72,7 @@ function describeCliWork(
     ok: true,
     value: {
       ref,
+      ...withClaudeIdentity(transcript),
       title: live.session.name || 'Claude Code session',
       place: { machine: deps.machine, name: 'Claude Code', ...(folder ? { folder } : {}) },
       status: live.status,
