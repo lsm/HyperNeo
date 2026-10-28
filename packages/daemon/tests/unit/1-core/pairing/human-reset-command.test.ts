@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NeoPublicationAppendResult } from '@hyperneo/shared/types/neo-publication';
 import { ChangeRecorder } from '../../../../src/storage/db-gateway/db-op';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops';
+import { humanDeviceResetWrites } from '../../../../src/storage/repositories/human-device-reset-write';
+import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import { neoPublicationWrites } from '../../../../src/storage/repositories/neo-publication-repository';
 import { DevicePairingRepository } from '../../../../src/storage/repositories/device-pairing-repository';
@@ -35,16 +37,7 @@ describe('atomic human-device reset command', () => {
     }[];
   const count = (table: 'human_device_resets' | 'neo_conversation') =>
     (writer.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
-  const reset = (at = now + 1) => {
-    const op = DB_OPS.get('pairing.humanReset.write');
-    if (!op) return Promise.reject(new Error('Unknown write DB op: pairing.humanReset.write'));
-    return gateway.run(op, { method: 'reset', args: [at] } as never) as Promise<{
-      id: string;
-      resetAt: number;
-      conversationId: string;
-      devices: { id: string; name: string }[];
-    }>;
-  };
+  const reset = (at = now + 1) => gateway.call(humanDeviceResetWrites, 'reset', at);
   const input = () => ({
     conversationId: randomUUID(),
     publicationId: randomUUID(),
@@ -62,6 +55,8 @@ describe('atomic human-device reset command', () => {
   test('the registered core append joins an outer transaction and returns plain data', () => {
     const value = input();
     expect(neoPublicationWrites.name).toBe('neo.publications.write');
+    expect(DB_OPS.get(neoPublicationWrites.name)).toBe(neoPublicationWrites);
+    expect(neoPublicationWrites.Repository).toBe(NeoPublicationRepository);
     expect(neoPublicationWrites.mode).toBe('write');
     expect(neoPublicationWrites.methods).toContain('append');
     expect(() =>

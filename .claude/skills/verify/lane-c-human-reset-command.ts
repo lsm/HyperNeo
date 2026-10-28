@@ -18,7 +18,7 @@ const { createDaemonApp } = await import('../../../packages/daemon/src/app.ts');
 const { JobQueueProcessor } = await import('../../../packages/daemon/src/storage/job-queue-processor.ts');
 const { Database: SQLite } = await import('../../../packages/daemon/src/storage/sqlite-compat.ts');
 const { DevicePairingRepository } = await import('../../../packages/daemon/src/storage/repositories/device-pairing-repository.ts');
-const { defineDbOp } = await import('../../../packages/daemon/src/storage/db-gateway/db-op.ts');
+const { humanDeviceResetWrites } = await import('../../../packages/daemon/src/storage/repositories/human-device-reset-write.ts');
 const { getConfig } = await import('../../../packages/daemon/src/config.ts');
 const { MessageHub, WebSocketClientTransport } = await import('../../../packages/shared/src/mod.ts');
 const NativeWorker = globalThis.Worker;
@@ -99,7 +99,7 @@ let lock: InstanceType<typeof SQLite> | undefined;
 let timer: ReturnType<typeof setInterval> | undefined;
 const evidence: Record<string, unknown> = {};
 type Receipt = { id: string; resetAt: number; conversationId: string; devices: { id: string; name: string }[] };
-const command = defineDbOp<{ method: string; args: unknown[] }, Receipt>({ name: 'pairing.humanReset.write', mode: 'write', run: () => { throw new Error('Native command must not execute on main'); } });
+
 try {
   JobQueueProcessor.prototype.start = function () { processors.add(this); return start.call(this); };
   try {
@@ -112,7 +112,7 @@ try {
   const seed = (kind: 'human' | 'relay' = 'human') => inspect(() => { const made = repo.createCode(kind, null, true, Date.now()); return repo.redeem(made.code, 'Synthetic reset device', Date.now())!; });
   const active = (id: string) => inspect(() => repo.isActiveDevice(id));
   const count = (table: 'neo_publications' | 'human_device_resets') => inspect(() => (raw.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n);
-  const reset = () => app!.db.gateway.run(command, { method: 'reset', args: [Date.now()] });
+  const reset = () => app!.db.gateway.call(humanDeviceResetWrites, 'reset', Date.now());
   const humans = Array.from({ length: 21 }, () => seed()); const relay = seed('relay');
   const oldCode = inspect(() => repo.createCode('human', null, true, Date.now()));
   const connect = async (credential: string) => {
@@ -134,7 +134,7 @@ try {
   evidence.coldMs = performance.now() - at; assert.equal(receipt.devices.length, 21); assert.deepEqual(new Set(receipt.devices.map((d) => d.id)), new Set(humans.map((d) => d.device.id)));
   for (const human of humans) assert.equal(active(human.device.id), false);
   assert.equal(active(relay.device.id), true); assert.equal(count('neo_publications'), beforeNotices + 2); assert.equal(count('human_device_resets'), beforeResets + 1);
-  assert.equal(await repo.redeemAsync(oldCode.code, 'Expired synthetic code', Date.now()), null); evidence.atomicReceiptAndCodeInvalidation = true;
+  assert.deepEqual(await repo.redeemAsync(oldCode.code, 'Expired synthetic code', Date.now()), { paired: null, awaitingApproval: false }); evidence.atomicReceiptAndCodeInvalidation = true;
   const page = await connectedRelay.hub.request<{ ok: boolean; items: { fullText: string }[] }>('operation.invoke', { name: 'neo.publication.read', input: { conversationId: receipt.conversationId, after: 0, limit: 100 } });
   assert(page.ok); const text = JSON.stringify(page.items); for (const human of humans) { assert(text.includes(human.device.id)); assert(!text.includes(human.credential)); }
   assert(!text.includes(relay.credential)); evidence.publicReaderRetainsChunkedNoticeWithoutSecrets = true;
@@ -147,14 +147,14 @@ try {
   assert.equal(listed.devices.find((d) => d.id === relay.device.id)?.revokedAt, null); evidence.realCliRetainsDeviceHistory = true;
   await wait(phone.closed); assert.equal(connectedRelay.closed(), false); evidence.existingObserverSeesCommittedReset = true;
   const firstCode = inspect(() => repo.createCode('human', null, true, Date.now())); const secondCode = inspect(() => repo.createCode('human', null, true, Date.now()));
-  assert(await repo.redeemAsync(firstCode.code, 'Synthetic replacement', Date.now())); assert.equal(await repo.redeemAsync(secondCode.code, 'Synthetic extra', Date.now()), null); evidence.oneReplacementConsumesRecovery = true;
+  assert((await repo.redeemAsync(firstCode.code, 'Synthetic replacement', Date.now())).paired); assert.deepEqual(await repo.redeemAsync(secondCode.code, 'Synthetic extra', Date.now()), { paired: null, awaitingApproval: true }); evidence.oneReplacementConsumesRecovery = true;
   const rollbackHumans = Array.from({ length: 21 }, () => seed()); const rollbackCode = inspect(() => repo.createCode('human', null, true, Date.now()));
   const rollbackNotices = count('neo_publications'); const rollbackResets = count('human_device_resets');
   raw.exec("CREATE TRIGGER reject_second_notice BEFORE INSERT ON neo_publications WHEN json_extract(NEW.payload_json, '$.fullText') LIKE '%(part 2)%' BEGIN SELECT RAISE(ABORT, 'synthetic second notice failure'); END");
   evidence.rollbackFailure = await reset().then(() => 'unexpected success', String); assert.match(String(evidence.rollbackFailure), /synthetic second notice failure/);
   for (const human of rollbackHumans) assert.equal(active(human.device.id), true);
   assert.equal(count('neo_publications'), rollbackNotices); assert.equal(count('human_device_resets'), rollbackResets);
-  assert(await repo.redeemAsync(rollbackCode.code, 'Synthetic valid after rollback', Date.now())); evidence.secondNoticeFailureRollsBackAllState = true; raw.exec('DROP TRIGGER reject_second_notice');
+  assert((await repo.redeemAsync(rollbackCode.code, 'Synthetic valid after rollback', Date.now())).paired); evidence.secondNoticeFailureRollsBackAllState = true; raw.exec('DROP TRIGGER reject_second_notice');
   raw.exec('CREATE TABLE synthetic_reset_lock(value INTEGER); INSERT INTO synthetic_reset_lock VALUES(0)');
   lock = new SQLite(app.db.getDbPath()); lock.exec('BEGIN IMMEDIATE'); lock.prepare('UPDATE synthetic_reset_lock SET value=1').run();
   const removed = rollbackHumans[0].device.id; lock.prepare('UPDATE paired_devices SET revoked_at=? WHERE id=?').run(Date.now(), removed);

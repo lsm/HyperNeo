@@ -21,6 +21,16 @@ subtree and hashes with the measurement helper. Neo authorized treating that
 already-worker-owned subtree as a separately audited dependency; do not edit it.
 The reset's existing direct repository append is the same implementation exposed
 by that registered command. Keep reset state and its notice in one transaction.
+The recorded core subtree is 277 lines, including decode/immutable append, input
+normalization, validation and artifact-reference schema dependencies. Each unit
+has exact source lines and a SHA-256; the reused gateway adapter is recorded
+separately. The contract binds the registered writer to that same repository
+class. Append is synchronous on the supplied connection and returns a cloneable
+accepted/refused value. Identical publication identity/content is idempotent,
+changed content conflicts, and invalid content is refused. A refusal is not an
+implicit rollback: the existing reset helper throws on it. The contract test
+requires an outer rollback to undo an already-appended notice and conversation.
+No separate gateway call, durable inner commit or external callback is involved.
 
 Self-check cached/new main SQL guards for reset mutations and conversation lookup,
 then deny them. Seed synthetic human devices and a relay. The native command

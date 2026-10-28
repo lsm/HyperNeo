@@ -1,0 +1,67 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "coldMs": 2.1487090000000535,
+  "atomicReceiptAndCodeInvalidation": true,
+  "publicReaderRetainsChunkedNoticeWithoutSecrets": true,
+  "realCliRetainsDeviceHistory": true,
+  "existingObserverSeesCommittedReset": true,
+  "oneReplacementConsumesRecovery": true,
+  "rollbackFailure": "Error: synthetic second notice failure",
+  "secondNoticeFailureRollsBackAllState": true,
+  "healthWhileHeldMs": 5.0252080000000205,
+  "heldMs": 55.40129200000001,
+  "currentHumansSelectedAfterWriterWait": true,
+  "concurrentMs": 0.6568750000001273,
+  "distinctEmptyResetsRetainNotices": true,
+  "beforeCommitFailure": "Error: synthetic human-reset admission rejected before commit",
+  "lostReceiptFailure": "Error: synthetic committed human-reset reply lost; outcome unknown",
+  "unknownOutcomeNotReplayed": true,
+  "writerRecovered": true,
+  "maxLoopLagMs": 5.988166999999976,
+  "rssBytes": 532103168,
+  "walBytes": 4128272,
+  "publicResetOperationUnwired": true,
+  "commandPosts": 8,
+  "mainSqlAttempts": 0,
+  "timings": [
+    {
+      "roundTripMs": 1.98241599999983,
+      "requestBytes": 41,
+      "replyBytes": 1775,
+      "encodeMs": 0.008125000000063665
+    },
+    {
+      "roundTripMs": 55.264834000000064,
+      "requestBytes": 41,
+      "replyBytes": 1860,
+      "encodeMs": 0.020041000000219356
+    },
+    {
+      "roundTripMs": 0.33791699999983393,
+      "requestBytes": 41,
+      "replyBytes": 138,
+      "encodeMs": 0.0021660000002157176
+    },
+    {
+      "roundTripMs": 0.5594999999998436,
+      "requestBytes": 41,
+      "replyBytes": 138,
+      "encodeMs": 0.004999999999654392
+    },
+    {
+      "roundTripMs": 4.26391700000022,
+      "requestBytes": 41,
+      "replyBytes": 215,
+      "encodeMs": 0.00466599999981554
+    },
+    {
+      "roundTripMs": 4.245208000000275,
+      "requestBytes": 41,
+      "replyBytes": 138,
+      "encodeMs": 0.0063329999998131825
+    }
+  ],
+  "runtime": "Deno 2.9.4",
+  "temporaryDataRemoved": true,
+  "exitCode": 0
+}
