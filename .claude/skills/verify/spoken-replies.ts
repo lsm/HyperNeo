@@ -37,7 +37,7 @@ const inputFacts = () => app.db.getSDKMessageRepo().getUserMessages(sessionId).f
   const content=message?.type==='user' ? message.message.content : [];
   return Array.isArray(content) ? content.filter(block=>block.type==='text' && block.text.startsWith('[input:')).map(block=>(block as {text:string}).text) : [];
 });
-const evidence = () => ({ inputFacts:inputFacts(), asr:{active:asrActive,accepted:asrAccepted,rejected:asrRejected}, speech:[...new Map((app.db.getDatabase().prepare("SELECT reason FROM operation_refusals WHERE operation='neo.speech' ORDER BY rowid").all() as {reason:string}[]).map(row=>{const value=JSON.parse(row.reason); return [value.id,value];})).values()], publications:app.db.getDatabase().prepare('SELECT COUNT(*) AS n FROM neo_publications').get() });
+const evidence = () => ({ inputFacts:inputFacts(), messages:app.db.getSDKMessageRepo().getUserMessages(sessionId).map(row=>app.db.getSDKMessageRepo().getMessageByUuid(sessionId,row.uuid)), asr:{active:asrActive,accepted:asrAccepted,rejected:asrRejected}, speech:[...new Map((app.db.getDatabase().prepare("SELECT reason FROM operation_refusals WHERE operation='neo.speech' ORDER BY rowid").all() as {reason:string}[]).map(row=>{const value=JSON.parse(row.reason); return [value.id,value];})).values()], publications:app.db.getDatabase().prepare('SELECT COUNT(*) AS n FROM neo_publications').get() });
 const wait = async (check: () => boolean) => { for(let i=0;i<1500 && !check();i++) await new Promise(done => setTimeout(done,20)); assert(check()); };
 const clients: { hub:MessageHub; transport:WebSocketClientTransport; events:unknown[] }[] = [];
 let finish = () => {};
