@@ -184,6 +184,31 @@ describe('public pairing revocation activation', () => {
     expect(notifications).toEqual([]);
     expect(mainSql).toBe(0);
   });
+  test('persistent read failure releases the caller while retaining eventual connection closure', async () => {
+    const target = seed();
+    gateway.loseReceipt = true;
+    gateway.failedReads = Infinity;
+    let settled = false;
+    const pending = revoke(target).finally(() => {
+      settled = true;
+    });
+    try {
+      await new Promise((done) => setTimeout(done, 1000));
+      expect(settled).toBe(true);
+      expect(await pending).toMatchObject({
+        kind: 'failed',
+        message: expect.stringContaining('outcome unknown'),
+      });
+    } finally {
+      gateway.failedReads = 0;
+      await pending;
+      const until = Date.now() + 2000;
+      while (!notifications.includes(target) && Date.now() < until)
+        await new Promise((done) => setTimeout(done, 5));
+      expect(notifications).toEqual([target]);
+      expect(gateway.writes).toBe(1);
+    }
+  });
   test('gateway close cancels read recovery without an unconfirmed notification', async () => {
     const target = seed();
     gateway.loseReceipt = true;

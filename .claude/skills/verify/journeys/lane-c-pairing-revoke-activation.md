@@ -35,3 +35,10 @@ getter and abort at close entry. Record request/reply bytes, worker round trips,
 RPC/health latency, loop lag and RSS; queue, SQL and clone time are not isolated.
 Save flags and numeric data only, never raw codes, credentials or CLI output.
 Public browser layout and deployment remain outside this proof.
+
+Use --persistent-read-outage to reproduce the review finding. Keep the read lane
+unavailable for one second after losing a committed writer reply. Record caller
+settlement, reader admissions and actual victim connection state. Restore the
+reader and require eventual closure with exactly one write admission. This pins
+both a finite foreground recovery budget and the revocation fence; a cap that
+simply drops recovery must not strand the revoked connection.

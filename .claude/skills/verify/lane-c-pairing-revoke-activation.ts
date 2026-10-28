@@ -177,6 +177,20 @@ try {
   evidence.lostReceiptFailure = await revoke(protectedTarget.device.id, nextHuman).then(() => 'unexpected success', String); assert.match(String(evidence.lostReceiptFailure), /outcome unknown/); assert.equal(active(protectedTarget.device.id), false); await wait(lostVictim.closed);
   assert.equal(commandPosts, beforePosts + 1); assert.equal(readPosts, beforeReads + 3); assert.equal(notifications.filter((id) => id === protectedTarget.device.id).length, 1); evidence.readOnlyRetryClosesAfterLostReceipt = true;
   const recovered = seed(); assert.deepEqual(await revoke(recovered.device.id, nextHuman), { ok: true }); assert.equal(active(recovered.device.id), false); evidence.writerRecovered = true;
+  if (process.argv.includes('--persistent-read-outage')) {
+    const delayedTarget = seed(); const delayedVictim = await connect(delayedTarget.credential);
+    const writesBeforeOutage = commandPosts; const readsBeforeOutage = readPosts;
+    loseNextReceipt = true; rejectReadsUntilClose = true; let settled = false;
+    const delayed = revoke(delayedTarget.device.id, nextHuman).then(() => 'unexpected success', String).finally(() => { settled = true; });
+    await new Promise((done) => setTimeout(done, 1000));
+    const settledDuringOutage = settled; assert.equal(active(delayedTarget.device.id), false);
+    evidence.persistentReadOutage = { rpcSettledWithinOneSecond: settledDuringOutage, readAdmissionsWithinOneSecond: readPosts - readsBeforeOutage, writeAdmissions: commandPosts - writesBeforeOutage, targetStillConnectedDuringOutage: !delayedVictim.closed(), persistedInactive: true };
+    rejectReadsUntilClose = false;
+    assert.match(await delayed, /outcome unknown/);
+    try { await wait(delayedVictim.closed); } catch (error) { evidence.eventualClosureAfterReadRecovery = false; throw error; }
+    assert.equal(commandPosts, writesBeforeOutage + 1); evidence.eventualClosureAfterReadRecovery = true;
+    assert.equal(settledDuringOutage, true, 'persistent read failure must release the RPC caller without abandoning eventual socket closure');
+  }
   const shutdownTarget = seed(); const beforeShutdownReads = readPosts; const beforeShutdownWrites = commandPosts; loseNextReceipt = true; rejectReadsUntilClose = true;
   const closingCall = revoke(shutdownTarget.device.id, nextHuman).then(() => 'unexpected success', String);
   await wait(() => readPosts > beforeShutdownReads);
