@@ -57,7 +57,7 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
         version: process.argv.includes('--wrong-version')
           ? 'unsupported-fixture'
           : process.argv.includes('--production-version')
-            ? '1.0.83'
+            ? '1.0.105'
             : 'fixture-1',
         protocolVersion: 3,
       });
