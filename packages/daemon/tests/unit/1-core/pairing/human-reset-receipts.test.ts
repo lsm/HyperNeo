@@ -4,6 +4,7 @@ import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import { DevicePairingRepository } from '../../../../src/storage/repositories/device-pairing-repository';
 import { resetHumanDevices } from '../../../../src/storage/repositories/human-device-reset-repository';
+import { humanDeviceResetReads } from '../../../../src/storage/repositories/human-device-reset-read';
 import { humanDeviceResetWrites } from '../../../../src/storage/repositories/human-device-reset-write';
 import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
@@ -27,11 +28,8 @@ describe('human reset receipts', () => {
     await gateway.close();
     db.close();
   });
-  const read = (id: string): Promise<Receipt | null> => {
-    const op = DB_OPS.get('pairing.humanReset.read');
-    if (!op) return Promise.reject(new Error('human reset reader is not registered'));
-    return gateway.run(op, { method: 'receipt', args: [id] } as never) as Promise<Receipt | null>;
-  };
+  const read = (id: string): Promise<Receipt | null> =>
+    gateway.call(humanDeviceResetReads, 'receipt', id);
   const reset = (id?: string) => gateway.call(humanDeviceResetWrites, 'reset', now, id);
   const pair = () => {
     const code = repo.createCode('human', 'Synthetic phone', true, now);
@@ -84,15 +82,23 @@ describe('human reset receipts', () => {
   test('only a notice matching both recovery origin fields authorizes the receipt', async () => {
     const id = randomUUID();
     const conversationId = randomUUID();
-    db.prepare('INSERT INTO human_device_resets (id, reset_at, devices_json) VALUES (?, ?, ?)')
-      .run(id, now, '[]');
+    db.prepare('INSERT INTO human_device_resets (id, reset_at, devices_json) VALUES (?, ?, ?)').run(
+      id,
+      now,
+      '[]'
+    );
     expect(await read(id)).toBeNull();
     const append = (sessionId: string, messageId: string) => {
-      expect(new NeoPublicationRepository(db).append({
-        conversationId, publicationId: randomUUID(),
-        producerInput: { sessionId, messageId },
-        shortText: 'Synthetic recovery', fullText: 'Synthetic recovery', links: [],
-      }).accepted).toBe(true);
+      expect(
+        new NeoPublicationRepository(db).append({
+          conversationId,
+          publicationId: randomUUID(),
+          producerInput: { sessionId, messageId },
+          shortText: 'Synthetic recovery',
+          fullText: 'Synthetic recovery',
+          links: [],
+        }).accepted
+      ).toBe(true);
     };
     append('different-producer', id);
     append('daemon:device-recovery', randomUUID());
@@ -111,10 +117,14 @@ describe('human reset receipts', () => {
   test('second-notice failure leaves no exact receipt or partially revoked humans', async () => {
     const humans = Array.from({ length: 21 }, pair);
     const id = randomUUID();
-    db.exec("CREATE TRIGGER reject_second_notice BEFORE INSERT ON neo_publications WHEN json_extract(NEW.payload_json, '$.fullText') LIKE '%(part 2)%' BEGIN SELECT RAISE(ABORT, 'synthetic second notice failure'); END");
+    db.exec(
+      "CREATE TRIGGER reject_second_notice BEFORE INSERT ON neo_publications WHEN json_extract(NEW.payload_json, '$.fullText') LIKE '%(part 2)%' BEGIN SELECT RAISE(ABORT, 'synthetic second notice failure'); END"
+    );
     await expect(reset(id)).rejects.toThrow('synthetic second notice failure');
     expect(await read(id)).toBeNull();
     expect(humans.every((h) => repo.isActiveDevice(h.device.id))).toBe(true);
-    expect(db.prepare('SELECT COUNT(*) AS count FROM neo_publications').get()).toEqual({ count: 0 });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM neo_publications').get()).toEqual({
+      count: 0,
+    });
   });
 });

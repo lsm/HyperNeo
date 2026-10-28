@@ -19,8 +19,7 @@ const { createDaemonApp } = await import('../../../packages/daemon/src/app.ts');
 const { JobQueueProcessor } = await import('../../../packages/daemon/src/storage/job-queue-processor.ts');
 const { Database: SQLite } = await import('../../../packages/daemon/src/storage/sqlite-compat.ts');
 const { DevicePairingRepository } = await import('../../../packages/daemon/src/storage/repositories/device-pairing-repository.ts');
-const { defineDbOp } = await import('../../../packages/daemon/src/storage/db-gateway/db-op.ts');
-const humanDeviceResetReads = defineDbOp<{ method: 'receipt'; args: [string] }, Receipt | null>({ name: 'pairing.humanReset.read', mode: 'read', run: () => { throw new Error('native worker required'); } });
+const { humanDeviceResetReads } = await import('../../../packages/daemon/src/storage/repositories/human-device-reset-read.ts');
 const { humanDeviceResetWrites } = await import('../../../packages/daemon/src/storage/repositories/human-device-reset-write.ts');
 const { getConfig } = await import('../../../packages/daemon/src/config.ts');
 const { MessageHub, WebSocketClientTransport } = await import('../../../packages/shared/src/mod.ts');
@@ -125,7 +124,7 @@ try {
   const active = (id: string) => inspect(() => repo.isActiveDevice(id));
   const count = (table: 'neo_publications' | 'human_device_resets') => inspect(() => (raw.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n);
   const reset = (id?: string, at = Date.now()) => id === undefined ? app!.db.gateway.call(humanDeviceResetWrites, 'reset', at) : app!.db.gateway.call(humanDeviceResetWrites, 'reset', at, id);
-  const read = (id: string) => app!.db.gateway.run(humanDeviceResetReads, { method: 'receipt', args: [id] });
+  const read = (id: string) => app!.db.gateway.call(humanDeviceResetReads, 'receipt', id);
   const humans = Array.from({ length: 21 }, () => seed()); const relay = seed('relay');
   const oldCode = inspect(() => repo.createCode('human', null, true, Date.now()));
   const connect = async (credential: string) => {

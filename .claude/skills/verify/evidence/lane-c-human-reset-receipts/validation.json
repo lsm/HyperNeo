@@ -1,0 +1,22 @@
+{
+  "unit": {
+    "command": "daemon Vitest pairing directory and DB gateway tests",
+    "passed": 133,
+    "files": 16,
+    "exitCode": 0
+  },
+  "check": {
+    "command": "bun run check",
+    "exitCode": 0
+  },
+  "nativeRuntimes": {
+    "bun": "1.4.3",
+    "deno": "deno 2.9.4 (stable, release, aarch64-apple-darwin)"
+  },
+  "limitations": [
+    "Pinned native Bun 1.4.2 not run locally",
+    "Public reset operation wiring is a separate slice",
+    "Browser layout and deployment smoke not run"
+  ],
+  "cleanup": "Proof wrapper saved evidence and removed each synthetic daemon data directory."
+}

@@ -5,8 +5,8 @@ import { resetHumanDevices } from './human-device-reset-repository.ts';
 class HumanDeviceResetWriter {
   constructor(private readonly db: Database) {}
 
-  reset(now: number) {
-    return resetHumanDevices(this.db, now);
+  reset(now: number, requestId?: string) {
+    return resetHumanDevices(this.db, now, requestId);
   }
 }
 
