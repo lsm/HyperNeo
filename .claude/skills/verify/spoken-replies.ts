@@ -44,9 +44,16 @@ let finish = () => {};
 const finished = new Promise<void>(done => { finish = done; });
 let sequence=0, asrActive=0, asrAccepted=0, asrRejected=0;
 const asrConnections = new Set<{send(data:string):unknown}>();
+const flightFrames: unknown[] = [];
 const fixture = createServer(async (request,response) => {
   try {
     response.setHeader('Content-Type','application/json');
+    if (request.url === '/flight-trace') {
+      let body=''; for await (const part of request) body+=part;
+      flightFrames.push(JSON.parse(body));
+      response.end('{}'); return;
+    }
+    if (request.url === '/flight-evidence') { response.end(JSON.stringify({frames:flightFrames})); return; }
     if (request.url === '/grow-transcript') {
       for (const ws of asrConnections) ws.send(JSON.stringify({type:'Results',is_final:false,channel:{alternatives:[{transcript:'Public live transcript. These are additional public fixture words that continue across several lines while the person keeps speaking. The indicator must keep its original size while only the text capsule grows taller.'}]}}));
       response.end('{}'); return;
