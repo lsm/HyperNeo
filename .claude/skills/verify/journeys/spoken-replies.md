@@ -38,3 +38,9 @@ and preview go through the operation door. Synthesis runs outside the admission
 serial queue, with one upstream request at a time; terminal acknowledgments and
 disconnect abort it. No audio or credentials are persisted. Phone playback and
 buffering are separately proved by the native spoken-replies journey.
+
+Voice conversation instructions belong in NEO_ROOT_TURN_END, not every human
+message. The replay also sends real neo.message.send input through the RPC door
+and reads its stored SDK prompt: require only [input: live_voice; speech: on],
+with original public human content unchanged and no repeated tool instructions.
+The input/speech fact is source and playback state, not authority to speak.
