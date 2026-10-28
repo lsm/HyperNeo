@@ -1,0 +1,26 @@
+{
+  "focusedTests": {
+    "files": 4,
+    "passed": 56,
+    "exitCode": 0
+  },
+  "repositoryCheck": {
+    "command": "bun run check",
+    "exitCode": 0
+  },
+  "nativeRuntimes": {
+    "bun": "1.4.3",
+    "deno": "deno 2.9.4 (stable, release, aarch64-apple-darwin)"
+  },
+  "legacyRemoveBodyUnchanged": true,
+  "legacyRemoveBodySha256": "97cbaadee9ffe2f889e7b28965ecd586dbbe26ca2af3e68cc222e458e76a1cbf",
+  "sqlBaselineChanged": false,
+  "decomposition": "The small build/wire exception: a typed delegate and one awaited RPC replacement; the existing 12-line transaction body is not moved or changed.",
+  "heldWriterLatency": "A deliberately held writer takes about 1.2 seconds and does not meet a 250 ms write target; health and main-loop responsiveness are measured separately.",
+  "cleanup": "Owned clients, locks, processors and daemon stopped; proof wrapper saved evidence and removed synthetic data.",
+  "limitations": [
+    "Pinned native Bun 1.4.2 not run locally",
+    "Workspace addition, project-folder/startup writes and history reads remain separate",
+    "Browser layout and deployment smoke not run"
+  ]
+}
