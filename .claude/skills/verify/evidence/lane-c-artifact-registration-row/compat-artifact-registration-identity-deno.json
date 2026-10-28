@@ -1,0 +1,33 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "admissionFailureNeverCapturesOrFallsBack": true,
+  "unknownOutcomeNeverAutomaticallyReplayed": true,
+  "healthWhileWriterHeldMs": 2.5417919999999867,
+  "deliberatelyHeldInitializationMs": 1465.8427909999998,
+  "existingDenoCaptureFailsClosed": true,
+  "successfulCaptureAndSnapshotReadVerified": false,
+  "concurrentInitializationShared": true,
+  "pathRefusalsPreserved": true,
+  "currentOwnershipRechecked": true,
+  "maxLoopLagMs": 7.210916999999881,
+  "rssBytes": 547766272,
+  "walBytes": 4128272,
+  "commandPosts": 3,
+  "fullTransitiveCaptureOwnershipGraphMeasured": false,
+  "pass": true,
+  "registrationMainIdentitySqlAttempts": 0,
+  "workerMetrics": [
+    {
+      "roundTripMs": 2.307207999999946,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.007375000000138243
+    },
+    {
+      "roundTripMs": 1293.2352500000002,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.050499999999829015
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "mainThreadMovementClaim": false,
+  "phase": "pure receipt serialization characterization; scratch legacy saves remain on supplied connection, public registration uses activated writer",
+  "firstRpcMs": 10.825874999999996,
+  "existingDenoCaptureFailsClosed": true,
+  "successfulDenoCaptureAndReadVerified": false,
+  "optionalFieldMatrixPreserved": true,
+  "matrixCases": 6,
+  "callerOwnedRollbackPreserved": true,
+  "serializationErrorsBeforeWritePreserved": true,
+  "healthMs": 0.4993339999998625,
+  "rssBytes": 545619968,
+  "walBytes": 4128272,
+  "pass": true,
+  "mainInsertRuns": 0,
+  "publicMainInsertBindCounts": []
+}
