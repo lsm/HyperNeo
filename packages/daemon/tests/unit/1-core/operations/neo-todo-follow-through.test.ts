@@ -50,6 +50,7 @@ function world() {
     sendRefused: false,
     onSend: null as null | (() => void),
     onTell: null as null | (() => void),
+    onStatus: null as null | (() => void),
   };
   const calls: { name: string; input: Record<string, unknown> }[] = [];
   const told: string[] = [];
@@ -109,6 +110,7 @@ function world() {
             : { ok: true, value: {} }
         );
       const worker = workers.get(id);
+      knobs.onStatus?.();
       return completed({
         ok: true,
         value: {
@@ -281,6 +283,116 @@ describe('a doing todo never sits idle without someone on it', () => {
     expect(w.todo(todo.id).state).toBe('doing');
     await w.at(126);
     expect(w.todo(todo.id).blockedBy).toBe('stalled');
+  });
+
+  test('a todo waiting on an open human card waits on the human, then resumes on a fresh ladder after the answer', async () => {
+    const w = (current = world());
+    const todo = w.add();
+    await w.runner.start(todo.id);
+    const card = w.store.askQuestion(
+      'outreach-card',
+      'ask',
+      {
+        kind: 'reply',
+        text: 'May the outreach go out?',
+        todoId: todo.id,
+        options: null,
+        multiple: false,
+        yesLabel: null,
+        noLabel: null,
+        startTodos: null,
+      } as unknown as Parameters<typeof w.store.askQuestion>[2],
+      Date.now()
+    );
+    for (const minutes of [20, 40, 60, 80, 120]) await w.at(minutes);
+    expect(w.todo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'question' });
+    expect(w.named('work.send')).toHaveLength(0);
+    expect(w.named('work.start')).toHaveLength(1);
+    w.store.answerQuestion(card, [], 'button', Date.now());
+    await w.at(130);
+    expect(w.todo(todo.id).state).toBe('doing');
+    await w.at(149);
+    expect(w.named('work.send')).toHaveLength(0);
+    await w.at(151);
+    expect(w.named('work.send')).toHaveLength(1);
+  });
+
+  test('a card that opens while the sweep reads the worker stops the reminder', async () => {
+    const w = (current = world());
+    const todo = w.add();
+    await w.runner.start(todo.id);
+    w.knobs.onStatus = () => {
+      w.knobs.onStatus = null;
+      w.store.askQuestion(
+        'late-card',
+        'ask',
+        {
+          kind: 'reply',
+          text: 'Which wording?',
+          todoId: todo.id,
+          options: null,
+          multiple: false,
+          yesLabel: null,
+          noLabel: null,
+          startTodos: null,
+        } as unknown as Parameters<typeof w.store.askQuestion>[2],
+        Date.now()
+      );
+    };
+    await w.at(20);
+    expect(w.named('work.send')).toHaveLength(0);
+  });
+
+  test("the daemon's own stalled card does not make a resumed todo wait on the human", async () => {
+    const w = (current = world());
+    const todo = w.adopt(null, 'tracked');
+    await w.at(60);
+    expect(w.todo(todo.id).blockedBy).toBe('stalled');
+    Object.assign(w.workers.get('adopted-session')!, { status: 'running' });
+    await w.at(65);
+    expect(w.todo(todo.id).state).toBe('doing');
+    w.sessions.recordProgress(
+      todo.id,
+      { landed: null, live: { status: 'done', lastActivityAt: Date.now() }, cardStatus: 'done' },
+      Date.now()
+    );
+    expect(w.store.updateTodo(w.todo(todo.id), {}, Date.now()).state).toBe('doing');
+  });
+
+  test("a retitled stalled todo still knows its card is the daemon's own", async () => {
+    const w = (current = world());
+    const todo = w.adopt(null, 'tracked');
+    await w.at(60);
+    expect(w.todo(todo.id).blockedBy).toBe('stalled');
+    w.store.updateTodo(w.todo(todo.id), { title: 'Watch the rollout' }, Date.now());
+    await w.at(65);
+    expect(w.todo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
+  });
+
+  test('a stalled todo with an open human card waits on the human instead', async () => {
+    const w = (current = world());
+    const todo = w.adopt(null, 'tracked');
+    await w.at(60);
+    expect(w.todo(todo.id).blockedBy).toBe('stalled');
+    w.store.askQuestion(
+      'approval-card',
+      'tracked',
+      {
+        kind: 'reply',
+        text: 'Approve the outreach?',
+        todoId: todo.id,
+        options: null,
+        multiple: false,
+        yesLabel: null,
+        noLabel: null,
+        startTodos: null,
+      } as unknown as Parameters<typeof w.store.askQuestion>[2],
+      Date.now()
+    );
+    await w.at(65);
+    expect(w.todo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'question' });
+    await w.at(200);
+    expect(w.todo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'question' });
   });
 
   test('a backlog of long-idle workers is moved to fresh workers one per sweep', async () => {
