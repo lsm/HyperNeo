@@ -343,6 +343,22 @@ describe('a doing todo never sits idle without someone on it', () => {
     expect(w.named('work.send')).toHaveLength(0);
   });
 
+  test("the daemon's own stalled card does not make a resumed todo wait on the human", async () => {
+    const w = (current = world());
+    const todo = w.adopt(null, 'tracked');
+    await w.at(60);
+    expect(w.todo(todo.id).blockedBy).toBe('stalled');
+    Object.assign(w.workers.get('adopted-session')!, { status: 'running' });
+    await w.at(65);
+    expect(w.todo(todo.id).state).toBe('doing');
+    w.sessions.recordProgress(
+      todo.id,
+      { landed: null, live: { status: 'done', lastActivityAt: Date.now() }, cardStatus: 'done' },
+      Date.now()
+    );
+    expect(w.store.updateTodo(w.todo(todo.id), {}, Date.now()).state).toBe('doing');
+  });
+
   test('a stalled todo with an open human card waits on the human instead', async () => {
     const w = (current = world());
     const todo = w.adopt(null, 'tracked');
