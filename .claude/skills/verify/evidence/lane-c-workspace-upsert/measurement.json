@@ -1,0 +1,73 @@
+{
+  "base": "2275afcc49982a1126f5f776a8278f3ee65e3578",
+  "units": [
+    {
+      "file": "packages/daemon/src/storage/repositories/workspace-history-repository.ts",
+      "name": "WorkspaceHistoryRepository.constructor",
+      "start": 13,
+      "end": 13,
+      "lines": 1,
+      "sha256": "37ae8ea2954cf392605c195037a07d4abd1b4658eb5c923aaa06862a17a0101d"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/workspace-history-repository.ts",
+      "name": "WorkspaceHistoryRepository.upsert",
+      "start": 65,
+      "end": 76,
+      "lines": 12,
+      "sha256": "4bf96c1052073e21c2c2c22c8899c7453c12d325cf032984dcbb7dede7ccba60"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/workspace-history-repository.ts",
+      "name": "WorkspaceHistoryRepository.get",
+      "start": 78,
+      "end": 83,
+      "lines": 6,
+      "sha256": "d50ee99179a2cc65d8be3cc9023ff0a718bb87e73ed5dcc73e6230e30c3346f9"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/workspace-history-upsert-write.ts",
+      "name": "whole typed data-only upsert command",
+      "lines": 18,
+      "sha256": "67676583861b10d88722885b90c3817485bde826ee74e7bdfd35d182abec7b39"
+    }
+  ],
+  "totalLines": 37,
+  "productionLines": 23,
+  "smokeRegistrationLines": 1,
+  "delta": [
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-ops.ts",
+      "lines": 2
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/workspace-history-repository.ts",
+      "lines": 3
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/workspace-history-upsert-write.ts",
+      "lines": 18
+    },
+    {
+      "file": "scripts/deno-smoke.sh",
+      "lines": 1
+    }
+  ],
+  "sql": [
+    {
+      "owner": "upsert",
+      "bytes": 198,
+      "sha256": "7a3de9b94dbfe8ab16e26c2d390ac423f188d5aeb648ef394056f9f28f41dc1f"
+    },
+    {
+      "owner": "get",
+      "bytes": 74,
+      "sha256": "05ea393a2c73a55a29e3813f8d789eb3fb777f7f9e3283bd6208cd50e2dd457b"
+    }
+  ],
+  "contract": "workspace.history.upsert.write / write / upsert(path, now): plain {path,last_used_at,use_count}; one increment and supplied timestamp; row read joins the same immediate transaction; default-clock upsert(path) remains supported; failures roll back and unknown outcomes are never automatically replayed.",
+  "sharedPlumbing": "Unchanged native gateway adapter, SQLite binding/transaction implementation and Date.now default clock are reused.",
+  "mcpAuditClaim": false,
+  "mcpBoundary": "Public workspace.add and all MCP refresh/import/tool-default dependencies are outside this construction command. No claim that their full graph has been measured or audited here.",
+  "sqlBaselineChanged": false
+}

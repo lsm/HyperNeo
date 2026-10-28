@@ -62,8 +62,7 @@ export class WorkspaceHistoryRepository {
     }));
   }
 
-  upsert(path: string): WorkspaceHistoryRow {
-    const now = Date.now();
+  upsert(path: string, now = Date.now()): WorkspaceHistoryRow {
     this.db
       .prepare(
         `INSERT INTO workspace_history (path, last_used_at, use_count)

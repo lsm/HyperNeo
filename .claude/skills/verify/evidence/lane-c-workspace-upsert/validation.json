@@ -1,0 +1,30 @@
+{
+  "focusedTests": {
+    "files": 5,
+    "passed": 64,
+    "exitCode": 0
+  },
+  "repositoryCheck": {
+    "command": "bun run check",
+    "exitCode": 0
+  },
+  "nativeRuntimes": {
+    "bun": "1.4.3",
+    "deno": "deno 2.9.4 (stable, release, aarch64-apple-darwin)"
+  },
+  "sqlBytesUnchanged": true,
+  "legacyDefaultClockPreserved": true,
+  "timestampContract": "Only captured numeric time crosses to the writer; queued execution retains that value. Legacy upsert(path) still samples Date.now by default.",
+  "receiptReadRollback": "Unit fault injection proves new insertion and existing counter changes roll back if the receipt lookup throws inside the gateway transaction.",
+  "publicWorkspaceAddExercised": false,
+  "mcpAuditClaim": false,
+  "mcpBoundary": "MCP refresh/import/tool-default dependencies are outside this construction. Their full graph is not audited or claimed here.",
+  "heldWriterLatency": "The deliberate 1.2-second lock wait remains a write-latency miss against 250 ms; health responsiveness is recorded separately.",
+  "sqlBaselineChanged": false,
+  "cleanup": "Native helpers stopped owned resources; proof wrapper saved evidence and removed synthetic daemon data.",
+  "limitations": [
+    "Pinned native Bun 1.4.2 not run locally",
+    "Public add wiring and MCP dependency audit follow separately",
+    "History reads, browser layout and deployment are outside this construction"
+  ]
+}
