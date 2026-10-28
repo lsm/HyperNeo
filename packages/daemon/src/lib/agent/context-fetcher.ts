@@ -204,6 +204,7 @@ export class ContextFetcher {
   ): void {
     const providerId = modelMetadata?.provider;
     if (!providerId || !NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) return;
+    if (modelMetadata?.autoCompactPercentOverride !== undefined) return;
     const metadataCapacity = positiveInteger(modelMetadata?.contextWindow);
     if (!metadataCapacity) return;
     const sdkCapacity = positiveInteger(response.maxTokens);
@@ -268,6 +269,8 @@ export class ContextFetcher {
       ? positiveInteger(modelMetadata?.contextWindow)
       : undefined;
     const metadataCapacityAny = positiveInteger(modelMetadata?.contextWindow);
+    const overrideArmed =
+      modelMetadata?.autoCompactPercentOverride !== undefined && metadataCapacity !== undefined;
     const shouldPreferMetadata = modelMetadata?.preferContextWindowMetadata ?? !isNativeProvider;
     const hasStaleOneMillionSuffix =
       responseModel &&
@@ -287,7 +290,10 @@ export class ContextFetcher {
       metadataCapacityAny !== undefined &&
       (sdkCapacityValue === undefined || sdkCapacityValue === 0);
     const useMetadata =
-      (shouldPreferMetadata && metadataCapacity) || sdkOverreporting || sdkCapacityUnavailable;
+      overrideArmed ||
+      (shouldPreferMetadata && metadataCapacity) ||
+      sdkOverreporting ||
+      sdkCapacityUnavailable;
     const capacity = useMetadata
       ? (metadataCapacityAny ?? 0)
       : (sdkCapacityValue ?? metadataCapacity ?? 0);
