@@ -30,18 +30,20 @@ const processors = new Set<InstanceType<typeof JobQueueProcessor>>();
 const transports: InstanceType<typeof WebSocketClientTransport>[] = [];
 const timings: { roundTripMs: number; requestBytes: number; replyBytes: number; encodeMs: number }[] = [];
 let measuring = false;
+let mainConnection: InstanceType<typeof SQLite> | undefined;
 let mainSqlAttempts = 0;
 let rejectNextWrite = false;
 let loseNextReceipt = false;
 let commandPosts = 0;
 SQLite.prototype.prepare = function (...args) {
+  const connection = this;
   const statement = Reflect.apply(prepare, this, args);
   if (!/SELECT\s+1\s+FROM\s+paired_devices|UPDATE\s+paired_devices\s+SET\s+revoked_at/i.test(args[0])) return statement;
   return new Proxy(statement, { get(target, key) {
     const value = Reflect.get(target, key);
     if (typeof value !== 'function') return value;
     return (...values: unknown[]) => {
-      if (measuring && ['get', 'all', 'iterate', 'run', 'values'].includes(String(key))) {
+      if (measuring && connection === mainConnection && ['get', 'all', 'iterate', 'run', 'values'].includes(String(key))) {
         mainSqlAttempts++;
         throw new Error('pairing revocation SQL reached main');
       }
@@ -104,7 +106,7 @@ try {
   } finally { JobQueueProcessor.prototype.start = start; }
   assert.notEqual(app.server.port, 8399);
   await Promise.all([...processors].map((processor) => processor.stop()));
-  const raw = app.db.getDatabase(); await waitForSdkBodyCopy(raw);
+  const raw = app.db.getDatabase(); mainConnection = raw; await waitForSdkBodyCopy(raw);
   const repo = new DevicePairingRepository(raw);
   const inspect = <T>(fn: () => T): T => { const previous = measuring; measuring = false; try { return fn(); } finally { measuring = previous; } };
   const seed = (kind: 'human' | 'relay' = 'relay') => inspect(() => { const code = repo.createCode(kind, null, true, Date.now()); return repo.redeem(code.code, 'Synthetic device', Date.now())!; });
@@ -118,7 +120,11 @@ try {
   transports.push(transport); hub.registerTransport(transport); await transport.initialize();
   let previous = performance.now(); let maxLoopLagMs = 0;
   timer = setInterval(() => { const now = performance.now(); maxLoopLagMs = Math.max(maxLoopLagMs, now - previous - 5); previous = now; }, 5);
+  const cached = raw.prepare('SELECT 1 FROM paired_devices WHERE id = ? AND revoked_at IS NULL');
   measuring = true;
+  assert.throws(() => cached.get(actor.device.id), /revocation SQL reached main/);
+  assert.throws(() => raw.prepare('UPDATE paired_devices SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL').run(Date.now(), target.device.id), /revocation SQL reached main/);
+  assert.equal(mainSqlAttempts, 2); mainSqlAttempts = 0; evidence.mainGuardSelfCheckPassed = true;
   const coldAt = performance.now();
   try { assert.deepEqual(await revoke(target.device.id), { ok: true }); } catch(error) { evidence.commandFailure = String(error); throw error; }
   evidence.coldMs = performance.now() - coldAt; assert.equal(active(target.device.id), false); evidence.committedBeforeReceipt = true;

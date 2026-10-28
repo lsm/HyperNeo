@@ -1,5 +1,8 @@
 # Build the pairing revocation writer command
 
+Remeasure the full local call graph with lane-c-pairing-revoke-command-measure.cjs;
+it must stay within 200 lines.
+
 This construction slice registers a data-only command. The public device.revoke
 mutation and its connection-closing callback stay unchanged; activation must prove
 those effects separately, including recovery after a lost commit receipt.
@@ -12,7 +15,9 @@ explicit owned session-door socket. No live daemon or port 8399 is used.
 
 Commit the failing native-command proof first: the baseline rejects the missing
 registered command. Deny new and cached main statements for active-device lookup
-and revocation updates. Fixture and assertion reads leave measurement synchronously.
+and revocation updates. First assert that the guard rejects a cached main read
+and a newly prepared main update; reset the deliberate self-check counter before
+command execution. Fixture and assertion reads leave measurement synchronously.
 Then prove authorization, committed receipts and the real CLI reader's revoked
 status. Refuse unpaired, relay, agent and revoked-human callers without changing
 the target; retain the session-door exception and repeated-target refusal.
