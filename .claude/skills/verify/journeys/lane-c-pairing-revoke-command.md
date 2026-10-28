@@ -1,7 +1,10 @@
 # Build the pairing revocation writer command
 
 Remeasure the full local call graph with lane-c-pairing-revoke-command-measure.cjs;
-it must stay within 200 lines.
+it must stay within 200 lines. Run lane-c-pairing-revoke-command-types.cjs with
+Bun from the repository root to typecheck the focused test and its imports using
+the daemon tests' strict configuration. The construction test must use the typed
+repository command, so its arguments and receipt remain checked.
 
 This construction slice registers a data-only command. The public device.revoke
 mutation and its connection-closing callback stay unchanged; activation must prove
