@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const root = path.join(process.cwd(),'.claude/skills/verify/evidence/lane-c-conversation-reservation-extract');
-const metrics = new Set(['coldMs','healthWhileHeldMs','heldMs','concurrentMs','maxLoopLagMs','rssBytes','walBytes','timings']);
+const metrics = new Set(['coldMs','healthWhileHeldMs','heldMs','concurrentMs','maxLoopLagMs','rssBytes','walBytes','timings','publicResetOperationUnwired','publicResetOperationExercised']);
 const semantic = value => Object.fromEntries(Object.entries(value).filter(([key])=>!metrics.has(key)));
 const results = [];
 for (const runtime of ['bun','deno']) {

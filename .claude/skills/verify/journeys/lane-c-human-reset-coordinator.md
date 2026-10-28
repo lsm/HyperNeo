@@ -16,8 +16,9 @@ The dependency manifest pins exact source hashes for the unchanged 142-line
 reset/receipt subtree and separately audited 277-line core append subtree. Neo
 authorized this audited-dependency split. Keep both interfaces and all hashes in
 the contract test and each PR body. Do not change app.ts, service/publication,
-WorkerLane or shared gateway plumbing. Public reset operation wiring follows
-in its own measured PR; construction must not claim that path moved off main.
+WorkerLane or shared gateway plumbing. This construction journey invokes the
+coordinator directly; use [reset activation](lane-c-human-reset-activation.md)
+for the public CLI and notification path.
 
 Self-check cached/new main SQL denial, then run registered reset/read commands in
 a fresh daemon. Verify real CLI history and public neo.publication.read. Exercise
@@ -39,4 +40,5 @@ Run focused strict types, pairing/gateway tests, repository checks and the measu
 local graph/diff cap. Save flags, byte/timing/RSS/WAL metrics and hashes only;
 never raw credentials, device IDs, codes or CLI output. Close owned clients,
 processors, timers, locks and daemon before the proof wrapper deletes its data.
-Public reset event wiring, browser layout and deployment remain unverified.
+This construction journey does not exercise public reset events; use the
+activation journey. Browser layout and deployment remain unverified.

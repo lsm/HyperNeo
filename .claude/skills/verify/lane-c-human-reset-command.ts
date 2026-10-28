@@ -186,10 +186,10 @@ try {
   assert.equal(count('human_device_resets'), preFaultResets + 1); assert.equal(count('neo_publications'), preFaultNotices + 1); await new Promise((done) => setTimeout(done, 100)); assert.equal(commandPosts, beforePosts + 1); evidence.unknownOutcomeNotReplayed = true;
   assert.equal((await reset()).devices.length, 0); evidence.writerRecovered = true;
   assert.equal(mainSqlAttempts, 0); assert(maxLoopLagMs < 1000); evidence.maxLoopLagMs = maxLoopLagMs; evidence.rssBytes = process.memoryUsage().rss; evidence.walBytes = statSync(`${app.db.getDbPath()}-wal`).size;
-  evidence.publicResetOperationUnwired = true; evidence.commandPosts = commandPosts;
+  evidence.publicResetOperationExercised = false; evidence.commandPosts = commandPosts;
 } finally {
   measuring = false; if (timer) clearInterval(timer); if (lock) { try { lock.exec('ROLLBACK'); } catch {} lock.close(); }
   try { await Promise.all(transports.map((t) => t.close())); await Promise.all([...processors].map((p) => p.stop())); await app?.cleanup(); }
   finally { SQLite.prototype.prepare = prepare; JobQueueProcessor.prototype.start = start; globalThis.Worker = NativeWorker; globalThis.fetch = nativeFetch; evidence.mainSqlAttempts = mainSqlAttempts; evidence.timings = timings; writeFileSync(join(run, 'evidence/human-reset-command.json'), JSON.stringify(evidence, null, 2)); }
 }
-console.log('ok native human reset and human-visible notice commit atomically off main, with real public readback and no write replay; reset operation wiring remains separate');
+console.log('ok native human reset and human-visible notice commit atomically off main, with real public readback and no write replay; public reset operation is not exercised by this construction proof');

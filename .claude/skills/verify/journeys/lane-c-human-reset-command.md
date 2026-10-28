@@ -9,8 +9,9 @@ local Bun 1.4.3 is not proof of the pinned Bun 1.4.2 native runtime. Deno is 2.9
 
 This construction registers a data-only reset command. Its input is one numeric
 time; its receipt contains only reset/conversation IDs, time and cleared device
-IDs/names. The public reset operation stays on its existing path until a separate
-wiring PR. Do not call that mutation while target SQL is denied in this journey.
+IDs/names. This construction journey calls the registered command directly.
+For the public CLI and notification path, use [reset activation](lane-c-human-reset-activation.md).
+Do not substitute a different mutation surface for this construction contract.
 
 Commit a failing native proof before construction: the fresh worker rejects the
 missing command, and the real device/publication state remains unchanged. Pin
@@ -54,4 +55,5 @@ local call graph and changed production lines to at most 200. Save flags, byte/
 timing metrics, RSS and WAL; do not save IDs, names, codes, credentials or CLI
 output. SQL, queue and clone time are not isolated. Close all owned clients,
 processors and daemon before proof-run saves evidence and removes its data.
-Browser layout, public reset wiring and deployment remain unverified here.
+This construction journey does not exercise public reset wiring. Browser layout
+and deployment remain unverified here; public CLI/events use the activation journey.

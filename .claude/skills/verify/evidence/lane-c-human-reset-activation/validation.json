@@ -1,0 +1,24 @@
+{
+  "focusedTests": {
+    "files": 18,
+    "passed": 146,
+    "exitCode": 0
+  },
+  "repositoryCheck": {
+    "command": "bun run check",
+    "exitCode": 0
+  },
+  "nativeRuntimes": {
+    "bun": "1.4.3",
+    "deno": "deno 2.9.4 (stable, release, aarch64-apple-darwin)"
+  },
+  "publicSurface": "Real devices reset-human CLI via the isolated owner-only session door, authenticated WebSocket events and public neo.publication.read.",
+  "exactReceiptProof": "The public lost-reply notice is matched to the writer request UUID; refused requests remain absent and concurrent empty receipts retain distinct IDs.",
+  "sqlBaselineChanged": false,
+  "historicalExtractionComparison": "Saved before/after SQL/semantic evidence still compares identically. Construction coverage metadata is excluded from semantic comparison.",
+  "cleanup": "Each native run saved evidence, stopped owned resources and removed synthetic daemon data.",
+  "limitations": [
+    "Pinned native Bun 1.4.2 not run locally",
+    "Browser layout and deployment smoke not run; deployment remains with Neo"
+  ]
+}

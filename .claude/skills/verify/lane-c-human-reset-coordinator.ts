@@ -225,10 +225,10 @@ try {
   await assert.rejects(coordinate(Date.now()), /outcome unknown/); await new Promise(done=>setTimeout(done,20)); await app.db.gateway.close(); const readsAtClose=readPosts; const writesAtClose=commandPosts;
   await new Promise(done=>setTimeout(done,1100)); assert.equal(readPosts,readsAtClose); assert.equal(commandPosts,writesAtClose); assert.equal(coordinatorNotices.length,2); await assert.rejects(coordinate(Date.now()),/closed/); assert.equal(commandPosts,writesAtClose); evidence.gatewayCloseStopsRecoveryWithoutNotification=true;
   assert.equal(mainSqlAttempts, 0); assert(maxLoopLagMs < 1000); evidence.maxLoopLagMs = maxLoopLagMs; evidence.rssBytes = process.memoryUsage().rss; evidence.walBytes = statSync(`${app.db.getDbPath()}-wal`).size;
-  evidence.publicResetOperationUnwired = true; evidence.commandPosts = commandPosts; evidence.readPosts = readPosts;
+  evidence.publicResetOperationExercised = false; evidence.commandPosts = commandPosts; evidence.readPosts = readPosts;
 } finally {
   measuring = false; if (timer) clearInterval(timer); if (lock) { try { lock.exec('ROLLBACK'); } catch {} lock.close(); }
   try { await Promise.all(transports.map((t) => t.close())); await Promise.all([...processors].map((p) => p.stop())); await app?.cleanup(); }
   finally { SQLite.prototype.prepare = prepare; JobQueueProcessor.prototype.start = start; globalThis.Worker = NativeWorker; globalThis.fetch = nativeFetch; evidence.mainSqlAttempts = mainSqlAttempts; evidence.timings = timings; writeFileSync(join(run, 'evidence/human-reset-coordinator.json'), JSON.stringify(evidence, null, 2)); }
 }
-console.log('ok gateway-lifetime coordinator notification recovery; exact receipt recovery by request UUID with no reset replay; human reset and human-visible notice commit atomically off main, with real public readback and no write replay; reset operation wiring remains separate');
+console.log('ok gateway-lifetime coordinator notification recovery; exact receipt recovery by request UUID with no reset replay; human reset and human-visible notice commit atomically off main, with real public readback and no write replay; public reset operation is not exercised by this construction proof');

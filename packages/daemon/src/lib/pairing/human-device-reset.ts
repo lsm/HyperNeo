@@ -1,7 +1,9 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../storage/sqlite-compat.ts';
-import { resetHumanDevices } from '../../storage/repositories/human-device-reset-repository.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { createHumanResetCoordinator } from './human-reset-coordinator.ts';
+import type { resetHumanDevices } from '../../storage/repositories/human-device-reset-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { fromDoor } from './pairing-operations.ts';
 import { announceDeviceRevoked } from './upgrade-auth.ts';
@@ -15,6 +17,10 @@ export function onHumanDevicesReset(listener: (conversationId: string) => void):
 }
 
 export function createHumanDeviceResetOperation(db: () => Database) {
+  const coordinate = createHumanResetCoordinator(gatewayFor(db()), (receipt) => {
+    for (const device of receipt.devices) announceDeviceRevoked(device.id);
+    for (const listener of listeners) listener(receipt.conversationId);
+  });
   const reset = (superpipe({})('device.reset_human') as PipelineAPI)
     .input(['caller'])
     .pipe(
@@ -30,17 +36,17 @@ export function createHumanDeviceResetOperation(db: () => Database) {
       'caller',
       'result:reset'
     )
-    .pipe((now: number) => resetHumanDevices(db(), now), 'reset', 'reset')
+    .pipe(coordinate, 'reset', 'reset')
     .pipe(
-      (receipt: ReturnType<typeof resetHumanDevices>) => {
-        for (const device of receipt.devices) announceDeviceRevoked(device.id);
-        for (const listener of listeners) listener(receipt.conversationId);
-        return { ok: true, resetAt: receipt.resetAt, devices: receipt.devices };
-      },
+      (receipt: ReturnType<typeof resetHumanDevices>) => ({
+        ok: true,
+        resetAt: receipt.resetAt,
+        devices: receipt.devices,
+      }),
       'reset',
       'reset'
     )
-    .end('reset') as (caller: OperationCaller) => unknown;
+    .endAsync('reset') as (caller: OperationCaller) => Promise<unknown>;
   return defineOperation({
     name: 'device.reset_human',
     description:

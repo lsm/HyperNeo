@@ -209,10 +209,10 @@ try {
   const recoveredPage = await connectedRelay.hub.request<{ ok: boolean; items: { producerInput?: { messageId: string } }[] }>('operation.invoke', { name: 'neo.publication.read', input: { conversationId: recovered!.conversationId, after: 0, limit: 100 } }); assert(recoveredPage.ok); assert(recoveredPage.items.some((p) => p.producerInput?.messageId === lostId)); evidence.recoveredNoticeVisibleThroughPublicReader = true;
   assert.equal((await reset()).devices.length, 0); evidence.writerRecovered = true;
   assert.equal(mainSqlAttempts, 0); assert(maxLoopLagMs < 1000); evidence.maxLoopLagMs = maxLoopLagMs; evidence.rssBytes = process.memoryUsage().rss; evidence.walBytes = statSync(`${app.db.getDbPath()}-wal`).size;
-  evidence.publicResetOperationUnwired = true; evidence.commandPosts = commandPosts; evidence.readPosts = readPosts;
+  evidence.publicResetOperationExercised = false; evidence.commandPosts = commandPosts; evidence.readPosts = readPosts;
 } finally {
   measuring = false; if (timer) clearInterval(timer); if (lock) { try { lock.exec('ROLLBACK'); } catch {} lock.close(); }
   try { await Promise.all(transports.map((t) => t.close())); await Promise.all([...processors].map((p) => p.stop())); await app?.cleanup(); }
   finally { SQLite.prototype.prepare = prepare; JobQueueProcessor.prototype.start = start; globalThis.Worker = NativeWorker; globalThis.fetch = nativeFetch; evidence.mainSqlAttempts = mainSqlAttempts; evidence.timings = timings; writeFileSync(join(run, 'evidence/human-reset-receipts.json'), JSON.stringify(evidence, null, 2)); }
 }
-console.log('ok native exact receipt recovery by request UUID with no reset replay; human reset and human-visible notice commit atomically off main, with real public readback and no write replay; reset operation wiring remains separate');
+console.log('ok native exact receipt recovery by request UUID with no reset replay; human reset and human-visible notice commit atomically off main, with real public readback and no write replay; public reset operation is not exercised by this construction proof');

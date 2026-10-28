@@ -30,3 +30,7 @@ Focused contracts also cover atomic rollback when notice persistence fails,
 ordinary revoke never reopening bootstrap, and network/agent caller refusal.
 This is report-only: S8/S9 and CORS are unchanged. Not verified: real phone push
 delivery, SSH access, GUI rendering, or Deno execution.
+
+For native Bun/Deno DB-worker and main-SQL-denial coverage of the same public CLI,
+including lost-reply notification recovery, use
+[reset activation](lane-c-human-reset-activation.md).
