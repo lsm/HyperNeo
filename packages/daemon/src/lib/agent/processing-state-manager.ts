@@ -287,7 +287,11 @@ export class ProcessingStateManager {
     return true;
   }
 
-  async setProcessing(messageId: string, phase: StreamingPhase = 'initializing'): Promise<void> {
+  async setProcessing(
+    messageId: string,
+    phase: StreamingPhase = 'initializing',
+    turnMessageIds?: string[]
+  ): Promise<void> {
     if (this.processingState.status === 'processing') {
       this.noteInitializationProgress(phase);
     }
@@ -303,6 +307,11 @@ export class ProcessingStateManager {
       phase: this.streamingPhase,
       streamingStartedAt: this.streamingStartedAt ?? undefined,
       isCompacting: this.isCompacting,
+      messageIds:
+        turnMessageIds ??
+        (this.processingState.status === 'processing'
+          ? this.processingState.messageIds
+          : undefined),
     });
   }
 
@@ -443,6 +452,7 @@ export class ProcessingStateManager {
       phase: this.streamingPhase,
       streamingStartedAt: this.streamingStartedAt ?? undefined,
       isCompacting: this.isCompacting,
+      messageIds: this.processingState.messageIds,
     };
 
     this.persistToDatabase();

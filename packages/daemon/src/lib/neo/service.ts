@@ -24,6 +24,7 @@ import { wakeStalledAsks } from './stalled-asks.ts';
 import type { SessionSchedule } from '../../storage/repositories/session-schedule-repository.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { receivedNeoHumanInput } from './human-input.ts';
+import { parseProcessingState } from '../session/space-session-reads.ts';
 import { workerIdentity, workerEngine } from '@hyperneo/shared/types/worker-identity';
 import { z } from 'zod';
 import { WorkSummarySchema } from '../drivers/types.ts';
@@ -223,6 +224,13 @@ export class NeoService {
     };
     this.publish = createNeoPublisher({
       receivedHumanInput: (sessionId, id) => !!receivedNeoHumanInput(this, sessionId, id),
+      currentHumanInputs: (sessionId) => {
+        const state = parseProcessingState(this.db.getSession(sessionId)?.processingState);
+        if (state.status !== 'processing') return [];
+        if (Array.isArray(state.messageIds))
+          return state.messageIds.filter((id): id is string => typeof id === 'string');
+        return typeof state.messageId === 'string' ? [state.messageId] : [];
+      },
       getBinding: (id) => this.repo.getBindingBySession(id),
       getRootBinding: () => this.repo.defaultBinding(),
       hasProject: (id) => !!this.repo.getProject(id),

@@ -1366,6 +1366,14 @@ describe('ProcessingStateManager', () => {
       expect(emitMock).not.toHaveBeenCalled();
     });
 
+    test('keeps the turn messageIds across a phase transition', async () => {
+      await manager.setProcessing('msg-2', 'initializing', ['msg-1', 'msg-2']);
+      await manager.updatePhase('streaming');
+
+      const state = manager.getState();
+      expect(state.messageIds).toEqual(['msg-1', 'msg-2']);
+    });
+
     test('persists phase update to database', async () => {
       await manager.setProcessing('msg-1', 'initializing');
       updateSessionMock.mockClear();
