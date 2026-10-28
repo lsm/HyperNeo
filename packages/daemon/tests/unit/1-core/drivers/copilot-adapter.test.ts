@@ -314,6 +314,7 @@ describe('owned Copilot lifecycle', () => {
       'queue',
       'status',
       'stop',
+      'archive',
     ]);
     const work = await start(fixture, 'settled');
     const detail = await fixture.adapter.status!(work.ref, undefined, work.receipt);
