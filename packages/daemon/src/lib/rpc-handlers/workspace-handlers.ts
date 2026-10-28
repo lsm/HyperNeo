@@ -48,7 +48,7 @@ export function setupWorkspaceHandlers(
     if (!path || typeof path !== 'string') {
       throw new Error('path is required');
     }
-    const success = workspaceHistoryRepo.remove(path);
+    const success = await workspaceHistoryRepo.removeAsync(path);
     return { success };
   });
 }

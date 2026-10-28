@@ -1,3 +1,5 @@
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { workspaceHistoryRemoveWrites } from './workspace-history-remove-write.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { WorkspaceHistoryEntry } from '@hyperneo/shared';
 
@@ -95,6 +97,10 @@ export class WorkspaceHistoryRepository {
         'SELECT path, last_used_at, use_count FROM workspace_history ORDER BY last_used_at DESC, id DESC'
       )
       .all() as WorkspaceHistoryRow[];
+  }
+
+  removeAsync(path: string) {
+    return gatewayFor(this.db).call(workspaceHistoryRemoveWrites, 'remove', path);
   }
 
   remove(path: string): boolean {
