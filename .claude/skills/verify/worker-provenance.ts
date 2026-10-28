@@ -185,6 +185,7 @@ try {
       invoke: async (_caller, name, input) => ({ kind: 'completed', value: await rpc(name, { ...input, from: `session:${caller}` }) }),
     });
     const snapshot = (model: string, effort?: string) => appendFileSync(transcript, JSON.stringify({ type: 'assistant', uuid: crypto.randomUUID(), timestamp: new Date().toISOString(), ...(effort ? { perTurnEffort: effort } : {}), message: { model, content: [{ type: 'text', text: 'Untrusted body effort: low' }] } }) + '\n');
+    const openings = new Set<string>();
     for (const [model, effort] of [['claude-opus-5-5', 'medium'], ['claude-sonnet-5', 'high'], ['claude-sonnet-5', undefined]]) {
       snapshot(model!, effort);
       const result = await runner.proceed(todo.id, 'Continue the programming task.');
@@ -192,6 +193,10 @@ try {
       const lines = readFileSync(transcript, 'utf8').trim().split('\n').map(line => JSON.parse(line));
       const task = lines.findLast(entry => entry.type === 'user').message.content;
       assert(task.includes(`Agent: ${model} (effort: ${effort ?? 'unknown'}) via Claude`), task);
+      const opening = sessions.readSent(todo.id)?.opening;
+      assert(opening && task.includes(opening), 'stored opening must occur in the native task input');
+      assert(!openings.has(opening), 'native follow-ups must have distinct delivery openings');
+      openings.add(opening);
       const card = sessions.readCard(todo.id)!;
       assert.equal(card.model, model); assert.equal(card.effort, effort ?? null);
       sessions.bind(todo.id, ref, Date.now());

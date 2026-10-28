@@ -1,3 +1,4 @@
+import { driverExchangeReport, readDriverLanded } from '../../../../src/lib/neo/driver-work.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { createNeoQuestionOperations } from '../../../../src/lib/neo/question-operations.ts';
@@ -381,6 +382,77 @@ describe('neo todo runner', () => {
       }
     }
   );
+
+  test.each(['landed', 'reply'])(
+    'does not attribute another todo input by the provenance opening: %s',
+    async (match) => {
+      const h = setup();
+      try {
+        h.setStatus({
+          ok: true,
+          value: {
+            status: 'running',
+            lastActivityAt: 1,
+            recentInputs: [],
+            model: 'claude-opus-5-5',
+            effort: 'medium',
+          },
+        });
+        h.setSend({ ok: true, value: { delivered: false } });
+        const first = h.add({ pack: 'coding', kind: 'pr', params: {} });
+        const second = h.add({ pack: 'coding', kind: 'pr', params: {} });
+        for (const todo of [first, second]) {
+          h.sessions.recordRef(todo.id, ref, undefined, undefined, {}, { verb: 'send', ref });
+          await h.runner.start(todo.id);
+        }
+        const messages = h.calls
+          .filter((call) => call.name === 'work.send')
+          .map((call) => String(call.input.message));
+        const firstSent = h.sessions.readSent(first.id)!;
+        const secondSent = h.sessions.readSent(second.id)!;
+        const exchange = [
+          { at: 100, role: 'user' as const, text: messages[1] },
+          { at: 101, role: 'agent' as const, text: 'Only the second todo completed.' },
+        ];
+        if (match === 'landed') {
+          const outcome = completed({
+            ok: true,
+            value: {
+              status: 'done',
+              lastActivityAt: 101,
+              recentInputs: [{ at: 100, text: messages[1] }],
+              exchange,
+            },
+          });
+          expect(readDriverLanded(outcome, firstSent)).toBeNull();
+          expect(readDriverLanded(outcome, secondSent)).toBe(100);
+        } else {
+          expect(driverExchangeReport(exchange, false, firstSent.opening)).toBeNull();
+          expect(driverExchangeReport(exchange, false, secondSent.opening)).toContain(
+            'Only the second todo completed.'
+          );
+        }
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
+  test('identical follow-up instructions have different delivery openings', async () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      await h.runner.start(todo.id);
+      h.setStatus({ ok: true, value: { status: 'running', lastActivityAt: 1, recentInputs: [] } });
+      h.setSend({ ok: true, value: { delivered: false } });
+      await h.runner.proceed(todo.id, 'Continue.');
+      const first = h.sessions.readSent(todo.id)!;
+      await h.runner.proceed(todo.id, 'Continue.');
+      expect(h.sessions.readSent(todo.id)?.opening).not.toBe(first.opening);
+    } finally {
+      h.db.close();
+    }
+  });
 
   test('a late identity refresh cannot overwrite a replacement binding', async () => {
     const h = setup();
