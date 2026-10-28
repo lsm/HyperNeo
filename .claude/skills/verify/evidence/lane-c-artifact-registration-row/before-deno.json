@@ -1,0 +1,16 @@
+{
+  "sqlScope": "Registration row INSERT only; existing read-only authorization/receipt SQL, native FS and Git publication not included",
+  "fullTransitiveCaptureOwnershipGraphMeasured": false,
+  "mainGuardSelfCheckPassed": true,
+  "firstConcurrentRpcMs": 10.692124999999805,
+  "existingDenoCaptureFailsClosed": true,
+  "successfulDenoRowActivationAndBytesVerified": false,
+  "pathRefusalsPreserved": true,
+  "maxLoopLagMs": 0.4562500000001819,
+  "rssBytes": 547880960,
+  "walBytes": 4128272,
+  "pass": true,
+  "registrationMainInsertRuns": 0,
+  "rowCommandPosts": 0,
+  "workerMetrics": []
+}
