@@ -11,7 +11,12 @@ const place = { machine: 'imac', folder: '/focus/dolmen', name: 'dolmen' };
 const neo: OperationCaller = { source: 'internal', sessionId: 'neo', role: 'neo' };
 
 function harness(
-  workers: { id: string; status: WorkStatus; folder?: string; refusal?: 'not_open' }[],
+  workers: {
+    id: string;
+    status: WorkStatus;
+    folder?: string;
+    refusal?: 'not_open' | 'uncertain';
+  }[],
   free: string[]
 ) {
   const sent: string[] = [];
@@ -53,7 +58,10 @@ function harness(
     },
     send: async (ref) => {
       sent.push(ref.id);
-      return workers.find((worker) => worker.id === ref.id)?.refusal
+      await Promise.resolve();
+      const refusal = workers.find((worker) => worker.id === ref.id)?.refusal;
+      if (refusal === 'uncertain') return { ok: false, reason: 'not_delivered', detail: 'unknown' };
+      return refusal
         ? { ok: false, reason: 'not_open', detail: 'archived', notSent: true }
         : { ok: true, value: { delivered: true, receipt: { executionId: 'e', inputId: 'i' } } };
     },
@@ -116,6 +124,21 @@ describe('work.start reuses an idle worker', () => {
     const result = await run.start();
     expect(result.value?.ref.id).toBe('fresh');
     expect(run.unusable).toEqual([{ adapter: 'claude-desktop', id: 'gone' }]);
+  });
+
+  test('two concurrent starts never send to the same idle worker', async () => {
+    const run = harness([{ id: 'idle', status: 'done' }], ['idle']);
+    const results = await Promise.all([run.start(), run.start()]);
+    expect(results.map((result) => result.value?.ref.id).sort()).toEqual(['fresh', 'idle']);
+    expect(run.sent).toEqual(['idle']);
+  });
+
+  test('an uncertain send marks the worker for reconciliation and starts nothing new', async () => {
+    const run = harness([{ id: 'maybe', status: 'done', refusal: 'uncertain' }], ['maybe']);
+    const result = await run.start();
+    expect(result.ok).toBe(false);
+    expect(run.started).toEqual([]);
+    expect(run.unusable).toEqual([{ adapter: 'claude-desktop', id: 'maybe' }]);
   });
 
   test('the human starting work always gets a new session', async () => {
