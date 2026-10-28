@@ -8,7 +8,7 @@ let input = 0;
 let eventId = 0;
 let pendingAck: (() => void) | undefined;
 const serial: { id: string; interaction: string; prompt: string }[] = [];
-const queued: { id: string; messageId: string }[] = [];
+const queueItems: { id: string; messageId: string }[] = [];
 const fixtureState = () => join(process.cwd(), `${sessionId}.fixture.json`);
 const send = (message: unknown) => {
   const data = JSON.stringify(message);
@@ -145,7 +145,7 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
         reply({ messageId: id });
         break;
       }
-      if (prompt === 'queued') queued.push({ id: `queue-item-${input}`, messageId: id });
+      if (prompt === 'queued') queueItems.push({ id: `queue-item-${input}`, messageId: id });
       if (prompt === 'crash') {
         reply({ messageId: id });
         setTimeout(() => process.exit(1), 5);
@@ -316,7 +316,7 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
     }
     case 'session.queue.pendingItems':
       reply({
-        items: queued.map((item) => ({
+        items: queueItems.map((item) => ({
           ...item,
           kind: 'message',
           displayText: 'queued',
@@ -326,9 +326,9 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
       });
       break;
     case 'session.queue.removeAt': {
-      const index = queued.findIndex((item) => item.id === msg.params?.id);
-      if (index >= 0) queued.splice(index, 1);
-      reply({ removed: index >= 0 });
+      const index = queueItems.findIndex((item) => item.id === msg.params?.id);
+      if (index >= 0) queueItems.splice(index, 1);
+      if (!process.argv.includes('--lost-remove-ack')) reply({ removed: index >= 0 });
       break;
     }
     case 'session.abort':

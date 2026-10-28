@@ -330,7 +330,13 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
       const { items } = await bounded(session.rpc.queue.pendingItems(), timeoutMs);
       const item = items.find((entry) => entry.messageId === inputId);
       if (!item) return false;
-      const { removed } = await bounded(session.rpc.queue.removeAt({ id: item.id }), timeoutMs);
+      let removed: boolean;
+      try {
+        ({ removed } = await bounded(session.rpc.queue.removeAt({ id: item.id }), timeoutMs));
+      } catch (error) {
+        state.status = 'unreachable';
+        throw error;
+      }
       const input = Object.hasOwn(state.inputs, inputId) ? state.inputs[inputId] : undefined;
       if (removed && input && !input.outcome) {
         input.outcome = 'stopped';

@@ -8,14 +8,14 @@ import type { WorkCallContext, WorkStarted } from '../../../../src/lib/drivers/t
 
 const context = { from: 'chat', caller: { source: 'rpc' } } as WorkCallContext;
 const runs: { run: string; close: () => Promise<void> }[] = [];
-function setup() {
+function setup(flag = '') {
   const run = mkdtempSync(join(tmpdir(), 'copilot-withdraw-'));
   mkdirSync(join(run, 'home'));
   const source = fileURLToPath(new URL('../../../fixtures/copilot-sdk.ts', import.meta.url));
   const cliPath = join(run, 'copilot');
   writeFileSync(
     cliPath,
-    `#!/usr/bin/env bun\nprocess.argv.push('--production-version', '--durable-inputs'); await import(${JSON.stringify(source)});\n`,
+    `#!/usr/bin/env bun\nprocess.argv.push('--production-version', '--durable-inputs', ${JSON.stringify(flag)}); await import(${JSON.stringify(source)});\n`,
     { mode: 0o700 }
   );
   const deps = {
@@ -126,5 +126,17 @@ describe('Copilot owned withdraw', () => {
     await f.restart();
     expect(await f.withdraw(work, queued)).toMatchObject({ ok: false, reason: 'unreachable' });
     expect(f.queueCalls()).toEqual([]);
+  });
+
+  test('a lost removal reply fails closed instead of leaving the input pending', async () => {
+    const f = setup('--lost-remove-ack');
+    const work = await f.start('serial:first');
+    const queued = await f.queue(work, 'queued');
+    expect(await f.withdraw(work, queued)).toMatchObject({ ok: false, reason: 'unreachable' });
+    expect(await f.adapter.status!(work.ref)).toMatchObject({ ok: false, reason: 'unreachable' });
+    expect(await f.adapter.send!(work.ref, 'settled', context)).toMatchObject({
+      ok: false,
+      reason: 'unreachable',
+    });
   });
 });
