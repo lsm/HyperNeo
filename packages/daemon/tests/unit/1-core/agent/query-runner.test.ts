@@ -1400,7 +1400,7 @@ describe('QueryRunner', () => {
       for await (const _msg of generator) {
       }
 
-      expect(setProcessingSpy).toHaveBeenCalledWith('msg-1', 'initializing');
+      expect(setProcessingSpy).toHaveBeenCalledWith('msg-1', 'initializing', ['msg-1']);
     });
 
     it('does not publish or transition status at generator-yield time', async () => {

@@ -2328,7 +2328,6 @@ export class QueryRunner {
       }
 
       if (!isInternal) {
-        await stateManager.setProcessing(message.uuid ?? 'unknown', 'initializing');
         this._lastConsumedUserMessage = {
           uuid: message.uuid ?? '',
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
@@ -2340,6 +2339,11 @@ export class QueryRunner {
         if (this._turnConsumedUserMessages.length > 32) {
           this._turnConsumedUserMessages.shift();
         }
+        await stateManager.setProcessing(
+          message.uuid ?? 'unknown',
+          'initializing',
+          this._turnConsumedUserMessages.map((entry) => entry.uuid)
+        );
         if (!this.ctx.firstMessageReceived) {
           const generationMessages = this._consumedUserMessages.get(queryGeneration) ?? [];
           generationMessages.push({

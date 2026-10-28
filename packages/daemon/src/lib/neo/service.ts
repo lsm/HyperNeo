@@ -217,11 +217,12 @@ export class NeoService {
     };
     this.publish = createNeoPublisher({
       receivedHumanInput: (sessionId, id) => !!receivedNeoHumanInput(this, sessionId, id),
-      currentHumanInput: (sessionId) => {
+      currentHumanInputs: (sessionId) => {
         const state = parseProcessingState(this.db.getSession(sessionId)?.processingState);
-        return state.status === 'processing' && typeof state.messageId === 'string'
-          ? state.messageId
-          : null;
+        if (state.status !== 'processing') return [];
+        if (Array.isArray(state.messageIds))
+          return state.messageIds.filter((id): id is string => typeof id === 'string');
+        return typeof state.messageId === 'string' ? [state.messageId] : [];
       },
       getBinding: (id) => this.repo.getBindingBySession(id),
       getRootBinding: () => this.repo.defaultBinding(),
