@@ -1,0 +1,57 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "nativeObserverDetected": true,
+  "onlyActualConnectedIdsDeduplicated": true,
+  "singleFlightWhileReplyHeldMs": 2200.802708,
+  "healthWhileHeldMs": 5.970000000000255,
+  "lostReceiptError": "Error: synthetic committed revocation reply lost; outcome unknown",
+  "readAdmissionsDuring2200msOutage": 2,
+  "unconfirmedDevicesRemainOpen": true,
+  "connectionsClosedAfterReadRecovery": true,
+  "recoveryMs": 734.517167,
+  "activeAndUnpairedRemainOpen": true,
+  "noMutationReplay": true,
+  "realCliConfirmsPersistedRevocation": true,
+  "walBytes": 4128272,
+  "cleanupStopsPollsAndLateNotification": true,
+  "maxLoopLagMs": 12.215291999999863,
+  "rssBytes": 539344896,
+  "readAdmissions": 5,
+  "writeAdmissions": 2,
+  "mainSqlAttempts": 0,
+  "timings": [
+    {
+      "roundTripMs": 1.0256659999995463,
+      "requestBytes": 110,
+      "replyBytes": 2,
+      "encodeMs": 0.02212500000041473
+    },
+    {
+      "roundTripMs": 1.3433330000007118,
+      "requestBytes": 125,
+      "replyBytes": 11,
+      "encodeMs": 0.03366699999969569
+    },
+    {
+      "roundTripMs": 2.4169590000001335,
+      "requestBytes": 110,
+      "replyBytes": 40,
+      "encodeMs": 0.002290999999786436
+    },
+    {
+      "roundTripMs": 0.4994170000009035,
+      "requestBytes": 125,
+      "replyBytes": 11,
+      "encodeMs": 0.002082999999402091
+    },
+    {
+      "roundTripMs": 0.9246249999996508,
+      "requestBytes": 110,
+      "replyBytes": 40,
+      "encodeMs": 0.013209000000642845
+    }
+  ],
+  "runtime": "Deno 2.9.4",
+  "temporaryDataRemoved": true,
+  "exitCode": 0
+}

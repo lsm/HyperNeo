@@ -1,0 +1,191 @@
+{
+  "units": [
+    {
+      "file": "packages/daemon/src/lib/pairing/connected-device-observer.ts",
+      "name": "whole observer module",
+      "lines": 44
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/connected-device-read.ts",
+      "name": "whole observer module",
+      "lines": 19
+    },
+    {
+      "file": "packages/daemon/src/lib/websocket-server-transport.ts",
+      "name": "WebSocketServerTransport.stopRevocations",
+      "start": 42,
+      "end": 42,
+      "lines": 1
+    },
+    {
+      "file": "packages/daemon/src/lib/websocket-server-transport.ts",
+      "name": "WebSocketServerTransport.readInactiveDevices",
+      "start": 50,
+      "end": 50,
+      "lines": 1
+    },
+    {
+      "file": "packages/daemon/src/lib/websocket-server-transport.ts",
+      "name": "WebSocketServerTransport.observeDevices",
+      "start": 51,
+      "end": 51,
+      "lines": 1
+    },
+    {
+      "file": "packages/daemon/src/lib/websocket-server-transport.ts",
+      "name": "WebSocketServerTransport.constructor",
+      "start": 53,
+      "end": 61,
+      "lines": 9
+    },
+    {
+      "file": "packages/daemon/src/lib/websocket-server-transport.ts",
+      "name": "WebSocketServerTransport.initialize",
+      "start": 63,
+      "end": 65,
+      "lines": 3
+    },
+    {
+      "file": "packages/daemon/src/lib/websocket-server-transport.ts",
+      "name": "WebSocketServerTransport.startDeviceObserver",
+      "start": 67,
+      "end": 74,
+      "lines": 8
+    },
+    {
+      "file": "packages/daemon/src/lib/websocket-server-transport.ts",
+      "name": "WebSocketServerTransport.connectedDeviceIds",
+      "start": 76,
+      "end": 81,
+      "lines": 6
+    },
+    {
+      "file": "packages/daemon/src/lib/websocket-server-transport.ts",
+      "name": "WebSocketServerTransport.stopStaleConnectionChecker",
+      "start": 93,
+      "end": 98,
+      "lines": 6
+    },
+    {
+      "file": "packages/daemon/src/lib/websocket-server-transport.ts",
+      "name": "WebSocketServerTransport.close",
+      "start": 153,
+      "end": 168,
+      "lines": 16
+    },
+    {
+      "file": "packages/daemon/src/lib/websocket-server-transport.ts",
+      "name": "WebSocketServerTransport.closeDevice",
+      "start": 287,
+      "end": 291,
+      "lines": 5
+    },
+    {
+      "file": "packages/daemon/src/lib/websocket-server-transport.ts",
+      "name": "WebSocketServerTransport.deviceOf",
+      "start": 293,
+      "end": 296,
+      "lines": 4
+    },
+    {
+      "file": "packages/daemon/src/lib/websocket-server-transport.ts",
+      "name": "WebSocketServerTransport.unregisterClient",
+      "start": 298,
+      "end": 322,
+      "lines": 25
+    },
+    {
+      "file": "packages/daemon/src/lib/websocket-server-transport.ts",
+      "name": "WebSocketServerTransport.notifyConnectionHandlers",
+      "start": 405,
+      "end": 415,
+      "lines": 11
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/device-pairing-repository.ts",
+      "name": "DevicePairingRepository.constructor",
+      "start": 125,
+      "end": 125,
+      "lines": 1
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/device-pairing-repository.ts",
+      "name": "DevicePairingRepository.isActiveDevice",
+      "start": 145,
+      "end": 149,
+      "lines": 5
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/upgrade-auth.ts",
+      "name": "revocationListeners",
+      "start": 11,
+      "end": 11,
+      "lines": 1
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/upgrade-auth.ts",
+      "name": "revokedDuringLookups",
+      "start": 14,
+      "end": 14,
+      "lines": 1
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/upgrade-auth.ts",
+      "name": "lookups",
+      "start": 15,
+      "end": 15,
+      "lines": 1
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/upgrade-auth.ts",
+      "name": "announceDeviceRevoked",
+      "start": 17,
+      "end": 20,
+      "lines": 4
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/upgrade-auth.ts",
+      "name": "onDeviceRevoked",
+      "start": 22,
+      "end": 25,
+      "lines": 4
+    },
+    {
+      "file": "packages/daemon/src/app.ts",
+      "name": "app transport reader binding",
+      "start": 694,
+      "end": 699,
+      "lines": 6
+    }
+  ],
+  "totalLines": 182,
+  "productionLines": 100,
+  "smokeRegistrationLines": 1,
+  "delta": [
+    {
+      "file": "packages/daemon/src/app.ts",
+      "lines": 2
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/connected-device-observer.ts",
+      "lines": 44
+    },
+    {
+      "file": "packages/daemon/src/lib/websocket-server-transport.ts",
+      "lines": 33
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-ops.ts",
+      "lines": 2
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/connected-device-read.ts",
+      "lines": 19
+    },
+    {
+      "file": "scripts/deno-smoke.sh",
+      "lines": 1
+    }
+  ],
+  "sharedPlumbing": "Unchanged socket registration, router, timer, logger and gateway transport/transaction adapters are reused."
+}

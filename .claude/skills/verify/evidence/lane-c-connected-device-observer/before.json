@@ -1,0 +1,19 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "nativeObserverDetected": false,
+  "lostReceiptError": "Error: synthetic committed revocation reply lost; outcome unknown",
+  "readAdmissionsDuring2200msOutage": 0,
+  "unconfirmedDevicesRemainOpen": true,
+  "connectionsClosedAfterReadRecovery": false,
+  "mainSqlAttempts": 0,
+  "timings": [
+    {
+      "roundTripMs": 0.3888329999999769,
+      "requestBytes": 125,
+      "replyBytes": 11,
+      "encodeMs": 0.008417000000008557
+    }
+  ],
+  "runtime": "Bun 1.4.3",
+  "temporaryDataRemoved": true
+}

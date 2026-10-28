@@ -1,6 +1,14 @@
 import type { RuntimeSocket } from './runtime-server/index.ts';
 import { Logger, emitStructuredLogEvent } from './logger.ts';
-import { onDeviceRevoked, type UpgradeIdentity } from './pairing/upgrade-auth.ts';
+import {
+  announceDeviceRevoked,
+  onDeviceRevoked,
+  type UpgradeIdentity,
+} from './pairing/upgrade-auth.ts';
+import {
+  createConnectedDeviceObserver,
+  type InactiveDeviceReader,
+} from './pairing/connected-device-observer.ts';
 import type { HubMessage, IMessageTransport, ConnectionState } from '@hyperneo/shared';
 import type { HubMessageWithMetadata } from '@hyperneo/shared/message-hub/protocol';
 import type { MessageHubRouter, ClientConnection } from '@hyperneo/shared';
@@ -16,6 +24,7 @@ export interface WebSocketServerTransportOptions {
   maxQueueBytes?: number;
   staleTimeout?: number;
   staleCheckInterval?: number;
+  readInactiveDevices?: InactiveDeviceReader;
 }
 
 export class WebSocketServerTransport implements IMessageTransport {
@@ -38,6 +47,8 @@ export class WebSocketServerTransport implements IMessageTransport {
   private readonly staleTimeout: number;
   private readonly staleCheckInterval: number;
   private staleCheckTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly readInactiveDevices?: InactiveDeviceReader;
+  private observeDevices: ((connected: boolean) => void) | null = null;
 
   constructor(options: WebSocketServerTransportOptions) {
     this.name = options.name || 'websocket-server';
@@ -46,10 +57,27 @@ export class WebSocketServerTransport implements IMessageTransport {
     this.maxQueueBytes = options.maxQueueBytes ?? 32 * 1024 * 1024;
     this.staleTimeout = options.staleTimeout || 120000;
     this.staleCheckInterval = options.staleCheckInterval || 30000;
+    this.readInactiveDevices = options.readInactiveDevices;
   }
 
   async initialize(): Promise<void> {
     this.startStaleConnectionChecker();
+  }
+
+  private startDeviceObserver(): void {
+    if (!this.readInactiveDevices || this.observeDevices) return;
+    this.observeDevices = createConnectedDeviceObserver(
+      () => this.connectedDeviceIds(),
+      this.readInactiveDevices,
+      announceDeviceRevoked
+    );
+  }
+
+  private connectedDeviceIds(): string[] {
+    return Array.from(this.clientIdToWs.keys()).flatMap((id) => {
+      const device = this.deviceOf(id);
+      return device ? [device.deviceId] : [];
+    });
   }
 
   private startStaleConnectionChecker(): void {
@@ -123,6 +151,7 @@ export class WebSocketServerTransport implements IMessageTransport {
   }
 
   async close(): Promise<void> {
+    this.observeDevices?.(false);
     this.stopStaleConnectionChecker();
     this.stopRevocations();
 
@@ -374,6 +403,8 @@ export class WebSocketServerTransport implements IMessageTransport {
   }
 
   private notifyConnectionHandlers(state: ConnectionState, error?: Error): void {
+    if (state === 'connected') this.startDeviceObserver();
+    this.observeDevices?.(state === 'connected');
     for (const handler of this.connectionHandlers) {
       try {
         handler(state, error);
