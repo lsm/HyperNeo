@@ -40,3 +40,10 @@ publication is separate. Update earlier owned journeys whose row-INSERT expectat
 changes, rerun them, strict types/focused tests and repository checks. Use only one
 append-only smoke line; no shared/core edits. Native pinned Bun when unavailable,
 browser and Neo deployment remain unverified. Close owned resources before cleanup.
+
+Native integration children retain artifact-proof-phases.json (imports, daemon
+startup, processor stop, SDK body copy, each RPC fence and cleanup). The test parent
+includes that trace and child stdout/stderr in failures before deleting its run.
+The existing 30-second deadline and proof assertions remain unchanged; the original
+Linux CI timeout is not reproduced by a passing macOS run. A new CI failure must
+identify its actual phase before changing budgets or production behavior.

@@ -42,3 +42,10 @@ on main. Update and rerun the earlier Git identity proof for zero main row saves
 Run strict/focused tests and repository checks; append only one own smoke line.
 Native pinned Bun when unavailable, browser and Neo deployment remain unverified.
 Close owned sockets/locks/processors/app before immediate proof-data cleanup.
+
+Native integration children retain artifact-proof-phases.json (imports, daemon
+startup, processor stop, SDK body copy, each RPC fence and cleanup). The test parent
+includes that trace and child stdout/stderr in failures before deleting its run.
+The existing 30-second deadline and proof assertions remain unchanged; the original
+Linux CI timeout is not reproduced by a passing macOS run. A new CI failure must
+identify its actual phase before changing budgets or production behavior.
