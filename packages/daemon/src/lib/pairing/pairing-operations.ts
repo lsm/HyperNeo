@@ -8,7 +8,7 @@ export const SESSION_DOOR_PRINCIPAL = 'session-door';
 
 const Kind = z.enum(['human', 'relay', 'daemon']);
 const Refused = z.object({ ok: z.literal(false), reason: z.string() });
-const refused = { ok: false as const, reason: 'This action needs the user.' };
+export const refused = { ok: false as const, reason: 'This action needs the user.' };
 
 export interface PairingOperationDeps {
   readonly repo: () => DevicePairingRepository;
@@ -71,24 +71,19 @@ export function createDevicePairingOperations({
         }),
         Refused,
       ]),
-      execute: async (input, caller) => {
-        const plan = planPairingCode(
-          caller,
-          pairing().countDevices(),
-          isPairedHuman(caller),
-          input.kind === 'human' && pairing().humanRecoveryOpen()
-        );
-        if (!plan) return refused;
-        if ('reason' in plan) return { ok: false as const, reason: plan.reason };
-        const made = pairing().createCode(input.kind, input.name ?? null, plan.approved, now());
-        return {
-          ok: true as const,
-          codeId: made.id,
-          code: made.code,
-          expiresAt: made.expiresAt,
-          approval: plan.approved ? ('approved' as const) : ('pending' as const),
-        };
-      },
+      execute: async (input, caller) =>
+        pairing().createCodeAsync(
+          input.kind,
+          input.name ?? null,
+          {
+            source: caller.source,
+            principal: caller.principal,
+            device: caller.device
+              ? { deviceId: caller.device.deviceId, kind: caller.device.kind }
+              : undefined,
+          },
+          now()
+        ),
     }),
     defineOperation({
       name: 'device.pair.pending',

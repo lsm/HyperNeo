@@ -4,6 +4,7 @@ import { defineDbOp } from '../db-gateway/db-op.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { pairingApproveWrite } from './pairing-approve-write.ts';
 import { pairingRedeemWrite } from './pairing-redeem-write.ts';
+import { pairingCodeCreateWrites, type PairingCodeCaller } from './pairing-code-create-write.ts';
 
 export type DeviceKind = 'human' | 'relay' | 'daemon';
 
@@ -206,6 +207,10 @@ export class DevicePairingRepository {
         'SELECT COUNT(*) AS "all", COUNT(*) FILTER (WHERE kind = \'human\' AND revoked_at IS NULL) AS humans FROM paired_devices'
       )
       .get() as { all: number; humans: number };
+  }
+
+  createCodeAsync(kind: DeviceKind, name: string | null, caller: PairingCodeCaller, now: number) {
+    return gatewayFor(this.db).call(pairingCodeCreateWrites, 'create', kind, name, caller, now);
   }
 
   createCode(

@@ -1,5 +1,8 @@
 # Pairing code creation uses one writer admission
 
+Remeasure local bodies with `bun .claude/skills/verify/lane-c-pairing-code-create-measure.cjs`;
+the complete local call graph must stay within 200 lines.
+
 Run `lane-c-pairing-code-create.ts` through `proof-run.sh` with Bun, then with
 `VERIFY_PROOF_RUNTIME=deno` and the cached Deno on PATH. The real session-door
 probe launches the existing Bun CLI under the same disposable HOME/data and an
