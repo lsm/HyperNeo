@@ -191,6 +191,7 @@ export const WorkInputEvidenceSchema = z.discriminatedUnion('state', [
 
 export const WorkStartedSchema = WorkSummarySchema.extend({
   receipt: WorkInputReceiptSchema.optional(),
+  reused: z.literal(true).optional(),
 });
 
 export const WorkTurnEndSchema = z.object({

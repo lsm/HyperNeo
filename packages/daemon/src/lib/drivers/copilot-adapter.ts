@@ -38,6 +38,7 @@ export function createCopilotAdapter(
   const live = new Map<string, Worker>();
   const transactions = new Map<string, Promise<unknown>>();
   const starts = new Set<Promise<W.Result<W.WorkStarted>>>();
+  const launching = new Set<string>();
   let closed = false;
   const path = (id: string) => join(deps.directory, `${id}.json`);
   const write = (file: string, value: unknown) => {
@@ -106,7 +107,7 @@ export function createCopilotAdapter(
       ? { value: { id: crypto.randomUUID(), directory } }
       : { reason: reject('invalid_place', 'Copilot execution needs a directory.') };
   };
-  const launch = async (
+  const launchOwned = async (
     location: { id: string; directory: string },
     request: W.StartRequest
   ): Promise<W.Result<W.WorkStarted>> => {
@@ -153,6 +154,14 @@ export function createCopilotAdapter(
       );
     }
   };
+  const launch = async (location: { id: string; directory: string }, request: W.StartRequest) => {
+    launching.add(location.id);
+    try {
+      return await launchOwned(location, request);
+    } finally {
+      launching.delete(location.id);
+    }
+  };
   const selectFolder = (request: W.StartRequest) =>
     selectLocalStartFolder(request, deps, 'Copilot needs a local folder.');
   const start = (superpipe({})('copilot-start') as PipelineAPI)
@@ -163,7 +172,7 @@ export function createCopilotAdapter(
     .pipe(launch, ['started', 'request'], 'started')
     .endAsync('started') as (request: W.StartRequest) => Promise<W.Result<W.WorkStarted>>;
   const refresh = async (record: Record) => {
-    const owned = !closed && live.get(record.work.ref.id);
+    const owned = !closed && !launching.has(record.work.ref.id) && live.get(record.work.ref.id);
     if (owned) {
       record.snapshot = await owned.snapshot();
       save(record);
@@ -297,6 +306,49 @@ export function createCopilotAdapter(
     .pipe(admitSend, 'delivery', 'result:delivery')
     .pipe(deliver, ['delivery', 'message'], 'delivery')
     .endAsync('delivery') as (ref: W.WorkRef, message: string) => Promise<W.Result<W.WorkDelivery>>;
+  const admitRename = (record: Record, title: string): Gate<Record> => {
+    if (record.archived) return { reason: reject('not_open', 'Copilot work is archived.', true) };
+    if (title.length > 100)
+      return {
+        reason: reject('not_delivered', 'Copilot session names are 1–100 characters.', true),
+      };
+    if (launching.has(record.work.ref.id))
+      return {
+        reason: reject('busy', 'Copilot work is still starting; rename after work.start.', true),
+      };
+    if (closed || record.pendingSubmission || record.snapshot.status === 'unreachable')
+      return { reason: unavailable() };
+    if (
+      !live.has(record.work.ref.id) &&
+      !['done', 'failed', 'stopped'].includes(record.snapshot.status)
+    )
+      return { reason: unavailable() };
+    return { value: record };
+  };
+  const applyRename = async (record: Record, title: string): Promise<W.Result<W.WorkRenamed>> => {
+    const id = record.work.ref.id;
+    let owned = live.get(id);
+    const resumed = !owned;
+    try {
+      owned ??= await open(record, true);
+      await owned.rename(title);
+      record.work.title = title;
+      save(record);
+      return { ok: true, value: { renamed: true, title } };
+    } finally {
+      if (resumed) {
+        live.delete(id);
+        await owned?.close();
+      }
+    }
+  };
+  const rename = (superpipe({})('copilot-rename') as PipelineAPI)
+    .input(['ref', 'title'])
+    .pipe(lookup, 'ref', 'result:renamed')
+    .pipe(refresh, 'renamed', 'renamed')
+    .pipe(admitRename, ['renamed', 'title'], 'result:renamed')
+    .pipe(applyRename, ['renamed', 'title'], 'renamed')
+    .endAsync('renamed') as (ref: W.WorkRef, title: string) => Promise<W.Result<W.WorkRenamed>>;
   const stop = (superpipe({})('copilot-stop') as PipelineAPI)
     .input(['ref'])
     .pipe(lookup, 'ref', 'result:stopped')
@@ -422,7 +474,16 @@ export function createCopilotAdapter(
         cursor
       );
     },
-    capabilities: ['find', 'start', 'send', 'queue', 'status', 'stop', 'archive'] as const,
+    capabilities: [
+      'find',
+      'start',
+      'rename',
+      'send',
+      'queue',
+      'status',
+      'stop',
+      'archive',
+    ] as const,
     unsupportedCapabilities: {
       steer:
         'Copilot strict same-turn steering is unsupported: immediate input can fall back to a later turn; the pinned protocol has no expected-active-turn precondition. Use auto or queue for explicit enqueue delivery.',
@@ -433,6 +494,7 @@ export function createCopilotAdapter(
       void pending.finally(() => starts.delete(pending));
       return pending;
     },
+    rename: (ref, title) => guard(() => rename(ref, title), ref.id),
     send: (ref, message) => guard(() => send(ref, message), ref.id),
     queue: (ref, message) => guard(() => send(ref, message), ref.id),
     status: (ref, _since, receipt) => guard(() => status(ref, receipt), ref.id),

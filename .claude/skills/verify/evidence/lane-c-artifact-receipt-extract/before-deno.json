@@ -1,0 +1,13 @@
+{
+  "mainThreadMovementClaim": false,
+  "phase": "pure receipt serialization extraction; legacy row publication remains on its supplied connection",
+  "firstRpcMs": 12.643333999999868,
+  "existingDenoCaptureFailsClosed": true,
+  "successfulDenoCaptureAndReadVerified": false,
+  "mainInsertRuns": 0,
+  "publicMainInsertBindCounts": [],
+  "runtime": "Deno 2.9.4",
+  "expectedFailure": "Existing public registration behavior preserved, then missing canonical serializer contract fails.",
+  "passBeforeFix": false,
+  "temporaryDaemonDataRemoved": true
+}

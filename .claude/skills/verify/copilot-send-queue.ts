@@ -226,7 +226,7 @@ try {
     assert.equal(orphan.ok, false); assert.equal(orphan.reason, 'unreachable');
   }
   const catalog = await rpc('work.adapters', {}) as { value: { id: string; capabilities: string[] }[] };
-  assert.deepEqual(catalog.value.find(adapter => adapter.id === 'copilot-cli')?.capabilities, ['find', 'start', 'send', 'queue', 'status', 'stop', 'archive']);
+  assert.deepEqual(catalog.value.find(adapter => adapter.id === 'copilot-cli')?.capabilities, ['find', 'start', 'rename', 'send', 'queue', 'status', 'stop', 'archive']);
   ws!.close(); await app!.cleanup(); app = undefined;
   const traffic = calls();
   for (const pid of new Set<number>(traffic.map(call => call.pid))) assert.throws(() => process.kill(pid, 0));

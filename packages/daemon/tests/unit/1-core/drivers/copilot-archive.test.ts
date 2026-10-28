@@ -107,6 +107,11 @@ describe('Copilot owned archive', () => {
       ok: false,
       reason: 'not_open',
     });
+    expect(await f.adapter.rename!(work.ref, 'Renamed', context)).toMatchObject({
+      ok: false,
+      reason: 'not_open',
+      notSent: true,
+    });
     expect(f.calls()).toHaveLength(before);
     await f.restart();
     expect(await f.adapter.status!(work.ref)).toMatchObject({

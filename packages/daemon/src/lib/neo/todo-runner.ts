@@ -780,6 +780,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     throw error;
   };
 
+  const retireWorker = ({ todo, ref }: NudgeClaim) =>
+    ['done', 'closed_unverified', 'failed', 'removed'].includes(
+      store.getTodo(todo.id)?.state ?? 'removed'
+    )
+      ? null
+      : sessions.write('markWorkerUnusable', ref);
+
   const stallTodo = (superpipe({})('neo.todo.stall') as PipelineAPI)
     .input(['claim', 'reason', 'now'])
     .pipe(
@@ -792,6 +799,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'claim',
       'result:claim'
     )
+    .pipe(retireWorker, 'claim', 'retired')
     .pipe(
       (claim: NudgeClaim, reason: string) =>
         deps
@@ -836,6 +844,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'refused',
       'result:moved'
     )
+    .pipe(retireWorker, 'claim', 'retired')
     .pipe(
       ({ todo }: NudgeClaim, now: number) =>
         store.updateTodo(todo, { state: 'todo', startedAt: null, finishedAt: null }, now),
