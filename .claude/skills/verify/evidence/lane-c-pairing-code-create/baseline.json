@@ -1,0 +1,8 @@
+{
+  "base": "0b81f588e2821c32de8b980a2ce1003e3fc36c27",
+  "failedRegressions": 6,
+  "passingPreAdmissionControls": 2,
+  "realRpcExitCode": 1,
+  "targetMainSqlAttempts": 1,
+  "controlCorrection": "Use the actual authenticated-relay policy refusal as the pre-admission control; agent-role rejection is a domain-planner decision after database reads. Corrected before the red commit."
+}
