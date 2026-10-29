@@ -1,0 +1,30 @@
+{
+  "mainThreadMovementClaim": false,
+  "boundary": "Verbatim GitHub source setting/watched enable SQL extraction only; public writes stay on main, constructor/backfill untouched",
+  "publicRpcMs": 1.4597919999998794,
+  "publicRpc": {
+    "replies": [
+      {
+        "spaceId": "synthetic-source-enabled",
+        "source": "github",
+        "enabled": true
+      },
+      {
+        "spaceId": "synthetic-source-enabled",
+        "source": "github",
+        "enabled": false
+      }
+    ],
+    "mainStatementRuns": 4,
+    "watchedRows": 2,
+    "sourceWatchedAndSnapshotStayAligned": true,
+    "creationAndSharedCommandTimesPreserved": true
+  },
+  "suppliedTimeResultAndCallerRollbackPreserved": true,
+  "pass": true,
+  "runtime": "Deno 2.9.4 macOS arm64",
+  "wrapper": {
+    "exitCode": 0
+  },
+  "temporaryDaemonDataRemoved": true
+}
