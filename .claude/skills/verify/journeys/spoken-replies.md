@@ -39,11 +39,12 @@ serial queue, with one upstream request at a time; terminal acknowledgments and
 disconnect abort it. No audio or credentials are persisted. Phone playback and
 buffering are separately proved by the native spoken-replies journey.
 
-Voice conversation instructions belong in NEO_ROOT_TURN_END, not every human
-message. The replay also sends real neo.message.send input through the RPC door
-and reads its stored SDK prompt: require only [input: live_voice; speech: on],
-with original public human content unchanged and no repeated tool instructions.
-The input/speech fact is source and playback state, not authority to speak.
+The replay also sends real neo.message.send input through the RPC door and reads
+its stored SDK prompt: require [input: live_voice; speech: on] followed in that
+same text block by the human-approved speak-first instruction. Every live voice
+input with speech on carries it; typed, dictation and speech-off inputs do not.
+The focused intake suite checks that matrix. Preserve original human content and
+the existing system prompt; this is a per-input instruction, not a tool gate.
 
 Production synthesis uses the operator-provided HYPERNEO_SPEECH_URL base, with
 /v1/audio/speech and /v1/audio/voices beneath it; the phone does not configure

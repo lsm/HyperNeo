@@ -133,7 +133,13 @@ export function neoIntakeMessage(
     input.inputMode ? `input: ${input.inputMode}` : null,
     input.speech === undefined ? null : `speech: ${input.speech ? 'on' : 'off'}`,
   ].filter(Boolean);
-  const speechFact = voiceState.length ? `[${voiceState.join('; ')}]` : null;
+  const speechFact = voiceState.length
+    ? `[${voiceState.join('; ')}]${
+        input.inputMode === 'live_voice' && input.speech === true
+          ? "\nVoice input: before any other tool call or work, call neo.speech.say with one short spoken reply to what the human just said (acknowledge it, say what you'll do, or answer it if it's quick). Then continue."
+          : ''
+      }`
+    : null;
   const facts = [identifier, localTime, fact, previewFact, speechFact].flatMap((text) =>
     text ? [{ type: 'text' as const, text }] : []
   );

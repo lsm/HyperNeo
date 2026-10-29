@@ -117,7 +117,7 @@ try {
     const inputId='20000000-0000-4000-8000-000000000001';
     const intake=await clients[0].hub.request<{ok:boolean}>('operation.invoke',{name:'neo.message.send',input:{sessionId,requestId:inputId,content:'Public short voice input',inputMode:'live_voice',speech:true}});
     assert(intake.ok);
-    await wait(()=>inputFacts().includes('[input: live_voice; speech: on]'));
+    await wait(()=>inputFacts().includes("[input: live_voice; speech: on]\nVoice input: before any other tool call or work, call neo.speech.say with one short spoken reply to what the human just said (acknowledge it, say what you'll do, or answer it if it's quick). Then continue."));
     const raw=app.db.getSDKMessageRepo().getMessageByUuid(sessionId,inputId);
     assert(!JSON.stringify(raw).includes('Briefly acknowledge'));
     const shown=JSON.stringify(app.db.getDatabase().prepare('SELECT payload_json FROM neo_conversation_asks').all());
