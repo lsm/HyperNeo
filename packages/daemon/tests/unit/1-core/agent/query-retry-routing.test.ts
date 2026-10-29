@@ -1083,15 +1083,13 @@ describe('planTurnEndedGeneration', () => {
 });
 
 describe('classifyQueryRetryRoute for a silent model stream', () => {
-  it('retries a stalled stream once, then fails it as a timeout with its own message', () => {
+  it('retries a stalled stream once, then holds the turn as a network outage', () => {
     const stall = signal({ rawText: 'Error: Model stream stalled: no data', isStreamStall: true });
     expect(classifyQueryRetryRoute({ errorSignal: stall, env: env() })).toEqual({
       action: 'stream_stall_retry',
     });
     expect(classifyQueryRetryRoute({ errorSignal: stall, env: env({ attempt: 1 }) })).toEqual({
-      action: 'terminal',
-      category: ErrorCategory.TIMEOUT,
-      messageHint: 'stream_stall',
+      action: 'network_pause',
     });
     expect(decideQueryRetry({ errorSignal: stall, env: env() }).finalizer.skipErrorManager).toBe(
       true

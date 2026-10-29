@@ -1500,7 +1500,9 @@ export class QueryRunner {
       let episode: Session['metadata']['queryFailureEpisode'];
       if (!cancelled && owns()) {
         episode =
-          episodeId && !(error instanceof QueryFailureCapError)
+          episodeId &&
+          !(error instanceof QueryFailureCapError) &&
+          !isNetworkUnreachableError(errorMessage)
             ? await this.failures.failure(errorMessage, episodeId)
             : session.metadata.queryFailureEpisode;
       }
