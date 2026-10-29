@@ -299,3 +299,30 @@ test('turn-end consumption refreshes an old receipt before its separate timestam
   expect(notes()).toHaveLength(2);
   expect(notes()[1].deliveryMode).toBe('defer');
 });
+
+test('removing an admitted pending input does not freeze its stalled todo reminders', async () => {
+  add('stuck');
+  clock += 2 * hour;
+  await service.refreshDriverWork();
+  const entry = notes()[0];
+  const dbId = await db.saveUserMessage(
+    'neo',
+    {
+      ...entry.message,
+      type: 'user',
+      uuid: entry.messageUuid,
+      session_id: 'neo',
+      message: { role: 'user', content: entry.message.message.content },
+    },
+    'enqueued'
+  );
+  const queue = db.getJobQueueRepo();
+  const job = queue.dequeue('mailbox', 1)[0];
+  expect(queue.complete(job.id, {}, job.claimToken)?.status).toBe('completed');
+  expect(
+    await db.getSDKMessageRepo().write('deletePendingUserMessage', 'neo', dbId, 'enqueued')
+  ).not.toBeNull();
+  await service.refreshDriverWork();
+  expect(notes()).toHaveLength(2);
+  expect(notes()[1].deliveryMode).toBe('immediate');
+});

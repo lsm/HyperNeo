@@ -125,6 +125,24 @@ try {
   assert.equal(raceNotes().length, 2);
   assert.equal(raceNotes()[1].deliveryMode, 'defer');
   evidence.turnEndTimestamp = { oldTimestamp: clock - 2 * hour, atomicReceipt, separateTimestampFollowUpHeld: true, reminders: raceNotes() };
+  const deletedAt = realNow();
+  service!.todos.addTodo('deleted-reminder', 'busy', { title: 'Deleted reminder', doneWhen: 'Observed', check: null, instruction: null, named: null }, deletedAt - 4 * hour);
+  service!.todos.commitState('deleted-reminder', { state: 'blocked', blockedBy: 'stalled' }, deletedAt - 4 * hour, { state: 'no_opinion' });
+  await app!.db.gateway.run(neoStallReminderWrite, { now: deletedAt });
+  const deletedNotes = () => notes().filter(row => row.message.message.content.includes('(deleted-reminder)'));
+  assert.equal(deletedNotes().length, 1);
+  const deleted = deletedNotes()[0];
+  const deletedDbId = await app!.db.saveUserMessage(root, { ...deleted.message, uuid: deleted.messageUuid, session_id: root, message: { role: 'user', content: deleted.message.message.content } }, 'enqueued');
+  clock = realNow();
+  const claimed = app!.db.getJobQueueRepo().dequeue('mailbox', 100).find(job => job.payload.messageUuid === deleted.messageUuid)!;
+  assert(claimed);
+  assert.equal(app!.db.getJobQueueRepo().complete(claimed.id, {}, claimed.claimToken)?.status, 'completed');
+  const removed = await rpc('session.messages.removePending', { sessionId: root, messageDbId: deletedDbId });
+  assert.equal((removed as { removed: boolean }).removed, true);
+  await app!.db.gateway.run(neoStallReminderWrite, { now: realNow() });
+  evidence.removedPending = { removed, reminders: deletedNotes() };
+  assert.equal(deletedNotes().length, 2, 'a removed receipt must not freeze reminders');
+  assert.equal(deletedNotes()[1].deliveryMode, 'immediate');
   evidence.passed = true;
 } catch (error) { evidence.error = String(error); throw error; }
 finally { await close(); Date.now = realNow; evidence.resourcesClosed = true; writeFileSync(join(run, 'evidence/result.json'), JSON.stringify(evidence, null, 2)); }
