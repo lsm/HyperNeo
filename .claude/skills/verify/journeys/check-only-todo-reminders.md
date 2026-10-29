@@ -29,3 +29,9 @@ stored as deferred and absent from its SDK input. Release that query, then
 observe the exact daily reminder in the next SDK turn and its completed result.
 Retain delivery.json and proof.log. The SDK is scripted; actual model reasoning
 remains unverified. Run the same helper without the flag for steer/queue compatibility.
+
+Repeat the SDK command with `--check-only --cancel`. After the reminder has
+materialized as deferred, hold its todo through the real DB writer before
+releasing the busy query. Its input must be failed/cancelled and must never
+reach the next SDK turn. An already consumed reminder and unrelated inputs
+must retain their state.

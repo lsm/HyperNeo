@@ -6,6 +6,7 @@ import { getSDKProjectDir, getSDKSessionFilePath } from '../../../packages/daemo
 
 const run = resolve(process.argv.at(-1)!);
 const checkOnly = process.argv.includes('--check-only');
+const cancel = checkOnly && process.argv.includes('--cancel');
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -91,14 +92,26 @@ try {
   await until(() => app.db.getSDKMessageRepo().getDeliveryContent(sessionId,deferredId)?.sendStatus === 'deferred','queue materialized as deferred');
   assert(!received.some(text=>text.includes(marker)));
   report.whileBusy = { received: [...received], results: [...results], queueStatus: 'deferred' };
+  if (cancel) {
+    const { neoTodoRunnerWrites } = await import('../../../packages/daemon/src/storage/repositories/neo-todo-runner-state.ts');
+    await app.db.gateway.run(neoTodoRunnerWrites, { method: 'recompute', args: ['stuck', store.getTodo('stuck')!.check, { state: 'blocked', blockedBy: 'held' }, Date.now(), { state: 'no_opinion' }] });
+    report.afterHoldStatus = app.db.getSDKMessageRepo().getUserSendStatus(sessionId,deferredId);
+  }
   releaseBusy();
-  await until(() => received.some(text => text.includes(marker)), 'queue reaches a fresh turn after busy result');
-  await until(() => results.filter(text => text === 'REMINDER_TURN_FINISHED').length >= (checkOnly ? 1 : 2), 'reminder turns finish');
+  if (!cancel) {
+    await until(() => received.some(text => text.includes(marker)), 'queue reaches a fresh turn after busy result');
+    await until(() => results.filter(text => text === 'REMINDER_TURN_FINISHED').length >= (checkOnly ? 1 : 2), 'reminder turns finish');
+  } else await until(() => results.includes('BUSY_TURN_FINISHED'), 'held turn finishes');
   assert.equal(results[0], 'BUSY_TURN_FINISHED');
   const agent = app.sessionManager.getSession(sessionId)!;
   await until(() => agent.getProcessingState().status === 'idle', 'last reminder settles idle');
   await agent.replayPendingMessagesForImmediateMode({ waitForPostSettlementFlush: true });
   report.afterRelease = { received, results };
+  if (cancel) {
+    await new Promise(done=>setTimeout(done,250));
+    assert(!received.some(text=>text.includes(marker)),'a held todo must not reach the next SDK turn');
+    assert.equal(app.db.getSDKMessageRepo().getUserSendStatus(sessionId,deferredId),'failed');
+  }
   report.passed = true;
 } catch (error) { report.error = String(error); throw error; }
 finally { releaseBusy(); stop(); await transport.close(); await app.cleanup(); globalThis.fetch = network; report.resourcesClosed = true; writeFileSync(join(run, 'evidence/delivery.json'), JSON.stringify(report, null, 2)); }

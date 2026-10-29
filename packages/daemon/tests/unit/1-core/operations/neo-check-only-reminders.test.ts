@@ -204,3 +204,32 @@ test('closing the ask stops its daily reminders', async () => {
   await service.refreshDriverWork();
   expect(notes()).toHaveLength(1);
 });
+
+test.each(['held', 'removed', 'done', 'instruction', 'target'] as const)(
+  '%s cancels an admitted daily reminder',
+  async (action) => {
+    const todo = add('queued');
+    clock += 24 * hour;
+    await service.refreshDriverWork();
+    const entry = notes()[0];
+    if (action === 'held')
+      service.todos.commitState(todo.id, { state: 'blocked', blockedBy: 'held' }, clock, {
+        state: 'no_opinion',
+      });
+    if (action === 'removed')
+      service.todos.commitState(todo.id, { state: 'removed' }, clock, { state: 'no_opinion' });
+    if (action === 'done')
+      service.todos.commitState(todo.id, {}, clock, { state: 'done', evidence: 'Observed' });
+    if (action === 'instruction')
+      service.todos.updateTodo(todo, { instruction: 'Do the work' }, clock);
+    if (action === 'target')
+      service.todoSessions.create(todo.id, {
+        verb: 'send',
+        ref: { adapter: 'hyperneo', id: 'worker' },
+      });
+    expect(
+      db.getJobQueueRepo().getLatestByPayload('mailbox', { messageUuid: entry.messageUuid })?.status
+    ).toBe('dead');
+    expect(db.getSDKMessageRepo().getUserSendStatus('neo', entry.messageUuid)).toBe('failed');
+  }
+);
