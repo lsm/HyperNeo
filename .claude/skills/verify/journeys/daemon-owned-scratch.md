@@ -13,7 +13,10 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
 Observe `daemon-owned-scratch.json`: archive removes its scratch, shutdown
 removes newly daemon-owned scratch, and startup removes only an older-than-day
 record with a positively dead owner. Live-owner, recent and unmarked Desktop
-scratch must remain. The fixture records get a known exited child PID to model
+scratch must remain. A synthetic persisted SDK child with a live PID must also
+retain scratch even after its recorded daemon owner has exited. Startup captures
+SDK child records before the existing orphan-process sweep; shutdown also checks
+tracked child PIDs after stopping sessions. The fixture records get a known exited child PID to model
 an unclean exit; no real daemon is killed and no system-temp sweep occurs.
 The outer proof wrapper exports evidence, stops owned resources and removes
 only its own fresh run. Abrupt SIGKILL relies on the next startup after a day;

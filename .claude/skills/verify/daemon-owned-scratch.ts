@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { installClaudeNativeWrites } from '../../../packages/daemon/src/lib/drivers/claude-native-writes.ts';
+import { AgentChildProcessRepository } from '../../../packages/daemon/src/storage/repositories/agent-child-process-repository.ts';
 import { workerWorkLocations } from '../../../packages/daemon/src/lib/work-locations.ts';
 
 const run = resolve(process.argv[2]);
@@ -51,6 +52,15 @@ try {
   evidence.archive = reply;
   ws.close(); ws = undefined;
   const shutdown = await fixture('shutdown');
+  const childLive = await fixture('child-live');
+  const exited = spawnSync(process.execPath, ['-e', 'process.exit(0)']);
+  assert.equal(exited.status, 0);
+  const childOwnerPath = ownerPath(childLive);
+  const childOwner = JSON.parse(readFileSync(childOwnerPath, 'utf8'));
+  childOwner.pid = exited.pid;
+  childOwner.createdAt = Date.now() - 25 * 60 * 60 * 1000;
+  writeFileSync(childOwnerPath, JSON.stringify(childOwner));
+  await new AgentChildProcessRepository(app.db.getDatabase()).record({ pid: process.pid, daemonPid: exited.pid, sessionId: 'synthetic-live-child', command: 'synthetic-proof', startedAt: Date.now() });
   await app.cleanup(); app = undefined;
   assert(!existsSync(workerWorkLocations(shutdown).scratch), 'daemon shutdown must remove its own scratch');
   assert(existsSync(workerWorkLocations(desktop).scratch), 'daemon shutdown must retain Desktop scratch');
@@ -72,7 +82,8 @@ try {
   assert(existsSync(workerWorkLocations(recent).scratch), 'startup must retain recent scratch');
   assert(existsSync(workerWorkLocations(live).scratch), 'startup must retain scratch with a live owner');
   assert(existsSync(workerWorkLocations(desktop).scratch), 'startup must retain unmarked Desktop scratch');
-  evidence.startup = { staleDeadRemoved: true, recentRetained: true, liveRetained: true, desktopRetained: true };
+  assert(existsSync(workerWorkLocations(childLive).scratch), 'startup must retain scratch with a live recorded SDK child');
+  evidence.startup = { liveSdkChildRetained: true, staleDeadRemoved: true, recentRetained: true, liveRetained: true, desktopRetained: true };
   evidence.passed = true;
   console.log('PASS archive RPC, normal daemon shutdown, stale-dead startup recovery and live/recent/Desktop retention');
 } finally {

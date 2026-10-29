@@ -1,3 +1,4 @@
+import { collectDaemonScratch } from './lib/drivers/daemon-scratch.ts';
 import {
   GitHubWatchInventory,
   reportGitHubWatchHealth,
@@ -516,6 +517,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       );
     const logError = verbose ? console.error : () => {};
 
+    const scratchChildrenAtStartup = new AgentChildProcessRepository(db.getDatabase()).list();
     if (process.env.NODE_ENV !== 'test') {
       try {
         await sweepOrphanedAgentChildren(
@@ -762,6 +764,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       registry: db.appMcpServers.list(),
       overrides: db.mcpEnablement.listAll(),
     });
+
+    await collectDaemonScratch(true, scratchChildrenAtStartup);
 
     startupTimer.start('session manager');
     sessionManager = new SessionManager(
@@ -1789,7 +1793,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         await mailboxExpireProcessor.stop();
         logInfo('[Daemon] Mailbox expiration job processor stopped');
         await taskAgentManager.cleanupAll();
+        const scratchChildrenAtExit = [
+          ...new AgentChildProcessRepository(db.getDatabase()).list(),
+          ...sessionManager
+            .getTrackedAgentRootPidsSplit()
+            .live.map((pid) => ({ pid, daemonPid: process.pid })),
+        ];
         await sessionManager.cleanup();
+        await collectDaemonScratch(false, scratchChildrenAtExit);
         logInfo('[Daemon] Active agent sessions stopped');
 
         await messageDeliveryProcessor.stop();
