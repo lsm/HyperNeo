@@ -76,12 +76,7 @@ function add(id: string, state: 'todo' | 'doing' = 'todo') {
     },
     clock
   );
-  return service.todos.commitState(
-    todo.id,
-    state === 'blocked' ? { state, blockedBy: 'stalled', blockedReason: 'No progress' } : { state },
-    clock,
-    { state: 'no_opinion' }
-  ).todo!;
+  return service.todos.commitState(todo.id, { state }, clock, { state: 'no_opinion' }).todo!;
 }
 function notes() {
   return (
