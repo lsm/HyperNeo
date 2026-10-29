@@ -191,3 +191,34 @@ test('completed todos and archived recipients stay quiet', async () => {
   await service.refreshDriverWork();
   expect(notes()).toHaveLength(0);
 });
+
+test('a failed queued reminder retries queued and preserves the remaining delivery budget', async () => {
+  add('stuck');
+  clock += 2 * hour;
+  await service.refreshDriverWork();
+  await consume(0);
+  clock += 2 * hour;
+  await service.refreshDriverWork();
+  await consume(1, 'failed');
+  expect(notes()).toHaveLength(3);
+  expect(notes()[2].deliveryMode).toBe('defer');
+  await consume(2);
+  clock += 2 * hour;
+  await service.refreshDriverWork();
+  expect(notes()).toHaveLength(4);
+  await consume(3);
+  clock += 2 * hour;
+  await service.refreshDriverWork();
+  expect(notes()).toHaveLength(4);
+});
+
+test('a stalled-only ask gets one todo reminder while the daily inventory still counts it', async () => {
+  service.todos.commitState('busy', { state: 'done' }, clock, { state: 'done' });
+  service.todos.retireQuestions('ask', clock);
+  add('stuck');
+  clock += 2 * hour;
+  await service.refreshDriverWork();
+  expect(notes()).toHaveLength(1);
+  expect(notes()[0].message.message.content).toContain('stuck');
+  expect(service.todos.listStalledAsks(clock - 2 * hour)).toHaveLength(1);
+});

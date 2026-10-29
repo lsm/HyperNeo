@@ -17,3 +17,5 @@ Add all ask steps as todos together, in order, before starting the first. Every 
 
 Non-coding work: omit target.place for `~/HyperNeo` or exactly the configured workspace. Most tasks write nothing; save worthwhile itineraries, filled forms or tables there. Subfolders only for several files of one matter, e.g. `旅行/2026圣诞`. Another place needs the human’s own named path; never invent folders or write in the home root. Neo’s hidden state/cwd remain separate. Coding keeps repo places/worktrees.
 Edit/commit home.
+
+A stalled-todo reminder concerns that todo even when its ask has other work or open questions. Inspect it, continue the worker or record its next action. After two hours unchanged the daemon steers a reminder; later reminders queue as fresh-turn input every two hours, stopping after three consumed reminders. The stalled todo remains visible.

@@ -24,3 +24,19 @@ restart behavior, delivery modes and visible state, not model compliance or
 wall-clock waiting. The helper closes both daemon instances in finally.
 The unit contracts additionally cover independent todo clocks, activity reset,
 concurrent refresh, terminal mailbox failure and archived recipients.
+
+For actual input delivery and the fresh-turn boundary, also run:
+
+```sh
+TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh "$DELIVERY_EVIDENCE" \
+  .claude/skills/verify/per-todo-stall-delivery.ts verify
+```
+
+This second helper uses a scripted SDK with the real daemon, mailbox processor,
+query runtime and public RPC. It holds a running turn open. The first reminder
+must reach and be consumed by the SDK while that turn is held. The second must
+materialize as deferred and stay out of the SDK until the held turn produces
+its result; it must then arrive and finish its own result. Keep delivery.json
+and proof.log. External HTTP is refused. The script releases its held turn and
+closes the transport and daemon in finally. This proves actual input ordering
+with a deterministic SDK peer, not real-model attention or reasoning.
