@@ -35,20 +35,22 @@ try{
   if(item.id==='status-match')db.prepare('UPDATE neo_asks SET outcome=? WHERE id=?').run('outcomesigil733',item.id);
  }
  if(phase==='global'){
-  for(let index=0;index<61;index++){
+  for(let index=60;index>=0;index--){
    const id=index===0?'old-unloaded':`recent-${index}`;
-   store.openAsk({id,title:index===0?'网页修两处':'Recent synthetic outcome',sessionId:root,projectId:null,originMessageId:null,request:'Synthetic old-card search acceptance',createdAt:now-100000+index});
-   db.prepare('UPDATE neo_asks SET status=?,outcome=?,settled_at=?,updated_at=? WHERE id=?').run('done',index===0?'古老卡片正文':'Synthetic completion',now-100000+index,now-100000+index,id);
+   store.openAsk({id,title:'网页修两处',sessionId:root,projectId:null,originMessageId:null,request:'Synthetic old-card search acceptance',createdAt:now-100000+index});
+   db.prepare('UPDATE neo_asks SET status=?,outcome=?,settled_at=?,updated_at=? WHERE id=?').run('done','古老卡片正文',now-100000+index,now-100000+index,id);
   }
  }
  const dist=resolve('packages/web/dist');assert(existsSync(join(dist,'neo/index.html')));
- let refreshSerial=0;
+ let refreshSerial=0,rejectSearch=false;
+ const sockets=createWebSocketHandlers(app.transport,app.sessionManager);
  front=Bun.serve({hostname:'127.0.0.1',port:0,async fetch(request,server){
   const target=new URL(request.url),path=target.pathname;
+  if(path==='/__verify-search-failure'){rejectSearch=target.searchParams.get('enabled')==='1';return Response.json({syntheticOnly:true,rejectSearch});}
   if(path==='/__verify-refresh'){if(target.searchParams.get('changed')==='1')store.updateTodo(store.getTodo('report-match-todo')!,{report:`Needle microcipher731 refreshedsigil737 ${++refreshSerial}`},Date.now());await app.messageHub.event('neo.changed',{});return Response.json({syntheticOnly:true});}
   if(path==='/ws'){if(server.upgrade(request,{data:{connectionSessionId:'global',device:await app.authenticateUpgrade(request,'127.0.0.1')}}))return;return new Response('Upgrade failed',{status:500});}
   const file=Bun.file(join(dist,path==='/neo'?'neo/index.html':path));return await file.exists()?new Response(file):new Response('Not found',{status:404});
- },websocket:createWebSocketHandlers(app.transport,app.sessionManager)});assert.notEqual(front.port,8399);
+ },websocket:{...sockets,message(ws,raw){const call=JSON.parse(String(raw));if(rejectSearch&&call.type==='REQ'&&call.data?.name==='neo.ask.search'){ws.send(JSON.stringify({...call,id:crypto.randomUUID(),requestId:call.id,type:'RSP',data:undefined,error:{code:'SYNTHETIC_UNAVAILABLE',message:'Synthetic search unavailable'}}));return;}return sockets.message(ws,raw);}}});assert.notEqual(front.port,8399);
  writeFileSync(readyPath,JSON.stringify({phase,port:front.port,url:`http://127.0.0.1:${front.port}/neo`,run,pid:process.pid,cases},null,2));
  console.log(`Ready for attended browser: http://127.0.0.1:${front.port}/neo`);
  let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});

@@ -73,6 +73,35 @@ afterEach(() => {
 const root = 'neo:550e8400-e29b-41d4-a716-446655440000';
 
 describe('Work search input and retry', () => {
+  it('finds an unloaded Chinese card beyond the first server page', async () => {
+    locale.value = 'en';
+    const old = testAskEntry('old-page-two', '网页修两处', { state: 'done' });
+    const request = vi.fn(
+      async (_method: string, params: { name: string; input: { cursor?: string } }) => {
+        if (params.name === 'neo.ask.search')
+          return params.input.cursor
+            ? {
+                ok: true,
+                results: [{ askId: old.ask.id }, { askId: old.ask.id }],
+                nextCursor: null,
+              }
+            : {
+                ok: true,
+                results: Array.from({ length: 50 }, () => ({ askId: 'waiting' })),
+                nextCursor: '50',
+              };
+        if (params.name === 'neo.ask.read') return { ok: true, entry: old };
+        return { schedules: [] };
+      }
+    );
+    vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
+    const { container } = mount();
+    expect(container.querySelector('[data-ask="old-page-two"]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Search work', exact: true }));
+    fireEvent.input(screen.getByRole('searchbox'), { target: { value: '网页修两处' } });
+    await screen.findByRole('heading', { name: '网页修两处' });
+    expect(container.querySelectorAll('[data-ask="old-page-two"]')).toHaveLength(1);
+  });
   it.each([{ isComposing: true }, { keyCode: 229 }])(
     'keeps the CJK query when Escape dismisses composition: %j',
     (composition) => {

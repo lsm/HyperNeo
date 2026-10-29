@@ -17,6 +17,20 @@ afterEach(cleanup);
 const noRemote = async () => [];
 
 describe('Work search source', () => {
+  it.each(['search', 'hydration'])('keeps loaded matches when remote %s fails', async (failure) => {
+    const read = vi.fn(async (id: string) => {
+      if (id === 'missing') throw new Error('Card unavailable');
+      return full;
+    });
+    const find = vi.fn(async () => {
+      if (failure === 'search') throw new Error('Search unavailable');
+      return [{ askId: 'missing' }];
+    });
+    const view = renderHook(() => useNeoWorkSearch(entries, 'needle', read, find));
+    await waitFor(() => expect(view.result.current.failed).toBe(true));
+    expect(view.result.current.results.map((entry) => entry.ask.id)).toEqual(['a']);
+    expect(view.result.current.pending).toBe(false);
+  });
   it('finds an old Chinese card outside the loaded feed through server search', async () => {
     const old = testAskEntry('old-unloaded', '网页修两处', { state: 'done' });
     const read = vi.fn(async (id: string) => (id === old.ask.id ? old : full));
