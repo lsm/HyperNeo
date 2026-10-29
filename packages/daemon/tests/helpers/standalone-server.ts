@@ -1,8 +1,14 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 const PORT = parseInt(process.env.PORT || '0', 10);
 
 import { createDaemonApp } from '../../src/app';
 
 async function main() {
+  const workspaceRoot = mkdtempSync(join(tmpdir(), 'hyperneo-daemon-test-'));
+  process.once('exit', () => rmSync(workspaceRoot, { recursive: true, force: true }));
   const { cleanup, server } = await createDaemonApp({
     config: {
       host: '127.0.0.1',
@@ -15,7 +21,7 @@ async function main() {
       dbPath: ':memory:',
       maxSessions: 10,
       nodeEnv: 'test',
-      workspaceRoot: `${process.env.TMPDIR || '/tmp'}/hyperneo-daemon-test-${Date.now()}`,
+      workspaceRoot,
       disableWorktrees: true,
     },
     standalone: true,
