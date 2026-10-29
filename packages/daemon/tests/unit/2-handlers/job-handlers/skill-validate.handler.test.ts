@@ -1,4 +1,4 @@
-import { createTestDirectory } from '../../../helpers/temporary-directory';
+import { testDirectories } from '../../../helpers/temporary-directory';
 import { describe, it, expect, mock, beforeEach } from 'bun:test';
 import { createSkillValidateHandler } from '../../../../src/lib/job-handlers/skill-validate.handler';
 import { SKILL_VALIDATE } from '../../../../src/lib/job-queue-constants';
@@ -8,6 +8,8 @@ import type { AppMcpServerRepository } from '../../../../src/storage/repositorie
 import type { AppSkill } from '@hyperneo/shared';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+const createTestDirectory = testDirectories();
 
 function makeJob(payload: Record<string, unknown>): Job {
   return {

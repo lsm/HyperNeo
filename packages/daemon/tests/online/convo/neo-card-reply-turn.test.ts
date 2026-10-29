@@ -1,4 +1,4 @@
-import { createTestDirectory } from '../../helpers/temporary-directory';
+import { testDirectories } from '../../helpers/temporary-directory';
 import { expect, test } from 'bun:test';
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import { NeoAskTodoRepository } from '../../../src/storage/repositories/neo-ask-todo-repository.ts';
+
+const createTestDirectory = testDirectories();
 
 function deferred() {
   let resolve!: () => void;

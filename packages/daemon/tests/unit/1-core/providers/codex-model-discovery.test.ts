@@ -1,4 +1,4 @@
-import { createTestDirectory } from '../../../helpers/temporary-directory';
+import { testDirectories } from '../../../helpers/temporary-directory';
 import { beforeEach, describe, expect, it } from 'bun:test';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -14,6 +14,8 @@ import {
   normalizeCodexRemoteModels,
   parseCodexModelsCacheFile,
 } from '../../../../src/lib/providers/codex-model-discovery';
+
+const createTestDirectory = testDirectories();
 
 function remoteModel(overrides: Partial<Parameters<typeof normalizeCodexRemoteModel>[0]> = {}) {
   return {

@@ -1,4 +1,4 @@
-import { createTestDirectory } from '../../../helpers/temporary-directory';
+import { testDirectories } from '../../../helpers/temporary-directory';
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
   appendFileSync,
@@ -17,6 +17,8 @@ import { createCopilotAdapter } from '../../../../src/lib/drivers/copilot-adapte
 import { createAcpAgentAdapter } from '../../../../src/lib/drivers/acp-agent-adapter';
 import type { WorkTurnPage } from '../../../../src/storage/work-turn-page';
 import type { WorkAdapter, WorkCallContext, WorkStarted } from '../../../../src/lib/drivers/types';
+
+const createTestDirectory = testDirectories();
 
 type Readable = WorkAdapter & {
   readTurns?: (

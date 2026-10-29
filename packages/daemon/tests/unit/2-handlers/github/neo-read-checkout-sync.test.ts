@@ -1,10 +1,12 @@
-import { createTestDirectory } from '../../../helpers/temporary-directory';
+import { testDirectories } from '../../../helpers/temporary-directory';
 import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+const createTestDirectory = testDirectories();
 
 describe('Neo reads a current default-branch checkout', () => {
   test('the existing poll RPC advances a detached clone while human edits stay untouched', () => {

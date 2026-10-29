@@ -1,4 +1,4 @@
-import { createTestDirectory } from '../../../helpers/temporary-directory';
+import { testDirectories } from '../../../helpers/temporary-directory';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,6 +15,8 @@ import {
   readAcpSessionPages,
   reuseAcpSessionList,
 } from '../../../../src/lib/drivers/acp-agent-adapter';
+
+const createTestDirectory = testDirectories();
 
 const NOW = 10_000_000;
 const session = (

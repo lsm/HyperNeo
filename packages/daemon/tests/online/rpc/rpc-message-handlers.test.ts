@@ -1,9 +1,11 @@
-import { createTestDirectory } from '../../helpers/temporary-directory';
+import { testDirectories } from '../../helpers/temporary-directory';
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle, waitForSdkMessages } from '../../helpers/daemon-actions';
+
+const createTestDirectory = testDirectories();
 
 const IS_DEV_PROXY = process.env.HYPERNEO_USE_DEV_PROXY === '1';
 const TIMEOUT = IS_DEV_PROXY ? 60_000 : 15_000;

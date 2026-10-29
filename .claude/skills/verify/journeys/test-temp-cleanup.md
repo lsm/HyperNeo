@@ -25,3 +25,18 @@ on normal process exit. It does not scan system temp directories.
 Online SDK fixture consumers use the same helper; those complete model journeys
 must be exercised by the online CI shards. This proof makes no claim about
 SIGKILL, native Desktop ownership, or legacy hn-* directory reclamation.
+
+## Shared-process Bun runner
+
+The same command also launches two actual `bun test` files in one process,
+with both importing the same cached cleanup helper. Each creates its own
+`shared-process-*` fixture. Observe that neither fixture remains after Bun exits.
+This reproduces the runner used by bare-Bun multi-file online/local testing;
+Vitest file isolation alone cannot prove this behavior.
+
+Test-first commit `29f82c7b69` leaves one fixture after both Bun files pass.
+Retaining the exit listener alone still fails under Bun 1.4.3, whose test runner
+does not emit that callback. Each consumer now calls the factory at file scope
+to register its own afterAll, even when the imported module is cached. Both
+files then remove their fixtures; the normal-exit fallback stays registered.
+The parent proof removes its own fresh run in finally on either outcome.

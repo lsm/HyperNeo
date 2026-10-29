@@ -1,4 +1,4 @@
-import { createTestDirectory } from '../../helpers/temporary-directory';
+import { testDirectories } from '../../helpers/temporary-directory';
 import { expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -8,6 +8,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+
+const createTestDirectory = testDirectories();
 
 test.each(['ordinary', 'neo', 'opus1m', 'opus-native'] as const)(
   '%s SDK compacts mid-turn without cancelling tools or losing queued inputs',

@@ -42,7 +42,9 @@ test('shared-process Bun suites retain exit cleanup for later files', () => {
         `import { expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { createTestDirectory } from ${JSON.stringify(helper)};
+import { testDirectories } from ${JSON.stringify(helper)};
+
+const createTestDirectory = testDirectories();
 test(${JSON.stringify(name)}, () => {
   const directory = createTestDirectory(join(process.env.FIXTURE_TMP_ROOT!, 'shared-process-'));
   expect(existsSync(directory)).toBe(true);

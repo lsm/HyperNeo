@@ -11,13 +11,11 @@ function cleanup() {
 }
 
 process.once('exit', cleanup);
-afterAll(() => {
-  cleanup();
-  process.off('exit', cleanup);
-});
-
-export function createTestDirectory(prefix: string): string {
-  const directory = mkdtempSync(prefix);
-  directories.add(directory);
-  return directory;
+export function testDirectories(): (prefix: string) => string {
+  afterAll(cleanup);
+  return (prefix) => {
+    const directory = mkdtempSync(prefix);
+    directories.add(directory);
+    return directory;
+  };
 }

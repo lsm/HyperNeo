@@ -1,4 +1,4 @@
-import { createTestDirectory } from '../../../helpers/temporary-directory';
+import { testDirectories } from '../../../helpers/temporary-directory';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { OapStdioClient } from '../../../../src/lib/oap/oap-stdio-client';
 import type { OapEnvelope } from '../../../../src/lib/oap/oap-stdio-client';
+
+const createTestDirectory = testDirectories();
 
 const endpoint = fileURLToPath(new URL('./fixtures/oap-endpoint.mjs', import.meta.url));
 const clients: OapStdioClient[] = [];
