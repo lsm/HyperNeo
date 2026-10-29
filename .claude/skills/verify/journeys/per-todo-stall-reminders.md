@@ -27,6 +27,8 @@ wall-clock waiting. The helper closes both daemon instances in finally.
 The same daemon proof holds the turn-end timestamp follow-up: the real
 markDeliveriesConsumedAtTurnEnd writer must expose a fresh consumed timestamp
 atomically, so a receipt queued two hours earlier cannot cause an early repeat.
+The real pending-message removal RPC must also release a missing receipt
+after its mailbox job completed, retrying without spending the budget.
 No separate timestamp update is allowed before the refresh; queue becomes due
 exactly two hours after that atomic receipt.
 The unit contracts additionally cover independent todo clocks, activity reset,

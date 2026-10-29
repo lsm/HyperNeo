@@ -52,7 +52,11 @@ const remindTodo = (superpipe({})('neo.stalled-todo.remind') as PipelineAPI)
         if (receipt?.status === 'consumed') {
           reminder.delivered.push({ id: pending, at: receipt.timestamp });
           delete reminder.pending;
-        } else if (receipt?.status === 'failed' || job?.status === 'dead') {
+        } else if (
+          receipt?.status === 'failed' ||
+          job?.status === 'dead' ||
+          (!receipt && job?.status !== 'pending' && job?.status !== 'processing')
+        ) {
           delete reminder.pending;
         }
       }
