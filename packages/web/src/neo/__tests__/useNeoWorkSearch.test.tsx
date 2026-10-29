@@ -16,6 +16,17 @@ const entries = [
 afterEach(cleanup);
 
 describe('Work search source', () => {
+  it('finds an old Chinese card outside the loaded feed through server search', async () => {
+    const old = testAskEntry('old-unloaded', '网页修两处', { state: 'done' });
+    const read = vi.fn(async (id: string) => (id === old.ask.id ? old : full));
+    const find = vi.fn(async () => [{ askId: old.ask.id }, { askId: old.ask.id }]);
+    const view = renderHook(() => useNeoWorkSearch(entries, '网页修两处', read, find));
+    await waitFor(() =>
+      expect(view.result.current.results.map((entry) => entry.ask.id)).toEqual([old.ask.id])
+    );
+    expect(view.result.current.pending).toBe(false);
+    expect(view.result.current.failed).toBe(false);
+  });
   it('reads summary bodies once for a search and reuses them for later queries', async () => {
     const read = vi.fn(async () => full);
     const view = renderHook(({ query }) => useNeoWorkSearch(entries, query, read), {
