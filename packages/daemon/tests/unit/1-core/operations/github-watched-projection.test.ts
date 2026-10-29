@@ -41,7 +41,7 @@ describe('saved GitHub watched repository projection', () => {
         publicCompleteProjectionPreserved: true,
         pureProjectionSecretMaskAndOmissionsPreserved: true,
         publicRpcCharacterization: {
-          mainStatementRuns: 4,
+          mainStatementRuns: 0,
           watchedRows: 2,
           sourceWatchedAndSnapshotStayAligned: true,
           creationAndSharedCommandTimesPreserved: true,

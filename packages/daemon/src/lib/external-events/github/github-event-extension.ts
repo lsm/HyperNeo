@@ -1,3 +1,5 @@
+import { gatewayFor } from '../../../storage/db-gateway/db-gateway.ts';
+import { gitHubSpaceEnabledWrites } from '../../../storage/repositories/github-space-enabled-write.ts';
 import { projectGitHubWatchedRepo } from './github-watched-projection.ts';
 import {
   createGitHubPollSource,
@@ -313,7 +315,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private readonly eventStore: ExternalEventStore;
 
   constructor(
-    db: BunDatabase,
+    private readonly db: BunDatabase,
     private readonly githubToken = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN,
     private readonly options: GitHubEventExtensionOptions = {}
   ) {
@@ -355,15 +357,20 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       await assertRpcConfigEnabled(context, this.sourceId);
       const params = data as { spaceId: string };
       if (!params.spaceId) throw new Error('spaceId is required');
+      await gatewayFor(this.db).call(
+        gitHubSpaceEnabledWrites,
+        'persist',
+        params.spaceId,
+        true,
+        Date.now()
+      );
       const willReenablePollingRows = this.repo
         .listWatchedRepos(params.spaceId)
         .some((repo) => repo.pollingEnabled);
-      this.repo.setRepoEnabled(params.spaceId, true);
       if (willReenablePollingRows && this.getPollIntervalMs() > 0) {
         await this.enablePollingCapability(context);
         this.ensurePollingActive();
       }
-      await this.persistSpaceConfig(context, params.spaceId);
       context.onSourceConfigChanged({
         source: this.sourceId,
         spaceId: params.spaceId,
@@ -376,8 +383,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       await assertRpcConfigEnabled(context, this.sourceId);
       const params = data as { spaceId: string };
       if (!params.spaceId) throw new Error('spaceId is required');
-      this.repo.setRepoEnabled(params.spaceId, false);
-      await this.persistSpaceConfig(context, params.spaceId);
+      await gatewayFor(this.db).call(
+        gitHubSpaceEnabledWrites,
+        'persist',
+        params.spaceId,
+        false,
+        Date.now()
+      );
       context.onSourceConfigChanged({
         source: this.sourceId,
         spaceId: params.spaceId,

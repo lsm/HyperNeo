@@ -1,0 +1,63 @@
+{
+  "publicMutationActivated": true,
+  "publicBaselineReaderConfirmed": true,
+  "mainGuardSelfCheckPassed": true,
+  "phase": "superseded_receipt",
+  "firstRpcMs": 0.5310420000000704,
+  "publicEnableDisableSnapshotAndLifecyclePreserved": true,
+  "zeroIntervalDoesNotRearmPolling": true,
+  "writerRollbackPrecedesLifecycle": true,
+  "knownPostCommitCallbackFailureKeepsConsistentSnapshot": true,
+  "healthWhileWriterHeldMs": 1.5867090000000417,
+  "deliberatelyHeldWriterMs": 1244.5661249999998,
+  "lifecycleAndRpcReplyWaitForCommit": true,
+  "preAdmissionTimestampRetained": true,
+  "mainSqlAttempts": 0,
+  "metrics": [
+    {
+      "roundTripMs": 0.2409580000000915,
+      "requestBytes": 72,
+      "replyBytes": 1070
+    },
+    {
+      "roundTripMs": 0.07220900000004349,
+      "requestBytes": 73,
+      "replyBytes": 1073
+    },
+    {
+      "roundTripMs": 0.07491700000002766,
+      "requestBytes": 72,
+      "replyBytes": 1070
+    },
+    {
+      "roundTripMs": 0.07674999999994725,
+      "requestBytes": 73,
+      "replyBytes": 1073
+    },
+    {
+      "roundTripMs": 1.5674579999999878,
+      "requestBytes": 72,
+      "replyBytes": 1070
+    },
+    {
+      "roundTripMs": 0.07658300000002782,
+      "requestBytes": 73,
+      "replyBytes": 1073
+    },
+    {
+      "roundTripMs": 1243.045291,
+      "requestBytes": 72,
+      "replyBytes": 1070
+    },
+    {
+      "roundTripMs": 0.17695899999989706,
+      "requestBytes": 73,
+      "replyBytes": 1073
+    },
+    {
+      "roundTripMs": 0.12229200000001583,
+      "requestBytes": 72,
+      "replyBytes": 1070
+    }
+  ]
+}

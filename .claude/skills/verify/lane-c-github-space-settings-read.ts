@@ -6,7 +6,7 @@ await import('./lane-c-github-space-enabled-extract.ts');
 const run = resolve(process.argv.at(-1)!);
 const characterized = JSON.parse(readFileSync(join(run, 'evidence/github-space-enabled-extract.json'), 'utf8'));
 assert.equal(characterized.pass, true);
-assert.equal(characterized.publicRpc.mainStatementRuns, 4);
+assert.equal(characterized.publicRpc.mainStatementRuns, 0);
 const evidence: Record<string, unknown> = { publicRpcCharacterization: characterized.publicRpc, mainThreadMovementClaim: false };
 let db: import('../../../packages/daemon/src/storage/sqlite-compat.ts').Database | undefined;
 try {

@@ -38,7 +38,7 @@ describe('Space extension configuration SQL extraction', () => {
       ).toMatchObject({
         pass: true,
         mainThreadMovementClaim: false,
-        publicRpc: { mainUpsertRuns: 2, exactSettingsAndCreationTimePreserved: true },
+        publicRpc: { mainUpsertRuns: 0, exactSettingsAndCreationTimePreserved: true },
         suppliedTimeRollbackAndCascadePreserved: true,
       });
     } finally {

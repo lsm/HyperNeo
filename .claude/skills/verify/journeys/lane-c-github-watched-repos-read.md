@@ -6,8 +6,8 @@ environment, free listeners, retained evidence and owned data cleanup.
 
 The unchanged settings-read journey imports the original real daemon Space
 RPC proof: enable/disable/listWatchedRepos/listConfig with two synthetic watched
-repos, polling/webhooks off, settings and timestamps aligned. Four target main
-write runs remain. Those helpers close all sockets, processors, app and scratch
+repos, polling/webhooks off, settings and timestamps aligned. The activated enable/disable path now expects zero target
+main writes. Those helpers close all sockets, processors, app and scratch
 DBs before this proof starts its own native query-only SQLite contract.
 
 With only the watched table, verify the complete mapped row, Space isolation,
@@ -24,3 +24,8 @@ The full transitive graph of all mapper consumers and GitHub/plugin/startup is
 outside this extraction. No public off-main or atomic command claim is made.
 Save github-watched-repos-read.json and imported fixture evidence. Deployment
 smoke stays with Neo. Never touch live daemon/8399 or real credentials.
+
+The enable/disable RPC now consumes the atomic writer receipt. Archived evidence
+retains its original commit-time counts. Current public RPC expectations require
+zero target main writes; direct scratch-helper SQL/binding/rollback contracts
+remain unchanged, and other public write/read families are not covered here.
