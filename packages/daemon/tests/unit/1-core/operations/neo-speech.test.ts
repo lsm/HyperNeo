@@ -7,6 +7,7 @@ import {
 } from '@hyperneo/shared';
 import { NeoSpeech } from '../../../../src/lib/neo/speech.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
+import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
 import {
   createOperationRegistry,
   type OperationCaller,
@@ -40,6 +41,7 @@ describe('spoken replies separate from publications', () => {
       id: string;
       reason?: string;
       state?: string;
+      guidance?: string;
     };
   };
   const listen = (enabled = true, caller = human) => call('listen', { sessionId, enabled }, caller);
@@ -95,6 +97,43 @@ describe('spoken replies separate from publications', () => {
     await speech.dispose();
     hub.cleanup();
     mailbox.close();
+  });
+
+  test('successful speech returns model guidance through MCP without repeating the utterance', async () => {
+    await listen();
+    const handler = createOperationMcpHandler(registry, () => neo);
+    const spoken = await handler({
+      name: 'neo.speech.say',
+      input: { requestId: 'guidance', text: 'PRIVATE_SPOKEN_ACKNOWLEDGMENT' },
+    });
+    const receipt = JSON.parse(spoken.content[0].text);
+    expect(receipt).toMatchObject({ ok: true, state: 'queued' });
+    expect(receipt.guidance).toContain('Do not repeat this utterance verbatim');
+    expect(receipt.guidance).toContain('Publish substantive results on screen separately');
+    expect(JSON.stringify(receipt)).not.toContain('PRIVATE_SPOKEN_ACKNOWLEDGMENT');
+    const retried = await call(
+      'say',
+      { requestId: 'guidance', text: 'PRIVATE_SPOKEN_ACKNOWLEDGMENT' },
+      neo
+    );
+    expect(retried.guidance).toBe(receipt.guidance);
+    expect(retried.created).toBe(false);
+  });
+
+  test('rejected or cancelled speech and non-say operations do not suppress screen replies', async () => {
+    expect((await say()).guidance).toBeUndefined();
+    expect((await listen()).guidance).toBeUndefined();
+    const saved = await say();
+    expect(
+      (await call('ack', { sessionId, id: saved.id, state: 'cancelled' })).guidance
+    ).toBeUndefined();
+    const retried = await say();
+    expect(retried.state).toBe('cancelled');
+    expect(retried.guidance).toBeUndefined();
+    expect(
+      (await call('preview', { sessionId, requestId: '30000000-0000-4000-8000-000000000001' }))
+        .guidance
+    ).toBeUndefined();
   });
 
   test('an unavailable failed-receipt write does not drop the next healthy synthesis', async () => {
