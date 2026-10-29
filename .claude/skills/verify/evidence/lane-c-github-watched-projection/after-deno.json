@@ -1,0 +1,206 @@
+{
+  "publicRpcCharacterization": {
+    "replies": [
+      {
+        "spaceId": "synthetic-source-enabled",
+        "source": "github",
+        "enabled": true
+      },
+      {
+        "spaceId": "synthetic-source-enabled",
+        "source": "github",
+        "enabled": false
+      }
+    ],
+    "mainStatementRuns": 4,
+    "watchedRows": 2,
+    "sourceWatchedAndSnapshotStayAligned": true,
+    "creationAndSharedCommandTimesPreserved": true
+  },
+  "publicCompleteProjectionPreserved": true,
+  "publicSnapshots": [
+    {
+      "publicWatched": [
+        {
+          "id": "36dd8cfd-3dcf-4592-acb9-7942d0a48217",
+          "spaceId": "synthetic-source-enabled",
+          "owner": "synthetic-owner",
+          "repo": "repo-one",
+          "enabled": true,
+          "webhookEnabled": false,
+          "pollingEnabled": false,
+          "webhookSecret": null,
+          "webhookRemoteId": null,
+          "webhookUrl": null,
+          "webhookAutoRegistered": false,
+          "webhookActive": null,
+          "webhookLastCheckedAt": null,
+          "webhookLastError": null,
+          "webhookConfiguredAt": null,
+          "lastWebhookAt": null,
+          "lastPollAt": null,
+          "pollCursor": null,
+          "createdAt": 1793254440385,
+          "updatedAt": 1793254440387
+        },
+        {
+          "id": "301f1964-b9c0-414e-9572-09cc74278acc",
+          "spaceId": "synthetic-source-enabled",
+          "owner": "synthetic-owner",
+          "repo": "repo-two",
+          "enabled": true,
+          "webhookEnabled": false,
+          "pollingEnabled": false,
+          "webhookSecret": null,
+          "webhookRemoteId": null,
+          "webhookUrl": null,
+          "webhookAutoRegistered": false,
+          "webhookActive": null,
+          "webhookLastCheckedAt": null,
+          "webhookLastError": null,
+          "webhookConfiguredAt": null,
+          "lastWebhookAt": null,
+          "lastPollAt": null,
+          "pollCursor": null,
+          "createdAt": 1793254440386,
+          "updatedAt": 1793254440387
+        }
+      ],
+      "savedWatched": [
+        {
+          "id": "36dd8cfd-3dcf-4592-acb9-7942d0a48217",
+          "owner": "synthetic-owner",
+          "repo": "repo-one",
+          "enabled": true,
+          "webhookEnabled": false,
+          "pollingEnabled": false,
+          "webhookSecret": null,
+          "webhookRemoteId": null,
+          "webhookUrl": null,
+          "webhookAutoRegistered": false,
+          "webhookActive": null,
+          "webhookLastCheckedAt": null,
+          "webhookLastError": null,
+          "webhookConfiguredAt": null,
+          "lastWebhookAt": null,
+          "lastPollAt": null,
+          "createdAt": 1793254440385,
+          "updatedAt": 1793254440387
+        },
+        {
+          "id": "301f1964-b9c0-414e-9572-09cc74278acc",
+          "owner": "synthetic-owner",
+          "repo": "repo-two",
+          "enabled": true,
+          "webhookEnabled": false,
+          "pollingEnabled": false,
+          "webhookSecret": null,
+          "webhookRemoteId": null,
+          "webhookUrl": null,
+          "webhookAutoRegistered": false,
+          "webhookActive": null,
+          "webhookLastCheckedAt": null,
+          "webhookLastError": null,
+          "webhookConfiguredAt": null,
+          "lastWebhookAt": null,
+          "lastPollAt": null,
+          "createdAt": 1793254440386,
+          "updatedAt": 1793254440387
+        }
+      ]
+    },
+    {
+      "publicWatched": [
+        {
+          "id": "36dd8cfd-3dcf-4592-acb9-7942d0a48217",
+          "spaceId": "synthetic-source-enabled",
+          "owner": "synthetic-owner",
+          "repo": "repo-one",
+          "enabled": false,
+          "webhookEnabled": false,
+          "pollingEnabled": false,
+          "webhookSecret": null,
+          "webhookRemoteId": null,
+          "webhookUrl": null,
+          "webhookAutoRegistered": false,
+          "webhookActive": null,
+          "webhookLastCheckedAt": null,
+          "webhookLastError": null,
+          "webhookConfiguredAt": null,
+          "lastWebhookAt": null,
+          "lastPollAt": null,
+          "pollCursor": null,
+          "createdAt": 1793254440385,
+          "updatedAt": 1793254440388
+        },
+        {
+          "id": "301f1964-b9c0-414e-9572-09cc74278acc",
+          "spaceId": "synthetic-source-enabled",
+          "owner": "synthetic-owner",
+          "repo": "repo-two",
+          "enabled": false,
+          "webhookEnabled": false,
+          "pollingEnabled": false,
+          "webhookSecret": null,
+          "webhookRemoteId": null,
+          "webhookUrl": null,
+          "webhookAutoRegistered": false,
+          "webhookActive": null,
+          "webhookLastCheckedAt": null,
+          "webhookLastError": null,
+          "webhookConfiguredAt": null,
+          "lastWebhookAt": null,
+          "lastPollAt": null,
+          "pollCursor": null,
+          "createdAt": 1793254440386,
+          "updatedAt": 1793254440388
+        }
+      ],
+      "savedWatched": [
+        {
+          "id": "36dd8cfd-3dcf-4592-acb9-7942d0a48217",
+          "owner": "synthetic-owner",
+          "repo": "repo-one",
+          "enabled": false,
+          "webhookEnabled": false,
+          "pollingEnabled": false,
+          "webhookSecret": null,
+          "webhookRemoteId": null,
+          "webhookUrl": null,
+          "webhookAutoRegistered": false,
+          "webhookActive": null,
+          "webhookLastCheckedAt": null,
+          "webhookLastError": null,
+          "webhookConfiguredAt": null,
+          "lastWebhookAt": null,
+          "lastPollAt": null,
+          "createdAt": 1793254440385,
+          "updatedAt": 1793254440388
+        },
+        {
+          "id": "301f1964-b9c0-414e-9572-09cc74278acc",
+          "owner": "synthetic-owner",
+          "repo": "repo-two",
+          "enabled": false,
+          "webhookEnabled": false,
+          "pollingEnabled": false,
+          "webhookSecret": null,
+          "webhookRemoteId": null,
+          "webhookUrl": null,
+          "webhookAutoRegistered": false,
+          "webhookActive": null,
+          "webhookLastCheckedAt": null,
+          "webhookLastError": null,
+          "webhookConfiguredAt": null,
+          "lastWebhookAt": null,
+          "lastPollAt": null,
+          "createdAt": 1793254440386,
+          "updatedAt": 1793254440388
+        }
+      ]
+    }
+  ],
+  "mainThreadMovementClaim": false,
+  "pureProjectionSecretMaskAndOmissionsPreserved": true,
+  "pass": true
+}
