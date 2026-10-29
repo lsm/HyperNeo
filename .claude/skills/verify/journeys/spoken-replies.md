@@ -81,3 +81,14 @@ Include neo-refusals.test.ts and operation-name-families.test.ts with the focuse
 speech/intake suite: catalog rejection codes need an actionable shared explanation,
 and the registered speech operation names must remain sorted. The complete static
 check alone does not execute those runtime registration guards.
+
+For server latency diagnostics, require voice-timing.json from the same real
+WebSocket/MCP replay. One speech id must connect queued, request_started,
+first_chunk, first_chunk_sent and finished; a live input has its message id at
+durable acceptance. The focused speech/intake/publication tests also hold the
+writer or audio source to prove timestamps occur at their actual boundaries,
+exclude text/PCM and preserve retry deduplication. Publication persistence and
+playing receipts are server observations, never screen-visible or first-played
+timestamps. Query exported timing events or explicitly selected daemon JSONL
+files with voice-timing-read.py; it only prints fixed stages, ids and times.
+No phone timing or exact input-to-say attribution is inferred from proximity.

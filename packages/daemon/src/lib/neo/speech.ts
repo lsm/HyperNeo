@@ -5,6 +5,7 @@ import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { recordOperationRefusal } from '../../storage/repositories/operation-refusal-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { Logger } from '../logger.ts';
+import { voiceDiagnostic } from '../voice/diagnostics.ts';
 import { NeoSpeechAudio } from './speech-audio.ts';
 import { neoDerivedId } from './derived-id.ts';
 
@@ -173,6 +174,13 @@ export class NeoSpeech {
     input: Input,
     caller: OperationCaller
   ): Promise<SpeechReceipt> {
+    if (action === 'say' && 'requestId' in input)
+      voiceDiagnostic('voice.speech.requested', {
+        sessionId,
+        requestId: input.requestId,
+        speechId: neoDerivedId(`speech:${sessionId}:${input.requestId}`),
+        atMs: Date.now(),
+      });
     const result = this.serial.then(() => this.dispatch(action, sessionId, input, caller));
     this.serial = result.catch(() => {});
     return result;
@@ -215,6 +223,13 @@ export class NeoSpeech {
       at: Date.now(),
     });
     this.receipts.set(row.id, row);
+    voiceDiagnostic('voice.speech.receipt', {
+      sessionId: row.sessionId,
+      speechId: row.id,
+      clientId: row.clientId,
+      state: row.state,
+      atMs: Date.now(),
+    });
     if (row.state !== 'queued' && row.state !== 'playing') this.audio.cancel(row.id);
     if (this.receipts.size > 1024) {
       const terminal = [...this.receipts.values()].find(

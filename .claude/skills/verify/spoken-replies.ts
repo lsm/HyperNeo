@@ -6,13 +6,18 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
-import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
+import { MessageHub, WebSocketClientTransport, subscribeToStructuredLogs } from '../../../packages/shared/src/mod.ts';
 
 const [mode, ...args] = process.argv.slice(2), run = resolve(args.at(-1)!);
 const upstream = mode === 'upstream' ? new URL(args[0]) : null;
 assert(['verify','serve','upstream'].includes(mode)); assert.equal(process.env.NODE_ENV,'test');
 assert.equal(process.env.HOME, join(run,'home'));
 for (const dir of ['workspace','bin','evidence']) mkdirSync(join(run,dir), { recursive:true });
+const timingEvents: {stage:string;metadata:Record<string,unknown>}[]=[];
+const stopTiming = subscribeToStructuredLogs(event=>{
+  if (event.module==='hyperneo:daemon:voice' && /^(voice\.(input|publication|speech|tts)\.)/.test(event.message))
+    timingEvents.push({stage:event.message,metadata:event.metadata});
+});
 writeFileSync(join(run,'bin/gh'), '#!/bin/sh\nexit 1\n', { mode:0o700 });
 const network = globalThis.fetch;
 globalThis.fetch = ((input, init) => {
@@ -162,9 +167,14 @@ try {
     const audioBytes=Buffer.concat(frames.map(event=>Buffer.from(event.pcm,'base64'))).length;
     if(!upstream) assert.equal(audioBytes,153600); else assert(audioBytes>0);
     assert((await call('ack',{sessionId,id:streamed.id,state:'played'},1)).ok);
+    assert(timingEvents.some(event=>event.stage==='voice.input.accepted' && event.metadata.messageId===inputId));
+    for(const stage of ['queued','request_started','first_chunk','first_chunk_sent','finished'])
+      assert.equal(timingEvents.filter(event=>event.stage==='voice.tts.'+stage && event.metadata.speechId===streamed.id).length,1);
     console.log(JSON.stringify({voiceMetadataShort:true, catalogTypedRejection:!upstream, catalogConnectionRefused:!upstream, serverAudioStreaming:true, upstream:upstream?.origin, audioBytes, chunks:frames.length, passed:true, realWebSocket:true, mcp:true, writerWorker:true, unrelatedClientSilent:true, noReplay:true, fullQueueRetry:true, ...evidence()}));
   }
 } finally {
+  stopTiming();
+  writeFileSync(join(run,'evidence/voice-timing.json'),JSON.stringify(timingEvents,null,2));
   writeFileSync(join(run,'evidence/spoken-replies.json'),JSON.stringify(evidence(),null,2));
   asrFixture?.stop(true);
   fixture.closeAllConnections(); await new Promise<void>(done=>fixture.close(()=>done()));

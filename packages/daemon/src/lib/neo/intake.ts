@@ -24,6 +24,7 @@ import type { NeoRepository } from '../../storage/repositories/neo-repository.ts
 import { toMailboxMessage } from '../mailbox/entry.ts';
 import { MessageSessionIdSchema, SessionContentSchema } from '../messaging/message-send.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import { voiceDiagnostic } from '../voice/diagnostics.ts';
 import { NeoReplyRefSchema } from './conversation-ask.ts';
 import { neoImageSize } from './image-size.ts';
 import { neoLocalTimeLine } from './local-time.ts';
@@ -277,7 +278,8 @@ async function persistNeoIntake(
   message: ReturnType<typeof neoIntakeMessage>,
   session: Target,
   db: Database,
-  conversationId: string
+  conversationId: string,
+  liveVoice: boolean
 ): Promise<IntakeResult> {
   const receipt = await new NeoConversationAskRepository(db.getDatabase()).acceptPrompt(
     conversationId,
@@ -286,6 +288,12 @@ async function persistNeoIntake(
     db.getSDKMessageRepo(),
     db.getJobQueueRepo()
   );
+  if (liveVoice && receipt.accepted && receipt.created)
+    voiceDiagnostic('voice.input.accepted', {
+      sessionId: session.id,
+      messageId: message.uuid,
+      atMs: Date.now(),
+    });
   return receipt.accepted
     ? {
         ok: true,
@@ -502,9 +510,20 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
     'message'
   )
   .pipe(
-    (message: ReturnType<typeof neoIntakeMessage>, root: IntakeTarget, db: Database) =>
-      persistNeoIntake(message, root.target, db, root.conversationId),
-    ['message', 'root', 'db'],
+    (
+      message: ReturnType<typeof neoIntakeMessage>,
+      root: IntakeTarget,
+      db: Database,
+      input: IntakeInput
+    ) =>
+      persistNeoIntake(
+        message,
+        root.target,
+        db,
+        root.conversationId,
+        input.inputMode === 'live_voice'
+      ),
+    ['message', 'root', 'db', 'input'],
     'receipt'
   )
   .pipe(

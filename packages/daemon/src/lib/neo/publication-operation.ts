@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { unregisteredArtifact } from '../artifacts/file-contracts.ts';
 import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import { voiceDiagnostic } from '../voice/diagnostics.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
 import { neoDerivedId } from './derived-id.ts';
 import {
@@ -160,11 +161,18 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
       'publication'
     )
     .pipe(
-      (receipt: Receipt) => {
+      (receipt: Receipt, draft: Draft, caller: OperationCaller) => {
+        if (receipt.accepted && receipt.created)
+          voiceDiagnostic('voice.publication.persisted', {
+            sessionId: caller.sessionId,
+            requestId: draft.requestId,
+            publicationId: receipt.publication.publicationId,
+            atMs: Date.now(),
+          });
         if (receipt.accepted) runtime.notify();
         return receipt;
       },
-      'publication',
+      ['publication', 'draft', 'caller'],
       'publication'
     )
     .endAsync('publication') as (input: unknown, caller: OperationCaller) => Promise<Receipt>;
