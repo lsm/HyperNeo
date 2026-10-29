@@ -53,6 +53,13 @@ describe('root Neo system prompt', () => {
     expect(NEO_ROOT_PROMPT).not.toContain('Plain assistant text shows only');
   });
 
+  test('delivers per-todo reminder guidance while retaining the short root', () => {
+    const prompt = neoPrompt([]);
+    expect(prompt).toContain('even when its ask has other work or open questions');
+    expect(prompt).toContain('later reminders queue as fresh-turn input every two hours');
+    expect(prompt).toContain('stopping after three consumed reminders');
+  });
+
   test('routes continuing discussion into a fresh prepared session using existing flows', () => {
     expect(NEO_FOCUSED_DISCUSSION.split(/\s+/).length).toBeLessThan(250);
     for (const prompt of [neoPrompt([]), neoPrompt(neoSettingsPackBriefs())]) {

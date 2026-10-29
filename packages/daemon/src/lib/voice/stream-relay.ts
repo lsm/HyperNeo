@@ -401,6 +401,10 @@ export class VoiceStream {
     return { text: outcome.text, via: 'batch' };
   }
 
+  get receivedBytes(): number {
+    return this.bytes;
+  }
+
   write(pcm: Uint8Array): string | null {
     if (pcm.byteLength % 2 !== 0) return 'Voice chunks must be whole 16-bit samples';
     if (this.bytes + pcm.byteLength > VOICE_MAX_AUDIO_BYTES - 44)

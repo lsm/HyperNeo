@@ -1,7 +1,7 @@
 import { codingLedgerPollReads } from './ledger-poll-db.ts';
 import { isRateLimitError } from '../../../session/rate-limit-detector.ts';
 import { codingCanonicalRepo, codingRepoWatched, codingWatchedRepos } from './watched-repos.ts';
-import { posix } from 'node:path';
+import { codingHumanSignoff } from './human-signoff.ts';
 import {
   CodingStageFactsRepository,
   codingReviewerPolicy,
@@ -72,6 +72,12 @@ export const Node = z.object({
   files: z
     .object({
       nodes: z.array(z.object({ path: z.string() })),
+      pageInfo: z.object({ hasNextPage: z.boolean() }),
+    })
+    .nullish(),
+  labels: z
+    .object({
+      nodes: z.array(z.object({ name: z.string() })),
       pageInfo: z.object({ hasNextPage: z.boolean() }),
     })
     .nullish(),
@@ -147,6 +153,7 @@ export function codingPrReplyAt(pr: Node): number | null {
 
 export interface CodingMergePolicy {
   provenance?: boolean;
+  mergeBy?: 'owner' | 'daemon';
   mergePolicy?: 'review_bot' | 'ci_only' | 'human';
   reviewBot?: string;
   humanSignoff?: readonly string[];
@@ -172,13 +179,13 @@ export function codingPrState(
   if (!policy.mergePolicy) return 'waiting_human';
   const readyCi = noCi || ci === 'SUCCESS';
   const humanSignoff =
-    !!policy.humanSignoff?.length &&
-    (!pr.files ||
-      pr.files.pageInfo.hasNextPage ||
-      policy.humanSignoff.some((pattern) => pattern.startsWith('label:')) ||
-      pr.files.nodes.some((file) =>
-        policy.humanSignoff!.some((pattern) => posix.matchesGlob(file.path, pattern))
-      ));
+    codingHumanSignoff(
+      policy.humanSignoff ?? [],
+      pr.files && !pr.files.pageInfo.hasNextPage ? pr.files.nodes.map((file) => file.path) : null,
+      pr.labels && !pr.labels.pageInfo.hasNextPage
+        ? pr.labels.nodes.map((label) => label.name)
+        : null
+    ) !== false;
   if (policy.mergePolicy === 'human' || (policy.mergePolicy === 'review_bot' && !policy.reviewBot))
     return readyCi ? 'waiting_human' : 'waiting_ci';
   if (policy.mergePolicy === 'review_bot') {
@@ -463,6 +470,7 @@ export class CodingPrLedgerRepository {
       )?.value;
     };
     return {
+      mergeBy: (read('mergeBy') ?? 'owner') as CodingMergePolicy['mergeBy'],
       provenance: read('provenance') as boolean | undefined,
       mergePolicy: read('mergePolicy') as CodingMergePolicy['mergePolicy'],
       reviewBot: read('reviewBot') as string | undefined,

@@ -144,6 +144,30 @@ describe('planCodingLedgerRead', () => {
     }
   );
 
+  test.each(['review_bot', 'ci_only'] as const)(
+    'checks actual labels for %s signoff',
+    (mergePolicy) => {
+      const state = (names: string[], hasNextPage = false) =>
+        planCodingLedgerRead(
+          response([
+            node(1, {
+              files: { nodes: [{ path: 'src/app.ts' }], pageInfo: { hasNextPage: false } },
+              labels: { nodes: names.map((name) => ({ name })), pageInfo: { hasNextPage } },
+              reviews: {
+                nodes: [{ state: 'APPROVED', commit: { oid: 'h1' }, author: { login: 'bot' } }],
+              },
+            }),
+          ]),
+          0,
+          () => ({ mergePolicy, reviewBot: 'bot', humanSignoff: ['label:human-*'] })
+        )?.rows[0].state;
+      expect(state([])).toBe('approved_green');
+      expect(state(['bug'])).toBe('approved_green');
+      expect(state(['human-merge'])).toBe('waiting_human');
+      expect(state([], true)).toBe('waiting_human');
+    }
+  );
+
   test('keeps open PRs and ones closed within 7 days, and refuses partial reads', () => {
     const now = 10 * CODING_LEDGER_KEEP_MS;
     const recent = new Date(now - 60_000).toISOString();
@@ -1021,6 +1045,7 @@ test('ledger reads repo preferences before same-pack global fallback', () => {
         .run(pack, scope ? 'repo' : 'global', scope, key, JSON.stringify(value));
     save('other', '', 'mergePolicy', 'ci_only');
     expect(ledger.policy('x/x')).toEqual({
+      mergeBy: 'owner',
       mergePolicy: undefined,
       reviewBot: undefined,
       humanSignoff: undefined,
@@ -1031,11 +1056,13 @@ test('ledger reads repo preferences before same-pack global fallback', () => {
     save('coding', 'X/X', 'mergePolicy', 'human');
     save('coding', 'X/X', 'humanSignoff', []);
     expect(ledger.policy('x/x')).toEqual({
+      mergeBy: 'owner',
       mergePolicy: 'human',
       reviewBot: 'global-bot',
       humanSignoff: [],
     });
     expect(ledger.policy('y/y')).toEqual({
+      mergeBy: 'owner',
       mergePolicy: 'review_bot',
       reviewBot: 'global-bot',
       humanSignoff: ['global/**'],
