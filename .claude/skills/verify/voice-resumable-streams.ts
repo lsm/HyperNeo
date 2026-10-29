@@ -121,6 +121,9 @@ try {
     }
     observed.legacyReconnects = index + 1;
   }
+  for (let attempt = 0; records.some((record) => !record.closed) && attempt < 500; attempt++) await sleep(10);
+  assert(records.every((record) => record.closed), 'replacement left an ASR connection open');
+  observed.detachedRelaysRetired = true;
   if (mode !== 'quick') {
     const abandoned = await second.call('voice.stream.start', { encoding: 'pcm16', sampleRate: 16_000 });
     await second.call('voice.stream.chunk', { streamId: abandoned.streamId, audioBase64: pcm([42]), offset: 0 });

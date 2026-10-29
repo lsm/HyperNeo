@@ -158,7 +158,9 @@ export function registerVoiceHandlers(
       const clientId = context?.clientId ?? context?.sessionId ?? 'global';
       const owner = ownerOf(clientId);
       expireIdleVoiceStreams(Date.now());
-      const replaced = [...voiceStreams].filter(([, owned]) => owned.clientId === clientId);
+      const replaces = (owned: OwnedVoiceStream) =>
+        owned.clientId === clientId || (owned.clientId === null && owned.owner === owner);
+      const replaced = [...voiceStreams].filter(([, owned]) => replaces(owned));
       const admitted = admitVoiceStreamStart(
         voiceStreamStarts.get(clientId) ?? [],
         voiceStreams.size - replaced.length + startingStreams.count,
@@ -199,8 +201,14 @@ export function registerVoiceHandlers(
           started.stream.close('client_disconnected');
           throw new Error('The client disconnected while the voice stream was starting');
         }
+        if (
+          [...voiceStreams.values()].filter((owned) => !replaces(owned)).length >= MAX_VOICE_STREAMS
+        ) {
+          started.stream.close('capacity_changed');
+          throw new Error('Too many voice streams are already open');
+        }
         for (const [id, owned] of voiceStreams)
-          if (owned.clientId === clientId) {
+          if (replaces(owned)) {
             owned.stream.close('replaced');
             deleteVoiceStream(id);
           }

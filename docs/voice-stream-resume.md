@@ -34,7 +34,11 @@ The RPC response envelope carries a human-readable `error` string and a separate
 
 Other existing start/chunk/stop errors retain their messages and handler-error
 behavior, including ownership, size, sample alignment and transcription failures.
-The daemon keeps its existing stream-count, rate and audio limits. Resume cancels
+The daemon keeps its existing stream-count, rate and audio limits. A successful
+new start replaces detached recordings of the same device/trusted local owner,
+so legacy reconnects do not accumulate abandoned streams. It preserves other
+owners and live connections. A failed start keeps the detached audio resumable;
+capacity is checked again after opening if ownership changed while awaiting ASR. Resume cancels
 the disconnect deadline; a later disconnect starts a new full grace period,
 independent of the connected idle deadline. A timer retires abandoned streams
 even without another RPC. Grace expiry also closes the ASR relay.

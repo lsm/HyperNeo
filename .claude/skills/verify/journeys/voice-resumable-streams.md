@@ -14,7 +14,10 @@ fully duplicated chunk and a partially overlapping chunk, then stops.
 
 Require one complete final transcript, exactly the original unique PCM samples
 at ASR, and one final event routed to the reconnected client. First, the helper
-also checks the legacy no-offset/no-resume path. It then disconnects another
+also checks the legacy no-offset/no-resume path, then nine reconnect/start
+cycles without either extension. The ninth succeeds, all superseded ASR
+connections retire, and live or other-device capacity stays protected by unit
+contracts, including a start/resume race and a refused replacement. It then disconnects another
 stream and waits 121 seconds: its ASR socket must close without any further RPC,
 and resume must return VOICE_STREAM_NOT_FOUND. The wait exercises the real grace
 timer; the unit suite separately checks exact boundaries and device isolation.

@@ -239,8 +239,8 @@ describe('resumable voice stream RPC', () => {
     const streams = [];
     for (let index = 0; index < 8; index++) {
       streams.push(await start(`client-${index}`));
-      disconnect(`client-${index}`);
     }
+    for (let index = 0; index < 8; index++) disconnect(`client-${index}`);
     let entered!: () => void;
     let release!: () => void;
     const opening = new Promise<void>((resolve) => {
