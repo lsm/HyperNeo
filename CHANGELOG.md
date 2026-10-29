@@ -9,6 +9,7 @@ All notable changes to HyperNeo will be documented in this file.
 ### Voice replies
 
 - Add spoken Neo replies for the opted-in client and session; cancel pending speech on disconnect without replaying it on reconnect (#9298).
+- Stream spoken reply audio from the daemon, and keep spoken replies from repeating what is already on screen (#9369, #9388).
 - Queue Send while transcription is pending (#9261).
 - Use explicit batch/live ASR endpoints; move recording storage and tool recovery writes off the daemon main thread (#9209, #9214, #9222).
 
@@ -28,9 +29,13 @@ All notable changes to HyperNeo will be documented in this file.
 
 - Revoke paired devices and observe connected-device revocations without blocking the daemon; move pairing approval, redemption, creation and human reset work to DB workers (#9302, #9304, #9270, #9278, #9295, #9315).
 - Move session reminders, schedules, workspaces, GitHub inbox delivery, publication pages, turn vectors and coding-ledger operations through DB workers (#9143, #9252, #9266, #9228, #9215, #9321, #9325, #9247, #9208, #9218, #9244).
+- Route global and Space extension configuration, GitHub Space settings and watched-repository reads through DB writers (#9377, #9379, #9381, #9383, #9385, #9389, #9391, #9393).
 
 ### Agent fixes
 
+- Hold stalled streams until the network returns instead of failing the turn; let the query failure latch expire and park deliveries while it holds (#9375, #9371).
+- Show the real dead-letter reason instead of a fixed kickoff banner (#9373).
+- Pin the Copilot worker to SDK 1.0.28 / CLI 1.0.105 (#9353).
 - Bound stream silence while tool calls are open; surface deferred restart, reconciliation and terminal query failures (#9284, #9285, #9110).
 - Preserve model capacity across auto-compaction, stop old queries before fallback and bound repeated delivery parks (#9341, #9134, #9283).
 - Prevent overlapping Desktop-owned sends, expose worker work locations and reuse idle workers at the same place (#9245, #9105, #9345).
