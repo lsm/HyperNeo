@@ -2776,6 +2776,12 @@ export class AgentSession
             return { outcome: 'blocked', retryAt, reason: 'limit_recovery' };
           }
 
+          const latchedUntil =
+            this.queryRunner instanceof QueryRunner ? this.queryRunner.failureLatchedUntil() : null;
+          if (latchedUntil !== null) {
+            return { outcome: 'blocked', retryAt: latchedUntil, reason: 'query_failure_cooldown' };
+          }
+
           if (this.networkPause.isActive()) await this.resumeNetworkPauseFor(messageUuid);
 
           if (!this.messageQueue.isRunning()) {

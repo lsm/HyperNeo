@@ -492,6 +492,10 @@ export class QueryRunner {
     return this.failures.reset();
   }
 
+  failureLatchedUntil() {
+    return this.failures.latchedUntil();
+  }
+
   private notifyToolInventory(): void {
     this.ctx.messageHub.event(
       'session.toolInventory.changed',
