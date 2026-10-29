@@ -23,7 +23,9 @@ The failing real-daemon reproduction is committed before this ordering fix.
 Read failures must also include a readable explanation and safe next step; the
 helper tests malformed GitHub replies and a synthetic reader exception. These
 pack-local messages must pass the existing refusal-catalog audit without adding
-coding-specific entries to core. No todo or owner is needed.
+coding-specific entries to core. No todo or owner is needed. A mixed-case GitHub hostname must work without
+GH_HOST; the CLI fixture also refuses unnormalized --hostname values. The
+hostname regression is reproduced through this daemon helper before the fix.
 
 Receipt commands run in the real DB writer. A held WAL lock must delay the
 begin receipt while health remains responsive. After commit, executor, head

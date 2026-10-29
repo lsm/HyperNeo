@@ -19,7 +19,7 @@ const Response = z.tuple([
 ]);
 type Observed = z.infer<typeof Response>;
 const collect = async (db: Database, url: string, spawn: SpawnFn) => {
-  const meta = parsePrUrl(url)!;
+  const meta = parsePrUrl(url.toLowerCase())!;
   const gh = (args: string[]) => runGhJson(['gh', ...args], homedir(), spawn);
   const pull = await gh([
     'pr',
@@ -84,7 +84,7 @@ const read = (superpipe({})('coding.read-daemon-merge-facts') as PipelineAPI)
   .input(['db', 'url', 'spawn'])
   .pipe(
     (url: string) => {
-      const meta = parsePrUrl(url);
+      const meta = parsePrUrl(url.toLowerCase());
       return meta &&
         (meta.host === 'github.com' || meta.host === process.env.GH_HOST?.toLowerCase())
         ? { value: url }
