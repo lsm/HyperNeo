@@ -3,7 +3,9 @@ set -euo pipefail
 cd "$(dirname "$0")/../../.."
 if [[ ${1:-} != --run ]]; then
   [[ $# = 1 && $1 = /* && ! -e $1 ]] || { echo 'usage: preview-html-viewer-check.sh /absolute/new/evidence'; exit 64; }
-  bash .claude/skills/verify/resource-check.sh
+  if [[ $(uname -s) == Darwin ]]; then
+    bash .claude/skills/verify/resource-check.sh
+  fi
   exec .claude/skills/verify/with-run.sh "$0" --run "$1"
 fi
 RUN=$(cd "$RUN" && pwd -P)

@@ -36,6 +36,12 @@ VERIFY_BROWSER=/path/to/chromium VERIFY_MOCK_PORT=19395 VERIFY_PORT=19396 \
   bash .claude/skills/verify/preview-html-viewer-check.sh /absolute/new/evidence
 ```
 
+The runner applies the shared macOS resource guard only on Darwin. Run
+`python3 .claude/skills/verify/preview-html-viewer-preflight.py` to exercise the
+actual entrypoint with platform/tool shims: Linux reaches seed setup without
+`memory_pressure`, while Darwin stops before setup below 25% free memory.
+This preflight regression does not establish native Linux browser coverage.
+
 The seed creates only a synthetic DB/context/workspace with hostile.html and a
 synthetic deep document. Prepare registers them and opens Neo through real
 operation.invoke. Stop the daemon before seeding the synthetic publication into

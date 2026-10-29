@@ -31,6 +31,9 @@ root of your worktree.
 
 ## Launch
 
+Build web for the current checkout HEAD before launching. A bundle from an older
+commit intentionally reloads on connection and can invalidate browser setup.
+
 ```bash
 cd packages/web && bun run build && cd ../..
 .claude/skills/verify/launch.sh 9311 "$RUN"
@@ -98,6 +101,9 @@ or use a shell with `set -e`. For example:
 ```bash
 bash .claude/skills/verify/resource-check.sh && bun run check
 ```
+
+Portable wrappers invoke this macOS-only check on Darwin; Linux must not require
+`memory_pressure` or `/System/Volumes/Data` to enter a journey.
 
 In a standalone clone beneath a directory named `tmp`, Biome can ignore its `.`
 target because the repository excludes `**/tmp`. If `format:check` reports zero
