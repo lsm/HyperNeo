@@ -98,6 +98,7 @@ export const NeoPublicationResultSchema = z.union([
   z.object({
     accepted: z.literal(true),
     created: z.boolean(),
+    guidance: z.string().optional(),
     publication: NeoPublicationObject.extend({
       sequence: z.number().int().positive(),
       createdAt: z.string(),

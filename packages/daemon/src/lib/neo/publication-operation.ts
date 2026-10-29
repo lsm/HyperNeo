@@ -170,7 +170,13 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
             atMs: Date.now(),
           });
         if (receipt.accepted) runtime.notify();
-        return receipt;
+        return receipt.accepted
+          ? {
+              ...receipt,
+              guidance:
+                'The user can see this message; add no assistant text this turn unless the user requested a transcript or record.',
+            }
+          : receipt;
       },
       ['publication', 'draft', 'caller'],
       'publication'
