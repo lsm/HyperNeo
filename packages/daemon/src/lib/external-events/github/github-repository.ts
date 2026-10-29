@@ -1,3 +1,4 @@
+import { persistGitHubSpaceEnabled } from '../../../storage/repositories/github-space-enabled-persist.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
 import type { GitHubPollResume } from './github-poll-slice.ts';
@@ -237,18 +238,7 @@ export class GitHubEventExtensionRepository {
 
   setRepoEnabled(spaceId: string, enabled: boolean): number {
     const now = Date.now();
-    this.db
-      .prepare(
-        `INSERT INTO space_github_source_settings (space_id, enabled, created_at, updated_at)
-				 VALUES (?, ?, ?, ?)
-				 ON CONFLICT(space_id) DO UPDATE SET enabled = excluded.enabled, updated_at = excluded.updated_at`
-      )
-      .run(spaceId, enabled ? 1 : 0, now, now);
-    return this.db
-      .prepare(
-        `UPDATE space_github_watched_repos SET enabled = ?, updated_at = ? WHERE space_id = ?`
-      )
-      .run(enabled ? 1 : 0, now, spaceId).changes;
+    return persistGitHubSpaceEnabled(this.db, spaceId, enabled, now);
   }
 
   setPollingIntent(spaceId: string, enabled: boolean): void {
