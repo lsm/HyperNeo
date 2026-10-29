@@ -150,6 +150,10 @@ test.each(['instruction', 'target', 'held', 'removed', 'done', 'no-check'] as co
   '%s stops a check-only reminder',
   async (action) => {
     const todo = add('queued');
+    clock += 24 * hour;
+    await service.refreshDriverWork();
+    expect(notes()).toHaveLength(1);
+    await consume(0);
     if (action === 'instruction')
       service.todos.updateTodo(todo, { instruction: 'Do the work' }, clock);
     if (action === 'target')
@@ -168,7 +172,7 @@ test.each(['instruction', 'target', 'held', 'removed', 'done', 'no-check'] as co
     if (action === 'no-check') service.todos.updateTodo(todo, { check: null }, clock);
     clock += 48 * hour;
     await service.refreshDriverWork();
-    expect(notes()).toHaveLength(0);
+    expect(notes()).toHaveLength(1);
   }
 );
 
@@ -177,6 +181,31 @@ test('changing the title does not restart the age of a check-only todo', async (
   clock += 23 * hour;
   service.todos.updateTodo(todo, { title: 'Renamed waiting work' }, clock);
   clock += hour;
+  await service.refreshDriverWork();
+  expect(notes()).toHaveLength(1);
+});
+
+test('a consumed receipt later marked failed does not spend the daily reminder', async () => {
+  add('queued');
+  clock += 24 * hour;
+  await service.refreshDriverWork();
+  await consume(0);
+  await db
+    .getSDKMessageRepo()
+    .write('markDeliveryFailedByUuidInclusive', 'neo', notes()[0].messageUuid);
+  await service.refreshDriverWork();
+  expect(notes()).toHaveLength(2);
+  await service.refreshDriverWork();
+  expect(notes()).toHaveLength(2);
+});
+
+test('closing the ask stops its daily reminders', async () => {
+  add('queued');
+  clock += 24 * hour;
+  await service.refreshDriverWork();
+  await consume(0);
+  service.todos.settleAsk(service.todos.getAsk('ask')!, 'dropped', 'Held elsewhere', clock);
+  clock += 48 * hour;
   await service.refreshDriverWork();
   expect(notes()).toHaveLength(1);
 });

@@ -764,16 +764,17 @@ export class NeoAskTodoRepository {
     );
   }
 
-  listCheckable(stalledBefore?: number): NeoTodo[] {
+  listCheckable(stalledBefore?: number, queuedBefore?: number): NeoTodo[] {
     return (
       this.db
         .prepare(
           `${TODO_SELECT} WHERE state IN ('todo', 'doing', 'blocked', 'failed', 'closed_unverified')
              AND ask_id IN (SELECT id FROM neo_asks WHERE status = 'open')
-             AND (?1 IS NULL OR (state = 'blocked' AND blocked_by IN ('stalled', 'environment') AND updated_at <= ?1
+             AND (?1 IS NULL OR (((state = 'blocked' AND blocked_by IN ('stalled', 'environment') AND updated_at <= ?1)
+               OR (state = 'todo' AND created_at <= ?2 AND check_json IS NOT NULL AND COALESCE(TRIM(instruction), '') = ''))
                AND ask_id IN (SELECT a.id FROM neo_asks a JOIN sessions s ON s.id = a.session_id WHERE s.status = 'active')))`
         )
-        .all(stalledBefore ?? null) as TodoRow[]
+        .all(stalledBefore ?? null, queuedBefore ?? null) as TodoRow[]
     ).map(toTodo);
   }
 

@@ -83,6 +83,8 @@ try {
   for(let day=0;day<3;day++){
     clock+=24*hour;await refresh();check('daily reminders continue until action',4+day);await receipt(3+day,'consumed');
   }
+  evidence.beforeCompletion=await rpc('operation.invoke',{name:'neo.snapshot',input:{}});
+  assert.equal(service!.todos.getTodo('queued-todo')?.state,'todo');
   writeFileSync(path,'Synthetic passing evidence');
   await refresh(); assert.equal(service!.todos.getTodo('queued-todo')?.state,'done');
   clock+=48*hour;await refresh();check('passing check stops reminders',6);
