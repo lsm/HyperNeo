@@ -62,3 +62,8 @@ unexpected infrastructure exception remains a failed operation.
 The real WebSocket proof also flips only its synthetic catalog upstream to503,
 requires a completed ok:false speech_backend_unavailable result, restores the
 upstream and requires a successful catalog before streaming the next utterance.
+For transport failures it closes the synthetic upstream listener, requires the
+same typed unavailable result through the real WebSocket door, restarts only
+that listener and requires catalog recovery. Focused tests also require typed
+unavailable results for fetch connection errors and timeout/abort rejections;
+unexpected infrastructure errors still fail the operation.

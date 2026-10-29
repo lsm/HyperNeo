@@ -31,14 +31,23 @@ export class NeoSpeechAudio {
   }
 
   async catalog(): Promise<{ ok: true; catalog: unknown } | { ok: false; reason: string }> {
+    const signal = AbortSignal.timeout(10_000);
     try {
       const response = await this.request(this.url('/v1/audio/voices'), {
-        signal: AbortSignal.timeout(10_000),
+        signal,
         redirect: 'error',
+      }).catch((error) => {
+        if (
+          error instanceof TypeError ||
+          (error instanceof DOMException && ['TimeoutError', 'AbortError'].includes(error.name))
+        )
+          throw new Error('speech_backend_unavailable');
+        throw error;
       });
       if (!response.ok) throw new Error('speech_backend_unavailable');
       return { ok: true, catalog: await response.json() };
     } catch (error) {
+      if (signal.aborted) return { ok: false, reason: 'speech_backend_unavailable' };
       if (
         error instanceof Error &&
         [
