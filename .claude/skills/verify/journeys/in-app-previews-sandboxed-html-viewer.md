@@ -5,7 +5,8 @@ artifact.file.html, not a second sanitizer or raw-path reader. The HTML response
 is paired with authorized metadata by SHA-256 and mounted only as srcdoc in an
 iframe with sandbox="" and referrerpolicy="no-referrer". No allowance, bridge,
 operation client, cookie or host DOM access is passed to content. The trusted CSP
-is supplied by the existing daemon sanitizer. Never enable script-running HTML.
+is supplied by the existing daemon sanitizer. This journey verifies the inert default. Opt-in Run has a separate isolation
+contract in `docs/design/artifact-run-isolation.md`; it must not relax Preview.
 
 The scripts-disabled notice and external-link actions live in trusted host DOM.
 External links require the same explicit confirmation as Markdown links. Source
@@ -25,24 +26,14 @@ Unit tests: ArtifactHtmlViewer, ArtifactHtmlDocument, ArtifactHtmlSource,
 artifact-html-client and prior preview/Markdown/panel suites. Full checks, web
 build and the daemon's preview-html tests remain required.
 
-Build web, then run the repeatable proof from the worktree root in one owning
-shell, with a stop.sh EXIT trap. VERIFY_BROWSER points to a headless Chromium
+Build web, then run the repeatable proof from the worktree root. The wrapper
+uses shared `with-run.sh` isolation and an owning stop.sh/evidence EXIT trap. VERIFY_BROWSER points to a headless Chromium
 binary and NODE_PATH to a directory containing Playwright; no headed GUI.
 
 ```bash
-RUN=$(mktemp -d /private/tmp/hn-html-viewer-XXXXXX)
-mkdir -p "$RUN/home" "$RUN/evidence"
-env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/opt/homebrew/bin:/usr/bin:/bin" \
-  NODE_ENV=test node .claude/skills/verify/preview-html-viewer-web.mjs seed "$RUN"
-.claude/skills/verify/launch.sh 9396 "$RUN"
-node .claude/skills/verify/preview-html-viewer-web.mjs prepare "$RUN" 9396
-.claude/skills/verify/stop.sh "$RUN"
-env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/opt/homebrew/bin:/usr/bin:/bin" \
-  NODE_ENV=test bun .claude/skills/verify/preview-html-panel-seed.ts "$RUN"
-.claude/skills/verify/launch.sh 9396 "$RUN"
-node .claude/skills/verify/preview-html-viewer-web.mjs web "$RUN" 9396
-.claude/skills/verify/doctor.sh 9396 "$RUN"
-.claude/skills/verify/stop.sh "$RUN"
+VERIFY_NODE=/path/to/node NODE_PATH=/path/to/node_modules \
+VERIFY_BROWSER=/path/to/chromium VERIFY_MOCK_PORT=19395 VERIFY_PORT=19396 \
+  bash .claude/skills/verify/preview-html-viewer-check.sh /absolute/new/evidence
 ```
 
 The seed creates only a synthetic DB/context/workspace with hostile.html and a
@@ -52,6 +43,8 @@ its own DB; then restart. Web taps the actual publication card and tests the
 merged panel. It checks content in the sandbox and records screenshots.
 Every off-origin request and relative asset probe is recorded and aborted; any
 attempt fails the proof (the abort is test isolation, not the containment guard).
+It seeds synthetic host-only cookie/local/session storage canaries, confirms they
+exist in the app and requires SecurityError for each in the frame.
 It confirms the static heading/image, opaque origin, no sentinel in parent or
 frame, no active authored navigation and no popups/dialogs. It deliberately
 replaces only that same test frame's srcdoc with unsanitized probe content without
