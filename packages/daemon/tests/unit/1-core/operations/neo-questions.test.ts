@@ -71,7 +71,12 @@ function setup(
     ).map((op) => [op.name, op])
   );
   const call = async (name: string, input: unknown, caller = owner) =>
-    (await ops[name].execute(ops[name].inputSchema.parse(input), caller)) as Receipt;
+    (await ops[name].execute(
+      ops[name].inputSchema.parse(
+        name === 'neo.question.ask' ? { retireWhen: pendingTodoCheck, ...(input as object) } : input
+      ),
+      caller
+    )) as Receipt;
   const asked = async (input: Record<string, unknown>) => {
     const receipt = await call('neo.question.ask', { askId: 'ask', ...input });
     if (!receipt.ok) throw new Error(receipt.reason);

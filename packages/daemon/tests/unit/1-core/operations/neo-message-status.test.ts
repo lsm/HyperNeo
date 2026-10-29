@@ -1,3 +1,4 @@
+import { pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
@@ -174,7 +175,13 @@ test('a publication answers exactly its explicit consumed ids; asking back does 
   expect(
     await invoke(
       'neo.question.ask',
-      { askId: 'work', kind: 'reply', text: 'Which draft?', replyTo: [ids[1]] },
+      {
+        retireWhen: pendingTodoCheck,
+        askId: 'work',
+        kind: 'reply',
+        text: 'Which draft?',
+        replyTo: [ids[1]],
+      },
       neo
     )
   ).toMatchObject({ value: { ok: true } });

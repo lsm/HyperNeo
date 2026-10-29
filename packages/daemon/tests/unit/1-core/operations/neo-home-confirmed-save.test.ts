@@ -1,3 +1,4 @@
+import { pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
@@ -65,6 +66,7 @@ const proposal = async (value = input, state = 'yes') => {
   const asked = await call(
     'neo.question.ask',
     {
+      retireWhen: pendingTodoCheck,
       askId: 'ask',
       kind: 'yesno',
       text: `Old: previous mandate. New: proposed mandate. Path: ${confirm.path}\nSHA-256: ${confirm.sha256}`,

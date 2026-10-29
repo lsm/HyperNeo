@@ -1,3 +1,4 @@
+import { pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
@@ -383,6 +384,7 @@ describe('Neo home save remote sync', () => {
       sha256: createHash('sha256').update(value.content).digest('hex'),
     };
     const question = await call('neo.question.ask', {
+      retireWhen: pendingTodoCheck,
       askId: 'ask',
       kind: 'yesno',
       text: `${confirm.path} ${confirm.sha256}`,

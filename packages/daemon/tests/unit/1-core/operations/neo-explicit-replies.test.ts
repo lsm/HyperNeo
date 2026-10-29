@@ -1,3 +1,4 @@
+import { pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
@@ -96,7 +97,9 @@ test('a publication explicitly answers exactly the named received human inputs',
 
 test('questions retain explicit human references without marking them answered', async () => {
   const id = await received();
-  expect(await invoke('neo.question.ask', { ...question, replyTo: [id] })).toMatchObject({
+  expect(
+    await invoke('neo.question.ask', { retireWhen: pendingTodoCheck, ...question, replyTo: [id] })
+  ).toMatchObject({
     value: { ok: true, question: { replyTo: [id] } },
   });
   expect(service.sessions.getCachedSession).not.toHaveBeenCalled();
@@ -128,7 +131,9 @@ test.each(['unknown', 'foreign', 'system', 'task', 'queued'])(
     expect(
       await invoke('neo.publication.publish', { ...publication, replyTo: [id] })
     ).toMatchObject({ value: { accepted: true, publication: { replyTo: [] } } });
-    expect(await invoke('neo.question.ask', { ...question, replyTo: [id] })).toMatchObject({
+    expect(
+      await invoke('neo.question.ask', { retireWhen: pendingTodoCheck, ...question, replyTo: [id] })
+    ).toMatchObject({
       value: { ok: true, question: { replyTo: [] } },
     });
     expect(service.publications.list(conversationId)).toHaveLength(1);
@@ -212,7 +217,9 @@ test('mixed references retain only received human inputs in both tools', async (
   expect(await invoke('neo.publication.publish', { ...publication, replyTo })).toMatchObject({
     value: { accepted: true, publication: { replyTo: [replyTo[0]] } },
   });
-  expect(await invoke('neo.question.ask', { ...question, replyTo })).toMatchObject({
+  expect(
+    await invoke('neo.question.ask', { retireWhen: pendingTodoCheck, ...question, replyTo })
+  ).toMatchObject({
     value: { ok: true, question: { replyTo: [replyTo[0]] } },
   });
   expect(service.publications.list(conversationId)).toHaveLength(2);
@@ -236,9 +243,19 @@ test('rewording a start question retains its explicit human references', async (
     1
   );
   expect(
-    await invoke('neo.question.ask', { ...question, kind: 'start', replyTo: [id] })
+    await invoke('neo.question.ask', {
+      retireWhen: pendingTodoCheck,
+      ...question,
+      kind: 'start',
+      replyTo: [id],
+    })
   ).toMatchObject({ value: { ok: true, question: { id: 'start', replyTo: [id] } } });
   expect(
-    await invoke('neo.question.ask', { ...question, kind: 'start', text: 'Start now?' })
+    await invoke('neo.question.ask', {
+      retireWhen: pendingTodoCheck,
+      ...question,
+      kind: 'start',
+      text: 'Start now?',
+    })
   ).toMatchObject({ value: { ok: true, question: { id: 'start', replyTo: [id] } } });
 });
