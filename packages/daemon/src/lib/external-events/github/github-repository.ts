@@ -1,3 +1,4 @@
+import { persistGitHubPollCursorJson } from '../../../storage/repositories/github-cursor-persist.ts';
 import {
   findGitHubWatchedRepo,
   findGitHubWatchedRepoById,
@@ -476,9 +477,7 @@ export class GitHubEventExtensionRepository {
   }
 
   updatePollCursorJson(id: string, cursor: PollCursor): void {
-    this.db
-      .prepare(`UPDATE space_github_watched_repos SET poll_cursor = ?, updated_at = ? WHERE id = ?`)
-      .run(JSON.stringify(cursor), Date.now(), id);
+    persistGitHubPollCursorJson(this.db, id, cursor);
   }
 
   clearPollErrorsForAllRepos(): void {

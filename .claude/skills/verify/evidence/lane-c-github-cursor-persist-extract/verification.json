@@ -1,0 +1,25 @@
+{
+  "redCommit": "9c9b8ece992afad0d8e3a2d3fe040d432e5dbaf4",
+  "red": {
+    "legacyCharacterizationPassed": true,
+    "missingHelperContractsFailed": 4,
+    "realPollingRpcBaselinePassed": true,
+    "nativeFailedAt": "missing cursor persistence helper"
+  },
+  "green": {
+    "tests": 269,
+    "files": 3,
+    "newUnitContracts": 5,
+    "newNativeParent": 1,
+    "existingGitHubExtensionTests": 263,
+    "strictTypeScript6": "pass; new helper, repository and new tests",
+    "rootCheck": "pass",
+    "bunNative": "after-bun.json",
+    "denoNative": "after-deno.json"
+  },
+  "beforeAfterPublicMainCursorUpdates": 1,
+  "mainThreadMovementClaim": false,
+  "scope": "Exact UPDATE with prepare, JSON serialization, existing Date.now, run JSON/time/id order and void result retained. Only cursor and update time change; serialization/preparation errors, peer isolation, missing-id behavior and caller rollback retained. Constructor/backfill, activation/reset and other methods and public roots untouched. Full transitive caller closure not audited.",
+  "deploymentSmoke": "Neo-owned, not run",
+  "cleanup": "Owned socket/processors/app, timer and scratch DB closed, hooks restored, synthetic data removed; live daemon/build untouched"
+}
