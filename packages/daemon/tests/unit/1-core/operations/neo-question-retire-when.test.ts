@@ -487,3 +487,39 @@ test('a linked coding default checks an existing branch claim before any todo ca
     f.db.close();
   }
 });
+
+test('a linked legacy todo without a check needs an explicit retirement condition', async () => {
+  const f = fixture();
+  try {
+    f.store.updateTodo(f.todo, { check: null }, 2);
+    expect(await f.ask({ todoId: f.todo.id })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('retire_when_required'),
+    });
+    expect(f.store.listQuestions('ask')).toEqual([]);
+    expect(await f.ask({ todoId: f.todo.id, retireWhen: f.check })).toMatchObject({ ok: true });
+  } finally {
+    f.db.close();
+  }
+});
+
+test('a rejected notice enqueue preserves the open card and its hold for the next sweep', async () => {
+  const f = fixture();
+  try {
+    const card = await f.ask({ retireWhen: f.check });
+    f.store.updateTodo(f.todo, { state: 'blocked', blockedBy: 'needs-human' }, 2);
+    f.db.exec(
+      "CREATE TRIGGER fail_notice BEFORE INSERT ON job_queue WHEN NEW.queue = 'mailbox' BEGIN SELECT RAISE(ABORT, 'notice enqueue failed'); END"
+    );
+    await expect(f.retire(card.question, null, 4)).rejects.toThrow('notice enqueue failed');
+    expect(f.store.getQuestion(card.question.id)?.state).toBe('open');
+    expect(f.store.getTodo(f.todo.id)?.blockedBy).toBe('needs-human');
+    expect(f.notes).toEqual([]);
+    f.db.exec('DROP TRIGGER fail_notice');
+    expect(await f.retire(card.question, null, 5)).toMatchObject({ state: 'retired' });
+    expect(f.store.getTodo(f.todo.id)).toMatchObject({ state: 'todo', blockedBy: null });
+    expect(f.notes).toHaveLength(1);
+  } finally {
+    f.db.close();
+  }
+});
