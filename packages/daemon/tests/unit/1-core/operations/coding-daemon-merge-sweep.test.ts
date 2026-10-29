@@ -281,3 +281,44 @@ test('one unreadable candidate holds the whole merge batch', async () => {
   expect(merges()).toHaveLength(0);
   expect(await ledger.write('daemonMerge', { kind: 'list' })).toEqual([]);
 });
+
+test('a receipt sharing a candidate cannot hide a failed read with a second response', async () => {
+  await ledger.write('daemonMerge', {
+    kind: 'begin',
+    url,
+    head,
+    actor: 'daemon:coding-sweep',
+    at: 1,
+  });
+  await ledger.write('daemonMerge', { kind: 'finish', url, head, commit: 'c'.repeat(40), at: 2 });
+  state = 'MERGED';
+  let failed = false;
+  const flaky: SpawnFn = (args) => {
+    if (!failed && args[2] === 'view') {
+      failed = true;
+      fail = 'view';
+      const result = spawn(args);
+      fail = '';
+      return result;
+    }
+    return spawn(args);
+  };
+  const run = createCodingDaemonMergeSweep(
+    () => db,
+    ledger,
+    new CodingPrEventRepository(db),
+    {
+      tell: async () => false,
+      wake: async (_key, text) => {
+        notices.push(text);
+        return true;
+      },
+    },
+    flaky
+  );
+  await run(10);
+  expect(failed).toBe(true);
+  expect(notices).toEqual([]);
+  expect(await ledger.write('daemonMerge', { kind: 'list' })).toHaveLength(1);
+  expect(merges()).toHaveLength(0);
+});
