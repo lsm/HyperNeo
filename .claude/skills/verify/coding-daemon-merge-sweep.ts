@@ -33,16 +33,17 @@ try{
  assert((await rpc('pack.preferences.set',{pack:'coding',scope:{kind:'global',key:''},key:'watchedRepos',value:['synthetic/merge']})).ok);
  const db=app.db.getDatabase(),ledger=new CodingPrLedgerRepository(db);
 
- const notices:string[]=[];let deliver=true;
+ const notices:string[]=[];let deliver=true,rejectSignoff=true;
  const snapshot=()=>JSON.parse(readFileSync(join(run,'fixture.json'),'utf8'));
- const makePack=()=>createCodingPack({database:()=>db,readPrs:async()=>[],readClaudeOwners:async()=>[],todoPrs:new CodingTodoPrRepository(db),prLedger:ledger,prEvents:new CodingPrEventRepository(db),prSweep:new CodingPrSweepRepository(db),projectRepos:()=>['synthetic/merge'],prSweepDeps:{tell:async()=>false,wake:async(_key,text)=>{if(deliver)notices.push(text);return deliver;}},readLedgerRepo:async()=>{
+ const makePack=()=>createCodingPack({database:()=>db,readPrs:async()=>[],readClaudeOwners:async()=>[],todoPrs:new CodingTodoPrRepository(db),prLedger:ledger,prEvents:new CodingPrEventRepository(db),prSweep:new CodingPrSweepRepository(db),projectRepos:()=>['synthetic/merge'],prSweepDeps:{tell:async()=>false,wake:async(_key,text)=>{if(rejectSignoff&&text.includes('requires human sign-off')){rejectSignoff=false;throw new Error('Synthetic mailbox unavailable');}if(deliver)notices.push(text);return deliver;}},readLedgerRepo:async()=>{
  const node={number:7,title:'Synthetic daemon merge',headRefName:'fixture',headRefOid:head,state:'OPEN',isDraft:false,mergeable:'MERGEABLE',reviewDecision:'APPROVED',closedAt:null,files:{nodes:[{path:'src/app.ts'}],pageInfo:{hasNextPage:false}},labels:{nodes:[],pageInfo:{hasNextPage:false}},reviews:{nodes:[{state:'APPROVED',commit:{oid:head},author:{login:'fixture-bot'}}]},commits:{nodes:[{commit:{statusCheckRollup:{state:'SUCCESS'}}}]}};
  return {data:{rateLimit:{remaining:5000},repository:{nameWithOwner:'synthetic/merge',open:{pageInfo:{hasNextPage:false},nodes:[node]},done:{nodes:[]}}}};
  }});
- const pack=makePack();const preferences=await rpc('pack.preferences.list',{});let tick=Date.now();
+ const pack=makePack();let preferences=await rpc('pack.preferences.list',{});let tick=Date.now();
  const runSweep=()=>pack.sweep!(tick+=61_000);
  const mergeCalls=()=>readFileSync(join(run,'evidence/gh.jsonl'),'utf8').trim().split('\n').filter(Boolean).map(line=>JSON.parse(line)).filter(args=>args[0]==='pr'&&args[1]==='merge');
- await runSweep();assert.equal(mergeCalls().length,0);assert(notices.some(text=>text.includes('sign-off')));evidence.laterPageHumanLabelHeld=true;
+ await runSweep();assert.equal(mergeCalls().length,0);assert.equal(rejectSignoff,false);assert(!notices.some(text=>text.includes('sign-off')));await runSweep();assert(notices.some(text=>text.includes('sign-off')));evidence.laterPageHumanLabelHeld=true;evidence.signoffDeliveryFailureRetried=true;
+ publish({labels:[[]]});assert((await rpc('pack.preferences.set',{pack:'coding',scope:{kind:'repo',key:'synthetic/merge'},key:'mergePolicy',value:'human'})).ok);const humanPreferences=await rpc('pack.preferences.list',{}),beforeHuman=notices.length;await runSweep();assert.equal(ledger.list()[0].state,'waiting_human');assert(notices.length>beforeHuman);assert.equal(mergeCalls().length,0);assert.deepEqual(await rpc('pack.preferences.list',{}),humanPreferences);evidence.humanPolicySurfaced=true;assert((await rpc('pack.preferences.set',{pack:'coding',scope:{kind:'repo',key:'synthetic/merge'},key:'mergePolicy',value:'review_bot'})).ok);preferences=await rpc('pack.preferences.list',{});
  for(const fail of ['/labels','/reviews','checks','graphql','view']){publish({fail,labels:[[]]});await runSweep();assert.equal(mergeCalls().length,0);assert.deepEqual(await ledger.write('daemonMerge',{kind:'list'}),[]);}evidence.readFailuresHeld=true;
  publish({labels:[[]],finalHead:'b'.repeat(40)});await runSweep();assert.equal(mergeCalls().length,0);evidence.movedHeadHeld=true;
  publish({labels:[[]]});deliver=false;await runSweep();assert.equal(mergeCalls().length,1);const receipt=(await ledger.write('daemonMerge',{kind:'list'}))[0];assert.equal(receipt.head,head);assert.equal(receipt.actor,'daemon:coding-sweep');assert.equal(receipt.mergeCommit,'c'.repeat(40));evidence.receipt=receipt;

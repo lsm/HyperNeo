@@ -17,7 +17,10 @@ used. Synthetic preferences are set through the public operation RPC. It calls
 the production coding pack sweep, including ledger reconciliation and the actual
 merge CLI effect, without a todo or owner.
 
-A sign-off label on a later page must hold for the human. Every required GitHub
+A sign-off label on a later page must hold for the human. A rejected sign-off
+notification must let the full pack sweep finish and retry next time. Changing
+only synthetic policy to human must put the PR in waiting_human and wake Neo
+without a merge or preference writes by the daemon. Every required GitHub
 read failure and a changed final head must leave the PR unmerged with no attempt
 receipt. A passing synthetic PR must execute exactly one squash command pinned
 to its full head SHA and persist executor, head, confirmation time and commit.

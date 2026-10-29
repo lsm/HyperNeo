@@ -11,13 +11,20 @@ import { readCodingDaemonMergeFacts } from './daemon-merge-facts.ts';
 import { decideCodingDaemonMerge } from './daemon-merge-gates.ts';
 
 type Receipt = ReturnType<CodingPrLedgerRepository['daemonMerge']>[number];
-type Candidate = { url: string; head: string; policy: CodingMergePolicy };
+type Candidate = { url: string; head: string; policy: CodingMergePolicy; approvedGreen: boolean };
 type Observed = Candidate & { facts: Awaited<ReturnType<typeof readCodingDaemonMergeFacts>> };
 const admit = (observed: Observed) => {
   const decision = decideCodingDaemonMerge(observed.facts, observed.policy);
-  return decision.kind === 'merge' && decision.head === observed.head
+  const reason =
+    decision.kind === 'skip' &&
+    decision.reason === 'merge_policy_unresolved' &&
+    observed.facts.ok &&
+    observed.facts.state === 'OPEN'
+      ? 'needs_human_signoff'
+      : decision.kind;
+  return decision.kind === 'merge' && decision.head === observed.head && observed.approvedGreen
     ? { value: observed }
-    : { reason: decision.kind };
+    : { reason };
 };
 
 export function createCodingDaemonMergeSweep(
@@ -27,6 +34,7 @@ export function createCodingDaemonMergeSweep(
   delivery: CodingSweepDeps,
   spawn: SpawnFn = spawnProcess
 ) {
+  const actor = 'daemon:coding-sweep';
   const record = (change: Parameters<CodingPrLedgerRepository['daemonMerge']>[0]) =>
     ledger.write('daemonMerge', change);
   const read = (url: string) => readCodingDaemonMergeFacts(database(), url, spawn);
@@ -43,12 +51,8 @@ export function createCodingDaemonMergeSweep(
   const finish = async (receipt: Receipt, facts: Observed['facts'], now: number) => {
     if (!facts.ok || facts.head !== receipt.head || facts.state !== 'MERGED' || !facts.mergeCommit)
       return;
-    const [completed] = await record({
-      ...receipt,
-      kind: 'finish',
-      commit: facts.mergeCommit,
-      at: now,
-    });
+    const commit = facts.mergeCommit;
+    const [completed] = await record({ ...receipt, kind: 'finish', commit, at: now });
     if (completed) await notify(completed, now);
   };
   const merge = (superpipe({})('coding.sweep-daemon-merge') as PipelineAPI)
@@ -57,13 +61,7 @@ export function createCodingDaemonMergeSweep(
     .pipe(
       async (observed: Observed, now: number) => {
         const { url, head } = observed;
-        const [receipt] = await record({
-          kind: 'begin',
-          url,
-          head,
-          actor: 'daemon:coding-sweep',
-          at: now,
-        });
+        const [receipt] = await record({ kind: 'begin', url, head, actor, at: now });
         return receipt ? { value: receipt } : { reason: 'already_attempted' };
       },
       ['result', 'now'],
@@ -86,18 +84,17 @@ export function createCodingDaemonMergeSweep(
     .endAsync('result') as (observed: Observed, now: number) => Promise<unknown>;
   const sweep = async (now: number): Promise<void> => {
     const rows = (await ledger.read('list')).filter(
-      (row) => row.closedAt === null && row.state === 'approved_green'
+      (row) => row.closedAt === null && ['approved_green', 'waiting_human'].includes(row.state)
     );
     const observed = await Promise.all(
-      rows.map(async ({ repo, number, head }) => ({
+      rows.map(async ({ repo, number, head, state }) => ({
         url: `https://${process.env.GH_HOST ?? 'github.com'}/${repo}/pull/${number}`.toLowerCase(),
         head,
+        approvedGreen: state === 'approved_green',
         policy: (await ledger.pollContextCurrent(repo)).policy,
       }))
     );
-    const candidates = observed.filter(
-      (row) => row.policy.mergeBy === 'daemon' && row.policy.mergePolicy !== 'human'
-    );
+    const candidates = observed.filter((row) => row.policy.mergeBy === 'daemon');
     const receipts = await record({ kind: 'list' });
     const pending = [...new Set([...candidates, ...receipts].map(({ url }) => url))];
     const facts = new Map(
@@ -113,10 +110,12 @@ export function createCodingDaemonMergeSweep(
       const outcome = await merge(observed, now);
       if (outcome === 'read_failure') return;
       if (outcome === 'needs_human_signoff')
-        await delivery.wake(
-          `coding-daemon-signoff:${candidate.url}:${candidate.head}`,
-          `${candidate.url} requires human sign-off; daemon merge is held.`
-        );
+        await delivery
+          .wake(
+            `coding-daemon-signoff:${candidate.url}:${candidate.head}`,
+            `${candidate.url} requires human sign-off or a resolved merge policy; daemon merge is held.`
+          )
+          .catch(() => false);
     }
   };
   let running = Promise.resolve();
