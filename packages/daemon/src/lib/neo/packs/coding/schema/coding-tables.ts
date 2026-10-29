@@ -1,7 +1,12 @@
 import type { Database } from '../../../../../storage/sqlite-compat.ts';
 
 export function createCodingPackTables(db: Database, activatedAt = Date.now()): void {
-  db.exec(`CREATE TABLE IF NOT EXISTS pack_coding_delivery_facts (
+  db.exec(`CREATE TABLE IF NOT EXISTS pack_coding_daemon_merges (
+    url TEXT NOT NULL, head TEXT NOT NULL, actor TEXT NOT NULL,
+    started_at INTEGER NOT NULL, merge_commit TEXT, merged_at INTEGER, notified_at INTEGER,
+    PRIMARY KEY (url, head)
+  );
+  CREATE TABLE IF NOT EXISTS pack_coding_delivery_facts (
     todo_id TEXT NOT NULL REFERENCES neo_todos(id) ON DELETE CASCADE,
     url TEXT NOT NULL,
     head TEXT NOT NULL,
@@ -175,9 +180,6 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     db.exec(
       'ALTER TABLE pack_coding_pr_ledger ADD COLUMN terminal_event_json TEXT CHECK (terminal_event_json IS NULL OR json_valid(terminal_event_json))'
     );
-  db.prepare(
-    'INSERT OR IGNORE INTO pack_coding_pr_event_state (id, activated_at) VALUES (1, ?)'
-  ).run(activatedAt);
   if (!ledger.some((column) => column.name === 'reply_at'))
     db.exec('ALTER TABLE pack_coding_pr_ledger ADD COLUMN reply_at INTEGER');
   if (!ledger.some((column) => column.name === 'created_at'))
@@ -191,7 +193,6 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
   }[];
   if (!unowned.some((column) => column.name === 'pending_rows'))
     db.exec('ALTER TABLE pack_coding_pr_unowned_state ADD COLUMN pending_rows TEXT');
-  db.prepare(
-    'INSERT OR IGNORE INTO pack_coding_pr_unowned_state (id, activated_at) VALUES (1, ?)'
-  ).run(activatedAt);
+  for (const table of ['pack_coding_pr_event_state', 'pack_coding_pr_unowned_state'])
+    db.prepare(`INSERT OR IGNORE INTO ${table} (id, activated_at) VALUES (1, ?)`).run(activatedAt);
 }

@@ -366,6 +366,46 @@ export class CodingPrLedgerRepository {
     >;
   }
 
+  daemonMerge(
+    change:
+      | { kind: 'list' }
+      | { kind: 'begin'; url: string; head: string; actor: string; at: number }
+      | { kind: 'finish'; url: string; head: string; commit: string; at: number }
+      | { kind: 'notified'; url: string; head: string; at: number }
+  ) {
+    const columns =
+      'url, head, actor, started_at AS startedAt, merge_commit AS mergeCommit, merged_at AS mergedAt, notified_at AS notifiedAt';
+    const statement =
+      change.kind === 'list'
+        ? {
+            sql: `SELECT ${columns} FROM pack_coding_daemon_merges WHERE notified_at IS NULL ORDER BY started_at`,
+            args: [],
+          }
+        : change.kind === 'begin'
+          ? {
+              sql: `INSERT OR IGNORE INTO pack_coding_daemon_merges(url,head,actor,started_at) VALUES(?,?,?,?) RETURNING ${columns}`,
+              args: [change.url, change.head, change.actor, change.at],
+            }
+          : change.kind === 'finish'
+            ? {
+                sql: `UPDATE pack_coding_daemon_merges SET merge_commit=?, merged_at=? WHERE url=? AND head=? AND merge_commit IS NULL RETURNING ${columns}`,
+                args: [change.commit, change.at, change.url, change.head],
+              }
+            : {
+                sql: `UPDATE pack_coding_daemon_merges SET notified_at=? WHERE url=? AND head=? AND merge_commit IS NOT NULL AND notified_at IS NULL RETURNING ${columns}`,
+                args: [change.at, change.url, change.head],
+              };
+    return this.db.prepare(statement.sql).all(...statement.args) as {
+      url: string;
+      head: string;
+      actor: string;
+      startedAt: number;
+      mergeCommit: string | null;
+      mergedAt: number | null;
+      notifiedAt: number | null;
+    }[];
+  }
+
   pollSnapshot(repos: readonly string[]) {
     const last = this.lastReads();
     return {
@@ -920,6 +960,7 @@ export async function reconcileCodingPrLedger(
 }
 
 type CodingLedgerWrite =
+  | 'daemonMerge'
   | 'acceptTerminalEvent'
   | 'acceptHealthNotice'
   | 'recordHealth'
@@ -939,6 +980,7 @@ export const codingLedgerWrites = defineRepositoryOp<CodingPrLedgerRepository, C
   'write',
   CodingPrLedgerRepository,
   [
+    'daemonMerge',
     'acceptTerminalEvent',
     'acceptHealthNotice',
     'recordHealth',

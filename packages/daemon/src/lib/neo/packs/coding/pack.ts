@@ -24,6 +24,7 @@ import { type CodingPrSweepRepository, type CodingSweepDeps, sweepCodingPrs } fr
 import { type NeoWorkPrReader } from './work-prs.ts';
 import { wakeCodingUnownedPrs } from './pr-unowned.ts';
 import { recordCodingSmoke } from './delivery-facts.ts';
+import { readCodingDaemonMergeFacts } from './daemon-merge-facts.ts';
 import { decideCodingDaemonMerge } from './daemon-merge-gates.ts';
 import { prepareCodingMerge } from './merge-gates.ts';
 import { deliverCodingHealth } from './health-delivery.ts';
@@ -49,6 +50,7 @@ export function createCodingPack(deps: {
   readLedgerRepo?: CodingLedgerRead;
   readClaudeOwners?: ReturnType<typeof createCodingClaudeOwnerReader>;
 }): NeoPack & {
+  readMergeFacts: typeof readCodingDaemonMergeFacts;
   decideMerge: typeof decideCodingDaemonMerge;
   recordSmoke: typeof recordCodingSmoke;
   prepareMerge: typeof prepareCodingMerge;
@@ -63,6 +65,7 @@ export function createCodingPack(deps: {
   );
   return {
     ...CODING_PACK_BRIEF,
+    readMergeFacts: readCodingDaemonMergeFacts,
     decideMerge: decideCodingDaemonMerge,
     recordSmoke: recordCodingSmoke,
     prepareMerge: prepareCodingMerge,
