@@ -1,3 +1,4 @@
+import { pendingTodoCheck } from '../../unit/helpers/todo-check-packs.ts';
 import { expect, test } from 'bun:test';
 import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -221,6 +222,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
                         add: ['Keep synthetic garden changes as drafts.'],
                       }
                     : {
+                        retireWhen: pendingTodoCheck,
                         askId: 'fictional-garden',
                         kind: 'reply',
                         text: 'Which synthetic flower?',

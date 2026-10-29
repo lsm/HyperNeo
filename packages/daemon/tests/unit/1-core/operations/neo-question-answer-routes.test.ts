@@ -1,3 +1,4 @@
+import { pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -206,6 +207,7 @@ test('startup does not turn a later manual replacement into a worker report', as
           sourceSession: f.source,
           kind: 'reply',
           text: 'A manual clarification',
+          retireWhen: pendingTodoCheck,
           replaces: f.question.id,
         },
         { source: 'rpc' }

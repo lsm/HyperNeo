@@ -1,3 +1,4 @@
+import { pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import { readNeoPublications } from '../../../../../web/src/neo/publication-client.ts';
 import { describe, expect, test, spyOn } from 'bun:test';
@@ -46,6 +47,7 @@ function setup() {
   const ask = async (input: Record<string, unknown>, caller = owner) =>
     (await op.execute(
       op.inputSchema.parse({
+        retireWhen: pendingTodoCheck,
         askId: 'ask',
         kind: 'choice',
         options: ['Keep', 'Change'],

@@ -321,7 +321,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
         'If a supplied todoId is unknown, belongs to another ask, or is done, closed unverified or removed'
       );
       expect(described.description).toContain(
-        'return a todo_closed record and open the question on the ask without linking that todo'
+        'supply explicit retireWhen to open the question on the ask without linking that todo; otherwise it is refused'
       );
     } finally {
       h.db.close();
@@ -445,6 +445,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
       try {
         h.store.updateTodo(h.todo, { state }, 2);
         const result = await h.call('neo.question.ask', {
+          retireWhen: pendingTodoCheck,
           askId: h.ask.id,
           todoId: h.todo.id,
           kind: 'reply',

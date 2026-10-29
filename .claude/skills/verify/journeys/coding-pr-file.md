@@ -38,3 +38,6 @@ introduced. This proof does not automate native applications or production deplo
 The existing `todo-pack-facts.ts` journey also invokes the constructed pack
 operation as a non-owner and must receive an authorization refusal rather than
 a missing-database error. Its original fact/judgement assertions remain intact.
+
+The unlinked attachment card supplies a core evidence `retireWhen` whose
+synthetic file stays absent while checking the card and its registered document.

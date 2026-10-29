@@ -12,7 +12,7 @@ import {
   type NeoTodoControls,
 } from '../../../../src/lib/neo/todo-operations.ts';
 import { resolveNeoInputAsk, type NeoInputReads } from '../../../../src/lib/neo/input-ask.ts';
-import { createTodoCheckPacks } from '../../helpers/todo-check-packs.ts';
+import { createTodoCheckPacks, pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 
 const conversationId = 'b0b5d1de-49a4-4f0e-9a3f-2f6f2a0d8f11';
@@ -70,7 +70,12 @@ function setup() {
   const askOp = questionOps.find((op) => op.name === 'neo.question.ask')!;
   const ask = async (input: Record<string, unknown>) =>
     (await askOp.execute(
-      askOp.inputSchema.parse({ kind: 'reply', text: 'Which button?', ...input }),
+      askOp.inputSchema.parse({
+        retireWhen: pendingTodoCheck,
+        kind: 'reply',
+        text: 'Which button?',
+        ...input,
+      }),
       owner
     )) as { ok: true; question: NeoQuestion; records?: string[] } | { ok: false; reason: string };
   const controls = {
