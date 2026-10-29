@@ -1,3 +1,4 @@
+import { persistGitHubFilterCurrentUser } from '../../../storage/repositories/github-filter-persist.ts';
 import {
   listGitHubWatchedRepos,
   mapGitHubWatchedRepo,
@@ -267,13 +268,7 @@ export class GitHubEventExtensionRepository {
 
   setFilterCurrentUser(spaceId: string, enabled: boolean): void {
     const now = Date.now();
-    this.db
-      .prepare(
-        `INSERT INTO space_github_source_settings (space_id, enabled, filter_current_user, created_at, updated_at)
-				 VALUES (?, 1, ?, ?, ?)
-				 ON CONFLICT(space_id) DO UPDATE SET filter_current_user = excluded.filter_current_user, updated_at = excluded.updated_at`
-      )
-      .run(spaceId, enabled ? 1 : 0, now, now);
+    persistGitHubFilterCurrentUser(this.db, spaceId, enabled, now);
   }
 
   getFilterCurrentUser(spaceId: string): boolean {

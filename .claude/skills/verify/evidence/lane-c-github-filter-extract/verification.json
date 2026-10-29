@@ -1,0 +1,36 @@
+{
+  "redCommit": "345ddf4772d70c8164caf25f1633433a9eba0add",
+  "before": {
+    "legacyCharacterizationPassed": 1,
+    "helperContractsFailed": 4,
+    "nativePublicRpcPassedBeforeHelperAvailabilityFailure": true
+  },
+  "after": {
+    "newTests": 6,
+    "existingFilterRelatedTests": 30,
+    "existingUnselectedTests": 233,
+    "strictTypeScript6": true,
+    "rootCheck": "bun run check passed",
+    "native": "Bun1.4.3/Deno2.9.4 real public filter RPCs preserve enabled/polling flags, creation/update times, insert defaults, complete saved configuration;3 target main UPSERTs expected; helper void result/supplied time/caller rollback pass"
+  },
+  "scope": {
+    "productionLines": 23,
+    "smokeLines": 1,
+    "repositoryHelperEnvelopeLines": 140,
+    "statementAstSha256": [
+      "7278661644d11f514b04d63440554178c819217191deacd9bb95962fc2493d95"
+    ],
+    "stableDependencySha256": "0c0aea924a218fcbdbf51e4a408057ac936c0c855cb8364e1f780715d23fae56"
+  },
+  "netPrepare": 0,
+  "netRun": 0,
+  "baselineIncrease": false,
+  "limits": [
+    "SQL extraction only; no public write moves off main, no latency improvement claim",
+    "Repository/helper envelope includes conservative existing constructor/read units and complete read modules; unchanged public handler/config-store/app files pinned, not a complete transitive GitHub/plugin/Space/startup audit",
+    "Atomic command and public activation are separate later rungs",
+    "Local Bun1.4.3; pinned1.4.2 and complete Deno smoke CI-owned",
+    "Existing tests selected by filter/self-echo name;233 unselected tests not rerun on this extraction",
+    "No live daemon/8399, credentials, shared core changes or deployment; own one-line Deno smoke registration only"
+  ]
+}
