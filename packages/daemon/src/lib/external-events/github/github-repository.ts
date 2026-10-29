@@ -1,5 +1,4 @@
-import { persistGitHubWatchedRepoInsert } from '../../../storage/repositories/github-watched-insert-persist.ts';
-import { persistGitHubWatchedRepoUpdate } from '../../../storage/repositories/github-watched-update-persist.ts';
+import { upsertGitHubWatchedRepo } from '../../../storage/repositories/github-watched-upsert-persist.ts';
 import { persistGitHubPollCursorJson } from '../../../storage/repositories/github-cursor-persist.ts';
 import {
   findGitHubWatchedRepo,
@@ -18,7 +17,6 @@ import {
 } from '../../../storage/repositories/github-space-settings-read.ts';
 import { persistGitHubSpaceEnabled } from '../../../storage/repositories/github-space-enabled-persist.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
-import { generateUUID } from '@hyperneo/shared';
 import type { GitHubPollResume } from './github-poll-slice.ts';
 
 export interface PollCursor {
@@ -132,31 +130,7 @@ export class GitHubEventExtensionRepository {
     webhookLastError?: string | null;
     webhookConfiguredAt?: number | null;
   }): GitHubWatchedRepo {
-    const now = Date.now();
-    const existing = this.getWatchedRepo(params.spaceId, params.owner, params.repo);
-    const wasActive = existing?.enabled && existing?.pollingEnabled;
-    const nextEnabled = params.enabled === undefined ? (existing?.enabled ?? true) : params.enabled;
-    const nextPolling = params.pollingEnabled ?? existing?.pollingEnabled ?? false;
-    const willBeActive = nextEnabled && nextPolling;
-    const pollingNewlyEnabled = willBeActive && !wasActive;
-    if (existing) {
-      persistGitHubWatchedRepoUpdate(this.db, params, existing, now);
-    } else {
-      const id = generateUUID();
-      const spaceEnabled = params.enabled ?? this.isSpaceEnabled(params.spaceId);
-      persistGitHubWatchedRepoInsert(this.db, params, id, spaceEnabled, now);
-    }
-    const watched = this.getWatchedRepo(params.spaceId, params.owner, params.repo)!;
-    if (pollingNewlyEnabled) {
-      const cursor = watched.pollCursor ?? {};
-      cursor.checkRunPollingEnabledAt = now;
-      delete cursor.checkRunHeadLastSeenAt;
-      delete cursor.checkRunHeadPendingLastSeenAt;
-      delete cursor.endpointLastSeenAt?.check_runs;
-      delete cursor.endpointPendingLastSeenAt?.check_runs;
-      this.updatePollCursorJson(watched.id, cursor);
-    }
-    return this.getWatchedRepoById(watched.id)!;
+    return upsertGitHubWatchedRepo(this.db, params);
   }
 
   clearWebhookRegistration(id: string, options: { clearSecret?: boolean } = {}): void {
