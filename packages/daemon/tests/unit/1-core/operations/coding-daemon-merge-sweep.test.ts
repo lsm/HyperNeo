@@ -376,3 +376,43 @@ test.each([undefined, 'GHE.company.test'])(
     }
   }
 );
+
+test.each(['human', undefined])(
+  'surfaces daemon policy %s without chasing owners',
+  async (value) => {
+    if (value) policy('mergePolicy', value);
+    else db.prepare("DELETE FROM neo_pack_preferences WHERE key='mergePolicy'").run();
+    const run = sweep();
+    await run(10);
+    expect(notices).toHaveLength(1);
+    const rows = await ledger.read('list');
+    await ledger.write('replace', 'synthetic/merge', [{ ...rows[0], state: 'waiting_human' }], 11);
+    await run(12);
+    expect(notices).toHaveLength(2);
+    expect(notices.every((text) => text.includes('sign-off'))).toBe(true);
+    expect(merges()).toHaveLength(0);
+  }
+);
+
+test('a rejected sign-off delivery holds merging but lets the sweep finish and retry', async () => {
+  labels = ['human-merge'];
+  let wakes = 0;
+  const run = createCodingDaemonMergeSweep(
+    () => db,
+    ledger,
+    new CodingPrEventRepository(db),
+    {
+      tell: async () => false,
+      wake: async () => {
+        if (++wakes === 1) throw new Error('Synthetic mailbox unavailable');
+        return true;
+      },
+    },
+    spawn
+  );
+  await expect(run(10)).resolves.toBeUndefined();
+  await run(11);
+  expect(wakes).toBe(2);
+  expect(merges()).toHaveLength(0);
+  expect(await ledger.write('daemonMerge', { kind: 'list' })).toEqual([]);
+});
