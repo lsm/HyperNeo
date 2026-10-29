@@ -20,7 +20,7 @@ script/handler/javascript URLs; no authored top navigation, form, popup, refresh
 base, iframe or external loads (including same-origin relative image probes);
 opaque parent DOM access; native details toggle; trusted link confirmation and
 Cancel; escaped Source; sanitizer-limit source fallback; connection loss and
-Back reuse the existing shell/panel lifecycle. Tests must fail before wiring.
+dismissal reuse the existing shell/panel lifecycle. Tests must fail before wiring.
 
 Unit tests: ArtifactHtmlViewer, ArtifactHtmlDocument, ArtifactHtmlSource,
 artifact-html-client and prior preview/Markdown/panel suites. Full checks, web
@@ -39,8 +39,9 @@ VERIFY_BROWSER=/path/to/chromium VERIFY_MOCK_PORT=19395 VERIFY_PORT=19396 \
 The seed creates only a synthetic DB/context/workspace with hostile.html and a
 synthetic deep document. Prepare registers them and opens Neo through real
 operation.invoke. Stop the daemon before seeding the synthetic publication into
-its own DB; then restart. Web taps the actual publication card and tests the
-merged panel. It checks content in the sandbox and records screenshots.
+its own DB; then restart. Web taps the actual publication card and tests the current tabbed desktop
+panel and compact phone panel. Panel metadata is not assumed to be a heading;
+the expected artifact heading is verified inside the frame. It checks content in the sandbox and records screenshots.
 Every off-origin request and relative asset probe is recorded and aborted; any
 attempt fails the proof (the abort is test isolation, not the containment guard).
 It seeds synthetic host-only cookie/local/session storage canaries, confirms they
@@ -51,9 +52,11 @@ replaces only that same test frame's srcdoc with unsanitized probe content witho
 CSP: script/handler execution, user-clicked top navigation, popup and form submit
 must still be denied by sandbox="". This mutation is a negative containment test,
 not a product path. It restores the daemon-prepared document for screenshots.
-Back restores focus/scroll; on narrow screens, stop/restart drops the frame then
-rereads it without reloading the app. Source must retain
-all original bytes as text. Screenshots and html-viewer-web.json stay under
+Escape dismisses the desktop/compact web panel and restores focus/scroll. On narrow screens,
+stop/restart drops the frame then rereads it without reloading the app. Source
+controls are exercised on the existing standalone `/neo?artifact=<id>` route,
+where Source must retain all original bytes as text and Back returns to `/neo`.
+The tabbed/compact panel does not expose those standalone Source controls. Screenshots and html-viewer-web.json stay under
 RUN/evidence; inspect them before attaching screenshots to the PR. Stop owned
 services/browser; retain synthetic evidence. Never use port 8399, a live DB,
 auth/credential files, real GitHub/providers or unattended GUI automation.
