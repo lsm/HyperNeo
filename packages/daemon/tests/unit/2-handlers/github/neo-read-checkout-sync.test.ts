@@ -1,13 +1,14 @@
+import { createTestDirectory } from '../../../helpers/temporary-directory';
 import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync } from 'node:fs';
+import { mkdirSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 describe('Neo reads a current default-branch checkout', () => {
   test('the existing poll RPC advances a detached clone while human edits stay untouched', () => {
-    const run = realpathSync(mkdtempSync(join(tmpdir(), 'neo-read-checkout-')));
+    const run = realpathSync(createTestDirectory(join(tmpdir(), 'neo-read-checkout-')));
     mkdirSync(join(run, 'home'));
     const output = execFileSync(
       'bun',

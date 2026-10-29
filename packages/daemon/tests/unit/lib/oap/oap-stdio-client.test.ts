@@ -1,5 +1,6 @@
+import { createTestDirectory } from '../../../helpers/temporary-directory';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -84,7 +85,7 @@ describe('OapStdioClient', () => {
   });
 
   test('an endpoint that answers on another profile is refused at connect and stopped', async () => {
-    const pidFile = join(mkdtempSync(join(tmpdir(), 'oap-client-')), 'pid');
+    const pidFile = join(createTestDirectory(join(tmpdir(), 'oap-client-')), 'pid');
     const wrong = client([
       '-e',
       `require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); process.stdin.once("data", (d) => { const r = JSON.parse(String(d)); process.stdout.write(JSON.stringify({ type: "protocol.initialize.response", in_reply_to: r.id, payload: { profile: "other" } }) + "\\n"); }); setInterval(() => {}, 1000);`,
@@ -112,7 +113,7 @@ describe('OapStdioClient', () => {
   });
 
   test('a malformed frame after connect stops the endpoint and delivers nothing after it', async () => {
-    const pidFile = join(mkdtempSync(join(tmpdir(), 'oap-client-')), 'pid');
+    const pidFile = join(createTestDirectory(join(tmpdir(), 'oap-client-')), 'pid');
     const script = [
       `require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));`,
       'const profile = "open-agent-protocol.agent-control-core";',

@@ -1,3 +1,4 @@
+import { createTestDirectory } from '../../../helpers/temporary-directory';
 import { describe, it, expect, mock, beforeEach } from 'bun:test';
 import { createSkillValidateHandler } from '../../../../src/lib/job-handlers/skill-validate.handler';
 import { SKILL_VALIDATE } from '../../../../src/lib/job-queue-constants';
@@ -5,7 +6,6 @@ import type { Job } from '../../../../src/storage/repositories/job-queue-reposit
 import type { SkillsManager } from '../../../../src/lib/skills-manager';
 import type { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
 import type { AppSkill } from '@hyperneo/shared';
-import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -105,7 +105,7 @@ describe('createSkillValidateHandler', () => {
   });
 
   it('passes validation for plugin skill with accessible path', async () => {
-    const pluginPath = mkdtempSync(join(tmpdir(), 'hyperneo-test-'));
+    const pluginPath = createTestDirectory(join(tmpdir(), 'hyperneo-test-'));
     const skill = makeSkill({
       sourceType: 'plugin',
       config: { type: 'plugin', pluginPath },

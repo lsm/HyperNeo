@@ -1,7 +1,8 @@
+import { createTestDirectory } from '../../helpers/temporary-directory';
 import { expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,7 +17,7 @@ test.each(['ordinary', 'neo', 'opus1m', 'opus-native'] as const)(
     const model = oneM ? 'claude-opus-5-5' : 'claude-haiku-4-5-20251001';
     const percent = oneM ? 90 : 60;
     const capacity = oneM ? 1_000_000 : 200000;
-    const run = await mkdtemp(join(tmpdir(), 'sdk-auto-compact-'));
+    const run = createTestDirectory(join(tmpdir(), 'sdk-auto-compact-'));
     await mkdir(join(run, 'workspace'));
     await mkdir(join(run, 'home'));
     await mkdir(join(run, 'bin'));

@@ -1,8 +1,8 @@
+import { createTestDirectory } from '../../../helpers/temporary-directory';
 import { beforeEach, describe, expect, it } from 'bun:test';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-import { mkdtempSync } from 'node:fs';
 import {
   CODEX_DISCOVERY_TTL_MS,
   CODEX_MODELS_ENDPOINT,
@@ -250,7 +250,7 @@ describe('CodexModelsCache', () => {
   let nowMs: number;
 
   beforeEach(() => {
-    cacheDir = mkdtempSync(path.join(os.tmpdir(), 'hyperneo-codex-models-cache-'));
+    cacheDir = createTestDirectory(path.join(os.tmpdir(), 'hyperneo-codex-models-cache-'));
     cachePath = path.join(cacheDir, 'codex-models-cache.json');
     nowMs = Date.now();
   });

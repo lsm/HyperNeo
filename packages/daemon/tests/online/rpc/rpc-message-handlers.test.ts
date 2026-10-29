@@ -1,5 +1,5 @@
+import { createTestDirectory } from '../../helpers/temporary-directory';
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
@@ -21,7 +21,7 @@ describe('Message RPC Handlers', () => {
   }, 20_000);
 
   async function createSessionWithMessages(title?: string): Promise<string> {
-    const workspacePath = mkdtempSync(join(tmpdir(), 'hyperneo-rpc-message-'));
+    const workspacePath = createTestDirectory(join(tmpdir(), 'hyperneo-rpc-message-'));
     const { sessionId } = (await daemon.messageHub.request('session.create', {
       workspacePath,
       title,

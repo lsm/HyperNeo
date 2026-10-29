@@ -1,6 +1,7 @@
+import { createTestDirectory } from '../../helpers/temporary-directory';
 import { expect, test } from 'bun:test';
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,7 +25,7 @@ async function until(check: () => boolean | Promise<boolean>) {
 }
 
 test('Costco human input survives a consumed teammate prompt when question.ask omits replyTo', async () => {
-  const isolated = await mkdtemp(join(tmpdir(), 'neo-card-reply-turn-'));
+  const isolated = createTestDirectory(join(tmpdir(), 'neo-card-reply-turn-'));
   const requestId = crypto.randomUUID();
   const firstModel = deferred();
   const releaseModel = deferred();
@@ -361,7 +362,7 @@ test('Costco human input survives a consumed teammate prompt when question.ask o
 }, 90000);
 
 test('ACP Neo persists a no-replyTo card notice through its real operation proxy', async () => {
-  const run = await mkdtemp(join(tmpdir(), 'neo-card-reply-acp-'));
+  const run = createTestDirectory(join(tmpdir(), 'neo-card-reply-acp-'));
   await mkdir(join(run, 'home'));
   const proof = fileURLToPath(
     new URL('../../../../../.claude/skills/verify/card-reply-acp.ts', import.meta.url)

@@ -1,9 +1,9 @@
+import { createTestDirectory } from '../../../helpers/temporary-directory';
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
   appendFileSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -31,7 +31,7 @@ const fixtures: ReturnType<typeof setup>[] = [];
 const context = { from: 'chat', caller: { source: 'rpc' } } as WorkCallContext;
 const query = { includeClosed: true, limit: 20 };
 function setup(projectFolder?: string) {
-  const run = realpathSync(mkdtempSync(join(tmpdir(), 'copilot-history-')));
+  const run = realpathSync(createTestDirectory(join(tmpdir(), 'copilot-history-')));
   mkdirSync(join(run, 'home'));
   const cliPath = join(run, 'copilot');
   const source = fileURLToPath(new URL('../../../fixtures/copilot-sdk.ts', import.meta.url));

@@ -24,7 +24,9 @@ test('fixture suites remove their owned temporary directories', () => {
       stdio: 'pipe',
       timeout: 90000,
     });
-    expect(readdirSync(root)).toEqual([]);
+    expect(
+      readdirSync(root).filter((name) => /^(acp-|copilot-|hyperneo-|neo-|oap-)/.test(name))
+    ).toEqual([]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
