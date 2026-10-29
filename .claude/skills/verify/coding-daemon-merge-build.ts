@@ -11,10 +11,11 @@ import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/s
 const run=resolve(process.argv[2]),url='https://github.com/synthetic/merge/pull/7',head='a'.repeat(40);
 assert.equal(process.env.NODE_ENV,'test');assert.equal(process.env.HOME,join(run,'home'));assert.equal(process.env.HYPERNEO_DATA_DIR,join(run,'data'));
 for(const dir of ['evidence','bin'])mkdirSync(join(run,dir),{recursive:true});
+process.env.PATH=`${join(run,'bin')}:${process.env.PATH}`;
 const pr={url,body:'',state:'OPEN',headRefOid:head,isDraft:false,mergeable:'MERGEABLE',mergeStateStatus:'CLEAN',author:{login:'author'},changedFiles:1,files:[{path:'src/app.ts'}],labels:[],mergeCommit:null};
 const review={state:'APPROVED',commit_id:head,user:{login:'fixture-bot',type:'Bot'},html_url:url+'#review'};
 const publish=(extra={})=>writeFileSync(join(run,'fixture.json'),JSON.stringify({pr,reviews:[[review]],labels:[[{name:'bug'}],[{name:'human-merge'}]],...extra}));publish();
-writeFileSync(join(run,'bin/gh'),`#!${process.execPath}
+writeFileSync(join(run,'bin/gh'),`#!/usr/bin/env bun
 import{readFileSync,appendFileSync,existsSync,writeFileSync}from'node:fs';const args=process.argv.slice(2),f=JSON.parse(readFileSync(${JSON.stringify(join(run,'fixture.json'))},'utf8'));appendFileSync(${JSON.stringify(join(run,'evidence/gh.jsonl'))},JSON.stringify(args)+'\\n');if(f.fail&&args.some(a=>a.includes(f.fail)))process.exit(1);if(args[0]==='pr'&&args[1]==='view'){if(f.race&&args.at(-1)!=='headRefOid,state'){await new Promise(done=>setTimeout(done,80));writeFileSync(${JSON.stringify(join(run,'pr-observed'))},'1');}console.log(JSON.stringify(args.at(-1)==='headRefOid,state'?{headRefOid:f.finalHead||f.pr.headRefOid,state:f.pr.state}:f.pr));}else if(args[0]==='pr'&&args[1]==='checks')console.log(JSON.stringify([{bucket:f.race&&existsSync(${JSON.stringify(join(run,'pr-observed'))})?'pending':'pass',name:'Required',link:f.pr.url+'/checks'}]));else if(args.some(a=>a.endsWith('/reviews')))console.log(JSON.stringify(f.reviews));else if(args.some(a=>a.endsWith('/labels')))console.log(JSON.stringify(f.labels));else if(args.includes('graphql'))console.log(JSON.stringify({data:{repository:{pullRequest:{url:f.pr.url,headRefOid:f.pr.headRefOid,reviewThreads:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}}}}}}));else process.exit(1);
 `,{mode:0o700});
 const network=globalThis.fetch;globalThis.fetch=(()=>{throw new Error('External HTTP forbidden');}) as typeof fetch;

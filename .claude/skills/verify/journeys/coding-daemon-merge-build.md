@@ -8,13 +8,18 @@ bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/coding
 ```
 
 The helper owns an isolated real daemon, synthetic HOME/database, an ephemeral
-non-8399 listener and a refusing GitHub CLI fixture. No provider or external
+non-8399 listener and a refusing GitHub CLI fixture. The CLI fixture uses Bun
+from PATH even when the daemon proof runs on Deno. No provider or external
 HTTP is allowed. It sets only synthetic repository preferences through public
 RPC and calls the coding pack's new fresh-facts reader and PR1 pure gate.
 Paginated labels must include a human-merge label on a later page and require
 human sign-off. A complete empty label list admits eligible facts. Required
 checks, reviews, labels or thread read failures and a final moved head must
-return unreadable facts. No todo or owner is needed.
+return unreadable facts. A delayed initial PR read exposes an old-head CI race:
+the checks fixture is green before the new head is observed and pending after.
+The reader must observe the head before requesting CI, then re-read the head
+after all facts; it must never attach those old passing checks to the new head.
+The failing real-daemon reproduction is committed before this ordering fix. No todo or owner is needed.
 
 Receipt commands run in the real DB writer. A held WAL lock must delay the
 begin receipt while health remains responsive. After commit, executor, head

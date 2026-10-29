@@ -21,14 +21,15 @@ type Observed = z.infer<typeof Response>;
 const collect = async (db: Database, url: string, spawn: SpawnFn) => {
   const meta = parsePrUrl(url)!;
   const gh = (args: string[]) => runGhJson(['gh', ...args], homedir(), spawn);
+  const pull = await gh([
+    'pr',
+    'view',
+    url,
+    '--json',
+    'url,body,state,headRefOid,isDraft,mergeable,mergeStateStatus,author,changedFiles,files,labels,mergeCommit',
+  ]);
   const responses = await Promise.all([
-    gh([
-      'pr',
-      'view',
-      url,
-      '--json',
-      'url,body,state,headRefOid,isDraft,mergeable,mergeStateStatus,author,changedFiles,files,labels,mergeCommit',
-    ]),
+    pull,
     gh([
       'api',
       '--hostname',
