@@ -222,3 +222,25 @@ test('a stalled-only ask gets one todo reminder while the daily inventory still 
   expect(notes()[0].message.message.content).toContain('stuck');
   expect(service.todos.listStalledAsks(clock - 2 * hour)).toHaveLength(1);
 });
+
+test('a delayed refresh measures the repeat from consumption, not the later observation', async () => {
+  add('stuck');
+  clock += 2 * hour;
+  await service.refreshDriverWork();
+  const entry = notes()[0];
+  await db.saveUserMessage(
+    'neo',
+    {
+      ...entry.message,
+      type: 'user',
+      uuid: entry.messageUuid,
+      session_id: 'neo',
+      message: { role: 'user', content: entry.message.message.content },
+    },
+    'consumed'
+  );
+  clock += 2 * hour;
+  await service.refreshDriverWork();
+  expect(notes()).toHaveLength(2);
+  expect(notes()[1].deliveryMode).toBe('defer');
+});
