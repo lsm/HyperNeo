@@ -27,7 +27,7 @@ const proof: Record<string, unknown> = { verified: false, providerTurns: 0, reci
 try {
   app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
   await app.jobProcessor.stop(); assert.notEqual(app.server.port, 8399);
-  app.db.updateGlobalSettings({ neo: { packs: [] } });
+  await app.db.updateGlobalSettings({ neo: { packs: [] } });
   neo = createNeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
   for (const id of ['synthetic-signoff-neo', worker]) await app.db.createSession({ id, title: id, workspacePath: join(run, 'home'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
   neo.repo.reserveBinding({ sessionId: 'synthetic-signoff-neo', projectId: null, kind: 'neo' });
@@ -38,12 +38,13 @@ try {
     ws!.onmessage = event => { const reply = JSON.parse(String(event.data)); if (reply.id !== id && reply.requestId !== id) return; clearTimeout(timer); if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data); };
     ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
+  assert.equal((await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'global', key: '' }, key: 'watchedRepos', value: [repo] })).ok, true);
   for (const [key, value] of Object.entries({ mergePolicy: 'review_bot', reviewBot: 'hyperneo-ai-test', humanSignoff: ['docs/design/**'] })) assert.equal((await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'repo', key: repo }, key, value })).ok, true);
   const db = app.db.getDatabase(), ledger = new CodingPrLedgerRepository(db);
   let approved = false, terminal = false;
-  const nodes = () => [1, 2].map(number => ({ number, title: number === 1 ? 'Synthetic code' : 'Synthetic design', headRefName: `slice-${number}`, headRefOid: `head-${number}`, state: terminal ? (number === 1 ? 'MERGED' : 'CLOSED') : 'OPEN', isDraft: false, mergeable: 'MERGEABLE', reviewDecision: approved ? 'APPROVED' : 'REVIEW_REQUIRED', closedAt: terminal ? new Date().toISOString() : null, files: { nodes: [{ path: number === 1 ? 'packages/daemon/src/app.ts' : 'docs/design/synthetic.md' }], pageInfo: { hasNextPage: false } }, reviews: { nodes: approved ? [{ state: 'APPROVED', commit: { oid: `head-${number}` }, author: { login: 'hyperneo-ai-test' } }] : [] }, commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] } }));
+  const nodes = () => [1, 2].map(number => ({ number, title: number === 1 ? 'Synthetic code' : 'Synthetic design', headRefName: `slice-${number}`, headRefOid: `head-${number}`, state: terminal ? (number === 1 ? 'MERGED' : 'CLOSED') : 'OPEN', isDraft: false, mergeable: 'MERGEABLE', reviewDecision: approved ? 'APPROVED' : 'REVIEW_REQUIRED', closedAt: terminal ? new Date().toISOString() : null, labels: { nodes: number === 1 ? [] : [{ name: 'needs-human' }], pageInfo: { hasNextPage: false } }, files: { nodes: [{ path: number === 1 ? 'packages/daemon/src/app.ts' : 'docs/design/synthetic.md' }], pageInfo: { hasNextPage: false } }, reviews: { nodes: approved ? [{ state: 'APPROVED', commit: { oid: `head-${number}` }, author: { login: 'hyperneo-ai-test' } }] : [] }, commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] } }));
   const pack = createCodingPack({ database: () => db, readPrs: async () => [], readClaudeOwners: async () => [], todoPrs: new CodingTodoPrRepository(db), prLedger: ledger, prEvents: new CodingPrEventRepository(db), prSweep: new CodingPrSweepRepository(db), projectRepos: () => [repo], prSweepDeps: { tell: (ref, key, text) => neo!.sendToRef(ref, key, text), wake: (key, text) => neo!.wakeNeo(key, text) }, readLedgerRepo: async () => ({ data: { rateLimit: { remaining: 4000 }, repository: { nameWithOwner: repo, open: { pageInfo: { hasNextPage: false }, nodes: terminal ? [] : nodes() }, done: { nodes: terminal ? nodes() : [] } } } }) });
-  pack.observeSessions!([{ ref: { adapter: 'hyperneo', id: worker }, status: { state: 'running' } as never, lastActivityAt: Date.now(), remotes: [`git@github.com:${repo}.git`], branches: ['slice-1', 'slice-2'], openedPrs: [] }], Date.now());
+  await pack.observeSessions!([{ ref: { adapter: 'hyperneo', id: worker }, status: { state: 'running' } as never, lastActivityAt: Date.now(), remotes: [`git@github.com:${repo}.git`], branches: ['slice-1', 'slice-2'], openedPrs: [] }], Date.now());
   const jobs = () => db.prepare("SELECT payload FROM job_queue WHERE queue='mailbox' ORDER BY id").all().map((row: { payload: string }) => JSON.parse(row.payload));
   const now = Date.now();
   await pack.sweep!(now);
@@ -59,7 +60,7 @@ try {
   await pack.sweep!(now + 3000);
   proof.terminal = { snapshot: await rpc('neo.snapshot', {}), ledger: ledger.list(), mailbox: jobs() };
   assert.deepEqual(states, [[1, 'approved_green'], [2, 'waiting_human']]);
-  assert.deepEqual(labelStates, [[1, 'waiting_human'], [2, 'waiting_human']]);
+  assert.deepEqual(labelStates, [[1, 'approved_green'], [2, 'waiting_human']]);
   assert.equal(terminalJobs.length, 3);
   assert.deepEqual(jobs(), terminalJobs);
   assert(jobs().every((job: any) => job.to.sessionId === worker));
