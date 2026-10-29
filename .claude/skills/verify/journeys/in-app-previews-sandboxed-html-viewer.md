@@ -40,11 +40,13 @@ The runner applies the shared macOS resource guard only on Darwin. Run
 `python3 .claude/skills/verify/preview-html-viewer-preflight.py` to exercise the
 actual entrypoint with platform/tool shims: Linux reaches seed setup without
 `memory_pressure`, while Darwin stops before setup below 25% free memory.
-This preflight regression does not establish native Linux browser coverage.
+It also injects a copy failure and requires the original canary and failure status
+to survive in the retained run. This does not establish native Linux browser coverage.
 
 Run `python3 .claude/skills/verify/preview-html-viewer-interrupt.py /absolute/new/evidence`
 to start the actual runner twice and cancel its outer process with TERM and INT
-after HTTP readiness. Require outer exit 143/130, retained cancellation evidence,
+while a prepare probe holds a Node process and its Bun child after HTTP readiness.
+Require bounded outer exit 143/130, retained cancellation evidence,
 closed daemon/mock listeners, no remaining owned processes and removal of the
 temporary run. `with-run.sh` forwards TERM to its child, so saved child status may
 be 143 after an outer INT. The controller owns its process group and cleans up a

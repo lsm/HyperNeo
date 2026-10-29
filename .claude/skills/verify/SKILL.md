@@ -135,7 +135,11 @@ directories; the helper must close its resources in finally.
 
 Shell wrappers that own daemon processes must translate INT/TERM to exit 130/143
 as well as registering EXIT cleanup. Preserve cancellation status and evidence
-before `with-run.sh` removes the run; an EXIT trap alone is insufficient.
+before `with-run.sh` removes the run; an EXIT trap alone is insufficient. Wait
+for active work in an interruptible background job and forward cancellation to
+that job and its children. Create `$RUN/.preserve-run` before producing evidence
+and remove it only after saving succeeds; `with-run.sh` retains marked runs even
+after a save error or cancellation.
 
 Reader proofs that trap SDK-message SQL must finish startup body copying before
 measuring reader work or acquiring a competing writer. After seeding fixtures,
