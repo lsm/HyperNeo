@@ -26,6 +26,21 @@ async function fixture(name: string, owned = true) {
 const config = () => getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') });
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let ws: WebSocket | undefined;
+async function rpc(method: string, data: unknown) {
+  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connection failed')); });
+  return await new Promise<Record<string, unknown>>((done, fail) => {
+    const id = crypto.randomUUID();
+    const timer = setTimeout(() => fail(new Error(`${method} timed out`)), 30000);
+    ws!.onmessage = (event) => {
+      const response = JSON.parse(String(event.data));
+      if (response.id !== id && response.requestId !== id) return;
+      clearTimeout(timer); done(response);
+    };
+    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method, data, timestamp: new Date().toISOString(), version: '1.0.0' }));
+  });
+}
+
 try {
   app = await createDaemonApp({ config: config(), verbose: false });
   assert.notEqual(app.server.port, 8399);
@@ -35,18 +50,7 @@ try {
   assert(!existsSync(ownerPath(desktop)), 'Desktop scratch must remain unclaimed');
   const now = new Date().toISOString();
   await app.db.createSession({ id: 'synthetic-scratch', title: 'Scratch proof', workspacePath: sdk, createdAt: now, lastActiveAt: now, status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
-  await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connection failed')); });
-  const reply = await new Promise<Record<string, unknown>>((done, fail) => {
-    const id = crypto.randomUUID();
-    const timer = setTimeout(() => fail(new Error('archive timeout')), 30000);
-    ws!.onmessage = (event) => {
-      const response = JSON.parse(String(event.data));
-      if (response.id !== id && response.requestId !== id) return;
-      clearTimeout(timer); done(response);
-    };
-    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'session.archive', data: { sessionId: 'synthetic-scratch', confirmed: true }, timestamp: now, version: '1.0.0' }));
-  });
+  const reply = await rpc('session.archive', { sessionId: 'synthetic-scratch', confirmed: true });
   assert(!reply.error, JSON.stringify(reply));
   assert(!existsSync(workerWorkLocations(sdk).scratch));
   evidence.archive = reply;
@@ -92,8 +96,51 @@ try {
   assert(existsSync(workerWorkLocations(desktop).scratch), 'startup must retain unmarked Desktop scratch');
   assert(existsSync(workerWorkLocations(childLive).scratch), 'startup must retain scratch with a live recorded SDK child');
   evidence.startup = { liveSdkChildRetained: true, staleDeadRemoved: true, recentRetained: true, liveRetained: true, desktopRetained: true };
+  await app.cleanup(); app = undefined;
+  const blocked = await fixture('cleanup-boundary-unavailable');
+  const blockedOwner = JSON.parse(readFileSync(ownerPath(blocked), 'utf8'));
+  blockedOwner.pid = dead.pid;
+  blockedOwner.createdAt = Date.now() - 25 * 60 * 60 * 1000;
+  const leaseBefore = JSON.stringify(blockedOwner);
+  writeFileSync(ownerPath(blocked), leaseBefore);
+  const originalSpawn = Bun.spawn;
+  const originalError = console.error;
+  const diagnostics: string[] = [];
+  console.error = (...args: unknown[]) => {
+    diagnostics.push(args.map(String).join(' '));
+    originalError(...args);
+  };
+  Bun.spawn = ((args, options) => {
+    if (Array.isArray(args) && args.includes('worker-runtime-cleanup')) {
+      args = [...args];
+      args[args.indexOf('/bin/sh') + 2] = "printf 'synthetic scratch boundary unavailable' >&2; exit 23";
+    }
+    return originalSpawn(args, options);
+  }) as typeof Bun.spawn;
+  try {
+    app = await createDaemonApp({ config: config(), verbose: true });
+  } catch (error) {
+    evidence.cleanupFailure = { startupAborted: true, error: String(error) };
+    throw error;
+  } finally {
+    Bun.spawn = originalSpawn;
+    console.error = originalError;
+  }
+  assert(existsSync(workerWorkLocations(blocked).scratch), 'failed cleanup must retain its scratch');
+  assert.equal(readFileSync(ownerPath(blocked), 'utf8'), leaseBefore, 'failed cleanup must retain its lease unchanged');
+  assert(diagnostics.some((line) => line.includes('synthetic scratch boundary unavailable')), 'startup must log the cleanup failure');
+  const health = await rpc('system.health', {});
+  assert(!health.error, JSON.stringify(health));
+  assert.equal((health.data as { status?: string }).status, 'ok');
+  ws!.close(); ws = undefined;
+  evidence.cleanupFailure = { scratchRetained: true, leaseRetained: true, diagnostics, health };
+  await app.cleanup(); app = undefined;
+  app = await createDaemonApp({ config: config(), verbose: false });
+  assert(!existsSync(workerWorkLocations(blocked).scratch), 'next startup must retry retained scratch');
+  assert(!existsSync(ownerPath(blocked)), 'successful retry must remove the retained lease');
+  evidence.cleanupRetry = { scratchRemoved: true, leaseRemoved: true };
   evidence.passed = true;
-  console.log('PASS archive RPC, normal daemon shutdown, stale-dead startup recovery and live/recent/Desktop retention');
+  console.log('PASS archive RPC, shutdown/restart ownership guards, cleanup-failure health RPC and retry');
 } finally {
   ws?.close();
   await app?.cleanup();

@@ -27,3 +27,12 @@ an unmarked or replaced directory is never adopted. Previous daemon PIDs remain
 liveness guards, and persisted SDK-child records captured before startup cleanup
 also guard shutdown after a lease transfer. Focused regressions cover renewal
 before a stale sweep and retention of live prior owners/SDK children.
+
+## Startup cleanup failure
+
+The same helper replaces only the OS-confined cleanup child's command body with
+an exit-23 diagnostic for one synthetic stale lease. Observe that startup still
+serves actual `system.health` RPC with status `ok`, logs the diagnostic, and
+retains scratch and lease bytes unchanged. Restore the real child command and
+restart: both retained paths must be reclaimed. This simulates cleanup-boundary
+failure on the current OS; it does not claim a native Linux namespace failure.
