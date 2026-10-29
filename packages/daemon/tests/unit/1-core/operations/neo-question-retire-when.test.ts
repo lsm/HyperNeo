@@ -547,3 +547,58 @@ test('a committed retirement keeps its pending Neo notice across a database rest
     rmSync(run, { recursive: true, force: true });
   }
 });
+
+test.each(['outside-window', 'other-owner'] as const)(
+  'a linked question keeps its todo PR ownership rules: %s',
+  async (conflict) => {
+    const f = fixture();
+    try {
+      const url = 'https://github.com/synthetic/project/pull/78';
+      const repository = new CodingTodoPrRepository(f.db);
+      const pack = createCodingTodoPack(repository, async () => [
+        {
+          url,
+          state: 'MERGED',
+          checks: 'passing',
+          review: 'approved',
+          title: 'Another change',
+          blockers: [],
+          createdAt: conflict === 'outside-window' ? 2 : 12,
+          mergedAt: 20,
+        },
+      ]);
+      pack.schema(f.db);
+      const todo = f.store.updateTodo(
+        f.todo,
+        { state: 'doing', startedAt: 10, check: { pack: 'coding', kind: 'pr_merged', params: {} } },
+        10
+      );
+      repository.claim(todo.id, [{ url, claim: 'branch' }], 11);
+      if (conflict === 'other-owner') {
+        const peer = f.store.addTodo(
+          'peer',
+          'ask',
+          {
+            title: 'Owns that PR',
+            doneWhen: 'Merged',
+            check: null,
+            instruction: null,
+            named: null,
+          },
+          1
+        );
+        repository.claim(peer.id, [{ url, claim: 'named' }], 1);
+      }
+      expect(await pack.check(todo)).toMatchObject({ done: false });
+      const card = await f.ask({ todoId: todo.id });
+      const retire = createQuestionRetirement(f.store, () => [
+        { id: 'coding', describe: 'Coding', instructions: () => null, todos: pack },
+      ]);
+      expect(await retire(card.question, todo, 30)).toBeNull();
+      expect(f.store.getQuestion(card.question.id)?.state).toBe('open');
+      expect(f.notes).toEqual([]);
+    } finally {
+      f.db.close();
+    }
+  }
+);
