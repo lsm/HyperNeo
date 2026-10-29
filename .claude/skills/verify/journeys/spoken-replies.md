@@ -44,3 +44,11 @@ message. The replay also sends real neo.message.send input through the RPC door
 and reads its stored SDK prompt: require only [input: live_voice; speech: on],
 with original public human content unchanged and no repeated tool instructions.
 The input/speech fact is source and playback state, not authority to speak.
+
+Production synthesis uses the operator-provided HYPERNEO_SPEECH_URL base, with
+/v1/audio/speech and /v1/audio/voices beneath it; the phone does not configure
+a second TTS endpoint. The audio opt-in receives pcm16 mono24kHz, ordered base64
+chunks no larger than3840 bytes, then end; playing/played remain phone receipts.
+The verify wrapper supplies a loopback synthetic upstream and must never inherit
+that production setting or any credentials. Successful local synthetic streaming
+does not establish the health or speed of the production GPU service.
