@@ -72,7 +72,10 @@ describe('resumable voice stream RPC', () => {
     }) as unknown as typeof fetch;
     registerVoiceHandlers(hub, settings, undefined, {
       db: {} as Database,
-      deviceOf: (id) => ({ deviceId: id === 'foreign' ? 'device-b' : 'device-a', kind: 'human' }),
+      deviceOf: (id) =>
+        id.startsWith('unpaired-')
+          ? null
+          : { deviceId: id === 'foreign' ? 'device-b' : 'device-a', kind: 'human' },
     });
   });
 
@@ -206,19 +209,22 @@ describe('resumable voice stream RPC', () => {
     expect(await call('voice.stream.stop', { streamId })).toEqual({ text: '1,2,3', via: 'batch' });
   });
 
-  it('lets legacy reconnects replace their detached recording without exhausting capacity', async () => {
-    let latest = '';
-    for (let index = 0; index < 9; index++) {
-      const client = `reconnect-${index}`;
-      latest = (await start(client)).streamId;
-      await call('voice.stream.chunk', { streamId: latest, audioBase64: pcm([index]) }, client);
-      if (index < 8) disconnect(client);
+  it.each(['paired', 'unpaired'])(
+    'keeps legacy reconnects working for %s clients',
+    async (kind) => {
+      let latest = '';
+      for (let index = 0; index < 9; index++) {
+        const client = `${kind}-reconnect-${index}`;
+        latest = (await start(client)).streamId;
+        await call('voice.stream.chunk', { streamId: latest, audioBase64: pcm([index]) }, client);
+        if (index < 8) disconnect(client);
+      }
+      expect(await call('voice.stream.stop', { streamId: latest }, `${kind}-reconnect-8`)).toEqual({
+        text: '8',
+        via: 'batch',
+      });
     }
-    expect(await call('voice.stream.stop', { streamId: latest }, 'reconnect-8')).toEqual({
-      text: '8',
-      via: 'batch',
-    });
-  });
+  );
 
   it('preserves live and other-device streams, and keeps detached audio when replacement fails', async () => {
     const streams = [];
@@ -270,5 +276,19 @@ describe('resumable voice stream RPC', () => {
     }
     expect(await outcome).toContain('Too many voice streams');
     await expect(start('foreign')).rejects.toThrow('Too many voice streams');
+  });
+
+  it('isolates unpaired clients and does not advertise reconnect recovery without identity', async () => {
+    const client = 'unpaired-first';
+    const { streamId, resumable } = await start(client);
+    await call('voice.stream.chunk', { streamId, audioBase64: pcm([42]) }, client);
+    await expect(
+      call('voice.stream.resume', { streamId }, 'unpaired-second')
+    ).rejects.toMatchObject({ code: 'VOICE_STREAM_NOT_FOUND' });
+    disconnect(client);
+    await expect(
+      call('voice.stream.resume', { streamId }, 'unpaired-second')
+    ).rejects.toMatchObject({ code: 'VOICE_STREAM_NOT_FOUND' });
+    expect(resumable).toBe(false);
   });
 });

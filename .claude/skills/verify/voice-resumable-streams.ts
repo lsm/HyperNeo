@@ -19,6 +19,7 @@ await new Promise<void>((done) => asr.once('listening', done));
 const asrPort = (asr.address() as { port: number }).port;
 const records: Array<{ chunks: Buffer[]; closed: boolean }> = [];
 const clients: WebSocket[] = [];
+const syntheticSecrets: string[] = [];
 const observed: Record<string, unknown> = { mode, passed: false };
 asr.on('connection', (socket) => {
   const record = { chunks: [] as Buffer[], closed: false };
@@ -42,10 +43,11 @@ closeSync(log);
 writeFileSync(join(run, 'daemon.pid'), String(daemon.pid));
 const exited = new Promise<void>((done) => daemon.once('exit', () => done()));
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
-async function connect() {
-  const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+async function connect(credential?: string) {
+  const url = `ws://127.0.0.1:${port}/ws`;
+  const ws = credential ? new WebSocket(url, { headers: { authorization: `Bearer ${credential}` } }) : new WebSocket(url);
   clients.push(ws);
-  await new Promise<void>((done, reject) => { ws.once('open', done); ws.once('error', reject); });
+  await new Promise<void>((done, reject) => { ws.once('open', done); ws.on('error', reject); });
   const events: Array<{ isFinal: boolean; text: string }> = [];
   const pending = new Map<string, { resolve: (value: Record<string, unknown>) => void; reject: (error: Error) => void }>();
   ws.on('message', (data) => {
@@ -83,7 +85,7 @@ try {
     await sleep(100);
   }
   assert(ready, 'isolated daemon not ready');
-  const first = await connect();
+  let first = await connect();
   await first.call('settings.global.update', { updates: { voice: {
     enabled: true, endpoint: `http://127.0.0.1:${asrPort}/v1/transcriptions`, model: 'synthetic',
     mode: 'streaming', streamEndpoint: `ws://127.0.0.1:${asrPort}/v1/listen`, streamProtocol: 'deepgram', allowPrivateNetwork: true,
@@ -93,12 +95,23 @@ try {
   await first.call('voice.stream.chunk', { streamId: legacy.streamId, audioBase64: pcm([9]) });
   observed.legacy = await first.call('voice.stream.stop', { streamId: legacy.streamId });
   assert.deepEqual(observed.legacy, { text: '7,8,9', via: 'streaming' });
+  const code = await first.call('operation.invoke', { name: 'device.pair.create', input: { kind: 'human', name: 'Synthetic phone' } });
+  assert.equal(typeof code.code, 'string');
+  syntheticSecrets.push(String(code.code));
+  const paired = await fetch(`http://127.0.0.1:${port}/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: code.code, name: 'Synthetic phone' }) });
+  assert.equal(paired.status, 200);
+  const { credential } = await paired.json() as { credential: string };
+  assert.equal(typeof credential, 'string');
+  syntheticSecrets.push(credential);
+  first = await connect(credential);
+  assert.equal((await first.call('operation.invoke', { name: 'device.pair.pending', input: {} })).ok, true);
+  observed.pairedIdentityConfirmed = true;
   const started = await first.call('voice.stream.start', { encoding: 'pcm16', sampleRate: 16_000 });
   observed.started = started;
   await first.call('voice.stream.chunk', { streamId: started.streamId, audioBase64: pcm([1, 2, 3]), offset: 0 });
   observed.disconnectCode = await first.drop();
   assert.equal(observed.disconnectCode, 1006);
-  const second = await connect();
+  const second = await connect(credential);
   observed.resume = await second.call('voice.stream.resume', { streamId: started.streamId });
   assert.deepEqual(observed.resume, { ok: true, receivedBytes: 6 });
   assert.equal(started.resumable, true);
@@ -111,7 +124,7 @@ try {
   assert.equal((observed.finalEvents as unknown[]).length, 1);
   observed.legacyReconnects = 0;
   for (let index = 0; index < 9; index++) {
-    const legacyPhone = await connect();
+    const legacyPhone = await connect(credential);
     const recording = await legacyPhone.call('voice.stream.start', { encoding: 'pcm16', sampleRate: 16_000 });
     await legacyPhone.call('voice.stream.chunk', { streamId: recording.streamId, audioBase64: pcm([index]) });
     if (index < 8) await legacyPhone.drop();
@@ -121,6 +134,14 @@ try {
     }
     observed.legacyReconnects = index + 1;
   }
+  const guest = await connect();
+  const stranger = await connect();
+  const unpaired = await guest.call('voice.stream.start', { encoding: 'pcm16', sampleRate: 16_000 });
+  await guest.call('voice.stream.chunk', { streamId: unpaired.streamId, audioBase64: pcm([66]) });
+  await guest.drop();
+  await assert.rejects(() => stranger.call('voice.stream.resume', { streamId: unpaired.streamId }), (error: Error & { code?: string }) => error.code === 'VOICE_STREAM_NOT_FOUND');
+  assert.equal(unpaired.resumable, false);
+  observed.unpairedTakeoverRefused = true;
   for (let attempt = 0; records.some((record) => !record.closed) && attempt < 500; attempt++) await sleep(10);
   assert(records.every((record) => record.closed), 'replacement left an ASR connection open');
   observed.detachedRelaysRetired = true;
@@ -133,7 +154,7 @@ try {
     observed.elapsedGraceMs = Date.now() - disconnectedAt;
     observed.abandonedRelayClosed = records.at(-1)!.closed;
     assert.equal(observed.abandonedRelayClosed, true, 'grace timer did not retire ASR without another RPC');
-    const third = await connect();
+    const third = await connect(credential);
     await assert.rejects(() => third.call('voice.stream.resume', { streamId: abandoned.streamId }), (error: Error & { code?: string }) => {
       observed.expiryCode = error.code;
       return error.code === 'VOICE_STREAM_NOT_FOUND';
@@ -151,7 +172,11 @@ try {
   const shutdownDeadline = setTimeout(() => daemon.kill('SIGKILL'), 15_000);
   try { await exited; } finally { clearTimeout(shutdownDeadline); }
   observed.daemonExitCode = daemon.exitCode;
+  const logText = readFileSync(join(run, 'evidence/daemon.log'), 'utf8');
+  observed.syntheticSecretsAbsent = syntheticSecrets.every((secret) => !logText.includes(secret));
+  writeFileSync(join(run, 'evidence/daemon.log'), syntheticSecrets.reduce((text, secret) => text.replaceAll(secret, '[synthetic secret redacted]'), logText));
   writeFileSync(join(run, 'evidence/voice-resumable.json'), JSON.stringify(observed, null, 2));
+  assert(observed.syntheticSecretsAbsent, 'synthetic pairing secret appeared in evidence');
   assert.equal(daemon.exitCode, 0, 'isolated daemon did not shut down cleanly');
   assert(!/database (?:is|has been) closed/i.test(readFileSync(join(run, 'evidence/daemon.log'), 'utf8')), 'closed database during proof shutdown');
 }
