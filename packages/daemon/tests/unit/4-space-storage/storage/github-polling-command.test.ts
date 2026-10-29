@@ -26,6 +26,7 @@ import {
 import { persistGitHubPollCursorJson } from '../../../../src/storage/repositories/github-cursor-persist';
 
 import { persistGitHubWatchedRepoUpdate } from '../../../../src/storage/repositories/github-watched-update-persist';
+import { upsertGitHubWatchedRepo } from '../../../../src/storage/repositories/github-watched-upsert-persist';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import type { DbOp } from '../../../../src/storage/db-gateway/db-op';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops';
@@ -65,8 +66,40 @@ describe('audited GitHub polling dependency interfaces', () => {
     vi.restoreAllMocks();
     db.close();
   });
+  test('sixth pinned UPSERT interface preserves receipts and caller rollback without initialization', () => {
+    db.exec('DROP TABLE space_github_source_settings');
+    vi.spyOn(Date, 'now').mockReturnValue(41);
+    const before = rows();
+    expect(() =>
+      db.transaction(() => {
+        const saved = upsertGitHubWatchedRepo(db, {
+          spaceId: 'synthetic-space',
+          owner: 'ownerz',
+          repo: 'REPO-Z',
+          enabled: false,
+          pollingEnabled: false,
+        });
+        expect(saved).toMatchObject({
+          id: 'synthetic-one',
+          createdAt: 17,
+          updatedAt: 41,
+          enabled: false,
+          pollingEnabled: false,
+          lastPollAt: 14,
+          lastWebhookAt: 13,
+        });
+        throw new Error('synthetic sixth-module rollback');
+      })()
+    ).toThrow('synthetic sixth-module rollback');
+    expect(rows()).toEqual(before);
+    expect(
+      db.prepare("SELECT name FROM sqlite_master WHERE name='space_github_source_settings'").get()
+    ).toBeNull();
+  });
   test('audited stable module hashes and constructor-free interfaces stay pinned', () => {
     const hashes = {
+      'github-watched-upsert-persist.ts':
+        'c108d5f4cff7893041110ad4c28154c7922b8a6204388a68ab7ab9a0cf5addd9',
       'github-watched-update-persist.ts':
         'c4a07d91b0c58eb2983c0c367c4e31b8943a8569ba48f6c2a9ccace218215e54',
       'github-watched-repo-lookups.ts':
@@ -147,6 +180,49 @@ describe('audited GitHub polling dependency interfaces', () => {
       'synthetic-one'
     );
     expect(() => findGitHubWatchedRepoById(db, 'synthetic-one')).toThrow(SyntaxError);
+  });
+});
+type Watched = ReturnType<GitHubEventExtensionRepository['upsertWatchedRepo']>;
+async function pipelineStages(): Promise<{
+  requirePollingSpace: (spaceId: string) => string;
+  selectPollingTargets: (repos: Watched[], enabled: boolean) => Watched[];
+}> {
+  const module = await import(
+    new URL('../../../../src/storage/repositories/github-polling-enabled-write.ts', import.meta.url)
+      .href
+  );
+  if (
+    typeof module.requirePollingSpace !== 'function' ||
+    typeof module.selectPollingTargets !== 'function'
+  )
+    throw new Error('Named polling pipeline decision stages are unavailable');
+  return module;
+}
+describe('polling pipeline stage decision tables', () => {
+  test('Space admission retains valid keys and the exact invalid-key error independently of storage', async () => {
+    const { requirePollingSpace } = await pipelineStages();
+    for (const id of ['synthetic-one', 'inner space', 'case-Space'])
+      expect(requirePollingSpace(id)).toBe(id);
+    for (const id of ['', ' ', ' synthetic-one', 'synthetic-one '])
+      expect(() => requirePollingSpace(id)).toThrow(
+        'Space id must be non-empty and must not include edge whitespace'
+      );
+  });
+  test('eligibility skips only enabled webhooks with a nonempty secret while enabling', async () => {
+    const { selectPollingTargets } = await pipelineStages();
+    for (const enabled of [false, true])
+      for (const webhookEnabled of [false, true])
+        for (const webhookSecret of [null, '', 'synthetic-only'])
+          for (const rowEnabled of [false, true]) {
+            const row = { ...mappedWatchedRow, enabled: rowEnabled, webhookEnabled, webhookSecret };
+            const before = structuredClone(row);
+            const selected = selectPollingTargets([row], enabled);
+            const shouldSkip = enabled && webhookEnabled && Boolean(webhookSecret);
+            expect(selected.map((r) => r.id)).toEqual(shouldSkip ? [] : [row.id]);
+            expect(row).toEqual(before);
+            if (!shouldSkip) expect(selected[0]).toBe(row);
+          }
+    expect(selectPollingTargets([], true)).toEqual([]);
   });
 });
 class FaultGateway extends DbGateway {
