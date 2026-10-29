@@ -1,0 +1,48 @@
+{
+  "publicSpaceSetterActivated": false,
+  "mainGuardSelfCheckPassed": true,
+  "firstCommandMs": 0.31158400000003894,
+  "committedConfigVisibleThroughPublicRpc": true,
+  "creationTimeAndSuppliedUpdateTimePreserved": true,
+  "postStatementFailureRollsBack": true,
+  "foreignKeyRejectsOrphan": true,
+  "healthWhileWriterHeldMs": 6.292582999999922,
+  "deliberatelyHeldWriterMs": 1302.0315,
+  "ackWaitsForCommit": true,
+  "admissionFailureDoesNotWriteOrReplay": true,
+  "actualCommittedReplyLossDoesNotReplay": true,
+  "maxLoopLagMs": 2.3700410000001284,
+  "commandPosts": 7,
+  "rssBytes": 468697088,
+  "walBytes": 4128272,
+  "pass": true,
+  "mainSqlAttempts": 0,
+  "metrics": [
+    {
+      "roundTripMs": 0.2062500000001819,
+      "requestBytes": 176,
+      "replyBytes": 22
+    },
+    {
+      "roundTripMs": 0.05804100000023027,
+      "requestBytes": 185,
+      "replyBytes": 22
+    },
+    {
+      "roundTripMs": 1301.2730000000001,
+      "requestBytes": 176,
+      "replyBytes": 22
+    },
+    {
+      "roundTripMs": 2.9209579999997004,
+      "requestBytes": 185,
+      "replyBytes": 22
+    }
+  ],
+  "runtime": "Deno 2.9.4 macOS arm64",
+  "wrapper": {
+    "exitCode": 0
+  },
+  "temporaryDaemonDataRemoved": true,
+  "heldWriterMeets250msTarget": false
+}

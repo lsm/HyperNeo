@@ -162,6 +162,7 @@ import { inboxCreateWrites } from '../repositories/inbox-create-write.ts';
 import { artifactIdentityWrites } from '../repositories/artifact-file-identity-write.ts';
 import { artifactFileRowWrites } from '../repositories/artifact-file-row-write.ts';
 import { globalExtensionConfigWrites } from '../repositories/global-extension-config-write.ts';
+import { spaceExtensionConfigWrites } from '../repositories/space-extension-config-write.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -301,5 +302,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     artifactIdentityWrites,
     artifactFileRowWrites,
     globalExtensionConfigWrites,
+    spaceExtensionConfigWrites,
   ].map((op) => [op.name, op])
 );
