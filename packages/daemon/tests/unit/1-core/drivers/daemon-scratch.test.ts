@@ -152,3 +152,20 @@ test('resuming owned scratch refreshes its lease before it can be reaped', async
   expect(existsSync(runtime())).toBe(true);
   expect(JSON.parse(readFileSync(marker(), 'utf8')).pid).toBe(process.pid);
 });
+
+test('lease renewal retains live previous owners', async () => {
+  await prepareDaemonWorkerSandbox(root);
+  ageOwner(process.ppid);
+  await prepareDaemonWorkerSandbox(root);
+  await collectDaemonScratch(false);
+  expect(existsSync(runtime())).toBe(true);
+});
+
+test('lease renewal retains live SDK children of previous owners', async () => {
+  await prepareDaemonWorkerSandbox(root);
+  const oldDaemon = deadPid();
+  ageOwner(oldDaemon);
+  await prepareDaemonWorkerSandbox(root);
+  await collectDaemonScratch(false, [{ pid: process.pid, daemonPid: oldDaemon }]);
+  expect(existsSync(runtime())).toBe(true);
+});

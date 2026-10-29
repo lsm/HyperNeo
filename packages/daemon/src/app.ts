@@ -1794,6 +1794,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         logInfo('[Daemon] Mailbox expiration job processor stopped');
         await taskAgentManager.cleanupAll();
         const scratchChildrenAtExit = [
+          ...scratchChildrenAtStartup,
           ...new AgentChildProcessRepository(db.getDatabase()).list(),
           ...sessionManager
             .getTrackedAgentRootPidsSplit()

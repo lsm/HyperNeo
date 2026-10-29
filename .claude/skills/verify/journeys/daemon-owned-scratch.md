@@ -21,3 +21,9 @@ an unclean exit; no real daemon is killed and no system-temp sweep occurs.
 The outer proof wrapper exports evidence, stops owned resources and removes
 only its own fresh run. Abrupt SIGKILL relies on the next startup after a day;
 independent Desktop process ownership is deliberately outside this slice.
+
+Resuming an already marked, inode-matching SDK runtime renews its daemon lease;
+an unmarked or replaced directory is never adopted. Previous daemon PIDs remain
+liveness guards, and persisted SDK-child records captured before startup cleanup
+also guard shutdown after a lease transfer. Focused regressions cover renewal
+before a stale sweep and retention of live prior owners/SDK children.
