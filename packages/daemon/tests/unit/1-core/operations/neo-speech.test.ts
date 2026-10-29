@@ -144,6 +144,8 @@ describe('spoken replies separate from publications', () => {
     ['', 'speech_backend_not_configured'],
     ['http://127.0.0.1:18555', 'speech_backend_unavailable'],
     ['http://example.invalid', 'invalid_speech_backend'],
+    ['gpu.example.com', 'invalid_speech_backend'],
+    ['https://[invalid', 'invalid_speech_backend'],
   ])('catalog returns a typed rejection for %s', async (base, reason) => {
     const catalog = new NeoSpeech(
       hub,
