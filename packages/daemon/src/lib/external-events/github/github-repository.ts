@@ -1,3 +1,4 @@
+import { persistGitHubWatchedRepoInsert } from '../../../storage/repositories/github-watched-insert-persist.ts';
 import { persistGitHubWatchedRepoUpdate } from '../../../storage/repositories/github-watched-update-persist.ts';
 import { persistGitHubPollCursorJson } from '../../../storage/repositories/github-cursor-persist.ts';
 import {
@@ -143,36 +144,7 @@ export class GitHubEventExtensionRepository {
     } else {
       const id = generateUUID();
       const spaceEnabled = params.enabled ?? this.isSpaceEnabled(params.spaceId);
-      this.db
-        .prepare(
-          `INSERT INTO space_github_watched_repos
-					 (id, space_id, owner, repo, enabled, webhook_enabled, polling_enabled, webhook_secret, webhook_remote_id, webhook_url,
-					  webhook_auto_registered, webhook_active, webhook_last_checked_at, webhook_last_error, webhook_configured_at, created_at, updated_at)
-					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-        .run(
-          id,
-          params.spaceId,
-          params.owner,
-          params.repo,
-          spaceEnabled ? 1 : 0,
-          params.webhookEnabled === false ? 0 : 1,
-          params.pollingEnabled ? 1 : 0,
-          params.webhookSecret ?? null,
-          params.webhookRemoteId ?? null,
-          params.webhookUrl ?? null,
-          params.webhookAutoRegistered ? 1 : 0,
-          params.webhookActive === undefined || params.webhookActive === null
-            ? null
-            : params.webhookActive
-              ? 1
-              : 0,
-          params.webhookLastCheckedAt ?? null,
-          params.webhookLastError ?? null,
-          params.webhookConfiguredAt ?? null,
-          now,
-          now
-        );
+      persistGitHubWatchedRepoInsert(this.db, params, id, spaceEnabled, now);
     }
     const watched = this.getWatchedRepo(params.spaceId, params.owner, params.repo)!;
     if (pollingNewlyEnabled) {
