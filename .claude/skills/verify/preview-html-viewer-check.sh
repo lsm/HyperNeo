@@ -25,6 +25,8 @@ cleanup() {
   exit "$result"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 mkdir -p "$RUN/home" "$RUN/tmp" "$RUN/evidence"
 probe() {
   env -i HOME="$RUN/home" TMPDIR="$RUN/tmp" PATH="$PATH" NODE_ENV=test NODE_PATH="${NODE_PATH:-}" \

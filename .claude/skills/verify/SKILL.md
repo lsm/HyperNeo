@@ -133,6 +133,10 @@ its temporary daemon data. It preserves failure status and never deletes the
 run if saving evidence fails. Keep baseline and fixed evidence in separate
 directories; the helper must close its resources in finally.
 
+Shell wrappers that own daemon processes must translate INT/TERM to exit 130/143
+as well as registering EXIT cleanup. Preserve cancellation status and evidence
+before `with-run.sh` removes the run; an EXIT trap alone is insufficient.
+
 Reader proofs that trap SDK-message SQL must finish startup body copying before
 measuring reader work or acquiring a competing writer. After seeding fixtures,
 call `waitForSdkBodyCopy(raw)` from `wait-for-sdk-body-copy.ts`, then capture body
