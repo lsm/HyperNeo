@@ -12,6 +12,7 @@ const opName = 'github.space.enabled.write',
   spaceId = 'synthetic-wire-space';
 class ControlledGateway extends DbGateway {
   calls = 0;
+  afterCommit?: () => Promise<void>;
   rejectNext = false;
   loseNext = false;
   hold?: Promise<void>;
@@ -30,6 +31,7 @@ class ControlledGateway extends DbGateway {
       throw new Error('synthetic writer admission rejected');
     }
     const result = await super.run(op, args);
+    await this.afterCommit?.();
     if (this.loseNext) {
       this.loseNext = false;
       throw new Error('synthetic committed reply lost; outcome unknown');
@@ -173,6 +175,33 @@ describe('GitHub Space enable RPC writer wiring', () => {
     expect(flags()).toEqual({ source: 1, config: 1, watched: [{ enabled: 1 }] });
     expect((await store.getGlobalConfig('github')).capabilities.polling).toBe(true);
     expect(notifications).toHaveLength(1);
+  });
+  test('superseded committed receipt cannot re-enable polling after a concurrent RPC disables it', async () => {
+    const global = await store.getGlobalConfig('github');
+    await store.setGlobalConfig('github', {
+      ...global,
+      capabilities: { ...global.capabilities, polling: true },
+    });
+    gateway.afterCommit = async () => {
+      gateway.afterCommit = undefined;
+      expect(
+        await client.request<{ spaceId: string; pollingEnabled: boolean }>(
+          'space.github.setPollingEnabled',
+          { spaceId, enabled: false }
+        )
+      ).toEqual({ spaceId, pollingEnabled: false });
+    };
+    expect(await request(true)).toEqual({ spaceId, source: 'github', enabled: true });
+    expect((await store.getGlobalConfig('github')).capabilities.polling).toBe(false);
+    expect(extension.repo.listWatchedRepos(spaceId).every((row) => !row.pollingEnabled)).toBe(true);
+    expect((await store.getSpaceConfig(spaceId, 'github'))?.settings.watchedRepos).toEqual(
+      expect.arrayContaining([expect.objectContaining({ pollingEnabled: false })])
+    );
+    expect(notifications.map((notice) => notice.kind)).toEqual([
+      'watched_repo_changed',
+      'space_enabled',
+    ]);
+    expect(gateway.calls).toBe(1);
   });
   test('zero interval keeps polling capability disabled while enabling source configuration', async () => {
     interval = 0;

@@ -48,6 +48,7 @@ describe('GitHub Space enable RPC writer wiring', () => {
         admissionFailureHasNoFallbackLifecycleOrReplay: true,
         actualCommittedReplyLossHasNoLifecycleOrReplay: true,
         authorizationPrecedesAdmission: true,
+        supersededReceiptDoesNotReenableUnusedPolling: true,
       });
     } finally {
       rmSync(root, { recursive: true, force: true });
