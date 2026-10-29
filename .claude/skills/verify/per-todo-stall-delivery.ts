@@ -6,7 +6,9 @@ import { getSDKProjectDir, getSDKSessionFilePath } from '../../../packages/daemo
 
 const run = resolve(process.argv.at(-1)!);
 const checkOnly = process.argv.includes('--check-only');
-const cancel = checkOnly && process.argv.includes('--cancel');
+const lateMaterialization = checkOnly && process.argv.includes('--cancel-before');
+const cancel = checkOnly && (process.argv.includes('--cancel') || lateMaterialization);
+let releaseMaterialization = () => {}, materializationHeld = false, materializationFinished = false;
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -75,6 +77,17 @@ try {
   }
   await hub.request('message.send', { sessionId, content: 'HOLD_CURRENT_TURN' });
   await until(() => received.some(text => text.includes('HOLD_CURRENT_TURN')), 'held turn starts');
+  if (lateMaterialization) {
+    const runWrite=app.db.gateway.run.bind(app.db.gateway);
+    const held=new Promise<void>(done=>{releaseMaterialization=done;});
+    app.db.gateway.run=async (op,args)=>{
+      if(op.name==='sdk_messages.ensurePrompt'&&JSON.stringify(args).includes('has a check but no instruction or target')){
+        materializationHeld=true;await held;
+        const result=await runWrite(op,args);materializationFinished=true;return result;
+      }
+      return runWrite(op,args);
+    };
+  }
   await app.db.gateway.run(neoStallReminderWrite, { now });
   const queued = () => app.db.getJobQueueRepo().getLatestByPayload('mailbox', { 'to.sessionId': sessionId });
   const marker = checkOnly ? 'has a check but no instruction or target' : 'reminder 2 of 3';
@@ -89,13 +102,15 @@ try {
   assert.equal(results.length,0);
   const deferred=queued()!,deferredId=String(deferred.payload.messageUuid);
   assert.equal(deferred.payload.deliveryMode,'defer');
-  await until(() => app.db.getSDKMessageRepo().getDeliveryContent(sessionId,deferredId)?.sendStatus === 'deferred','queue materialized as deferred');
+  if(lateMaterialization) await until(()=>materializationHeld,'mailbox writer held before materialization');
+  else await until(() => app.db.getSDKMessageRepo().getDeliveryContent(sessionId,deferredId)?.sendStatus === 'deferred','queue materialized as deferred');
   assert(!received.some(text=>text.includes(marker)));
-  report.whileBusy = { received: [...received], results: [...results], queueStatus: 'deferred' };
+  report.whileBusy = { received: [...received], results: [...results], queueStatus: lateMaterialization ? 'held before materialization' : 'deferred' };
   if (cancel) {
     const { neoTodoRunnerWrites } = await import('../../../packages/daemon/src/storage/repositories/neo-todo-runner-state.ts');
     await app.db.gateway.run(neoTodoRunnerWrites, { method: 'recompute', args: ['stuck', store.getTodo('stuck')!.check, { state: 'blocked', blockedBy: 'held' }, Date.now(), { state: 'no_opinion' }] });
     report.afterHoldStatus = app.db.getSDKMessageRepo().getUserSendStatus(sessionId,deferredId);
+    if(lateMaterialization){releaseMaterialization();await until(()=>materializationFinished,'late materialization completes');}
   }
   releaseBusy();
   if (!cancel) {
@@ -114,4 +129,4 @@ try {
   }
   report.passed = true;
 } catch (error) { report.error = String(error); throw error; }
-finally { releaseBusy(); stop(); await transport.close(); await app.cleanup(); globalThis.fetch = network; report.resourcesClosed = true; writeFileSync(join(run, 'evidence/delivery.json'), JSON.stringify(report, null, 2)); }
+finally { releaseMaterialization(); releaseBusy(); stop(); await transport.close(); await app.cleanup(); globalThis.fetch = network; report.resourcesClosed = true; writeFileSync(join(run, 'evidence/delivery.json'), JSON.stringify(report, null, 2)); }

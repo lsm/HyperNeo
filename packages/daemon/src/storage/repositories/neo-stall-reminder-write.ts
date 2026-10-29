@@ -21,7 +21,7 @@ type Context = {
   field: 'stallReminder' | 'checkOnlyReminder';
 };
 
-const remindTodo = (superpipe({})('neo.todo.remind') as PipelineAPI)
+const remindTodo = (superpipe({})('neo.stalled-todo.remind') as PipelineAPI)
   .input(['db', 'todo', 'now'])
   .pipe(
     (db: Database, todo: ReminderTodo): Context => {
@@ -117,7 +117,7 @@ const remindTodo = (superpipe({})('neo.todo.remind') as PipelineAPI)
       if (outcome.kind === 'rejected') throw new Error(outcome.reason);
       new NeoTodoSessionRepository(db).recordNudge(todo.id, {
         ...due.incident,
-        [due.field]: { ...reminder, pending: messageUuid },
+        [due.field]: { ...reminder, pending: messageUuid, sessionId: todo.sessionId },
       });
     },
     ['db', 'due'],

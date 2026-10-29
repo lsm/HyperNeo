@@ -1,3 +1,4 @@
+import type { ReactiveDatabase } from '../reactive-database.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { NeoQuestionAnswerRepository } from './neo-question-answer-repository.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
@@ -289,7 +290,8 @@ export class NeoAskTodoRepository {
     private readonly db: Database,
     private readonly changed: () => void = () => {},
     private readonly rulesChanged: () => void = () => {},
-    private readonly questionsPruned?: () => void
+    private readonly questionsPruned?: () => void,
+    private readonly changes?: Pick<ReactiveDatabase, 'notifyChange'>
   ) {}
 
   cardReplyQuestion(conversationId: string, mutationId: string): NeoQuestion | null {
@@ -743,6 +745,11 @@ export class NeoAskTodoRepository {
           now,
           todo.id
         );
+      if (result.changes) {
+        const current = this.getTodo(todo.id)!;
+        if (current.state !== 'todo' || current.instruction?.trim() || !current.check)
+          new NeoTodoSessionRepository(this.db, this.changes).cancelCheckOnlyReminder(todo.id);
+      }
       if (result.changes && patch.state) this.pruneQuestions(todo.askId, now);
       return result.changes;
     })();
@@ -1114,8 +1121,8 @@ export const neoTodoWrites = defineRepositoryOp(
   'neo.todoWrites',
   'write',
   class extends NeoAskTodoRepository {
-    constructor(db: Database) {
-      super(db);
+    constructor(db: Database, changes?: ReactiveDatabase) {
+      super(db, undefined, undefined, undefined, changes);
     }
   },
   ['commitState']

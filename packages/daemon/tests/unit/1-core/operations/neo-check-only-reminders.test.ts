@@ -233,3 +233,56 @@ test.each(['held', 'removed', 'done', 'instruction', 'target'] as const)(
     expect(db.getSDKMessageRepo().getUserSendStatus('neo', entry.messageUuid)).toBe('failed');
   }
 );
+
+test('cancellation affects only that todo reminder and preserves consumed input', async () => {
+  const first = add('first');
+  add('other');
+  clock += 24 * hour;
+  await service.refreshDriverWork();
+  const entry = notes().find((row) => row.message.message.content.includes('(first)'))!;
+  const other = notes().find((row) => row.message.message.content.includes('(other)'))!;
+  await db.saveUserMessage(
+    'neo',
+    {
+      ...entry.message,
+      type: 'user',
+      uuid: entry.messageUuid,
+      session_id: 'neo',
+      message: { role: 'user', content: entry.message.message.content },
+    },
+    'consumed'
+  );
+  service.todos.commitState(first.id, { state: 'blocked', blockedBy: 'held' }, clock, {
+    state: 'no_opinion',
+  });
+  expect(db.getSDKMessageRepo().getUserSendStatus('neo', entry.messageUuid)).toBe('consumed');
+  expect(
+    db.getJobQueueRepo().getLatestByPayload('mailbox', { messageUuid: other.messageUuid })?.status
+  ).toBe('pending');
+  expect(db.getSDKMessageRepo().getUserSendStatus('neo', other.messageUuid)).toBeNull();
+});
+
+test('holding a todo also cancels deferred input after mailbox history is purged', async () => {
+  const todo = add('queued');
+  clock += 24 * hour;
+  await service.refreshDriverWork();
+  const entry = notes()[0];
+  await db.saveUserMessage(
+    'neo',
+    {
+      ...entry.message,
+      type: 'user',
+      uuid: entry.messageUuid,
+      session_id: 'neo',
+      message: { role: 'user', content: entry.message.message.content },
+    },
+    'deferred'
+  );
+  db.getDatabase()
+    .prepare("DELETE FROM job_queue WHERE json_extract(payload,'$.messageUuid')=?")
+    .run(entry.messageUuid);
+  service.todos.commitState(todo.id, { state: 'blocked', blockedBy: 'held' }, clock, {
+    state: 'no_opinion',
+  });
+  expect(db.getSDKMessageRepo().getUserSendStatus('neo', entry.messageUuid)).toBe('failed');
+});

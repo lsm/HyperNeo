@@ -35,3 +35,8 @@ materialized as deferred, hold its todo through the real DB writer before
 releasing the busy query. Its input must be failed/cancelled and must never
 reach the next SDK turn. An already consumed reminder and unrelated inputs
 must retain their state.
+
+Use `--check-only --cancel-before` for the admission race: hold the mailbox's
+SDK writer before it materializes the input, hold the todo, then let that writer
+finish. The cancellation tombstone must survive late materialization, and the
+stale input must remain absent from the next SDK turn.
