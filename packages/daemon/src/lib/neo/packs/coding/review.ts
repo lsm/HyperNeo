@@ -19,7 +19,9 @@ export const codingReviewOnHead = (input: ReviewInput) =>
     .filter(
       (review) =>
         review.commit?.oid === input.head &&
-        review.author?.login.toLowerCase() === input.reviewBot?.toLowerCase()
+        review.author?.login.toLowerCase() === input.reviewBot?.toLowerCase() &&
+        review.state !== 'COMMENTED' &&
+        review.state !== 'PENDING'
     )
     .at(-1);
 
@@ -28,12 +30,7 @@ export const runCodingReview = (superpipe({})('neo-coding-review') as PipelineAP
   .pipe(
     (input: ReviewInput): ReviewDecision => {
       if (!input.reviewBot) return { kind: 'session', head: input.head };
-      const latest = codingReviewOnHead({
-        ...input,
-        reviews: input.reviews.filter(
-          (review) => review.state !== 'COMMENTED' && review.state !== 'PENDING'
-        ),
-      });
+      const latest = codingReviewOnHead(input);
       return {
         kind: 'bot',
         head: input.head,

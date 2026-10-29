@@ -159,7 +159,7 @@ test.each(
     [],
     null,
   ].map((pages) => ({ pages }))
-)('only the configured bot’s latest review on the current head passes: %j', async ({ pages }) => {
+)('only the configured bot’s latest decision on the current head passes: %j', async ({ pages }) => {
   const r = reader();
   r.state.pages = pages;
   expect(await r.check()).toEqual({ done: false, evidence: null });
