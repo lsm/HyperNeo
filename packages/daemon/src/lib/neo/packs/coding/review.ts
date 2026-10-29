@@ -14,20 +14,26 @@ type BotReview = { kind: 'bot'; head: string; login: string; approved: boolean }
 type ReviewDecision = BotReview | { kind: 'session'; head: string };
 type ReviewResult = BotReview | { kind: 'session'; head: string; sessionId: string };
 
+export const codingReviewOnHead = (input: ReviewInput) =>
+  input.reviews
+    .filter(
+      (review) =>
+        review.commit?.oid === input.head &&
+        review.author?.login.toLowerCase() === input.reviewBot?.toLowerCase()
+    )
+    .at(-1);
+
 export const runCodingReview = (superpipe({})('neo-coding-review') as PipelineAPI)
   .input(['input', 'effects'])
   .pipe(
     (input: ReviewInput): ReviewDecision => {
       if (!input.reviewBot) return { kind: 'session', head: input.head };
-      const latest = input.reviews
-        .filter(
-          (review) =>
-            review.commit?.oid === input.head &&
-            review.author?.login.toLowerCase() === input.reviewBot!.toLowerCase() &&
-            review.state !== 'COMMENTED' &&
-            review.state !== 'PENDING'
-        )
-        .at(-1);
+      const latest = codingReviewOnHead({
+        ...input,
+        reviews: input.reviews.filter(
+          (review) => review.state !== 'COMMENTED' && review.state !== 'PENDING'
+        ),
+      });
       return {
         kind: 'bot',
         head: input.head,
