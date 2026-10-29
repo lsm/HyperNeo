@@ -416,3 +416,10 @@ test('a rejected sign-off delivery holds merging but lets the sweep finish and r
   expect(merges()).toHaveLength(0);
   expect(await ledger.write('daemonMerge', { kind: 'list' })).toEqual([]);
 });
+
+test('waiting_human rows are signaling-only even if fresh gates would allow merging', async () => {
+  const rows = await ledger.read('list');
+  await ledger.write('replace', 'synthetic/merge', [{ ...rows[0], state: 'waiting_human' }], 2);
+  await sweep()(10);
+  expect(merges()).toHaveLength(0);
+});
