@@ -56,7 +56,7 @@ export function createCopilotAdapter(
           write(inputPath(record.work.ref.id, id), input);
     const worker = await openCopilotWorker({
       cliPath: deps.cliPath,
-      expectedVersion: '1.0.83',
+      expectedVersion: '1.0.105',
       sessionId: record.work.ref.id,
       cwd: record.directory,
       stateDirectory: join(deps.directory, record.work.ref.id),
