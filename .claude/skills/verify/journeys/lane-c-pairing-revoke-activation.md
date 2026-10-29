@@ -51,3 +51,9 @@ The independent observer is supplied by merged #9304. Foreground recovery stops
 after three reads; its 25 ms delays are abortable through the authorized gateway
 close signal. Fixture-owned clients are closed before daemon cleanup so their
 connection-owned observer also stops. Neither recovery path replays a write.
+
+Capture the independent observer admission count before restoring read access.
+The two-to-three-read budget applies only to the 2.2-second outage. After the
+target closes, require one further observer admission for the remaining connected
+clients; recovery and continued healthy polling must not count against the outage
+budget. Evidence records both counts so this phase boundary cannot regress.
