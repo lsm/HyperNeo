@@ -143,3 +143,12 @@ test('normal shutdown retains scratch while a recorded SDK child is still live',
   await collectDaemonScratch(false, [{ pid: process.pid, daemonPid: process.pid }]);
   expect(existsSync(runtime())).toBe(true);
 });
+
+test('resuming owned scratch refreshes its lease before it can be reaped', async () => {
+  await prepareDaemonWorkerSandbox(root);
+  ageOwner(deadPid());
+  await prepareDaemonWorkerSandbox(root);
+  await collectDaemonScratch();
+  expect(existsSync(runtime())).toBe(true);
+  expect(JSON.parse(readFileSync(marker(), 'utf8')).pid).toBe(process.pid);
+});
