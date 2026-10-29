@@ -423,3 +423,28 @@ test('waiting_human rows are signaling-only even if fresh gates would allow merg
   await sweep()(10);
   expect(merges()).toHaveLength(0);
 });
+
+test.each([
+  ['mergeBy', 'owner'],
+  ['mergePolicy', 'human'],
+])(
+  'a human change to %s=%s during fresh GitHub reads revokes daemon admission',
+  async (key, value) => {
+    const racing: SpawnFn = (args) => {
+      if (args[2] === 'checks') policy(key, value);
+      return spawn(args);
+    };
+    await createCodingDaemonMergeSweep(
+      () => db,
+      ledger,
+      new CodingPrEventRepository(db),
+      {
+        tell: async () => false,
+        wake: async () => true,
+      },
+      racing
+    )(10);
+    expect(ledger.policy('synthetic/merge')[key as 'mergeBy' | 'mergePolicy']).toBe(value);
+    expect(merges()).toHaveLength(0);
+  }
+);
