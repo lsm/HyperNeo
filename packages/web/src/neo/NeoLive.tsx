@@ -71,24 +71,32 @@ async function loadNeoAskDetails(input: string | NeoWorkSelector): Promise<NeoAs
   return result.entry;
 }
 
-async function findNeoWork(query: string): Promise<{ askId: string }[]> {
+async function findNeoWork(
+  query: string,
+  cursor?: string
+): Promise<{ results: { askId: string }[]; nextCursor: string | null }> {
   type Page =
     | { ok: true; results: { askId: string }[]; nextCursor: string | null }
     | { ok: false; reason: string };
   const hub = await connectionManager.getHub();
-  const hits = new Map<string, { askId: string }>();
-  let cursor: string | null = null;
-  do {
-    const result: Page = await invokeOperation<Page>(hub, 'neo.ask.search', {
+  try {
+    const result = await invokeOperation<Page>(hub, 'neo.ask.search', {
       query,
       limit: 50,
       ...(cursor ? { cursor } : {}),
     });
     if (!result.ok) throw new Error(result.reason);
-    for (const hit of result.results) hits.set(hit.askId, hit);
-    cursor = result.nextCursor;
-  } while (cursor);
-  return [...hits.values()];
+    return result;
+  } catch (cause) {
+    if (
+      cause instanceof Error &&
+      'code' in cause &&
+      cause.code === 'INVALID_PARAMS' &&
+      cause.message.includes('query_too_short')
+    )
+      return { results: [], nextCursor: null };
+    throw cause;
+  }
 }
 
 export function NeoLive() {
@@ -1021,6 +1029,15 @@ export function NeoLive() {
                 ))}
               </section>
             )
+          )}
+          {!!workQuery.trim() && search.nextCursor && (
+            <Button
+              variant="ghost"
+              disabled={!connected || search.pending}
+              onClick={search.loadMore}
+            >
+              {t('live.moreSearchResults')}
+            </Button>
           )}
           {historyCursor && (
             <Button

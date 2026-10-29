@@ -125,6 +125,9 @@ describe('Work search input and retry', () => {
     expect(container.querySelector('[data-ask="old-page-two"]')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Search work', exact: true }));
     fireEvent.input(screen.getByRole('searchbox'), { target: { value: '网页修两处' } });
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Load more search results', exact: true })
+    );
     await screen.findByRole('heading', { name: '网页修两处' });
     expect(container.querySelectorAll('[data-ask="old-page-two"]')).toHaveLength(1);
   });

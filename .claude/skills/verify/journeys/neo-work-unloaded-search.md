@@ -11,7 +11,8 @@ Open READY.url using the browser tool. Import `verifyUnloadedWorkSearch` from
 `neo-work-unloaded-search-web.mjs` in its persistent runtime and pass the tab
 and an evidence directory. The helper uses the documented tab API, checks the
 old card is absent before typing, searches 网页修两处 through the real UI, and
-checks the completed card appears. It opens its All details dialog, verifies
+checks the old card is still absent when the first search page settles, then
+clicks Load more search results and checks the completed card appears. It opens its All details dialog, verifies
 古老卡片正文 is visible, and saves the resulting screenshot. Repeat at desktop
 and phone widths; no history button or backend call may load the old card first.
 
@@ -21,6 +22,16 @@ from the same browser helper: it searches needle and verifies the loaded Needle
 ask remains visible alongside the server error. Reset with enabled=0 before the
 next viewport. Both the refusal endpoint and database seeding exist only on the
 isolated fixture; never use this endpoint on the live daemon.
+
+Run verifyShortQueries after the opened-card check, with the refusal disabled,
+to verify to do and ok? retain the loaded matching card without a false error.
+The fixture's read-only `/__verify-search-stats` endpoint reports search cursors,
+per-card read counts and maximum concurrent unloaded reads. Before clicking Load
+more, there must be only one search page and at most fifty pointer rows to
+hydrate. Maximum concurrent unloaded reads must be four or fewer. Repeating the
+query and sending a changed feed event through `/__verify-refresh?changed=1`
+must reuse unloaded reads; save before/after stats. Loaded changed card bodies
+retain the existing revision-based refresh contract.
 
 Write browser.json under the run's evidence directory with phase global,
 passed true and both observations, then signal the READY.pid with SIGUSR1.

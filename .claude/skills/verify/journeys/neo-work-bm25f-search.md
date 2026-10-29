@@ -31,8 +31,10 @@ widths with phase after. Words and CJK text present only in the original request
 or a question answer must find the ask. Preserve separate before proofs showing
 No matching work. For the answer-only baseline pass queries:['answercipher736','回答']
 to verifySearchRequest, because request matching was already fixed at that point.
-The useNeoWorkSearch result boundary calls neo.ask.search for each settled query
+The useNeoWorkSearch result boundary calls neo.ask.search once per settled query
 and appends distinct unloaded asks after the existing locally ranked matches.
+Further server pages require Load more search results. Unloaded hydration is
+limited to four concurrent reads and cached while search stays open.
 
 Require No matching work for an unmatched query, with no stale cards. Escape
 clears search and restores all cards without closing the mobile Work sheet.
