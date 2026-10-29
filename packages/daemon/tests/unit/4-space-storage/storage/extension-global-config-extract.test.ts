@@ -100,12 +100,16 @@ describe('global extension configuration SQL extraction', () => {
     vi.spyOn(db, 'prepare').mockImplementation((...args) => {
       const statement = prepare(...args);
       if (!args[0].includes('INSERT INTO external_event_extension_configs')) return statement;
-      const run = statement.run.bind(statement);
-      vi.spyOn(statement, 'run').mockImplementation((...bindings) => {
-        captures.push(bindings);
-        return run(...bindings);
+      return new Proxy(statement, {
+        get(target, key) {
+          const value = Reflect.get(target, key);
+          if (typeof value !== 'function') return value;
+          return (...bindings: unknown[]) => {
+            if (key === 'run') captures.push(bindings);
+            return Reflect.apply(value, target, bindings);
+          };
+        },
       });
-      return statement;
     });
     vi.spyOn(Date, 'now').mockReturnValue(41);
     await store.setGlobalConfig(config.source, config);
@@ -114,6 +118,7 @@ describe('global extension configuration SQL extraction', () => {
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => {
       throw new Error('helper must use caller time');
     });
+    clock.mockClear();
     expect(persist(db, config.source, config, 41)).toBeUndefined();
     expect(clock).not.toHaveBeenCalled();
     expect(row()).toEqual(legacy);
@@ -147,5 +152,45 @@ describe('global extension configuration SQL extraction', () => {
       })()
     ).toThrow('synthetic rollback');
     expect(row()).toEqual(before);
+  });
+  test('legacy setter retains clock, prepare, serialization and execution order', async () => {
+    const events: string[] = [];
+    vi.spyOn(Date, 'now').mockImplementation(() => {
+      events.push('clock');
+      return 41;
+    });
+    const prepare = db.prepare.bind(db);
+    vi.spyOn(db, 'prepare').mockImplementation((...args) => {
+      events.push('prepare');
+      return new Proxy(prepare(...args), {
+        get(target, key) {
+          const value = Reflect.get(target, key);
+          if (typeof value !== 'function') return value;
+          return (...bindings: unknown[]) => {
+            if (key === 'run') events.push('run');
+            return Reflect.apply(value, target, bindings);
+          };
+        },
+      });
+    });
+    await store.setGlobalConfig(config.source, {
+      ...config,
+      capabilities: Object.assign(
+        { polling: true },
+        {
+          toJSON() {
+            events.push('capabilities');
+            return { polling: true };
+          },
+        }
+      ),
+      settings: {
+        toJSON() {
+          events.push('settings');
+          return { label: 'Synthetic 🦊' };
+        },
+      },
+    });
+    expect(events).toEqual(['clock', 'prepare', 'capabilities', 'settings', 'run']);
   });
 });

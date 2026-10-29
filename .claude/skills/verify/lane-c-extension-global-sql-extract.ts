@@ -68,7 +68,7 @@ try {
     const listed = await hub.request<{ extensions: { source: string; status: string; config: typeof config }[] }>('externalEvents.extensions.list', {});
     assert.deepEqual(listed.extensions.find(e => e.source === source), { source, status: enabled ? 'started' : 'stopped', config: { ...config, globallyEnabled: enabled } });
     const row = main.prepare('SELECT * FROM external_event_extension_configs WHERE source=?').get(source)!;
-    assert.deepEqual({ ...row, globally_enabled: initial.globally_enabled, updated_at: initial.updated_at }, initial);
+    assert.deepEqual({ ...row, globally_enabled: initial.globally_enabled, updated_at: initial.updated_at }, { ...initial });
     assert.equal(row.globally_enabled, enabled ? 1 : 0);
     assert((row.updated_at as number) >= (initial.updated_at as number));
     replies.push(reply);

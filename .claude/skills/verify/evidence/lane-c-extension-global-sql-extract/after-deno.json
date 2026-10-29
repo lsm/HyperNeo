@@ -1,0 +1,35 @@
+{
+  "mainThreadMovementClaim": false,
+  "boundary": "SQL-only extraction; public persistence remains on the supplied main connection",
+  "publicRpc": {
+    "replies": [
+      {
+        "source": "synthetic-extension",
+        "globallyEnabled": true
+      },
+      {
+        "source": "synthetic-extension",
+        "globallyEnabled": false
+      }
+    ],
+    "callbacks": [
+      {
+        "kind": "start",
+        "enabled": true
+      },
+      {
+        "kind": "stop",
+        "enabled": true
+      }
+    ],
+    "mainUpsertRuns": 2,
+    "exactJsonAndCreationTimePreserved": true
+  },
+  "suppliedTimeAndCallerRollbackPreserved": true,
+  "pass": true,
+  "runtime": "Deno 2.9.4 macOS arm64",
+  "wrapper": {
+    "exitCode": 0
+  },
+  "temporaryDaemonDataRemoved": true
+}
