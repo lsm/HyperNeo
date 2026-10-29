@@ -92,3 +92,10 @@ playing receipts are server observations, never screen-visible or first-played
 timestamps. Query exported timing events or explicitly selected daemon JSONL
 files with voice-timing-read.py; it only prints fixed stages, ids and times.
 No phone timing or exact input-to-say attribution is inferred from proximity.
+
+The real MCP say result must carry speech-only guidance after successful queued,
+playing or played admission: do not duplicate the utterance as screen/final text,
+but still publish substantive results separately. Submitted is not confirmed
+playback. Rejections, cancelled/failed retries and non-say operations must not
+carry that guidance. Keep this as model guidance, without blocking publications
+or adding timers; do not claim a synthetic tool result proves model compliance.

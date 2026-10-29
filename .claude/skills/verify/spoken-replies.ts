@@ -35,7 +35,13 @@ new NeoRepository(app.db.getDatabase()).reserveBinding({ sessionId, kind:'neo', 
 const mcp = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({sessionId, role:'neo'}));
 const speak = async (requestId: string, text = '好，我帮你查一下订单。') => {
   const response = await mcp({ name:'neo.speech.say', input:{requestId,text} });
-  return JSON.parse(response.content[0].text);
+  const result=JSON.parse(response.content[0].text);
+  if(result.ok && ['queued','playing','played'].includes(result.state)) {
+    assert.match(result.guidance,/Do not repeat this utterance verbatim/);
+    assert.match(result.guidance,/Publish substantive results on screen separately/);
+    assert(!result.guidance.includes(text));
+  } else assert(!('guidance' in result));
+  return result;
 };
 const inputFacts = () => app.db.getSDKMessageRepo().getUserMessages(sessionId).flatMap(row=>{
   const message=app.db.getSDKMessageRepo().getMessageByUuid(sessionId,row.uuid);

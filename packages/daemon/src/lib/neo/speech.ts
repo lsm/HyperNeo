@@ -15,6 +15,7 @@ const Result = z.object({
   state: z.enum(['queued', 'playing', 'played', 'cancelled', 'failed']).optional(),
   created: z.boolean().optional(),
   reason: z.string().optional(),
+  guidance: z.string().optional(),
 });
 const Listen = z.object({
   sessionId: z.string().min(1).max(160),
@@ -47,6 +48,7 @@ type SpeechReceipt = {
   state?: SpeechState;
   created?: boolean;
   reason?: string;
+  guidance?: string;
 };
 type Entry = { id: string; sessionId: string; clientId: string; text: string; state: SpeechState };
 type Listener = { clientId: string; pending: Set<string>; audio: boolean; voice: string };
@@ -106,6 +108,20 @@ export class NeoSpeech {
           (sessionId: string, input: Input, caller: OperationCaller) =>
             this.enqueue(action, sessionId, input, caller),
           ['receipt', 'input', 'caller'],
+          'receipt'
+        )
+        .pipe(
+          (receipt: SpeechReceipt) =>
+            action === 'say' &&
+            receipt.ok &&
+            ['queued', 'playing', 'played'].includes(receipt.state ?? '')
+              ? {
+                  ...receipt,
+                  guidance:
+                    'This is a speech-only response. Do not repeat this utterance verbatim in a screen publication or final text reply. For a spoken acknowledgment alone, continue the work or finish without adding text. Publish substantive results on screen separately. Speech submission alone does not prove playback.',
+                }
+              : receipt,
+          'receipt',
           'receipt'
         )
         .endAsync('receipt') as (input: Input, caller: OperationCaller) => Promise<SpeechReceipt>;
