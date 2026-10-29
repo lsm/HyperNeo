@@ -1,3 +1,4 @@
+import { neoStallReminderWrite } from '../repositories/neo-stall-reminder-write.ts';
 import { historySnapshotReads } from '../repositories/sdk-history-snapshot-read.ts';
 import { toolRecoveryWrites } from '../repositories/tool-continuation-recovery-repository.ts';
 import {
@@ -204,6 +205,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     reserveNeoHomeProjects,
     neoTodoSessionReads,
     neoTodoSessionWrites,
+    neoStallReminderWrite,
     codingTodoPrReads,
     neoTodoReads,
     neoTodoWrites,

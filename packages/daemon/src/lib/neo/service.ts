@@ -1,3 +1,4 @@
+import { neoStallReminderWrite } from '../../storage/repositories/neo-stall-reminder-write.ts';
 import { NeoSpeech } from './speech.ts';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { neoSessionTrackWrites } from '../../storage/repositories/neo-session-track-write.ts';
@@ -759,6 +760,9 @@ export class NeoService {
     );
     if (this.watching || this.disposed) return;
     this.watching = runLagPhase('neo:driver:session_watch', async () => {
+      await this.runDbOp(neoStallReminderWrite, { now: Date.now() }).catch((error) =>
+        this.log.warn('Stalled todo reminders pending', error)
+      );
       await wakeStalledAsks(this.todos, this.deliverForward.bind(this), Date.now()).catch((error) =>
         this.log.warn('Stalled ask wake pending', error)
       );
