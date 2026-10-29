@@ -1,0 +1,33 @@
+{
+  "redCommit": "d25d63ff344935f283887fa26101ca840deccd7f",
+  "before": {
+    "validationPassed": 1,
+    "bypassedWriterContractsFailed": 3,
+    "nativePublicRpcError": "Global config UPSERT reached main",
+    "mainSqlAttempts": 1
+  },
+  "focused": {
+    "files": 7,
+    "tests": 26,
+    "passed": true
+  },
+  "native": "Bun and Deno public enable/disable/list RPC, concurrent enable coalescing, known-commit callback compensation, SQL rollback, held writer ordering/health, admission rejection and actual lost committed reply pass",
+  "priorProofCompatibility": "Existing extraction helper/Bun CI test now requires zero main UPSERTs; corrected extraction helper also passed native Deno",
+  "limits": [
+    "Public global setter activated on bound production gateway; unbound inline fallback remains pre-existing",
+    "Reads, Space writes and constructor DDL remain separate; final global guard not complete",
+    "Mixed enable/disable race repair and lifecycle recovery after unknown receipt are not claimed",
+    "Intentional 1.2-second writer hold exceeds 250 ms write-latency target",
+    "Local Bun 1.4.3; pinned Bun 1.4.2 is CI-owned",
+    "Exact root hashes do not constitute a full plugin/startup/transitive framework audit",
+    "Deployment remains Neo-owned; no live daemon touched"
+  ],
+  "strictTypeScript6": {
+    "passed": true,
+    "scope": "Activated store, both new unit files, updated extraction RPC test and imported dependencies"
+  },
+  "rootCheck": {
+    "command": "bun run check",
+    "exitCode": 0
+  }
+}

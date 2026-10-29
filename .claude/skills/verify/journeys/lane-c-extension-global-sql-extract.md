@@ -9,8 +9,9 @@ The helper registers a synthetic extension in the real daemon manager, then uses
 the public WebSocket enable/disable and list RPCs. Both states must persist,
 the start callback observes committed enablement, and stop retains its existing
 ordering. Exact JSON, synthetic secret reference, creation time and lifecycle
-status survive. Two main-connection UPSERTs remain expected: this is extraction,
-not writer activation. Constructor DDL and reads remain unchanged too.
+status survive. Its historical extraction baseline had two public main-connection
+UPSERTs; current setter activation requires zero. Direct scratch-helper calls
+still use their supplied connection. Constructor DDL and reads remain unchanged.
 
 Commit the failing helper-availability contract first while the public legacy
 characterizations pass. After extraction, verify caller-supplied timestamps and

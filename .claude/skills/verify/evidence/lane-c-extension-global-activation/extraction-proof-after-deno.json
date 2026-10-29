@@ -1,0 +1,33 @@
+{
+  "mainThreadMovementClaim": false,
+  "boundary": "Historical SQL extraction characterized direct helper behavior; current public setter uses the activated writer",
+  "publicRpc": {
+    "replies": [
+      {
+        "source": "synthetic-extension",
+        "globallyEnabled": true
+      },
+      {
+        "source": "synthetic-extension",
+        "globallyEnabled": false
+      }
+    ],
+    "callbacks": [
+      {
+        "kind": "start",
+        "enabled": true
+      },
+      {
+        "kind": "stop",
+        "enabled": true
+      }
+    ],
+    "mainUpsertRuns": 0,
+    "exactJsonAndCreationTimePreserved": true
+  },
+  "suppliedTimeAndCallerRollbackPreserved": true,
+  "pass": true,
+  "runtime": "Deno 2.9.4 macOS arm64",
+  "exitCode": 0,
+  "temporaryDaemonDataRemoved": true
+}
