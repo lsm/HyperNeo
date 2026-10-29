@@ -163,6 +163,7 @@ import { artifactIdentityWrites } from '../repositories/artifact-file-identity-w
 import { artifactFileRowWrites } from '../repositories/artifact-file-row-write.ts';
 import { globalExtensionConfigWrites } from '../repositories/global-extension-config-write.ts';
 import { spaceExtensionConfigWrites } from '../repositories/space-extension-config-write.ts';
+import { gitHubSpaceEnabledWrites } from '../repositories/github-space-enabled-write.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -303,5 +304,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     artifactFileRowWrites,
     globalExtensionConfigWrites,
     spaceExtensionConfigWrites,
+    gitHubSpaceEnabledWrites,
   ].map((op) => [op.name, op])
 );

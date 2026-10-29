@@ -93,7 +93,7 @@ describe('atomic GitHub Space enabled writer construction', () => {
       .get();
     const receipt = await persist();
     expect(receipt.changedRows).toBe(2);
-    expect(receipt.config).toEqual(await store.getSpaceConfig('synthetic-one', 'github'));
+    expect(await store.getSpaceConfig('synthetic-one', 'github')).toEqual(receipt.config);
     expect(receipt.config).toMatchObject({
       enabled: true,
       settings: { pollingIntent: true, filterCurrentUser: false },
@@ -130,7 +130,7 @@ describe('atomic GitHub Space enabled writer construction', () => {
     const disabled = await persist(false, 52);
     expect(disabled.changedRows).toBe(2);
     expect(disabled.config.enabled).toBe(false);
-    expect(disabled.config).toEqual(await store.getSpaceConfig('synthetic-one', 'github'));
+    expect(await store.getSpaceConfig('synthetic-one', 'github')).toEqual(disabled.config);
     expect(sourceRow()).toMatchObject({ enabled: 0, created_at: 11, updated_at: 52 });
     expect((await persist(false, 63)).changedRows).toBe(2);
   });
