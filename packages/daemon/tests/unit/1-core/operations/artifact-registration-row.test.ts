@@ -6,6 +6,22 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 describe('artifact registration committed row admission', () => {
+  test('startup backup retains directory access while the session socket binds privately', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'sdk-backup-bind-')));
+    try {
+      runArtifactProofChild(
+        fileURLToPath(new URL('../../../../../../.claude/skills/verify/sdk-backup-directory-umask.ts', import.meta.url)),
+        root
+      );
+      expect(JSON.parse(readFileSync(join(root, 'evidence/permissions.json'), 'utf8'))).toMatchObject({
+        observedMask: '177', directoryMode: '700', backupMode: '600', socketMode: '600', error: '',
+        backup: { quickCheck: 'ok', rows: 0 },
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('RPC publication preserves receipts and bytes while fencing lost replies and revoked access', () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'artifact-registration-row-')));
     try {
