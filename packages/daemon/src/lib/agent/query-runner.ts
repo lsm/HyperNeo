@@ -1496,7 +1496,10 @@ export class QueryRunner {
       let episode: Session['metadata']['queryFailureEpisode'];
       if (!cancelled && owns()) {
         episode =
-          episodeId && !(error instanceof QueryFailureCapError)
+          episodeId &&
+          !(error instanceof QueryFailureCapError) &&
+          !isNetworkUnreachableError(errorMessage) &&
+          !errorMessage.includes(STREAM_STALL_ERROR)
             ? await this.failures.failure(errorMessage, episodeId)
             : session.metadata.queryFailureEpisode;
       }

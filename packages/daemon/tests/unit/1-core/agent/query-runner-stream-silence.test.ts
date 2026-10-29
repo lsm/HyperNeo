@@ -286,29 +286,24 @@ describe('QueryRunner stream silence watchdog', () => {
     } as unknown as SDKMessage;
   }
 
-  it('cuts silent requests through the shared budget and fails after three attempts', async () => {
+  it('retries a silent request once, then holds the turn for the network without latching', async () => {
     const { runner, ctx } = createRunner('s1');
+    const outage = mock(async (_errorText: string) => true);
+    ctx.onNetworkOutage = outage;
     runner.start();
 
     await waitFor(() => (spawnNexts[0]?.length ?? 0) >= 1);
     spawnNexts[0][0].resolve({ value: sdkMessage(), done: false });
     await waitFor(() => events.includes('close0'));
     await waitFor(() => (spawnNexts[1]?.length ?? 0) >= 1);
-    expect(handleErrorSpy.mock.calls.length).toBe(0);
-
     spawnNexts[1][0].resolve({ value: sdkMessage(), done: false });
-    await waitFor(() => events.includes('close1'));
-    await waitFor(() => (spawnNexts[2]?.length ?? 0) >= 1);
-    expect(handleErrorSpy.mock.calls.length).toBe(0);
-    spawnNexts[2][0].resolve({ value: sdkMessage(), done: false });
-    await waitFor(() => handleErrorSpy.mock.calls.length > 0);
+    await waitFor(() => outage.mock.calls.length > 0);
     await ctx.queryPromise;
-    expect(spawnNexts.length).toBe(3);
-    expect(ctx.session.metadata.queryFailureEpisode?.failures).toBe(3);
-    expect(ctx.session.metadata.queryFailureEpisode?.failed).toBe(true);
-    expect(handleErrorSpy.mock.calls[0][2]).toBe('timeout');
-    expect(String(handleErrorSpy.mock.calls[0][3])).toContain('Query stopped after 3 failures');
-    expect(String(handleErrorSpy.mock.calls[0][3])).toContain('Model stream stalled');
+    expect(spawnNexts.length).toBe(2);
+    expect(String(outage.mock.calls[0][0])).toContain('Model stream stalled');
+    expect(handleErrorSpy.mock.calls.length).toBe(0);
+    expect(ctx.session.metadata.queryFailureEpisode?.failures ?? 0).toBe(0);
+    expect(ctx.session.metadata.queryFailureEpisode?.failed ?? false).toBe(false);
   });
 
   it('never cuts a slow request that keeps streaming', async () => {
