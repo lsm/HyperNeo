@@ -37,7 +37,7 @@ const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, 
 
 const Text = z.string().trim().min(1);
 
-const TodoCheck = z.object({
+export const TodoCheck = z.object({
   pack: Text,
   kind: Text,
   params: z.record(z.string(), z.unknown()).default({}),

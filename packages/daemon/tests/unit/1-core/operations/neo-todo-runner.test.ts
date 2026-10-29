@@ -957,6 +957,7 @@ describe('neo todo runner', () => {
           askId: 'ask',
           kind: 'reply',
           text: 'Prepared',
+          todoId: todo.id,
           focused: true,
           sourceSession: ref,
         };

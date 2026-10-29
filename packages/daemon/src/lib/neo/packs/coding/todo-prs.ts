@@ -473,7 +473,7 @@ type CodingTodoFacts = {
 };
 
 const readIssueFacts = (superpipe({})('coding.issue-facts') as PipelineAPI)
-  .input(['todo', 'readRefs', 'readPrs', 'repo'])
+  .input(['todo', 'readRefs', 'readPrs', 'repo', 'persist'])
   .pipe(() => Date.now(), 'todo', 'observedAt')
   .pipe(
     async (todo: NeoTodo, read: NeoRefStateReader) => {
@@ -496,19 +496,21 @@ const readIssueFacts = (superpipe({})('coding.issue-facts') as PipelineAPI)
       facts: Omit<CodingTodoFacts, 'observedAt'>,
       repo: CodingTodoPrRepository,
       todo: NeoTodo,
-      observedAt: number
+      observedAt: number,
+      persist: boolean
     ) => {
-      await repo.write('record', todo.id, facts.prs, observedAt);
+      if (persist) await repo.write('record', todo.id, facts.prs, observedAt);
       return { ...facts, observedAt };
     },
-    ['facts', 'repo', 'todo', 'observedAt'],
+    ['facts', 'repo', 'todo', 'observedAt', 'persist'],
     'facts'
   )
   .endAsync('facts') as (
   todo: NeoTodo,
   readRefs: NeoRefStateReader,
   readPrs: NeoWorkPrReader,
-  repo: CodingTodoPrRepository
+  repo: CodingTodoPrRepository,
+  persist: boolean
 ) => Promise<CodingTodoFacts>;
 
 export function createCodingTodoPolicy(
@@ -582,12 +584,13 @@ export function createCodingTodoPack(
       ...repo.claimsOn([...recorded]).filter((row) => row.todoId === todo.id),
     ];
   };
-  const readFacts = async (todo: NeoTodo): Promise<CodingTodoFacts | null> => {
+  const readFacts = async (todo: NeoTodo, persist = true): Promise<CodingTodoFacts | null> => {
     if (todo.check && todo.check.pack !== 'coding') return null;
     if (todo.check?.kind === 'issue_closed')
-      return readIssueFacts(todo, readRefs ?? (async () => []), readPrs, repo);
-    await repo.write('claim', todo.id, claimsOf(todo), Date.now());
-    const urls = repo.urls(todo.id);
+      return readIssueFacts(todo, readRefs ?? (async () => []), readPrs, repo, persist);
+    const named = claimsOf(todo);
+    if (persist) await repo.write('claim', todo.id, named, Date.now());
+    const urls = persist ? repo.urls(todo.id) : named.map((claim) => codingPrKey(claim.url)!);
     if (!urls.length) return todo.check ? { prs: [], observedAt: Date.now() } : null;
     const observedAt = Date.now();
     const read = await readPrs(urls);
@@ -595,9 +598,9 @@ export function createCodingTodoPack(
       return { prs: [], observedAt: Date.now(), incomplete: true };
     const claims = repo.claimsOn(urls);
     const window = await repo.readWindow(todo.id);
-    const prs = codingTodoOwnPrs(todo, claims, read, window);
+    const prs = persist ? codingTodoOwnPrs(todo, claims, read, window) : read;
     const open = todo.check ? [] : codingTodoOpenBranchPrs(todo, claims, read, window, prs);
-    await repo.write('record', todo.id, [...prs, ...open], observedAt);
+    if (persist) await repo.write('record', todo.id, [...prs, ...open], observedAt);
     return { prs, observedAt };
   };
   const checked = (todo: NeoTodo, facts: CodingTodoFacts) =>
@@ -624,8 +627,8 @@ export function createCodingTodoPack(
         Date.now()
       );
     },
-    check: async (todo) => {
-      const facts = await readFacts(todo);
+    check: async (todo, context) => {
+      const facts = await readFacts(todo, context !== 'question');
       if (!facts) return null;
       if (facts.incomplete) return todo.check ? { done: false, evidence: null } : null;
       return checked(todo, facts);
