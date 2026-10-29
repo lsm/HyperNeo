@@ -166,6 +166,7 @@ import { globalExtensionConfigWrites } from '../repositories/global-extension-co
 import { spaceExtensionConfigWrites } from '../repositories/space-extension-config-write.ts';
 import { gitHubSpaceEnabledWrites } from '../repositories/github-space-enabled-write.ts';
 import { gitHubFilterWrites } from '../repositories/github-filter-write.ts';
+import { gitHubPollingWrites } from '../repositories/github-polling-enabled-write.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -309,5 +310,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     spaceExtensionConfigWrites,
     gitHubSpaceEnabledWrites,
     gitHubFilterWrites,
+    gitHubPollingWrites,
   ].map((op) => [op.name, op])
 );
