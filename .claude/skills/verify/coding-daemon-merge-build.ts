@@ -30,10 +30,13 @@ try{
  const db=app.db.getDatabase(),ledger=new CodingPrLedgerRepository(db),policy=ledger.policy('synthetic/merge');
  const labeled=await readCodingDaemonMergeFacts(db,url);assert(labeled.ok);assert.deepEqual(labeled.labels,['bug','human-merge']);assert.equal(decideCodingDaemonMerge(labeled,policy).kind,'needs_human_signoff');
  publish({labels:[[]]});const passing=await readCodingDaemonMergeFacts(db,url);assert(passing.ok);assert.equal(decideCodingDaemonMerge(passing,policy).kind,'merge');evidence.facts={labeled,passing};
- for(const fail of ['/labels','/reviews','checks','graphql']){publish({fail});assert.equal((await readCodingDaemonMergeFacts(db,url)).ok,false);}
+ for(const fail of ['/labels','/reviews','checks','graphql']){publish({fail});const unreadable=await readCodingDaemonMergeFacts(db,url);assert.equal(unreadable.ok,false);if(!unreadable.ok)assert.match(unreadable.reason,/: .+/, 'Unreadable merge facts need a readable explanation');}
  publish({finalHead:'b'.repeat(40)});assert.equal((await readCodingDaemonMergeFacts(db,url)).ok,false);evidence.readFailuresAndMovedHeadRefused=true;
  publish({race:true,pr:{...pr,headRefOid:'b'.repeat(40)},reviews:[[{...review,commit_id:'b'.repeat(40)}]],labels:[[]]});
  const raced=await readCodingDaemonMergeFacts(db,url);assert(raced.ok);assert.equal(raced.requiredCi.green,false,'Passing old-head checks must not be attached to the new head');evidence.exactHeadCiReadOrdered=true;
+ db.exec('ALTER TABLE pack_coding_repo_aliases RENAME TO synthetic_unavailable_aliases');
+ try{const unreadable=await readCodingDaemonMergeFacts(db,url);assert.equal(unreadable.ok,false);if(!unreadable.ok)assert.match(unreadable.reason,/: .+/, 'Reader exceptions need a readable explanation');}finally{db.exec('ALTER TABLE synthetic_unavailable_aliases RENAME TO pack_coding_repo_aliases');}
+ evidence.readFailureExplained=true;
  const prepare=db.prepare.bind(db);let watching=false,mainSql=0;
  db.prepare=((sql:string)=>{if(watching&&sql.includes('pack_coding_daemon_merges')){mainSql++;throw new Error('Receipt SQL on main');}return prepare(sql);}) as typeof db.prepare;
  try{

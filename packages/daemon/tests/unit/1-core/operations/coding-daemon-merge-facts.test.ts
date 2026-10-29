@@ -119,6 +119,12 @@ describe('readCodingDaemonMergeFacts', () => {
       mergeCommit: 'c'.repeat(40),
     });
   });
+  test('explains malformed GitHub data without relying on a core refusal entry', async () => {
+    labels = null;
+    const result = await readCodingDaemonMergeFacts(db, url, spawn);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/: .+/);
+  });
   test('keeps truncated file scope unknown instead of declaring it complete', async () => {
     changedFiles = 101;
     expect(await readCodingDaemonMergeFacts(db, url, spawn)).toMatchObject({
