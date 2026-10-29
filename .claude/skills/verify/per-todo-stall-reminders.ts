@@ -90,6 +90,12 @@ try {
   await receipt(3, 'consumed');
   clock += 24 * hour;
   await refresh(); check('three delivered reminders cap', 4);
+  await app!.db.getSDKMessageRepo().write('markDeliveryFailedByUuidInclusive', root, notes()[3].messageUuid);
+  await refresh(); check('late failure restores the capped budget', 5);
+  assert.equal(notes()[4].deliveryMode, 'defer');
+  await receipt(4, 'consumed');
+  clock += 2 * hour;
+  await refresh(); check('replacement consumption restores the cap', 5);
   evidence.snapshot = await rpc('operation.invoke', { name: 'neo.snapshot', input: {} });
   assert.equal(service!.todos.getTodo('stalled')?.blockedBy, 'stalled');
   assert(JSON.stringify(evidence.snapshot).includes('stalled'));

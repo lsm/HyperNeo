@@ -15,7 +15,9 @@ at two hours. Mailbox admission alone must not count as delivered. A failed
 input must retry as steer without spending a reminder. Following a consumed
 receipt and daemon restart, the next reminder must use queue after two hours,
 then queue once more after two hours. Three delivered reminders exhaust the
-budget; the stalled todo remains visible in the public snapshot.
+budget; the stalled todo remains visible in the public snapshot. A consumed
+input subsequently marked failed must restore its budget, including after the
+cap was reached; a queued replacement must then restore the cap.
 
 Retain result.json and proof.log. Receipt facts are synthetic inputs written
 through the normal message writer and observed through message.status over

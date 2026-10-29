@@ -28,7 +28,7 @@ const remindTodo = (superpipe({})('neo.stalled-todo.remind') as PipelineAPI)
         reminder:
           incident.stallReminder?.since === todo.since
             ? { ...incident.stallReminder }
-            : { since: todo.since, delivered: 0 },
+            : { since: todo.since, delivered: [] },
       };
     },
     ['db', 'todo'],
@@ -37,31 +37,33 @@ const remindTodo = (superpipe({})('neo.stalled-todo.remind') as PipelineAPI)
   .pipe(
     (db: Database, context: Context, now: number) => {
       const { todo, reminder } = context;
-      if (reminder.pending) {
-        const receipt = new SDKMessageRepository(db).getUserDeliveryReceipt(
-          todo.sessionId,
-          reminder.pending
-        );
+      const sdk = new SDKMessageRepository(db);
+      const delivered = reminder.delivered.length;
+      reminder.delivered = reminder.delivered.filter(
+        ({ id }) => sdk.getUserSendStatus(todo.sessionId, id) !== 'failed'
+      );
+      const pending = reminder.pending;
+      if (pending) {
+        const receipt = sdk.getUserDeliveryReceipt(todo.sessionId, pending);
         const job = new JobQueueRepository(db).getLatestByPayload('mailbox', {
           'to.sessionId': todo.sessionId,
-          messageUuid: reminder.pending,
+          messageUuid: pending,
         });
         if (receipt?.status === 'consumed') {
-          reminder.delivered++;
-          reminder.deliveredAt = receipt.timestamp;
+          reminder.delivered.push({ id: pending, at: receipt.timestamp });
           delete reminder.pending;
         } else if (receipt?.status === 'failed' || job?.status === 'dead') {
           delete reminder.pending;
         }
-        if (!reminder.pending)
-          new NeoTodoSessionRepository(db).recordNudge(todo.id, {
-            ...context.incident,
-            stallReminder: reminder,
-          });
       }
+      if (pending !== reminder.pending || delivered !== reminder.delivered.length)
+        new NeoTodoSessionRepository(db).recordNudge(todo.id, {
+          ...context.incident,
+          stallReminder: reminder,
+        });
       return !reminder.pending &&
-        reminder.delivered < 3 &&
-        now - (reminder.deliveredAt ?? todo.since) >= INTERVAL
+        reminder.delivered.length < 3 &&
+        now - (reminder.delivered.at(-1)?.at ?? todo.since) >= INTERVAL
         ? { value: context }
         : { reason: null };
     },
@@ -78,14 +80,14 @@ const remindTodo = (superpipe({})('neo.stalled-todo.remind') as PipelineAPI)
           to: { kind: 'session', sessionId: todo.sessionId },
           origin: `session:${todo.sessionId}`,
           messageUuid,
-          deliveryMode: reminder.delivered === 0 ? 'immediate' : 'defer',
+          deliveryMode: reminder.delivered.length === 0 ? 'immediate' : 'defer',
           message: {
             type: 'user',
             parent_tool_use_id: null,
             inputKind: 'system',
             neoWakeEvent: true,
             message: {
-              content: `Todo "${todo.title}" (${todo.id}) in ask ${todo.askId} is still stalled. Review this todo and continue its work or record the next action. This is reminder ${reminder.delivered + 1} of 3; the todo stays visible after reminders stop.`,
+              content: `Todo "${todo.title}" (${todo.id}) in ask ${todo.askId} is still stalled. Review this todo and continue its work or record the next action. This is reminder ${reminder.delivered.length + 1} of 3; the todo stays visible after reminders stop.`,
             },
           },
         })
