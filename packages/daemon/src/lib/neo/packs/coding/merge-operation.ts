@@ -252,3 +252,5 @@ export function createCodingMergeOperation(deps: Deps) {
     execute: (input) => prepare(input),
   });
 }
+
+export const codingMergeGithubSchemas = { Head, Pr, Reviews, Checks, Threads };

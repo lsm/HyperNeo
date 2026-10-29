@@ -674,6 +674,12 @@ env -i HOME="$TODO_MUTATION_COMMIT_RUN/home" PATH="$PATH" TMPDIR="$TODO_MUTATION
 	HYPERNEO_DATA_DIR="$TODO_MUTATION_COMMIT_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-mutation-commit.ts" verify "$TODO_MUTATION_COMMIT_RUN"
 
+CODING_DAEMON_BUILD_RUN="$WORK_DIR/coding-daemon-merge-build"
+mkdir -p "$CODING_DAEMON_BUILD_RUN/home" "$CODING_DAEMON_BUILD_RUN/tmp"
+env -i HOME="$CODING_DAEMON_BUILD_RUN/home" PATH="$PATH" TMPDIR="$CODING_DAEMON_BUILD_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$CODING_DAEMON_BUILD_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/coding-daemon-merge-build.ts" "$CODING_DAEMON_BUILD_RUN"
+
 CODING_SIGNOFF_RUN="$WORK_DIR/coding-signoff-scope"
 mkdir -p "$CODING_SIGNOFF_RUN/home" "$CODING_SIGNOFF_RUN/tmp"
 env -i HOME="$CODING_SIGNOFF_RUN/home" PATH="$PATH" TMPDIR="$CODING_SIGNOFF_RUN/tmp" NODE_ENV=test \

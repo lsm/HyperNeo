@@ -10,7 +10,7 @@ const url = 'https://github.com/synthetic/merge/pull/1',
   head = 'a'.repeat(40);
 let db: Database, fail: string, finalHead: string, labels: unknown, reviews: unknown;
 let files: { path: string }[], changedFiles: number;
-let calls: string[][];
+let calls: string[][], state: string, mergeCommit: { oid: string } | null;
 const spawn: SpawnFn = (args) => {
   calls.push(args);
   let value: unknown;
@@ -28,13 +28,13 @@ const spawn: SpawnFn = (args) => {
     };
   else if (args.some((a) => a.endsWith('/labels'))) value = labels;
   else if (args.some((a) => a.endsWith('/reviews'))) value = reviews;
-  else if (args[1] === 'checks')
+  else if (args[2] === 'checks')
     value = [{ name: 'Required', bucket: 'pass', link: url + '/checks' }];
   else
     value = {
       url,
       body: '',
-      state: 'OPEN',
+      state,
       headRefOid: args.at(-1) === 'headRefOid,state' ? finalHead : head,
       isDraft: false,
       mergeable: 'MERGEABLE',
@@ -43,6 +43,7 @@ const spawn: SpawnFn = (args) => {
       changedFiles,
       files,
       labels: [],
+      mergeCommit,
     };
   const broken = !!fail && args.some((a) => a.includes(fail));
   return {
@@ -59,6 +60,8 @@ beforeEach(() => {
   createTables(db);
   createCodingPackTables(db);
   fail = '';
+  state = 'OPEN';
+  mergeCommit = null;
   finalHead = head;
   files = [{ path: 'src/app.ts' }];
   changedFiles = 1;
@@ -100,9 +103,21 @@ describe('readCodingDaemonMergeFacts', () => {
   test('rejects missing pages and a head changed during acquisition', async () => {
     labels = { error: 'not a complete labels collection' };
     expect((await readCodingDaemonMergeFacts(db, url, spawn)).ok).toBe(false);
+    labels = [];
+    expect((await readCodingDaemonMergeFacts(db, url, spawn)).ok).toBe(false);
     labels = [[]];
     finalHead = 'b'.repeat(40);
     expect((await readCodingDaemonMergeFacts(db, url, spawn)).ok).toBe(false);
+  });
+  test('returns a confirmed merge commit for later receipt recovery', async () => {
+    state = 'MERGED';
+    mergeCommit = { oid: 'c'.repeat(40) };
+    expect(await readCodingDaemonMergeFacts(db, url, spawn)).toMatchObject({
+      ok: true,
+      state: 'MERGED',
+      head,
+      mergeCommit: 'c'.repeat(40),
+    });
   });
   test('keeps truncated file scope unknown instead of declaring it complete', async () => {
     changedFiles = 101;
