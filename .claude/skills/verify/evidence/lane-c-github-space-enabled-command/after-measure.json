@@ -1,0 +1,92 @@
+{
+  "base": "982330a210c048cbe3644de36c69f0623a9f748a",
+  "completeCommand": {
+    "file": "packages/daemon/src/storage/repositories/github-space-enabled-write.ts",
+    "lines": 42,
+    "sha256": "d2f0382018e266314d6e22e0ac9fbb7b2d6ebb5083ff804eb3813310c811a388"
+  },
+  "dependencies": [
+    {
+      "file": "packages/daemon/src/storage/repositories/github-space-enabled-persist.ts",
+      "lines": 17,
+      "sha256": "679e241c86e7041f9b3e2d8c7ed076ac41a8614bde66f40e621c96b6a9ed3888"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/github-watched-repos-read.ts",
+      "lines": 44,
+      "sha256": "4c5945ea131459249bb302cdb27ee6a014fc6aadd5d15f9d402b3226972e6a95"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/github-space-settings-read.ts",
+      "lines": 26,
+      "sha256": "821cdbd20d30a954c0aa6c1c82ad8ff88e098abbd76e522e4072dce26d240681"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/space-extension-config-persist.ts",
+      "lines": 20,
+      "sha256": "3eb49614501626f43b0d679f09a7cfea5ae6d9592070e907adf1c283ed87758f"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-watched-projection.ts",
+      "lines": 29,
+      "sha256": "c9f18fb9061bfe708176fdd065a4a6e1301f7ffd78c03306c074fede5a1686eb"
+    }
+  ],
+  "dependencySubtreeSha256": "c7e59ac8f1e2646c057a9165d61b74349b4079da6b690634f9a23c99526b5627",
+  "completeOwnedDataGraphLines": 178,
+  "productionAndRegistryLines": 44,
+  "registryLines": 2,
+  "smokeLines": 1,
+  "delta": [
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-ops.ts",
+      "lines": 2
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/github-space-enabled-write.ts",
+      "lines": 42
+    },
+    {
+      "file": "scripts/deno-smoke.sh",
+      "lines": 1
+    }
+  ],
+  "stablePublic": [
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "sha256": "603bdfafd623d40bcce55f30e44abc4de5ab75100ecc2e9863ffdbb7f91d6947"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
+      "sha256": "754492db4fb3c8b8e12e5a861360f45a732bd50c789b0c6f82082873d644f9e2"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/extension-config-store.ts",
+      "sha256": "30f39909917d79db49f790e89ffcfc9c1b64d15dd27a69a19ed35564bd9d517e"
+    }
+  ],
+  "infrastructure": [
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-gateway-worker.ts",
+      "sha256": "fbaeb4d89aa03a8dcc1e7aa686dedce502c0b279ebb6c2f7f5ef865bda3644b1"
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-gateway.ts",
+      "sha256": "54b7739518ba9c5c58bda82f7627a76d8483511949cd3469adc07e5643e09858"
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-op.ts",
+      "sha256": "459703e0371a0b1c351bf571a7a73126f6fd81a824e2ecdfbe0a7916986fbd3c"
+    }
+  ],
+  "infrastructureContract": "Existing registered write DbOp runs synchronously inside one IMMEDIATE transaction in both native worker and in-memory gateway. Receipt is posted/resolved after commit. No framework edits/replay; framework/SQLite internals are stable infrastructure, not a new owned business subtree.",
+  "commandContract": "persist(spaceId,enabled,now) data-only repository primitive; validates existing Space key error, reuses five merged modules, updates source/watched flags, reads exact projected config and saves it in same gateway transaction, returns changedRows/config. No initialization, clock, callback, filesystem, network, retry or public mutation activation.",
+  "spaceIdValidationAstUnchanged": true,
+  "noCommandConstructorEffects": true,
+  "publicMutationActivated": false,
+  "netPrepare": 0,
+  "netRun": 0,
+  "netTransaction": 0,
+  "baselineIncrease": false,
+  "auditLimit": "Five complete data helper modules plus command counted. Native worker transaction ordering/receipt contract is pinned as existing infrastructure. Public authorization/polling/hooks/plugin/startup transitive closure is not audited or activated."
+}

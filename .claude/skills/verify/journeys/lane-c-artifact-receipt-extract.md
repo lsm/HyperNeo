@@ -22,9 +22,10 @@ serialization failure. The pure helper performs no SQL/clock/UUID/I/O or mutatio
 Measure complete save/helper bodies to <=200 lines; preserve the normalized
 JSON.stringify AST, INSERT SQL bytes, clock expression, constructor and receipt
 method hashes. Net prepare/run 0 and no baseline increase. Append only this own
-Deno smoke line. This is an extraction: row publication still executes on its
-supplied connection (one main INSERT for public Bun registration; zero Deno rows).
-Never call that positive main count an off-main pass. Row writer construction and
-public activation follow separately. Full capture/source/native/OS dependency
+Deno smoke line. This remains an extraction characterization: direct legacy scratch saves execute
+on their supplied connection. Its historical baseline had one main INSERT for
+public Bun registration; current registration activation requires zero main INSERTs
+(and Deno retains zero rows). That movement is proved by the separate registration
+row journey, not attributed to this pure extraction. Full capture/source/native/OS dependency
 closure, pinned Bun when unavailable, browser and Neo deployment remain unverified.
 Close scratch DBs, owned sockets/processors/app before wrapper cleanup.

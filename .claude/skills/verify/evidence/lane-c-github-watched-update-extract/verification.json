@@ -1,0 +1,34 @@
+{
+  "redCommit": "5127b1389df1df5cc67e4a13af8bc4130ca51fda",
+  "red": {
+    "legacyAndAuditedDependencyContractsPassed": 2,
+    "missingHelperContractsFailed": 4,
+    "realWatchRpcBaselinePassed": true,
+    "nativeFailedAt": "missing existing-row UPDATE helper"
+  },
+  "green": {
+    "tests": 270,
+    "files": 3,
+    "newUnitContracts": 6,
+    "newNativeParent": 1,
+    "existingGitHubExtensionTests": 263,
+    "strictTypeScript6": "pass; new helper, repository and new tests",
+    "rootCheck": "pass",
+    "bunNative": "after-bun.json",
+    "denoNative": "after-deno.json"
+  },
+  "approvedBoundary": {
+    "freshEnvelope": 199,
+    "excludedStableLines": 102,
+    "totalKnownLines": 301,
+    "changedProductionLines": 120,
+    "smokeRegistrationLines": 1,
+    "authorization": "Explicit Neo approval; four already-merged constructor-free data modules excluded, full-module hashes/contracts pinned and interface-tested",
+    "onReviewChallenge": "Stop and report to Neo; do not argue or widen"
+  },
+  "beforeAfterPublicMainExistingUpdates": 3,
+  "mainThreadMovementClaim": false,
+  "scope": "Exact existing-row UPDATE SQL/binds/default/flag/COALESCE/null behavior, row identity, supplied time and caller rollback retained. Other repository/INSERT/activation/cursor policy unchanged. Full public/shared-barrel/runtime transitive closure not claimed.",
+  "deploymentSmoke": "Neo-owned, not run",
+  "cleanup": "Owned scratch DB/socket/processors/app/timer closed, hooks restored and synthetic data removed; live daemon/build untouched"
+}

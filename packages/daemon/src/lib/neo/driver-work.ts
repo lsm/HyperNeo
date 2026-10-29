@@ -52,11 +52,16 @@ const NeoStartWorkTarget = z.object({
 
 const NeoSendWorkTarget = z.object({ verb: z.literal('send'), ref: WorkRefSchema });
 
-export const NeoTodoTargetSchema = z.discriminatedUnion('verb', [
-  NeoStartWorkTarget,
-  NeoSendWorkTarget,
-  z.object({ verb: z.literal('bind'), ref: WorkRefSchema }),
-]);
+export const NeoTodoTargetSchema = z.discriminatedUnion(
+  'verb',
+  [NeoStartWorkTarget, NeoSendWorkTarget],
+  {
+    error: (issue) =>
+      (issue.input as { verb?: unknown } | undefined)?.verb === 'bind'
+        ? 'bind is its own operation: use neo.todo.bind {todoId, ref} for work already running; to give a worker a new task use target {verb: send, ref}.'
+        : undefined,
+  }
+);
 
 export type NeoTodoTarget = z.infer<typeof NeoTodoTargetSchema>;
 
@@ -182,6 +187,18 @@ export function readDriverOutcome(
     ...(queued ? { queued: true as const } : {}),
     ...(delivered && confirmedAt !== undefined ? { startedAt: confirmedAt } : {}),
     ...(receipt ? { receipt } : {}),
+  };
+}
+
+export function readDriverIdentity(outcome: OperationOutcome) {
+  const status = parseDriverStatusReply(outcome);
+  if (!status?.ok) return null;
+  const value = status.value;
+  if (value.model === undefined && value.effort === undefined && !value.identityObservation)
+    return null;
+  return {
+    model: typeof value?.model === 'string' ? value.model : null,
+    effort: typeof value?.effort === 'string' ? value.effort : null,
   };
 }
 

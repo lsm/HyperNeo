@@ -1,3 +1,4 @@
+import { withWorkerProvenance } from '../drivers/worker-provenance.ts';
 import { createWorkQueue } from '../work-queue/sweep.ts';
 import { neoTodoAwaitsHuman, neoTodoStalledCard } from './todo-state.ts';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
@@ -22,6 +23,7 @@ import {
   type NeoDriverTarget,
   neoCardSent,
   readDriverActivity,
+  readDriverIdentity,
   readDriverFollowUp,
   readDriverLive,
   readDriverOpenedPrs,
@@ -277,14 +279,32 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     instruction += `\n\nEven when told to stay quiet, report questions or blockers requiring a human decision with message.send {to: the sending Neo, kind: question or blocked, text: original report, question: {todoId: "${todo.id}", title: short question, options: 2–6 short options, language: en or zh-Hans}} in the human's configured language. Do not keep working while waiting for that answer.`;
     const pack = deps.packs().find((candidate) => candidate.id === todo.check?.pack);
     const recorded = existing ? sessions.readCard(todo.id) : null;
+    if (!existing) return instruction;
     return (
-      pack?.workerBrief?.(instruction, {
+      (pack?.workerBrief ?? withWorkerProvenance)(instruction, {
         model: recorded?.model ?? null,
         effort: recorded?.effort ?? null,
         harness,
       }) ?? instruction
     );
   };
+  const refreshIdentity = (superpipe({})('neo.todo.refresh-identity') as PipelineAPI)
+    .input(['todoId', 'ref', 'ask'])
+    .pipe(
+      (ref: WorkRef, ask: NeoAsk) => deps.invoke(caller(ask), 'work.status', { ref }),
+      ['ref', 'ask'],
+      'status'
+    )
+    .pipe(
+      async (todoId: string, ref: WorkRef, status: OperationOutcome) => {
+        const identity = readDriverIdentity(status);
+        if (identity) await sessions.write('recordIdentity', todoId, ref, identity);
+        return status;
+      },
+      ['todoId', 'ref', 'status'],
+      'status'
+    )
+    .endAsync('status') as (todoId: string, ref: WorkRef, ask: NeoAsk) => Promise<OperationOutcome>;
   const starting = new Set<string>();
   const caller = (ask: NeoAsk) => driverWorkCaller({ originSessionId: ask.sessionId });
   const recompute = (superpipe({})('neo.todo.recompute-committed') as PipelineAPI)
@@ -337,6 +357,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   };
 
   const dispatch = async ({ todo, ask, target }: Startable) => {
+    const status = target.verb === 'send' ? await refreshIdentity(todo.id, target.ref, ask) : null;
     const prepare = deps.packs().find((pack) => pack.id === todo.check?.pack);
     const card = neoTodoCard(todo, ask, prepare?.workerRules);
     card.instruction = workerBrief(
@@ -362,14 +383,17 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         parameters: target.preparationParameters ?? {},
         ...(target.sandbox ? { sandbox: true } : {}),
       };
-    if (target.verb === 'start') call.input.todoId = todo.id;
+    if (target.verb === 'start') {
+      call.input.todoId = todo.id;
+      call.input.provenance = true;
+    }
     const message = String(call.input.message);
     const probe =
       target.verb === 'send'
-        ? await deps.invoke(caller(ask), 'work.status', { ref: target.ref }).then((outcome) => ({
-            baseline: readDriverSendBaseline(outcome, Date.now(), !!target.ref.daemon),
-            sent: readDriverSent(outcome, message, todo.createdAt),
-          }))
+        ? {
+            baseline: readDriverSendBaseline(status!, Date.now(), !!target.ref.daemon),
+            sent: readDriverSent(status!, message, todo.createdAt),
+          }
         : null;
     const baseline = probe ? probe.baseline : Date.now();
     const result = await dispatchNeoInput(
@@ -1165,13 +1189,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     const gate = requireNeoTodoContinuable(read(todoId));
     if ('reason' in gate) return gate.reason;
     const { todo, ask, ref } = gate.value;
+    const status = await refreshIdentity(todo.id, ref, ask);
     const text = formatGoal(workerBrief(todo, message, ref.adapter), {
       workId: todo.id,
       goal: null,
       doneWhen: todo.doneWhen,
       checkKind: todo.check?.kind ?? null,
     });
-    const status = await deps.invoke(caller(ask), 'work.status', { ref });
     if (readDriverLive(status)?.status === 'needs_you')
       return fail(
         'needs_you: its session is waiting on the human; ask them to answer it there, then continue.'
@@ -1247,6 +1271,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
 
   return {
     start,
+    async refreshIdentity(todoId: string) {
+      const { ref, ask } = read(todoId);
+      if (ref && ask) await refreshIdentity(todoId, ref, ask);
+    },
     fill,
     advance,
     recompute,

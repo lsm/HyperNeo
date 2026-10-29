@@ -1,0 +1,28 @@
+{
+  "mainThreadMovementClaim": false,
+  "boundary": "Space configuration SQL extraction only; public writes remain on main and other GitHub repository writes are outside this extraction",
+  "publicRpcMs": 1.7554589999999735,
+  "publicRpc": {
+    "replies": [
+      {
+        "spaceId": "synthetic-space-config",
+        "source": "github",
+        "enabled": true
+      },
+      {
+        "spaceId": "synthetic-space-config",
+        "source": "github",
+        "enabled": false
+      }
+    ],
+    "mainUpsertRuns": 2,
+    "exactSettingsAndCreationTimePreserved": true
+  },
+  "suppliedTimeRollbackAndCascadePreserved": true,
+  "pass": true,
+  "runtime": "Deno 2.9.4 macOS arm64",
+  "wrapper": {
+    "exitCode": 0
+  },
+  "temporaryDaemonDataRemoved": true
+}

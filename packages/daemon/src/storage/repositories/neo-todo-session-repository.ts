@@ -95,14 +95,18 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     target?: NeoDriverTarget;
   }) {
     const recorded = input.keepIdentity ? this.readCard(input.todoId) : null;
+    const observed =
+      input.observed.model !== undefined || input.observed.effort !== undefined
+        ? input.observed
+        : recorded;
     this.recordRef(
       input.todoId,
       input.ref,
       input.startedAt,
       input.link,
       {
-        model: input.observed.model ?? recorded?.model ?? undefined,
-        effort: input.observed.effort ?? recorded?.effort ?? undefined,
+        model: observed?.model ?? undefined,
+        effort: observed?.effort ?? undefined,
       },
       input.target
     );
@@ -330,12 +334,47 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       .run(todoId, JSON.stringify(target));
   }
 
+  recordIdentity(
+    todoId: string,
+    ref: WorkRef,
+    identity: { model: string | null; effort: string | null }
+  ): void {
+    this.recordRef(
+      todoId,
+      ref,
+      undefined,
+      undefined,
+      {
+        model: identity.model ?? undefined,
+        effort: identity.effort ?? undefined,
+      },
+      undefined,
+      true
+    );
+  }
+
   bind(todoId: string, ref: WorkRef, now: number): void {
+    const previous = this.readRef(todoId);
+    const same =
+      previous?.id === ref.id && previous.adapter === ref.adapter && previous.daemon === ref.daemon;
     this.db
-      .prepare(`INSERT OR REPLACE INTO neo_todo_sessions
+      .prepare(`INSERT INTO neo_todo_sessions
       (todo_id, target, ref, started_at, follow_anchor)
-      VALUES (?, ?, ?, ?, ?)`)
-      .run(todoId, JSON.stringify({ verb: 'adopt', ref }), JSON.stringify(ref), now, now);
+      VALUES (?, ?, ?, ?, ?) ON CONFLICT(todo_id) DO UPDATE SET
+        target = excluded.target, ref = excluded.ref, started_at = excluded.started_at,
+        follow_anchor = excluded.follow_anchor,
+        actual_model = CASE WHEN ?6 THEN actual_model ELSE NULL END,
+        actual_effort = CASE WHEN ?6 THEN actual_effort ELSE NULL END,
+        link = NULL, remote_link = NULL, input_before = NULL, sent_opening = NULL,
+        sent_receipt = NULL, live_status = NULL, start_interrupted = 0, needs_you_since = NULL`)
+      .run(
+        todoId,
+        JSON.stringify({ verb: 'adopt', ref }),
+        JSON.stringify(ref),
+        now,
+        now,
+        Number(same)
+      );
   }
 
   readLinks(todoId: string): { link: string | null; remoteLink: string | null } {
@@ -407,6 +446,7 @@ export const neoTodoSessionWrites = defineRepositoryOp(
   [
     'recordLive',
     'recordDispatch',
+    'recordIdentity',
     'recordProgress',
     'claimNeedsYou',
     'claimNudge',

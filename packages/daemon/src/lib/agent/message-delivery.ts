@@ -168,7 +168,11 @@ export type DeliveryOutcome =
   | {
       outcome: 'blocked';
       retryAt: number;
-      reason?: 'sdk_resume_choice' | 'context_clear_boundary' | 'limit_recovery';
+      reason?:
+        | 'sdk_resume_choice'
+        | 'context_clear_boundary'
+        | 'limit_recovery'
+        | 'query_failure_cooldown';
     };
 
 export type DriveTurnOutcome = DeliveryOutcome;

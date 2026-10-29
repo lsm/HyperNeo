@@ -54,7 +54,7 @@ the current bounded byte window; an unlocated anchor reports reply_unavailable.
 Clipped history is a preview; full final reports remain receipt-bound, and
 history availability never proves turn completion.
 
-Real CLI 1.0.83 / SDK 1.0.13 compatibility and the CLI's native persistence
+Real CLI 1.0.105 / SDK 1.0.28 compatibility and the CLI's native persistence
 layout, real account authentication/entitlement/quotas/billing, tool execution,
 Desktop/IDE live visibility and GUI handover remain unverified. The helper
 impersonates the pinned runtime, including its COPILOT_HOME session-state event

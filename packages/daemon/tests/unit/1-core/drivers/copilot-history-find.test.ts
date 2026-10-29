@@ -1,3 +1,4 @@
+import { testDirectories } from '../../../helpers/temporary-directory';
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
@@ -5,7 +6,6 @@ import {
   appendFileSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -20,6 +20,8 @@ import { createAcpAgentAdapter } from '../../../../src/lib/drivers/acp-agent-ada
 import type { WorkTurnPage } from '../../../../src/storage/work-turn-page';
 import type { WorkAdapter, WorkCallContext, WorkStarted } from '../../../../src/lib/drivers/types';
 
+const createTestDirectory = testDirectories();
+
 type Readable = WorkAdapter & {
   readTurns?: (
     id: string,
@@ -33,7 +35,7 @@ const fixtures: ReturnType<typeof setup>[] = [];
 const context = { from: 'chat', caller: { source: 'rpc' } } as WorkCallContext;
 const query = { includeClosed: true, limit: 20 };
 function setup(projectFolder?: string) {
-  const run = realpathSync(mkdtempSync(join(tmpdir(), 'copilot-history-')));
+  const run = realpathSync(createTestDirectory(join(tmpdir(), 'copilot-history-')));
   mkdirSync(join(run, 'home'));
   const cliPath = join(run, 'copilot');
   const source = fileURLToPath(new URL('../../../fixtures/copilot-sdk.ts', import.meta.url));

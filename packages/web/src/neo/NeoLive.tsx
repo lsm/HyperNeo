@@ -71,6 +71,34 @@ async function loadNeoAskDetails(input: string | NeoWorkSelector): Promise<NeoAs
   return result.entry;
 }
 
+async function findNeoWork(
+  query: string,
+  cursor?: string
+): Promise<{ results: { askId: string }[]; nextCursor: string | null }> {
+  type Page =
+    | { ok: true; results: { askId: string }[]; nextCursor: string | null }
+    | { ok: false; reason: string };
+  const hub = await connectionManager.getHub();
+  try {
+    const result = await invokeOperation<Page>(hub, 'neo.ask.search', {
+      query,
+      limit: 50,
+      ...(cursor ? { cursor } : {}),
+    });
+    if (!result.ok) throw new Error(result.reason);
+    return result;
+  } catch (cause) {
+    if (
+      cause instanceof Error &&
+      'code' in cause &&
+      cause.code === 'INVALID_PARAMS' &&
+      cause.message.includes('query_too_short')
+    )
+      return { results: [], nextCursor: null };
+    throw cause;
+  }
+}
+
 export function NeoLive() {
   const neo = useNeo();
   const attachments = useNeoAttachments(neo.sessionId);
@@ -170,7 +198,7 @@ export function NeoLive() {
   )
     workEntries.push(referenced.entry);
   const [workQuery, setWorkQuery] = useState('');
-  const search = useNeoWorkSearch(workEntries, workQuery, loadNeoAskDetails);
+  const search = useNeoWorkSearch(workEntries, workQuery, loadNeoAskDetails, findNeoWork);
   useEffect(() => {
     setHistory(null);
     setReferenced(null);
@@ -1001,6 +1029,15 @@ export function NeoLive() {
                 ))}
               </section>
             )
+          )}
+          {!!workQuery.trim() && search.nextCursor && (
+            <Button
+              variant="ghost"
+              disabled={!connected || search.pending}
+              onClick={search.loadMore}
+            >
+              {t('live.moreSearchResults')}
+            </Button>
           )}
           {historyCursor && (
             <Button

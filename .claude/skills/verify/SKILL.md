@@ -31,6 +31,9 @@ root of your worktree.
 
 ## Launch
 
+Build web for the current checkout HEAD before launching. A bundle from an older
+commit intentionally reloads on connection and can invalidate browser setup.
+
 ```bash
 cd packages/web && bun run build && cd ../..
 .claude/skills/verify/launch.sh 9311 "$RUN"
@@ -99,6 +102,9 @@ or use a shell with `set -e`. For example:
 bash .claude/skills/verify/resource-check.sh && bun run check
 ```
 
+Portable wrappers invoke this macOS-only check on Darwin; Linux must not require
+`memory_pressure` or `/System/Volumes/Data` to enter a journey.
+
 In a standalone clone beneath a directory named `tmp`, Biome can ignore its `.`
 target because the repository excludes `**/tmp`. If `format:check` reports zero
 files, run the same check chain with that one command replaced by
@@ -126,6 +132,14 @@ the helper's evidence JSON and log outside that run, then immediately removes
 its temporary daemon data. It preserves failure status and never deletes the
 run if saving evidence fails. Keep baseline and fixed evidence in separate
 directories; the helper must close its resources in finally.
+
+Shell wrappers that own daemon processes must translate INT/TERM to exit 130/143
+as well as registering EXIT cleanup. Preserve cancellation status and evidence
+before `with-run.sh` removes the run; an EXIT trap alone is insufficient. Wait
+for active work in an interruptible background job and forward cancellation to
+that job and its children. Create `$RUN/.preserve-run` before producing evidence
+and remove it only after saving succeeds; `with-run.sh` retains marked runs even
+after a save error or cancellation.
 
 Reader proofs that trap SDK-message SQL must finish startup body copying before
 measuring reader work or acquiring a competing writer. After seeding fixtures,

@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { testDirectories } from '../../../helpers/temporary-directory';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
@@ -14,6 +15,8 @@ import {
   readAcpSessionPages,
   reuseAcpSessionList,
 } from '../../../../src/lib/drivers/acp-agent-adapter';
+
+const createTestDirectory = testDirectories();
 
 const NOW = 10_000_000;
 const session = (
@@ -103,14 +106,14 @@ describe('ACP agent helpers', () => {
   });
 
   test('findAcpAgentBinary resolves the first PATH entry holding the binary', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'acp-bin-'));
+    const dir = createTestDirectory(join(tmpdir(), 'acp-bin-'));
     writeFileSync(join(dir, 'copilot'), '');
     expect(findAcpAgentBinary('copilot', `/nowhere:${dir}`)).toBe(join(dir, 'copilot'));
     expect(findAcpAgentBinary('copilot', '/nowhere')).toBeNull();
   });
 
   test('gitWorktreeProject maps a linked worktree to its main repository', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'acp-wt-'));
+    const root = createTestDirectory(join(tmpdir(), 'acp-wt-'));
     const worktree = join(root, 'wt');
     mkdirSync(worktree);
     writeFileSync(join(worktree, '.git'), `gitdir: ${root}/repo/.git/worktrees/wt\n`);
@@ -119,7 +122,7 @@ describe('ACP agent helpers', () => {
   });
 
   test('copilotSessionFolder reads the starting folder from the session log', async () => {
-    const state = mkdtempSync(join(tmpdir(), 'copilot-state-'));
+    const state = createTestDirectory(join(tmpdir(), 'copilot-state-'));
     mkdirSync(join(state, 's1'));
     writeFileSync(
       join(state, 's1', 'events.jsonl'),

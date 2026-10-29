@@ -55,16 +55,21 @@ try {
    if (url.startsWith(base) && !url.includes('/__html_probe__/')) return route.continue();
    attempts.push(url); return route.abort();
   });
+  await context.addCookies([{ name: 'artifactAppProbe', value: 'synthetic-cookie', url: base, sameSite: 'Strict' }]);
   const page = await context.newPage(); const dialogs = []; page.on('dialog', async (d) => { dialogs.push(d.message()); await d.dismiss(); });
   try {
    await page.goto(`${base}/neo`);
+   await page.evaluate(() => { localStorage.setItem('artifactAppProbe', 'synthetic-local'); sessionStorage.setItem('artifactAppProbe', 'synthetic-session'); });
+   assert.match(await page.evaluate(() => document.cookie), /artifactAppProbe=synthetic-cookie/);
+   assert.equal(await page.evaluate(() => localStorage.getItem('artifactAppProbe')), 'synthetic-local');
+   assert.equal(await page.evaluate(() => sessionStorage.getItem('artifactAppProbe')), 'synthetic-session');
    const card = page.getByRole('button', { name: 'Open preview: Static layout report' });
    await card.waitFor(); await card.scrollIntoViewIfNeeded();
    const scrollTop = await page.locator('main.neo-scroll').evaluate((node) => node.scrollTop);
    await card.click(); const openedUrl = page.url();
    await page.getByRole('dialog').waitFor();
    const section = page.getByRole('region', { name: 'File preview' });
-   await section.getByRole('heading', { name: 'Static layout report' }).waitFor();
+   await section.locator('iframe').waitFor();
    await page.waitForTimeout(150);
    assert.equal(await page.locator('iframe').count(), 1, `HTML viewer absent: ${await section.innerText()}`);
    await page.getByText('Scripts disabled', { exact: true }).waitFor();
@@ -77,6 +82,11 @@ try {
    assert.equal(await page.evaluate(() => window.__htmlSentinel), undefined);
    assert.equal(await frame.evaluate(() => window.__htmlSentinel), undefined);
    assert.equal(await frame.evaluate(() => { try { void parent.document.body; return 'accessible'; } catch { return 'denied'; } }), 'denied');
+   const storage = await frame.evaluate(() => {
+    const read = (callback) => { try { return { accessible: true, value: callback() }; } catch (error) { return error.name; } };
+    return { cookie: read(() => document.cookie), local: read(() => localStorage.getItem('artifactAppProbe')), session: read(() => sessionStorage.getItem('artifactAppProbe')) };
+   });
+   assert.deepEqual(storage, { cookie: 'SecurityError', local: 'SecurityError', session: 'SecurityError' });
    await frame.getByText('More detail', { exact: true }).click(); await frame.getByText('Native HTML details still work.').waitFor({ state: 'visible' });
    assert((await frame.locator('body').innerText()).includes('Authored navigation'));
    assert.equal(page.url(), openedUrl); assert.equal(context.pages().length, 1); assert.deepEqual(dialogs, []); assert.deepEqual(attempts, []);
@@ -95,12 +105,7 @@ try {
    await page.getByText('Open this link in a new tab?').waitFor(); assert.equal(context.pages().length, 1);
    await page.screenshot({ path: join(run, 'evidence', `html-viewer-links-${width}.png`) });
    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
-   await page.getByRole('button', { name: 'Source', exact: true }).click();
-   await page.locator('pre').filter({ hasText: "window.__htmlSentinel='ran'" }).waitFor();
-   assert.equal(await page.locator('iframe').count(), 0); assert.equal(await page.locator('pre').innerText(), hostile);
-   assert.equal(await page.evaluate(() => window.__htmlSentinel), undefined);
-   await page.screenshot({ path: join(run, 'evidence', `html-viewer-source-${width}.png`) });
-   await page.getByRole('button', { name: 'Back', exact: true }).click();
+   await page.keyboard.press('Escape');
    await page.getByRole('dialog').waitFor({ state: 'detached' });
    assert.equal(await page.locator('main.neo-scroll').evaluate((node) => node.scrollTop), scrollTop);
    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Open preview: Static layout report');
@@ -112,14 +117,24 @@ try {
     await page.screenshot({ path: join(run, 'evidence', 'html-viewer-disconnected-390.png') });
     execFileSync(join(verify, 'launch.sh'), [port, run], { stdio: 'ignore' });
     await page.locator('iframe').waitFor({ timeout: 60000 });
-    await page.getByRole('button', { name: 'Back', exact: true }).click();
+    await page.keyboard.press('Escape');
+    await page.getByRole('dialog').waitFor({ state: 'detached' });
    }
+   await page.goto(`${base}/neo?artifact=${ids.hostile}`);
+   await page.getByRole('region', { name: 'File preview' }).getByRole('heading', { name: 'Static layout report' }).waitFor();
+   await page.getByRole('button', { name: 'Source', exact: true }).click();
+   await page.locator('pre').filter({ hasText: "window.__htmlSentinel='ran'" }).waitFor();
+   assert.equal(await page.locator('iframe').count(), 0); assert.equal(await page.locator('pre').innerText(), hostile);
+   assert.equal(await page.evaluate(() => window.__htmlSentinel), undefined);
+   await page.screenshot({ path: join(run, 'evidence', `html-viewer-source-${width}.png`) });
+   await page.getByRole('button', { name: 'Back', exact: true }).click();
+   await page.waitForURL(`${base}/neo`);
    await page.goto(`${base}/neo?artifact=${ids.deep}`);
    await page.getByText('HTML preview unavailable. View the original source.', { exact: true }).waitFor();
    await page.getByRole('button', { name: 'Source', exact: true }).click(); await page.locator('pre').filter({ hasText: 'Deep source' }).waitFor();
    assert.equal(await page.locator('iframe').count(), 0);
    await page.screenshot({ path: join(run, 'evidence', `html-viewer-source-only-${width}.png`) });
-   evidence.widths[width] = { staticLayout: true, raster: true, scriptsDisabled: true, opaqueOrigin: true, sandboxWithoutCsp: true, noNavigation: true, noRemoteAssets: true, sourceEscaped: true, sourceOnlyFallback: true, backFocusScroll: true, disconnectClears: width === 390, dialogs, iframeWidth: bounds.width };
+   evidence.widths[width] = { staticLayout: true, raster: true, scriptsDisabled: true, opaqueOrigin: true, appCookieDenied: true, localStorageDenied: true, sessionStorageDenied: true, sandboxWithoutCsp: true, noNavigation: true, noRemoteAssets: true, sourceEscaped: true, sourceOnlyFallback: true, dismissFocusScroll: true, disconnectClears: width === 390, dialogs, iframeWidth: bounds.width };
   } catch (error) { await page.screenshot({ path: join(run, 'evidence', `html-viewer-failure-${width}.png`) }); throw error; }
   finally { await context.close(); }
  }

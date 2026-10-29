@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { MessageHub, MessageHubRouter } from '@hyperneo/shared';
+import {
+  MessageHub,
+  MessageHubRouter,
+  subscribeToStructuredLogs,
+  type StructuredLogEvent,
+} from '@hyperneo/shared';
 import { NeoSpeech } from '../../../../src/lib/neo/speech.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
+import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
 import {
   createOperationRegistry,
   type OperationCaller,
@@ -21,6 +27,9 @@ describe('spoken replies separate from publications', () => {
   let messages: { client: string; message: { data: Record<string, string> } }[];
   let speech: NeoSpeech;
   let disconnected: (id: string) => void;
+  let audioController: ReadableStreamDefaultController<Uint8Array>;
+  let audioSignal: AbortSignal | null | undefined;
+  let synthesis: number;
   let writeGate: (() => Promise<void>) | undefined;
   const call = async (name: string, input: unknown, caller = human) => {
     const result = await invokeOperation(registry, 'neo.speech.' + name, input, caller);
@@ -32,6 +41,7 @@ describe('spoken replies separate from publications', () => {
       id: string;
       reason?: string;
       state?: string;
+      guidance?: string;
     };
   };
   const listen = (enabled = true, caller = human) => call('listen', { sessionId, enabled }, caller);
@@ -54,6 +64,7 @@ describe('spoken replies separate from publications', () => {
         send: (data) => messages.push({ client: id, message: JSON.parse(data) }),
       });
     writeGate = undefined;
+    synthesis = 0;
     hub.onClientDisconnect = (handler) => {
       disconnected = handler;
       return () => {};
@@ -64,7 +75,21 @@ describe('spoken replies separate from publications', () => {
         await writeGate?.();
         return runDbOpOn(mailbox.db)(op, args);
       },
-      (id) => id.startsWith('neo:')
+      (id) => id.startsWith('neo:'),
+      'http://127.0.0.1:18555',
+      (async (_url, init) => {
+        synthesis++;
+        audioSignal = init?.signal;
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              audioController = controller;
+              init?.signal?.addEventListener('abort', () => controller.error(new Error('aborted')));
+            },
+          }),
+          { headers: { 'content-type': 'audio/pcm' } }
+        );
+      }) as typeof fetch
     );
     registry = createOperationRegistry(speech.operations);
   });
@@ -74,6 +99,266 @@ describe('spoken replies separate from publications', () => {
     mailbox.close();
   });
 
+  test('successful speech returns model guidance through MCP without repeating the utterance', async () => {
+    await listen();
+    const handler = createOperationMcpHandler(registry, () => neo);
+    const spoken = await handler({
+      name: 'neo.speech.say',
+      input: { requestId: 'guidance', text: 'PRIVATE_SPOKEN_ACKNOWLEDGMENT' },
+    });
+    const receipt = JSON.parse(spoken.content[0].text);
+    expect(receipt).toMatchObject({ ok: true, state: 'queued' });
+    expect(receipt.guidance).toContain('Do not repeat this utterance verbatim');
+    expect(receipt.guidance).toContain('Publish substantive results on screen separately');
+    expect(JSON.stringify(receipt)).not.toContain('PRIVATE_SPOKEN_ACKNOWLEDGMENT');
+    const retried = await call(
+      'say',
+      { requestId: 'guidance', text: 'PRIVATE_SPOKEN_ACKNOWLEDGMENT' },
+      neo
+    );
+    expect(retried.guidance).toBe(receipt.guidance);
+    expect(retried.created).toBe(false);
+  });
+
+  test('rejected or cancelled speech and non-say operations do not suppress screen replies', async () => {
+    expect((await say()).guidance).toBeUndefined();
+    expect((await listen()).guidance).toBeUndefined();
+    const saved = await say();
+    expect(
+      (await call('ack', { sessionId, id: saved.id, state: 'cancelled' })).guidance
+    ).toBeUndefined();
+    const retried = await say();
+    expect(retried.state).toBe('cancelled');
+    expect(retried.guidance).toBeUndefined();
+    expect(
+      (await call('preview', { sessionId, requestId: '30000000-0000-4000-8000-000000000001' }))
+        .guidance
+    ).toBeUndefined();
+  });
+
+  test('an unavailable failed-receipt write does not drop the next healthy synthesis', async () => {
+    await call('listen', { sessionId, enabled: true, audio: true });
+    const first = await say('broken-upstream');
+    for (let i = 0; i < 100 && synthesis < 1; i++) await new Promise((done) => setTimeout(done, 1));
+    let failedWrites = 0;
+    writeGate = async () => {
+      writeGate = undefined;
+      failedWrites++;
+      throw new Error('Public fixture receipt-write failure');
+    };
+    audioController.error(new Error('Public fixture upstream failure'));
+    for (let i = 0; i < 100 && !failedWrites; i++) await new Promise((done) => setTimeout(done, 1));
+    expect(failedWrites).toBe(1);
+    expect(
+      messages.some(
+        (item) => item.message.data.id === first.id && item.message.data.type === 'failed'
+      )
+    ).toBe(true);
+    const next = await say('healthy-after-write-failure');
+    for (let i = 0; i < 100 && synthesis < 2; i++) await new Promise((done) => setTimeout(done, 1));
+    expect(synthesis).toBe(2);
+    expect(
+      messages.some(
+        (item) => item.message.data.id === next.id && item.message.data.type === 'failed'
+      )
+    ).toBe(false);
+    if (synthesis !== 2) return;
+    audioController.enqueue(new Uint8Array([1, 0, 2, 0]));
+    audioController.close();
+    for (
+      let i = 0;
+      i < 100 &&
+      !messages.some(
+        (item) => item.message.data.id === next.id && item.message.data.type === 'end'
+      );
+      i++
+    )
+      await new Promise((done) => setTimeout(done, 1));
+    expect(
+      messages.some(
+        (item) => item.message.data.id === next.id && item.message.data.type === 'audio'
+      )
+    ).toBe(true);
+    expect(
+      messages.some((item) => item.message.data.id === next.id && item.message.data.type === 'end')
+    ).toBe(true);
+  });
+
+  test.each([
+    ['', 'speech_backend_not_configured'],
+    ['http://127.0.0.1:18555', 'speech_backend_unavailable'],
+    ['http://example.invalid', 'invalid_speech_backend'],
+    ['gpu.example.com', 'invalid_speech_backend'],
+    ['https://[invalid', 'invalid_speech_backend'],
+  ])('catalog returns a typed rejection for %s', async (base, reason) => {
+    const catalog = new NeoSpeech(
+      hub,
+      runDbOpOn(mailbox.db),
+      () => true,
+      base,
+      (async () => new Response('', { status: 503 })) as typeof fetch
+    );
+    try {
+      const result = await invokeOperation(
+        createOperationRegistry(catalog.operations),
+        'neo.speech.catalog',
+        {},
+        human
+      );
+      expect(result).toMatchObject({ kind: 'completed', value: { ok: false, reason } });
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  test.each([
+    new TypeError('fetch failed'),
+    new DOMException('The operation timed out', 'TimeoutError'),
+    new DOMException('The operation was aborted', 'AbortError'),
+  ])('catalog returns backend unavailable when transport rejects with %s', async (error) => {
+    const catalog = new NeoSpeech(
+      hub,
+      runDbOpOn(mailbox.db),
+      () => true,
+      'http://127.0.0.1:18555',
+      (async () => {
+        throw error;
+      }) as typeof fetch
+    );
+    try {
+      expect(
+        await invokeOperation(
+          createOperationRegistry(catalog.operations),
+          'neo.speech.catalog',
+          {},
+          human
+        )
+      ).toMatchObject({
+        kind: 'completed',
+        value: { ok: false, reason: 'speech_backend_unavailable' },
+      });
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  test('catalog still returns voices and keeps unexpected infrastructure errors as failures', async () => {
+    for (const available of [true, false]) {
+      const catalog = new NeoSpeech(
+        hub,
+        runDbOpOn(mailbox.db),
+        () => true,
+        'http://127.0.0.1:18555',
+        (async () => {
+          if (!available) throw new Error('Public fixture infrastructure fault');
+          return Response.json({ data: [{ id: 'ryan' }] });
+        }) as typeof fetch
+      );
+      try {
+        const result = await invokeOperation(
+          createOperationRegistry(catalog.operations),
+          'neo.speech.catalog',
+          {},
+          human
+        );
+        if (available)
+          expect(result).toMatchObject({
+            kind: 'completed',
+            value: { ok: true, catalog: { data: [{ id: 'ryan' }] } },
+          });
+        else expect(result.kind).toBe('failed');
+      } finally {
+        await catalog.dispose();
+      }
+    }
+  });
+
+  test('server sends audio before synthesis finishes without blocking MCP or replaying it', async () => {
+    await call('listen', { sessionId, enabled: true, audio: true, voice: 'ryan' });
+    const saved = await say();
+    for (let i = 0; i < 100 && !synthesis; i++) await new Promise((done) => setTimeout(done, 1));
+    expect(synthesis).toBe(1);
+    audioController.enqueue(new Uint8Array([1, 0, 2, 0]));
+    for (let i = 0; i < 100 && messages.length < 2; i++)
+      await new Promise((done) => setTimeout(done, 1));
+    expect(messages[0].message.data).toMatchObject({ type: 'say', format: 'pcm16' });
+    expect(messages[1].message.data).toMatchObject({ type: 'audio', pcm: 'AQACAA==', seq: 0 });
+    expect(messages.every((item) => item.client === 'phone')).toBe(true);
+    expect(messages.some((item) => item.message.data.type === 'end')).toBe(false);
+    expect(await say()).toMatchObject({ created: false });
+    audioController.close();
+    for (let i = 0; i < 100 && !messages.some((item) => item.message.data.type === 'end'); i++)
+      await new Promise((done) => setTimeout(done, 1));
+    expect(messages.at(-1)?.message.data).toMatchObject({ type: 'end', seq: 1 });
+    expect(await call('ack', { sessionId, id: saved.id, state: 'played' })).toMatchObject({
+      state: 'played',
+    });
+  });
+  test('records synthesis boundaries by id without logging speech or audio', async () => {
+    const logs: StructuredLogEvent[] = [];
+    const unsubscribe = subscribeToStructuredLogs((event) => {
+      if (event.module === 'hyperneo:daemon:voice') logs.push(event);
+    });
+    try {
+      await call('listen', { sessionId, enabled: true, audio: true });
+      const saved = await say('timing-one', 'PRIVATE_SPEECH_CONTENT');
+      for (let i = 0; i < 100 && !synthesis; i++) await new Promise((done) => setTimeout(done, 1));
+      expect(logs.some((event) => event.message === 'voice.tts.first_chunk')).toBe(false);
+      audioController.enqueue(new Uint8Array([1, 0, 2, 0]));
+      audioController.enqueue(new Uint8Array([3, 0, 4, 0]));
+      audioController.close();
+      for (let i = 0; i < 100 && !messages.some((item) => item.message.data.type === 'end'); i++)
+        await new Promise((done) => setTimeout(done, 1));
+      await call('ack', { sessionId, id: saved.id, state: 'played' });
+      expect(logs.map((event) => event.message)).toEqual([
+        'voice.speech.requested',
+        'voice.speech.receipt',
+        'voice.tts.queued',
+        'voice.tts.request_started',
+        'voice.tts.first_chunk',
+        'voice.tts.first_chunk_sent',
+        'voice.tts.finished',
+        'voice.speech.receipt',
+      ]);
+      expect(logs[0].metadata).toMatchObject({
+        requestId: 'timing-one',
+        speechId: saved.id,
+        sessionId,
+      });
+      for (const event of logs) {
+        expect(event.metadata.speechId).toBe(saved.id);
+        expect(event.metadata.atMs).toEqual(expect.any(Number));
+        expect(
+          Object.keys(event.metadata).every((key) =>
+            [
+              'argTypes',
+              'atMs',
+              'sessionId',
+              'speechId',
+              'requestId',
+              'clientId',
+              'state',
+            ].includes(key)
+          )
+        ).toBe(true);
+      }
+      expect(JSON.stringify(logs)).not.toContain('PRIVATE_SPEECH_CONTENT');
+      expect(JSON.stringify(logs)).not.toContain('AQACAA==');
+    } finally {
+      unsubscribe();
+    }
+  });
+  test('cancelling playback aborts server synthesis and the next request can run', async () => {
+    await call('listen', { sessionId, enabled: true, audio: true });
+    const saved = await say();
+    for (let i = 0; i < 100 && !synthesis; i++) await new Promise((done) => setTimeout(done, 1));
+    await call('ack', { sessionId, id: saved.id, state: 'cancelled' });
+    expect(audioSignal?.aborted).toBe(true);
+    await say('next');
+    for (let i = 0; i < 100 && synthesis < 2; i++) await new Promise((done) => setTimeout(done, 1));
+    expect(synthesis).toBe(2);
+    await listen(false);
+  });
   test('no opt-in means no spoken output or saved utterance', async () => {
     expect(await say()).toMatchObject({ ok: false, reason: 'voice_replies_off' });
     expect(messages).toHaveLength(0);

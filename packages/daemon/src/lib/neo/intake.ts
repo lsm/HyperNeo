@@ -24,6 +24,7 @@ import type { NeoRepository } from '../../storage/repositories/neo-repository.ts
 import { toMailboxMessage } from '../mailbox/entry.ts';
 import { MessageSessionIdSchema, SessionContentSchema } from '../messaging/message-send.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import { voiceDiagnostic } from '../voice/diagnostics.ts';
 import { NeoReplyRefSchema } from './conversation-ask.ts';
 import { neoImageSize } from './image-size.ts';
 import { neoLocalTimeLine } from './local-time.ts';
@@ -52,6 +53,7 @@ const Input = z
     replyTo: NeoReplyRefSchema.optional(),
     previewContext: NeoPreviewContextSchema.optional(),
     speech: z.boolean().optional(),
+    inputMode: z.enum(['text', 'dictation', 'live_voice']).optional(),
   })
   .superRefine((input, context) => {
     const projected = toMailboxMessage({
@@ -128,8 +130,16 @@ export function neoIntakeMessage(
   const previewFact = previewContext
     ? `Preview context: registered artifact ${previewContext.artifactId}, exact SHA-256 snapshot ${previewContext.snapshot}.`
     : null;
-  const speechFact = input.speech
-    ? 'Voice replies are enabled on the current phone. Use neo.speech.say for natural spoken acknowledgments and answers; screen publications are independent.'
+  const voiceState = [
+    input.inputMode ? `input: ${input.inputMode}` : null,
+    input.speech === undefined ? null : `speech: ${input.speech ? 'on' : 'off'}`,
+  ].filter(Boolean);
+  const speechFact = voiceState.length
+    ? `[${voiceState.join('; ')}]${
+        input.inputMode === 'live_voice' && input.speech === true
+          ? "\nVoice input: before any other tool call or work, call neo.speech.say with one short spoken reply to what the human just said (acknowledge it, say what you'll do, or answer it if it's quick). Then continue."
+          : ''
+      }`
     : null;
   const facts = [identifier, localTime, fact, previewFact, speechFact].flatMap((text) =>
     text ? [{ type: 'text' as const, text }] : []
@@ -268,7 +278,8 @@ async function persistNeoIntake(
   message: ReturnType<typeof neoIntakeMessage>,
   session: Target,
   db: Database,
-  conversationId: string
+  conversationId: string,
+  liveVoice: boolean
 ): Promise<IntakeResult> {
   const receipt = await new NeoConversationAskRepository(db.getDatabase()).acceptPrompt(
     conversationId,
@@ -277,6 +288,12 @@ async function persistNeoIntake(
     db.getSDKMessageRepo(),
     db.getJobQueueRepo()
   );
+  if (liveVoice && receipt.accepted && receipt.created)
+    voiceDiagnostic('voice.input.accepted', {
+      sessionId: session.id,
+      messageId: message.uuid,
+      atMs: Date.now(),
+    });
   return receipt.accepted
     ? {
         ok: true,
@@ -493,9 +510,20 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
     'message'
   )
   .pipe(
-    (message: ReturnType<typeof neoIntakeMessage>, root: IntakeTarget, db: Database) =>
-      persistNeoIntake(message, root.target, db, root.conversationId),
-    ['message', 'root', 'db'],
+    (
+      message: ReturnType<typeof neoIntakeMessage>,
+      root: IntakeTarget,
+      db: Database,
+      input: IntakeInput
+    ) =>
+      persistNeoIntake(
+        message,
+        root.target,
+        db,
+        root.conversationId,
+        input.inputMode === 'live_voice'
+      ),
+    ['message', 'root', 'db', 'input'],
     'receipt'
   )
   .pipe(

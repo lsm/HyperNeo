@@ -1,0 +1,76 @@
+{
+  "redCommit": "f9825e8926f0a873db945c5c26aac80e35b2dbd7",
+  "before": {
+    "unitFailed": 7,
+    "authorizationPassed": 1,
+    "nativePublicRpcFailure": "Target GitHub SQL reached main",
+    "mainWriteAttempts": 1,
+    "nativeBaselineAndSixGuardChecksPassed": true
+  },
+  "legacySuite": {
+    "files": 1,
+    "tests": 263,
+    "passed": true,
+    "setupOnlyChanges": "Four scenarios now seed a real Space FK row; assertions unchanged"
+  },
+  "strictTypeScript6": {
+    "passed": true,
+    "scope": "Modified extension and both new tests plus imported dependencies",
+    "fixtureTypesCorrected": "Typed four SQL scalar reads; publisher stub now rejects unexpected publication with compatible return type"
+  },
+  "rootCheck": {
+    "command": "bun run check",
+    "exitCode": 0
+  },
+  "native": "Bun1.4.3/Deno2.9.4 real WebSocket enable/disable/listConfig, complete projected snapshot and captured caller times, zero target main writes; capability -> actual timer scheduling -> source notification after delivered committed receipt; zero interval skips re-arm; snapshot failure rolls back, known post-commit capability failure retains consistent snapshot; held writer keeps health/old reads responsive; admission and actual committed-reply loss produce no lifecycle/fallback/replay; authorization precedes admission",
+  "scope": {
+    "productionLines": 22,
+    "smokeLines": 1,
+    "ownedBridgeGraphLines": 55,
+    "auditedStableCommandGraphLines": 178
+  },
+  "priorJourneyUpdates": "Current native extraction/read/projection proofs and CI parents expect0 main write runs; direct helper SQL contracts and archived prior-commit evidence retained",
+  "limits": [
+    "Owned scope is two RPC bridges and retained constructor DB reference; constructor body/other extension AST unchanged after restoring bridges",
+    "Exact command subtree and policy/timer/app notification/shared-file hashes pinned; downstream async poll/token/network/reactive/plugin/startup closures not transitively audited",
+    "Native safe interval and no reconciliation supplied through existing options; observation hooks forward real scheduling/config/notification methods",
+    "Target guard covers source UPSERT, watched enabled UPDATE and config UPSERT, not general public reader SELECTs",
+    "Public read endpoints, other writer families and startup initialization remain separate",
+    "Updated prior native fixture chains run locally on Bun; current wiring proof runs on Bun and Deno; CI owns complete Deno smoke",
+    "Held writer duration is not a250ms latency pass",
+    "Local Bun1.4.3, pinned1.4.2 CI-owned",
+    "Deployment smoke Neo-owned; no live daemon touched",
+    "Competing setPollingEnabled RPC remains main-side; native target guard is suspended only for that completed concurrent setter, then restored before delivering the enable receipt. Target main-writer claim applies to enable/disable. The current-state SELECT also remains main-side."
+  ],
+  "priorHeadRegressionSuite": {
+    "files": 7,
+    "tests": 14,
+    "passed": true,
+    "finalNewTestSubset": {
+      "files": 2,
+      "tests": 9,
+      "passed": true
+    }
+  },
+  "currentTargetedSuite": {
+    "files": 2,
+    "tests": 10,
+    "passed": true
+  },
+  "reviewFix": {
+    "redCommit": "b978f59a8b98b41b5be30c471e5b0d6d266dd46b",
+    "before": "Unit and actual public WebSocket RPC reproduced global polling true after a completed concurrent setPollingEnabled(false), while the enable receipt was withheld",
+    "after": "After its committed receipt, enable rechecks current watched polling flags through the existing synchronous read adapter and skips unused capability/timer re-enable; preserves newer concurrent configuration and sends the original reply/notification",
+    "tests": "9 unit tests +1 native parent pass, strict TS6 pass, standalone Bun/Deno proofs pass",
+    "legacySuite": {
+      "files": 1,
+      "tests": 263,
+      "passed": true
+    },
+    "thread": "PRRT_kwDORDDLj86xdoF-",
+    "rootCheck": {
+      "command": "bun run check",
+      "exitCode": 0
+    }
+  }
+}

@@ -1,3 +1,7 @@
+import { gatewayFor } from '../../../storage/db-gateway/db-gateway.ts';
+import { gitHubSpaceEnabledWrites } from '../../../storage/repositories/github-space-enabled-write.ts';
+import { gitHubFilterWrites } from '../../../storage/repositories/github-filter-write.ts';
+import { projectGitHubWatchedRepo } from './github-watched-projection.ts';
 import {
   createGitHubPollSource,
   parseRateLimitHeaders,
@@ -312,7 +316,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private readonly eventStore: ExternalEventStore;
 
   constructor(
-    db: BunDatabase,
+    private readonly db: BunDatabase,
     private readonly githubToken = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN,
     private readonly options: GitHubEventExtensionOptions = {}
   ) {
@@ -354,15 +358,20 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       await assertRpcConfigEnabled(context, this.sourceId);
       const params = data as { spaceId: string };
       if (!params.spaceId) throw new Error('spaceId is required');
+      await gatewayFor(this.db).call(
+        gitHubSpaceEnabledWrites,
+        'persist',
+        params.spaceId,
+        true,
+        Date.now()
+      );
       const willReenablePollingRows = this.repo
         .listWatchedRepos(params.spaceId)
         .some((repo) => repo.pollingEnabled);
-      this.repo.setRepoEnabled(params.spaceId, true);
       if (willReenablePollingRows && this.getPollIntervalMs() > 0) {
         await this.enablePollingCapability(context);
         this.ensurePollingActive();
       }
-      await this.persistSpaceConfig(context, params.spaceId);
       context.onSourceConfigChanged({
         source: this.sourceId,
         spaceId: params.spaceId,
@@ -375,8 +384,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       await assertRpcConfigEnabled(context, this.sourceId);
       const params = data as { spaceId: string };
       if (!params.spaceId) throw new Error('spaceId is required');
-      this.repo.setRepoEnabled(params.spaceId, false);
-      await this.persistSpaceConfig(context, params.spaceId);
+      await gatewayFor(this.db).call(
+        gitHubSpaceEnabledWrites,
+        'persist',
+        params.spaceId,
+        false,
+        Date.now()
+      );
       context.onSourceConfigChanged({
         source: this.sourceId,
         spaceId: params.spaceId,
@@ -676,8 +690,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (!params.spaceId || typeof params.enabled !== 'boolean') {
         throw new Error('spaceId and enabled are required');
       }
-      this.repo.setFilterCurrentUser(params.spaceId, params.enabled);
-      await this.persistSpaceConfig(context, params.spaceId);
+      await gatewayFor(this.db).call(
+        gitHubFilterWrites,
+        'persist',
+        params.spaceId,
+        params.enabled,
+        Date.now()
+      );
       context.onSourceConfigChanged({
         source: this.sourceId,
         spaceId: params.spaceId,
@@ -2004,26 +2023,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       settings: {
         pollingIntent: this.repo.getPollingIntent(spaceId),
         filterCurrentUser: this.repo.getFilterCurrentUser(spaceId),
-        watchedRepos: repos.map((repo) => ({
-          id: repo.id,
-          owner: repo.owner,
-          repo: repo.repo,
-          enabled: repo.enabled,
-          webhookEnabled: repo.webhookEnabled,
-          pollingEnabled: repo.pollingEnabled,
-          webhookSecret: repo.webhookSecret ? 'configured' : null,
-          webhookRemoteId: repo.webhookRemoteId,
-          webhookUrl: repo.webhookUrl,
-          webhookAutoRegistered: repo.webhookAutoRegistered,
-          webhookActive: repo.webhookActive,
-          webhookLastCheckedAt: repo.webhookLastCheckedAt,
-          webhookLastError: repo.webhookLastError,
-          webhookConfiguredAt: repo.webhookConfiguredAt,
-          lastWebhookAt: repo.lastWebhookAt,
-          lastPollAt: repo.lastPollAt,
-          createdAt: repo.createdAt,
-          updatedAt: repo.updatedAt,
-        })),
+        watchedRepos: repos.map(projectGitHubWatchedRepo),
       },
     });
   }

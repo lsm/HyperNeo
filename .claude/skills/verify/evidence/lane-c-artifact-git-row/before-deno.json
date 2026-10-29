@@ -1,0 +1,18 @@
+{
+  "sqlScope": "Git publication row INSERT only; existing source/receipt/authorization SQL, core #9342 constructor transaction and sync native descriptor work remain outside this ownership proof",
+  "fullTransitiveCaptureOwnershipGraphMeasured": false,
+  "mainGuardSelfCheckPassed": true,
+  "firstConcurrentRpcMs": 435.672916,
+  "existingDenoCaptureFailsClosed": true,
+  "existingDenoDuplicateBlobFailsClosed": true,
+  "successfulDenoRowActivationAndBytesVerified": false,
+  "foreignOrNonSourceReferenceRefusedBeforeLookup": true,
+  "fixtureGhCalls": 6,
+  "maxLoopLagMs": 4.819415999999819,
+  "rssBytes": 601063424,
+  "walBytes": 4128272,
+  "pass": true,
+  "GitMainInsertRuns": 0,
+  "rowCommandPosts": 0,
+  "workerMetrics": []
+}

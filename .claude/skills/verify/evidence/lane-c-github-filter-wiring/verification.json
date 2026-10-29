@@ -1,0 +1,40 @@
+{
+  "redCommit": "101778ea0392137e4cb6fe04f58cce6af21cce46",
+  "before": {
+    "unitFailures": 7,
+    "authorizationParameterContractPassed": 1,
+    "nativePublicRpcFailure": "Target GitHub SQL reached main",
+    "baselineAndSixGuardChecksPassed": true
+  },
+  "after": {
+    "relatedTests": 23,
+    "relatedFiles": 6,
+    "legacyTests": 263,
+    "legacyFiles": 1,
+    "strictTS6": true,
+    "rootCheck": "bun run check passed",
+    "native": "Bun1.4.3/Deno2.9.4 real WebSocket filter/listConfig/health RPCs,0 target main writes, full committed projection and retained source/watched state/creation times, notification/reply after commit, snapshot/cursor/FK rollback, known postcommit notify failure consistent, held writer responsive old reads/health, reordered actual committed receipts retain newer filter, admission and actual committed-reply loss no notify/fallback/replay",
+    "fixtureRepair": "Initial legacy run exposed a stale Static store map in one filter roundtrip scenario. Use a real Space FK row and real SQLite config store with identical global settings; all behavioral assertions unchanged. Final full263 pass."
+  },
+  "scope": {
+    "productionLines": 10,
+    "smokeLines": 1,
+    "ownedBridgeGraphLines": 29,
+    "stableCommandGraphLines": 175,
+    "stableCommandSubtreeSha256": "30759e4dfc3a8c48e8d0d3d5ae30aa17a04c1138f472ab1e52989d6674963599",
+    "stablePolicyRootsSha256": "114fb471e02a553ec6616a773388e6d9e27545f05db9d7e1645d67cc2901e3da"
+  },
+  "netPrepare": 0,
+  "netRun": 0,
+  "baselineIncrease": false,
+  "limits": [
+    "Only filter RPC data writes routed; public readers, other mutation families and constructor/startup work remain separate",
+    "Complete175-line merged data subtree audited stable; gate/start/stop, notification and shared modules pinned, no full transitive plugin/startup audit",
+    "Native source notification observer forwards actual callback, except deliberate known notification fault",
+    "Reordered receipt replies echo accepted inputs; notifications signal current DB state and never re-persist a stale DTO",
+    "Current extraction native proof/parent now expects0 main target runs; archived original3-write evidence and direct SQL contracts retained",
+    "First measured RPC uses warmed setup worker; held1.2s wait is not a250ms latency pass; no cold-start claim",
+    "Local Bun1.4.3; pinned1.4.2 and complete Deno smoke CI-owned",
+    "No live daemon/8399, credentials, deployment or shared core changes; only own1-line smoke registration"
+  ]
+}

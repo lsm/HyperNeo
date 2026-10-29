@@ -765,6 +765,7 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
     });
 
     it('rejects a pending initialize when closed during a reconnect backoff', async () => {
+      vi.spyOn(Math, 'random').mockReturnValue(1);
       global.WebSocket = vi.fn(function () {
         const ws = new MockWebSocket('ws://localhost:9999', false);
         setTimeout(() => {
@@ -781,12 +782,20 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
         reconnectDelay: 10_000,
       });
 
-      const initializing = transport.initialize();
-      await new Promise((resolve) => setTimeout(resolve, 30));
+      const backoff = new Promise<void>((resolve) => {
+        let disconnects = 0;
+        const off = transport.onConnectionChange((state) => {
+          if (state === 'disconnected' && ++disconnects === 2) {
+            off();
+            resolve();
+          }
+        });
+      });
+      const rejected = expect(transport.initialize()).rejects.toThrow('closed before connecting');
+      await backoff;
       expect(transport.getState()).toBe('disconnected');
       await transport.close();
-
-      await expect(initializing).rejects.toThrow('closed before connecting');
+      await rejected;
     });
 
     it('retries at once, then backs off with full jitter up to the cap', () => {

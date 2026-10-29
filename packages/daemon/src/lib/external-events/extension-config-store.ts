@@ -1,3 +1,6 @@
+import { persistSpaceExtensionConfig } from '../../storage/repositories/space-extension-config-persist.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { globalExtensionConfigWrites } from '../../storage/repositories/global-extension-config-write.ts';
 import { isRecord } from '../record.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type {
@@ -77,28 +80,7 @@ export class ExternalEventExtensionConfigStore
     validateSourceId(source);
     validateGlobalConfig(source, config);
     const now = Date.now();
-    this.db
-      .prepare(
-        `INSERT INTO external_event_extension_configs (
-					source, globally_enabled, capabilities_json, secrets_ref,
-					settings_json, created_at, updated_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?)
-				ON CONFLICT(source) DO UPDATE SET
-					globally_enabled = excluded.globally_enabled,
-					capabilities_json = excluded.capabilities_json,
-					secrets_ref = excluded.secrets_ref,
-					settings_json = excluded.settings_json,
-					updated_at = excluded.updated_at`
-      )
-      .run(
-        source,
-        config.globallyEnabled ? 1 : 0,
-        JSON.stringify(config.capabilities),
-        config.secretsRef ?? null,
-        JSON.stringify(config.settings ?? {}),
-        now,
-        now
-      );
+    await gatewayFor(this.db).call(globalExtensionConfigWrites, 'persist', source, config, now);
   }
 
   async setSpaceConfig(
@@ -110,17 +92,7 @@ export class ExternalEventExtensionConfigStore
     validateSourceId(source);
     validateSpaceConfig(spaceId, source, config);
     const now = Date.now();
-    this.db
-      .prepare(
-        `INSERT INTO space_external_event_source_configs (
-					space_id, source, enabled, settings_json, created_at, updated_at
-				) VALUES (?, ?, ?, ?, ?, ?)
-				ON CONFLICT(space_id, source) DO UPDATE SET
-					enabled = excluded.enabled,
-					settings_json = excluded.settings_json,
-					updated_at = excluded.updated_at`
-      )
-      .run(spaceId, source, config.enabled ? 1 : 0, JSON.stringify(config.settings), now, now);
+    persistSpaceExtensionConfig(this.db, spaceId, source, config, now);
   }
 }
 

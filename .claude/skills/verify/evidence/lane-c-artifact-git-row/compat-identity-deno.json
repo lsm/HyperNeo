@@ -1,0 +1,163 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "GitAdmissionFailureNeverLooksUpCapturesOrFallsBack": true,
+  "GitUnknownOutcomeNeverAutomaticallyReplayed": true,
+  "healthWhileGitIdentityWriterHeldMs": 2.550582999999733,
+  "deliberatelyHeldGitInitializationMs": 1392.936917,
+  "sourceRecheckedAfterGitIdentityReceiptBeforeLookup": true,
+  "uncontendedConcurrentGitResolutionMs": 420.8785419999999,
+  "existingDenoDuplicateBlobFailsClosed": true,
+  "existingDenoCaptureFailsClosed": true,
+  "successfulCaptureAndSnapshotReadVerified": false,
+  "foreignOrNonSourceReferenceRefusedBeforeLookup": true,
+  "maxLoopLagMs": 6.3777500000001055,
+  "rssBytes": 591446016,
+  "walBytes": 4128272,
+  "mainRowSaves": 0,
+  "commandPosts": 18,
+  "fixtureGhCalls": 6,
+  "fullTransitiveGitCaptureGraphMeasured": false,
+  "pass": true,
+  "diagnosticSteps": [
+    "post:1",
+    "reply:1",
+    "post:2",
+    "post:3",
+    "reply:3",
+    "post:4",
+    "reply:4",
+    "post:5",
+    "reply:5",
+    "post:6",
+    "reply:6",
+    "post:7",
+    "reply:7",
+    "post:8",
+    "reply:8",
+    "post:9",
+    "post:10",
+    "reply:9",
+    "post:11",
+    "reply:10",
+    "reply:11",
+    "post:12",
+    "reply:12",
+    "post:13",
+    "reply:13",
+    "post:14",
+    "post:15",
+    "reply:14",
+    "reply:15",
+    "post:16",
+    "reply:16",
+    "post:17",
+    "reply:17",
+    "post:18",
+    "reply:18"
+  ],
+  "GitMainIdentitySqlAttempts": 0,
+  "workerMetrics": [
+    {
+      "roundTripMs": 0.14895799999999326,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.007041999999955806
+    },
+    {
+      "roundTripMs": 2.4547079999999823,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.00874999999996362
+    },
+    {
+      "roundTripMs": 0.10483299999987139,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0015000000000782165
+    },
+    {
+      "roundTripMs": 2.415834000000359,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0033749999997780833
+    },
+    {
+      "roundTripMs": 1228.7632500000004,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.011458999999831576
+    },
+    {
+      "roundTripMs": 0.25766699999985576,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0025829999999587017
+    },
+    {
+      "roundTripMs": 0.26862500000015643,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.005708000000140601
+    },
+    {
+      "roundTripMs": 0.2831660000001648,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0030839999999443535
+    },
+    {
+      "roundTripMs": 4.260541999999987,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.005625000000236469
+    },
+    {
+      "roundTripMs": 3.1627089999997224,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.004249999999956344
+    },
+    {
+      "roundTripMs": 0.19016700000020137,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.003541999999924883
+    },
+    {
+      "roundTripMs": 0.19879200000013952,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0025000000000545697
+    },
+    {
+      "roundTripMs": 0.17041699999981574,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0019160000001647859
+    },
+    {
+      "roundTripMs": 0.8190840000002026,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0015410000000883883
+    },
+    {
+      "roundTripMs": 0.19991699999991397,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0009159999999610591
+    },
+    {
+      "roundTripMs": 0.14208300000018426,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0022089999997660925
+    },
+    {
+      "roundTripMs": 0.09054199999991397,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0015000000003055902
+    }
+  ]
+}

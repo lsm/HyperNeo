@@ -160,6 +160,11 @@ import { workspaceHistoryRemoveWrites } from '../repositories/workspace-history-
 import { workspaceHistoryUpsertWrites } from '../repositories/workspace-history-upsert-write.ts';
 import { inboxCreateWrites } from '../repositories/inbox-create-write.ts';
 import { artifactIdentityWrites } from '../repositories/artifact-file-identity-write.ts';
+import { artifactFileRowWrites } from '../repositories/artifact-file-row-write.ts';
+import { globalExtensionConfigWrites } from '../repositories/global-extension-config-write.ts';
+import { spaceExtensionConfigWrites } from '../repositories/space-extension-config-write.ts';
+import { gitHubSpaceEnabledWrites } from '../repositories/github-space-enabled-write.ts';
+import { gitHubFilterWrites } from '../repositories/github-filter-write.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -297,5 +302,10 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     workspaceHistoryUpsertWrites,
     inboxCreateWrites,
     artifactIdentityWrites,
+    artifactFileRowWrites,
+    globalExtensionConfigWrites,
+    spaceExtensionConfigWrites,
+    gitHubSpaceEnabledWrites,
+    gitHubFilterWrites,
   ].map((op) => [op.name, op])
 );

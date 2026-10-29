@@ -8,6 +8,7 @@ import type { ArtifactRef, ArtifactRefusal } from '@hyperneo/shared/types/artifa
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { artifactIdentityWrites } from '../../storage/repositories/artifact-file-identity-write.ts';
+import { artifactFileRowWrites } from '../../storage/repositories/artifact-file-row-write.ts';
 import { ArtifactFileRepository } from '../../storage/repositories/artifact-file-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { getDataDir } from '../data-dir.ts';
@@ -143,8 +144,10 @@ async function registrationService(db: Database, data: string, home: string) {
       const limit = artifactBundleLimit(snapshot.byteLength, bound.value);
       if (limit) return limit;
     }
-    return finish(() =>
-      registry.save(
+    return finish(async () => {
+      const saved = await gatewayFor(db).call(
+        artifactFileRowWrites,
+        'publish',
         input.context,
         previous ? randomUUID() : input.requestId,
         fingerprint(producer),
@@ -161,8 +164,9 @@ async function registrationService(db: Database, data: string, home: string) {
         { kind: 'worktree' },
         plan.bundle,
         input.requestId
-      )
-    );
+      );
+      return finish(() => ({ accepted: true, artifact: saved.artifact }));
+    });
   }
   const register = (superpipe({})('artifact-file-register') as PipelineAPI)
     .input(['input', 'caller'])

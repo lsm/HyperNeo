@@ -1,0 +1,282 @@
+{
+  "base": "5f3d6a1d36aea5fcc844f8b36b4bc9d5691653b3",
+  "ownedUnits": [
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "constructor",
+      "lines": 37,
+      "sha256": "060d24192eb0b29c9fca21a05d86eb7d3d5022d48f967624b5a63718625fbe45"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "setPollingIntent",
+      "lines": 4,
+      "sha256": "c900a2148f3c288b7c3dce0a72dafa7745e8eb81e2d1880bebcf50a14595034a"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "getPollingIntent",
+      "lines": 3,
+      "sha256": "5b03efd619b83e9330e20afc74102c3034514fcdcb642d901321f121c92c00e9"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "getFilterCurrentUser",
+      "lines": 3,
+      "sha256": "682c9ee11e8310028f8d3c5095fa648b8d53ae057fb860c7b321f90dec30a9dc"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "isSpaceEnabled",
+      "lines": 3,
+      "sha256": "f86ecedadb43666d7a5e8b54c31e516ae6b31732510b129455c42cc2d81b78d4"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "listWatchedRepos",
+      "lines": 3,
+      "sha256": "fea8d4b2abe1f1bc9934d90c741fb46b4dfc34064d4e20a53b2099f65e52a7aa"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "rowToRepo",
+      "lines": 3,
+      "sha256": "0227374d96bfcf60c0a1690082bd5884ce91439a59ee56748a7fb7c3f7ea5eff"
+    }
+  ],
+  "completeHelper": {
+    "file": "packages/daemon/src/storage/repositories/github-polling-intent-persist.ts",
+    "lines": 14,
+    "sha256": "5b570a3167d3d45636d57d7bd02cc86cbff7bea14927bd4ba12949b9b5ad649f"
+  },
+  "fullOwnedGraphLines": 140,
+  "stableReadModules": [
+    {
+      "file": "packages/daemon/src/storage/repositories/github-space-settings-read.ts",
+      "lines": 26,
+      "sha256": "821cdbd20d30a954c0aa6c1c82ad8ff88e098abbd76e522e4072dce26d240681"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/github-watched-repos-read.ts",
+      "lines": 44,
+      "sha256": "4c5945ea131459249bb302cdb27ee6a014fc6aadd5d15f9d402b3226972e6a95"
+    }
+  ],
+  "stablePublicModules": [
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
+      "sha256": "ce078018949e68caec77f649fa06fefb378fbcd696c7ee247764ea8f97c6b414"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/extension-config-store.ts",
+      "sha256": "30f39909917d79db49f790e89ffcfc9c1b64d15dd27a69a19ed35564bd9d517e"
+    },
+    {
+      "file": "packages/daemon/src/app.ts",
+      "sha256": "d7cba475e25e9a0113f91ed8cb2188ea48fb97da1572ca0da50e94e5bdb4470f"
+    }
+  ],
+  "stableDependencySha256": "0f87a3c6e6847f058fd1f0596ebd51076dce12c4a64c468e95c3f6f57cf1bfa1",
+  "productionLines": 23,
+  "smokeLines": 1,
+  "delta": [
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "lines": 9
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/github-polling-intent-persist.ts",
+      "lines": 14
+    },
+    {
+      "file": "scripts/deno-smoke.sh",
+      "lines": 1
+    }
+  ],
+  "statementAstSha256": [
+    "5661dededee775b886683df8938e1ac0cf59778306713fa8ebc340534dc01f1c"
+  ],
+  "allOtherRepositoryUnits": [
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "constructor",
+      "lines": 37,
+      "sha256": "060d24192eb0b29c9fca21a05d86eb7d3d5022d48f967624b5a63718625fbe45"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "upsertWatchedRepo",
+      "lines": 124,
+      "sha256": "041a43ed7ac1399870552054d832d2eea85456f0022caf99f76b82a4379451a3"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "clearWebhookRegistration",
+      "lines": 12,
+      "sha256": "b0a4f54e7bfbc9df0f328ae43d2a8d8dd98b4ffa1a14d20f4f8bcb9c66afe69d"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "setRepoEnabled",
+      "lines": 4,
+      "sha256": "bdcdea3a63b7578e06aeca383378f4ea599829831eb4597af8090a823fdf2e55"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "getPollingIntent",
+      "lines": 3,
+      "sha256": "5b03efd619b83e9330e20afc74102c3034514fcdcb642d901321f121c92c00e9"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "setFilterCurrentUser",
+      "lines": 4,
+      "sha256": "8b7806ef7062356faa2ad5146f42de6e48ffa796c371aa05894d4e7a5aef5641"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "getFilterCurrentUser",
+      "lines": 3,
+      "sha256": "682c9ee11e8310028f8d3c5095fa648b8d53ae057fb860c7b321f90dec30a9dc"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "countSpacesWithPollingIntent",
+      "lines": 10,
+      "sha256": "05f132b69f854d7f4c6e5e28336fd66fe6d8a8a0e6104ae1cf4f5a1b144397d6"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "countAllAutoRegisteredHookRefs",
+      "lines": 8,
+      "sha256": "57ceb43e116cbe9db479632c29484e164d793f784c3c0bcee093ec69ef2d0eba"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "removeWatchedRepo",
+      "lines": 9,
+      "sha256": "5b193f1a14d9f5eb3f52e0e4eda6762a66f72ff39dbd0531b31a80fd9260a703"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "isSpaceEnabled",
+      "lines": 3,
+      "sha256": "f86ecedadb43666d7a5e8b54c31e516ae6b31732510b129455c42cc2d81b78d4"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "listWatchedRepos",
+      "lines": 3,
+      "sha256": "fea8d4b2abe1f1bc9934d90c741fb46b4dfc34064d4e20a53b2099f65e52a7aa"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "listWebhookValidationRepos",
+      "lines": 9,
+      "sha256": "04039ee9aa76dcb4f423a1ad54fc652491d5baad4344b191ef1229eae18fcba4"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "listPollingRepos",
+      "lines": 14,
+      "sha256": "274fcd6df42475444d4901ff853f78f8bf10c601e6ed166b84a5f052a60cacbd"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "listAllPollingConfiguredRepos",
+      "lines": 20,
+      "sha256": "16dbe8f397356583494b6735cacb6d1f6e9279ea5273948cf959235a0c3fe1ce"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "getWatchedRepo",
+      "lines": 8,
+      "sha256": "7b0d886251abb651504ba96f4d826b4d5d794f882fe7c8ec0f1bf087ec84b860"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "getAutoRegisteredRepo",
+      "lines": 11,
+      "sha256": "4ca6dbfc88f106d7f5aa2344f596162594affe8ec098897fc4d845b6d8b15e33"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "countAutoRegisteredHookRefs",
+      "lines": 10,
+      "sha256": "9a68031e5d663743f01f8924b89665dd23537b37478023d6648fa9d209ab0d99"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "updateSharedAutoHook",
+      "lines": 32,
+      "sha256": "4f87de14fec2dfb2314596f42dc041be268d309bee2fa76585f9b645611ccec3"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "updateSharedWebhookStatus",
+      "lines": 21,
+      "sha256": "cdb57a151199e1b72faba58ce6dab4fc7ad29f31aad55e1cbfe7c8013e018444"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "getWatchedRepoById",
+      "lines": 6,
+      "sha256": "13745524d3efc8a98797b1dbb8f4b094d6e1e14944def90291c9b8cafc2b3ff5"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "markWebhookReceived",
+      "lines": 14,
+      "sha256": "a8bd8fb153ab29c42c71a9066bded71c99698b19a158210383d2dde4205b48cc"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "clearWebhookDeliveryHistory",
+      "lines": 7,
+      "sha256": "ac3fbbada96ed38b7299fbddf520c16c7dd614fb8d8a47e85108b698231de4cf"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "updatePollCursor",
+      "lines": 7,
+      "sha256": "21adab51bfc07095c2d8aaef17257bd936f5cec107f565e8e2b0d4609c901b2e"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "updatePollCursorJson",
+      "lines": 5,
+      "sha256": "00022670a4dc434cbacdf4c6835f1a307e45df911dcfcfa32447634742f2f435"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "clearPollErrorsForAllRepos",
+      "lines": 10,
+      "sha256": "a5eff1a03e42e07a1652a11be2d4af1572a58b07803253a00a2cafa2ed44788f"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "recordPollFailure",
+      "lines": 16,
+      "sha256": "14a1ed3690a318b2f18d3961bf85946debdb721793c0647094738614c9fca1e2"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "updateWebhookStatus",
+      "lines": 34,
+      "sha256": "fe3cbded3b1fda001a48de4c1bb15038abb78ae2c77a001a6252a5a27715b54f"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "rowToRepo",
+      "lines": 3,
+      "sha256": "0227374d96bfcf60c0a1690082bd5884ce91439a59ee56748a7fb7c3f7ea5eff"
+    }
+  ],
+  "sqlBindingsResultAndClockUnchanged": true,
+  "netPrepare": 0,
+  "netRun": 0,
+  "baselineIncrease": false,
+  "mainThreadMovementClaim": false,
+  "contract": "One exact UPSERT with supplied time; void result, insert enabled1/filter1 defaults, conflict changes only polling intent and update time. No helper clock/transaction/constructor/backfill/callback/retry; caller transaction and statement failure retain legacy rollback.",
+  "auditLimit": "Conservative helper/wrapper/constructor/read units and complete read modules counted. Actual polling preference RPC with existing and empty synthetic Spaces is characterized. Unchanged public handler/config-store/app files pinned; their full transitive GitHub/plugin/startup/Space closure is not audited. Public polling and saved snapshot writes remain on main; atomic command and public wiring are separate rungs."
+}

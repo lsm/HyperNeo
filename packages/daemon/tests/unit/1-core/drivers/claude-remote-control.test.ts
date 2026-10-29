@@ -645,6 +645,8 @@ describe('B1 native task delivery', () => {
     const summary = {
       ref: { adapter: 'claude-desktop', id: 'local_target' },
       title: 'Synthetic task',
+      model: 'claude-opus-5-5',
+      effort: 'medium',
       permissionMode: 'acceptEdits',
       status: 'queued',
     } as unknown as WorkSummary;
@@ -670,7 +672,8 @@ describe('B1 native task delivery', () => {
       async (target, message, _deps, deliveryContext) => {
         expect(deliveryContext).toEqual(context);
         expect(target.sessionId).toBe('local_target');
-        expect(message).toBe('Exact actual task');
+        expect(message).toContain('Exact actual task');
+        expect(message).toContain('Agent: claude-opus-5-5 (effort: medium) via Claude');
         order.push('native-message');
         return {
           ok: true,
@@ -678,7 +681,9 @@ describe('B1 native task delivery', () => {
         };
       }
     );
-    expect(await wrapped.start!({ message: 'Exact actual task' } as never, context)).toMatchObject({
+    expect(
+      await wrapped.start!({ message: 'Exact actual task', provenance: true } as never, context)
+    ).toMatchObject({
       ok: true,
       value: {
         permissionMode: 'acceptEdits',

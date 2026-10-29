@@ -1,0 +1,205 @@
+{
+  "base": "83a625a33ff7037586becf02a8df5cebe5aaea66",
+  "ownedBridgeUnits": [
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
+      "name": "constructor",
+      "owner": "GitHubEventExtension",
+      "lines": 9,
+      "sha256": "596a466e48b80cb82c3ba6d6d21102669145b0b966306d8389d03bd793682b68"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
+      "name": "space.github.enable",
+      "lines": 25,
+      "sha256": "b542fd16197a29274bec7a5ce92a1dd70c952fd29a2d9d2283984eb0f74546da"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
+      "name": "space.github.disable",
+      "lines": 18,
+      "sha256": "8523e222ff43cfc87a41b8e33f3d2dabff573965d3f81e6bb2efceec55127ef2"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "listWatchedRepos",
+      "owner": "GitHubEventExtensionRepository",
+      "lines": 3,
+      "sha256": "fea8d4b2abe1f1bc9934d90c741fb46b4dfc34064d4e20a53b2099f65e52a7aa"
+    }
+  ],
+  "ownedBridgeGraphLines": 55,
+  "productionLines": 22,
+  "smokeLines": 1,
+  "delta": [
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
+      "lines": 22
+    },
+    {
+      "file": "scripts/deno-smoke.sh",
+      "lines": 1
+    }
+  ],
+  "stableCommandModules": [
+    {
+      "file": "packages/daemon/src/storage/repositories/github-space-enabled-write.ts",
+      "lines": 42,
+      "sha256": "d2f0382018e266314d6e22e0ac9fbb7b2d6ebb5083ff804eb3813310c811a388"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/github-space-enabled-persist.ts",
+      "lines": 17,
+      "sha256": "679e241c86e7041f9b3e2d8c7ed076ac41a8614bde66f40e621c96b6a9ed3888"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/github-watched-repos-read.ts",
+      "lines": 44,
+      "sha256": "4c5945ea131459249bb302cdb27ee6a014fc6aadd5d15f9d402b3226972e6a95"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/github-space-settings-read.ts",
+      "lines": 26,
+      "sha256": "821cdbd20d30a954c0aa6c1c82ad8ff88e098abbd76e522e4072dce26d240681"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/space-extension-config-persist.ts",
+      "lines": 20,
+      "sha256": "3eb49614501626f43b0d679f09a7cfea5ae6d9592070e907adf1c283ed87758f"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-watched-projection.ts",
+      "lines": 29,
+      "sha256": "c9f18fb9061bfe708176fdd065a4a6e1301f7ffd78c03306c074fede5a1686eb"
+    }
+  ],
+  "stableCommandGraphLines": 178,
+  "stableCommandSubtreeSha256": "7242156b4892398f66d0f42805ce4ddd8a90155cd3ce3779c5012541c9eab2fb",
+  "commandContract": "Merged178-line data-only writer subtree. One registered write-mode transaction saves source/watched flags and full projected Space config, preserves caller/creation times and returns changedRows/config after commit. No replay or constructor effects.",
+  "stablePolicyRoots": [
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
+      "name": "start",
+      "owner": "GitHubEventExtension",
+      "lines": 18,
+      "sha256": "41abdeb9228476df2ae9934d76a09f24c5b2041cdcaaa2179411bf56ffc8bddd"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
+      "name": "stop",
+      "owner": "GitHubEventExtension",
+      "lines": 8,
+      "sha256": "338d8843d49b2c30483da1b3a10a59409cb57cd694cf603f03fd00707f2d7fbe"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
+      "name": "scheduleNextPoll",
+      "owner": "GitHubEventExtension",
+      "lines": 5,
+      "sha256": "412d5ea222fb60761a0bf8e6aac10a512079c91859e5a866fdcbbd9dca28b70b"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
+      "name": "scheduleNextPollAfter",
+      "owner": "GitHubEventExtension",
+      "lines": 17,
+      "sha256": "e60a1da658ad9f1599941f64cf9deed71b3c4fa130a0a6eda13f23c0d8a937d1"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
+      "name": "getNextPollDelayMs",
+      "owner": "GitHubEventExtension",
+      "lines": 13,
+      "sha256": "0e3648c60ae96eed227ce6c4476d1de9d3a53df911f6055bd31b5234399405a7"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
+      "name": "getPollIntervalMs",
+      "owner": "GitHubEventExtension",
+      "lines": 7,
+      "sha256": "2836cf7a3bf0c7162a3e55b25bae19640e8cbeecb491f89f0ac304d936fb0232"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
+      "name": "enablePollingCapability",
+      "owner": "GitHubEventExtension",
+      "lines": 8,
+      "sha256": "4e420bfc4d7ff56a8f89ad1c73cf5ba41299f561473bff53338cb7f9fb6f767b"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
+      "name": "ensurePollingActive",
+      "owner": "GitHubEventExtension",
+      "lines": 5,
+      "sha256": "b40fa77bfb50f6856fdbffbecba6650605de19a902eb79c3628c08f57bee6590"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
+      "name": "assertRpcConfigEnabled",
+      "lines": 9,
+      "sha256": "3a19416016c634b3d5bccf9ea5fa05cdd206cb5cbb73b5b0e10e8baec161f092"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "listWatchedRepos",
+      "owner": "GitHubEventExtensionRepository",
+      "lines": 3,
+      "sha256": "fea8d4b2abe1f1bc9934d90c741fb46b4dfc34064d4e20a53b2099f65e52a7aa"
+    }
+  ],
+  "stablePolicyRootsSha256": "c37d55c2af9cc64e4111919f24eddea51532077be8e55e66aa2c6bbfaa2e8f9e",
+  "notificationBridge": {
+    "notify": {
+      "name": "onSourceConfigChanged",
+      "lines": 6,
+      "sha256": "1bf4a427f4b164f2f0eab40d9796848e60c57b83aded5025a86a9bc1d3a76cee"
+    },
+    "tableMap": {
+      "name": "sourceConfigTables",
+      "sha256": "3fac4d8d7fa15a5bd8c472d32269b97633090ede90f96dc98371c08bc1c8e0d3"
+    }
+  },
+  "stablePublicDependencies": [
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "sha256": "603bdfafd623d40bcce55f30e44abc4de5ab75100ecc2e9863ffdbb7f91d6947"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/extension-config-store.ts",
+      "sha256": "30f39909917d79db49f790e89ffcfc9c1b64d15dd27a69a19ed35564bd9d517e"
+    },
+    {
+      "file": "packages/daemon/src/app.ts",
+      "sha256": "d7cba475e25e9a0113f91ed8cb2188ea48fb97da1572ca0da50e94e5bdb4470f"
+    },
+    {
+      "file": "packages/daemon/src/storage/reactive-database.ts",
+      "sha256": "8eaf79b2fafe1bc9b3d04401aed2b15bf1a77d60ec67073191f03489fcb71e35"
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-gateway.ts",
+      "sha256": "54b7739518ba9c5c58bda82f7627a76d8483511949cd3469adc07e5643e09858"
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-gateway-worker.ts",
+      "sha256": "fbaeb4d89aa03a8dcc1e7aa686dedce502c0b279ebb6c2f7f5ef865bda3644b1"
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-op.ts",
+      "sha256": "459703e0371a0b1c351bf571a7a73126f6fd81a824e2ecdfbe0a7916986fbd3c"
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-ops.ts",
+      "sha256": "26573d2efcb46143bc4ea4473beca4fcde2ce242a512469b5ec12dfa8101585f"
+    }
+  ],
+  "wholeExtensionRestoredAstUnchanged": true,
+  "constructorBodyUnchanged": true,
+  "authorizationAndReplyAstUnchanged": true,
+  "policyContract": "Same pre-admission capability/parameter gate. Main-side capability and timer effects recheck current watched polling flags synchronously after receipt; this existing read remains main-side; same source notification/reply. Zero interval skips polling re-arm. Errors propagate; no catch/fallback/replay.",
+  "fixtureUpdates": "Prior native extraction/read/projection journeys and CI parents now expect0 target main writes; archived prior-commit evidence retained. Four legacy scenario setups seed a real FK Space row, behavioral assertions unchanged.",
+  "netPrepare": 0,
+  "netRun": 0,
+  "baselineIncrease": false,
+  "auditLimit": "Owned graph is the two public bridges plus existing constructor retaining its DB and the unchanged three-line current-state read adapter. The complete178-line merged command is an audited stable dependency. Authorization/poll/timer roots, app notification and shared files pinned exactly; downstream async poll/token/network/reactive/plugin/startup closures are not transitively audited. Public read RPCs, other writer families and constructor initialization remain outside this activation."
+}

@@ -1,0 +1,29 @@
+{
+  "mainThreadMovementClaim": false,
+  "boundary": "Space configuration SQL extraction only; public writes remain on main and other GitHub repository writes are outside this extraction",
+  "publicRpcMs": 0.7867499999999836,
+  "publicRpc": {
+    "replies": [
+      {
+        "spaceId": "synthetic-space-config",
+        "source": "github",
+        "enabled": true
+      },
+      {
+        "spaceId": "synthetic-space-config",
+        "source": "github",
+        "enabled": false
+      }
+    ],
+    "mainUpsertRuns": 2,
+    "exactSettingsAndCreationTimePreserved": true
+  },
+  "runtime": "Bun 1.4.3 macOS arm64",
+  "exitCode": 1,
+  "expectedFailure": "Space extension SQL helper is unavailable",
+  "unitContracts": {
+    "legacyPassed": 3,
+    "missingHelperFailed": 2
+  },
+  "temporaryDaemonDataRemoved": true
+}

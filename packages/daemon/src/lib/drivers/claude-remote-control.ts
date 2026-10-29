@@ -1,3 +1,4 @@
+import { withWorkerProvenance } from './worker-provenance.ts';
 import { CLAUDE_DESKTOP_WAKE_BRIEF, CLAUDE_RC_TOGGLE_REQUEST, fillPrompt } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { Logger } from '../logger.ts';
@@ -266,7 +267,14 @@ export function withClaudeRemoteControl(
       const started = await start(startRequest, context);
       if (started.ok) {
         const target = { sessionId: started.value.ref.id, title: started.value.title };
-        const delivery = await wake(target, startRequest.message, deps, context);
+        const message = startRequest.provenance
+          ? withWorkerProvenance(startRequest.message, {
+              model: started.value.model ?? null,
+              effort: started.value.effort ?? null,
+              harness: adapter.id,
+            })
+          : startRequest.message;
+        const delivery = await wake(target, message, deps, context);
         if (!delivery.ok)
           return {
             ...delivery,

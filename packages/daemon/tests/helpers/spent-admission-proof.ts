@@ -2,6 +2,7 @@ import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,6 +15,8 @@ export async function verifySpentAdmission(
   scenario: 'interrupted' | 'idle' | 'history' = 'interrupted'
 ): Promise<void> {
   const run = await mkdtemp(join(tmpdir(), 'spent-admission-'));
+  const removeRun = () => rmSync(run, { recursive: true, force: true });
+  process.once('exit', removeRun);
   const requestId = randomUUID();
   const markers = ['ADMISSION_HEAD', 'QUEUED_ONE', 'QUEUED_TWO', 'QUEUED_THREE', 'QUEUED_FOUR'];
   const requests: string[] = [];
@@ -483,28 +486,33 @@ export async function verifySpentAdmission(
     evidence.received = [...received];
     evidence.passed = true;
   } finally {
-    releaseCoverage?.();
-    release?.();
-    if (process.env.VERIFY_EVIDENCE_DIR) {
-      await mkdir(process.env.VERIFY_EVIDENCE_DIR, { recursive: true });
-      await writeFile(
-        join(
-          process.env.VERIFY_EVIDENCE_DIR,
-          scenario === 'interrupted'
-            ? `spent-admission-${kind}.json`
-            : `spent-admission-${scenario}-${kind}.json`
-        ),
-        JSON.stringify(evidence, null, 2)
-      );
-    }
-    unsubscribe();
-    QueryOptionsBuilder.prototype.build = build;
-    await transport?.close();
-    await daemon?.cleanup();
-    await new Promise<void>((resolve) => fixture.close(() => resolve()));
-    for (const [key, value] of prior) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
+    try {
+      releaseCoverage?.();
+      release?.();
+      if (process.env.VERIFY_EVIDENCE_DIR) {
+        await mkdir(process.env.VERIFY_EVIDENCE_DIR, { recursive: true });
+        await writeFile(
+          join(
+            process.env.VERIFY_EVIDENCE_DIR,
+            scenario === 'interrupted'
+              ? `spent-admission-${kind}.json`
+              : `spent-admission-${scenario}-${kind}.json`
+          ),
+          JSON.stringify(evidence, null, 2)
+        );
+      }
+      unsubscribe();
+      QueryOptionsBuilder.prototype.build = build;
+      await transport?.close();
+      await daemon?.cleanup();
+      await new Promise<void>((resolve) => fixture.close(() => resolve()));
+      for (const [key, value] of prior) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    } finally {
+      removeRun();
+      process.off('exit', removeRun);
     }
   }
 }

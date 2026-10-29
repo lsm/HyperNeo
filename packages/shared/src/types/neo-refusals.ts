@@ -1,4 +1,10 @@
 export const NEO_REFUSALS: Readonly<Record<string, string>> = {
+  speech_backend_not_configured:
+    'The daemon has no speech backend configured. Ask the operator to set HYPERNEO_SPEECH_URL; reply on screen in the meantime.',
+  speech_backend_unavailable:
+    'The speech backend could not be reached or returned an unsuccessful response. Reply on screen and ask the operator to check the service before retrying.',
+  invalid_speech_backend:
+    'The daemon speech backend URL is invalid or unsupported. Ask the operator to configure a valid HTTPS base URL; loopback HTTP is supported for local services.',
   neo_speech_not_available:
     'Spoken replies require a bound Neo session and an opted-in human client. Continue with a screen reply if unavailable.',
   speech_receipt_mismatch:

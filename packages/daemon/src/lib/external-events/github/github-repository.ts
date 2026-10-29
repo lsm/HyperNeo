@@ -1,5 +1,22 @@
+import { upsertGitHubWatchedRepo } from '../../../storage/repositories/github-watched-upsert-persist.ts';
+import { persistGitHubPollCursorJson } from '../../../storage/repositories/github-cursor-persist.ts';
+import {
+  findGitHubWatchedRepo,
+  findGitHubWatchedRepoById,
+} from '../../../storage/repositories/github-watched-repo-lookups.ts';
+import { persistGitHubPollingIntent } from '../../../storage/repositories/github-polling-intent-persist.ts';
+import { persistGitHubFilterCurrentUser } from '../../../storage/repositories/github-filter-persist.ts';
+import {
+  listGitHubWatchedRepos,
+  mapGitHubWatchedRepo,
+} from '../../../storage/repositories/github-watched-repos-read.ts';
+import {
+  readGitHubSpaceEnabled,
+  readGitHubPollingIntent,
+  readGitHubFilterCurrentUser,
+} from '../../../storage/repositories/github-space-settings-read.ts';
+import { persistGitHubSpaceEnabled } from '../../../storage/repositories/github-space-enabled-persist.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
-import { generateUUID } from '@hyperneo/shared';
 import type { GitHubPollResume } from './github-poll-slice.ts';
 
 export interface PollCursor {
@@ -113,113 +130,7 @@ export class GitHubEventExtensionRepository {
     webhookLastError?: string | null;
     webhookConfiguredAt?: number | null;
   }): GitHubWatchedRepo {
-    const now = Date.now();
-    const existing = this.getWatchedRepo(params.spaceId, params.owner, params.repo);
-    const wasActive = existing?.enabled && existing?.pollingEnabled;
-    const nextEnabled = params.enabled === undefined ? (existing?.enabled ?? true) : params.enabled;
-    const nextPolling = params.pollingEnabled ?? existing?.pollingEnabled ?? false;
-    const willBeActive = nextEnabled && nextPolling;
-    const pollingNewlyEnabled = willBeActive && !wasActive;
-    if (existing) {
-      this.db
-        .prepare(
-          `UPDATE space_github_watched_repos
-						 SET enabled = ?, webhook_enabled = ?, polling_enabled = ?, webhook_secret = COALESCE(?, webhook_secret),
-						     webhook_remote_id = COALESCE(?, webhook_remote_id), webhook_url = COALESCE(?, webhook_url),
-						     webhook_auto_registered = ?, webhook_active = ?, webhook_last_checked_at = COALESCE(?, webhook_last_checked_at),
-						     webhook_last_error = ?, webhook_configured_at = COALESCE(?, webhook_configured_at), updated_at = ?
-						 WHERE id = ?`
-        )
-        .run(
-          params.enabled === undefined ? (existing.enabled ? 1 : 0) : params.enabled ? 1 : 0,
-          params.webhookEnabled === undefined
-            ? existing.webhookEnabled
-              ? 1
-              : 0
-            : params.webhookEnabled
-              ? 1
-              : 0,
-          params.pollingEnabled === undefined
-            ? existing.pollingEnabled
-              ? 1
-              : 0
-            : params.pollingEnabled
-              ? 1
-              : 0,
-          params.webhookSecret ?? null,
-          params.webhookRemoteId ?? null,
-          params.webhookUrl ?? null,
-          params.webhookAutoRegistered === undefined
-            ? existing.webhookAutoRegistered
-              ? 1
-              : 0
-            : params.webhookAutoRegistered
-              ? 1
-              : 0,
-          params.webhookActive === undefined
-            ? existing.webhookActive === null
-              ? null
-              : existing.webhookActive
-                ? 1
-                : 0
-            : params.webhookActive === null
-              ? null
-              : params.webhookActive
-                ? 1
-                : 0,
-          params.webhookLastCheckedAt ?? null,
-          params.webhookLastError === undefined
-            ? existing.webhookLastError
-            : params.webhookLastError,
-          params.webhookConfiguredAt ?? null,
-          now,
-          existing.id
-        );
-    } else {
-      const id = generateUUID();
-      const spaceEnabled = params.enabled ?? this.isSpaceEnabled(params.spaceId);
-      this.db
-        .prepare(
-          `INSERT INTO space_github_watched_repos
-					 (id, space_id, owner, repo, enabled, webhook_enabled, polling_enabled, webhook_secret, webhook_remote_id, webhook_url,
-					  webhook_auto_registered, webhook_active, webhook_last_checked_at, webhook_last_error, webhook_configured_at, created_at, updated_at)
-					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-        .run(
-          id,
-          params.spaceId,
-          params.owner,
-          params.repo,
-          spaceEnabled ? 1 : 0,
-          params.webhookEnabled === false ? 0 : 1,
-          params.pollingEnabled ? 1 : 0,
-          params.webhookSecret ?? null,
-          params.webhookRemoteId ?? null,
-          params.webhookUrl ?? null,
-          params.webhookAutoRegistered ? 1 : 0,
-          params.webhookActive === undefined || params.webhookActive === null
-            ? null
-            : params.webhookActive
-              ? 1
-              : 0,
-          params.webhookLastCheckedAt ?? null,
-          params.webhookLastError ?? null,
-          params.webhookConfiguredAt ?? null,
-          now,
-          now
-        );
-    }
-    const watched = this.getWatchedRepo(params.spaceId, params.owner, params.repo)!;
-    if (pollingNewlyEnabled) {
-      const cursor = watched.pollCursor ?? {};
-      cursor.checkRunPollingEnabledAt = now;
-      delete cursor.checkRunHeadLastSeenAt;
-      delete cursor.checkRunHeadPendingLastSeenAt;
-      delete cursor.endpointLastSeenAt?.check_runs;
-      delete cursor.endpointPendingLastSeenAt?.check_runs;
-      this.updatePollCursorJson(watched.id, cursor);
-    }
-    return this.getWatchedRepoById(watched.id)!;
+    return upsertGitHubWatchedRepo(this.db, params);
   }
 
   clearWebhookRegistration(id: string, options: { clearSecret?: boolean } = {}): void {
@@ -237,58 +148,25 @@ export class GitHubEventExtensionRepository {
 
   setRepoEnabled(spaceId: string, enabled: boolean): number {
     const now = Date.now();
-    this.db
-      .prepare(
-        `INSERT INTO space_github_source_settings (space_id, enabled, created_at, updated_at)
-				 VALUES (?, ?, ?, ?)
-				 ON CONFLICT(space_id) DO UPDATE SET enabled = excluded.enabled, updated_at = excluded.updated_at`
-      )
-      .run(spaceId, enabled ? 1 : 0, now, now);
-    return this.db
-      .prepare(
-        `UPDATE space_github_watched_repos SET enabled = ?, updated_at = ? WHERE space_id = ?`
-      )
-      .run(enabled ? 1 : 0, now, spaceId).changes;
+    return persistGitHubSpaceEnabled(this.db, spaceId, enabled, now);
   }
 
   setPollingIntent(spaceId: string, enabled: boolean): void {
     const now = Date.now();
-    this.db
-      .prepare(
-        `INSERT INTO space_github_source_settings (space_id, enabled, polling_intent, created_at, updated_at)
-				 VALUES (?, 1, ?, ?, ?)
-				 ON CONFLICT(space_id) DO UPDATE SET polling_intent = excluded.polling_intent, updated_at = excluded.updated_at`
-      )
-      .run(spaceId, enabled ? 1 : 0, now, now);
+    persistGitHubPollingIntent(this.db, spaceId, enabled, now);
   }
 
   getPollingIntent(spaceId: string): boolean {
-    const row = this.db
-      .prepare(
-        'SELECT polling_intent AS pollingIntent FROM space_github_source_settings WHERE space_id = ?'
-      )
-      .get(spaceId) as { pollingIntent: number } | undefined;
-    return row ? row.pollingIntent === 1 : false;
+    return readGitHubPollingIntent(this.db, spaceId);
   }
 
   setFilterCurrentUser(spaceId: string, enabled: boolean): void {
     const now = Date.now();
-    this.db
-      .prepare(
-        `INSERT INTO space_github_source_settings (space_id, enabled, filter_current_user, created_at, updated_at)
-				 VALUES (?, 1, ?, ?, ?)
-				 ON CONFLICT(space_id) DO UPDATE SET filter_current_user = excluded.filter_current_user, updated_at = excluded.updated_at`
-      )
-      .run(spaceId, enabled ? 1 : 0, now, now);
+    persistGitHubFilterCurrentUser(this.db, spaceId, enabled, now);
   }
 
   getFilterCurrentUser(spaceId: string): boolean {
-    const row = this.db
-      .prepare(
-        'SELECT filter_current_user AS filterCurrentUser FROM space_github_source_settings WHERE space_id = ?'
-      )
-      .get(spaceId) as { filterCurrentUser: number } | undefined;
-    return row ? row.filterCurrentUser === 1 : true;
+    return readGitHubFilterCurrentUser(this.db, spaceId);
   }
 
   countSpacesWithPollingIntent(): number {
@@ -322,23 +200,11 @@ export class GitHubEventExtensionRepository {
   }
 
   isSpaceEnabled(spaceId: string): boolean {
-    const row = this.db
-      .prepare(`SELECT enabled FROM space_github_source_settings WHERE space_id = ?`)
-      .get(spaceId) as { enabled: number } | undefined;
-    return row ? row.enabled === 1 : true;
+    return readGitHubSpaceEnabled(this.db, spaceId);
   }
 
   listWatchedRepos(spaceId?: string): GitHubWatchedRepo[] {
-    const rows = spaceId
-      ? (this.db
-          .prepare(
-            `SELECT * FROM space_github_watched_repos WHERE space_id = ? ORDER BY owner, repo`
-          )
-          .all(spaceId) as Record<string, unknown>[])
-      : (this.db
-          .prepare(`SELECT * FROM space_github_watched_repos ORDER BY space_id, owner, repo`)
-          .all() as Record<string, unknown>[]);
-    return rows.map((r) => this.rowToRepo(r));
+    return listGitHubWatchedRepos(this.db, spaceId);
   }
 
   listWebhookValidationRepos(): GitHubWatchedRepo[] {
@@ -388,12 +254,7 @@ export class GitHubEventExtensionRepository {
   }
 
   getWatchedRepo(spaceId: string, owner: string, repo: string): GitHubWatchedRepo | null {
-    const row = this.db
-      .prepare(
-        `SELECT * FROM space_github_watched_repos WHERE space_id = ? AND lower(owner)=lower(?) AND lower(repo)=lower(?)`
-      )
-      .get(spaceId, owner, repo) as Record<string, unknown> | undefined;
-    return row ? this.rowToRepo(row) : null;
+    return findGitHubWatchedRepo(this.db, spaceId, owner, repo);
   }
 
   getAutoRegisteredRepo(owner: string, repo: string, webhookUrl: string): GitHubWatchedRepo | null {
@@ -475,10 +336,7 @@ export class GitHubEventExtensionRepository {
   }
 
   getWatchedRepoById(id: string): GitHubWatchedRepo | null {
-    const row = this.db.prepare(`SELECT * FROM space_github_watched_repos WHERE id = ?`).get(id) as
-      | Record<string, unknown>
-      | undefined;
-    return row ? this.rowToRepo(row) : null;
+    return findGitHubWatchedRepoById(this.db, id);
   }
 
   markWebhookReceived(id: string): void {
@@ -513,9 +371,7 @@ export class GitHubEventExtensionRepository {
   }
 
   updatePollCursorJson(id: string, cursor: PollCursor): void {
-    this.db
-      .prepare(`UPDATE space_github_watched_repos SET poll_cursor = ?, updated_at = ? WHERE id = ?`)
-      .run(JSON.stringify(cursor), Date.now(), id);
+    persistGitHubPollCursorJson(this.db, id, cursor);
   }
 
   clearPollErrorsForAllRepos(): void {
@@ -582,30 +438,6 @@ export class GitHubEventExtensionRepository {
   }
 
   private rowToRepo(row: Record<string, unknown>): GitHubWatchedRepo {
-    return {
-      id: row.id as string,
-      spaceId: row.space_id as string,
-      owner: row.owner as string,
-      repo: row.repo as string,
-      enabled: row.enabled === 1,
-      webhookEnabled: row.webhook_enabled === 1,
-      pollingEnabled: row.polling_enabled === 1,
-      webhookSecret: (row.webhook_secret as string | null) ?? null,
-      webhookRemoteId: (row.webhook_remote_id as number | null) ?? null,
-      webhookUrl: (row.webhook_url as string | null) ?? null,
-      webhookAutoRegistered: row.webhook_auto_registered === 1,
-      webhookActive:
-        row.webhook_active === null || row.webhook_active === undefined
-          ? null
-          : row.webhook_active === 1,
-      webhookLastCheckedAt: (row.webhook_last_checked_at as number | null) ?? null,
-      webhookLastError: (row.webhook_last_error as string | null) ?? null,
-      webhookConfiguredAt: (row.webhook_configured_at as number | null) ?? null,
-      lastWebhookAt: (row.last_webhook_at as number | null) ?? null,
-      lastPollAt: (row.last_poll_at as number | null) ?? null,
-      pollCursor: row.poll_cursor ? (JSON.parse(row.poll_cursor as string) as PollCursor) : null,
-      createdAt: row.created_at as number,
-      updatedAt: row.updated_at as number,
-    };
+    return mapGitHubWatchedRepo(row);
   }
 }
