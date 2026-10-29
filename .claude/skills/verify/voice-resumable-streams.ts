@@ -1,11 +1,11 @@
 import { opusFixture } from '../../../packages/daemon/tests/helpers/opus-fixture.ts';
+import WebSocket, { WebSocketServer } from 'ws';
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { openSync, closeSync, writeFileSync, readFileSync, copyFileSync, mkdirSync } from 'node:fs';
+import { openSync, closeSync, writeFileSync, readFileSync, copyFileSync, mkdirSync, existsSync } from 'node:fs';
 import { createServer, connect as connectTcp } from 'node:net';
 import { join } from 'node:path';
-import WebSocket, { WebSocketServer } from 'ws';
 
 const [mode, ...args] = process.argv.slice(2);
 const run = args.at(-1)!;
@@ -47,13 +47,17 @@ asr.on('connection', (socket) => {
   });
 });
 copyFileSync('.claude/skills/verify/gh-stub.sh', join(run, 'bin/gh'));
+writeFileSync(join(run, 'bin/security'), '#!/bin/sh\nprintf "unexpected-discovery\\n" >> "$HYPERNEO_DATA_DIR/security-attempts"\nexit 1\n', { mode: 0o700 });
 const log = openSync(join(run, 'evidence/daemon.log'), 'w');
-const daemon = spawn(binary ?? process.execPath, [...(binary ? [] : [...(process.versions.deno ? ['run', '-A'] : []), 'packages/cli/main.ts']), '--port', String(port), '--host', '127.0.0.1', '--db-path', join(run, 'data/daemon.db')], {
-  env: { ...process.env, HYPERNEO_WORKSPACE_PATH: run, HF_HUB_OFFLINE: '1', TRANSFORMERS_OFFLINE: '1' }, stdio: ['ignore', log, log],
+const deno = mode.includes('deno');
+observed.daemonRuntime = binary ? 'compiled-bun' : deno ? 'deno' : 'bun';
+const daemon = spawn(binary ?? (deno ? 'deno' : process.execPath), binary ? ['--port', String(port), '--host', '127.0.0.1', '--db-path', join(run, 'data/daemon.db')] : deno ? ['run', '-A', 'main.ts'] : ['packages/cli/main.ts', '--port', String(port), '--host', '127.0.0.1', '--db-path', join(run, 'data/daemon.db')], {
+  cwd: deno && !binary ? join(process.cwd(), 'packages/daemon') : process.cwd(),
+  env: { ...process.env, HYPERNEO_WORKSPACE_PATH: run, HYPERNEO_PORT: String(port), HYPERNEO_HOST: '127.0.0.1', DB_PATH: join(run, 'data/daemon.db'), HF_HUB_OFFLINE: '1', TRANSFORMERS_OFFLINE: '1' }, stdio: ['ignore', log, log],
 });
 closeSync(log);
 writeFileSync(join(run, 'daemon.pid'), String(daemon.pid));
-const exited = new Promise<void>((done) => daemon.once('exit', () => done()));
+const exited = new Promise<{ code: number | null; signal: string | null }>((done) => daemon.once('exit', (code, signal) => done({ code, signal })));
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
 async function connect(credential?: string) {
   const url = `ws://127.0.0.1:${port}/ws`;
@@ -202,7 +206,7 @@ try {
       return error.code === 'VOICE_STREAM_NOT_FOUND';
     });
   }
-  observed.passed = true;
+  observed.protocolPassed = true;
 } catch (error) {
   observed.error = error instanceof Error ? { message: error.message, code: (error as Error & { code?: string }).code } : String(error);
   throw error;
@@ -212,14 +216,20 @@ try {
   await new Promise<void>((done) => asr.close(() => done()));
   daemon.kill('SIGTERM');
   const shutdownDeadline = setTimeout(() => daemon.kill('SIGKILL'), 15_000);
-  try { await exited; } finally { clearTimeout(shutdownDeadline); }
-  observed.daemonExitCode = daemon.exitCode;
+  const status = await exited.finally(() => clearTimeout(shutdownDeadline));
+  observed.daemonExitCode = status.code;
+  observed.daemonExitSignal = status.signal;
   const logText = readFileSync(join(run, 'evidence/daemon.log'), 'utf8');
   observed.syntheticSecretsAbsent = syntheticSecrets.every((secret) => !logText.includes(secret));
+  observed.credentialDiscoveryAbsent = !existsSync(join(run, 'data/security-attempts'));
+  observed.databaseClosedErrorAbsent = !/database (?:is|has been) closed/i.test(logText);
+  observed.passed = observed.protocolPassed === true && status.code === 0 && status.signal === null && observed.syntheticSecretsAbsent === true && observed.credentialDiscoveryAbsent === true && observed.databaseClosedErrorAbsent === true;
   writeFileSync(join(run, 'evidence/daemon.log'), syntheticSecrets.reduce((text, secret) => text.replaceAll(secret, '[synthetic secret redacted]'), logText));
   writeFileSync(join(run, 'evidence/voice-resumable.json'), JSON.stringify(observed, null, 2));
   assert(observed.syntheticSecretsAbsent, 'synthetic pairing secret appeared in evidence');
-  assert.equal(daemon.exitCode, 0, 'isolated daemon did not shut down cleanly');
+  assert.equal(observed.daemonExitCode, 0, 'isolated daemon did not shut down cleanly');
+  assert.equal(observed.daemonExitSignal, null, 'isolated daemon exited by signal');
+  assert(observed.credentialDiscoveryAbsent, 'isolated daemon attempted credential discovery');
   assert(!/database (?:is|has been) closed/i.test(readFileSync(join(run, 'evidence/daemon.log'), 'utf8')), 'closed database during proof shutdown');
 }
 console.log(JSON.stringify(observed));
