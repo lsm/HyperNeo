@@ -36,3 +36,6 @@ sample numbers and outcome metadata are retained; the shared wrapper removes
 temporary data. `quick` instead of `verify` skips the real-time expiry check and
 must not be reported as full grace verification. This proves the daemon's
 protocol and real pairing path, not physical-phone audio or a production network.
+
+The RPC proof also cancels a detached paired recording without resuming first:
+the ASR connection closes and another resume returns `VOICE_STREAM_NOT_FOUND`.

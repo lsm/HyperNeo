@@ -54,3 +54,8 @@ unique audio, and final text events target the rebound connection. Interim text
 missed while disconnected is not replayed. Successful stop/cancel retires the
 stream; this protocol does not persist audio or completed stop responses across
 daemon restarts. Clients without offset/resume retain their existing path.
+
+Cancel also retires a detached stream when called by its paired owner, without
+requiring resume first. It does not cancel another live connection's stream,
+even for the same paired device. Unknown or foreign cancel remains an idempotent
+`{ok:true}` no-op.

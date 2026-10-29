@@ -280,7 +280,13 @@ export function registerVoiceHandlers(
 
   messageHub.onRequest<{ streamId: string }>('voice.stream.cancel', async (data, context) => {
     const owned = data?.streamId ? voiceStreams.get(data.streamId) : undefined;
-    if (owned?.clientId === (context?.clientId ?? context?.sessionId ?? 'global')) {
+    const clientId = context?.clientId ?? context?.sessionId ?? 'global';
+    if (
+      owned &&
+      (owned.clientId === clientId ||
+        (owned.clientId === null &&
+          typeof voiceStreamResume(owned, ownerOf(clientId)) !== 'string'))
+    ) {
       owned.stream.cancel();
       deleteVoiceStream(data.streamId);
     }
