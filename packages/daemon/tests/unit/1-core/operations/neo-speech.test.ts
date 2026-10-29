@@ -92,6 +92,110 @@ describe('spoken replies separate from publications', () => {
     mailbox.close();
   });
 
+  test('an unavailable failed-receipt write does not drop the next healthy synthesis', async () => {
+    await call('listen', { sessionId, enabled: true, audio: true });
+    const first = await say('broken-upstream');
+    for (let i = 0; i < 100 && synthesis < 1; i++) await new Promise((done) => setTimeout(done, 1));
+    let failedWrites = 0;
+    writeGate = async () => {
+      writeGate = undefined;
+      failedWrites++;
+      throw new Error('Public fixture receipt-write failure');
+    };
+    audioController.error(new Error('Public fixture upstream failure'));
+    for (let i = 0; i < 100 && !failedWrites; i++) await new Promise((done) => setTimeout(done, 1));
+    expect(failedWrites).toBe(1);
+    expect(
+      messages.some(
+        (item) => item.message.data.id === first.id && item.message.data.type === 'failed'
+      )
+    ).toBe(true);
+    const next = await say('healthy-after-write-failure');
+    for (let i = 0; i < 100 && synthesis < 2; i++) await new Promise((done) => setTimeout(done, 1));
+    expect(synthesis).toBe(2);
+    expect(
+      messages.some(
+        (item) => item.message.data.id === next.id && item.message.data.type === 'failed'
+      )
+    ).toBe(false);
+    if (synthesis !== 2) return;
+    audioController.enqueue(new Uint8Array([1, 0, 2, 0]));
+    audioController.close();
+    for (
+      let i = 0;
+      i < 100 &&
+      !messages.some(
+        (item) => item.message.data.id === next.id && item.message.data.type === 'end'
+      );
+      i++
+    )
+      await new Promise((done) => setTimeout(done, 1));
+    expect(
+      messages.some(
+        (item) => item.message.data.id === next.id && item.message.data.type === 'audio'
+      )
+    ).toBe(true);
+    expect(
+      messages.some((item) => item.message.data.id === next.id && item.message.data.type === 'end')
+    ).toBe(true);
+  });
+
+  test.each([
+    ['', 'speech_backend_not_configured'],
+    ['http://127.0.0.1:18555', 'speech_backend_unavailable'],
+    ['http://example.invalid', 'invalid_speech_backend'],
+  ])('catalog returns a typed rejection for %s', async (base, reason) => {
+    const catalog = new NeoSpeech(
+      hub,
+      runDbOpOn(mailbox.db),
+      () => true,
+      base,
+      (async () => new Response('', { status: 503 })) as typeof fetch
+    );
+    try {
+      const result = await invokeOperation(
+        createOperationRegistry(catalog.operations),
+        'neo.speech.catalog',
+        {},
+        human
+      );
+      expect(result).toMatchObject({ kind: 'completed', value: { ok: false, reason } });
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  test('catalog still returns voices and keeps unexpected infrastructure errors as failures', async () => {
+    for (const available of [true, false]) {
+      const catalog = new NeoSpeech(
+        hub,
+        runDbOpOn(mailbox.db),
+        () => true,
+        'http://127.0.0.1:18555',
+        (async () => {
+          if (!available) throw new Error('Public fixture infrastructure fault');
+          return Response.json({ data: [{ id: 'ryan' }] });
+        }) as typeof fetch
+      );
+      try {
+        const result = await invokeOperation(
+          createOperationRegistry(catalog.operations),
+          'neo.speech.catalog',
+          {},
+          human
+        );
+        if (available)
+          expect(result).toMatchObject({
+            kind: 'completed',
+            value: { ok: true, catalog: { data: [{ id: 'ryan' }] } },
+          });
+        else expect(result.kind).toBe('failed');
+      } finally {
+        await catalog.dispose();
+      }
+    }
+  });
+
   test('server sends audio before synthesis finishes without blocking MCP or replaying it', async () => {
     await call('listen', { sessionId, enabled: true, audio: true, voice: 'ryan' });
     const saved = await say();
