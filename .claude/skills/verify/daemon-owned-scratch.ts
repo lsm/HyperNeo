@@ -134,7 +134,34 @@ try {
   assert.equal((health.data as { status?: string }).status, 'ok');
   ws!.close(); ws = undefined;
   evidence.cleanupFailure = { scratchRetained: true, leaseRetained: true, diagnostics, health };
-  await app.cleanup(); app = undefined;
+  const shutdownRoots = [await fixture('shutdown-one'), await fixture('shutdown-two')].sort((a, b) => ownerPath(a).localeCompare(ownerPath(b)));
+  const [shutdownBlocked, shutdownHealthy] = shutdownRoots;
+  const shutdownLease = readFileSync(ownerPath(shutdownBlocked), 'utf8');
+  const shutdownErrors: string[] = [];
+  const raw = app.db.getDatabase();
+  console.error = (...args: unknown[]) => {
+    shutdownErrors.push(args.map(String).join(' '));
+    originalError(...args);
+  };
+  Bun.spawn = ((args, options) => {
+    if (Array.isArray(args) && args.includes('worker-runtime-cleanup') && args.includes(workerWorkLocations(shutdownBlocked).scratch)) {
+      args = [...args];
+      args[args.indexOf('/bin/sh') + 2] = "printf 'synthetic shutdown boundary unavailable' >&2; exit 23";
+    }
+    return originalSpawn(args, options);
+  }) as typeof Bun.spawn;
+  let shutdownError: unknown;
+  try { await app.cleanup(); } catch (error) { shutdownError = String(error); }
+  finally { Bun.spawn = originalSpawn; console.error = originalError; app = undefined; }
+  let databaseClosed = false;
+  try { raw.query('SELECT 1').get(); } catch { databaseClosed = true; }
+  evidence.shutdownFailure = { shutdownError, databaseClosed, shutdownErrors, healthyRemoved: !existsSync(workerWorkLocations(shutdownHealthy).scratch) };
+  assert.equal(shutdownError, undefined, 'scratch failure must not abort graceful shutdown');
+  assert(databaseClosed, 'shutdown must close its database after scratch failure');
+  assert(!existsSync(workerWorkLocations(shutdownHealthy).scratch), 'one failed lease must not strand healthy leases');
+  assert(existsSync(workerWorkLocations(shutdownBlocked).scratch));
+  assert.equal(readFileSync(ownerPath(shutdownBlocked), 'utf8'), shutdownLease);
+  assert(shutdownErrors.some((line) => line.includes('synthetic shutdown boundary unavailable')));
   app = await createDaemonApp({ config: config(), verbose: false });
   assert(!existsSync(workerWorkLocations(blocked).scratch), 'next startup must retry retained scratch');
   assert(!existsSync(ownerPath(blocked)), 'successful retry must remove the retained lease');

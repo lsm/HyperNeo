@@ -169,3 +169,17 @@ test('lease renewal retains live SDK children of previous owners', async () => {
   await collectDaemonScratch(false, [{ pid: process.pid, daemonPid: oldDaemon }]);
   expect(existsSync(runtime())).toBe(true);
 });
+
+test('renewal drops dead owner guards before their PIDs can be reused', async () => {
+  await prepareDaemonWorkerSandbox(root);
+  const retired = deadPid();
+  ageOwner(retired);
+  await prepareDaemonWorkerSandbox(root);
+  const kill = process.kill.bind(process);
+  vi.spyOn(process, 'kill').mockImplementation((pid, signal) =>
+    pid === retired ? true : kill(pid, signal)
+  );
+  await collectDaemonScratch(false);
+  expect(existsSync(runtime())).toBe(false);
+  expect(existsSync(marker())).toBe(false);
+});
