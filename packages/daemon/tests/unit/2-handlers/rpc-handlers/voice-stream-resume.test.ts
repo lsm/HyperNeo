@@ -1,3 +1,4 @@
+import { opusFixture } from '../../../helpers/opus-fixture.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CallContext, MessageHub } from '@hyperneo/shared';
 import { VoiceStream } from '../../../../src/lib/voice/stream-relay.ts';
@@ -319,5 +320,54 @@ describe('resumable voice stream RPC', () => {
     await expect(call('voice.stream.resume', abandoned, 'fourth')).rejects.toMatchObject({
       code: 'VOICE_STREAM_NOT_FOUND',
     });
+  });
+
+  it('defaults to PCM16 and advertises both input formats', async () => {
+    expect(await call('voice.stream.start', { sampleRate: 16_000 })).toMatchObject({
+      formats: ['pcm16', 'opus'],
+    });
+  });
+
+  it('resumes an Opus packet split across reconnect and overlapping encoded offsets', async () => {
+    const fixture = await opusFixture(3);
+    const { streamId } = (await call('voice.stream.start', {
+      encoding: 'opus',
+      sampleRate: 16_000,
+    })) as { streamId: string };
+    const cut = fixture.boundaries[1] + 1;
+    await call('voice.stream.chunk', {
+      streamId,
+      audioBase64: fixture.encoded.subarray(0, cut).toString('base64'),
+      offset: 0,
+    });
+    disconnect('first');
+    expect(await call('voice.stream.resume', { streamId }, 'second')).toEqual({
+      ok: true,
+      receivedBytes: cut,
+    });
+    await call(
+      'voice.stream.chunk',
+      { streamId, audioBase64: fixture.encoded.subarray(0, cut).toString('base64'), offset: 0 },
+      'second'
+    );
+    await call(
+      'voice.stream.chunk',
+      {
+        streamId,
+        audioBase64: fixture.encoded.subarray(cut - 1).toString('base64'),
+        offset: cut - 1,
+      },
+      'second'
+    );
+    const samples = [];
+    for (let index = 0; index < fixture.pcm.length; index += 2)
+      samples.push(fixture.pcm.readInt16LE(index));
+    expect(await call('voice.stream.stop', { streamId }, 'second')).toEqual({
+      text: samples.join(','),
+      via: 'batch',
+    });
+    expect(
+      events.filter(({ message }) => (message.data as { isFinal: boolean }).isFinal)
+    ).toHaveLength(1);
   });
 });

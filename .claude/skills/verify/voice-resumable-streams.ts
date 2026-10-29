@@ -1,3 +1,5 @@
+import { opusFixture } from '../../../packages/daemon/tests/helpers/opus-fixture.ts';
+import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { openSync, closeSync, writeFileSync, readFileSync, copyFileSync, mkdirSync } from 'node:fs';
@@ -6,6 +8,8 @@ import { join } from 'node:path';
 import WebSocket, { WebSocketServer } from 'ws';
 
 const [mode, run] = process.argv.slice(2);
+const isOpus = mode.startsWith('opus');
+const transcript = (bytes: Buffer, fallback: string) => isOpus ? createHash('sha256').update(bytes).digest('hex') : fallback;
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 for (const part of ['data', 'evidence']) mkdirSync(join(run, part), { recursive: true });
@@ -29,6 +33,11 @@ asr.on('connection', (socket) => {
     if (!binary && JSON.parse(String(data)).type !== 'CloseStream') return;
     if (binary) record.chunks.push(Buffer.from(data as Buffer));
     const pcm = Buffer.concat(record.chunks);
+    if (isOpus) {
+      socket.send(JSON.stringify({ type: 'Results', is_final: !binary, channel: { alternatives: [{ transcript: createHash('sha256').update(pcm).digest('hex') }] } }));
+      if (!binary) socket.close(1000);
+      return;
+    }
     const samples = [];
     for (let i = 0; i < pcm.length; i += 2) samples.push(pcm.readInt16LE(i));
     socket.send(JSON.stringify({ type: 'Results', is_final: !binary, channel: { alternatives: [{ transcript: samples.join(',') }] } }));
@@ -95,7 +104,7 @@ try {
   await first.call('voice.stream.chunk', { streamId: legacy.streamId, audioBase64: pcm([7, 8]) });
   await first.call('voice.stream.chunk', { streamId: legacy.streamId, audioBase64: pcm([9]) });
   observed.legacy = await first.call('voice.stream.stop', { streamId: legacy.streamId });
-  assert.deepEqual(observed.legacy, { text: '7,8,9', via: 'streaming' });
+  assert.deepEqual(observed.legacy, { text: transcript(Buffer.from(new Int16Array([7, 8, 9]).buffer), '7,8,9'), via: 'streaming' });
   const code = await first.call('operation.invoke', { name: 'device.pair.create', input: { kind: 'human', name: 'Synthetic phone' } });
   assert.equal(typeof code.code, 'string');
   syntheticSecrets.push(String(code.code));
@@ -107,20 +116,26 @@ try {
   first = await connect(credential);
   assert.equal((await first.call('operation.invoke', { name: 'device.pair.pending', input: {} })).ok, true);
   observed.pairedIdentityConfirmed = true;
-  const started = await first.call('voice.stream.start', { encoding: 'pcm16', sampleRate: 16_000 });
+  const fixture = isOpus ? await opusFixture() : null;
+  const started = await first.call('voice.stream.start', { encoding: fixture ? 'opus' : 'pcm16', sampleRate: 16_000 });
   observed.started = started;
-  await first.call('voice.stream.chunk', { streamId: started.streamId, audioBase64: pcm([1, 2, 3]), offset: 0 });
+  assert.deepEqual(started.formats, ['pcm16', 'opus']);
+  const cut = fixture ? fixture.boundaries[1] + 1 : 6;
+  const initial = fixture ? fixture.encoded.subarray(0, cut).toString('base64') : pcm([1, 2, 3]);
+  await first.call('voice.stream.chunk', { streamId: started.streamId, audioBase64: initial, offset: 0 });
   observed.disconnectCode = await first.drop();
   assert.equal(observed.disconnectCode, 1006);
   let second = await connect(credential);
   observed.resume = await second.call('voice.stream.resume', { streamId: started.streamId });
-  assert.deepEqual(observed.resume, { ok: true, receivedBytes: 6 });
+  assert.deepEqual(observed.resume, { ok: true, receivedBytes: cut });
   assert.equal(started.resumable, true);
-  await second.call('voice.stream.chunk', { streamId: started.streamId, audioBase64: pcm([1, 2, 3]), offset: 0 });
-  await second.call('voice.stream.chunk', { streamId: started.streamId, audioBase64: pcm([3, 4, 5]), offset: 4 });
+  await second.call('voice.stream.chunk', { streamId: started.streamId, audioBase64: initial, offset: 0 });
+  await second.call('voice.stream.chunk', { streamId: started.streamId, audioBase64: fixture ? fixture.encoded.subarray(cut - 1).toString('base64') : pcm([3, 4, 5]), offset: fixture ? cut - 1 : 4 });
   observed.stopped = await second.call('voice.stream.stop', { streamId: started.streamId });
-  assert.deepEqual(observed.stopped, { text: '1,2,3,4,5', via: 'streaming' });
-  assert.deepEqual(Buffer.concat(records[1].chunks), Buffer.from(new Int16Array([1, 2, 3, 4, 5]).buffer));
+  const expectedPcm = fixture?.pcm ?? Buffer.from(new Int16Array([1, 2, 3, 4, 5]).buffer);
+  assert.deepEqual(observed.stopped, { text: transcript(expectedPcm, '1,2,3,4,5'), via: 'streaming' });
+  assert.deepEqual(Buffer.concat(records[1].chunks), expectedPcm);
+  if (fixture) observed.bandwidth = { encodedBytes: fixture.encoded.length, decodedBytes: expectedPcm.length, encodedBytesPerMinute: fixture.encoded.length * 60, decodedSha256: createHash('sha256').update(expectedPcm).digest('hex') };
   observed.finalEvents = second.events.filter((event) => event.isFinal);
   assert.equal((observed.finalEvents as unknown[]).length, 1);
   observed.legacyReconnects = 0;
@@ -131,7 +146,7 @@ try {
     if (index < 8) await legacyPhone.drop();
     else {
       observed.legacyReconnectFinal = await legacyPhone.call('voice.stream.stop', { streamId: recording.streamId });
-      assert.deepEqual(observed.legacyReconnectFinal, { text: '8', via: 'streaming' });
+      assert.deepEqual(observed.legacyReconnectFinal, { text: transcript(Buffer.from(new Int16Array([8]).buffer), '8'), via: 'streaming' });
     }
     observed.legacyReconnects = index + 1;
   }
@@ -155,9 +170,9 @@ try {
   await assert.rejects(() => second.call('voice.stream.resume', { streamId: cancelled.streamId }), (error: Error & { code?: string }) => error.code === 'VOICE_STREAM_NOT_FOUND');
   assert(records.every((record) => record.closed), 'replacement left an ASR connection open');
   observed.detachedRelaysRetired = true;
-  if (mode !== 'quick') {
-    const abandoned = await second.call('voice.stream.start', { encoding: 'pcm16', sampleRate: 16_000 });
-    await second.call('voice.stream.chunk', { streamId: abandoned.streamId, audioBase64: pcm([42]), offset: 0 });
+  if (!mode.endsWith('quick')) {
+    const abandoned = await second.call('voice.stream.start', { encoding: fixture ? 'opus' : 'pcm16', sampleRate: 16_000 });
+    await second.call('voice.stream.chunk', { streamId: abandoned.streamId, audioBase64: fixture ? initial : pcm([42]), offset: 0 });
     const disconnectedAt = Date.now();
     await second.drop();
     await sleep(119_000);
