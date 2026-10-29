@@ -2359,3 +2359,82 @@ describe('failed todo retry in place', () => {
     }
   });
 });
+
+describe('worker final-line blockers', () => {
+  test.each(['needs_human', 'environment'] as const)(
+    'routes %s to its todo without nudging the worker',
+    async (kind) => {
+      const h = setup(false);
+      try {
+        const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+        await h.runner.start(todo.id);
+        const dispatch = h.sessions.inputs.list(todo.id)[0];
+        const message = `Work is unfinished.\nBlocked (${kind}): Awaiting a synthetic prerequisite`;
+        h.setStatus({
+          ok: true,
+          value: {
+            status: 'done',
+            lastActivityAt: dispatch.acceptedAt + 100,
+            turnEnds: [{ id: 'blocker-turn', at: dispatch.acceptedAt + 100, message }],
+          },
+        });
+        await h.runner.refresh(() => {});
+        expect(h.store.getTodo(todo.id)).toMatchObject({
+          state: 'blocked',
+          blockedBy: kind === 'needs_human' ? 'needs-human' : 'environment',
+          blockedReason: 'Awaiting a synthetic prerequisite',
+          report: message,
+        });
+        const questions = h.store
+          .listQuestions('ask')
+          .filter((q) => q.todoId === todo.id && q.state === 'open');
+        expect(questions).toHaveLength(kind === 'needs_human' ? 1 : 0);
+        if (kind === 'needs_human')
+          expect(questions[0]).toMatchObject({
+            kind: 'reply',
+            text: 'Awaiting a synthetic prerequisite',
+          });
+        expect(h.calls.filter((c) => c.name === 'work.send')).toHaveLength(0);
+        await h.runner.refresh(() => {});
+        expect(
+          h.store.listQuestions('ask').filter((q) => q.todoId === todo.id && q.state === 'open')
+        ).toHaveLength(questions.length);
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+  test.each([
+    'Blocked (needs_human): Approval\nMore text',
+    '> Blocked (needs_human): Approval',
+    'blocked (needs_human): Approval',
+    'Blocked (needs-human): Approval',
+    'Blocked (environment):',
+    'Blocked (environment):   ',
+    'Ordinary report',
+  ])('leaves non-contract prose unchanged: %s', async (message) => {
+    const h = setup(false);
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      await h.runner.start(todo.id);
+      const dispatch = h.sessions.inputs.list(todo.id)[0];
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: dispatch.acceptedAt + 100,
+          turnEnds: [{ id: 'ordinary-turn', at: dispatch.acceptedAt + 100, message }],
+        },
+      });
+      await h.runner.refresh(() => {});
+      expect(h.store.getTodo(todo.id)).toMatchObject({
+        state: 'doing',
+        blockedBy: null,
+        report: null,
+      });
+      expect(h.store.listQuestions('ask').filter((q) => q.todoId === todo.id)).toHaveLength(0);
+    } finally {
+      h.db.close();
+    }
+  });
+});
