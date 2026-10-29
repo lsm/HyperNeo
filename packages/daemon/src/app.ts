@@ -1448,22 +1448,26 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           const session =
             taskAgentManager?.getSubSession(payload.sessionId) ??
             sessionManager?.getSession(payload.sessionId);
-          void settleMessageDeliveryDeadLetter(payload, {
-            markDeliveryFailedByUuid: (sid, uuid) =>
-              store.writeSDKMessage('markDeliveryFailedByUuidInclusive', sid, uuid),
-            publishStatusChanged: (sid, messageIds) =>
-              internalEventBus.publish('messages.statusChanged', {
-                sessionId: sid,
-                messageIds,
-                status: 'failed',
-              }),
-            publishSessionError: (sid, error) =>
-              internalEventBus.publish('session.error', { sessionId: sid, error }),
-            settleSkippedDelivery: (uuid) =>
-              session?.settleSkippedDelivery(uuid) ?? Promise.resolve(),
-            resetStuckProcessingState: (sid, uuid) =>
-              session?.clearStuckProcessingState(uuid) ?? Promise.resolve(),
-          }).catch(() => {});
+          void settleMessageDeliveryDeadLetter(
+            payload,
+            {
+              markDeliveryFailedByUuid: (sid, uuid) =>
+                store.writeSDKMessage('markDeliveryFailedByUuidInclusive', sid, uuid),
+              publishStatusChanged: (sid, messageIds) =>
+                internalEventBus.publish('messages.statusChanged', {
+                  sessionId: sid,
+                  messageIds,
+                  status: 'failed',
+                }),
+              publishSessionError: (sid, error) =>
+                internalEventBus.publish('session.error', { sessionId: sid, error }),
+              settleSkippedDelivery: (uuid) =>
+                session?.settleSkippedDelivery(uuid) ?? Promise.resolve(),
+              resetStuckProcessingState: (sid, uuid) =>
+                session?.clearStuckProcessingState(uuid) ?? Promise.resolve(),
+            },
+            job.error
+          ).catch(() => {});
         },
       }
     );
