@@ -23,8 +23,9 @@ only its own fresh run. Abrupt SIGKILL relies on the next startup after a day;
 independent Desktop process ownership is deliberately outside this slice.
 
 Resuming an already marked, inode-matching SDK runtime renews its daemon lease;
-an unmarked or replaced directory is never adopted. Previous daemon PIDs remain
-liveness guards, and persisted SDK-child records captured before startup cleanup
+an unmarked or replaced directory is never adopted. Live previous daemon PIDs remain
+liveness guards; positively dead ones are pruned on renewal before PID reuse.
+Prior owner identities remain separate guards for recorded SDK children, and persisted SDK-child records captured before startup cleanup
 also guard shutdown after a lease transfer. Focused regressions cover renewal
 before a stale sweep and retention of live prior owners/SDK children.
 
@@ -36,3 +37,11 @@ serves actual `system.health` RPC with status `ok`, logs the diagnostic, and
 retains scratch and lease bytes unchanged. Restore the real child command and
 restart: both retained paths must be reclaimed. This simulates cleanup-boundary
 failure on the current OS; it does not claim a native Linux namespace failure.
+
+## Shutdown cleanup failure
+
+The helper fails the cleanup child for the first of two sorted shutdown leases.
+Graceful shutdown must complete, close its database, remove the healthy lease,
+and log the failure while retaining the failed scratch and lease unchanged.
+Focused regressions simulate reuse of a dead PID after renewal and still verify
+that a live child of that prior owner retains its scratch.

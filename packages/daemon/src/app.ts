@@ -765,10 +765,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       overrides: db.mcpEnablement.listAll(),
     });
 
+    const logScratchError = (error: unknown) =>
+      logError('[Daemon] Scratch cleanup failed (non-fatal):', error);
     try {
-      await collectDaemonScratch(true, scratchChildrenAtStartup);
+      await collectDaemonScratch(true, scratchChildrenAtStartup, logScratchError);
     } catch (error) {
-      logError('[Daemon] Stale scratch cleanup failed (non-fatal):', error);
+      logScratchError(error);
     }
 
     startupTimer.start('session manager');
@@ -1805,7 +1807,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             .live.map((pid) => ({ pid, daemonPid: process.pid })),
         ];
         await sessionManager.cleanup();
-        await collectDaemonScratch(false, scratchChildrenAtExit);
+        try {
+          await collectDaemonScratch(false, scratchChildrenAtExit, logScratchError);
+        } catch (error) {
+          logScratchError(error);
+        }
         logInfo('[Daemon] Active agent sessions stopped');
 
         await messageDeliveryProcessor.stop();

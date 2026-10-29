@@ -13,6 +13,7 @@ const Owner = z.strictObject({
   pid: z.number().int().positive(),
   token: z.string().uuid(),
   previousPids: z.array(z.number().int().positive()).default([]),
+  childOwnerPids: z.array(z.number().int().positive()).default([]),
   createdAt: z.number().positive(),
   root: z.string().min(1),
   dev: z.number(),
@@ -88,9 +89,14 @@ export async function prepareDaemonWorkerSandbox(root: string) {
           previousPids: managed
             ? [
                 ...new Set(
-                  [previous.pid, ...previous.previousPids].filter((pid) => pid !== process.pid)
+                  [previous.pid, ...previous.previousPids].filter(
+                    (pid) => pid !== process.pid && !dead(pid)
+                  )
                 ),
               ]
+            : [],
+          childOwnerPids: managed
+            ? [...new Set([previous.pid, ...previous.previousPids, ...previous.childOwnerPids])]
             : [],
           createdAt: Date.now(),
           root,
@@ -111,7 +117,10 @@ export async function prepareDaemonWorkerSandbox(root: string) {
 
 export async function collectDaemonScratch(
   staleOnly = true,
-  children: readonly { pid: number; daemonPid: number }[] = []
+  children: readonly { pid: number; daemonPid: number }[] = [],
+  onError: (error: unknown) => void = (error) => {
+    throw error;
+  }
 ): Promise<void> {
   const directory = ownerDirectory();
   const registry = await lstat(directory).catch((error: NodeJS.ErrnoException) => {
@@ -122,31 +131,37 @@ export async function collectDaemonScratch(
   for (const name of await readdir(directory)) {
     if (!/^hn-[a-f0-9]{12}\.json$/.test(name)) continue;
     const path = join(directory, name);
-    const lease = await readOwner(path);
-    if (!lease || key(lease.root) !== name) continue;
-    if (
-      staleOnly
-        ? Date.now() - lease.createdAt <= day || !dead(lease.pid)
-        : lease.pid !== process.pid || lease.token !== token
-    )
-      continue;
-    if (lease.previousPids.some((pid) => !dead(pid))) continue;
-    if (
-      children.some(
-        (child) =>
-          (child.daemonPid === lease.pid || lease.previousPids.includes(child.daemonPid)) &&
-          !dead(child.pid)
+    try {
+      const lease = await readOwner(path);
+      if (!lease || key(lease.root) !== name) continue;
+      if (
+        staleOnly
+          ? Date.now() - lease.createdAt <= day || !dead(lease.pid)
+          : lease.pid !== process.pid || lease.token !== token
       )
-    )
-      continue;
-    const runtime = workerWorkLocations(lease.root).scratch;
-    const entry = await lstat(runtime).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === 'ENOENT') return null;
-      throw error;
-    });
-    if (entry && (!entry.isDirectory() || entry.dev !== lease.dev || entry.ino !== lease.ino))
-      continue;
-    if (entry) await releaseWorkerSandbox(lease.root);
-    await unlink(path);
+        continue;
+      if (lease.previousPids.some((pid) => !dead(pid))) continue;
+      if (
+        children.some(
+          (child) =>
+            (child.daemonPid === lease.pid ||
+              lease.previousPids.includes(child.daemonPid) ||
+              lease.childOwnerPids.includes(child.daemonPid)) &&
+            !dead(child.pid)
+        )
+      )
+        continue;
+      const runtime = workerWorkLocations(lease.root).scratch;
+      const entry = await lstat(runtime).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return null;
+        throw error;
+      });
+      if (entry && (!entry.isDirectory() || entry.dev !== lease.dev || entry.ino !== lease.ino))
+        continue;
+      if (entry) await releaseWorkerSandbox(lease.root);
+      await unlink(path);
+    } catch (error) {
+      onError(error);
+    }
   }
 }

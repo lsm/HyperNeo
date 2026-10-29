@@ -43,6 +43,7 @@ async function rpc(method: string, data: unknown) {
 
 try {
   app = await createDaemonApp({ config: config(), verbose: false });
+  await app.jobProcessor.stop();
   assert.notEqual(app.server.port, 8399);
   const sdk = await fixture('sdk');
   const desktop = await fixture('desktop', false);
@@ -90,6 +91,7 @@ try {
     writeFileSync(path, JSON.stringify(owner));
   }
   app = await createDaemonApp({ config: config(), verbose: false });
+  await app.jobProcessor.stop();
   assert(!existsSync(workerWorkLocations(stale).scratch), 'startup must reclaim old scratch with a dead owner');
   assert(existsSync(workerWorkLocations(recent).scratch), 'startup must retain recent scratch');
   assert(existsSync(workerWorkLocations(live).scratch), 'startup must retain scratch with a live owner');
@@ -119,6 +121,7 @@ try {
   }) as typeof Bun.spawn;
   try {
     app = await createDaemonApp({ config: config(), verbose: true });
+    await app.jobProcessor.stop();
   } catch (error) {
     evidence.cleanupFailure = { startupAborted: true, error: String(error) };
     throw error;
@@ -137,12 +140,8 @@ try {
   const shutdownRoots = [await fixture('shutdown-one'), await fixture('shutdown-two')].sort((a, b) => ownerPath(a).localeCompare(ownerPath(b)));
   const [shutdownBlocked, shutdownHealthy] = shutdownRoots;
   const shutdownLease = readFileSync(ownerPath(shutdownBlocked), 'utf8');
-  const shutdownErrors: string[] = [];
+  const shutdownErrors = diagnostics;
   const raw = app.db.getDatabase();
-  console.error = (...args: unknown[]) => {
-    shutdownErrors.push(args.map(String).join(' '));
-    originalError(...args);
-  };
   Bun.spawn = ((args, options) => {
     if (Array.isArray(args) && args.includes('worker-runtime-cleanup') && args.includes(workerWorkLocations(shutdownBlocked).scratch)) {
       args = [...args];
@@ -163,11 +162,12 @@ try {
   assert.equal(readFileSync(ownerPath(shutdownBlocked), 'utf8'), shutdownLease);
   assert(shutdownErrors.some((line) => line.includes('synthetic shutdown boundary unavailable')));
   app = await createDaemonApp({ config: config(), verbose: false });
+  await app.jobProcessor.stop();
   assert(!existsSync(workerWorkLocations(blocked).scratch), 'next startup must retry retained scratch');
   assert(!existsSync(ownerPath(blocked)), 'successful retry must remove the retained lease');
   evidence.cleanupRetry = { scratchRemoved: true, leaseRemoved: true };
   evidence.passed = true;
-  console.log('PASS archive RPC, shutdown/restart ownership guards, cleanup-failure health RPC and retry');
+  console.log('PASS archive RPC, ownership guards, nonfatal startup/shutdown cleanup, database close and retry');
 } finally {
   ws?.close();
   await app?.cleanup();
