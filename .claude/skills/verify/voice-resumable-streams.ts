@@ -26,6 +26,7 @@ asr.on('connection', (socket) => {
   records.push(record);
   socket.on('close', () => { record.closed = true; });
   socket.on('message', (data, binary) => {
+    if (!binary && JSON.parse(String(data)).type !== 'CloseStream') return;
     if (binary) record.chunks.push(Buffer.from(data as Buffer));
     const pcm = Buffer.concat(record.chunks);
     const samples = [];
@@ -150,7 +151,10 @@ try {
     await second.call('voice.stream.chunk', { streamId: abandoned.streamId, audioBase64: pcm([42]), offset: 0 });
     const disconnectedAt = Date.now();
     await second.drop();
-    await sleep(121_000);
+    await sleep(119_000);
+    assert.equal(records.at(-1)!.closed, false, 'paired ASR retired before its grace deadline');
+    observed.aliveBeforeGraceDeadline = true;
+    await sleep(2_000);
     observed.elapsedGraceMs = Date.now() - disconnectedAt;
     observed.abandonedRelayClosed = records.at(-1)!.closed;
     assert.equal(observed.abandonedRelayClosed, true, 'grace timer did not retire ASR without another RPC');

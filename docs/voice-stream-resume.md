@@ -1,14 +1,18 @@
 # Resumable voice-stream RPC
 
-Streams remain in daemon memory for 120 seconds after their client disconnects.
-Resume requires the same paired device (or the existing trusted local context),
+Paired-device streams remain in daemon memory for 120 seconds after disconnect.
+Recovery across connections requires the same paired device,
 using the stream ID received from start. It moves chunk ownership and future
 text events to the new connection. No iOS changes or deployment accompany this
-slice; clients must opt in only when start advertises the capability.
+slice; clients must opt in only when start advertises `resumable:true`.
+Unpaired streams advertise `resumable:false`, remain connection-owned and close
+on disconnect as before. Knowing a stream ID alone never grants another unpaired
+connection access to its audio. An unpaired caller can query its own stream on
+the same connection, but cannot recover it across connections.
 
 | Method | Request | Successful response |
 | --- | --- | --- |
-| `voice.stream.start` | `{encoding:"pcm16", sampleRate:16000, language?:"zh"\|"en"}` | `{streamId, via:"streaming"\|"batch", resumable:true, fallback?:string}` |
+| `voice.stream.start` | `{encoding:"pcm16", sampleRate:16000, language?:"zh"\|"en"}` | `{streamId, via:"streaming"\|"batch", resumable:boolean, fallback?:string}` |
 | `voice.stream.chunk` | `{streamId, audioBase64, offset?:number}` | `{ok:true}` |
 | `voice.stream.resume` | `{streamId}` | `{ok:true, receivedBytes:number}` |
 | `voice.stream.stop` | `{streamId}` | `{text:string, via:"streaming"\|"batch"}` |
@@ -35,8 +39,8 @@ The RPC response envelope carries a human-readable `error` string and a separate
 Other existing start/chunk/stop errors retain their messages and handler-error
 behavior, including ownership, size, sample alignment and transcription failures.
 The daemon keeps its existing stream-count, rate and audio limits. A successful
-new start replaces detached recordings of the same device/trusted local owner,
-so legacy reconnects do not accumulate abandoned streams. It preserves other
+new start replaces detached recordings of the same paired device,
+so paired legacy reconnects do not accumulate abandoned streams. It preserves other
 owners and live connections. A failed start keeps the detached audio resumable;
 capacity is checked again after opening if ownership changed while awaiting ASR. Resume cancels
 the disconnect deadline; a later disconnect starts a new full grace period,

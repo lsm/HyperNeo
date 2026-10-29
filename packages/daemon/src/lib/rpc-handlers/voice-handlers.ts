@@ -133,7 +133,10 @@ export function registerVoiceHandlers(
   credentialManager?: ProviderCredentialManager,
   recording?: { db: Database; deviceOf: (clientId: string) => UpgradeIdentity | null }
 ): void {
-  const ownerOf = (clientId: string) => recording?.deviceOf(clientId)?.deviceId ?? 'local';
+  const ownerOf = (clientId: string) => {
+    const device = recording?.deviceOf(clientId);
+    return device ? `device:${device.deviceId}` : `client:${clientId}`;
+  };
   const recordings = recording
     ? new VoiceRecordingTranscription(new VoiceRecordingRepository(recording.db))
     : undefined;
@@ -221,7 +224,7 @@ export function registerVoiceHandlers(
         return {
           streamId,
           via: started.via,
-          resumable: true,
+          resumable: owner.startsWith('device:'),
           ...('fallback' in started && started.fallback ? { fallback: started.fallback } : {}),
         };
       } finally {
@@ -286,8 +289,13 @@ export function registerVoiceHandlers(
 
   messageHub.onClientDisconnect?.((clientId) => {
     voiceStreamStarts.delete(clientId);
-    for (const owned of voiceStreams.values())
+    for (const [id, owned] of voiceStreams)
       if (owned.clientId === clientId) {
+        if (owned.owner === `client:${clientId}`) {
+          owned.stream.close('client_disconnected');
+          deleteVoiceStream(id);
+          continue;
+        }
         owned.clientId = null;
         owned.disconnectedAt = Date.now();
         owned.disconnectTimer = setTimeout(
