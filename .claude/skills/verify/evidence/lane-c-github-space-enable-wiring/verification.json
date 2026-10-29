@@ -13,16 +13,6 @@
     "passed": true,
     "setupOnlyChanges": "Four scenarios now seed a real Space FK row; assertions unchanged"
   },
-  "regressionSuite": {
-    "files": 7,
-    "tests": 14,
-    "passed": true,
-    "finalNewTestSubset": {
-      "files": 2,
-      "tests": 9,
-      "passed": true
-    }
-  },
   "strictTypeScript6": {
     "passed": true,
     "scope": "Modified extension and both new tests plus imported dependencies",
@@ -34,9 +24,9 @@
   },
   "native": "Bun1.4.3/Deno2.9.4 real WebSocket enable/disable/listConfig, complete projected snapshot and captured caller times, zero target main writes; capability -> actual timer scheduling -> source notification after delivered committed receipt; zero interval skips re-arm; snapshot failure rolls back, known post-commit capability failure retains consistent snapshot; held writer keeps health/old reads responsive; admission and actual committed-reply loss produce no lifecycle/fallback/replay; authorization precedes admission",
   "scope": {
-    "productionLines": 28,
+    "productionLines": 22,
     "smokeLines": 1,
-    "ownedBridgeGraphLines": 52,
+    "ownedBridgeGraphLines": 55,
     "auditedStableCommandGraphLines": 178
   },
   "priorJourneyUpdates": "Current native extraction/read/projection proofs and CI parents expect0 main write runs; direct helper SQL contracts and archived prior-commit evidence retained",
@@ -49,6 +39,38 @@
     "Updated prior native fixture chains run locally on Bun; current wiring proof runs on Bun and Deno; CI owns complete Deno smoke",
     "Held writer duration is not a250ms latency pass",
     "Local Bun1.4.3, pinned1.4.2 CI-owned",
-    "Deployment smoke Neo-owned; no live daemon touched"
-  ]
+    "Deployment smoke Neo-owned; no live daemon touched",
+    "Competing setPollingEnabled RPC remains main-side; native target guard is suspended only for that completed concurrent setter, then restored before delivering the enable receipt. Target main-writer claim applies to enable/disable. The current-state SELECT also remains main-side."
+  ],
+  "priorHeadRegressionSuite": {
+    "files": 7,
+    "tests": 14,
+    "passed": true,
+    "finalNewTestSubset": {
+      "files": 2,
+      "tests": 9,
+      "passed": true
+    }
+  },
+  "currentTargetedSuite": {
+    "files": 2,
+    "tests": 10,
+    "passed": true
+  },
+  "reviewFix": {
+    "redCommit": "b978f59a8b98b41b5be30c471e5b0d6d266dd46b",
+    "before": "Unit and actual public WebSocket RPC reproduced global polling true after a completed concurrent setPollingEnabled(false), while the enable receipt was withheld",
+    "after": "After its committed receipt, enable rechecks current watched polling flags through the existing synchronous read adapter and skips unused capability/timer re-enable; preserves newer concurrent configuration and sends the original reply/notification",
+    "tests": "9 unit tests +1 native parent pass, strict TS6 pass, standalone Bun/Deno proofs pass",
+    "legacySuite": {
+      "files": 1,
+      "tests": 263,
+      "passed": true
+    },
+    "thread": "PRRT_kwDORDDLj86xdoF-",
+    "rootCheck": {
+      "command": "bun run check",
+      "exitCode": 0
+    }
+  }
 }

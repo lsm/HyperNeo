@@ -357,16 +357,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       await assertRpcConfigEnabled(context, this.sourceId);
       const params = data as { spaceId: string };
       if (!params.spaceId) throw new Error('spaceId is required');
-      const { config } = await gatewayFor(this.db).call(
+      await gatewayFor(this.db).call(
         gitHubSpaceEnabledWrites,
         'persist',
         params.spaceId,
         true,
         Date.now()
       );
-      const willReenablePollingRows = config.settings.watchedRepos.some(
-        (repo) => repo.pollingEnabled
-      );
+      const willReenablePollingRows = this.repo
+        .listWatchedRepos(params.spaceId)
+        .some((repo) => repo.pollingEnabled);
       if (willReenablePollingRows && this.getPollIntervalMs() > 0) {
         await this.enablePollingCapability(context);
         this.ensurePollingActive();

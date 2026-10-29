@@ -12,22 +12,29 @@
       "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
       "name": "space.github.enable",
       "lines": 25,
-      "sha256": "bdb48d6bdb5bedd5192a274432368a05761a1759c00e48d465ba3a5515a0c670"
+      "sha256": "b542fd16197a29274bec7a5ce92a1dd70c952fd29a2d9d2283984eb0f74546da"
     },
     {
       "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
       "name": "space.github.disable",
       "lines": 18,
       "sha256": "8523e222ff43cfc87a41b8e33f3d2dabff573965d3f81e6bb2efceec55127ef2"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "listWatchedRepos",
+      "owner": "GitHubEventExtensionRepository",
+      "lines": 3,
+      "sha256": "fea8d4b2abe1f1bc9934d90c741fb46b4dfc34064d4e20a53b2099f65e52a7aa"
     }
   ],
-  "ownedBridgeGraphLines": 52,
-  "productionLines": 28,
+  "ownedBridgeGraphLines": 55,
+  "productionLines": 22,
   "smokeLines": 1,
   "delta": [
     {
       "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
-      "lines": 28
+      "lines": 22
     },
     {
       "file": "scripts/deno-smoke.sh",
@@ -131,9 +138,16 @@
       "name": "assertRpcConfigEnabled",
       "lines": 9,
       "sha256": "3a19416016c634b3d5bccf9ea5fa05cdd206cb5cbb73b5b0e10e8baec161f092"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "listWatchedRepos",
+      "owner": "GitHubEventExtensionRepository",
+      "lines": 3,
+      "sha256": "fea8d4b2abe1f1bc9934d90c741fb46b4dfc34064d4e20a53b2099f65e52a7aa"
     }
   ],
-  "stablePolicyRootsSha256": "dbb2e3a93a740025e03f99bc0bdc0732c748781a2d9e9b02d95a5a61f8ee6b21",
+  "stablePolicyRootsSha256": "c37d55c2af9cc64e4111919f24eddea51532077be8e55e66aa2c6bbfaa2e8f9e",
   "notificationBridge": {
     "notify": {
       "name": "onSourceConfigChanged",
@@ -182,10 +196,10 @@
   "wholeExtensionRestoredAstUnchanged": true,
   "constructorBodyUnchanged": true,
   "authorizationAndReplyAstUnchanged": true,
-  "policyContract": "Same pre-admission capability/parameter gate. Main-side capability and timer effects use committed watched polling flags, run only after receipt; same source notification/reply. Zero interval skips polling re-arm. Errors propagate; no catch/fallback/replay.",
+  "policyContract": "Same pre-admission capability/parameter gate. Main-side capability and timer effects recheck current watched polling flags synchronously after receipt; this existing read remains main-side; same source notification/reply. Zero interval skips polling re-arm. Errors propagate; no catch/fallback/replay.",
   "fixtureUpdates": "Prior native extraction/read/projection journeys and CI parents now expect0 target main writes; archived prior-commit evidence retained. Four legacy scenario setups seed a real FK Space row, behavioral assertions unchanged.",
   "netPrepare": 0,
   "netRun": 0,
   "baselineIncrease": false,
-  "auditLimit": "Owned graph is the two public bridges plus existing constructor retaining its DB. The complete178-line merged command is an audited stable dependency. Authorization/poll/timer roots, app notification and shared files pinned exactly; downstream async poll/token/network/reactive/plugin/startup closures are not transitively audited. Public read RPCs, other writer families and constructor initialization remain outside this activation."
+  "auditLimit": "Owned graph is the two public bridges plus existing constructor retaining its DB and the unchanged three-line current-state read adapter. The complete178-line merged command is an audited stable dependency. Authorization/poll/timer roots, app notification and shared files pinned exactly; downstream async poll/token/network/reactive/plugin/startup closures are not transitively audited. Public read RPCs, other writer families and constructor initialization remain outside this activation."
 }

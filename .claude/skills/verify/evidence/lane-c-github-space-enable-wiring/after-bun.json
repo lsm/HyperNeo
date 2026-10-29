@@ -3,141 +3,164 @@
   "publicBaselineReaderConfirmed": true,
   "mainGuardSelfCheckPassed": true,
   "phase": "complete",
-  "firstRpcMs": 0.5384169999999813,
+  "firstRpcMs": 0.5183329999999842,
   "publicEnableDisableSnapshotAndLifecyclePreserved": true,
   "zeroIntervalDoesNotRearmPolling": true,
   "writerRollbackPrecedesLifecycle": true,
   "knownPostCommitCallbackFailureKeepsConsistentSnapshot": true,
-  "healthWhileWriterHeldMs": 1.7892500000000382,
-  "deliberatelyHeldWriterMs": 1222.044,
+  "healthWhileWriterHeldMs": 1.5171660000000884,
+  "deliberatelyHeldWriterMs": 1243.517209,
   "lifecycleAndRpcReplyWaitForCommit": true,
   "preAdmissionTimestampRetained": true,
+  "supersededReceiptDoesNotReenableUnusedPolling": true,
   "admissionFailureHasNoFallbackLifecycleOrReplay": true,
   "actualCommittedReplyLossHasNoLifecycleOrReplay": true,
   "authorizationPrecedesAdmission": true,
-  "maxLoopLagMs": 3.4333749999999554,
-  "commandPosts": 11,
+  "maxLoopLagMs": 4.173999999999978,
+  "commandPosts": 13,
   "callbacks": [
     {
       "kind": "polling_capability",
-      "time": 1793260136743,
+      "time": 1793262035801,
       "sourceEnabled": 1,
       "configEnabled": 1
     },
     {
       "kind": "schedule_poll",
-      "time": 1793260136743,
+      "time": 1793262035801,
       "sourceEnabled": 1,
       "configEnabled": 1
     },
     {
       "kind": "space_enabled",
-      "time": 1793260136743,
+      "time": 1793262035801,
       "sourceEnabled": 1,
       "configEnabled": 1
     },
     {
       "kind": "space_disabled",
-      "time": 1793260136744,
+      "time": 1793262035801,
       "sourceEnabled": 0,
       "configEnabled": 0
     },
     {
       "kind": "space_enabled",
-      "time": 1793260136744,
+      "time": 1793262035802,
       "sourceEnabled": 1,
       "configEnabled": 1
     },
     {
       "kind": "space_disabled",
-      "time": 1793260136744,
+      "time": 1793262035802,
       "sourceEnabled": 0,
       "configEnabled": 0
     },
     {
       "kind": "polling_capability",
-      "time": 1793260136747,
+      "time": 1793262035804,
       "sourceEnabled": 1,
       "configEnabled": 1
     },
     {
       "kind": "space_disabled",
-      "time": 1793260136749,
+      "time": 1793262035806,
       "sourceEnabled": 0,
       "configEnabled": 0
     },
     {
       "kind": "polling_capability",
-      "time": 1793260136751,
+      "time": 1793262035808,
       "sourceEnabled": 1,
       "configEnabled": 1
     },
     {
       "kind": "schedule_poll",
-      "time": 1793260136751,
+      "time": 1793262035808,
       "sourceEnabled": 1,
       "configEnabled": 1
     },
     {
       "kind": "space_enabled",
-      "time": 1793260136751,
+      "time": 1793262035808,
       "sourceEnabled": 1,
       "configEnabled": 1
     },
     {
       "kind": "space_disabled",
-      "time": 1793260137973,
+      "time": 1793262037051,
+      "sourceEnabled": 0,
+      "configEnabled": 0
+    },
+    {
+      "kind": "space_enabled",
+      "time": 1793262037052,
+      "sourceEnabled": 1,
+      "configEnabled": 1
+    },
+    {
+      "kind": "space_disabled",
+      "time": 1793262037060,
       "sourceEnabled": 0,
       "configEnabled": 0
     }
   ],
-  "rssBytes": 182223976,
+  "rssBytes": 195298432,
   "walBytes": 4152,
   "pass": true,
   "mainSqlAttempts": 0,
   "metrics": [
     {
-      "roundTripMs": 0.25499999999999545,
+      "roundTripMs": 0.24112500000001091,
       "requestBytes": 72,
       "replyBytes": 1070
     },
     {
-      "roundTripMs": 0.09124999999994543,
+      "roundTripMs": 0.07720900000003894,
       "requestBytes": 73,
       "replyBytes": 1073
     },
     {
-      "roundTripMs": 0.06737500000008367,
+      "roundTripMs": 0.06495800000004692,
       "requestBytes": 72,
       "replyBytes": 1070
     },
     {
-      "roundTripMs": 0.08720800000003237,
+      "roundTripMs": 0.07691599999998289,
       "requestBytes": 73,
       "replyBytes": 1073
     },
     {
-      "roundTripMs": 1.6927080000000387,
+      "roundTripMs": 1.459333000000015,
       "requestBytes": 72,
       "replyBytes": 1070
     },
     {
-      "roundTripMs": 0.09791699999993853,
+      "roundTripMs": 0.06662500000004457,
       "requestBytes": 73,
       "replyBytes": 1073
     },
     {
-      "roundTripMs": 1219.6570000000002,
+      "roundTripMs": 1241.038458,
       "requestBytes": 72,
       "replyBytes": 1070
     },
     {
-      "roundTripMs": 0.12829199999987395,
+      "roundTripMs": 0.21279099999992468,
       "requestBytes": 73,
       "replyBytes": 1073
     },
     {
-      "roundTripMs": 4.956916999999976,
+      "roundTripMs": 0.13487499999996544,
+      "requestBytes": 72,
+      "replyBytes": 1070
+    },
+    {
+      "roundTripMs": 0.12641600000006292,
+      "requestBytes": 73,
+      "replyBytes": 1073
+    },
+    {
+      "roundTripMs": 4.9007910000000265,
       "requestBytes": 72,
       "replyBytes": 1070
     }
