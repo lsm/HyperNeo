@@ -57,7 +57,9 @@ const parse = (responses: unknown[], url: string) => {
     parsed.data[0].url.toLowerCase() === url.toLowerCase() &&
     parsed.data[3].headOid === parsed.data[0].headRefOid
     ? { value: parsed.data }
-    : failed('fresh_complete_merge_facts_required');
+    : failed(
+        'fresh_complete_merge_facts_required: Fresh, complete GitHub merge facts are required. Leave the PR unchanged until every required read succeeds.'
+      );
 };
 const project = ([pr, reviews, checks, threads, labels]: Observed): CodingDaemonMergeFacts & {
   mergeCommit?: string | null;
@@ -86,7 +88,9 @@ const read = (superpipe({})('coding.read-daemon-merge-facts') as PipelineAPI)
       return meta &&
         (meta.host === 'github.com' || meta.host === process.env.GH_HOST?.toLowerCase())
         ? { value: url }
-        : failed('unsupported_pr_url');
+        : failed(
+            'unsupported_pr_url: Use a GitHub PR URL on github.com or the configured GH_HOST.'
+          );
     },
     'url',
     'result:observed'
@@ -105,7 +109,9 @@ const read = (superpipe({})('coding.read-daemon-merge-facts') as PipelineAPI)
         head.data.headRefOid === observed[0].headRefOid &&
         head.data.state === observed[0].state
         ? { value: observed }
-        : failed('head_or_state_changed_during_read');
+        : failed(
+            'head_or_state_changed_during_read: The PR head or state changed during collection. Read the current PR again before merging.'
+          );
     },
     ['observed', 'url', 'spawn'],
     'result:observed'
@@ -118,4 +124,8 @@ const read = (superpipe({})('coding.read-daemon-merge-facts') as PipelineAPI)
 ) => Promise<ReturnType<typeof project>>;
 
 export const readCodingDaemonMergeFacts = (db: Database, url: string, spawn = spawnProcess) =>
-  read(db, url, spawn).catch(() => ({ ok: false as const, reason: 'merge_fact_read_failed' }));
+  read(db, url, spawn).catch(() => ({
+    ok: false as const,
+    reason:
+      'merge_fact_read_failed: Merge facts could not be read. Leave the PR unchanged until a fresh read succeeds.',
+  }));

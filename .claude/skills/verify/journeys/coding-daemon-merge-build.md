@@ -19,7 +19,11 @@ return unreadable facts. A delayed initial PR read exposes an old-head CI race:
 the checks fixture is green before the new head is observed and pending after.
 The reader must observe the head before requesting CI, then re-read the head
 after all facts; it must never attach those old passing checks to the new head.
-The failing real-daemon reproduction is committed before this ordering fix. No todo or owner is needed.
+The failing real-daemon reproduction is committed before this ordering fix.
+Read failures must also include a readable explanation and safe next step; the
+helper tests malformed GitHub replies and a synthetic reader exception. These
+pack-local messages must pass the existing refusal-catalog audit without adding
+coding-specific entries to core. No todo or owner is needed.
 
 Receipt commands run in the real DB writer. A held WAL lock must delay the
 begin receipt while health remains responsive. After commit, executor, head
