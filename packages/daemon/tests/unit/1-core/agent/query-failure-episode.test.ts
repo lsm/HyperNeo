@@ -1,7 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { Session } from '@hyperneo/shared';
 import type { Database } from '../../../../src/storage/database.ts';
-import { QueryFailureGovernor } from '../../../../src/lib/agent/query-failure-episode.ts';
+import {
+  QUERY_FAILURE_COOLDOWN_MS,
+  QueryFailureGovernor,
+} from '../../../../src/lib/agent/query-failure-episode.ts';
 
 describe('Query failure episode', () => {
   it('retains a bounded useful error when a provider returns a large failure', async () => {
@@ -18,7 +21,7 @@ describe('Query failure episode', () => {
     expect(session.metadata.queryFailureEpisode?.error).toBe(episode.error);
   });
 
-  it('retains the failure cap through rehydration and resets only on explicit recovery or success', async () => {
+  it('retains the failure cap through rehydration until explicit recovery, success or cooldown', async () => {
     const session = { id: 'synthetic-worker', metadata: {} } as Session;
     const persisted = structuredClone(session);
     const db = {
@@ -57,6 +60,32 @@ describe('Query failure episode', () => {
       await restored.failure('New episode failure', fresh);
       await restored.success(fresh);
       expect(persisted.metadata.queryFailureEpisode?.failures).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('latches for the cooldown after three failures, then admits a fresh episode', async () => {
+    const session = { id: 'cooldown', metadata: {} } as Session;
+    const db = {
+      getSession: () => session,
+      updateSession: vi.fn(async (_id, patch) => Object.assign(session.metadata, patch.metadata)),
+    } as unknown as Database;
+    const governor = new QueryFailureGovernor(session, db);
+    vi.useFakeTimers();
+    try {
+      const id = await governor.admit(() => true);
+      await governor.failure('Model stream stalled', id);
+      await governor.failure('Model stream stalled', id);
+      const latched = await governor.failure('Model stream stalled', id);
+      expect(latched.failed).toBe(true);
+      expect(governor.latchedUntil()).toBe(Date.now() + QUERY_FAILURE_COOLDOWN_MS);
+      await expect(governor.admit(() => true)).rejects.toThrow('Query stopped after 3 failures');
+      await vi.advanceTimersByTimeAsync(QUERY_FAILURE_COOLDOWN_MS);
+      expect(governor.latchedUntil()).toBeNull();
+      const fresh = await governor.admit(() => true);
+      expect(fresh).not.toBe(id);
+      expect(session.metadata.queryFailureEpisode).toMatchObject({ failures: 0, failed: false });
     } finally {
       vi.useRealTimers();
     }
