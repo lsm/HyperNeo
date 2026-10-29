@@ -1,0 +1,59 @@
+{
+  "base": "84d673622a70a4d969a7f27dd1f20734fd4a2c96",
+  "command": {
+    "file": "packages/daemon/src/storage/repositories/global-extension-config-write.ts",
+    "lines": 19,
+    "sha256": "f095ddc13e7e99adc68f692dc3999aa3b97252e475c3c3a77ab985dacc197224"
+  },
+  "fullOwnedCommandAndHelperLines": 49,
+  "changedProductionAndRegistrations": 22,
+  "delta": [
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-ops.ts",
+      "lines": 2
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/global-extension-config-write.ts",
+      "lines": 19
+    },
+    {
+      "file": "scripts/deno-smoke.sh",
+      "lines": 1
+    }
+  ],
+  "stableDependencies": [
+    {
+      "file": "packages/daemon/src/storage/repositories/global-extension-config-persist.ts",
+      "lines": 30,
+      "sha256": "3d500772c14766ce7c20f0e5bf1143c0bf500e756dd65078fc9312fe621705f1"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/extension-config-store.ts",
+      "lines": 206,
+      "sha256": "11aa23e34cdbdaed6c38cf5a690a5c3c30354b0bc6884b5a6e9d29419b8d1b5f"
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-op.ts",
+      "lines": 65,
+      "sha256": "459703e0371a0b1c351bf571a7a73126f6fd81a824e2ecdfbe0a7916986fbd3c"
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-gateway-worker.ts",
+      "lines": 56,
+      "sha256": "fbaeb4d89aa03a8dcc1e7aa686dedce502c0b279ebb6c2f7f5ef865bda3644b1"
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-gateway.ts",
+      "lines": 280,
+      "sha256": "54b7739518ba9c5c58bda82f7627a76d8483511949cd3469adc07e5643e09858"
+    }
+  ],
+  "helperContract": "Verbatim seven-argument UPSERT, caller-supplied timestamp, unchanged JSON/default/created_at behavior; executes synchronously inside caller transaction.",
+  "commandContract": "extension.global.config.write / persist(source,config,now): internal validated data only; no closure, lifecycle callback, clock, retry or read; void acknowledgement after existing worker immediate transaction commits.",
+  "infrastructureContract": "Existing defineRepositoryOp checks method allowlist and invokes synchronous repository method; native worker owns transaction and posts acknowledgement after commit. DB gateway failure/no-replay semantics exercised with native before-post refusal and actual committed reply loss.",
+  "auditLimit": "Complete owned command and merged SQL-helper modules counted. Framework files are exact-hash stable infrastructure; their transitive runtime/SQLite closure is not re-audited. Global/Space setters, validators, constructor DDL, reads and extension lifecycle/plugin callback closure remain unchanged. Public activation and full final guard are separate slices.",
+  "publicSetterActivated": false,
+  "netPrepare": 0,
+  "netRun": 0,
+  "baselineIncrease": false
+}
