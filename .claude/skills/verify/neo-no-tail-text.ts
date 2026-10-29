@@ -12,6 +12,7 @@ import { createNeoPublicationOperation } from '../../../packages/daemon/src/lib/
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { createOperationMcpHandler, OperationMcpInvocationSchema } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 import { createDiscoveryOperations } from '../../../packages/daemon/src/lib/operations/discovery.ts';
+import { NEO_GOAL_CYCLE, NEO_ROOT_TURN_END } from '../../../packages/prompts/src/mod.ts';
 
 const run = resolve(process.argv[3] ?? '');
 const verify = process.argv[2] === 'verify';
@@ -46,7 +47,7 @@ const registry = () => createOperationRegistry([
 const handler = createOperationMcpHandler(registry, () => ({ sessionId: root, role: 'neo' }));
 const observed: unknown[] = [];
 try {
-  for (const scenario of ['speech', 'publication', 'ordinary', 'transcript', 'forced-end-control']) {
+  for (const scenario of ['speech', 'publication', 'ordinary', 'transcript', 'scheduled-wake', 'forced-end-control']) {
     let requests = 0;
     let nudges = 0;
     let receivedGuidance: string | undefined;
@@ -69,7 +70,7 @@ try {
             receivedGuidance = receipt.guidance;
           }
       const first = requests++ === 0;
-      const text = nudged ? 'Runtime demanded visible text.' : scenario === 'transcript' ? 'Requested transcript.' : '';
+      const text = nudged ? 'Runtime demanded visible text.' : scenario === 'transcript' ? 'Requested transcript.' : scenario === 'scheduled-wake' ? 'Scheduled work is waiting on a fixture.' : '';
       const usage = { input_tokens: 20, output_tokens: 20 };
       const events = [
         ['message_start', { type: 'message_start', message: { id: `msg_${scenario}_${requests}`, type: 'message', role: 'assistant', model: 'claude-sonnet-4-20250514', content: [], stop_reason: null, stop_sequence: null, usage } }],
@@ -81,7 +82,7 @@ try {
       ];
       return new Response(events.map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join(''), { headers: { 'content-type': 'text/event-stream' } });
     } });
-    const stream = query({ prompt: scenario === 'transcript' ? 'Deliver this and give me a transcript.' : 'Synthetic delivery probe.', options: {
+    const stream = query({ prompt: scenario === 'transcript' ? 'Deliver this and give me a transcript.' : scenario === 'scheduled-wake' ? `${NEO_ROOT_TURN_END}\n\n${NEO_GOAL_CYCLE}\n\nSynthetic scheduled goal wake: goalId=fixture; runId=fixture-run.` : 'Synthetic delivery probe.', options: {
       cwd: join(run, 'workspace'), pathToClaudeCodeExecutable: resolveSDKCliPath(), model: 'claude-sonnet-4-20250514',
       tools: [], permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true, settingSources: [],
       env: { ...process.env, ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.port}`, ANTHROPIC_API_KEY: 'sk-devproxy-test-key', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' },
@@ -94,25 +95,28 @@ try {
     } });
     const watchdog = setTimeout(() => stream.close(), 30000);
     let completed = false;
+    let finalText: string | undefined;
     try {
       for await (const event of stream) if (event.type === 'result') {
         assert.equal(event.is_error, false, JSON.stringify(event));
+        if ('result' in event) finalText = event.result;
         completed = true;
         break;
       }
     } finally { clearTimeout(watchdog); stream.close(); await server.stop(true); }
-    observed.push({ scenario, operation, requests, nudges, receivedGuidance, receipts });
+    observed.push({ scenario, operation, requests, nudges, receivedGuidance, receipts, finalText });
     writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ observed, delivered, publications: neo.publications.list(conversation) }, null, 2));
     assert(completed);
-    assert.equal(nudges, ['transcript', 'forced-end-control'].includes(scenario) ? 0 : 1);
+    assert.equal(nudges, ['transcript', 'scheduled-wake', 'forced-end-control'].includes(scenario) ? 0 : 1);
+    if (scenario === 'scheduled-wake') assert.equal(finalText, 'Scheduled work is waiting on a fixture.');
     if (scenario === 'forced-end-control') assert.equal(requests, 1, 'endTurn also prevents continuing work');
     else if (scenario === 'ordinary') assert.equal(receivedGuidance, undefined);
     else if (verify) {
-      assert.match(receivedGuidance ?? '', /no assistant text this turn unless the user requested a transcript or record/);
+      assert.match(receivedGuidance ?? '', /no assistant text this turn except a requested transcript\/record or required scheduled-wake summary/);
       assert((receivedGuidance?.length ?? 0) < 130);
     }
   }
-  assert.equal(neo.publications.list(conversation)?.length, 2);
+  assert.equal(neo.publications.list(conversation)?.length, 3);
   assert(delivered.some((message) => JSON.stringify(message).includes('Synthetic spoken reply.')));
   console.log('PASS: real SDK receives delivery reminders; external empty-response nudge and forced-end limitation reproduced.');
 } finally { await neo.dispose(); hub.cleanup(); db.close(); }

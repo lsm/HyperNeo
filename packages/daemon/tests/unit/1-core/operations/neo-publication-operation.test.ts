@@ -75,7 +75,7 @@ describe('Neo publication without runtime input attribution', () => {
       accepted: true,
       created: true,
       guidance:
-        'The user can see this message; add no assistant text this turn unless the user requested a transcript or record.',
+        'Already shown to the user; no assistant text this turn except a requested transcript/record or required scheduled-wake summary.',
     });
     const retry = JSON.parse((await send()).content[0].text);
     expect(retry).toMatchObject({ accepted: true, created: false, guidance: first.guidance });

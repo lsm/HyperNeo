@@ -109,7 +109,7 @@ describe('spoken replies separate from publications', () => {
     const receipt = JSON.parse(spoken.content[0].text);
     expect(receipt).toMatchObject({ ok: true, state: 'queued' });
     expect(receipt.guidance).toBe(
-      'Already sent for speech; add no assistant text this turn unless the user requested a transcript or record.'
+      'Already sent for speech; no assistant text this turn except a requested transcript/record or required scheduled-wake summary.'
     );
     expect(JSON.stringify(receipt)).not.toContain('PRIVATE_SPOKEN_ACKNOWLEDGMENT');
     const retried = await call(
