@@ -83,16 +83,22 @@ describe('GitHub Space enable RPC writer wiring', () => {
     });
     notifications.length = 0;
     const context = {
-      publisher: { publish: async () => {} },
+      publisher: {
+        publish: async () => {
+          throw new Error('Source enable wiring must not publish an event');
+        },
+      },
       config: store,
       onSourceConfigChanged(change: { kind: string }) {
         notifications.push({
           kind: change.kind,
           sourceEnabled: db
-            .prepare('SELECT enabled FROM space_github_source_settings WHERE space_id=?')
+            .prepare<{ enabled: number }>(
+              'SELECT enabled FROM space_github_source_settings WHERE space_id=?'
+            )
             .get(spaceId)?.enabled,
           configEnabled: db
-            .prepare(
+            .prepare<{ enabled: number }>(
               'SELECT enabled FROM space_external_event_source_configs WHERE space_id=? AND source=?'
             )
             .get(spaceId, 'github')?.enabled,
@@ -120,10 +126,12 @@ describe('GitHub Space enable RPC writer wiring', () => {
     client.request(`space.github.${enabled ? 'enable' : 'disable'}`, { spaceId });
   const flags = () => ({
     source: db
-      .prepare('SELECT enabled FROM space_github_source_settings WHERE space_id=?')
+      .prepare<{ enabled: number }>(
+        'SELECT enabled FROM space_github_source_settings WHERE space_id=?'
+      )
       .get(spaceId)?.enabled,
     config: db
-      .prepare(
+      .prepare<{ enabled: number }>(
         'SELECT enabled FROM space_external_event_source_configs WHERE space_id=? AND source=?'
       )
       .get(spaceId, 'github')?.enabled,

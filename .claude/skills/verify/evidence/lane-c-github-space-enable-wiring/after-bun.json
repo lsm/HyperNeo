@@ -1,0 +1,145 @@
+{
+  "publicMutationActivated": true,
+  "publicBaselineReaderConfirmed": true,
+  "mainGuardSelfCheckPassed": true,
+  "phase": "complete",
+  "firstRpcMs": 0.5384169999999813,
+  "publicEnableDisableSnapshotAndLifecyclePreserved": true,
+  "zeroIntervalDoesNotRearmPolling": true,
+  "writerRollbackPrecedesLifecycle": true,
+  "knownPostCommitCallbackFailureKeepsConsistentSnapshot": true,
+  "healthWhileWriterHeldMs": 1.7892500000000382,
+  "deliberatelyHeldWriterMs": 1222.044,
+  "lifecycleAndRpcReplyWaitForCommit": true,
+  "preAdmissionTimestampRetained": true,
+  "admissionFailureHasNoFallbackLifecycleOrReplay": true,
+  "actualCommittedReplyLossHasNoLifecycleOrReplay": true,
+  "authorizationPrecedesAdmission": true,
+  "maxLoopLagMs": 3.4333749999999554,
+  "commandPosts": 11,
+  "callbacks": [
+    {
+      "kind": "polling_capability",
+      "time": 1793260136743,
+      "sourceEnabled": 1,
+      "configEnabled": 1
+    },
+    {
+      "kind": "schedule_poll",
+      "time": 1793260136743,
+      "sourceEnabled": 1,
+      "configEnabled": 1
+    },
+    {
+      "kind": "space_enabled",
+      "time": 1793260136743,
+      "sourceEnabled": 1,
+      "configEnabled": 1
+    },
+    {
+      "kind": "space_disabled",
+      "time": 1793260136744,
+      "sourceEnabled": 0,
+      "configEnabled": 0
+    },
+    {
+      "kind": "space_enabled",
+      "time": 1793260136744,
+      "sourceEnabled": 1,
+      "configEnabled": 1
+    },
+    {
+      "kind": "space_disabled",
+      "time": 1793260136744,
+      "sourceEnabled": 0,
+      "configEnabled": 0
+    },
+    {
+      "kind": "polling_capability",
+      "time": 1793260136747,
+      "sourceEnabled": 1,
+      "configEnabled": 1
+    },
+    {
+      "kind": "space_disabled",
+      "time": 1793260136749,
+      "sourceEnabled": 0,
+      "configEnabled": 0
+    },
+    {
+      "kind": "polling_capability",
+      "time": 1793260136751,
+      "sourceEnabled": 1,
+      "configEnabled": 1
+    },
+    {
+      "kind": "schedule_poll",
+      "time": 1793260136751,
+      "sourceEnabled": 1,
+      "configEnabled": 1
+    },
+    {
+      "kind": "space_enabled",
+      "time": 1793260136751,
+      "sourceEnabled": 1,
+      "configEnabled": 1
+    },
+    {
+      "kind": "space_disabled",
+      "time": 1793260137973,
+      "sourceEnabled": 0,
+      "configEnabled": 0
+    }
+  ],
+  "rssBytes": 182223976,
+  "walBytes": 4152,
+  "pass": true,
+  "mainSqlAttempts": 0,
+  "metrics": [
+    {
+      "roundTripMs": 0.25499999999999545,
+      "requestBytes": 72,
+      "replyBytes": 1070
+    },
+    {
+      "roundTripMs": 0.09124999999994543,
+      "requestBytes": 73,
+      "replyBytes": 1073
+    },
+    {
+      "roundTripMs": 0.06737500000008367,
+      "requestBytes": 72,
+      "replyBytes": 1070
+    },
+    {
+      "roundTripMs": 0.08720800000003237,
+      "requestBytes": 73,
+      "replyBytes": 1073
+    },
+    {
+      "roundTripMs": 1.6927080000000387,
+      "requestBytes": 72,
+      "replyBytes": 1070
+    },
+    {
+      "roundTripMs": 0.09791699999993853,
+      "requestBytes": 73,
+      "replyBytes": 1073
+    },
+    {
+      "roundTripMs": 1219.6570000000002,
+      "requestBytes": 72,
+      "replyBytes": 1070
+    },
+    {
+      "roundTripMs": 0.12829199999987395,
+      "requestBytes": 73,
+      "replyBytes": 1073
+    },
+    {
+      "roundTripMs": 4.956916999999976,
+      "requestBytes": 72,
+      "replyBytes": 1070
+    }
+  ]
+}

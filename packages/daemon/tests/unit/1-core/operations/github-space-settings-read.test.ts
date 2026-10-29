@@ -40,7 +40,7 @@ describe('GitHub Space settings read extraction', () => {
         mainThreadMovementClaim: false,
         constructorFreeQueryOnlyContract: true,
         publicRpcCharacterization: {
-          mainStatementRuns: 4,
+          mainStatementRuns: 0,
           watchedRows: 2,
           sourceWatchedAndSnapshotStayAligned: true,
           creationAndSharedCommandTimesPreserved: true,

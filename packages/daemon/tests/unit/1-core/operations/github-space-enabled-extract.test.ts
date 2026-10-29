@@ -39,7 +39,7 @@ describe('GitHub Space enabled SQL extraction', () => {
         pass: true,
         mainThreadMovementClaim: false,
         publicRpc: {
-          mainStatementRuns: 4,
+          mainStatementRuns: 0,
           watchedRows: 2,
           sourceWatchedAndSnapshotStayAligned: true,
           creationAndSharedCommandTimesPreserved: true,

@@ -7,8 +7,8 @@ environment, ephemeral listeners, retained evidence and owned data cleanup.
 The unchanged lane-c-github-space-enabled-extract.ts journey first drives the
 real Space enable/disable/listWatchedRepos/listConfig RPCs, with two synthetic
 watched repositories and polling/webhooks disabled. Source/watched/saved config
-flags, creation times and shared-command timestamps must remain aligned. Four
-target main statement runs remain expected. The imported journey closes its
+flags, creation times and shared-command timestamps must remain aligned. The activated enable/disable
+path now expects zero target main writes. The imported journey closes its
 daemon, socket and processors before the new direct read proof starts.
 
 Then use native SQLite containing only the settings table with query_only ON.
@@ -19,8 +19,14 @@ unchanged stored rows and missing-table errors. Commit the missing-helper red
 contracts before extracting the statements. Measure SQL/default/bind AST equality
 and hash all other repository units, including constructor/backfill, unchanged.
 
-This rung extracts reads only. Public reads/writes remain on main; no atomic
-writer or full transitive GitHub/plugin/startup audit is claimed. The previous
+This helper retains the extracted read contracts. Enable/disable now uses the
+atomic writer; other public reads/setters remain separate. No full transitive
+GitHub/plugin/startup audit is claimed. The previous
 native helper is a behavior fixture, not a new transitive production audit.
 Save github-space-settings-read.json and the imported RPC evidence. Deployment
 smoke remains with Neo; never touch the live daemon or port 8399.
+
+The enable/disable RPC now consumes the atomic writer receipt. Archived evidence
+retains its original commit-time counts. Current public RPC expectations require
+zero target main writes; direct scratch-helper SQL/binding/rollback contracts
+remain unchanged, and other public write/read families are not covered here.

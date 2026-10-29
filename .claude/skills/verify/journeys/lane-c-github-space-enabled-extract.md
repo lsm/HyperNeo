@@ -10,7 +10,8 @@ a synthetic Space and add synthetic watched repositories through the real RPC,
 with both polling and webhooks disabled. Drive space.github.enable/disable,
 listWatchedRepos and listConfig. Preserve enabled flags across source setting,
 watched rows and saved Space config, creation times and same-command timestamps.
-Four measured main statement runs remain expected; no off-main claim is made.
+The activated enable/disable path now expects zero target main writes; this
+fixture retains direct helper contracts without a blanket off-main claim.
 
 Commit the failing helper-availability contracts first while legacy RPC behavior
 passes. Extract only the source-setting UPSERT and watched-row UPDATE into a
@@ -24,6 +25,12 @@ Scratch native SQLite also verifies the result count and outer rollback. Pin
 SQL/JSON AST and every other repository method, including constructor/backfill.
 
 The full GitHub/plugin/startup/Space closure is not transitively audited. Space
-config persistence and future atomic command/wiring remain separate slices.
+config writer families remain separate; enable/disable atomic writer activation
+has its own public RPC proof.
 Save github-space-enabled-extract.json; close scratch DB, socket, processors and
 app before wrapper cleanup. Deployment smoke is Neo-owned.
+
+The enable/disable RPC now consumes the atomic writer receipt. Archived evidence
+retains its original commit-time counts. Current public RPC expectations require
+zero target main writes; direct scratch-helper SQL/binding/rollback contracts
+remain unchanged, and other public write/read families are not covered here.

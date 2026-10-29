@@ -47,6 +47,12 @@ function setupDb(): BunDatabase {
   return db;
 }
 
+function seedRpcSpace(db: BunDatabase): void {
+  db.prepare(
+    'INSERT INTO spaces(id,slug,name,workspace_path,created_at,updated_at)VALUES(?,?,?,?,?,?)'
+  ).run('space-1', 'space-1', 'Synthetic Space', 'synthetic-space-workspace', 1, 1);
+}
+
 class StaticExternalEventExtensionConfigStore implements ExternalEventExtensionConfigStore {
   readonly spaceConfigs = new Map<string, SpaceExternalEventSourceConfig>();
 
@@ -1535,6 +1541,7 @@ describe('GitHubEventExtension', () => {
 
   test('RPC disable persists for newly watched repositories', async () => {
     const db = setupDb();
+    seedRpcSpace(db);
     const extension = new GitHubEventExtension(db);
     const clientHub = new MessageHub();
     const hub = new MessageHub();
@@ -1597,6 +1604,7 @@ describe('GitHubEventExtension', () => {
 
   test('RPC unwatchRepo preserves explicit space enablement after removing last repository', async () => {
     const db = setupDb();
+    seedRpcSpace(db);
     const extension = new GitHubEventExtension(db);
     const clientHub = new MessageHub();
     const hub = new MessageHub();
@@ -8847,6 +8855,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
 
   test('space.github.enable re-enables webhook delivery without polling re-arm when interval is 0', async () => {
     const db = setupDb();
+    seedRpcSpace(db);
     const extension = new GitHubEventExtension(db, undefined, { getPollIntervalMs: () => 0 });
     const { clientHub, hub, ready } = setupHubPair();
     await ready;
@@ -9125,6 +9134,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
 
   test('space.github.enable restarts polling capability for previously-disabled spaces', async () => {
     const db = setupDb();
+    seedRpcSpace(db);
     const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
     const { clientHub, hub, ready } = setupHubPair();
     await ready;

@@ -1,0 +1,54 @@
+{
+  "redCommit": "f9825e8926f0a873db945c5c26aac80e35b2dbd7",
+  "before": {
+    "unitFailed": 7,
+    "authorizationPassed": 1,
+    "nativePublicRpcFailure": "Target GitHub SQL reached main",
+    "mainWriteAttempts": 1,
+    "nativeBaselineAndSixGuardChecksPassed": true
+  },
+  "legacySuite": {
+    "files": 1,
+    "tests": 263,
+    "passed": true,
+    "setupOnlyChanges": "Four scenarios now seed a real Space FK row; assertions unchanged"
+  },
+  "regressionSuite": {
+    "files": 7,
+    "tests": 14,
+    "passed": true,
+    "finalNewTestSubset": {
+      "files": 2,
+      "tests": 9,
+      "passed": true
+    }
+  },
+  "strictTypeScript6": {
+    "passed": true,
+    "scope": "Modified extension and both new tests plus imported dependencies",
+    "fixtureTypesCorrected": "Typed four SQL scalar reads; publisher stub now rejects unexpected publication with compatible return type"
+  },
+  "rootCheck": {
+    "command": "bun run check",
+    "exitCode": 0
+  },
+  "native": "Bun1.4.3/Deno2.9.4 real WebSocket enable/disable/listConfig, complete projected snapshot and captured caller times, zero target main writes; capability -> actual timer scheduling -> source notification after delivered committed receipt; zero interval skips re-arm; snapshot failure rolls back, known post-commit capability failure retains consistent snapshot; held writer keeps health/old reads responsive; admission and actual committed-reply loss produce no lifecycle/fallback/replay; authorization precedes admission",
+  "scope": {
+    "productionLines": 28,
+    "smokeLines": 1,
+    "ownedBridgeGraphLines": 52,
+    "auditedStableCommandGraphLines": 178
+  },
+  "priorJourneyUpdates": "Current native extraction/read/projection proofs and CI parents expect0 main write runs; direct helper SQL contracts and archived prior-commit evidence retained",
+  "limits": [
+    "Owned scope is two RPC bridges and retained constructor DB reference; constructor body/other extension AST unchanged after restoring bridges",
+    "Exact command subtree and policy/timer/app notification/shared-file hashes pinned; downstream async poll/token/network/reactive/plugin/startup closures not transitively audited",
+    "Native safe interval and no reconciliation supplied through existing options; observation hooks forward real scheduling/config/notification methods",
+    "Target guard covers source UPSERT, watched enabled UPDATE and config UPSERT, not general public reader SELECTs",
+    "Public read endpoints, other writer families and startup initialization remain separate",
+    "Updated prior native fixture chains run locally on Bun; current wiring proof runs on Bun and Deno; CI owns complete Deno smoke",
+    "Held writer duration is not a250ms latency pass",
+    "Local Bun1.4.3, pinned1.4.2 CI-owned",
+    "Deployment smoke Neo-owned; no live daemon touched"
+  ]
+}

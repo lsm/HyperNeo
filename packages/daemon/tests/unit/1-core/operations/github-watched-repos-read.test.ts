@@ -41,7 +41,7 @@ describe('GitHub watched repository read extraction', () => {
         constructorFreeQueryOnlyRows: true,
         completeRowOrderAndCursorErrorsPreserved: true,
         publicRpcCharacterization: {
-          mainStatementRuns: 4,
+          mainStatementRuns: 0,
           watchedRows: 2,
           sourceWatchedAndSnapshotStayAligned: true,
           creationAndSharedCommandTimesPreserved: true,
