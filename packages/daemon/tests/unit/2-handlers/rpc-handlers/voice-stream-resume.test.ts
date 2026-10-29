@@ -92,9 +92,9 @@ describe('resumable voice stream RPC', () => {
       receivedBytes: 6,
     });
     expect(resumable).toBe(true);
-    await expect(
-      call('voice.stream.chunk', { streamId, audioBase64: pcm([99]) })
-    ).rejects.toMatchObject({ code: 'VOICE_STREAM_NOT_FOUND' });
+    await expect(call('voice.stream.chunk', { streamId, audioBase64: pcm([99]) })).rejects.toThrow(
+      'Unknown voice stream'
+    );
     await call(
       'voice.stream.chunk',
       { streamId, audioBase64: pcm([1, 2, 3]), offset: 0 },
