@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { spawn, execFileSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { openSync, closeSync, writeFileSync, readFileSync, copyFileSync, mkdirSync } from 'node:fs';
-import { createServer } from 'node:net';
+import { createServer, connect as connectTcp } from 'node:net';
 import { join } from 'node:path';
 import WebSocket, { WebSocketServer } from 'ws';
 
@@ -54,7 +54,7 @@ async function connect() {
     const entry = pending.get(frame.requestId ?? frame.id);
     if (!entry) return;
     pending.delete(frame.requestId ?? frame.id);
-    if (frame.error) entry.reject(Object.assign(new Error(frame.error.message), { code: frame.error.code }));
+    if (frame.error) entry.reject(Object.assign(new Error(frame.error), { code: frame.errorCode }));
     else entry.resolve(frame.data);
   });
   ws.on('close', () => { for (const entry of pending.values()) entry.reject(new Error('synthetic connection dropped')); pending.clear(); });
@@ -74,7 +74,11 @@ try {
   let ready = false;
   for (let i = 0; i < 200; i++) {
     assert.equal(daemon.exitCode, null, 'isolated daemon exited before readiness');
-    try { ready = (await fetch(`http://127.0.0.1:${port}/health`)).ok; } catch {}
+    ready = await new Promise<boolean>((done) => {
+      const probe = connectTcp({ host: '127.0.0.1', port });
+      probe.once('connect', () => { probe.destroy(); done(true); });
+      probe.once('error', () => done(false));
+    });
     if (ready) break;
     await sleep(100);
   }
@@ -128,10 +132,12 @@ try {
   for (const client of clients) client.terminate();
   for (const socket of asr.clients) socket.terminate();
   await new Promise<void>((done) => asr.close(() => done()));
-  execFileSync('bash', ['.claude/skills/verify/stop.sh', run], { stdio: 'inherit' });
-  await exited;
+  daemon.kill('SIGTERM');
+  const shutdownDeadline = setTimeout(() => daemon.kill('SIGKILL'), 15_000);
+  try { await exited; } finally { clearTimeout(shutdownDeadline); }
   observed.daemonExitCode = daemon.exitCode;
   writeFileSync(join(run, 'evidence/voice-resumable.json'), JSON.stringify(observed, null, 2));
+  assert.equal(daemon.exitCode, 0, 'isolated daemon did not shut down cleanly');
   assert(!/database (?:is|has been) closed/i.test(readFileSync(join(run, 'evidence/daemon.log'), 'utf8')), 'closed database during proof shutdown');
 }
 console.log(JSON.stringify(observed));
