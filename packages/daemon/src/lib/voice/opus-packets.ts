@@ -15,11 +15,11 @@ const decodePacket = (superpipe({})('voice-opus-packet') as PipelineAPI)
       return { value: packet };
     },
     ['packet', 'decodedBytes'],
-    'result:packet'
+    'result:pcm'
   )
   .pipe(
     (packet: Uint8Array, decoder: OpusDecoderHandle) => decoder.decode(packet),
-    ['packet', 'decoder'],
+    ['pcm', 'decoder'],
     'pcm'
   )
   .endAsync('pcm') as (
