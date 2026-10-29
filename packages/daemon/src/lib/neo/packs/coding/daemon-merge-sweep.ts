@@ -89,10 +89,10 @@ export function createCodingDaemonMergeSweep(
       (row) => row.closedAt === null && row.state === 'approved_green'
     );
     const observed = await Promise.all(
-      rows.map(async (row) => ({
-        url: `https://github.com/${row.repo}/pull/${row.number}`.toLowerCase(),
-        head: row.head,
-        policy: (await ledger.pollContextCurrent(row.repo)).policy,
+      rows.map(async ({ repo, number, head }) => ({
+        url: `https://${process.env.GH_HOST ?? 'github.com'}/${repo}/pull/${number}`.toLowerCase(),
+        head,
+        policy: (await ledger.pollContextCurrent(repo)).policy,
       }))
     );
     const candidates = observed.filter(
