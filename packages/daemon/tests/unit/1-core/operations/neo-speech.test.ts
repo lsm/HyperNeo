@@ -165,6 +165,37 @@ describe('spoken replies separate from publications', () => {
     }
   });
 
+  test.each([
+    new TypeError('fetch failed'),
+    new DOMException('The operation timed out', 'TimeoutError'),
+    new DOMException('The operation was aborted', 'AbortError'),
+  ])('catalog returns backend unavailable when transport rejects with %s', async (error) => {
+    const catalog = new NeoSpeech(
+      hub,
+      runDbOpOn(mailbox.db),
+      () => true,
+      'http://127.0.0.1:18555',
+      (async () => {
+        throw error;
+      }) as typeof fetch
+    );
+    try {
+      expect(
+        await invokeOperation(
+          createOperationRegistry(catalog.operations),
+          'neo.speech.catalog',
+          {},
+          human
+        )
+      ).toMatchObject({
+        kind: 'completed',
+        value: { ok: false, reason: 'speech_backend_unavailable' },
+      });
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
   test('catalog still returns voices and keeps unexpected infrastructure errors as failures', async () => {
     for (const available of [true, false]) {
       const catalog = new NeoSpeech(
