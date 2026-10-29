@@ -20,8 +20,9 @@ retaining committed bytes/row; a later explicit retry recovers the same receipt.
 Preserve absent/missing/sensitive source refusals. Deno keeps its existing native
 safe_open_unavailable refusal; successful Deno capture/bytes are unverified.
 
-Only resolver identity initialization moves in this slice. Row publication, source
-reads, Git capture identity and public read-only authorization remain main-side.
+This journey originally moved only resolver identity initialization. Current
+registration/Git identity and row publication are covered by their later journeys;
+source/receipt reads and public read-only authorization remain main-side.
 Count the separate read-only verification identity SELECTs explicitly. Pin the merged
 identity command and registration dependency by exact hashes/contracts. Count the
 whole local resolver module including closures/schema/constants to <=200 lines;

@@ -1,0 +1,9 @@
+{
+  "sqlScope": "Git publication row INSERT only; existing source/receipt/authorization SQL, core #9342 constructor transaction and sync native descriptor work remain outside this ownership proof",
+  "fullTransitiveCaptureOwnershipGraphMeasured": false,
+  "mainGuardSelfCheckPassed": true,
+  "firstConcurrentRpcMs": 402.72358399999996,
+  "GitMainInsertRuns": 2,
+  "rowCommandPosts": 0,
+  "workerMetrics": []
+}

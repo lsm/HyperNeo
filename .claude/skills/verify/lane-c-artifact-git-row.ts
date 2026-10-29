@@ -1,0 +1,88 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, statSync, writeFileSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { createArtifactProofPhases } from './lane-c-artifact-proof-phases.ts';
+import { waitForSdkBodyCopy } from './wait-for-sdk-body-copy.ts';
+import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
+
+const run=resolve(process.argv.at(-1)!);
+assert.equal(process.env.NODE_ENV,'test');assert.equal(process.env.HOME,join(run,'home'));assert.equal(process.env.HYPERNEO_DATA_DIR,join(run,'data'));assert(!existsSync(join(run,'data')));
+for(const key of ['ANTHROPIC_API_KEY','CLAUDE_CODE_OAUTH_TOKEN','OPENAI_API_KEY','GITHUB_TOKEN'])assert.equal(process.env[key],undefined);
+for(const name of ['home','workspace','bin','evidence'])mkdirSync(join(run,name),{recursive:true});
+const phase=createArtifactProofPhases(run);phase('imports');
+writeFileSync(join(run,'bin/gh'),'#!/bin/sh\nexit 1\n',{mode:0o755});process.env.PATH=join(run,'bin')+':'+process.env.PATH;
+const {createDaemonApp}=await import('../../../packages/daemon/src/app.ts');
+const {getConfig}=await import('../../../packages/daemon/src/config.ts');
+const {JobQueueProcessor}=await import('../../../packages/daemon/src/storage/job-queue-processor.ts');
+const {Database:SQLite}=await import('../../../packages/daemon/src/storage/sqlite-compat.ts');
+const {NeoAskTodoRepository}=await import('../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts');
+const {MessageHub,WebSocketClientTransport}=await import('../../../packages/shared/src/mod.ts');
+const NativeWorker=globalThis.Worker,nativeFetch=globalThis.fetch,prepare=SQLite.prototype.prepare,start=JobQueueProcessor.prototype.start;
+const processors=new Set<InstanceType<typeof JobQueueProcessor>>();let main:InstanceType<typeof SQLite>|undefined;let measuring=false;let mainInsertRuns=0,rowPosts=0,rejectNext=false,loseNext=false;let beforePost:(()=>void)|undefined,beforeReceipt:(()=>void)|undefined;
+const metrics:{roundTripMs:number;requestBytes:number;replyBytes:number}[]=[];
+SQLite.prototype.prepare=function(sql,...rest){const connection=this,statement=Reflect.apply(prepare,this,[sql,...rest]);if(!/INSERT INTO artifact_files/i.test(sql))return statement;return new Proxy(statement,{get(target,key){const value=Reflect.get(target,key);if(typeof value!=='function')return value;return(...args:unknown[])=>{if(measuring&&connection===main&&key==='run'){mainInsertRuns++;throw new Error('Git artifact publication INSERT reached main');}return Reflect.apply(value,target,args);};}});};
+globalThis.Worker=function(url:string|URL,options?:WorkerOptions){const worker=new NativeWorker(url,options);if(String(url).endsWith('/db-gateway-worker.ts')){const post=worker.postMessage.bind(worker),sent=new Map<number,{at:number;bytes:number}>(),lost=new Set<number>();let receive:((event:MessageEvent)=>void)|null=null;Object.defineProperty(worker,'onmessage',{configurable:true,get:()=>receive,set:(handler:typeof receive)=>{receive=handler;}});worker.addEventListener('message',event=>{const request=sent.get(event.data.id);if(request){sent.delete(event.data.id);if(event.data.error)assert.equal(event.data.changes,undefined);else{assert.deepEqual(event.data.changes,[]);metrics.push({roundTripMs:performance.now()-request.at,requestBytes:request.bytes,replyBytes:Buffer.byteLength(JSON.stringify(event.data.result))});if(beforeReceipt){const effect=beforeReceipt;beforeReceipt=undefined;effect();}}}if(lost.delete(event.data.id)&&!event.data.error){worker.dispatchEvent(new ErrorEvent('error',{message:'synthetic committed Git publication row reply lost; outcome unknown',cancelable:true}));return;}receive?.call(worker,event);});worker.postMessage=((message:{id:number;op?:string;lane?:string;args?:unknown})=>{if(message.op==='artifact.file.row.write'){rowPosts++;assert.equal(message.lane,'write');const payload=message.args as {method:string;args:unknown[]};assert.equal(payload.method,'publish');assert.equal(payload.args.length,8);assert.deepEqual(structuredClone(payload),payload);if(beforePost){const effect=beforePost;beforePost=undefined;effect();}if(rejectNext){rejectNext=false;queueMicrotask(()=>worker.dispatchEvent(new ErrorEvent('error',{message:'synthetic Git publication row admission rejected before commit',cancelable:true})));return;}sent.set(message.id,{at:performance.now(),bytes:Buffer.byteLength(JSON.stringify(payload))});if(loseNext){loseNext=false;lost.add(message.id);}}post(message);}) as typeof worker.postMessage;}return worker;} as unknown as typeof Worker;
+globalThis.fetch=(()=>{throw new Error('External HTTP refused by artifact Git publication row fixture');}) as typeof fetch;
+let app:Awaited<ReturnType<typeof createDaemonApp>>|undefined,transport:InstanceType<typeof WebSocketClientTransport>|undefined,lock:InstanceType<typeof SQLite>|undefined,timer:ReturnType<typeof setInterval>|undefined;
+const evidence:Record<string,unknown>={sqlScope:'Git publication row INSERT only; existing source/receipt/authorization SQL, core #9342 constructor transaction and sync native descriptor work remain outside this ownership proof',fullTransitiveCaptureOwnershipGraphMeasured:false};
+try{
+ const sha='a'.repeat(40),treeSha='b'.repeat(40);const bytes=Buffer.from('# Synthetic pinned Git 🦊\n'.repeat(60000));const blobSha=createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');const expectedHash=createHash('sha256').update(bytes).digest('hex');const gitPrefix='repos/synthetic/fixture/git/';
+ const commitKey=gitPrefix+'commits/'+sha,treeKey=gitPrefix+'trees/'+treeSha,blobKey=gitPrefix+'blobs/'+blobSha;
+ const fixtures={
+  [commitKey]:{url:'https://api.github.com/'+commitKey,sha,tree:{sha:treeSha}},
+  [treeKey]:{url:'https://api.github.com/'+treeKey,sha:treeSha,truncated:false,tree:[{path:'report.md',mode:'100644',type:'blob',sha:blobSha,size:bytes.length}]},
+  [blobKey]:{url:'https://api.github.com/'+blobKey,sha:blobSha,encoding:'base64',size:bytes.length,content:bytes.toString('base64')},
+ };
+ writeFileSync(join(run,'git-fixtures.json'),JSON.stringify(fixtures));writeFileSync(join(run,'evidence/gh.log'),'');
+ writeFileSync(join(run,'bin/gh'),`#!/usr/bin/env python3
+import json,pathlib,sys
+r=pathlib.Path(__file__).resolve().parent.parent
+a=[v for v in sys.argv[1:] if v!='--include']
+with (r/'evidence/gh.log').open('a') as f:f.write(json.dumps(a)+'\\n')
+fixtures=json.loads((r/'git-fixtures.json').read_text())
+if len(a)==4 and a[:3]==['api','--hostname','github.com'] and a[3] in fixtures:
+ print(json.dumps(fixtures[a[3]]));sys.exit(0)
+sys.stderr.write('Refused non-fixture gh call');sys.exit(1)
+`,{mode:0o755});
+ const ghCalls=()=>readFileSync(join(run,'evidence/gh.log'),'utf8').split('\n').filter(Boolean).length;
+ phase('daemon-start');
+ JobQueueProcessor.prototype.start=function(){processors.add(this);return start.call(this);};try{app=await createDaemonApp({config:{...getConfig({host:'127.0.0.1',port:0,dbPath:join(run,'data/daemon.db'),workspaceRoot:join(run,'workspace')}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});}finally{JobQueueProcessor.prototype.start=start;}
+ assert.notEqual(app.server.port,8399);phase('processors-stop');await Promise.all([...processors].map(p=>p.stop()));main=app.db.getDatabase();phase('body-copy');await waitForSdkBodyCopy(main);phase('fixtures');
+ for(const id of ['synthetic-neo','synthetic-other'])main.prepare("INSERT INTO sessions(id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?,'Synthetic',?,'now','now','active','{}','{}')").run(id,join(run,'workspace'));
+ const ask={id:'synthetic-git-ask',sessionId:'synthetic-neo',projectId:null,originMessageId:null,title:'Synthetic Git row',request:'Synthetic proof only',createdAt:Date.now()},work=new NeoAskTodoRepository(main);work.openAsk(ask);work.addTodo('synthetic-git-todo',ask.id,{title:'Synthetic document',doneWhen:'',instruction:null,check:null,named:null},Date.now());
+ const reference=`https://github.com/synthetic/fixture/blob/${sha}/report.md`,setSource=(text:string)=>main!.prepare('UPDATE neo_todos SET evidence=? WHERE id=?').run(text,'synthetic-git-todo');setSource(reference);main.prepare('UPDATE neo_todos SET repo=? WHERE id=?').run('github.com/synthetic/fixture','synthetic-git-todo');
+ const input={requestId:crypto.randomUUID(),sourceMessageOrCard:{kind:'todo' as const,id:'synthetic-git-todo'},reference};
+ const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();
+ type Reply={accepted:true;artifact:ArtifactRef}|{accepted:false;reason:string};
+ const invoke=(value=input)=>hub.request<Reply>('operation.invoke',{name:'artifact.reference.resolve',input:value});
+ const count=()=>Number(main!.prepare('SELECT COUNT(*) AS n FROM artifact_files').get()!.n);const retained=(request:string)=>main!.prepare('SELECT receipt FROM artifact_files WHERE request_id=?').get('git:'+request)?.receipt as string|undefined;
+ const wait=async(predicate:()=>boolean)=>{const until=performance.now()+5000;while(!predicate()){assert(performance.now()<until);await new Promise(done=>setTimeout(done,5));}};
+ const cached=main.prepare('INSERT INTO artifact_files VALUES(?,?,?,?,?,?,?,?,?,?,?)');measuring=true;assert.throws(()=>cached.run(),/INSERT reached main/);assert.equal(mainInsertRuns,1);mainInsertRuns=0;evidence.mainGuardSelfCheckPassed=true;
+ let previous=performance.now(),maxLoopLagMs=0;timer=setInterval(()=>{const now=performance.now();maxLoopLagMs=Math.max(maxLoopLagMs,now-previous-5);previous=now;},5);
+ phase('initial-rpc');
+ const at=performance.now(),responses=await Promise.allSettled([invoke(),invoke()]);evidence.firstConcurrentRpcMs=performance.now()-at;
+ if(Reflect.get(globalThis,'Deno')){assert.equal(responses[0].status,'fulfilled');if(responses[0].status!=='fulfilled')throw responses[0].reason;assert.deepEqual(responses[0].value,{accepted:false,reason:'safe_open_unavailable'});assert.equal(responses[1].status,'rejected');if(responses[1].status==='rejected')assert.match(String(responses[1].reason),/artifact_blob_conflict/);assert.equal(rowPosts,0);assert.equal(count(),0);evidence.existingDenoCaptureFailsClosed=true;evidence.existingDenoDuplicateBlobFailsClosed=true;evidence.successfulDenoRowActivationAndBytesVerified=false;}
+ else{
+ for(const response of responses)assert.equal(response.status,'fulfilled',response.status==='rejected'?String(response.reason):'');const[first,concurrent]=responses.map(response=>(response as PromiseFulfilledResult<Reply>).value);assert(first.accepted,JSON.stringify(first));assert.deepEqual(concurrent,first);assert.equal(count(),1);assert.equal(rowPosts,1);assert.deepEqual(await invoke(),first);assert.equal(rowPosts,1);evidence.concurrentLaneAndReceiptRetryPreserved=true;
+ const read=async(ref:ArtifactRef)=>{const chunks:Buffer[]=[];let offset=0;for(;;){const reply=await hub.request<{accepted:boolean;data:string;sha256:string;nextOffset:number;complete:boolean}>('operation.invoke',{name:'artifact.file.read',input:{artifactId:ref.artifactId,offset}});assert.equal(reply.accepted,true);assert.equal(reply.sha256,expectedHash);const chunk=Buffer.from(reply.data,'base64');assert(chunk.length<=256*1024);chunks.push(chunk);offset=reply.nextOffset;if(reply.complete)break;}evidence.completeBytes=offset;evidence.readChunks=chunks.length;return Buffer.concat(chunks);};assert((await read(first.artifact)).equals(bytes));const metadata=await hub.request<{accepted:boolean;metadata:{sha256:string;revision:unknown}}>('operation.invoke',{name:'artifact.file.get',input:{artifactId:first.artifact.artifactId}});assert.equal(metadata.accepted,true);assert.equal(metadata.metadata.sha256,expectedHash);assert.deepEqual(metadata.metadata.revision,{kind:'commit',repository:'github.com/synthetic/fixture',commitSha:sha,blobSha});evidence.commitProvenanceAndFullSnapshotBytesRetained=true;
+ phase('admission-refusal');
+ const refused={...input,requestId:crypto.randomUUID()},beforeRefusal=rowPosts,rowsBeforeRefusal=count();rejectNext=true;await assert.rejects(invoke(refused),/before commit/);assert.equal(retained(refused.requestId),undefined);assert.equal(count(),rowsBeforeRefusal);await new Promise(done=>setTimeout(done,100));assert.equal(rowPosts,beforeRefusal+1);assert((await invoke(refused)).accepted);evidence.admissionFailureHasNoFallbackOrReplay=true;
+ phase('committed-reply-loss');
+ const lost={...input,requestId:crypto.randomUUID()},beforeLoss=rowPosts;loseNext=true;await assert.rejects(invoke(lost),/outcome unknown/);const stored=retained(lost.requestId);assert(stored);const lostArtifact=JSON.parse(stored).artifact as ArtifactRef;await new Promise(done=>setTimeout(done,100));assert.equal(rowPosts,beforeLoss+1);const callsBeforeRetry=ghCalls();assert.deepEqual(await invoke(lost),{accepted:true,artifact:lostArtifact});assert.equal(rowPosts,beforeLoss+1);assert.equal(ghCalls(),callsBeforeRetry);evidence.unknownOutcomeNeverAutomaticallyReplayed=true;evidence.explicitRetryReadsCommittedReceiptWithoutLookup=true;
+ phase('post-commit-binding');
+ const rebound={...input,requestId:crypto.randomUUID()},beforeRebind=rowPosts;beforeReceipt=()=>{main!.prepare('UPDATE neo_asks SET session_id=? WHERE id=?').run('synthetic-other',ask.id);};assert.deepEqual(await invoke(rebound),{accepted:false,reason:'unavailable'});assert(retained(rebound.requestId));assert.equal(rowPosts,beforeRebind+1);main.prepare('UPDATE neo_asks SET session_id=? WHERE id=?').run('synthetic-neo',ask.id);assert.deepEqual(await invoke(rebound),{accepted:true,artifact:JSON.parse(retained(rebound.requestId)!).artifact});assert.equal(rowPosts,beforeRebind+1);evidence.postCommitBindingChangeWithholdsReference=true;
+ phase('post-commit-revocation');
+ const revoked={...input,requestId:crypto.randomUUID()},beforeRevocation=rowPosts;beforeReceipt=()=>setSource('Source removed after Git row commit.');assert.deepEqual(await invoke(revoked),{accepted:false,reason:'unavailable'});assert(retained(revoked.requestId));assert.equal(rowPosts,beforeRevocation+1);assert.deepEqual(await invoke(revoked),{accepted:false,reason:'unavailable'});setSource(reference);assert.deepEqual(await invoke(revoked),{accepted:true,artifact:JSON.parse(retained(revoked.requestId)!).artifact});assert.equal(rowPosts,beforeRevocation+1);evidence.postCommitSourceRevocationWithholdsReference=true;
+ phase('writer-contention');
+ main.exec('CREATE TABLE synthetic_publication_lock(value INTEGER);INSERT INTO synthetic_publication_lock VALUES(0)');beforePost=()=>{lock=new SQLite(app!.db.getDbPath());lock.exec('BEGIN IMMEDIATE');lock.prepare('UPDATE synthetic_publication_lock SET value=1').run();};const held={...input,requestId:crypto.randomUUID()},beforeHeld=rowPosts,heldAt=performance.now();let settled=false;const firstPending=invoke(held).finally(()=>{settled=true;});await wait(()=>!!lock);const secondPending=invoke(held);assert.equal(rowPosts,beforeHeld+1);assert.equal(settled,false);assert.equal(retained(held.requestId),undefined);const healthAt=performance.now();assert.equal((await hub.request<{status:string}>('system.health',{})).status,'ok');evidence.healthWhileWriterHeldMs=performance.now()-healthAt;await new Promise(done=>setTimeout(done,1200));assert.equal(settled,false);lock!.exec('COMMIT');lock!.close();lock=undefined;const[heldFirst,heldSecond]=await Promise.all([firstPending,secondPending]);assert(heldFirst.accepted);assert.deepEqual(heldSecond,heldFirst);assert.equal(rowPosts,beforeHeld+1);evidence.deliberatelyHeldPublicationMs=performance.now()-heldAt;evidence.publicReceiptWaitsForCommit=true;
+ writeFileSync(join(run,'git-fixtures.json'),'{}');const offlineCalls=ghCalls(),offlinePosts=rowPosts;assert.deepEqual(await invoke(),first);assert.equal(ghCalls(),offlineCalls);assert.equal(rowPosts,offlinePosts);assert((await read(first.artifact)).equals(bytes));evidence.explicitOfflineRetryReadsWithoutLookupOrPublication=true;
+ }
+ const beforeForeign=ghCalls();assert.deepEqual(await invoke({...input,reference:reference.replace('/fixture/','/foreign/')}),{accepted:false,reason:'unavailable'});assert.equal(ghCalls(),beforeForeign);evidence.foreignOrNonSourceReferenceRefusedBeforeLookup=true;evidence.fixtureGhCalls=ghCalls();
+ assert.equal(mainInsertRuns,0);assert(maxLoopLagMs<1000);evidence.maxLoopLagMs=maxLoopLagMs;evidence.rssBytes=process.memoryUsage().rss;evidence.walBytes=existsSync(`${app.db.getDbPath()}-wal`)?statSync(`${app.db.getDbPath()}-wal`).size:0;evidence.pass=true;
+}finally{
+ phase('shutdown');
+ measuring=false;if(timer)clearInterval(timer);if(lock){try{lock.exec('ROLLBACK');}catch{}lock.close();}try{await transport?.close();await Promise.all([...processors].map(p=>p.stop()));await app?.cleanup();}finally{SQLite.prototype.prepare=prepare;JobQueueProcessor.prototype.start=start;globalThis.Worker=NativeWorker;globalThis.fetch=nativeFetch;evidence.GitMainInsertRuns=mainInsertRuns;evidence.rowCommandPosts=rowPosts;evidence.workerMetrics=metrics;writeFileSync(join(run,'evidence/artifact-git-row.json'),JSON.stringify(evidence,null,2));}
+}
+phase('complete');
+console.log('ok public Git publication row admission/commit/authorization/no-replay fence; Bun bytes pass, Deno retains existing capture refusal');
