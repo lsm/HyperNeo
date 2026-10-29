@@ -1,0 +1,40 @@
+{
+  "redCommit": "e667378be38446f147287746e94216cad12315b0",
+  "before": {
+    "missingCommandFailed": 7,
+    "nativePublicBaselineAndSixMainGuardsPassed": true,
+    "nativeFailure": "Unknown write DB op: github.space.enabled.write"
+  },
+  "focused": {
+    "files": 6,
+    "tests": 24,
+    "passed": true
+  },
+  "strictTypeScript6": {
+    "passed": true,
+    "scope": "New command and both new tests plus imported dependencies",
+    "nullableTestComparisonsCorrected": true
+  },
+  "rootCheck": {
+    "command": "bun run check",
+    "exitCode": 0
+  },
+  "native": "Bun1.4.3/Deno2.9.4 actual typed worker write and real Space config RPC reader; six cached/fresh guard probes then zero target SQL on main; complete committed source/watched/config snapshot with shared caller time, retained creation times and unrelated Space/backfill state; snapshot trigger, cursor parse, FK and invalid id faults roll back; held writer keeps RPC health responsive; admission rejection and actual committed reply loss each post once with no replay",
+  "scope": {
+    "commandLines": 42,
+    "completeOwnedDataGraphLines": 178,
+    "productionAndRegistryLines": 44,
+    "registryLines": 2,
+    "smokeLines": 1
+  },
+  "fixtureCorrection": "Initial synthetic Space setup used duplicate workspace paths; corrected to unique owned directories before final expected-red proof and red commit",
+  "limits": [
+    "Public mutation handlers remain unchanged; construction only",
+    "Data-only repository primitive uses existing native/inline gateway IMMEDIATE transaction and returns after commit; no extra transaction or pipeline/business-policy routing added",
+    "Five merged helper modules plus command counted; existing framework transaction/SQLite internals pinned as infrastructure, not a new owned subtree",
+    "Public authorization/polling/hooks/plugin/startup transitive closure not audited or activated",
+    "Deliberately held writer duration is not a 250ms command-latency pass",
+    "Local Bun1.4.3; pinned1.4.2 CI-owned",
+    "Deployment smoke Neo-owned; live daemon untouched"
+  ]
+}
