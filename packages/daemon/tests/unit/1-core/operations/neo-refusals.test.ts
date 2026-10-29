@@ -28,6 +28,17 @@ function neoRefusalCodes(): Set<string> {
 }
 
 describe('explainNeoRefusal', () => {
+  test.each([
+    'speech_backend_not_configured',
+    'speech_backend_unavailable',
+    'invalid_speech_backend',
+  ])('explains the speech catalog rejection %s', (reason) => {
+    expect(explainNeoRefusal({ ok: false, reason })).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(new RegExp(`^${reason}: .+`)),
+    });
+  });
+
   test('turns a bare refusal code into the code, why, and what would pass', () => {
     expect(explainNeoRefusal({ ok: false, reason: 'work_not_found' })).toEqual({
       ok: false,
