@@ -30,13 +30,26 @@ export class NeoSpeechAudio {
     return url;
   }
 
-  async catalog(): Promise<unknown> {
-    const response = await this.request(this.url('/v1/audio/voices'), {
-      signal: AbortSignal.timeout(10_000),
-      redirect: 'error',
-    });
-    if (!response.ok) throw new Error('speech_backend_unavailable');
-    return response.json();
+  async catalog(): Promise<{ ok: true; catalog: unknown } | { ok: false; reason: string }> {
+    try {
+      const response = await this.request(this.url('/v1/audio/voices'), {
+        signal: AbortSignal.timeout(10_000),
+        redirect: 'error',
+      });
+      if (!response.ok) throw new Error('speech_backend_unavailable');
+      return { ok: true, catalog: await response.json() };
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        [
+          'speech_backend_not_configured',
+          'speech_backend_unavailable',
+          'invalid_speech_backend',
+        ].includes(error.message)
+      )
+        return { ok: false, reason: error.message };
+      throw error;
+    }
   }
 
   start(target: Target, voice: string): void {
@@ -114,7 +127,7 @@ export class NeoSpeechAudio {
         clearTimeout(expires);
         this.jobs.delete(target.id);
       });
-    this.serial = job;
+    this.serial = job.catch(() => {});
   }
 
   cancel(id: string): void {

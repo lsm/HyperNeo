@@ -42,7 +42,7 @@ const wait = async (check: () => boolean) => { for(let i=0;i<1500 && !check();i+
 const clients: { hub:MessageHub; transport:WebSocketClientTransport; events:unknown[] }[] = [];
 let finish = () => {};
 const finished = new Promise<void>(done => { finish = done; });
-let sequence=0, asrActive=0, asrAccepted=0, asrRejected=0;
+let sequence=0, asrActive=0, asrAccepted=0, asrRejected=0, catalogAvailable=true;
 const asrConnections = new Set<{send(data:string):unknown}>();
 const flightFrames: unknown[] = [];
 const fixture = createServer(async (request,response) => {
@@ -67,6 +67,7 @@ const fixture = createServer(async (request,response) => {
     if (request.url === '/evidence') { response.end(JSON.stringify(evidence())); return; }
     if (request.url === '/stop') { response.end('{}'); finish(); return; }
     if (request.url === '/v1/audio/voices') {
+      if (!catalogAvailable) { response.statusCode=503; response.end('{}'); return; }
       response.end(JSON.stringify({ model:'fixture', data:[{id:'vivian',name_en:'Vivian',name_zh:'薇薇安'},{id:'ryan',name_en:'Ryan',name_zh:'瑞恩'}] })); return;
     }
     if (request.url === '/v1/audio/transcriptions') {
@@ -139,6 +140,11 @@ try {
     assert.equal((await speak('second')).created,false);
     assert.equal(clients[1].events.length,0);
     assert((await call('listen',{sessionId,enabled:true,audio:true,voice:'vivian'},1)).ok);
+    assert((await call('catalog',{},1)).ok);
+    catalogAvailable=false;
+    assert.deepEqual(await call('catalog',{},1),{ok:false,reason:'speech_backend_unavailable'});
+    catalogAvailable=true;
+    assert((await call('catalog',{},1)).ok);
     const streamed=await speak('streamed'); assert(streamed.ok);
     const streamEvents=()=>clients[1].events.filter((event:any)=>event.id===streamed.id) as any[];
     await wait(()=>streamEvents().some(event=>event.type==='audio'));
@@ -149,7 +155,7 @@ try {
     const audioBytes=Buffer.concat(frames.map(event=>Buffer.from(event.pcm,'base64'))).length;
     if(!upstream) assert.equal(audioBytes,153600); else assert(audioBytes>0);
     assert((await call('ack',{sessionId,id:streamed.id,state:'played'},1)).ok);
-    console.log(JSON.stringify({voiceMetadataShort:true, serverAudioStreaming:true, upstream:upstream?.origin, audioBytes, chunks:frames.length, passed:true, realWebSocket:true, mcp:true, writerWorker:true, unrelatedClientSilent:true, noReplay:true, fullQueueRetry:true, ...evidence()}));
+    console.log(JSON.stringify({voiceMetadataShort:true, catalogTypedRejection:true, serverAudioStreaming:true, upstream:upstream?.origin, audioBytes, chunks:frames.length, passed:true, realWebSocket:true, mcp:true, writerWorker:true, unrelatedClientSilent:true, noReplay:true, fullQueueRetry:true, ...evidence()}));
   }
 } finally {
   writeFileSync(join(run,'evidence/spoken-replies.json'),JSON.stringify(evidence(),null,2));

@@ -139,12 +139,15 @@ export class NeoSpeech {
         name: 'neo.speech.catalog',
         description: 'List the voices available through this server.',
         inputSchema: z.object({}),
-        resultSchema: z.object({ ok: z.boolean(), catalog: z.unknown().optional() }),
+        resultSchema: z.object({
+          ok: z.boolean(),
+          catalog: z.unknown().optional(),
+          reason: z.string().optional(),
+        }),
         policy: { safetyClass: 'human_only', caller: 'local_user' },
         execute: (superpipe({})('neo.speech.catalog') as PipelineAPI)
-          .pipe(() => this.audio.catalog(), undefined, 'catalog')
-          .pipe((catalog: unknown) => ({ ok: true, catalog }), ['catalog'], 'result')
-          .endAsync('result') as () => Promise<{ ok: boolean; catalog: unknown }>,
+          .pipe(() => this.audio.catalog(), undefined, 'result')
+          .endAsync('result') as () => ReturnType<NeoSpeechAudio['catalog']>,
       }),
       defineOperation({
         name: 'neo.speech.ack',

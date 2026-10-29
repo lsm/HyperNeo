@@ -52,3 +52,13 @@ chunks no larger than3840 bytes, then end; playing/played remain phone receipts.
 The verify wrapper supplies a loopback synthetic upstream and must never inherit
 that production setting or any credentials. Successful local synthetic streaming
 does not establish the health or speed of the production GPU service.
+
+For failure isolation, run the focused neo-speech suite through Vitest. Inject an
+upstream read failure followed by a rejected failure-receipt write: the next
+healthy request must still synthesize and deliver audio/end, with no unhandled
+rejection. Catalog calls with missing, unavailable or invalid backend configuration
+must complete with ok:false and a fixed reason; valid voices still return and an
+unexpected infrastructure exception remains a failed operation.
+The real WebSocket proof also flips only its synthetic catalog upstream to503,
+requires a completed ok:false speech_backend_unavailable result, restores the
+upstream and requires a successful catalog before streaming the next utterance.
