@@ -16,3 +16,16 @@ Creating the synthetic check's evidence must complete the todo and stop reminder
 Read the public snapshot and retain result.json and proof.log. The clock and
 receipts are fixtures; model reasoning, browser rendering and wall-clock waits
 are unverified. Both daemon instances and sockets close in finally.
+
+For receiving-side proof, run the shared scripted-SDK delivery journey:
+
+```sh
+TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh "$DELIVERY_EVIDENCE" \
+  .claude/skills/verify/per-todo-stall-delivery.ts verify --check-only
+```
+
+While the real daemon's current Neo query is held, the daily reminder must be
+stored as deferred and absent from its SDK input. Release that query, then
+observe the exact daily reminder in the next SDK turn and its completed result.
+Retain delivery.json and proof.log. The SDK is scripted; actual model reasoning
+remains unverified. Run the same helper without the flag for steer/queue compatibility.

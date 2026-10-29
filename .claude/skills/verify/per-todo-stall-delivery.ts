@@ -5,6 +5,7 @@ import { mock } from 'bun:test';
 import { getSDKProjectDir, getSDKSessionFilePath } from '../../../packages/daemon/src/lib/sdk-session-file-manager.ts';
 
 const run = resolve(process.argv.at(-1)!);
+const checkOnly = process.argv.includes('--check-only');
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -65,32 +66,34 @@ try {
   const { sessionId } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic Neo stall reader', config: { model: 'haiku', provider: 'anthropic' } });
   new NeoRepository(app.db.getDatabase()).reserveBinding({ sessionId, kind: 'neo', projectId: null });
   const store = new NeoAskTodoRepository(app.db.getDatabase());
-  const hour = 3_600_000, now = Date.now();
-  store.openAsk({ id: 'busy', sessionId, projectId: null, originMessageId: null, title: 'Busy ask', request: 'Synthetic', createdAt: now - 2 * hour });
+  const hour = 3_600_000, now = Date.now(), age = (checkOnly ? 24 : 2) * hour;
+  store.openAsk({ id: 'busy', sessionId, projectId: null, originMessageId: null, title: 'Busy ask', request: 'Synthetic', createdAt: now - age });
   for (const id of ['stuck', 'other']) {
-    store.addTodo(id, 'busy', { title: id, doneWhen: 'Observed', check: null, instruction: null, named: null }, now - 2 * hour);
-    store.commitState(id, id === 'stuck' ? { state: 'blocked', blockedBy: 'stalled' } : { state: 'doing' }, now - 2 * hour, { state: 'no_opinion' });
+    store.addTodo(id, 'busy', { title: id, doneWhen: 'Observed', check: checkOnly && id === 'stuck' ? { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-evidence') } } : null, instruction: null, named: null }, now - age);
+    store.commitState(id, id === 'stuck' ? checkOnly ? { state: 'todo' } : { state: 'blocked', blockedBy: 'stalled' } : { state: 'doing' }, now - age, { state: 'no_opinion' });
   }
   await hub.request('message.send', { sessionId, content: 'HOLD_CURRENT_TURN' });
   await until(() => received.some(text => text.includes('HOLD_CURRENT_TURN')), 'held turn starts');
   await app.db.gateway.run(neoStallReminderWrite, { now });
-  await until(() => received.some(text => text.includes('reminder 1 of 3')), 'steer reaches the busy SDK input');
-  assert.equal(results.length, 0);
   const queued = () => app.db.getJobQueueRepo().getLatestByPayload('mailbox', { 'to.sessionId': sessionId });
-  const first = queued()!;
-  const firstId = String(first.payload.messageUuid);
-  await until(() => app.db.getSDKMessageRepo().getDeliveryContent(sessionId, firstId)?.sendStatus === 'consumed', 'steer consumed');
-  await app.db.gateway.run(neoStallReminderWrite, { now });
-  await app.db.gateway.run(neoStallReminderWrite, { now: Date.now() + 2 * hour });
-  const second = queued()!, secondId = String(second.payload.messageUuid);
-  assert.notEqual(secondId, firstId);
-  assert.equal(second.payload.deliveryMode, 'defer');
-  await until(() => app.db.getSDKMessageRepo().getDeliveryContent(sessionId, secondId)?.sendStatus === 'deferred', 'queue materialized as deferred');
-  assert(!received.some(text => text.includes('reminder 2 of 3')));
+  const marker = checkOnly ? 'has a check but no instruction or target' : 'reminder 2 of 3';
+  if (!checkOnly) {
+    await until(() => received.some(text => text.includes('reminder 1 of 3')), 'steer reaches the busy SDK input');
+    const firstId=String(queued()!.payload.messageUuid);
+    await until(() => app.db.getSDKMessageRepo().getDeliveryContent(sessionId, firstId)?.sendStatus === 'consumed', 'steer consumed');
+    await app.db.gateway.run(neoStallReminderWrite, { now });
+    await app.db.gateway.run(neoStallReminderWrite, { now: Date.now() + 2 * hour });
+    assert.notEqual(String(queued()!.payload.messageUuid),firstId);
+  }
+  assert.equal(results.length,0);
+  const deferred=queued()!,deferredId=String(deferred.payload.messageUuid);
+  assert.equal(deferred.payload.deliveryMode,'defer');
+  await until(() => app.db.getSDKMessageRepo().getDeliveryContent(sessionId,deferredId)?.sendStatus === 'deferred','queue materialized as deferred');
+  assert(!received.some(text=>text.includes(marker)));
   report.whileBusy = { received: [...received], results: [...results], queueStatus: 'deferred' };
   releaseBusy();
-  await until(() => received.some(text => text.includes('reminder 2 of 3')), 'queue reaches a fresh turn after busy result');
-  await until(() => results.filter(text => text === 'REMINDER_TURN_FINISHED').length >= 2, 'both reminder turns finish');
+  await until(() => received.some(text => text.includes(marker)), 'queue reaches a fresh turn after busy result');
+  await until(() => results.filter(text => text === 'REMINDER_TURN_FINISHED').length >= (checkOnly ? 1 : 2), 'reminder turns finish');
   assert.equal(results[0], 'BUSY_TURN_FINISHED');
   const agent = app.sessionManager.getSession(sessionId)!;
   await until(() => agent.getProcessingState().status === 'idle', 'last reminder settles idle');
