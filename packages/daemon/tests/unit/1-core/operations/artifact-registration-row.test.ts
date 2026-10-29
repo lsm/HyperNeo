@@ -21,6 +21,7 @@ describe('artifact registration committed row admission', () => {
       expect(
         JSON.parse(readFileSync(join(root, 'evidence/permissions.json'), 'utf8'))
       ).toMatchObject({
+        backupVerifiedDuringBind: true,
         observedMask: '177',
         directoryMode: '700',
         backupMode: '600',

@@ -44,6 +44,10 @@ browser and Neo deployment remain unverified. Close owned resources before clean
 Native integration children retain artifact-proof-phases.json (imports, daemon
 startup, processor stop, SDK body copy, each RPC fence and cleanup). The test parent
 includes that trace and child stdout/stderr in failures before deleting its run.
-The existing 30-second deadline and proof assertions remain unchanged; the original
-Linux CI timeout is not reproduced by a passing macOS run. A new CI failure must
-identify its actual phase before changing budgets or production behavior.
+The existing 30-second deadline and proof assertions remain unchanged. Startup
+body-copy EACCES is covered by sdk-backup-directory-umask.ts and its journey:
+the real worker must finish its verified backup while the socket bind holds its
+0177 mask, with the backup directory still 0700. The same test file runs that
+regression before the public artifact RPC proof. A passing macOS RPC run alone
+does not explain other Linux timeouts; identify their actual phase before
+changing budgets or production behavior.

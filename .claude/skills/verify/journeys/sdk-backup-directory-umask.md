@@ -13,7 +13,7 @@ observer holds the actual 0177 bind mask long enough for the backup worker to ru
 No backup or permission behavior is mocked. Restore the observer and close the
 worker, socket and database before the wrapper removes the temporary data.
 
-Observe permissions.json: the backup directory stays 0700, the backup and bound
+Observe permissions.json: backupVerifiedDuringBind must be true, so a run that missed the interleaving cannot pass. The backup directory stays 0700, the backup and bound
 socket stay 0600, and the real backup receipt has quickCheck ok. The original
 failure produces a 0600 directory and an EACCES backup refusal. Keep its failing
 receipt before the fix. Also run artifact-registration-row.test.ts: both this
