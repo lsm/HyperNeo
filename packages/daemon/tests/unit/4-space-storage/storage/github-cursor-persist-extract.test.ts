@@ -22,7 +22,11 @@ describe('GitHub cursor persistence extraction', () => {
   let db: Database;
   let repo: GitHubEventExtensionRepository;
   const cursor: PollCursor = { lastSeenAt: 51, etags: { issues: 'synthetic-etag' } };
-  const rows = () => db.prepare('SELECT * FROM space_github_watched_repos ORDER BY id').all();
+  const rows = () =>
+    db.prepare('SELECT * FROM space_github_watched_repos ORDER BY id').all() as Record<
+      string,
+      unknown
+    >[];
   beforeEach(() => {
     db = new Database(':memory:');
     db.exec('CREATE TABLE spaces(id TEXT PRIMARY KEY)');
