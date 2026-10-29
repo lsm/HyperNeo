@@ -18,6 +18,12 @@ or merge.
 Put the repository's merge rule in a coding todo's instruction: merge by hand
 after the review it uses approves the latest head and required checks are green,
 and never enable GitHub auto-merge.
+The repo-scoped `mergeBy` preference defaults to `owner` without saving a value.
+`daemon` selects the pure admission gate only; daemon merge execution is not
+wired yet. Keep the existing owner manual-merge procedure. Never change saved
+preferences unless the human approves the preference change. `humanSignoff`
+checks changed path globs and actual PR labels (`label:human-merge` explicitly,
+or a bare label name); unreadable scope remains blocked.
 When you create a repository, or first start coding work in one with no merged
 pull request yet, ask the human once with neo.question.ask (kind choice) how its
 pull requests get reviewed: "I'll install my review app on it", "Merge on green

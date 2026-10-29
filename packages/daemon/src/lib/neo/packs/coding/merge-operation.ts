@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { posix } from 'node:path';
+import { codingHumanSignoff } from './human-signoff.ts';
 import { isDeepStrictEqual } from 'node:util';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -177,11 +177,11 @@ export function createCodingMergeOperation(deps: Deps) {
         const signoff = state.policy.humanSignoff ?? [];
         const needsHuman =
           state.policy.mergePolicy === 'human' ||
-          signoff.some((pattern) =>
-            pattern.startsWith('label:')
-              ? pr.labels.some((label) => posix.matchesGlob(label.name, pattern.slice(6)))
-              : pr.files.some((file) => posix.matchesGlob(file.path, pattern))
-          );
+          codingHumanSignoff(
+            signoff,
+            pr.changedFiles === pr.files.length ? pr.files.map((file) => file.path) : null,
+            pr.labels.map((label) => label.name)
+          ) !== false;
         return deps.prepareMerge(
           deps.todos.deliveryFacts,
           input.todoId,
