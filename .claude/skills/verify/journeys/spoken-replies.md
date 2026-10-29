@@ -75,3 +75,8 @@ are limited to local synthetic mode. Upstream mode checks a healthy catalog and
 streaming, and reports both injected-failure evidence flags as false. Invalid
 backend configuration includes malformed URLs and missing schemes; both must
 return invalid_speech_backend without attempting a network request.
+
+Include neo-refusals.test.ts and operation-name-families.test.ts with the focused
+speech/intake suite: catalog rejection codes need an actionable shared explanation,
+and the registered speech operation names must remain sorted. The complete static
+check alone does not execute those runtime registration guards.
