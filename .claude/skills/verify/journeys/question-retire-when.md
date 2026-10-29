@@ -30,8 +30,11 @@ Keep `observed.json`, `receipts.json`, `proof.log` and the wrapper's real exit
 status. Focused tests cover linked-check defaults, explicit overrides, failed
 reads, concurrent sweeps, changes during a read, release/notice rollback and queued-notice persistence across restart.
 An unlinked coding check also uses the pack's existing check without inserting
-a fictional todo or saving todo-only cache rows. Other packs can use the same
-optional question context to avoid todo-only side effects.
+a fictional todo or saving todo-only cache rows. Question checks pass `{readOnly:true, detached:boolean}` to avoid todo-only
+side effects. Coding projects claims in memory and keeps its existing PR
+ownership and session-window filter. A linked default cannot retire on another
+todo’s PR or one outside its window; an explicit condition can read its named
+PR facts without changing the real todo’s check or claims.
 
 This is daemon/operation proof. It does not claim browser layout, provider or
 live-database verification. The helper closes its WebSocket and daemon in

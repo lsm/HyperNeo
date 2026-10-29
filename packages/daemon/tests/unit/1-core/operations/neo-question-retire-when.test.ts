@@ -602,3 +602,63 @@ test.each(['outside-window', 'other-owner'] as const)(
     }
   }
 );
+
+test.each(['linked', 'standalone'] as const)(
+  'an explicit %s condition does not change the real todo check',
+  async (scope) => {
+    const f = fixture();
+    try {
+      const url = 'https://github.com/synthetic/project/pull/78';
+      const repository = new CodingTodoPrRepository(f.db);
+      const pack = createCodingTodoPack(repository, async () => [
+        {
+          url,
+          state: 'MERGED',
+          checks: 'passing',
+          review: 'approved',
+          title: 'An earlier change',
+          blockers: [],
+          createdAt: 2,
+          mergedAt: 20,
+        },
+      ]);
+      pack.schema(f.db);
+      const todo = f.store.updateTodo(
+        f.todo,
+        { state: 'doing', startedAt: 10, check: { pack: 'coding', kind: 'pr_merged', params: {} } },
+        10
+      );
+      repository.claim(todo.id, [{ url, claim: 'branch' }], 11);
+      if (scope === 'standalone') {
+        const peer = f.store.addTodo(
+          'peer',
+          'ask',
+          {
+            title: 'Owns the explicit PR',
+            doneWhen: 'Merged',
+            check: null,
+            instruction: null,
+            named: null,
+          },
+          1
+        );
+        repository.claim(peer.id, [{ url, claim: 'named' }], 1);
+      }
+      const card = await f.ask({
+        ...(scope === 'linked' ? { todoId: todo.id } : {}),
+        retireWhen: { pack: 'coding', kind: 'pr_merged', params: { urls: [url] } },
+      });
+      const retire = createQuestionRetirement(f.store, () => [
+        { id: 'coding', describe: 'Coding', instructions: () => null, todos: pack },
+      ]);
+      expect(await retire(card.question, scope === 'linked' ? todo : null, 30)).toMatchObject({
+        state: 'retired',
+        retiredReason: '#78 merged',
+      });
+      expect(await pack.check(todo)).toMatchObject({ done: false });
+      expect(f.store.getTodo(todo.id)?.check).toEqual(todo.check);
+    } finally {
+      f.db.close();
+    }
+  }
+);
