@@ -37,7 +37,7 @@ const speak = async (requestId: string, text = '好，我帮你查一下订单�
   const response = await mcp({ name:'neo.speech.say', input:{requestId,text} });
   const result=JSON.parse(response.content[0].text);
   if(result.ok && ['queued','playing','played'].includes(result.state)) {
-    assert.equal(result.guidance,'Already sent for speech; add no assistant text this turn unless the user requested a transcript or record.');
+    assert.equal(result.guidance,'Already sent for speech; no assistant text this turn except a requested transcript/record or required scheduled-wake summary.');
     assert(!result.guidance.includes(text));
   } else assert(!('guidance' in result));
   return result;

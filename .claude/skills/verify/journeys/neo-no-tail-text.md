@@ -13,9 +13,12 @@ SDK diagnostics and the proof log, then removes its isolated HOME/data. No provi
 credentials, live daemon, audio device, browser or deployment is used.
 
 Speech submission and durable publication must succeed. Their model-visible results
-must contain one short reminder to add no assistant text this turn unless the human
-requested a transcript/record. A discovery operation must have no delivery reminder.
-The explicit transcript scenario must still be able to return assistant text.
+must contain one short reminder to add no assistant text this turn except a requested
+transcript/record or the required summary on scheduled goal wakes. A discovery
+operation must have no delivery reminder. The explicit transcript scenario must
+still be able to return assistant text. The scheduled-wake scenario sends the actual
+goal-cycle/root-turn-end prompts and requires the SDK's final result to retain the
+single summary line used to label a wake row; it does not run the full scheduler UI.
 Focused operation tests cover retries, rejected publications, and failed/cancelled
 speech; these must not falsely claim a delivery.
 

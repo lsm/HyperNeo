@@ -174,7 +174,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
           ? {
               ...receipt,
               guidance:
-                'The user can see this message; add no assistant text this turn unless the user requested a transcript or record.',
+                'Already shown to the user; no assistant text this turn except a requested transcript/record or required scheduled-wake summary.',
             }
           : receipt;
       },

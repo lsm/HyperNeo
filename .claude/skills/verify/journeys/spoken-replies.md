@@ -16,8 +16,9 @@ no reconnect replay and zero extra publications. All writes use the real writer
 worker. Inspect spoken-replies.json and the wrapper's exit status.
 
 Successful speech receipts must also carry the one-sentence reminder to add no
-assistant text this turn unless the human requested a transcript or record; it
-must not repeat the spoken content. Rejected and cancelled speech has no reminder.
+assistant text this turn except a requested transcript/record or the required
+scheduled-wake summary; it must not repeat the spoken content. Rejected and
+cancelled speech has no reminder.
 
 The replay also fills the queue and retries an existing request without replay,
 and disconnects with pending speech, which must finish as cancelled. The
