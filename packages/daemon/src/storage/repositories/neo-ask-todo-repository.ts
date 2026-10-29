@@ -1,3 +1,7 @@
+import { enqueueMailboxEntry } from '../../lib/mailbox/enqueue.ts';
+import { createMailboxEntry } from '../../lib/mailbox/entry.ts';
+import { renderAddress } from '../../lib/mailbox/address.ts';
+import { JobQueueRepository } from './job-queue-repository.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { NeoQuestionAnswerRepository } from './neo-question-answer-repository.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
@@ -804,19 +808,40 @@ export class NeoAskTodoRepository {
     now: number
   ): NeoQuestion | null {
     const current = this.getQuestion(question.id);
+    const ask = current ? this.getAsk(current.askId) : null;
     if (
       current?.state !== 'open' ||
-      this.getAsk(current.askId)?.status !== 'open' ||
+      ask?.status !== 'open' ||
       JSON.stringify(
         current.retireWhen ?? (current.todoId ? this.getTodo(current.todoId)?.check : null)
       ) !== JSON.stringify(check)
     )
       return null;
     const retired = this.retireQuestion(current, evidence, null, now);
-    if (retired)
-      for (const todo of this.listTodos(current.askId))
-        if (todo.state === 'blocked' && ['question', 'needs-human'].includes(todo.blockedBy ?? ''))
-          this.commitState(todo.id, {}, now, { state: 'no_opinion' });
+    if (!retired) return null;
+    for (const todo of this.listTodos(current.askId))
+      if (todo.state === 'blocked' && ['question', 'needs-human'].includes(todo.blockedBy ?? ''))
+        this.commitState(todo.id, {}, now, { state: 'no_opinion' });
+    const to = { kind: 'session' as const, sessionId: ask.sessionId };
+    const queued = enqueueMailboxEntry(
+      new JobQueueRepository(this.db),
+      createMailboxEntry({
+        to,
+        origin: renderAddress(to),
+        messageUuid: `neo-question-retired:${current.id}`,
+        message: {
+          type: 'user',
+          parent_tool_use_id: null,
+          inputKind: 'system',
+          neoWakeEvent: true,
+          message: {
+            role: 'user',
+            content: `Retired question ${current.id}: ${evidence}`.replace(/\s+/g, ' '),
+          },
+        },
+      })
+    );
+    if (queued.kind === 'rejected') throw new Error(queued.reason);
     return retired;
   }
 

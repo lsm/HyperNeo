@@ -13,19 +13,22 @@ startup observer captures the actual Neo service without replacing its checks,
 retirement, delivery or public operation handlers.
 
 Observe real WebSocket `neo.question.ask` receipts: an unlinked card without
-retireWhen is refused with a clear message. A supplied already-done todo cannot
+retireWhen is refused with a clear message. A linked legacy todo with no check also requires an explicit condition. A
+supplied already-done todo cannot
 silently turn that request into an unchecked unlinked card. Unknown packs, unsupported kinds and malformed params are refused through the
 same pack policy as todo checks. With explicit
 `retireWhen: {pack, kind, params}`, the same request opens an unlinked card and
 blocks a waiting todo. Run the actual pack sweep: the missing evidence file
 leaves that card open and the hold intact. Create the synthetic file and sweep
 again. `neo.question.get` and `neo.ask.read` must show retirement with the check's
-evidence, no fabricated human answer, and a released todo. One mailbox line
-informs Neo; another sweep must not duplicate it.
+evidence, no fabricated human answer, and a released todo. The existing durable mailbox queue receives the Neo line in the same write
+transaction. Force its enqueue to fail: the card and its hold must roll back
+together. Remove the fault and sweep again: retirement and exactly one notice
+must commit. Another sweep must not duplicate it.
 
 Keep `observed.json`, `receipts.json`, `proof.log` and the wrapper's real exit
 status. Focused tests cover linked-check defaults, explicit overrides, failed
-reads, concurrent sweeps, changes during a read, release rollback and restart.
+reads, concurrent sweeps, changes during a read, release/notice rollback and queued-notice persistence across restart.
 An unlinked coding check also uses the pack's existing check without inserting
 a fictional todo or saving todo-only cache rows. Other packs can use the same
 optional question context to avoid todo-only side effects.

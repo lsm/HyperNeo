@@ -41,8 +41,7 @@ export function passedQuestionCheck(result: NeoTodoCheckResult | null) {
 
 export function createQuestionRetirement(
   store: NeoAskTodoRepository,
-  packs: () => readonly NeoPack[],
-  tell: (question: NeoQuestion, evidence: string) => Promise<void>
+  packs: () => readonly NeoPack[]
 ) {
   return (superpipe({})('neo.question.retire-when') as PipelineAPI)
     .input(['question', 'todo', 'now'])
@@ -69,14 +68,6 @@ export function createQuestionRetirement(
       },
       ['question', 'checked', 'retired', 'now'],
       'result:retired'
-    )
-    .pipe(
-      async (question: NeoQuestion) => {
-        await tell(question, question.retiredReason!);
-        return question;
-      },
-      'retired',
-      'retired'
     )
     .endAsync('retired') as (
     question: NeoQuestion,

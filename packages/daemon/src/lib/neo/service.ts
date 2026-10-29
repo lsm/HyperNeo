@@ -731,20 +731,7 @@ export class NeoService {
       await pack
         .sweep?.(Date.now())
         .catch((error) => this.log.warn(`Neo ${pack.id} sweep failed`, error));
-    const retire = createQuestionRetirement(
-      this.todos,
-      () => this.installedPacks(),
-      async (question, evidence) => {
-        const ask = this.todos.getAsk(question.askId)!;
-        await this.deliverForward(
-          ask.sessionId,
-          `neo-question-retired:${question.id}`,
-          `Retired question ${question.id}: ${evidence}`.replace(/\s+/g, ' '),
-          ask.sessionId,
-          'event'
-        );
-      }
-    );
+    const retire = createQuestionRetirement(this.todos, () => this.installedPacks());
     for (const { question, todo } of await this.todos.read('openQuestionChecks'))
       await retire(question, todo, Date.now()).catch((error) =>
         this.log.warn('Question check pending', error)

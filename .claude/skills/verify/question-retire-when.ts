@@ -79,6 +79,10 @@ try {
     assert.match(refused.reason!, /^check_(required|refused|unsupported):/);
   }
   assert.equal(store.listQuestions('ask').length, 0);
+  const uncheckedTodo = store.addTodo('legacy-unchecked', 'ask', { title: 'Legacy unchecked work', doneWhen: 'Old condition', check: null, instruction: null, named: null }, 3);
+  const unchecked = await rpc('neo.question.ask', { askId: 'ask', todoId: uncheckedTodo.id, kind: 'reply', text: 'Legacy linked card' });
+  assert.equal(unchecked.ok, false);
+  assert.match(unchecked.reason!, /retire_when_required/);
   const staleLink = await rpc('neo.question.ask', { askId: 'ask', todoId: previous.id, kind: 'reply', text: 'Old worker question' });
   assert.equal(staleLink.ok, false);
   assert.match(staleLink.reason!, /retire_when_required/);
@@ -113,9 +117,28 @@ try {
   assert(line.startsWith(`Retired question ${created.question.id}: `));
   await service.sweepPacks();
   assert.equal(notices().length, 1);
+  const retry = await rpc('neo.question.ask', { askId: 'ask', kind: 'reply', text: 'Notice must survive enqueue failure', retireWhen: check });
+  assert(retry.ok && retry.question);
+  store.updateTodo(waiting, { state: 'blocked', blockedBy: 'needs-human' }, Date.now());
+  db.exec("CREATE TRIGGER fail_notice BEFORE INSERT ON job_queue WHEN NEW.queue = 'mailbox' BEGIN SELECT RAISE(ABORT, 'notice enqueue failed'); END");
+  await service.sweepPacks();
+  const failedEnqueue = await rpc('neo.question.get', { questionId: retry.question.id });
+  assert.equal(failedEnqueue.question?.state, 'open');
+  assert.equal(store.getTodo(waiting.id)?.blockedBy, 'needs-human');
+  const retryNotices = () => app!.db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': owner, messageUuid: `neo-question-retired:${retry.question!.id}` });
+  assert.equal(retryNotices().length, 0);
+  db.exec('DROP TRIGGER fail_notice');
+  await service.sweepPacks();
+  const recoveredEnqueue = await rpc('neo.question.get', { questionId: retry.question.id });
+  assert.equal(recoveredEnqueue.question?.state, 'retired');
+  assert.equal(store.getTodo(waiting.id)?.blockedBy, null);
+  assert.equal(retryNotices().length, 1);
+  await service.sweepPacks();
+  assert.equal(retryNotices().length, 1);
+  receipts.push({ failedEnqueue, recoveredEnqueue, retriedNotice: retryNotices()[0].payload });
   receipts.push({ beforeCard, afterCard, releasedTodo: store.getTodo(waiting.id), neoNotice: notices()[0].payload, isolatedPort: app.server.port });
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ passed: true, receipts, limits: 'Real isolated daemon, pack sweep and WebSocket operation receipts. No browser layout, provider, model or live database.' }, null, 2));
-  console.log('PASS: the real operation door rejects unchecked unlinked cards; unmet facts keep the hold; passed facts retire with evidence, release the hold and enqueue one Neo line.');
+  console.log('PASS: the real operation door rejects unchecked unlinked cards; unmet facts keep the hold; passed facts atomically retire with evidence, release the hold and enqueue one Neo line; enqueue failure rolls back and a later sweep recovers.');
 } finally {
   ws?.close();
   await app?.cleanup();

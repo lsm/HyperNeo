@@ -1,3 +1,4 @@
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { createTodoCheckPacks } from '../../helpers/todo-check-packs.ts';
 import { expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -22,11 +23,8 @@ test('20707c94: an unlinked stale facts card retires and releases the todo it bl
     { event: () => {} } as unknown as MessageHub,
     new InternalEventBus<DaemonInternalEventMap>()
   );
-  const notes: string[] = [];
+  const notes = () => retiredNotices(db.getDatabase());
   service.packs = () => [];
-  service.deliverForward = async (_session, _key, text) => {
-    notes.push(String(text));
-  };
   try {
     const store = service.todos;
     store.openAsk({
@@ -89,11 +87,11 @@ test('20707c94: an unlinked stale facts card retires and releases the todo it bl
       answeredBy: null,
     });
     expect(store.getTodo(waiting.id)).toMatchObject({ state: 'todo', blockedBy: null });
-    expect(notes).toHaveLength(1);
-    expect(notes[0]).toContain(`File ${check.params.path} exists.`);
-    expect(notes[0]).not.toContain('\n');
+    expect(notes()).toHaveLength(1);
+    expect(notes()[0]).toContain(`File ${check.params.path} exists.`);
+    expect(notes()[0]).not.toContain('\n');
     await service.sweepPacks();
-    expect(notes).toHaveLength(1);
+    expect(notes()).toHaveLength(1);
   } finally {
     service.dispose();
     db.close();
@@ -113,6 +111,12 @@ import {
   createCodingTodoPack,
   CodingTodoPrRepository,
 } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
+
+function retiredNotices(db: Database): string[] {
+  return new JobQueueRepository(db)
+    .listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })
+    .map((job) => (job.payload.message as { message: { content: string } }).message.content);
+}
 
 function fixture(path = ':memory:') {
   const db = new Database(path);
@@ -159,30 +163,23 @@ function fixture(path = ':memory:') {
       reason?: string;
       question: import('@hyperneo/shared/types/neo-ask').NeoQuestion;
     }>;
-  const notes: string[] = [];
   let result: NeoTodoCheckResult | null = { done: true, evidence: 'Fact observed\nwith detail' };
   let observe = async () => {};
-  const retire = createQuestionRetirement(
-    store,
-    () => [
-      {
-        id: 'test',
-        describe: 'Synthetic facts',
-        instructions: () => null,
-        todos: {
-          schema: () => {},
-          statusLine: () => null,
-          check: async () => {
-            await observe();
-            return result;
-          },
+  const retire = createQuestionRetirement(store, () => [
+    {
+      id: 'test',
+      describe: 'Synthetic facts',
+      instructions: () => null,
+      todos: {
+        schema: () => {},
+        statusLine: () => null,
+        check: async () => {
+          await observe();
+          return result;
         },
       },
-    ],
-    async (_q, reason) => {
-      notes.push(reason);
-    }
-  );
+    },
+  ]);
   return {
     db,
     store,
@@ -191,7 +188,9 @@ function fixture(path = ':memory:') {
     check,
     ask,
     retire,
-    notes,
+    get notes() {
+      return retiredNotices(db);
+    },
     result(value: NeoTodoCheckResult | null) {
       result = value;
     },
@@ -373,11 +372,9 @@ test('an unlinked coding check uses its existing reader without inventing a todo
       }))
     );
     pack.schema(f.db);
-    const retire = createQuestionRetirement(
-      f.store,
-      () => [{ id: 'coding', describe: 'Coding', instructions: () => null, todos: pack }],
-      async () => {}
-    );
+    const retire = createQuestionRetirement(f.store, () => [
+      { id: 'coding', describe: 'Coding', instructions: () => null, todos: pack },
+    ]);
     const card = await f.ask({
       retireWhen: {
         pack: 'coding',
@@ -473,11 +470,9 @@ test('a linked coding default checks an existing branch claim before any todo ca
     );
     repository.claim(todo.id, [{ url, claim: 'branch' }], 2);
     const card = await f.ask({ todoId: todo.id });
-    const retire = createQuestionRetirement(
-      f.store,
-      () => [{ id: 'coding', describe: 'Coding', instructions: () => null, todos: pack }],
-      async () => {}
-    );
+    const retire = createQuestionRetirement(f.store, () => [
+      { id: 'coding', describe: 'Coding', instructions: () => null, todos: pack },
+    ]);
     expect(await retire(card.question, todo, 4)).toMatchObject({
       state: 'retired',
       retiredReason: '#78 merged',
@@ -521,5 +516,34 @@ test('a rejected notice enqueue preserves the open card and its hold for the nex
     expect(f.notes).toHaveLength(1);
   } finally {
     f.db.close();
+  }
+});
+
+test('a committed retirement keeps its pending Neo notice across a database restart', async () => {
+  const run = mkdtempSync(join(tmpdir(), 'question-notice-restart-'));
+  const path = join(run, 'daemon.db');
+  const f = fixture(path);
+  let closed = false;
+  try {
+    const card = await f.ask({ retireWhen: f.check });
+    await f.retire(card.question, null, 4);
+    expect(f.notes).toHaveLength(1);
+    f.db.close();
+    closed = true;
+    const reopened = new Database(path);
+    try {
+      expect(new NeoAskTodoRepository(reopened).getQuestion(card.question.id)?.state).toBe(
+        'retired'
+      );
+      expect(retiredNotices(reopened)).toHaveLength(1);
+      expect(retiredNotices(reopened)[0]).toContain(
+        `Retired question ${card.question.id}: Fact observed with detail`
+      );
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    if (!closed) f.db.close();
+    rmSync(run, { recursive: true, force: true });
   }
 });
