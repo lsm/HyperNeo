@@ -41,7 +41,7 @@ describe('GitHub polling intent SQL extraction', () => {
         publicRpc: {
           mainStatementRuns: 3,
           snapshotAndCreationTimesPreserved: true,
-          enabledAndPollingIntentPreserved: true,
+          enabledAndFilterFlagPreserved: true,
         },
         suppliedTimeVoidResultAndCallerRollbackPreserved: true,
       });
