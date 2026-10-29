@@ -1,0 +1,109 @@
+{
+  "publicSetterActivated": true,
+  "mainGuardSelfCheckPassed": true,
+  "firstRpcMs": 1.7189579999999296,
+  "publicEnableDisableListPreserved": true,
+  "concurrentEnablesStartOnce": true,
+  "failedStartRestoresKnownCommittedConfig": true,
+  "failedWriterRollsBackBeforeCallback": true,
+  "healthWhileWriterHeldMs": 2.1382089999999607,
+  "deliberatelyHeldWriterMs": 1240.5151670000002,
+  "callbackAndReplyWaitForCommit": true,
+  "preAdmissionTimestampRetained": true,
+  "rejectedAdmissionHasNoFallbackStartOrReplay": true,
+  "actualLostCommittedReplyNeverStartsOrReplays": true,
+  "maxLoopLagMs": 5.923333999999613,
+  "commandPosts": 12,
+  "callbackObservations": [
+    {
+      "kind": "start",
+      "enabled": true
+    },
+    {
+      "kind": "stop",
+      "enabled": true
+    },
+    {
+      "kind": "start",
+      "enabled": true
+    },
+    {
+      "kind": "stop",
+      "enabled": true
+    },
+    {
+      "kind": "start",
+      "enabled": true
+    },
+    {
+      "kind": "start",
+      "enabled": true
+    },
+    {
+      "kind": "stop",
+      "enabled": true
+    }
+  ],
+  "rssBytes": 542752768,
+  "walBytes": 4128272,
+  "pass": true,
+  "mainSqlAttempts": 0,
+  "metrics": [
+    {
+      "roundTripMs": 0.08262500000000728,
+      "requestBytes": 248,
+      "replyBytes": 22
+    },
+    {
+      "roundTripMs": 0.07616699999994125,
+      "requestBytes": 249,
+      "replyBytes": 22
+    },
+    {
+      "roundTripMs": 0.05862499999989268,
+      "requestBytes": 248,
+      "replyBytes": 22
+    },
+    {
+      "roundTripMs": 0.12929099999973914,
+      "requestBytes": 248,
+      "replyBytes": 22
+    },
+    {
+      "roundTripMs": 0.058749999999918145,
+      "requestBytes": 249,
+      "replyBytes": 22
+    },
+    {
+      "roundTripMs": 0.04979100000014114,
+      "requestBytes": 248,
+      "replyBytes": 22
+    },
+    {
+      "roundTripMs": 0.07283300000017334,
+      "requestBytes": 249,
+      "replyBytes": 22
+    },
+    {
+      "roundTripMs": 1239.399542,
+      "requestBytes": 248,
+      "replyBytes": 22
+    },
+    {
+      "roundTripMs": 0.2147500000000946,
+      "requestBytes": 249,
+      "replyBytes": 22
+    },
+    {
+      "roundTripMs": 2.8275830000002316,
+      "requestBytes": 248,
+      "replyBytes": 22
+    }
+  ],
+  "runtime": "Deno 2.9.4 macOS arm64",
+  "wrapper": {
+    "exitCode": 0
+  },
+  "temporaryDaemonDataRemoved": true,
+  "heldWriterMeets250msTarget": false
+}

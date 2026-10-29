@@ -38,7 +38,7 @@ describe('global extension configuration RPC extraction', () => {
       ).toMatchObject({
         pass: true,
         mainThreadMovementClaim: false,
-        publicRpc: { mainUpsertRuns: 2, exactJsonAndCreationTimePreserved: true },
+        publicRpc: { mainUpsertRuns: 0, exactJsonAndCreationTimePreserved: true },
         suppliedTimeAndCallerRollbackPreserved: true,
       });
     } finally {

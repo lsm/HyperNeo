@@ -28,7 +28,7 @@ let main: InstanceType<typeof Database> | undefined;
 let scratch: InstanceType<typeof Database> | undefined;
 let measuring = false;
 const bindings: unknown[][] = [];
-const evidence: Record<string, unknown> = { mainThreadMovementClaim: false, boundary: 'SQL-only extraction; public persistence remains on the supplied main connection' };
+const evidence: Record<string, unknown> = { mainThreadMovementClaim: false, boundary: 'Historical SQL extraction characterized direct helper behavior; current public setter uses the activated writer' };
 const source = 'synthetic-extension';
 const config = { source, globallyEnabled: false, capabilities: { polling: true }, secretsRef: 'synthetic-reference', settings: { label: 'Synthetic 🦊' } };
 const callbacks: { kind: string; enabled: boolean }[] = [];
@@ -74,8 +74,8 @@ try {
     replies.push(reply);
   }
   assert.deepEqual(callbacks, [{ kind: 'start', enabled: true }, { kind: 'stop', enabled: true }]);
-  assert.equal(bindings.length, 2);
-  assert.deepEqual(bindings.map(b => b.slice(0, 5)), [true, false].map(enabled => [source, enabled ? 1 : 0, '{"polling":true}', 'synthetic-reference', '{"label":"Synthetic 🦊"}']));
+  assert.equal(bindings.length, 0);
+  assert.deepEqual(bindings, []);
   evidence.publicRpc = { replies, callbacks, mainUpsertRuns: bindings.length, exactJsonAndCreationTimePreserved: true };
   measuring = false;
   const helper = new URL('../../../packages/daemon/src/storage/repositories/global-extension-config-persist.ts', import.meta.url);

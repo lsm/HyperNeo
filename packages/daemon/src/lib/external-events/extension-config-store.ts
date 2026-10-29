@@ -1,4 +1,5 @@
-import { persistGlobalExtensionConfig } from '../../storage/repositories/global-extension-config-persist.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { globalExtensionConfigWrites } from '../../storage/repositories/global-extension-config-write.ts';
 import { isRecord } from '../record.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type {
@@ -78,7 +79,7 @@ export class ExternalEventExtensionConfigStore
     validateSourceId(source);
     validateGlobalConfig(source, config);
     const now = Date.now();
-    persistGlobalExtensionConfig(this.db, source, config, now);
+    await gatewayFor(this.db).call(globalExtensionConfigWrites, 'persist', source, config, now);
   }
 
   async setSpaceConfig(

@@ -1,0 +1,142 @@
+{
+  "base": "6b881d7e6e41f49e8e97f92c2f7ec03e2690ca1a",
+  "ownedUnits": [
+    {
+      "file": "packages/daemon/src/lib/external-events/extension-config-store.ts",
+      "name": "constructor",
+      "lines": 3,
+      "sha256": "eb836302ccbfe4d9a8604cce4ed36b6601cd1cbfb659c9b99b0e121332622bfa"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/extension-config-store.ts",
+      "name": "getGlobalConfig",
+      "lines": 16,
+      "sha256": "1306ba148315c07ee063837c76ee9fad5cd02471779338d4f4741eb587054ea1"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/extension-config-store.ts",
+      "name": "setGlobalConfig",
+      "lines": 6,
+      "sha256": "9fda9b0825dc5a808ea4876bdd824280ed4dc40d30fffd76faaa3542a516986a"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/extension-config-store.ts",
+      "name": "ensureExternalEventExtensionConfigTables",
+      "lines": 26,
+      "sha256": "d6bc0387cd86f21b92a1724d130ab422ad465dcf2842c98ff52997d834d1afaf"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/extension-config-store.ts",
+      "name": "globalRowToConfig",
+      "lines": 10,
+      "sha256": "9e116d439bca5db3b8fffe97474e0ea041396be8926c8452ca23f6c534bf8175"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/extension-config-store.ts",
+      "name": "parseJsonRecord",
+      "lines": 9,
+      "sha256": "bea41de5c9ec79c9101e71df194fd3013857cec1fb1432334bbc5bb38fda8455"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/extension-config-store.ts",
+      "name": "validateGlobalConfig",
+      "lines": 13,
+      "sha256": "91b7408dc3dc5385196fc1bd6faf0ff90c256b233ae040c668a08cedb27c42bd"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/extension-config-store.ts",
+      "name": "validateSourceId",
+      "lines": 5,
+      "sha256": "757044433ace867a75d05b255746346680596c71c4ab5aec9a3db6207174d66c"
+    },
+    {
+      "file": "packages/daemon/src/lib/record.ts",
+      "name": "isRecord",
+      "lines": 3,
+      "sha256": "22127d266e831aa403effe1bd057956232e61ff887c2fd0aba9684c0dc6d17e4"
+    },
+    {
+      "file": "packages/daemon/src/lib/record.ts",
+      "name": "asRecord",
+      "lines": 3,
+      "sha256": "740a94ef1bb95aa622a9bbd1f4e1d00f346cf1a32c4f533325d0124d6cf4d95d"
+    }
+  ],
+  "fullOwnedGlobalStoreCommandHelperLines": 143,
+  "changedProductionAndRegistrations": 6,
+  "delta": [
+    {
+      "file": "packages/daemon/src/lib/external-events/extension-config-store.ts",
+      "lines": 5
+    },
+    {
+      "file": "scripts/deno-smoke.sh",
+      "lines": 1
+    }
+  ],
+  "stableDependencies": [
+    {
+      "file": "packages/daemon/src/storage/repositories/global-extension-config-write.ts",
+      "lines": 19,
+      "sha256": "f095ddc13e7e99adc68f692dc3999aa3b97252e475c3c3a77ab985dacc197224"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/global-extension-config-persist.ts",
+      "lines": 30,
+      "sha256": "3d500772c14766ce7c20f0e5bf1143c0bf500e756dd65078fc9312fe621705f1"
+    },
+    {
+      "file": "packages/daemon/src/lib/record.ts",
+      "lines": 7,
+      "sha256": "5dcc223c838234a0c93364bcd70b5b407673bc92a6e488d3998135075bc33ec2"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/extension-manager.ts",
+      "lines": 286,
+      "sha256": "7c3f60e09c9fac68b78e86d5bd155f79760d89e59fef9842e479a54d22e10e9d"
+    },
+    {
+      "file": "packages/daemon/src/lib/rpc-handlers/index.ts",
+      "lines": 1923,
+      "sha256": "bbd636b9a10a547072bf6d6bbc434cce17f64d352a74eeea4a063b61c2922883"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
+      "lines": 3826,
+      "sha256": "eeecdf14c9d502c9d493b601f242ae790672ed5ceab280800f60af26f71dd9ef"
+    },
+    {
+      "file": "packages/daemon/src/app.ts",
+      "lines": 1909,
+      "sha256": "d7cba475e25e9a0113f91ed8cb2188ea48fb97da1572ca0da50e94e5bdb4470f"
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-op.ts",
+      "lines": 65,
+      "sha256": "459703e0371a0b1c351bf571a7a73126f6fd81a824e2ecdfbe0a7916986fbd3c"
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-gateway.ts",
+      "lines": 280,
+      "sha256": "54b7739518ba9c5c58bda82f7627a76d8483511949cd3469adc07e5643e09858"
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-gateway-worker.ts",
+      "lines": 56,
+      "sha256": "fbaeb4d89aa03a8dcc1e7aa686dedce502c0b279ebb6c2f7f5ef865bda3644b1"
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-ops.ts",
+      "lines": 305,
+      "sha256": "593c149068ec262e46c6ffc8aecd9308008cc51a2031c6bd8810e5aba22a2eb3"
+    }
+  ],
+  "validationAndCallerClockUnchanged": true,
+  "nonGlobalStoreUnitsUnchanged": true,
+  "commandContract": "extension.global.config.write/persist(source,config,now): validated data only, exact seven-binding SQL/JSON/created_at semantics, caller timestamp; ack after immediate transaction commit; no replay.",
+  "publicContract": "Initial enabled admission is outside lifecycle catch: rejection or unknown receipt propagates without start or compensation. Start failure after known committed admission retains existing previous-config compensation. Concurrent enables share the manager start. No callbacks cross the worker boundary.",
+  "auditLimit": "Complete owned global store helper/command graph counted. Unchanged manager, public RPC, GitHub capability and app roots are exact-file-hash pins, not a full dynamic plugin/transitive framework/startup audit. Mixed enable/disable race repair, unknown-outcome lifecycle reconciliation, reads, Space setter, constructor DDL, unbound inline gateway fallback and final global guard remain outside this activation.",
+  "netPrepare": 0,
+  "netRun": 0,
+  "baselineIncrease": false
+}

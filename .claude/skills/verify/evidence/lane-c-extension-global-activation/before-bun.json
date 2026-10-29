@@ -1,0 +1,15 @@
+{
+  "publicSetterActivated": true,
+  "mainGuardSelfCheckPassed": true,
+  "firstRpcError": "MessageHubResponseError: Global config UPSERT reached main",
+  "mainSqlAttempts": 1,
+  "metrics": [],
+  "runtime": "Bun 1.4.3 macOS arm64",
+  "exitCode": 1,
+  "expectedFailure": "Public enable RPC executes target UPSERT on main",
+  "unitContracts": {
+    "validationPassed": 1,
+    "bypassedWriterFailed": 3
+  },
+  "temporaryDaemonDataRemoved": true
+}
