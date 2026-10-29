@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CallContext, MessageHub } from '@hyperneo/shared';
+import { VoiceStream } from '../../../../src/lib/voice/stream-relay.ts';
 import type { SettingsManager } from '../../../../src/lib/settings-manager.ts';
 import type { Database } from '../../../../src/storage/sqlite-compat.ts';
 import {
@@ -28,8 +29,8 @@ describe('resumable voice stream RPC', () => {
       expect(handler, method).toBeDefined();
       return handler!(data, context(clientId));
     });
-  const start = async () =>
-    (await call('voice.stream.start', { encoding: 'pcm16', sampleRate: 16_000 })) as {
+  const start = async (clientId = 'first') =>
+    (await call('voice.stream.start', { encoding: 'pcm16', sampleRate: 16_000 }, clientId)) as {
       streamId: string;
       resumable?: boolean;
     };
@@ -203,5 +204,71 @@ describe('resumable voice stream RPC', () => {
       call('voice.stream.chunk', { streamId, audioBase64: 'AA==', offset: 6 })
     ).rejects.toThrow('whole 16-bit');
     expect(await call('voice.stream.stop', { streamId })).toEqual({ text: '1,2,3', via: 'batch' });
+  });
+
+  it('lets legacy reconnects replace their detached recording without exhausting capacity', async () => {
+    let latest = '';
+    for (let index = 0; index < 9; index++) {
+      const client = `reconnect-${index}`;
+      latest = (await start(client)).streamId;
+      await call('voice.stream.chunk', { streamId: latest, audioBase64: pcm([index]) }, client);
+      if (index < 8) disconnect(client);
+    }
+    expect(await call('voice.stream.stop', { streamId: latest }, 'reconnect-8')).toEqual({
+      text: '8',
+      via: 'batch',
+    });
+  });
+
+  it('preserves live and other-device streams, and keeps detached audio when replacement fails', async () => {
+    const streams = [];
+    for (let index = 0; index < 8; index++) streams.push(await start(`client-${index}`));
+    await expect(start('extra')).rejects.toThrow('Too many voice streams');
+    for (let index = 0; index < 8; index++) disconnect(`client-${index}`);
+    await expect(start('foreign')).rejects.toThrow('Too many voice streams');
+    vi.spyOn(VoiceStream, 'start').mockResolvedValueOnce({ error: 'synthetic opening failed' });
+    await expect(start('replacement')).rejects.toThrow('synthetic opening failed');
+    for (const { streamId } of streams)
+      expect(await call('voice.stream.resume', { streamId }, 'recovered')).toEqual({
+        ok: true,
+        receivedBytes: 0,
+      });
+  });
+
+  it('rechecks capacity when detached streams resume while a replacement opens', async () => {
+    const streams = [];
+    for (let index = 0; index < 8; index++) {
+      streams.push(await start(`client-${index}`));
+      disconnect(`client-${index}`);
+    }
+    let entered!: () => void;
+    let release!: () => void;
+    const opening = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const nativeStart = VoiceStream.start;
+    vi.spyOn(VoiceStream, 'start').mockImplementationOnce(async (...args) => {
+      const result = await nativeStart(...args);
+      entered();
+      await gate;
+      return result;
+    });
+    const pending = start('replacement');
+    const outcome = pending.then(
+      () => 'started',
+      (error: Error) => error.message
+    );
+    try {
+      await Promise.race([opening, pending]);
+      for (let index = 0; index < 8; index++)
+        await call('voice.stream.resume', streams[index], `rebound-${index}`);
+    } finally {
+      release();
+    }
+    expect(await outcome).toContain('Too many voice streams');
+    await expect(start('foreign')).rejects.toThrow('Too many voice streams');
   });
 });

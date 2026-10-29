@@ -109,6 +109,18 @@ try {
   assert.deepEqual(Buffer.concat(records[1].chunks), Buffer.from(new Int16Array([1, 2, 3, 4, 5]).buffer));
   observed.finalEvents = second.events.filter((event) => event.isFinal);
   assert.equal((observed.finalEvents as unknown[]).length, 1);
+  observed.legacyReconnects = 0;
+  for (let index = 0; index < 9; index++) {
+    const legacyPhone = await connect();
+    const recording = await legacyPhone.call('voice.stream.start', { encoding: 'pcm16', sampleRate: 16_000 });
+    await legacyPhone.call('voice.stream.chunk', { streamId: recording.streamId, audioBase64: pcm([index]) });
+    if (index < 8) await legacyPhone.drop();
+    else {
+      observed.legacyReconnectFinal = await legacyPhone.call('voice.stream.stop', { streamId: recording.streamId });
+      assert.deepEqual(observed.legacyReconnectFinal, { text: '8', via: 'streaming' });
+    }
+    observed.legacyReconnects = index + 1;
+  }
   if (mode !== 'quick') {
     const abandoned = await second.call('voice.stream.start', { encoding: 'pcm16', sampleRate: 16_000 });
     await second.call('voice.stream.chunk', { streamId: abandoned.streamId, audioBase64: pcm([42]), offset: 0 });
@@ -116,7 +128,7 @@ try {
     await second.drop();
     await sleep(121_000);
     observed.elapsedGraceMs = Date.now() - disconnectedAt;
-    observed.abandonedRelayClosed = records[2].closed;
+    observed.abandonedRelayClosed = records.at(-1)!.closed;
     assert.equal(observed.abandonedRelayClosed, true, 'grace timer did not retire ASR without another RPC');
     const third = await connect();
     await assert.rejects(() => third.call('voice.stream.resume', { streamId: abandoned.streamId }), (error: Error & { code?: string }) => {
