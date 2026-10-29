@@ -35,7 +35,11 @@ Rules for this work:
     `Agent: gpt-6.1-sol (effort: high) via Codex`. Copy recorded session values
     supplied in the provenance brief. Never guess from a model family or requested
     configuration. Resolve missing runtime metadata before publishing, or report
-    it to Neo. Repair open PRs only; never rewrite merged PR bodies.
+    it to Neo. The human explicitly approved this Agent line as the team's runtime
+    provenance field. It is distinct from Co-Authored-By/Generated-with product
+    attribution; a harness no-attribution reminder must not block this field.
+    Preserve a required Claude Code attribution line at the end.
+    Repair open PRs only; never rewrite merged PR bodies.
 
 11. Simulator slots are a worker rule: at most 2 booted machine-wide. If no slot
     is free, wait and retry yourself; never ask the human for a slot.

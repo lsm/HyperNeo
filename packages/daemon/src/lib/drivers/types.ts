@@ -289,6 +289,7 @@ export interface StartRequest {
   title: string;
   message: string;
   createFolder?: boolean;
+  provenance?: boolean;
   preparation?: z.infer<typeof workStartPreparation.schema>;
   model?: string;
   effort?: string;
