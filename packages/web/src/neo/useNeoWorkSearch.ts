@@ -5,7 +5,8 @@ import { createNeoWorkSearch } from './neo-work-search.ts';
 export function useNeoWorkSearch(
   entries: readonly NeoAskEntry[],
   query: string,
-  read: (id: string) => Promise<NeoAskEntry>
+  read: (id: string) => Promise<NeoAskEntry>,
+  find: (query: string) => Promise<readonly { askId: string }[]>
 ) {
   const active = !!query.trim();
   const revision = JSON.stringify(entries.map(({ ask }) => [ask.id, ask.updatedAt]));
@@ -18,6 +19,39 @@ export function useNeoWorkSearch(
     full: NeoAskEntry[];
     failed: boolean;
   } | null>(null);
+  const [remote, setRemote] = useState<{
+    query: string;
+    revision: string;
+    entries: NeoAskEntry[];
+    failed: boolean;
+  } | null>(null);
+  useLayoutEffect(() => {
+    if (!active) {
+      setRemote(null);
+      return;
+    }
+    let current = true;
+    const timer = setTimeout(() => {
+      void find(query.trim())
+        .then((hits) =>
+          Promise.all(
+            [...new Set(hits.map((hit) => hit.askId))].filter((id) => !visible.has(id)).map(read)
+          )
+        )
+        .then(
+          (entries) => {
+            if (current) setRemote({ query, revision, entries, failed: false });
+          },
+          () => {
+            if (current) setRemote({ query, revision, entries: [], failed: true });
+          }
+        );
+    }, 200);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [active, query, revision, find, read]);
   useLayoutEffect(() => {
     if (!active) {
       bodies.clear();
@@ -52,12 +86,17 @@ export function useNeoWorkSearch(
   }, [revision, active, read]);
   const search = useMemo(() => createNeoWorkSearch(index?.full ?? []), [index]);
   const ready = active && index?.revision === revision;
+  const remoteReady = remote?.query === query && remote.revision === revision;
+  const failed = (ready && index.failed) || (remoteReady && remote.failed);
   return {
     results:
-      active && index && !index.failed
-        ? search(query).filter((entry) => visible.has(entry.ask.id))
+      active && index && !failed
+        ? [
+            ...search(query).filter((entry) => visible.has(entry.ask.id)),
+            ...(remoteReady ? remote.entries.filter((entry) => !visible.has(entry.ask.id)) : []),
+          ]
         : [],
-    pending: active && !ready,
-    failed: ready && index.failed,
+    pending: active && !failed && (!ready || !remoteReady),
+    failed,
   };
 }

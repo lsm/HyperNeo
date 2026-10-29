@@ -48,6 +48,12 @@ vi.mock('../NeoConversation.tsx', () => ({
 vi.mock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
 
 beforeEach(() => {
+  vi.spyOn(connectionManager, 'getHub').mockResolvedValue({
+    request: vi.fn(async (_method: string, params: { name: string }) => {
+      if (params.name === 'neo.ask.search') return { ok: true, results: [] };
+      throw new Error('Synthetic unavailable');
+    }),
+  } as never);
   connectionState.value = 'connected';
   vi.stubGlobal('matchMedia', () => ({ matches: true }));
   vi.stubGlobal(
@@ -61,6 +67,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 const root = 'neo:550e8400-e29b-41d4-a716-446655440000';
@@ -93,7 +100,9 @@ describe('Work search input and retry', () => {
       .mockRejectedValueOnce(new Error('Synthetic unavailable'))
       .mockReturnValue(pending);
     const request = vi.fn((_method: string, input: { name: string }) =>
-      input.name === 'neo.ask.read' ? read() : Promise.resolve({ schedules: [] })
+      input.name === 'neo.ask.read'
+        ? read()
+        : Promise.resolve({ ok: true, results: [], schedules: [] })
     );
     const hub = vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
     try {
@@ -197,7 +206,9 @@ describe('Neo public work scenes', () => {
       .mockRejectedValueOnce(new Error('History unavailable'))
       .mockResolvedValue({ ok: true, entries: [old], nextCursor: null });
     const request = vi.fn((_method: string, input: { name: string }) =>
-      input.name === 'neo.ask.history' ? history() : Promise.resolve({ schedules: [] })
+      input.name === 'neo.ask.history'
+        ? history()
+        : Promise.resolve({ ok: true, results: [], schedules: [] })
     );
     const hub = vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
     try {
@@ -433,7 +444,7 @@ describe('card reply notice navigation', () => {
             nextOffset: offset === 0 ? 20 : null,
           };
         }
-        return { schedules: [] };
+        return { ok: true, results: [], schedules: [] };
       }
     );
     const hub = vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
@@ -518,7 +529,7 @@ describe('card reply notice navigation', () => {
         ? new Promise((resolve) => {
             finish = resolve;
           })
-        : Promise.resolve({ schedules: [] })
+        : Promise.resolve({ ok: true, results: [], schedules: [] })
     );
     const hub = vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
     try {
@@ -548,7 +559,9 @@ describe('card reply notice navigation', () => {
       });
       const read = vi.fn(() => pending);
       const request = vi.fn((_method: string, params: { name: string }) =>
-        params.name === 'neo.ask.read' ? read() : Promise.resolve({ schedules: [] })
+        params.name === 'neo.ask.read'
+          ? read()
+          : Promise.resolve({ ok: true, results: [], schedules: [] })
       );
       const hub = vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
       try {

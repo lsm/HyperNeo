@@ -71,6 +71,15 @@ async function loadNeoAskDetails(input: string | NeoWorkSelector): Promise<NeoAs
   return result.entry;
 }
 
+async function findNeoWork(query: string): Promise<{ askId: string }[]> {
+  const hub = await connectionManager.getHub();
+  const result = await invokeOperation<
+    { ok: true; results: { askId: string }[] } | { ok: false; reason: string }
+  >(hub, 'neo.ask.search', { query, limit: 50 });
+  if (!result.ok) throw new Error(result.reason);
+  return result.results;
+}
+
 export function NeoLive() {
   const neo = useNeo();
   const attachments = useNeoAttachments(neo.sessionId);
@@ -170,7 +179,7 @@ export function NeoLive() {
   )
     workEntries.push(referenced.entry);
   const [workQuery, setWorkQuery] = useState('');
-  const search = useNeoWorkSearch(workEntries, workQuery, loadNeoAskDetails);
+  const search = useNeoWorkSearch(workEntries, workQuery, loadNeoAskDetails, findNeoWork);
   useEffect(() => {
     setHistory(null);
     setReferenced(null);

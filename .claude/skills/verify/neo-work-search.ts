@@ -9,7 +9,7 @@ import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/s
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 
 const [phase,readyPath,directory]=process.argv.slice(2),run=resolve(directory);
-assert(['before','after'].includes(phase));assert.equal(process.env.NODE_ENV,'test');assert.equal(process.env.HOME,join(run,'home'));assert.equal(process.env.HYPERNEO_DATA_DIR,join(run,'data'));
+assert(['before','after','global'].includes(phase));assert.equal(process.env.NODE_ENV,'test');assert.equal(process.env.HOME,join(run,'home'));assert.equal(process.env.HYPERNEO_DATA_DIR,join(run,'data'));
 for(const path of ['workspace','bin','evidence'])mkdirSync(join(run,path),{recursive:true});
 writeFileSync(join(run,'bin/gh'),'#!/bin/sh\nexit 1\n',{mode:0o700});
 const network=globalThis.fetch;globalThis.fetch=(()=>{throw new Error('External HTTP disabled');}) as typeof fetch;
@@ -33,6 +33,13 @@ try{
   if(item.id==='todo-match')store.updateTodo(todo,{evidence:'evidencesigil732'},now+1);
   if(item.id==='ask-match'){const question=store.askQuestion('search-question',item.id,{kind:'reply',text:'permission734',options:null,multiple:false,noLabel:null,yesLabel:null,startTodos:null},now+1);store.answerQuestion(question,'answercipher736 回答内容','chat',now+2);}
   if(item.id==='status-match')db.prepare('UPDATE neo_asks SET outcome=? WHERE id=?').run('outcomesigil733',item.id);
+ }
+ if(phase==='global'){
+  for(let index=0;index<61;index++){
+   const id=index===0?'old-unloaded':`recent-${index}`;
+   store.openAsk({id,title:index===0?'网页修两处':'Recent synthetic outcome',sessionId:root,projectId:null,originMessageId:null,request:'Synthetic old-card search acceptance',createdAt:now-100000+index});
+   db.prepare('UPDATE neo_asks SET status=?,outcome=?,settled_at=?,updated_at=? WHERE id=?').run('done',index===0?'古老卡片正文':'Synthetic completion',now-100000+index,now-100000+index,id);
+  }
  }
  const dist=resolve('packages/web/dist');assert(existsSync(join(dist,'neo/index.html')));
  let refreshSerial=0;
