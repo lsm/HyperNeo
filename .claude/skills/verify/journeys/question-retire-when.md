@@ -14,7 +14,8 @@ retirement, delivery or public operation handlers.
 
 Observe real WebSocket `neo.question.ask` receipts: an unlinked card without
 retireWhen is refused with a clear message. A supplied already-done todo cannot
-silently turn that request into an unchecked unlinked card. With explicit
+silently turn that request into an unchecked unlinked card. Unknown packs, unsupported kinds and malformed params are refused through the
+same pack policy as todo checks. With explicit
 `retireWhen: {pack, kind, params}`, the same request opens an unlinked card and
 blocks a waiting todo. Run the actual pack sweep: the missing evidence file
 leaves that card open and the hold intact. Create the synthetic file and sweep

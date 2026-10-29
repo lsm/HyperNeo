@@ -590,7 +590,9 @@ export function createCodingTodoPack(
       return readIssueFacts(todo, readRefs ?? (async () => []), readPrs, repo, persist);
     const named = claimsOf(todo);
     if (persist) await repo.write('claim', todo.id, named, Date.now());
-    const urls = persist ? repo.urls(todo.id) : named.map((claim) => codingPrKey(claim.url)!);
+    const urls = [
+      ...new Set([...repo.urls(todo.id), ...named.map((claim) => codingPrKey(claim.url)!)]),
+    ];
     if (!urls.length) return todo.check ? { prs: [], observedAt: Date.now() } : null;
     const observedAt = Date.now();
     const read = await readPrs(urls);

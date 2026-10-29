@@ -795,7 +795,8 @@ export function createNeoOperations(service: NeoService) {
       (id) => service.notifyPublicationsChanged(id),
       (questionId) => service.deliverQuestionAnswers(questionId),
       () => neoStandingRules(service.db.getGlobalSettings().neo),
-      inputReads
+      inputReads,
+      () => service.installedPacks()
     ),
     defineOperation({
       name: 'neo.open',

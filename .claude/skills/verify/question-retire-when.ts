@@ -69,6 +69,16 @@ try {
   const invalid = await rpc('neo.question.ask', { askId: 'ask', kind: 'reply', text: 'Missing retirement condition' });
   assert.notEqual(invalid.ok, true);
   assert.match(JSON.stringify(invalid), /retireWhen is required without a linked todo/);
+  for (const retireWhen of [
+    { pack: 'missing-pack', kind: 'evidence', params: { path: join(run, 'facts.txt') } },
+    { pack: 'core', kind: 'evience', params: { path: join(run, 'facts.txt') } },
+    { pack: 'core', kind: 'evidence', params: { path: 'relative-facts' } },
+  ]) {
+    const refused = await rpc('neo.question.ask', { askId: 'ask', kind: 'reply', text: 'Invalid predicate', retireWhen });
+    assert.equal(refused.ok, false);
+    assert.match(refused.reason!, /^check_(required|refused|unsupported):/);
+  }
+  assert.equal(store.listQuestions('ask').length, 0);
   const staleLink = await rpc('neo.question.ask', { askId: 'ask', todoId: previous.id, kind: 'reply', text: 'Old worker question' });
   assert.equal(staleLink.ok, false);
   assert.match(staleLink.reason!, /retire_when_required/);
