@@ -40,3 +40,8 @@ Use `--check-only --cancel-before` for the admission race: hold the mailbox's
 SDK writer before it materializes the input, hold the todo, then let that writer
 finish. The cancellation tombstone must survive late materialization, and the
 stale input must remain absent from the next SDK turn.
+
+Run the reminder, queue, recompute, question-retirement and
+sdk-message-gateway-routing unit suites. The SDK writer inventory must stay
+green with its existing allowed synchronous units; route status changes
+through the registered SDK operation rather than adding caller exemptions.

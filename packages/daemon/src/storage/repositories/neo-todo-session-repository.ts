@@ -1,3 +1,4 @@
+import { sdkMessageWrites } from './sdk-message-writes.ts';
 import { ChangeRecorder } from '../db-gateway/db-op.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import { JobQueueRepository } from './job-queue-repository.ts';
@@ -161,7 +162,11 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       this.changes?.notifyChange('job_queue', { sessionId });
     }
     if (!job && receipt && receipt.status !== 'consumed') {
-      sdk.markDeliveryFailedByUuid(sessionId, reminder.pending);
+      sdkMessageWrites.run(
+        this.db,
+        { method: 'markDeliveryFailedByUuid', args: [sessionId, reminder.pending] },
+        new ChangeRecorder()
+      );
       jobs.cancelDelivery(sessionId, reminder.pending);
       this.changes?.notifyChange('sdk_messages', { sessionId });
       this.changes?.notifyChange('job_queue', { sessionId });
