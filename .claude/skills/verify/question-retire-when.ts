@@ -31,7 +31,7 @@ const owner = 'neo:10000000-0000-4000-8000-000000009400';
 const receipts: unknown[] = [];
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let ws: WebSocket | undefined;
-type Receipt = { entry?: { state: string; todos: NeoTodo[]; questions: NeoQuestion[] }; ok?: boolean; reason?: string; question?: NeoQuestion; todos?: NeoTodo[]; error?: unknown };
+type Receipt = { entry?: { state: string; todos: NeoTodo[]; questions: NeoQuestion[] }; ok?: boolean; reason?: string; records?: string[]; question?: NeoQuestion; todos?: NeoTodo[]; error?: unknown };
 async function rpc(name: string, input: unknown): Promise<Receipt> {
   assert(ws);
   const id = crypto.randomUUID();
@@ -79,6 +79,13 @@ try {
     assert.match(refused.reason!, /^check_(required|refused|unsupported):/);
   }
   assert.equal(store.listQuestions('ask').length, 0);
+  const warned = await rpc('neo.question.ask', { askId: 'ask', kind: 'reply', text: 'Pack warning must reach the caller', retireWhen: { pack: 'coding', kind: 'pr_merged', params: {} } });
+  assert(warned.ok && warned.question);
+  assert(warned.records?.some(record => record.startsWith('pr_merged_needs_urls:')));
+  assert.equal(warned.question.todoId, undefined);
+  const cleanedWarning = await rpc('neo.question.retire', { questionId: warned.question.id, reason: 'Synthetic warning receipt verified; no pending question remains.' });
+  assert.equal(cleanedWarning.ok, true);
+  receipts.push({ warned, cleanedWarning });
   const uncheckedTodo = store.addTodo('legacy-unchecked', 'ask', { title: 'Legacy unchecked work', doneWhen: 'Old condition', check: null, instruction: null, named: null }, 3);
   const unchecked = await rpc('neo.question.ask', { askId: 'ask', todoId: uncheckedTodo.id, kind: 'reply', text: 'Legacy linked card' });
   assert.equal(unchecked.ok, false);

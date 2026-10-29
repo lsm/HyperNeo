@@ -16,7 +16,7 @@ Observe real WebSocket `neo.question.ask` receipts: an unlinked card without
 retireWhen is refused with a clear message. A linked legacy todo with no check also requires an explicit condition. A
 supplied already-done todo cannot
 silently turn that request into an unchecked unlinked card. Unknown packs, unsupported kinds and malformed params are refused through the
-same pack policy as todo checks. With explicit
+same pack policy as todo checks. A deferred coding check without PR URLs must return its pack warning in the actual question receipt; retire that synthetic warning card explicitly before the fact/hold proof. With explicit
 `retireWhen: {pack, kind, params}`, the same request opens an unlinked card and
 blocks a waiting todo. Run the actual pack sweep: the missing evidence file
 leaves that card open and the hold intact. Create the synthetic file and sweep
