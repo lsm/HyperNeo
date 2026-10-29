@@ -1,3 +1,8 @@
+import {
+  readGitHubSpaceEnabled,
+  readGitHubPollingIntent,
+  readGitHubFilterCurrentUser,
+} from '../../../storage/repositories/github-space-settings-read.ts';
 import { persistGitHubSpaceEnabled } from '../../../storage/repositories/github-space-enabled-persist.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
@@ -253,12 +258,7 @@ export class GitHubEventExtensionRepository {
   }
 
   getPollingIntent(spaceId: string): boolean {
-    const row = this.db
-      .prepare(
-        'SELECT polling_intent AS pollingIntent FROM space_github_source_settings WHERE space_id = ?'
-      )
-      .get(spaceId) as { pollingIntent: number } | undefined;
-    return row ? row.pollingIntent === 1 : false;
+    return readGitHubPollingIntent(this.db, spaceId);
   }
 
   setFilterCurrentUser(spaceId: string, enabled: boolean): void {
@@ -273,12 +273,7 @@ export class GitHubEventExtensionRepository {
   }
 
   getFilterCurrentUser(spaceId: string): boolean {
-    const row = this.db
-      .prepare(
-        'SELECT filter_current_user AS filterCurrentUser FROM space_github_source_settings WHERE space_id = ?'
-      )
-      .get(spaceId) as { filterCurrentUser: number } | undefined;
-    return row ? row.filterCurrentUser === 1 : true;
+    return readGitHubFilterCurrentUser(this.db, spaceId);
   }
 
   countSpacesWithPollingIntent(): number {
@@ -312,10 +307,7 @@ export class GitHubEventExtensionRepository {
   }
 
   isSpaceEnabled(spaceId: string): boolean {
-    const row = this.db
-      .prepare(`SELECT enabled FROM space_github_source_settings WHERE space_id = ?`)
-      .get(spaceId) as { enabled: number } | undefined;
-    return row ? row.enabled === 1 : true;
+    return readGitHubSpaceEnabled(this.db, spaceId);
   }
 
   listWatchedRepos(spaceId?: string): GitHubWatchedRepo[] {
