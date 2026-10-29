@@ -67,7 +67,7 @@ try {
   assert.equal(decisions.unowned.kind, 'merge');assert.equal(decisions.owner.kind, 'skip');
   assert.equal(decisions.staleCi.kind, 'skip');assert.equal(decisions.unresolved.kind, 'skip');
   assert.equal(decisions.unreadable.kind, 'read_failure');assert.equal(decisions.humanPolicy.kind, 'needs_human_signoff');
-  proof.daemonGate = { decisions, pureBuildOnly: true, mergeExecuted: false, defaultDidNotSave: true };
+  proof.daemonGate = { decisions, pureDecision: true, mergeExecuted: false, defaultDidNotSave: true };
   const now = Date.now();
   await pack.sweep!(now);
   approved = true; await pack.sweep!(now + 1000);
@@ -83,10 +83,10 @@ try {
   proof.terminal = { snapshot: await rpc('neo.snapshot', {}), ledger: ledger.list(), mailbox: jobs() };
   assert.deepEqual(states, [[1, 'approved_green'], [2, 'waiting_human']]);
   assert.deepEqual(labelStates, [[1, 'approved_green'], [2, 'waiting_human']]);
-  assert.equal(terminalJobs.length, 3);
+  assert.equal(terminalJobs.length, 2);
   assert.deepEqual(jobs(), terminalJobs);
   assert(jobs().every((job: any) => job.to.sessionId === worker));
-  assert.deepEqual(jobs().map((job: any) => job.messageUuid).sort(), ['neo-pr-event:synthetic/signoff#1:head-1:approved_green', 'neo-pr-event:synthetic/signoff#1:head-1:merged', 'neo-pr-event:synthetic/signoff#2:head-2:closed'].sort());
+  assert.deepEqual(jobs().map((job: any) => job.messageUuid).sort(), ['neo-pr-event:synthetic/signoff#1:head-1:merged', 'neo-pr-event:synthetic/signoff#2:head-2:closed'].sort());
   assert.equal(db.prepare('SELECT count(*) AS count FROM sdk_messages').get().count, 0);
   proof.verified = true;
   console.log(JSON.stringify({ verified: true, states, ownerMailboxEvents: jobs().length, duplicateEvents: 0, providerTurns: 0 }));

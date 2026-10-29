@@ -99,9 +99,9 @@ export function createCodingDaemonMergeSweep(
       (row) => row.policy.mergeBy === 'daemon' && row.policy.mergePolicy !== 'human'
     );
     const receipts = await record({ kind: 'list' });
-    const pending = [...candidates, ...receipts];
+    const pending = [...new Set([...candidates, ...receipts].map(({ url }) => url))];
     const facts = new Map(
-      await Promise.all(pending.map(async ({ url }) => [url, await read(url)] as const))
+      await Promise.all(pending.map(async (url) => [url, await read(url)] as const))
     );
     if ([...facts.values()].some((fact) => !fact.ok)) return;
     for (const receipt of receipts) {

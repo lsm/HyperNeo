@@ -19,15 +19,16 @@ otherwise today's empty default watch list makes the old journey inconclusive.
 
 It also exercises `mergeBy` through the public preference RPCs: unanswered stays
 unsaved and defaults to owner, invalid values are refused, and daemon reads back.
-The coding pack's pure build gate admits an unowned eligible PR, skips owner
+The coding pack's pure admission gate admits an unowned eligible PR, skips owner
 execution, stale CI and unresolved threads, reports GitHub read failure and
-requires human sign-off for human policy. No executor is wired and no merge
+requires human sign-off for human policy. The synthetic ledger heads cannot pass fresh execution admission; no merge
 command is invoked. Complete chronological review facts and required-check/thread
 observations must belong to the current head; incomplete reads use read_failure.
 Unit contracts cover stale/wrong/revoked bot approval and label/path matching.
 
-The worker's real durable mailbox must receive one merge instruction, one merged
-notice and one closed notice; another identical read must add nothing. The daemon
+With daemon execution selected, the worker receives no approved-green merge
+instruction. Its real durable mailbox must receive one merged notice and one
+closed notice; another identical read must add nothing. The daemon
 snapshot, ledger and mailbox payloads are retained in `evidence/signoff-scope.json`.
 On the reproduction commit, the code PR incorrectly waits for a human and neither
 terminal event arrives. Every run shuts down its daemon and socket in `finally`.
