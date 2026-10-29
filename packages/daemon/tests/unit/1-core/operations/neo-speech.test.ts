@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { MessageHub, MessageHubRouter } from '@hyperneo/shared';
+import {
+  MessageHub,
+  MessageHubRouter,
+  subscribeToStructuredLogs,
+  type StructuredLogEvent,
+} from '@hyperneo/shared';
 import { NeoSpeech } from '../../../../src/lib/neo/speech.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
@@ -249,6 +254,52 @@ describe('spoken replies separate from publications', () => {
     expect(await call('ack', { sessionId, id: saved.id, state: 'played' })).toMatchObject({
       state: 'played',
     });
+  });
+  test('records synthesis boundaries by id without logging speech or audio', async () => {
+    const logs: StructuredLogEvent[] = [];
+    const unsubscribe = subscribeToStructuredLogs((event) => {
+      if (event.module === 'hyperneo:daemon:voice') logs.push(event);
+    });
+    try {
+      await call('listen', { sessionId, enabled: true, audio: true });
+      const saved = await say('timing-one', 'PRIVATE_SPEECH_CONTENT');
+      for (let i = 0; i < 100 && !synthesis; i++) await new Promise((done) => setTimeout(done, 1));
+      expect(logs.some((event) => event.message === 'voice.tts.first_chunk')).toBe(false);
+      audioController.enqueue(new Uint8Array([1, 0, 2, 0]));
+      audioController.enqueue(new Uint8Array([3, 0, 4, 0]));
+      audioController.close();
+      for (let i = 0; i < 100 && !messages.some((item) => item.message.data.type === 'end'); i++)
+        await new Promise((done) => setTimeout(done, 1));
+      await call('ack', { sessionId, id: saved.id, state: 'played' });
+      expect(logs.map((event) => event.message)).toEqual([
+        'voice.speech.requested',
+        'voice.speech.receipt',
+        'voice.tts.queued',
+        'voice.tts.request_started',
+        'voice.tts.first_chunk',
+        'voice.tts.first_chunk_sent',
+        'voice.tts.finished',
+        'voice.speech.receipt',
+      ]);
+      expect(logs[0].metadata).toMatchObject({
+        requestId: 'timing-one',
+        speechId: saved.id,
+        sessionId,
+      });
+      for (const event of logs) {
+        expect(event.metadata.speechId).toBe(saved.id);
+        expect(event.metadata.atMs).toEqual(expect.any(Number));
+        expect(
+          Object.keys(event.metadata).every((key) =>
+            ['atMs', 'sessionId', 'speechId', 'requestId', 'clientId', 'state'].includes(key)
+          )
+        ).toBe(true);
+      }
+      expect(JSON.stringify(logs)).not.toContain('PRIVATE_SPEECH_CONTENT');
+      expect(JSON.stringify(logs)).not.toContain('AQACAA==');
+    } finally {
+      unsubscribe();
+    }
   });
   test('cancelling playback aborts server synthesis and the next request can run', async () => {
     await call('listen', { sessionId, enabled: true, audio: true });
