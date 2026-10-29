@@ -1,3 +1,4 @@
+import type { ReactiveDatabase } from '../reactive-database.ts';
 import { enqueueMailboxEntry } from '../../lib/mailbox/enqueue.ts';
 import { createMailboxEntry } from '../../lib/mailbox/entry.ts';
 import { renderAddress } from '../../lib/mailbox/address.ts';
@@ -298,7 +299,8 @@ export class NeoAskTodoRepository {
     private readonly db: Database,
     private readonly changed: () => void = () => {},
     private readonly rulesChanged: () => void = () => {},
-    private readonly questionsPruned?: () => void
+    private readonly questionsPruned?: () => void,
+    private readonly changes?: Pick<ReactiveDatabase, 'notifyChange'>
   ) {}
 
   cardReplyQuestion(conversationId: string, mutationId: string): NeoQuestion | null {
@@ -752,6 +754,11 @@ export class NeoAskTodoRepository {
           now,
           todo.id
         );
+      if (result.changes) {
+        const current = this.getTodo(todo.id)!;
+        if (current.state !== 'todo' || current.instruction?.trim() || !current.check)
+          new NeoTodoSessionRepository(this.db, this.changes).cancelCheckOnlyReminder(todo.id);
+      }
       if (result.changes && patch.state) this.pruneQuestions(todo.askId, now);
       return result.changes;
     })();
@@ -773,16 +780,17 @@ export class NeoAskTodoRepository {
     );
   }
 
-  listCheckable(stalledBefore?: number): NeoTodo[] {
+  listCheckable(stalledBefore?: number, queuedBefore?: number): NeoTodo[] {
     return (
       this.db
         .prepare(
           `${TODO_SELECT} WHERE state IN ('todo', 'doing', 'blocked', 'failed', 'closed_unverified')
              AND ask_id IN (SELECT id FROM neo_asks WHERE status = 'open')
-             AND (?1 IS NULL OR (state = 'blocked' AND blocked_by IN ('stalled', 'environment') AND updated_at <= ?1
+             AND (?1 IS NULL OR (((state = 'blocked' AND blocked_by IN ('stalled', 'environment') AND updated_at <= ?1)
+               OR (state = 'todo' AND created_at <= ?2 AND check_json IS NOT NULL AND COALESCE(TRIM(instruction), '') = ''))
                AND ask_id IN (SELECT a.id FROM neo_asks a JOIN sessions s ON s.id = a.session_id WHERE s.status = 'active')))`
         )
-        .all(stalledBefore ?? null) as TodoRow[]
+        .all(stalledBefore ?? null, queuedBefore ?? null) as TodoRow[]
     ).map(toTodo);
   }
 
@@ -1179,8 +1187,8 @@ export const neoTodoWrites = defineRepositoryOp(
   'neo.todoWrites',
   'write',
   class extends NeoAskTodoRepository {
-    constructor(db: Database) {
-      super(db);
+    constructor(db: Database, changes?: ReactiveDatabase) {
+      super(db, undefined, undefined, undefined, changes);
     }
   },
   ['commitState', 'retireCheckedQuestion']

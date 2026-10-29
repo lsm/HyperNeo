@@ -419,7 +419,7 @@ export class QueryOptionsBuilder {
     const session = overrides?.session ?? this.ctx.session;
     const config = this.admittedConfig(session);
     const toolInputs = this.canonicalToolInputs(session);
-    const workerSandbox = await readClaudeWorkerSandbox(this.getCwd());
+    const workerSandbox = await readClaudeWorkerSandbox(this.getCwd(), true);
 
     await this.ctx.settingsManager.prepareSDKOptions();
 
