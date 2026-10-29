@@ -188,13 +188,18 @@ try {
     await new Promise((done) => setTimeout(done, 1000));
     const settledDuringOutage = settled; const foregroundReadsWithinOneSecond = readPosts - readsBeforeOutage;
     await new Promise((done) => setTimeout(done, 1200)); assert.equal(active(delayedTarget.device.id), false);
-    evidence.persistentReadOutage = { rpcSettledWithinOneSecond: settledDuringOutage, readAdmissionsWithinOneSecond: foregroundReadsWithinOneSecond, observerReadAdmissionsDuring2200msOutage: observerReadPosts - observerReadsBeforeOutage, writeAdmissions: commandPosts - writesBeforeOutage, targetStillConnectedDuringOutage: !delayedVictim.closed(), persistedInactive: true };
+    const observerReadsDuringOutage = observerReadPosts - observerReadsBeforeOutage;
+    evidence.persistentReadOutage = { rpcSettledWithinOneSecond: settledDuringOutage, readAdmissionsWithinOneSecond: foregroundReadsWithinOneSecond, observerReadAdmissionsDuring2200msOutage: observerReadsDuringOutage, writeAdmissions: commandPosts - writesBeforeOutage, targetStillConnectedDuringOutage: !delayedVictim.closed(), persistedInactive: true };
     rejectReadsUntilClose = false;
     assert.match(await delayed, /outcome unknown/);
     try { await wait(delayedVictim.closed); } catch (error) { evidence.eventualClosureAfterReadRecovery = false; throw error; }
+    const observerReadsAtRecovery = observerReadPosts;
+    await wait(() => observerReadPosts > observerReadsAtRecovery);
+    evidence.observerContinuesAfterRecovery = true;
+    evidence.observerReadAdmissionsAfterRecovery = observerReadPosts - observerReadsBeforeOutage;
     assert.equal(commandPosts, writesBeforeOutage + 1); evidence.eventualClosureAfterReadRecovery = true;
     assert.equal(settledDuringOutage, true, 'persistent read failure must release the RPC caller without abandoning eventual socket closure');
-    assert.equal(readPosts, readsBeforeOutage + 3); assert(observerReadPosts - observerReadsBeforeOutage >= 2); assert(observerReadPosts - observerReadsBeforeOutage <= 3);
+    assert.equal(readPosts, readsBeforeOutage + 3); assert(observerReadsDuringOutage >= 2); assert(observerReadsDuringOutage <= 3);
     assert.equal(evidence.persistentReadOutage && (evidence.persistentReadOutage as { targetStillConnectedDuringOutage: boolean }).targetStillConnectedDuringOutage, true);
   }
   const shutdownTarget = seed(); const beforeShutdownReads = readPosts; const beforeShutdownWrites = commandPosts; loseNextReceipt = true; rejectReadsUntilClose = true;

@@ -4,6 +4,38 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.51.0] - 2026-10-28
+
+### Voice replies
+
+- Add spoken Neo replies for the opted-in client and session; cancel pending speech on disconnect without replaying it on reconnect (#9298).
+- Queue Send while transcription is pending (#9261).
+- Use explicit batch/live ASR endpoints; move recording storage and tool recovery writes off the daemon main thread (#9209, #9214, #9222).
+
+### Quote Markdown and conversations
+
+- Render quote excerpts as Markdown, preserve the browser context menu and improve message touch targets, folding and long-message readability (#9300, #9116, #9238, #9227, #9243).
+- Attribute publications to the human input being processed; bind new todos and questions to its ask (#9293, #9338).
+- Search Chinese card/message text, rank Work results and open references at the exact item (#9152, #9248, #9273).
+
+### Todo status and scheduling
+
+- Keep human-waiting todos waiting, and block completion when a required check is unmet (#9292, #9343).
+- Follow through on idle workers, start dependency-ready steps under caps, and support holds and priorities (#9154, #9164, #9166, #9158, #9170, #9178, #9184, #9186).
+- Show open questions in Work snapshots and collapsed cards; restore folding for completed todos and collect history in one dialog (#9226, #9205, #9239, #9253).
+
+### Database writer work
+
+- Revoke paired devices and observe connected-device revocations without blocking the daemon; move pairing approval, redemption, creation and human reset work to DB workers (#9302, #9304, #9270, #9278, #9295, #9315).
+- Move session reminders, schedules, workspaces, GitHub inbox delivery, publication pages, turn vectors and coding-ledger operations through DB workers (#9143, #9252, #9266, #9228, #9215, #9321, #9325, #9247, #9208, #9218, #9244).
+
+### Agent fixes
+
+- Bound stream silence while tool calls are open; surface deferred restart, reconciliation and terminal query failures (#9284, #9285, #9110).
+- Preserve model capacity across auto-compaction, stop old queries before fallback and bound repeated delivery parks (#9341, #9134, #9283).
+- Prevent overlapping Desktop-owned sends, expose worker work locations and reuse idle workers at the same place (#9245, #9105, #9345).
+- Fail the required CI gate when a required job is cancelled (#9311).
+
 ## [0.50.0] - 2026-10-27
 
 ### Added

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { createArtifactProofPhases } from './lane-c-artifact-proof-phases.ts';
 import { waitForSdkBodyCopy } from './wait-for-sdk-body-copy.ts';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 
@@ -8,6 +9,7 @@ const run=resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV,'test');assert.equal(process.env.HOME,join(run,'home'));assert.equal(process.env.HYPERNEO_DATA_DIR,join(run,'data'));assert(!existsSync(join(run,'data')));
 for(const key of ['ANTHROPIC_API_KEY','CLAUDE_CODE_OAUTH_TOKEN','OPENAI_API_KEY','GITHUB_TOKEN'])assert.equal(process.env[key],undefined);
 for(const name of ['home','workspace','bin','evidence'])mkdirSync(join(run,name),{recursive:true});
+const phase=createArtifactProofPhases(run);phase('imports');
 writeFileSync(join(run,'bin/gh'),'#!/bin/sh\nexit 1\n',{mode:0o755});process.env.PATH=join(run,'bin')+':'+process.env.PATH;
 const {createDaemonApp}=await import('../../../packages/daemon/src/app.ts');
 const {getConfig}=await import('../../../packages/daemon/src/config.ts');
@@ -24,8 +26,9 @@ globalThis.fetch=(()=>{throw new Error('External HTTP refused by artifact regist
 let app:Awaited<ReturnType<typeof createDaemonApp>>|undefined,transport:InstanceType<typeof WebSocketClientTransport>|undefined,lock:InstanceType<typeof SQLite>|undefined,timer:ReturnType<typeof setInterval>|undefined;
 const evidence:Record<string,unknown>={sqlScope:'Registration row INSERT only; existing read-only authorization/receipt SQL, native FS and Git publication not included',fullTransitiveCaptureOwnershipGraphMeasured:false};
 try{
+ phase('daemon-start');
  JobQueueProcessor.prototype.start=function(){processors.add(this);return start.call(this);};try{app=await createDaemonApp({config:{...getConfig({host:'127.0.0.1',port:0,dbPath:join(run,'data/daemon.db'),workspaceRoot:join(run,'workspace')}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});}finally{JobQueueProcessor.prototype.start=start;}
- assert.notEqual(app.server.port,8399);await Promise.all([...processors].map(p=>p.stop()));main=app.db.getDatabase();await waitForSdkBodyCopy(main);
+ assert.notEqual(app.server.port,8399);phase('processors-stop');await Promise.all([...processors].map(p=>p.stop()));main=app.db.getDatabase();phase('body-copy');await waitForSdkBodyCopy(main);phase('fixtures');
  main.prepare("INSERT INTO sessions(id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?,'Synthetic',?,'now','now','active','{}','{}')").run('synthetic-neo',join(run,'workspace'));
  const ask={id:'synthetic-registration-ask',sessionId:'synthetic-neo',projectId:null,originMessageId:null,title:'Synthetic registration row',request:'Synthetic proof only',createdAt:Date.now()};const work=new NeoAskTodoRepository(main);work.openAsk(ask);
  const source=join(run,'workspace/report.md'),text='# Synthetic immutable snapshot 🦊\n';writeFileSync(source,text);
@@ -37,20 +40,28 @@ try{
  const wait=async(predicate:()=>boolean)=>{const until=performance.now()+5000;while(!predicate()){assert(performance.now()<until);await new Promise(done=>setTimeout(done,5));}};
  const cached=main.prepare('INSERT INTO artifact_files VALUES(?,?,?,?,?,?,?,?,?,?,?)');measuring=true;assert.throws(()=>cached.run(),/INSERT reached main/);assert.equal(mainInsertRuns,1);mainInsertRuns=0;evidence.mainGuardSelfCheckPassed=true;
  let previous=performance.now(),maxLoopLagMs=0;timer=setInterval(()=>{const now=performance.now();maxLoopLagMs=Math.max(maxLoopLagMs,now-previous-5);previous=now;},5);
+ phase('initial-rpc');
  const at=performance.now(),responses=await Promise.allSettled([invoke(),invoke()]);for(const response of responses)assert.equal(response.status,'fulfilled',response.status==='rejected'?String(response.reason):'');const [first,concurrent]=responses.map(response=>(response as PromiseFulfilledResult<Reply>).value);evidence.firstConcurrentRpcMs=performance.now()-at;
  if(Reflect.get(globalThis,'Deno')){assert.deepEqual(first,{accepted:false,reason:'safe_open_unavailable'});assert.deepEqual(concurrent,first);assert.deepEqual(await invoke(),first);assert.equal(rowPosts,0);assert.equal(count(),0);evidence.existingDenoCaptureFailsClosed=true;evidence.successfulDenoRowActivationAndBytesVerified=false;}
  else{
  assert(first.accepted,JSON.stringify(first));assert.deepEqual(concurrent,first);assert.equal(count(),1);assert.equal(rowPosts,1);assert.deepEqual(await invoke(),first);assert.equal(rowPosts,1);evidence.concurrentLaneAndReceiptRetryPreserved=true;
  const read=async(ref:ArtifactRef)=>{const reply=await hub.request<{accepted:boolean;data:string}>('operation.invoke',{name:'artifact.file.read',input:{artifactId:ref.artifactId}});assert.equal(reply.accepted,true);return Buffer.from(reply.data,'base64').toString();};assert.equal(await read(first.artifact),text);evidence.publicSnapshotBytesRetained=true;
+ phase('admission-refusal');
  const refused={...input,requestId:'synthetic-refused'},beforeRefusal=rowPosts,rowsBeforeRefusal=count();rejectNext=true;await assert.rejects(invoke(refused),/before commit/);assert.equal(retained(refused.requestId),undefined);assert.equal(count(),rowsBeforeRefusal);await new Promise(done=>setTimeout(done,100));assert.equal(rowPosts,beforeRefusal+1);assert((await invoke(refused)).accepted);evidence.admissionFailureHasNoFallbackOrReplay=true;
+ phase('committed-reply-loss');
  const lost={...input,requestId:'synthetic-lost'},beforeLoss=rowPosts;loseNext=true;await assert.rejects(invoke(lost),/outcome unknown/);const stored=retained(lost.requestId);assert(stored);const lostArtifact=JSON.parse(stored).artifact as ArtifactRef;await new Promise(done=>setTimeout(done,100));assert.equal(rowPosts,beforeLoss+1);assert.deepEqual(await invoke(lost),{accepted:true,artifact:lostArtifact});assert.equal(rowPosts,beforeLoss+1);evidence.unknownOutcomeNeverAutomaticallyReplayed=true;evidence.explicitRetryReadsCommittedReceipt=true;
+ phase('post-commit-revocation');
  const revoked={...input,requestId:'synthetic-revoked'},beforeRevocation=rowPosts;beforeReceipt=()=>{main!.prepare('DELETE FROM neo_asks WHERE id=?').run(ask.id);};assert.deepEqual(await invoke(revoked),{accepted:false,reason:'unavailable'});assert(retained(revoked.requestId));assert.equal(rowPosts,beforeRevocation+1);assert.deepEqual(await invoke(revoked),{accepted:false,reason:'unavailable'});assert.equal(rowPosts,beforeRevocation+1);work.openAsk(ask);const restored=await invoke(revoked);assert(restored.accepted);assert.deepEqual(restored.artifact,JSON.parse(retained(revoked.requestId)!).artifact);assert.equal(rowPosts,beforeRevocation+1);evidence.postCommitAccessRevocationWithholdsReference=true;
+ phase('writer-contention');
  main.exec('CREATE TABLE synthetic_publication_lock(value INTEGER);INSERT INTO synthetic_publication_lock VALUES(0)');beforePost=()=>{lock=new SQLite(app!.db.getDbPath());lock.exec('BEGIN IMMEDIATE');lock.prepare('UPDATE synthetic_publication_lock SET value=1').run();};const held={...input,requestId:'synthetic-held'},beforeHeld=rowPosts,heldAt=performance.now();let settled=false;const pending=Promise.all([invoke(held),invoke(held)]).finally(()=>{settled=true;});await wait(()=>!!lock);assert.equal(rowPosts,beforeHeld+1);assert.equal(settled,false);assert.equal(retained(held.requestId),undefined);const healthAt=performance.now();assert.equal((await hub.request<{status:string}>('system.health',{})).status,'ok');evidence.healthWhileWriterHeldMs=performance.now()-healthAt;await new Promise(done=>setTimeout(done,1200));assert.equal(settled,false);lock!.exec('COMMIT');lock!.close();lock=undefined;const [heldFirst,heldSecond]=await pending;assert(heldFirst.accepted);assert.deepEqual(heldSecond,heldFirst);assert.equal(rowPosts,beforeHeld+1);evidence.deliberatelyHeldPublicationMs=performance.now()-heldAt;evidence.publicReceiptWaitsForCommit=true;
+ phase('revision');
  const revisedText='# New immutable snapshot 🦊\n';writeFileSync(source,revisedText);const beforeRevision=count(),revised=await invoke();assert(revised.accepted);assert.notEqual(revised.artifact.artifactId,first.artifact.artifactId);assert.equal(count(),beforeRevision+1);const postsAfterRevision=rowPosts;assert.deepEqual(await invoke(),revised);assert.equal(rowPosts,postsAfterRevision);assert.equal(await read(revised.artifact),revisedText);assert.equal(await read(first.artifact),text);evidence.changedSourceCreatesImmutableRevision=true;
  }
  const beforeRefusals=rowPosts;assert.deepEqual(await invoke({...input,requestId:'synthetic-sensitive',path:join(run,'workspace/.env')}),{accepted:false,reason:'sensitive_path'});assert.deepEqual(await invoke({...input,requestId:'synthetic-traversal',path:'../outside.md'}),{accepted:false,reason:'unsafe_path'});assert.equal(rowPosts,beforeRefusals);evidence.pathRefusalsPreserved=true;
  assert.equal(mainInsertRuns,0);assert(maxLoopLagMs<1000);evidence.maxLoopLagMs=maxLoopLagMs;evidence.rssBytes=process.memoryUsage().rss;evidence.walBytes=existsSync(`${app.db.getDbPath()}-wal`)?statSync(`${app.db.getDbPath()}-wal`).size:0;evidence.pass=true;
 }finally{
+ phase('shutdown');
  measuring=false;if(timer)clearInterval(timer);if(lock){try{lock.exec('ROLLBACK');}catch{}lock.close();}try{await transport?.close();await Promise.all([...processors].map(p=>p.stop()));await app?.cleanup();}finally{SQLite.prototype.prepare=prepare;JobQueueProcessor.prototype.start=start;globalThis.Worker=NativeWorker;globalThis.fetch=nativeFetch;evidence.registrationMainInsertRuns=mainInsertRuns;evidence.rowCommandPosts=rowPosts;evidence.workerMetrics=metrics;writeFileSync(join(run,'evidence/artifact-registration-row.json'),JSON.stringify(evidence,null,2));}
 }
+phase('complete');
 console.log('ok public registration row admission/commit/authorization/no-replay fence; Bun bytes pass, Deno retains existing capture refusal');

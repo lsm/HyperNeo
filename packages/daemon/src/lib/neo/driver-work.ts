@@ -190,6 +190,18 @@ export function readDriverOutcome(
   };
 }
 
+export function readDriverIdentity(outcome: OperationOutcome) {
+  const status = parseDriverStatusReply(outcome);
+  if (!status?.ok) return null;
+  const value = status.value;
+  if (value.model === undefined && value.effort === undefined && !value.identityObservation)
+    return null;
+  return {
+    model: typeof value?.model === 'string' ? value.model : null,
+    effort: typeof value?.effort === 'string' ? value.effort : null,
+  };
+}
+
 const DriverStatusSchema = z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),

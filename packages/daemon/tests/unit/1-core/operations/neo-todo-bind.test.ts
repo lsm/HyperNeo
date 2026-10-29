@@ -36,7 +36,15 @@ function setup() {
       calls.push(name);
       return {
         kind: 'completed',
-        value: { ok: true, value: { status: 'running', lastActivityAt: Date.now() } },
+        value: {
+          ok: true,
+          value: {
+            status: 'running',
+            lastActivityAt: Date.now(),
+            model: 'claude-opus-5-5',
+            effort: 'medium',
+          },
+        },
       };
     },
   });
@@ -109,6 +117,28 @@ describe('bind an already running worker without dispatch', () => {
       }
     }
   );
+  test('explicit bind refreshes identity for an unbound todo without dispatch', async () => {
+    const { db, sessions, calls, invoke } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Observed worker',
+        request: 'Track work',
+        todos: [{ title: 'Worker task', check: pendingTodoCheck }],
+      });
+      const todoId = opened.todos[0].id;
+      const result = await invoke('neo.todo.bind', { todoId, ref });
+      expect(result.ok).toBe(true);
+      expect(calls).toEqual(['work.status']);
+      expect(sessions.readCard(todoId)).toMatchObject({
+        ref,
+        model: 'claude-opus-5-5',
+        effort: 'medium',
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   test('a failed backfill can be rebound in place, clearing failure and stale delivery without sending', async () => {
     const { db, store, sessions, calls, invoke, runner } = setup();
     try {

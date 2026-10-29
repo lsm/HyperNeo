@@ -16,8 +16,8 @@ Reserve the JS per-database capture lane synchronously before its first await. U
 tests hold identity admission, dispatch two explicit captures and require the first
 identity/current callback to finish before the second initializes. Initialization
 failure releases the lane for another explicit call without replaying callbacks.
-Keep repository/resource data main-side in the existing pipeline; only UUID data
-crosses the worker transaction. No FS/network/current callback crosses it.
+Keep repository/resource data main-side in the existing pipeline; identity admission sends only UUID data; separately activated row publication sends
+only save arguments to its own worker transaction. No FS/network/current callback crosses it.
 
 In the native RPC proof acquire the competing writer lock at the Git identity
 command post boundary, after reference source planning completes. Health remains responsive; the affected RPC is
@@ -35,8 +35,10 @@ registration/bytes remain unverified. No fallback or backend change is added. Fo
 Count the complete local Git module/closures/constants to <=200 lines. Pin exact
 merged writer, reference resolver, stored-kind and source/policy/capture/descriptor/
 Git-reader boundary hashes/contracts, with explicit transitive repository/runtime/
-OS/library audit limits. Source reads, immutable row publication and read-only
-identity authorization remain on main. Only the explicit public read verification
+OS/library audit limits. Current row publication is separately worker-backed;
+assert zero main row saves. Source reads and read-only identity authorization
+remain on main. Use lane-c-artifact-git-row-measure.cjs for the current topology;
+the identity-only measurement remains a historical slice record. Only the explicit public read verification
 phase permits/counts existing read-only identity SELECTs. Run strict/focused tests,
 native proofs and repository checks; append only the owned smoke line. Stop all
 owned sockets/processors/app and delete daemon data after saving evidence. Native

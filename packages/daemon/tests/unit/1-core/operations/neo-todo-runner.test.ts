@@ -1,3 +1,4 @@
+import { driverExchangeReport, readDriverLanded } from '../../../../src/lib/neo/driver-work.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { createNeoQuestionOperations } from '../../../../src/lib/neo/question-operations.ts';
@@ -250,8 +251,8 @@ describe('neo todo runner', () => {
       const todo = h.add({ pack: 'coding', kind: 'pr', params: {} });
       await h.runner.start(todo.id);
       const opening = h.calls.find((call) => call.name === 'work.start')!.input.message as string;
-      expect(opening).toContain('Agent: <exact model id> (effort: <effort>) via HyperNeo');
-      expect(opening).toContain('Never guess');
+      expect(opening).not.toContain('<exact model id>');
+      expect(h.calls.find((call) => call.name === 'work.start')!.input.provenance).toBe(true);
       expect(opening).toContain('Even when told to stay quiet');
       expect(opening).toContain(`todoId: "${todo.id}"`);
       expect(opening).toContain('2–6 short options');
@@ -259,16 +260,264 @@ describe('neo todo runner', () => {
         model: 'gpt-6.1-sol',
         effort: 'high',
       });
+      h.setStatus({
+        ok: true,
+        value: {
+          ref,
+          status: 'done',
+          lastActivityAt: 1000,
+          model: 'claude-opus-5-5',
+          effort: 'medium',
+        },
+      });
       await h.runner.proceed(todo.id, 'Write the PR body.');
       const followup = h.calls.findLast((call) => call.name === 'work.send')!.input
         .message as string;
-      expect(followup).toContain('Agent: gpt-6.1-sol (effort: high) via HyperNeo');
+      expect(followup).toContain('Agent: claude-opus-5-5 (effort: medium) via HyperNeo');
       expect(followup).not.toContain('<effort>');
-      expect(h.sessions.readCard(todo.id)).toMatchObject({ model: 'gpt-6.1-sol', effort: 'high' });
+      expect(h.sessions.readCard(todo.id)).toMatchObject({
+        model: 'claude-opus-5-5',
+        effort: 'medium',
+      });
     } finally {
       h.db.close();
     }
   });
+  test('refreshes an existing Claude ref for a file-check task and clears missing effort', async () => {
+    const h = setup();
+    try {
+      const todo = h.add({ pack: 'core', kind: 'evidence', params: { path: '/tmp/report' } });
+      const worker = { adapter: 'claude-desktop', id: 'local-fixture' };
+      h.sessions.bind(todo.id, worker, 1);
+      h.sessions.recordRef(
+        todo.id,
+        worker,
+        1,
+        undefined,
+        { model: 'old-model', effort: 'low' },
+        { verb: 'send', ref: worker }
+      );
+      h.setStatus({
+        ok: true,
+        value: {
+          ref: worker,
+          status: 'done',
+          lastActivityAt: 1000,
+          model: 'claude-opus-5-5',
+          effort: 'medium',
+        },
+      });
+      await h.runner.start(todo.id);
+      const message = h.calls.findLast((call) => call.name === 'work.send')!.input
+        .message as string;
+      expect(message).toContain('Agent: claude-opus-5-5 (effort: medium) via Claude');
+      expect(h.sessions.readCard(todo.id)).toMatchObject({
+        model: 'claude-opus-5-5',
+        effort: 'medium',
+      });
+      h.setStatus({
+        ok: true,
+        value: { ref: worker, status: 'done', lastActivityAt: 1000, model: 'claude-sonnet-5' },
+      });
+      await h.runner.proceed(todo.id, 'Continue coding.');
+      const next = h.calls.findLast((call) => call.name === 'work.send')!.input.message as string;
+      expect(next).toContain('Agent: claude-sonnet-5 (effort: unknown) via Claude');
+      expect(next).not.toContain('effort: medium');
+      expect(h.sessions.readCard(todo.id)).toMatchObject({
+        model: 'claude-sonnet-5',
+        effort: null,
+      });
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('binding the same ref retains identity but a different ref clears it', () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      h.sessions.recordRef(todo.id, ref, 1, undefined, {
+        model: 'claude-opus-5-5',
+        effort: 'medium',
+      });
+      h.sessions.bind(todo.id, ref, 2);
+      expect(h.sessions.readCard(todo.id)).toMatchObject({
+        model: 'claude-opus-5-5',
+        effort: 'medium',
+      });
+      h.sessions.bind(todo.id, { ...ref, id: 'other' }, 3);
+      expect(h.sessions.readCard(todo.id)).toMatchObject({ model: null, effort: null });
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test.each([
+    { ok: false, reason: 'unreachable', detail: 'Synthetic remote outage' },
+    { ok: false, reason: 'not_found', detail: 'Synthetic missing worker' },
+    null,
+    { ok: true, value: { status: 'done' } },
+  ])(
+    'keeps last observed identity when status is unsuccessful or malformed: %j',
+    async (status) => {
+      const h = setup();
+      try {
+        const todo = h.add();
+        await h.runner.start(todo.id);
+        h.sessions.recordRef(todo.id, ref, 1, undefined, {
+          model: 'claude-opus-5-5',
+          effort: 'medium',
+        });
+        h.setStatus(status);
+        await h.runner.proceed(todo.id, 'Continue.');
+        expect(h.sessions.readCard(todo.id)).toMatchObject({
+          model: 'claude-opus-5-5',
+          effort: 'medium',
+        });
+        expect(h.calls.findLast((call) => call.name === 'work.send')!.input.message).toContain(
+          'Agent: claude-opus-5-5 (effort: medium) via HyperNeo'
+        );
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
+  test('Codex identity-silent follow-ups retain the pair confirmed at start', async () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      await h.runner.start(todo.id);
+      const worker = { adapter: 'codex-desktop', id: 'codex-thread' };
+      h.sessions.recordRef(todo.id, worker, 1, undefined, { model: 'gpt-6.1-sol', effort: 'high' });
+      h.setStatus({
+        ok: true,
+        value: { ref: worker, status: 'done', lastActivityAt: 2, recentInputs: [] },
+      });
+      await h.runner.proceed(todo.id, 'Continue coding.');
+      expect(h.sessions.readCard(todo.id)).toMatchObject({ model: 'gpt-6.1-sol', effort: 'high' });
+      expect(h.calls.findLast((call) => call.name === 'work.send')!.input.message).toContain(
+        'Agent: gpt-6.1-sol (effort: high) via Codex'
+      );
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('an explicit observation with unknown identity clears the prior pair', async () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      await h.runner.start(todo.id);
+      h.sessions.recordRef(todo.id, ref, 1, undefined, { model: 'previous-model', effort: 'high' });
+      h.setStatus({
+        ok: true,
+        value: {
+          ref,
+          status: 'done',
+          lastActivityAt: 2,
+          identityObservation: { source: 'assistant-transcript', messageId: 'unknown-observation' },
+        },
+      });
+      await h.runner.proceed(todo.id, 'Continue.');
+      expect(h.sessions.readCard(todo.id)).toMatchObject({ model: null, effort: null });
+      expect(h.calls.findLast((call) => call.name === 'work.send')!.input.message).toContain(
+        'Agent: unknown (effort: unknown) via HyperNeo'
+      );
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test.each(['landed', 'reply'])(
+    'does not attribute another todo input by the provenance opening: %s',
+    async (match) => {
+      const h = setup();
+      try {
+        h.setStatus({
+          ok: true,
+          value: {
+            status: 'running',
+            lastActivityAt: 1,
+            recentInputs: [],
+            model: 'claude-opus-5-5',
+            effort: 'medium',
+          },
+        });
+        h.setSend({ ok: true, value: { delivered: false } });
+        const first = h.add({ pack: 'coding', kind: 'pr', params: {} });
+        const second = h.add({ pack: 'coding', kind: 'pr', params: {} });
+        for (const todo of [first, second]) {
+          h.sessions.recordRef(todo.id, ref, undefined, undefined, {}, { verb: 'send', ref });
+          await h.runner.start(todo.id);
+        }
+        const messages = h.calls
+          .filter((call) => call.name === 'work.send')
+          .map((call) => String(call.input.message));
+        const firstSent = h.sessions.readSent(first.id)!;
+        const secondSent = h.sessions.readSent(second.id)!;
+        const exchange = [
+          { at: 100, role: 'user' as const, text: messages[1] },
+          { at: 101, role: 'agent' as const, text: 'Only the second todo completed.' },
+        ];
+        if (match === 'landed') {
+          const outcome = completed({
+            ok: true,
+            value: {
+              status: 'done',
+              lastActivityAt: 101,
+              recentInputs: [{ at: 100, text: messages[1] }],
+              exchange,
+            },
+          });
+          expect(readDriverLanded(outcome, firstSent)).toBeNull();
+          expect(readDriverLanded(outcome, secondSent)).toBe(100);
+        } else {
+          expect(driverExchangeReport(exchange, false, firstSent.opening)).toBeNull();
+          expect(driverExchangeReport(exchange, false, secondSent.opening)).toContain(
+            'Only the second todo completed.'
+          );
+        }
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
+  test('identical follow-up instructions have different delivery openings', async () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      await h.runner.start(todo.id);
+      h.setStatus({ ok: true, value: { status: 'running', lastActivityAt: 1, recentInputs: [] } });
+      h.setSend({ ok: true, value: { delivered: false } });
+      await h.runner.proceed(todo.id, 'Continue.');
+      const first = h.sessions.readSent(todo.id)!;
+      await h.runner.proceed(todo.id, 'Continue.');
+      expect(h.sessions.readSent(todo.id)?.opening).not.toBe(first.opening);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a late identity refresh cannot overwrite a replacement binding', async () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      h.sessions.bind(todo.id, ref, 1);
+      const replacement = { ...ref, id: 'replacement' };
+      h.sessions.bind(todo.id, replacement, 2);
+      await h.sessions.write('recordIdentity', todo.id, ref, { model: 'stale', effort: 'low' });
+      expect(h.sessions.readCard(todo.id)).toMatchObject({
+        ref: replacement,
+        model: null,
+        effort: null,
+      });
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('refuses the external effect if accepting its durable input fails', async () => {
     const h = setup();
     try {

@@ -19,6 +19,7 @@ type Record = {
   directory: string;
   pendingSubmission?: boolean;
   latestReceipt?: Receipt;
+  archived?: boolean;
 };
 type Gate<T> = { value: T } | { reason: ReturnType<typeof reject> };
 interface Deps extends StartFolderDeps {
@@ -183,7 +184,7 @@ export function createCopilotAdapter(
     return record;
   };
   const detail = (record: Record, receipt?: Receipt): W.Result<W.WorkDetail> => {
-    if (record.pendingSubmission && !receipt) return unavailable();
+    if (record.pendingSubmission && !receipt && !record.archived) return unavailable();
     receipt ??= record.latestReceipt ?? record.work.receipt;
     const { work, snapshot } = record;
     if (receipt && receipt.executionId !== work.ref.id)
@@ -199,6 +200,7 @@ export function createCopilotAdapter(
       if (!input) return reject('not_found', 'Receipt does not belong to this owned input.');
     }
     if (
+      !record.archived &&
       !input?.outcome &&
       (snapshot.status === 'unreachable' ||
         (!live.has(work.ref.id) && !['done', 'failed', 'stopped'].includes(snapshot.status)))
@@ -208,15 +210,16 @@ export function createCopilotAdapter(
       ok: true,
       value: {
         ...work,
-        status:
-          snapshot.status === 'unreachable' || (!live.has(work.ref.id) && input?.outcome)
+        status: record.archived
+          ? 'stopped'
+          : snapshot.status === 'unreachable' || (!live.has(work.ref.id) && input?.outcome)
             ? input!.outcome!
             : snapshot.status,
         startReceipt: work.receipt,
         execution: { directory: record.directory, machine: deps.machine },
         ...(input?.replyReport ? { lastReply: input.replyReport } : {}),
         inputEvidence:
-          receipt && input
+          receipt && input && !(record.archived && input.state === 'pending')
             ? input.state === 'pending'
               ? { receipt, state: 'pending' }
               : {
@@ -228,7 +231,8 @@ export function createCopilotAdapter(
                   replyAvailability: input.replyAvailability,
                 }
             : undefined,
-        waitingFor: snapshot.status === 'needs_you' ? 'Permission denied.' : undefined,
+        waitingFor:
+          !record.archived && snapshot.status === 'needs_you' ? 'Permission denied.' : undefined,
       },
     };
   };
@@ -239,6 +243,7 @@ export function createCopilotAdapter(
     .pipe(detail, ['record', 'receipt'], 'detail')
     .endAsync('detail') as (ref: W.WorkRef, receipt?: Receipt) => Promise<W.Result<W.WorkDetail>>;
   const admitSend = (record: Record): Gate<Record> => {
+    if (record.archived) return { reason: reject('not_open', 'Copilot work is archived.') };
     if (closed || record.pendingSubmission || record.snapshot.status === 'unreachable')
       return { reason: unavailable() };
     if (record.snapshot.status === 'needs_you')
@@ -305,6 +310,7 @@ export function createCopilotAdapter(
     .pipe(deliver, ['delivery', 'message'], 'delivery')
     .endAsync('delivery') as (ref: W.WorkRef, message: string) => Promise<W.Result<W.WorkDelivery>>;
   const admitRename = (record: Record, title: string): Gate<Record> => {
+    if (record.archived) return { reason: reject('not_open', 'Copilot work is archived.', true) };
     if (title.length > 100)
       return {
         reason: reject('not_delivered', 'Copilot session names are 1–100 characters.', true),
@@ -426,6 +432,34 @@ export function createCopilotAdapter(
       'stopped'
     )
     .endAsync('stopped') as (ref: W.WorkRef) => Promise<W.Result<{ stopped: boolean }>>;
+  const admitArchive = (record: Record, admit: W.ArchiveAdmission): Gate<Record> => {
+    if (
+      launching.has(record.work.ref.id) ||
+      (live.has(record.work.ref.id) &&
+        !['done', 'failed', 'stopped'].includes(record.snapshot.status))
+    )
+      return { reason: reject('busy', 'Copilot work still has a live turn.', true) };
+    const refused = admit();
+    return refused ? { reason: refused } : { value: record };
+  };
+  const applyArchive = (record: Record): W.Result<{ archived: boolean }> => {
+    if (record.archived) return { ok: true, value: { archived: false } };
+    const { mtime } = fs.statSync(path(record.work.ref.id));
+    record.archived = true;
+    save(record);
+    fs.utimesSync(path(record.work.ref.id), mtime, mtime);
+    return { ok: true, value: { archived: true } };
+  };
+  const archive = (superpipe({})('copilot-archive') as PipelineAPI)
+    .input(['ref', 'admit'])
+    .pipe(lookup, 'ref', 'result:archived')
+    .pipe(refresh, 'archived', 'archived')
+    .pipe(admitArchive, ['archived', 'admit'], 'result:archived')
+    .pipe(applyArchive, 'archived', 'archived')
+    .endAsync('archived') as (
+    ref: W.WorkRef,
+    admit: W.ArchiveAdmission
+  ) => Promise<W.Result<{ archived: boolean }>>;
   const find = createCopilotFind(
     discovery,
     deps.directory,
@@ -442,18 +476,21 @@ export function createCopilotAdapter(
           record.work.place.folder ??
           record.directory;
         const unavailable =
-          status === 'unreachable' || (!owner && !['done', 'failed', 'stopped'].includes(status));
+          !record.archived &&
+          (status === 'unreachable' || (!owner && !['done', 'failed', 'stopped'].includes(status)));
         return {
           ok: true,
           value: {
             ...record.work,
             place: { ...record.work.place, folder, name: basename(folder) || folder },
-            status:
-              status === 'unreachable'
+            status: record.archived
+              ? 'stopped'
+              : status === 'unreachable'
                 ? record.pendingSubmission
                   ? 'queued'
                   : record.work.status
                 : status,
+            ...(record.archived ? { archived: true } : {}),
             ...(unavailable
               ? {
                   watchHint:
@@ -489,6 +526,7 @@ export function createCopilotAdapter(
       'withdraw',
       'status',
       'stop',
+      'archive',
     ] as const,
     unsupportedCapabilities: {
       steer:
@@ -506,6 +544,7 @@ export function createCopilotAdapter(
     withdraw: (ref, inputId) => guard(() => withdraw(ref, inputId), ref.id),
     status: (ref, _since, receipt) => guard(() => status(ref, receipt), ref.id),
     stop: (ref) => guard(() => stop(ref), ref.id),
+    archive: (ref, admit) => guard(() => archive(ref, admit), ref.id),
     async close() {
       closed = true;
       await Promise.allSettled([...starts, ...transactions.values()]);

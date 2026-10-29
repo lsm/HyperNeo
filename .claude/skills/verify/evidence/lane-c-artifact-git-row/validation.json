@@ -1,0 +1,28 @@
+{
+  "failingCommit": "d8121163cee783a78648e7fcb1789c72de0656f1",
+  "red": "Native Bun concurrent artifact.reference.resolve Git RPCs both reject at guarded main INSERT; two target attempts, zero row commands. The matching integration test fails. Deno baseline refuses safe_open_unavailable then artifact_blob_conflict and is a compatibility control, not a failing activation proof.",
+  "focusedTests": 21,
+  "strictTypeScript": "6.0.3: zero errors for integration test and production Git module",
+  "repositoryCheck": "bun run check: exit 0, SQL ratchet unchanged",
+  "fullLocalGraphLines": 88,
+  "productionLines": 17,
+  "appendOnlySmokeLines": 1,
+  "netPrepare": 0,
+  "netRun": 0,
+  "nativeBun": "Zero main publication INSERTs; full 1680000 snapshot bytes in seven chunks and exact commit/blob provenance; concurrent lane and retained receipts; admission refusal without fallback/replay; actual committed reply loss with no replay; explicit offline receipt retry without lookup/publication; late binding and source changes withhold committed reference; competing writer keeps health responsive and receipt pending.",
+  "nativeDeno": "Existing safe_open_unavailable first refusal and explicit duplicate artifact_blob_conflict refusal preserved; zero rows/row commands; foreign/non-source reference refused before lookup. Successful capture, publication, bytes and late fences unverified; native writer construction proof is separate.",
+  "compatibility": "Prior Git identity proof updated to assert zero main row saves and passes on Bun/Deno. Historical reference journey clarified current ownership and old measurement scope.",
+  "auditedDependencyLimits": "Complete local Git module including new gate closures counted. Full exact subtree pins for merged 135-line row writer, 31-line identity command, unchanged 130-line resolver and 26-line storedKind, plus full source/import-root hashes. Their transitive repository/runtime/OS/network implementation closure is not fully audited.",
+  "sqlScope": "Git row INSERT only. Receipt/source/authorization reads, native sync descriptor work and earlier core constructor immediate transaction #9342 remain outside this ownership proof. Competing lock is acquired after planning; second RPC starts only once that lock is owned.",
+  "latencyScope": "Normal full synthetic Git batch 326.62ms (includes fixture processes/data), so no full-RPC sub-250ms claim. Deliberately held publication 1349.30ms, health2.18ms; isolated normal row round trips and payload metrics recorded separately.",
+  "oneCheckout": true,
+  "noInstalls": true,
+  "proofDataRemoved": true,
+  "unverified": [
+    "Full transitive source/security/capture/native-runtime/OS graph",
+    "Successful Deno capture/publication/bytes and late fences",
+    "Native Bun 1.4.2 (local 1.4.3)",
+    "Browser and Neo-owned deployment smoke",
+    "Final no SQLite/sync disk main-thread guard"
+  ]
+}

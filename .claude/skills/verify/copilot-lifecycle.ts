@@ -58,7 +58,7 @@ const status = async (work: WorkStarted) => {
 try {
   await connect();
   const catalog = await rpc('work.adapters', {}) as { value: { id: string; capabilities: string[]; unsupportedCapabilities?: { steer?: string } }[] };
-  assert.deepEqual(catalog.value.find(adapter => adapter.id === 'copilot-cli')?.capabilities, ['find', 'start', 'rename', 'send', 'queue', 'withdraw', 'status', 'stop']);
+  assert.deepEqual(catalog.value.find(adapter => adapter.id === 'copilot-cli')?.capabilities, ['find', 'start', 'rename', 'send', 'queue', 'withdraw', 'status', 'stop', 'archive']);
   if (mode === 'steer') {
     const adapter = catalog.value.find(adapter => adapter.id === 'copilot-cli')!;
     assert.match(adapter.unsupportedCapabilities?.steer ?? '', /same-turn/);

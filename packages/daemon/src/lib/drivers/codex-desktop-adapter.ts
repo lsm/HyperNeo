@@ -1,3 +1,4 @@
+import { withWorkerProvenance } from './worker-provenance.ts';
 import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
 import { basename, join } from 'node:path';
 import { CODEX_WORKER_INSTRUCTIONS } from '@hyperneo/prompts';
@@ -1285,7 +1286,14 @@ export async function startCodexThread(
       }
       await server.call('thread/name/set', { threadId, name: request.title });
       await server.close();
-      const message = `${request.message}\n${CODEX_WORKER_INSTRUCTIONS}`;
+      const brief = request.provenance
+        ? withWorkerProvenance(request.message, {
+            model: model ?? null,
+            effort: effort ?? null,
+            harness: 'codex-desktop',
+          })
+        : request.message;
+      const message = `${brief}\n${CODEX_WORKER_INSTRUCTIONS}`;
       await deps.startDesktopTurn(threadId, {
         threadId,
         approvalPolicy: 'never',
