@@ -1,3 +1,8 @@
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { opusInputDefaults } from '../../../../src/lib/voice/opus-input.ts';
 import { createOpusPackets } from '../../../../src/lib/voice/opus-packets.ts';
 import { opusFixture } from '../../../helpers/opus-fixture.ts';
@@ -512,4 +517,33 @@ describe('resumable voice stream RPC', () => {
       code: 'VOICE_STREAM_NOT_FOUND',
     });
   });
+
+  it('releases Opus batch workers so an isolated caller exits naturally', () => {
+    const run = mkdtempSync(join(tmpdir(), 'opus-worker-exit-'));
+    for (const part of ['home', 'tmp', 'data']) mkdirSync(join(run, part));
+    try {
+      const fixture = fileURLToPath(
+        new URL('../../../helpers/opus-worker-exit.ts', import.meta.url)
+      );
+      const result = spawnSync('bun', [fixture], {
+        env: {
+          PATH: process.env.PATH,
+          NODE_ENV: 'test',
+          HOME: join(run, 'home'),
+          HYPERNEO_DATA_DIR: join(run, 'data'),
+          TMPDIR: join(run, 'tmp'),
+          SystemRoot: process.env.SystemRoot,
+        },
+        timeout: 10_000,
+        killSignal: 'SIGKILL',
+        encoding: 'utf8',
+      });
+      expect(result.stdout).toContain('batch-stop-complete');
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(0);
+      expect(result.signal).toBeNull();
+    } finally {
+      rmSync(run, { recursive: true, force: true });
+    }
+  }, 15_000);
 });
