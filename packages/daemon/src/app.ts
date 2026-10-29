@@ -765,7 +765,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       overrides: db.mcpEnablement.listAll(),
     });
 
-    await collectDaemonScratch(true, scratchChildrenAtStartup);
+    try {
+      await collectDaemonScratch(true, scratchChildrenAtStartup);
+    } catch (error) {
+      logError('[Daemon] Stale scratch cleanup failed (non-fatal):', error);
+    }
 
     startupTimer.start('session manager');
     sessionManager = new SessionManager(
