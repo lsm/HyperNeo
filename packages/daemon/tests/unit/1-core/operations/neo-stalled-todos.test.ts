@@ -246,3 +246,16 @@ test('a delayed refresh measures the repeat from consumption, not the later obse
   expect(notes()).toHaveLength(2);
   expect(notes()[1].deliveryMode).toBe('defer');
 });
+
+test('a consumed reminder later marked failed is removed from the delivered budget', async () => {
+  add('stuck');
+  clock += 2 * hour;
+  await service.refreshDriverWork();
+  await consume(0);
+  await db
+    .getSDKMessageRepo()
+    .write('markDeliveryFailedByUuidInclusive', 'neo', notes()[0].messageUuid);
+  await service.refreshDriverWork();
+  expect(notes()).toHaveLength(2);
+  expect(notes()[1].deliveryMode).toBe('immediate');
+});
