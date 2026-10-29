@@ -1,3 +1,4 @@
+import { createTodoCheckPacks } from '../../helpers/todo-check-packs.ts';
 import { expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -134,10 +135,20 @@ function fixture(path = ':memory:') {
     { title: 'Work', doneWhen: 'Observed', check, instruction: null, named: null },
     1
   );
+  const packs = createTodoCheckPacks(db);
   const operation = createNeoQuestionOperations(
     store,
     async () => {},
-    async () => ({ ok: true })
+    async () => ({ ok: true }),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    () => [...packs, { id: 'test', todos: { doneWhen: () => 'Fact observed' } }]
   ).find((op) => op.name === 'neo.question.ask')!;
   const ask = async (input: Record<string, unknown>) =>
     operation.execute(
@@ -402,11 +413,14 @@ test('a linked default follows later todo check edits and rejects the old read r
   }
 });
 
-test('an unavailable pack leaves the question open', async () => {
+test('an unavailable legacy pack leaves the question open', async () => {
   const f = fixture();
   try {
-    const card = await f.ask({ retireWhen: { ...f.check, pack: 'unavailable' } });
-    expect(await f.retire(card.question, null, 4)).toBeNull();
+    const card = await f.ask({ retireWhen: f.check });
+    f.db
+      .prepare('UPDATE neo_questions SET retire_when_json = ? WHERE id = ?')
+      .run(JSON.stringify({ ...f.check, pack: 'unavailable' }), card.question.id);
+    expect(await f.retire(f.store.getQuestion(card.question.id)!, null, 4)).toBeNull();
     expect(f.store.getQuestion(card.question.id)?.state).toBe('open');
     expect(f.notes).toEqual([]);
   } finally {
@@ -433,3 +447,43 @@ test.each([
     }
   }
 );
+
+test('a linked coding default checks an existing branch claim before any todo cache read', async () => {
+  const f = fixture();
+  try {
+    const url = 'https://github.com/synthetic/project/pull/78';
+    const repository = new CodingTodoPrRepository(f.db);
+    const pack = createCodingTodoPack(repository, async () => [
+      {
+        url,
+        state: 'MERGED',
+        checks: 'passing',
+        review: 'approved',
+        title: 'Merged change',
+        blockers: [],
+        createdAt: 2,
+        mergedAt: 3,
+      },
+    ]);
+    pack.schema(f.db);
+    const todo = f.store.updateTodo(
+      f.todo,
+      { state: 'doing', startedAt: 1, check: { pack: 'coding', kind: 'pr_merged', params: {} } },
+      1
+    );
+    repository.claim(todo.id, [{ url, claim: 'branch' }], 2);
+    const card = await f.ask({ todoId: todo.id });
+    const retire = createQuestionRetirement(
+      f.store,
+      () => [{ id: 'coding', describe: 'Coding', instructions: () => null, todos: pack }],
+      async () => {}
+    );
+    expect(await retire(card.question, todo, 4)).toMatchObject({
+      state: 'retired',
+      retiredReason: '#78 merged',
+    });
+    expect(await pack.check(todo)).toMatchObject({ done: true, evidence: '#78 merged' });
+  } finally {
+    f.db.close();
+  }
+});
