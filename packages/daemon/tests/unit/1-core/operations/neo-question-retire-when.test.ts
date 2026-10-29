@@ -161,6 +161,7 @@ function fixture(path = ':memory:') {
     ) as Promise<{
       ok: boolean;
       reason?: string;
+      records?: string[];
       question: import('@hyperneo/shared/types/neo-ask').NeoQuestion;
     }>;
   let result: NeoTodoCheckResult | null = { done: true, evidence: 'Fact observed\nwith detail' };
@@ -444,6 +445,20 @@ test.each([
     }
   }
 );
+
+test('an unlinked coding check returns the pack warning that it needs PR URLs', async () => {
+  const f = fixture();
+  try {
+    const receipt = await f.ask({
+      retireWhen: { pack: 'coding', kind: 'pr_merged', params: {} },
+    });
+    expect(receipt.ok).toBe(true);
+    expect(receipt.question.todoId).toBeUndefined();
+    expect(receipt.records).toContainEqual(expect.stringMatching(/^pr_merged_needs_urls:/));
+  } finally {
+    f.db.close();
+  }
+});
 
 test('a linked coding default checks an existing branch claim before any todo cache read', async () => {
   const f = fixture();
