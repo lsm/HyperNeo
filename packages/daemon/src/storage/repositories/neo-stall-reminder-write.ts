@@ -1,3 +1,4 @@
+import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { createMailboxEntry } from '../../lib/mailbox/entry.ts';
 import { enqueueMailboxEntry } from '../../lib/mailbox/enqueue.ts';
@@ -10,7 +11,7 @@ import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 import { SDKMessageRepository } from './sdk-message-repository.ts';
 
 const INTERVAL = 2 * 60 * 60 * 1000;
-type StalledTodo = { id: string; title: string; since: number; sessionId: string; askId: string };
+type StalledTodo = NeoTodo & { since: number; sessionId: string };
 type Reminder = NonNullable<FollowThroughIncident['stallReminder']>;
 type Context = { todo: StalledTodo; incident: FollowThroughIncident; reminder: Reminder };
 
@@ -91,7 +92,7 @@ const remindTodo = (superpipe({})('neo.stalled-todo.remind') as PipelineAPI)
             inputKind: 'system',
             neoWakeEvent: true,
             message: {
-              content: `Todo "${todo.title}" (${todo.id}) in ask ${todo.askId} is still stalled. Review this todo and continue its work or record the next action. This is reminder ${reminder.delivered.length + 1} of 3; the todo stays visible after reminders stop.`,
+              content: `Todo "${todo.title}" (${todo.id}) in ask ${todo.askId} is still stalled${todo.blockedBy === 'environment' ? ` by environment: ${todo.blockedReason}; retry or escalate this environment failure` : ''}. Review this todo and continue its work or record the next action. This is reminder ${reminder.delivered.length + 1} of 3; the todo stays visible after reminders stop.`,
             },
           },
         })

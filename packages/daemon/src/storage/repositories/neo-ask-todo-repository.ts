@@ -514,7 +514,7 @@ export class NeoAskTodoRepository {
       AND EXISTS (SELECT 1 FROM sessions WHERE sessions.id = neo_asks.session_id AND sessions.status = 'active')
       AND NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state IN ('todo', 'doing'))
       AND NOT EXISTS (SELECT 1 FROM neo_questions WHERE ask_id = neo_asks.id AND state = 'open')
-      AND (?3 OR NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state = 'blocked' AND blocked_by = 'stalled'))
+      AND (?3 OR NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state = 'blocked' AND blocked_by IN ('stalled', 'environment')))
       AND (?2 IS NULL OR stalled_wake_at IS NULL OR stalled_wake_at <= ?2)`)
       .all(before, repeatBefore, includeStalledTodos ? 1 : 0) as {
       id: string;
@@ -770,7 +770,7 @@ export class NeoAskTodoRepository {
         .prepare(
           `${TODO_SELECT} WHERE state IN ('todo', 'doing', 'blocked', 'failed', 'closed_unverified')
              AND ask_id IN (SELECT id FROM neo_asks WHERE status = 'open')
-             AND (?1 IS NULL OR (state = 'blocked' AND blocked_by = 'stalled' AND updated_at <= ?1
+             AND (?1 IS NULL OR (state = 'blocked' AND blocked_by IN ('stalled', 'environment') AND updated_at <= ?1
                AND ask_id IN (SELECT a.id FROM neo_asks a JOIN sessions s ON s.id = a.session_id WHERE s.status = 'active')))`
         )
         .all(stalledBefore ?? null) as TodoRow[]

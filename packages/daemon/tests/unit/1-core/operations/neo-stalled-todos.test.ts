@@ -326,3 +326,23 @@ test('removing an admitted pending input does not freeze its stalled todo remind
   expect(notes()).toHaveLength(2);
   expect(notes()[1].deliveryMode).toBe('immediate');
 });
+
+test('environment blockers remind Neo with the reason while needs-human cards stay quiet', async () => {
+  const environment = add('environment');
+  service.todos.updateTodo(
+    environment!,
+    { blockedBy: 'environment', blockedReason: 'Synthetic DNS failure' },
+    clock
+  );
+  const human = add('human');
+  service.todos.updateTodo(
+    human!,
+    { blockedBy: 'needs-human', blockedReason: 'Approval needed' },
+    clock
+  );
+  clock += 2 * hour;
+  await service.refreshDriverWork();
+  expect(notes()).toHaveLength(1);
+  expect(JSON.stringify(notes()[0])).toContain('Synthetic DNS failure');
+  expect(JSON.stringify(notes()[0])).toContain('retry or escalate');
+});
