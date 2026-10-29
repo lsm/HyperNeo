@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { neoStallReminderWrite } from '../../../packages/daemon/src/storage/repositories/neo-stall-reminder-write.ts';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
@@ -99,6 +101,30 @@ try {
   evidence.snapshot = await rpc('operation.invoke', { name: 'neo.snapshot', input: {} });
   assert.equal(service!.todos.getTodo('stalled')?.blockedBy, 'stalled');
   assert(JSON.stringify(evidence.snapshot).includes('stalled'));
+  clock = realNow();
+  service!.todos.addTodo('receipt-race', 'busy', { title: 'Receipt race', doneWhen: 'Observed', check: null, instruction: null, named: null }, clock - 4 * hour);
+  service!.todos.commitState('receipt-race', { state: 'blocked', blockedBy: 'stalled' }, clock - 4 * hour, { state: 'no_opinion' });
+  await app!.db.gateway.run(neoStallReminderWrite, { now: clock - 2 * hour });
+  const raceNotes = () => notes().filter(row => row.message.message.content.includes('(receipt-race)'));
+  assert.equal(raceNotes().length, 1);
+  const race = raceNotes()[0];
+  const raceDbId = await app!.db.saveUserMessage(root, { ...race.message, uuid: race.messageUuid, session_id: root, message: { role: 'user', content: race.message.message.content } }, 'enqueued');
+  await app!.db.getSDKMessageRepo().write('updateMessageTimestamp', raceDbId, clock - 2 * hour);
+  const resultUuid = crypto.randomUUID();
+  await app!.db.saveSDKMessage(root, { type: 'result', subtype: 'success', uuid: resultUuid, parent_tool_use_id: null, is_error: false } as unknown as SDKMessage);
+  const consumed = await app!.db.getSDKMessageRepo().write('markDeliveriesConsumedAtTurnEnd', root, [race.messageUuid], resultUuid);
+  assert.deepEqual(consumed.ids, [raceDbId]);
+  const atomicReceipt = app!.db.getSDKMessageRepo().getUserDeliveryReceipt(root, race.messageUuid)!;
+  assert.equal(atomicReceipt.status, 'consumed');
+  assert(atomicReceipt.timestamp >= clock);
+  await app!.db.gateway.run(neoStallReminderWrite, { now: realNow() });
+  assert.equal(raceNotes().length, 1);
+  await app!.db.gateway.run(neoStallReminderWrite, { now: atomicReceipt.timestamp + 2 * hour - 1 });
+  assert.equal(raceNotes().length, 1);
+  await app!.db.gateway.run(neoStallReminderWrite, { now: atomicReceipt.timestamp + 2 * hour });
+  assert.equal(raceNotes().length, 2);
+  assert.equal(raceNotes()[1].deliveryMode, 'defer');
+  evidence.turnEndTimestamp = { oldTimestamp: clock - 2 * hour, atomicReceipt, separateTimestampFollowUpHeld: true, reminders: raceNotes() };
   evidence.passed = true;
 } catch (error) { evidence.error = String(error); throw error; }
 finally { await close(); Date.now = realNow; evidence.resourcesClosed = true; writeFileSync(join(run, 'evidence/result.json'), JSON.stringify(evidence, null, 2)); }

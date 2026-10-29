@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { MessageHub } from '@hyperneo/shared';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
@@ -258,4 +259,43 @@ test('a consumed reminder later marked failed is removed from the delivered budg
   await service.refreshDriverWork();
   expect(notes()).toHaveLength(2);
   expect(notes()[1].deliveryMode).toBe('immediate');
+});
+
+test('turn-end consumption refreshes an old receipt before its separate timestamp follow-up', async () => {
+  clock = new Date().getTime() - 4 * hour;
+  add('stuck');
+  clock += 2 * hour;
+  await service.refreshDriverWork();
+  const entry = notes()[0];
+  const dbId = await db.saveUserMessage(
+    'neo',
+    {
+      ...entry.message,
+      type: 'user',
+      uuid: entry.messageUuid,
+      session_id: 'neo',
+      message: { role: 'user', content: entry.message.message.content },
+    },
+    'enqueued'
+  );
+  db.getSDKMessageRepo().updateMessageTimestamp(dbId, clock);
+  clock += 2 * hour;
+  const resultUuid = crypto.randomUUID();
+  await db.saveSDKMessage('neo', {
+    type: 'result',
+    subtype: 'success',
+    uuid: resultUuid,
+    parent_tool_use_id: null,
+    is_error: false,
+  } as unknown as SDKMessage);
+  const consumed = await db
+    .getSDKMessageRepo()
+    .write('markDeliveriesConsumedAtTurnEnd', 'neo', [entry.messageUuid], resultUuid);
+  expect(consumed.ids).toEqual([dbId]);
+  await service.refreshDriverWork();
+  expect(notes()).toHaveLength(1);
+  clock = new Date().getTime() + 2 * hour;
+  await service.refreshDriverWork();
+  expect(notes()).toHaveLength(2);
+  expect(notes()[1].deliveryMode).toBe('defer');
 });

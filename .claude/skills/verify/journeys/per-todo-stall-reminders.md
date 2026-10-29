@@ -24,6 +24,11 @@ through the normal message writer and observed through message.status over
 WebSocket; this verifies durable scheduling, failed-delivery reconciliation,
 restart behavior, delivery modes and visible state, not model compliance or
 wall-clock waiting. The helper closes both daemon instances in finally.
+The same daemon proof holds the turn-end timestamp follow-up: the real
+markDeliveriesConsumedAtTurnEnd writer must expose a fresh consumed timestamp
+atomically, so a receipt queued two hours earlier cannot cause an early repeat.
+No separate timestamp update is allowed before the refresh; queue becomes due
+exactly two hours after that atomic receipt.
 The unit contracts additionally cover independent todo clocks, activity reset,
 concurrent refresh, terminal mailbox failure and archived recipients.
 
