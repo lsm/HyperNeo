@@ -1,0 +1,29 @@
+{
+  "redCommit": "2b8fab4705166303a8d05b85c21383b37cf88bc9",
+  "legacyCharacterizationsBeforeExtraction": 2,
+  "missingHelperContractsBeforeExtraction": 2,
+  "focusedAfter": {
+    "files": 3,
+    "tests": 15,
+    "passed": true
+  },
+  "strictTypeScript6": {
+    "passed": true,
+    "scope": "Two new unit files, legacy config store and extracted SQL module, plus imported dependencies"
+  },
+  "firstDenoAttempt": {
+    "exitCode": 1,
+    "cause": "Proof compared ordinary spread row against Deno null-prototype row; corrected to compare row values on both sides",
+    "productionChangeNeeded": false
+  },
+  "limits": [
+    "SQL-only extraction: two public main-connection UPSERTs remain",
+    "No full plugin callback closure audit or writer activation claim",
+    "Local Bun is 1.4.3; pinned Bun 1.4.2 remains CI-owned",
+    "Deployment smoke remains Neo-owned; live daemon untouched"
+  ],
+  "rootCheck": {
+    "command": "bun run check",
+    "exitCode": 0
+  }
+}
