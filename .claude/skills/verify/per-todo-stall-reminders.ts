@@ -48,7 +48,8 @@ const check = (name: string, count: number) => {
 const refresh = () => service!.refreshDriverWork();
 const receipt = async (index: number, status: 'consumed' | 'failed') => {
   const entry = notes()[index];
-  await app!.db.saveUserMessage(root, { ...entry.message, uuid: entry.messageUuid, session_id: root, message: { role: 'user', content: entry.message.message.content } }, status);
+  const dbId = await app!.db.saveUserMessage(root, { ...entry.message, uuid: entry.messageUuid, session_id: root, message: { role: 'user', content: entry.message.message.content } }, status);
+  await app!.db.getSDKMessageRepo().write('updateMessageTimestamp', dbId, clock);
   const visible = await rpc('operation.invoke', { name: 'message.status', input: { sessionId: root, messageId: entry.messageUuid } });
   (evidence.checks as unknown[]).push({ name: `public ${status} receipt`, visible });
   assert(JSON.stringify(visible).includes(status === 'consumed' ? 'delivered' : 'failed'));

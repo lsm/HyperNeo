@@ -86,7 +86,7 @@ function notes() {
 }
 async function consume(index: number, status: 'consumed' | 'failed' = 'consumed') {
   const entry = notes()[index];
-  await db.saveUserMessage(
+  const dbId = await db.saveUserMessage(
     'neo',
     {
       ...entry.message,
@@ -97,6 +97,7 @@ async function consume(index: number, status: 'consumed' | 'failed' = 'consumed'
     },
     status
   );
+  db.getSDKMessageRepo().updateMessageTimestamp(dbId, clock);
   await service.refreshDriverWork();
 }
 
@@ -228,7 +229,7 @@ test('a delayed refresh measures the repeat from consumption, not the later obse
   clock += 2 * hour;
   await service.refreshDriverWork();
   const entry = notes()[0];
-  await db.saveUserMessage(
+  const dbId = await db.saveUserMessage(
     'neo',
     {
       ...entry.message,
@@ -239,6 +240,7 @@ test('a delayed refresh measures the repeat from consumption, not the later obse
     },
     'consumed'
   );
+  db.getSDKMessageRepo().updateMessageTimestamp(dbId, clock);
   clock += 2 * hour;
   await service.refreshDriverWork();
   expect(notes()).toHaveLength(2);

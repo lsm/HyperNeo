@@ -38,7 +38,7 @@ const remindTodo = (superpipe({})('neo.stalled-todo.remind') as PipelineAPI)
     (db: Database, context: Context, now: number) => {
       const { todo, reminder } = context;
       if (reminder.pending) {
-        const status = new SDKMessageRepository(db).getUserSendStatus(
+        const receipt = new SDKMessageRepository(db).getUserDeliveryReceipt(
           todo.sessionId,
           reminder.pending
         );
@@ -46,11 +46,11 @@ const remindTodo = (superpipe({})('neo.stalled-todo.remind') as PipelineAPI)
           'to.sessionId': todo.sessionId,
           messageUuid: reminder.pending,
         });
-        if (status === 'consumed') {
+        if (receipt?.status === 'consumed') {
           reminder.delivered++;
-          reminder.deliveredAt = now;
+          reminder.deliveredAt = receipt.timestamp;
           delete reminder.pending;
-        } else if (status === 'failed' || job?.status === 'dead') {
+        } else if (receipt?.status === 'failed' || job?.status === 'dead') {
           delete reminder.pending;
         }
         if (!reminder.pending)

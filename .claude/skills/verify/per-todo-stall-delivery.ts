@@ -81,7 +81,7 @@ try {
   const firstId = String(first.payload.messageUuid);
   await until(() => app.db.getSDKMessageRepo().getDeliveryContent(sessionId, firstId)?.sendStatus === 'consumed', 'steer consumed');
   await app.db.gateway.run(neoStallReminderWrite, { now });
-  await app.db.gateway.run(neoStallReminderWrite, { now: now + 2 * hour });
+  await app.db.gateway.run(neoStallReminderWrite, { now: Date.now() + 2 * hour });
   const second = queued()!, secondId = String(second.payload.messageUuid);
   assert.notEqual(secondId, firstId);
   assert.equal(second.payload.deliveryMode, 'defer');
