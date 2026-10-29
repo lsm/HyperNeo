@@ -10,6 +10,8 @@ import { createTables, runMigrations } from '../../../packages/daemon/src/storag
 const run=process.argv.at(-1)!;
 mkdirSync(join(run,'evidence'));mkdirSync(join(run,'data/backups'),{recursive:true,mode:0o700});
 const directory=join(run,'data/backups/sdk-message-bodies-v1'), dbPath=join(run,'data/daemon.db');
+if(process.argv.includes('--recover')){mkdirSync(directory,{mode:0o700});chmodSync(directory,0o600);}
+const initialDirectoryMode=existsSync(directory)?(statSync(directory).mode&0o777).toString(8):null;
 const db=new Database(dbPath);runMigrations(db,()=>{});createTables(db);
 const phase=createArtifactProofPhases(run);phase('backup-channel');
 const abort=new AbortController(), channel=sdkBodyBackupChannel(dbPath,join(directory,'owned.db'),abort.signal);
@@ -30,7 +32,7 @@ try{
  phase('socket-bind');door=await startSessionDoor(()=>{throw Error('No RPC call belongs to this fixture');},socketPath);
  let error='', backup:Awaited<ReturnType<typeof channel.verify>>|undefined;try{backup=await pending;}catch(cause){error=String(cause);}
  phase('backup-receipt');
- const evidence={backupVerifiedDuringBind,observedMask:observedMask?.toString(8),directoryMode:directoryMode?.toString(8),backupMode:existsSync(join(directory,'owned.db'))?(statSync(join(directory,'owned.db')).mode&0o777).toString(8):null,socketMode:(statSync(socketPath).mode&0o777).toString(8),backup,error,ambientMaskAfter:process.umask().toString(8)};
+ const evidence={initialDirectoryMode,backupVerifiedDuringBind,observedMask:observedMask?.toString(8),directoryMode:directoryMode?.toString(8),backupMode:existsSync(join(directory,'owned.db'))?(statSync(join(directory,'owned.db')).mode&0o777).toString(8):null,socketMode:(statSync(socketPath).mode&0o777).toString(8),backup,error,ambientMaskAfter:process.umask().toString(8)};
  writeFileSync(join(run,'evidence/permissions.json'),JSON.stringify(evidence,null,2));
  console.log(JSON.stringify(evidence));
  assert.equal(backupVerifiedDuringBind,true);assert.equal(observedMask,0o177);assert.equal(directoryMode,0o700);assert.equal(error,'');assert.equal(backup?.quickCheck,'ok');assert.equal(evidence.backupMode,'600');assert.equal(evidence.socketMode,'600');

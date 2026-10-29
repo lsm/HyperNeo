@@ -4,7 +4,14 @@ Use shared SKILL.md isolation and proof-run.sh:
 
 ```sh
 bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory .claude/skills/verify/sdk-backup-directory-umask.ts verify
+
+bash .claude/skills/verify/proof-run.sh /absolute/fresh/recovery-evidence-directory .claude/skills/verify/sdk-backup-directory-umask.ts verify --recover
 ```
+
+Run both fresh and recovery modes. Recovery seeds an owned 0600 backup directory
+left by an earlier failed startup. Observe initialDirectoryMode 600, then a
+successful verified backup and final directory mode 0700; the fresh case starts
+with no directory. Keep the failing recovery receipt before its fix.
 
 The helper owns a fresh HOME/data directory, synthetic database, actual SDK body
 backup worker and a real local session-door socket. It configures no provider,

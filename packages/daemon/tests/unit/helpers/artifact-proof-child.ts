@@ -2,9 +2,13 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-export function runArtifactProofChild(file: string, root: string): void {
+export function runArtifactProofChild(
+  file: string,
+  root: string,
+  args: readonly string[] = []
+): void {
   try {
-    execFileSync('bun', [file, root], {
+    execFileSync('bun', [file, ...args, root], {
       env: {
         PATH: process.env.PATH,
         HOME: join(root, 'home'),
