@@ -291,7 +291,15 @@ describe('spoken replies separate from publications', () => {
         expect(event.metadata.atMs).toEqual(expect.any(Number));
         expect(
           Object.keys(event.metadata).every((key) =>
-            ['atMs', 'sessionId', 'speechId', 'requestId', 'clientId', 'state'].includes(key)
+            [
+              'argTypes',
+              'atMs',
+              'sessionId',
+              'speechId',
+              'requestId',
+              'clientId',
+              'state',
+            ].includes(key)
           )
         ).toBe(true);
       }

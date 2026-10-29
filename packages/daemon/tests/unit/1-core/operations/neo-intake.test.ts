@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import type { Session } from '@hyperneo/shared';
+import { subscribeToStructuredLogs, type Session, type StructuredLogEvent } from '@hyperneo/shared';
 import {
   admitNeoIntake,
   neoIntakeMessage,
@@ -148,6 +148,26 @@ describe('durable Neo intake operation', () => {
       caller
     );
   }
+  test('timestamps one accepted live input without its content or duplicate retries', async () => {
+    const logs: StructuredLogEvent[] = [];
+    const unsubscribe = subscribeToStructuredLogs((event) => {
+      if (event.message === 'voice.input.accepted') logs.push(event);
+    });
+    try {
+      const voice = { ...input, inputMode: 'live_voice', speech: true };
+      await invoke(voice);
+      await invoke(voice);
+      expect(logs).toHaveLength(1);
+      expect(logs[0].metadata).toMatchObject({
+        sessionId: input.sessionId,
+        messageId: input.requestId,
+        atMs: expect.any(Number),
+      });
+      expect(JSON.stringify(logs)).not.toContain(input.content);
+    } finally {
+      unsubscribe();
+    }
+  });
   test('an archived root session rejects the ask before any write', async () => {
     sessions.set(input.sessionId, { ...target, status: 'archived' as never });
     const registry = createOperationRegistry([createNeoIntakeOperation(db, repo)]);
