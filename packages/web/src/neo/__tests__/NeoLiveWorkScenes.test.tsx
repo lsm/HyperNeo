@@ -73,6 +73,32 @@ afterEach(() => {
 const root = 'neo:550e8400-e29b-41d4-a716-446655440000';
 
 describe('Work search input and retry', () => {
+  it.each(['to do', 'ok?'])(
+    'keeps short local query %s usable without a false server error',
+    async (query) => {
+      locale.value = 'en';
+      const request = vi.fn(async (_method: string, params: { name: string }) => {
+        if (params.name === 'neo.ask.search')
+          throw Object.assign(new Error('query_too_short'), { code: 'INVALID_PARAMS' });
+        return { schedules: [] };
+      });
+      vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
+      const { model } = mount();
+      act(() => {
+        model.value = {
+          ...model.value,
+          snapshot: { ...model.value.snapshot, todoAsks: [testAskEntry('short', query)] },
+        };
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Search work', exact: true }));
+      fireEvent.input(screen.getByRole('searchbox'), { target: { value: query } });
+      await screen.findByRole('heading', { name: query, exact: true });
+      await waitFor(() => expect(screen.queryByText('Searching work…')).toBeNull());
+      expect(
+        screen.queryByText('Could not search work. Close and reopen search to retry.')
+      ).toBeNull();
+    }
+  );
   it('finds an unloaded Chinese card beyond the first server page', async () => {
     locale.value = 'en';
     const old = testAskEntry('old-page-two', '网页修两处', { state: 'done' });

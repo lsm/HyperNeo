@@ -17,6 +17,38 @@ afterEach(cleanup);
 const noRemote = async () => [];
 
 describe('Work search source', () => {
+  it('bounds simultaneous unloaded card reads', async () => {
+    let active = 0;
+    const releases: (() => void)[] = [];
+    const read = vi.fn(async (id: string) => {
+      active++;
+      await new Promise<void>((resolve) => releases.push(resolve));
+      active--;
+      return testAskEntry(id, 'Broad match');
+    });
+    const find = async () => Array.from({ length: 12 }, (_, i) => ({ askId: `old-${i}` }));
+    const view = renderHook(() => useNeoWorkSearch([], 'e', read, find));
+    try {
+      await waitFor(() => expect(read).toHaveBeenCalled());
+      expect(active).toBeLessThanOrEqual(4);
+    } finally {
+      view.unmount();
+      for (const release of releases) release();
+    }
+  });
+  it('reuses unloaded reads across feed revisions', async () => {
+    const old = testAskEntry('old', 'Unloaded needle');
+    const read = vi.fn(async () => old);
+    const find = async () => [{ askId: old.ask.id }];
+    const view = renderHook(({ values }) => useNeoWorkSearch(values, 'needle', read, find), {
+      initialProps: { values: [full] },
+    });
+    await waitFor(() => expect(view.result.current.pending).toBe(false));
+    view.rerender({ values: [{ ...full, ask: { ...full.ask, updatedAt: 2 } }] });
+    await waitFor(() => expect(view.result.current.pending).toBe(false));
+    expect(view.result.current.results.some((entry) => entry.ask.id === old.ask.id)).toBe(true);
+    expect(read).toHaveBeenCalledTimes(1);
+  });
   it.each(['search', 'hydration'])('keeps loaded matches when remote %s fails', async (failure) => {
     const read = vi.fn(async (id: string) => {
       if (id === 'missing') throw new Error('Card unavailable');
