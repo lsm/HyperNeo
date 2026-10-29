@@ -37,3 +37,11 @@ review/gate contracts must still pass. The helper closes its WebSocket and daemo
 in finally and the wrapper removes temporary data immediately. This is operation
 and native metadata-reader proof; browser layout, real GitHub and deployment
 remain unverified. PR approval is a fact check, not the manual merge/QA gate.
+
+The focused compatibility run must include neo-packs.test.ts: its enabled-pack
+catalog expectation covers the coding description and guidance visible to Neo.
+After the shared resource check, run from packages/daemon:
+
+```sh
+bunx vitest run --config vitest.config.ts tests/unit/1-core/operations/{coding-pr-approved,neo-packs,neo-coding-todo-prs,neo-coding-todo-policy,neo-coding-review,neo-coding-merge-gates,neo-question-retire-when,neo-check-only-reminders}.test.ts
+```
