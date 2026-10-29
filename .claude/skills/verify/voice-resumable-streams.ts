@@ -112,7 +112,7 @@ try {
   await first.call('voice.stream.chunk', { streamId: started.streamId, audioBase64: pcm([1, 2, 3]), offset: 0 });
   observed.disconnectCode = await first.drop();
   assert.equal(observed.disconnectCode, 1006);
-  const second = await connect(credential);
+  let second = await connect(credential);
   observed.resume = await second.call('voice.stream.resume', { streamId: started.streamId });
   assert.deepEqual(observed.resume, { ok: true, receivedBytes: 6 });
   assert.equal(started.resumable, true);
@@ -143,7 +143,16 @@ try {
   await assert.rejects(() => stranger.call('voice.stream.resume', { streamId: unpaired.streamId }), (error: Error & { code?: string }) => error.code === 'VOICE_STREAM_NOT_FOUND');
   assert.equal(unpaired.resumable, false);
   observed.unpairedTakeoverRefused = true;
+  const cancelled = await second.call('voice.stream.start', { encoding: 'pcm16', sampleRate: 16_000 });
+  await second.call('voice.stream.chunk', { streamId: cancelled.streamId, audioBase64: pcm([99]) });
+  const cancelRecord = records.at(-1)!;
+  await second.drop();
+  second = await connect(credential);
+  assert.deepEqual(await second.call('voice.stream.cancel', { streamId: cancelled.streamId }), { ok: true });
   for (let attempt = 0; records.some((record) => !record.closed) && attempt < 500; attempt++) await sleep(10);
+  observed.detachedCancelRetired = cancelRecord.closed;
+  assert.equal(observed.detachedCancelRetired, true, 'detached cancel left ASR open');
+  await assert.rejects(() => second.call('voice.stream.resume', { streamId: cancelled.streamId }), (error: Error & { code?: string }) => error.code === 'VOICE_STREAM_NOT_FOUND');
   assert(records.every((record) => record.closed), 'replacement left an ASR connection open');
   observed.detachedRelaysRetired = true;
   if (mode !== 'quick') {

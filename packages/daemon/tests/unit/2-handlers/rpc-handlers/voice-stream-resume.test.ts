@@ -291,4 +291,33 @@ describe('resumable voice stream RPC', () => {
     ).rejects.toMatchObject({ code: 'VOICE_STREAM_NOT_FOUND' });
     expect(resumable).toBe(false);
   });
+
+  it('cancels a detached recording from its paired owner while preserving foreign and live streams', async () => {
+    const { streamId } = await start();
+    await call('voice.stream.chunk', { streamId, audioBase64: pcm([77]) });
+    for (const client of ['second', 'foreign', 'unpaired-stranger'])
+      await call('voice.stream.cancel', { streamId }, client);
+    disconnect('first');
+    for (const client of ['foreign', 'unpaired-stranger'])
+      await call('voice.stream.cancel', { streamId }, client);
+    expect(await call('voice.stream.resume', { streamId }, 'second')).toEqual({
+      ok: true,
+      receivedBytes: 2,
+    });
+    expect(await call('voice.stream.stop', { streamId }, 'second')).toEqual({
+      text: '77',
+      via: 'batch',
+    });
+    const abandoned = await start('second');
+    await call(
+      'voice.stream.chunk',
+      { streamId: abandoned.streamId, audioBase64: pcm([88]) },
+      'second'
+    );
+    disconnect('second');
+    expect(await call('voice.stream.cancel', abandoned, 'third')).toEqual({ ok: true });
+    await expect(call('voice.stream.resume', abandoned, 'fourth')).rejects.toMatchObject({
+      code: 'VOICE_STREAM_NOT_FOUND',
+    });
+  });
 });
