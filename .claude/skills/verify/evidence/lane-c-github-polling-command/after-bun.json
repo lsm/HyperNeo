@@ -3,7 +3,7 @@
   "publicBaselineReaderConfirmed": true,
   "mainGuardSelfCheckPassed": true,
   "phase": "complete",
-  "firstCommandMs": 0.9857079999999314,
+  "firstCommandMs": 0.61099999999999,
   "atomicReceiptVisibleThroughPublicRpc": true,
   "eligibleFlagsWebhookSkipAndCursorPreserved": true,
   "creationAndPostLoopSharedTimesPreserved": true,
@@ -12,36 +12,36 @@
   "cursorWriteFailureRollsBackEarlierFlagWrite": true,
   "malformedCursorLeavesNoPartialState": true,
   "orphanAndInvalidIdLeaveNoPartialState": true,
-  "healthWhileWriterHeldMs": 2.472541000000092,
-  "deliberatelyHeldWriterMs": 1305.4272919999999,
+  "healthWhileWriterHeldMs": 1.999249999999961,
+  "deliberatelyHeldWriterMs": 1295.6465,
   "ackWaitsForAtomicCommit": true,
   "admissionFailureDoesNotWriteOrReplay": true,
   "actualCommittedReplyLossDoesNotReplay": true,
   "finalFlagsIntentAndSnapshotConverged": true,
-  "maxLoopLagMs": 1.2546669999999267,
+  "maxLoopLagMs": 1.787290999999982,
   "commandPosts": 10,
-  "rssBytes": 164725912,
+  "rssBytes": 187466880,
   "walBytes": 0,
   "pass": true,
   "mainSqlAttempts": 0,
   "metrics": [
     {
-      "roundTripMs": 0.9084590000001072,
+      "roundTripMs": 0.5698330000000169,
       "requestBytes": 61,
       "replyBytes": 1513
     },
     {
-      "roundTripMs": 0.25416599999994105,
+      "roundTripMs": 0.15354200000001583,
       "requestBytes": 62,
       "replyBytes": 1516
     },
     {
-      "roundTripMs": 1304.823167,
+      "roundTripMs": 1294.971,
       "requestBytes": 61,
       "replyBytes": 1513
     },
     {
-      "roundTripMs": 6.581832999999733,
+      "roundTripMs": 6.9002919999998085,
       "requestBytes": 62,
       "replyBytes": 1516
     }

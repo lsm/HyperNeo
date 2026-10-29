@@ -11,19 +11,19 @@
     "failure": "Unknown write DB op: github.space.polling.write"
   },
   "greenFocusedTests": {
-    "passed": 9,
+    "passed": 12,
     "files": 2
   },
   "strictTypeScript6": "pass",
   "repositoryCheck": "pass",
   "bunNative": "pass",
   "denoNative": "pass",
-  "freshEnvelope": 199,
-  "excludedStableLines": 166,
-  "totalKnownLines": 365,
-  "newExclusions": 0,
-  "completeCommandLines": 41,
-  "productionAndRegistryLines": 43,
+  "freshEnvelope": 184,
+  "excludedStableLines": 206,
+  "totalKnownLines": 390,
+  "newExclusions": 1,
+  "completeCommandLines": 66,
+  "productionAndRegistryLines": 68,
   "smokeRegistrationLines": 1,
   "publicMutationActivated": false,
   "contract": "One existing gateway IMMEDIATE commit for eligible polling flags/cursor, intent and sanitized saved config; post-loop shared intent/config clock; no constructor, callbacks, resources or replay",
@@ -38,5 +38,19 @@
     "No target SQL writes on main; other Spaces and constructor backfill unchanged"
   ],
   "debt": "https://github.com/lsm/HyperNeo/issues/9418",
-  "furtherExclusionsRequireNeoTableDecision": true
+  "furtherExclusionsRequireNeoTableDecision": true,
+  "pipelineStageRedCommit": "c636e48bcea3082dc24dab4e2c33bcca88d84504",
+  "pipelineStageRedTests": {
+    "passed": 9,
+    "failed": 2,
+    "error": "Named polling pipeline decision stages are unavailable"
+  },
+  "sixthModule": "github-watched-upsert-persist.ts",
+  "sixthModuleSha256": "c108d5f4cff7893041110ad4c28154c7922b8a6204388a68ab7ab9a0cf5addd9",
+  "namedDirectPipeline": "github-space-polling-commit",
+  "pipelineStages": 9,
+  "transactionOwnership": "existing gateway, no pipeline transaction or resources",
+  "contextObject": false,
+  "coordinatorAuthorizedSixthOnly": true,
+  "botRound": 2
 }

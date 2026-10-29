@@ -2,17 +2,10 @@
   "base": "75e957774d88babaf8746e2ab952fad955fbb46c",
   "completeCommand": {
     "file": "packages/daemon/src/storage/repositories/github-polling-enabled-write.ts",
-    "lines": 41,
-    "sha256": "9949cffcdf3898a73ba37b3c0f218b4ccac500527e286943454f614d5bf91534"
+    "lines": 66,
+    "sha256": "63c68646034af002fbd1e155e41e6092b61b840f5f59195c616829eb5a39869c"
   },
   "freshDependencies": [
-    {
-      "file": "packages/daemon/src/storage/repositories/github-watched-upsert-persist.ts",
-      "lines": 40,
-      "sha256": "c108d5f4cff7893041110ad4c28154c7922b8a6204388a68ab7ab9a0cf5addd9",
-      "contract": "Complete reduced UPSERT, legacy UUID/clock/Space fallback order, row/default/cursor policy and caller transaction",
-      "includedInFresh": true
-    },
     {
       "file": "packages/daemon/src/storage/repositories/github-watched-insert-persist.ts",
       "lines": 40,
@@ -55,42 +48,50 @@
       "lines": 24,
       "sha256": "efd6b45d927224ce17fb9d819a4c8d325dcde4cacf1e7c7e75ca7238b18d46c4",
       "contract": "Key/id SELECT/get/map/null, lower owner/repo, exact Space/id, parse failures and transaction visibility",
-      "exclusionReason": "Same five previously merged constructor-free modules explicitly approved for exclusion, full-module hashes and interfaces pinned; no additional exclusions"
+      "exclusionReason": "Six previously merged constructor-free modules explicitly approved for exclusion, full-module hashes and interfaces pinned; sixth UPSERT40 specifically authorized, no further exclusions"
     },
     {
       "file": "packages/daemon/src/storage/repositories/github-watched-repos-read.ts",
       "lines": 44,
       "sha256": "4c5945ea131459249bb302cdb27ee6a014fc6aadd5d15f9d402b3226972e6a95",
       "contract": "Complete flags/null/default/cursor mapper and ordered SELECT/list; no initialization/writes",
-      "exclusionReason": "Same five previously merged constructor-free modules explicitly approved for exclusion, full-module hashes and interfaces pinned; no additional exclusions"
+      "exclusionReason": "Six previously merged constructor-free modules explicitly approved for exclusion, full-module hashes and interfaces pinned; sixth UPSERT40 specifically authorized, no further exclusions"
     },
     {
       "file": "packages/daemon/src/storage/repositories/github-space-settings-read.ts",
       "lines": 26,
       "sha256": "821cdbd20d30a954c0aa6c1c82ad8ff88e098abbd76e522e4072dce26d240681",
       "contract": "Enabled/polling/filter getters with legacy absent-row defaults; no initialization/writes",
-      "exclusionReason": "Same five previously merged constructor-free modules explicitly approved for exclusion, full-module hashes and interfaces pinned; no additional exclusions"
+      "exclusionReason": "Six previously merged constructor-free modules explicitly approved for exclusion, full-module hashes and interfaces pinned; sixth UPSERT40 specifically authorized, no further exclusions"
     },
     {
       "file": "packages/daemon/src/storage/repositories/github-cursor-persist.ts",
       "lines": 8,
       "sha256": "8ec4673c7f96429b885da9367af90c023bf161668f49607c799ea845658d3bae",
       "contract": "Prepare, JSON serialization, existing clock, run(JSON,time,id); void/caller rollback, no init/retry",
-      "exclusionReason": "Same five previously merged constructor-free modules explicitly approved for exclusion, full-module hashes and interfaces pinned; no additional exclusions"
+      "exclusionReason": "Six previously merged constructor-free modules explicitly approved for exclusion, full-module hashes and interfaces pinned; sixth UPSERT40 specifically authorized, no further exclusions"
     },
     {
       "file": "packages/daemon/src/storage/repositories/github-watched-update-persist.ts",
       "lines": 64,
       "sha256": "c4a07d91b0c58eb2983c0c367c4e31b8943a8569ba48f6c2a9ccace218215e54",
       "contract": "Existing-row UPDATE, exact flags/default/COALESCE/null/bind order, row id, supplied time/void/caller transaction; no init/clock/UUID/replay",
-      "exclusionReason": "Same five previously merged constructor-free modules explicitly approved for exclusion, full-module hashes and interfaces pinned; no additional exclusions"
+      "exclusionReason": "Six previously merged constructor-free modules explicitly approved for exclusion, full-module hashes and interfaces pinned; sixth UPSERT40 specifically authorized, no further exclusions"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/github-watched-upsert-persist.ts",
+      "lines": 40,
+      "sha256": "c108d5f4cff7893041110ad4c28154c7922b8a6204388a68ab7ab9a0cf5addd9",
+      "contract": "Complete constructor-free UPSERT, UUID/clock/Space fallback order, row/cursor policy and caller transaction",
+      "exclusionReason": "Six previously merged constructor-free modules explicitly approved for exclusion, full-module hashes and interfaces pinned; sixth UPSERT40 specifically authorized, no further exclusions"
     }
   ],
-  "freshEnvelope": 199,
-  "excludedLines": 166,
-  "totalKnownLines": 365,
-  "newExclusions": 0,
-  "productionAndRegistryLines": 43,
+  "freshEnvelope": 184,
+  "excludedLines": 206,
+  "totalKnownLines": 390,
+  "newExclusions": 1,
+  "authorizedSixthDependency": true,
+  "productionAndRegistryLines": 68,
   "registryLines": 2,
   "smokeRegistrationLines": 1,
   "delta": [
@@ -100,7 +101,7 @@
     },
     {
       "file": "packages/daemon/src/storage/repositories/github-polling-enabled-write.ts",
-      "lines": 41
+      "lines": 66
     },
     {
       "file": "scripts/deno-smoke.sh",
@@ -146,7 +147,20 @@
   "baselineIncrease": false,
   "spaceValidationAstUnchanged": true,
   "postLoopSharedClock": true,
+  "namedDirectPipeline": true,
+  "pipelineName": "github-space-polling-commit",
+  "pipeStages": [
+    "requirePollingSpace",
+    "listGitHubWatchedRepos",
+    "selectPollingTargets",
+    "persistPollingTargets",
+    "() => Date.now()",
+    "persistGitHubPollingIntent",
+    "readPollingSnapshot",
+    "(db: Database, spaceId: string, config: SpaceExternalEventSourceConfig, now: number) =>\n      persistSpaceExtensionConfig(db, spaceId, 'github', config, now)",
+    "(config: SpaceExternalEventSourceConfig) => ({ config })"
+  ],
   "contract": "run({spaceId,enabled}) changes eligible flags using existing UPSERT, skips enabled webhooks with secrets only when enabling, persists intent and sanitized exact snapshot with one post-loop clock, returns config after existing gateway IMMEDIATE commit. No constructor/callback/filesystem/network/retry. Public mutation not activated.",
   "infrastructureContract": "Existing native and inline write DbOp gateway owns IMMEDIATE transaction and posts/resolves receipt after commit. No worker/lane/gateway changes; SQLite/framework internals are existing infrastructure, not a new owned business subtree.",
-  "auditLimit": "Same five excluded166 only, whole fresh command/data modules and UUID leaf counted; no full public/shared-barrel/runtime transitive closure claim. Further exclusions require Neo table decision; stop/report envelope objections. Public polling/capability/timer/notification wiring is separate."
+  "auditLimit": "Authorized six excluded206, only UPSERT40 added, whole fresh command/data modules and UUID leaf counted; no full public/shared-barrel/runtime transitive closure claim. Superpipe is existing pinned infrastructure. Further exclusions require Neo table decision; stop/report envelope objections. Public polling/capability/timer/notification wiring is separate."
 }

@@ -34,10 +34,15 @@ Close scratch lock, sockets/processors/app and restore Worker/DB/fetch hooks in
 finally; wrapper retains evidence then removes owned data. Save github-polling-command.json.
 
 Run measurement only on unmerged branch; preserve its saved result after merge.
-Fresh199 = command41 + whole UPSERT40/INSERT40/intent14/config20/projection29 +
-UUID15. The same five audited stable modules remain excluded166; known365, zero
-new exclusions. Pin all five full-file hashes/contracts with interface tests;
-#9418 records lifecycle/bump procedure. Existing native/inline transaction and
+Fresh184 = command66 + whole INSERT40/intent14/config20/projection29 + UUID15.
+Neo authorized only the merged UPSERT40 as sixth audited stable dependency:
+excluded206, known390. Pin all six hashes/interfaces, including direct UPSERT
+receipt/rollback without initialization; #9418 now tracks the sixth module.
+Stage-level Space validation and webhook eligibility tables must fail before the
+repair. One named synchronous direct superpipe pipeline exposes validation,
+read, selection, row effects, post-loop clock, intent, snapshot and receipt;
+named dependencies, no ctx object. Transaction stays in the gateway. Preserve
+all existing scenario/native proofs. Existing native/inline transaction and
 receipt framework is pinned infrastructure. Full public/shared-barrel/runtime
 transitive closure remains unclaimed; later extra exclusions need a Neo table
 and decision. Stop/report if review challenges the envelope. Public mutation
