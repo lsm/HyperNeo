@@ -1,0 +1,27 @@
+{
+  "redCommit": "ba60ed88e9d602d892ea93ce15a6b2727d939cc1",
+  "red": {
+    "legacyCharacterizationPassed": true,
+    "missingHelperContractsFailed": 4,
+    "realWatchRpcBaselinePassed": true,
+    "nativeFailedAt": "missing constructor-free lookup helper"
+  },
+  "green": {
+    "tests": 273,
+    "files": 4,
+    "newUnitContracts": 5,
+    "newNativeParent": 1,
+    "existingMapperContracts": 4,
+    "existingGitHubExtensionTests": 263,
+    "strengthenedNativeParentRepeated": "pass; id and creation time checked against stored rows",
+    "strictTypeScript6": "pass; new helper, repository and new tests",
+    "rootCheck": "pass",
+    "bunNative": "after-bun.json",
+    "denoNative": "after-deno.json"
+  },
+  "beforeAfterPublicMainLookupReads": 15,
+  "mainThreadMovementClaim": false,
+  "scope": "Exact key/id SELECT, binding/map/null behavior preserved. Full mapped rows, case matching, missing results, malformed-cursor errors, query-only constructor-free use and caller-uncommitted/rollback behavior retained. Constructor/backfill, other methods/types, watched UPSERT/cursor policy and public roots untouched; full transitive caller closure not audited.",
+  "deploymentSmoke": "Neo-owned, not run",
+  "cleanup": "Owned socket/processors/app and scratch DB closed, hooks restored, synthetic data removed; live daemon/build untouched"
+}

@@ -58,7 +58,9 @@ describe('GitHub watched repository lookup extraction', () => {
       ['missing', 'OwnerZ', 'repo-z'],
       ['', '', ''],
     ] as const)
-      expect(r.findGitHubWatchedRepo(db, ...key)).toEqual(repo.getWatchedRepo(...key));
+      expect(r.findGitHubWatchedRepo(db, key[0], key[1], key[2])).toEqual(
+        repo.getWatchedRepo(key[0], key[1], key[2])
+      );
     for (const id of ['synthetic-one', 'synthetic-other', 'SYNTHETIC-ONE', '', 'missing'])
       expect(r.findGitHubWatchedRepoById(db, id)).toEqual(repo.getWatchedRepoById(id));
     expect(db.prepare('SELECT * FROM space_github_watched_repos ORDER BY id').all()).toEqual(

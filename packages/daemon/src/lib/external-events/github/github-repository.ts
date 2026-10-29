@@ -1,3 +1,7 @@
+import {
+  findGitHubWatchedRepo,
+  findGitHubWatchedRepoById,
+} from '../../../storage/repositories/github-watched-repo-lookups.ts';
 import { persistGitHubPollingIntent } from '../../../storage/repositories/github-polling-intent-persist.ts';
 import { persistGitHubFilterCurrentUser } from '../../../storage/repositories/github-filter-persist.ts';
 import {
@@ -355,12 +359,7 @@ export class GitHubEventExtensionRepository {
   }
 
   getWatchedRepo(spaceId: string, owner: string, repo: string): GitHubWatchedRepo | null {
-    const row = this.db
-      .prepare(
-        `SELECT * FROM space_github_watched_repos WHERE space_id = ? AND lower(owner)=lower(?) AND lower(repo)=lower(?)`
-      )
-      .get(spaceId, owner, repo) as Record<string, unknown> | undefined;
-    return row ? this.rowToRepo(row) : null;
+    return findGitHubWatchedRepo(this.db, spaceId, owner, repo);
   }
 
   getAutoRegisteredRepo(owner: string, repo: string, webhookUrl: string): GitHubWatchedRepo | null {
@@ -442,10 +441,7 @@ export class GitHubEventExtensionRepository {
   }
 
   getWatchedRepoById(id: string): GitHubWatchedRepo | null {
-    const row = this.db.prepare(`SELECT * FROM space_github_watched_repos WHERE id = ?`).get(id) as
-      | Record<string, unknown>
-      | undefined;
-    return row ? this.rowToRepo(row) : null;
+    return findGitHubWatchedRepoById(this.db, id);
   }
 
   markWebhookReceived(id: string): void {
