@@ -90,7 +90,7 @@ export function useNeoWorkSearch(
   const failed = (ready && index.failed) || (remoteReady && remote.failed);
   return {
     results:
-      active && index && !failed
+      active && index && !index.failed
         ? [
             ...search(query).filter((entry) => visible.has(entry.ask.id)),
             ...(remoteReady ? remote.entries.filter((entry) => !visible.has(entry.ask.id)) : []),

@@ -16,10 +16,26 @@ export async function verifyUnloadedWorkSearch(tab, evidence, label) {
   await old.waitFor({ state: 'visible', timeoutMs: 15000 });
   assert.equal(await old.getAttribute('data-ask-state'), 'done');
   assert.match(await old.innerText(), /网页修两处/);
+  assert(await ui.locator('[data-scene-group="search"] [data-ask]').count() > 50);
+  await old.getByRole('heading', { name: '网页修两处', exact: true }).click();
+  await tab.getAXState({ emit: false });
   await writeFile(`${evidence}/${label}-search.png`, await tab.screenshot({ fullPage: false }));
   await old.getByRole('button', { name: 'All · 0', exact: true }).click();
   await tab.getAXState({ emit: false });
   assert(await ui.getByText('古老卡片正文', { exact: true }).isVisible());
   await writeFile(`${evidence}/${label}-open.png`, await tab.screenshot({ fullPage: false }));
-  return { label, query: '网页修两处', unloadedBefore: true, foundCompleted: true, openedOutcome: true };
+  return { label, query: '网页修两处', unloadedBefore: true, foundCompleted: true, beyondFirstPage: true, openedOutcome: true };
+}
+
+export async function verifyLocalSearchFailure(tab, evidence, label) {
+  const ui = tab.playwright;
+  await ui.getByRole('button', { name: 'Close modal', exact: true }).click();
+  await tab.getAXState({ emit: false });
+  await ui.getByRole('searchbox', { name: 'Search work', exact: true }).fill('needle');
+  await tab.getAXState({ emit: false });
+  await ui.getByText('Could not search work. Close and reopen search to retry.', { exact: true }).waitFor({ state: 'visible' });
+  assert.equal(await ui.locator('[data-ask="ask-match"]').count(), 1);
+  assert(await ui.getByRole('heading', { name: 'Needle ask', exact: true }).isVisible());
+  await writeFile(`${evidence}/${label}-remote-failure.png`, await tab.screenshot({ fullPage: false }));
+  return { label, localMatchPreserved: true, remoteFailureVisible: true };
 }
