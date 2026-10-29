@@ -1,4 +1,10 @@
-import { VOICE_MAX_AUDIO_BYTES, type VoiceMode, type VoiceSettings } from '@hyperneo/shared';
+import { opusInputDefaults, type OpusInput } from './opus-input.ts';
+import {
+  MessageHubHandlerError,
+  VOICE_MAX_AUDIO_BYTES,
+  type VoiceMode,
+  type VoiceSettings,
+} from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
 import { withVoiceCredentialLock } from '../rpc-handlers/voice-credential-lock.ts';
@@ -216,6 +222,11 @@ export class VoiceStream {
   private chunks: Uint8Array[] = [];
   private cancelled = false;
   private bytes = 0;
+  private codec: OpusInput | null = null;
+  private encodedBytes = 0;
+  private inputTail: Promise<void> = Promise.resolve();
+  private partialOpus = false;
+  private queued = { bytes: 0, count: 0 };
   private relay: AsrRelay | null = null;
   private relayAlive = false;
   private finishedWaiter: ((result: { ok: boolean; text: string }) => void) | null = null;
@@ -323,7 +334,61 @@ export class VoiceStream {
     }, 1_000);
   }
 
-  stop(): Promise<
+  async enableOpus(): Promise<void> {
+    this.codec = await opusInputDefaults.create();
+  }
+
+  writeInput(select: () => Uint8Array, size: number, appendEmpty: boolean): Promise<string | null> {
+    if (
+      this.codec &&
+      (this.queued.bytes + size > VOICE_MAX_AUDIO_BYTES || this.queued.count >= 128)
+    )
+      return Promise.resolve('Voice input queue is full; retry after pending chunks finish');
+    this.queued.bytes += size;
+    this.queued.count++;
+    const accept = async () => {
+      const audio = select();
+      if (!audio.byteLength && !appendEmpty) return null;
+      if (!this.codec) return this.write(audio);
+      try {
+        const decoded = await this.codec.decode(audio);
+        const refused = decoded.pcm.byteLength ? this.write(decoded.pcm) : null;
+        if (refused) throw new MessageHubHandlerError(refused, 'VOICE_STREAM_INVALID_OPUS');
+        this.partialOpus = decoded.partial;
+        this.encodedBytes += audio.byteLength;
+        return null;
+      } catch (error) {
+        this.cancel();
+        throw error instanceof MessageHubHandlerError
+          ? error
+          : new MessageHubHandlerError(
+              error instanceof Error ? error.message : String(error),
+              'VOICE_STREAM_INVALID_OPUS'
+            );
+      }
+    };
+    const result = (this.codec ? this.inputTail.then(accept) : accept()).finally(() => {
+      this.queued.bytes -= size;
+      this.queued.count--;
+    });
+    this.inputTail = result.then(
+      () => {},
+      () => {}
+    );
+    return result;
+  }
+
+  stop(): ReturnType<VoiceStream['stopReady']> {
+    return this.codec
+      ? this.inputTail.then(() =>
+          this.partialOpus
+            ? { error: 'Incomplete Opus packet', retryable: true as const }
+            : this.stopReady()
+        )
+      : this.stopReady();
+  }
+
+  private stopReady(): Promise<
     { text: string; via: 'streaming' | 'batch' } | { error: string; retryable?: true }
   > {
     if (!this.stopping) {
@@ -402,7 +467,7 @@ export class VoiceStream {
   }
 
   get receivedBytes(): number {
-    return this.bytes;
+    return this.codec ? this.encodedBytes : this.bytes;
   }
 
   write(pcm: Uint8Array): string | null {
@@ -423,6 +488,7 @@ export class VoiceStream {
   }
 
   close(reason = 'closed'): void {
+    this.codec?.close();
     voiceDiagnostic('voice.stream.close', {
       streamId: this.id,
       clientId: this.deps.clientId,

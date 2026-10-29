@@ -7,7 +7,9 @@ import { createServer, connect as connectTcp } from 'node:net';
 import { join } from 'node:path';
 import WebSocket, { WebSocketServer } from 'ws';
 
-const [mode, run] = process.argv.slice(2);
+const [mode, ...args] = process.argv.slice(2);
+const run = args.at(-1)!;
+const binary = args.length > 1 ? args[0] : null;
 const isOpus = mode.startsWith('opus');
 const transcript = (bytes: Buffer, fallback: string) => isOpus ? createHash('sha256').update(bytes).digest('hex') : fallback;
 assert.equal(process.env.NODE_ENV, 'test');
@@ -46,8 +48,8 @@ asr.on('connection', (socket) => {
 });
 copyFileSync('.claude/skills/verify/gh-stub.sh', join(run, 'bin/gh'));
 const log = openSync(join(run, 'evidence/daemon.log'), 'w');
-const daemon = spawn(process.execPath, ['packages/cli/main.ts', '--port', String(port), '--host', '127.0.0.1', '--db-path', join(run, 'data/daemon.db')], {
-  env: { ...process.env, HYPERNEO_WORKSPACE_PATH: run }, stdio: ['ignore', log, log],
+const daemon = spawn(binary ?? process.execPath, [...(binary ? [] : [...(process.versions.deno ? ['run', '-A'] : []), 'packages/cli/main.ts']), '--port', String(port), '--host', '127.0.0.1', '--db-path', join(run, 'data/daemon.db')], {
+  env: { ...process.env, HYPERNEO_WORKSPACE_PATH: run, HF_HUB_OFFLINE: '1', TRANSFORMERS_OFFLINE: '1' }, stdio: ['ignore', log, log],
 });
 closeSync(log);
 writeFileSync(join(run, 'daemon.pid'), String(daemon.pid));
@@ -139,6 +141,18 @@ try {
   observed.finalEvents = second.events.filter((event) => event.isFinal);
   assert.equal((observed.finalEvents as unknown[]).length, 1);
   observed.legacyReconnects = 0;
+  if (fixture) {
+    const malformed = await second.call('voice.stream.start', { encoding: 'opus' });
+    await assert.rejects(() => second.call('voice.stream.chunk', { streamId: malformed.streamId, audioBase64: Buffer.from([0, 0]).toString('base64') }), (error: Error & { code?: string }) => error.code === 'VOICE_STREAM_INVALID_OPUS');
+    await assert.rejects(() => second.call('voice.stream.resume', { streamId: malformed.streamId }), (error: Error & { code?: string }) => error.code === 'VOICE_STREAM_NOT_FOUND');
+    const partial = await second.call('voice.stream.start', { encoding: 'opus' });
+    await second.call('voice.stream.chunk', { streamId: partial.streamId, audioBase64: fixture.encoded.subarray(0, 1).toString('base64'), offset: 0 });
+    await assert.rejects(() => second.call('voice.stream.stop', { streamId: partial.streamId }), (error: Error & { code?: string }) => error.code === 'VOICE_STREAM_INCOMPLETE_OPUS');
+    assert.equal((await second.call('voice.stream.resume', { streamId: partial.streamId })).receivedBytes, 1);
+    await second.call('voice.stream.chunk', { streamId: partial.streamId, audioBase64: fixture.encoded.subarray(1).toString('base64'), offset: 1 });
+    assert.deepEqual(await second.call('voice.stream.stop', { streamId: partial.streamId }), { text: transcript(expectedPcm, ''), via: 'streaming' });
+    observed.invalidAndIncompleteOpus = 'refused, retired or completed after remaining bytes';
+  }
   for (let index = 0; index < 9; index++) {
     const legacyPhone = await connect(credential);
     const recording = await legacyPhone.call('voice.stream.start', { encoding: 'pcm16', sampleRate: 16_000 });

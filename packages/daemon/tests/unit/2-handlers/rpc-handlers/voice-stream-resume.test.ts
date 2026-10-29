@@ -1,3 +1,5 @@
+import { opusInputDefaults } from '../../../../src/lib/voice/opus-input.ts';
+import { createOpusPackets } from '../../../../src/lib/voice/opus-packets.ts';
 import { opusFixture } from '../../../helpers/opus-fixture.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CallContext, MessageHub } from '@hyperneo/shared';
@@ -37,6 +39,7 @@ describe('resumable voice stream RPC', () => {
     };
 
   beforeEach(() => {
+    vi.spyOn(opusInputDefaults, 'create').mockImplementation(createOpusPackets);
     resetVoiceTranscriptionLimitsForTests();
     handlers = new Map();
     events = [];
@@ -369,5 +372,144 @@ describe('resumable voice stream RPC', () => {
     expect(
       events.filter(({ message }) => (message.data as { isFinal: boolean }).isFinal)
     ).toHaveLength(1);
+  });
+
+  it.each([1, 61])('keeps an incomplete Opus packet retryable at byte %i', async (cut) => {
+    const fixture = await opusFixture(1);
+    const { streamId } = (await call('voice.stream.start', { encoding: 'opus' })) as {
+      streamId: string;
+    };
+    await call('voice.stream.chunk', {
+      streamId,
+      audioBase64: fixture.encoded.subarray(0, cut).toString('base64'),
+    });
+    await expect(call('voice.stream.stop', { streamId })).rejects.toMatchObject({
+      code: 'VOICE_STREAM_INCOMPLETE_OPUS',
+    });
+    expect(await call('voice.stream.resume', { streamId })).toEqual({
+      ok: true,
+      receivedBytes: cut,
+    });
+    await call('voice.stream.chunk', {
+      streamId,
+      audioBase64: fixture.encoded.subarray(cut).toString('base64'),
+      offset: cut,
+    });
+    expect(await call('voice.stream.stop', { streamId })).toEqual({
+      text: Array.from({ length: fixture.pcm.length / 2 }, (_, i) =>
+        fixture.pcm.readInt16LE(i * 2)
+      ).join(','),
+      via: 'batch',
+    });
+  });
+
+  it.each([
+    [0, 0],
+    [0, 5],
+    [1, 0, 255],
+  ])('rejects malformed Opus %j and retires the stream', async (...bytes) => {
+    const { streamId } = (await call('voice.stream.start', { encoding: 'opus' })) as {
+      streamId: string;
+    };
+    await expect(
+      call('voice.stream.chunk', { streamId, audioBase64: Buffer.from(bytes).toString('base64') })
+    ).rejects.toMatchObject({ code: 'VOICE_STREAM_INVALID_OPUS' });
+    await expect(call('voice.stream.resume', { streamId })).rejects.toMatchObject({
+      code: 'VOICE_STREAM_NOT_FOUND',
+    });
+  });
+
+  it.each([
+    [160, 1],
+    [320, 2],
+  ] as const)('rejects %i-sample/%i-channel Opus', async (frameSize, channels) => {
+    const fixture = await opusFixture(1, frameSize, channels);
+    const { streamId } = (await call('voice.stream.start', { encoding: 'opus' })) as {
+      streamId: string;
+    };
+    await expect(
+      call('voice.stream.chunk', { streamId, audioBase64: fixture.encoded.toString('base64') })
+    ).rejects.toMatchObject({ code: 'VOICE_STREAM_INVALID_OPUS' });
+  });
+
+  it('serializes pipelined Opus offsets and drains them before stop', async () => {
+    const fixture = await opusFixture(3);
+    const { streamId } = (await call('voice.stream.start', { encoding: 'opus' })) as {
+      streamId: string;
+    };
+    const cut = fixture.boundaries[1];
+    const first = call('voice.stream.chunk', {
+      streamId,
+      audioBase64: fixture.encoded.subarray(0, cut).toString('base64'),
+      offset: 0,
+    });
+    const second = call('voice.stream.chunk', {
+      streamId,
+      audioBase64: fixture.encoded.subarray(cut).toString('base64'),
+      offset: cut,
+    });
+    const stopped = call('voice.stream.stop', { streamId });
+    expect(await first).toEqual({ ok: true });
+    expect(await second).toEqual({ ok: true });
+    const expected = Array.from({ length: fixture.pcm.length / 2 }, (_, i) =>
+      fixture.pcm.readInt16LE(i * 2)
+    ).join(',');
+    expect(await stopped).toEqual({ text: expected, via: 'batch' });
+  });
+
+  it('preserves the previous recording if decoder startup fails', async () => {
+    const previous = await start();
+    await call('voice.stream.chunk', { ...previous, audioBase64: pcm([77]) });
+    vi.mocked(opusInputDefaults.create).mockRejectedValueOnce(
+      new Error('Synthetic decoder startup failure')
+    );
+    await expect(call('voice.stream.start', { encoding: 'opus' })).rejects.toMatchObject({
+      code: 'VOICE_STREAM_DECODER_FAILED',
+    });
+    expect(await call('voice.stream.resume', previous)).toEqual({ ok: true, receivedBytes: 2 });
+    expect(await call('voice.stream.stop', previous)).toEqual({ text: '77', via: 'batch' });
+  });
+
+  it('bounds pending Opus requests without accepting bytes on overload', async () => {
+    const fixture = await opusFixture(1);
+    const { streamId } = (await call('voice.stream.start', { encoding: 'opus' })) as {
+      streamId: string;
+    };
+    const responses = await Promise.allSettled(
+      Array.from({ length: 129 }, () =>
+        call('voice.stream.chunk', { streamId, audioBase64: '', offset: 0 })
+      )
+    );
+    const refused = responses.filter((result) => result.status === 'rejected');
+    expect(refused).toHaveLength(1);
+    expect((refused[0] as PromiseRejectedResult).reason.message).toContain(
+      'Voice input queue is full'
+    );
+    expect(await call('voice.stream.resume', { streamId })).toEqual({ ok: true, receivedBytes: 0 });
+    await call('voice.stream.chunk', {
+      streamId,
+      audioBase64: fixture.encoded.toString('base64'),
+      offset: 0,
+    });
+    expect(await call('voice.stream.stop', { streamId })).toMatchObject({ via: 'batch' });
+  });
+
+  it('enforces the decoded audio limit on compressed input', async () => {
+    const fixture = await opusFixture(1);
+    const { streamId } = (await call('voice.stream.start', { encoding: 'opus' })) as {
+      streamId: string;
+    };
+    const audio = Buffer.concat(
+      Array(Math.floor((10 * 1024 * 1024 - 44) / 640) + 1).fill(fixture.encoded)
+    );
+    await expect(
+      call('voice.stream.chunk', { streamId, audioBase64: audio.toString('base64') })
+    ).rejects.toMatchObject({
+      code: 'VOICE_STREAM_INVALID_OPUS',
+      message: expect.stringContaining('10 MB'),
+    });
+    await expect(call('voice.stream.resume', { streamId })).rejects.toMatchObject({
+      code: 'VOICE_STREAM_NOT_FOUND',
+    });
   });
 });
