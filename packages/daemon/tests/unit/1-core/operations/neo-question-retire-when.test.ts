@@ -413,3 +413,23 @@ test('an unavailable pack leaves the question open', async () => {
     f.db.close();
   }
 });
+
+test.each([
+  { pack: 'missing-pack', kind: 'evidence', params: { path: '/synthetic/result' } },
+  { pack: 'core', kind: 'evience', params: { path: '/synthetic/result' } },
+  { pack: 'core', kind: 'evidence', params: { path: 'relative-result' } },
+])(
+  'an unusable explicit retirement check is refused before opening a card: %j',
+  async (retireWhen) => {
+    const f = fixture();
+    try {
+      expect(await f.ask({ retireWhen })).toMatchObject({
+        ok: false,
+        reason: expect.stringMatching(/^check_(required|refused|unsupported):/),
+      });
+      expect(f.store.listQuestions('ask')).toEqual([]);
+    } finally {
+      f.db.close();
+    }
+  }
+);
