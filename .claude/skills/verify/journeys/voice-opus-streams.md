@@ -38,3 +38,7 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence .claude/skills/
 Compile with scripts/compiled-worker-entrypoints.ts so the decoder worker is
 embedded. A source-only run does not prove compiled-worker loading. This is
 public daemon RPC with synthetic ASR, not physical-phone or live-provider proof.
+
+The focused unit suite also runs a real isolated batch caller without forcing
+process exit. After stop completes it must exit naturally, proving the decoder
+worker was released; the failing reproduction timed out after reporting stop.

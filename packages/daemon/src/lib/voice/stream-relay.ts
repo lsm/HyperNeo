@@ -414,6 +414,7 @@ export class VoiceStream {
               'error' in result ? 'failed' : 'completed',
               'error' in result && result.retryable === true
             );
+            if (!('error' in result) || !result.retryable) this.codec?.close();
             return result;
           },
           (error: unknown) => {
@@ -439,7 +440,7 @@ export class VoiceStream {
       });
       relay.post({ type: 'finish' });
       const result = await finished;
-      this.close();
+      this.closeRelay();
       if (this.cancelled) return { error: 'Voice stream cancelled' };
       if (result.ok && (result.text || this.bytes === 0)) {
         this.deps.push({ streamId: this.id, text: result.text, isFinal: true });
@@ -489,6 +490,10 @@ export class VoiceStream {
 
   close(reason = 'closed'): void {
     this.codec?.close();
+    this.closeRelay(reason);
+  }
+
+  private closeRelay(reason = 'closed'): void {
     voiceDiagnostic('voice.stream.close', {
       streamId: this.id,
       clientId: this.deps.clientId,

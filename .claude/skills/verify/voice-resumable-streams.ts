@@ -52,7 +52,7 @@ const log = openSync(join(run, 'evidence/daemon.log'), 'w');
 const deno = mode.includes('deno');
 observed.daemonRuntime = binary ? 'compiled-bun' : deno ? 'deno' : 'bun';
 const daemon = spawn(binary ?? (deno ? 'deno' : process.execPath), binary ? ['--port', String(port), '--host', '127.0.0.1', '--db-path', join(run, 'data/daemon.db')] : deno ? ['run', '-A', 'main.ts'] : ['packages/cli/main.ts', '--port', String(port), '--host', '127.0.0.1', '--db-path', join(run, 'data/daemon.db')], {
-  cwd: deno && !binary ? join(process.cwd(), 'packages/daemon') : process.cwd(),
+  cwd: binary ? run : deno ? join(process.cwd(), 'packages/daemon') : process.cwd(),
   env: { ...process.env, HYPERNEO_WORKSPACE_PATH: run, HYPERNEO_PORT: String(port), HYPERNEO_HOST: '127.0.0.1', DB_PATH: join(run, 'data/daemon.db'), HF_HUB_OFFLINE: '1', TRANSFORMERS_OFFLINE: '1' }, stdio: ['ignore', log, log],
 });
 closeSync(log);

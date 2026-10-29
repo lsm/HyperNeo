@@ -11,6 +11,12 @@ export interface OpusInput {
 }
 export const opusInputDefaults = { create: createThreadedOpusInput };
 
+type Awaiting = {
+  resolve(value: OpusDecoded): void;
+  reject(error: Error): void;
+  timer: ReturnType<typeof setTimeout>;
+};
+
 async function createThreadedOpusInput(): Promise<OpusInput> {
   const worker = new Worker(
     runtimeWorkerUrl(
@@ -20,14 +26,7 @@ async function createThreadedOpusInput(): Promise<OpusInput> {
     ).toString(),
     { type: 'module' }
   );
-  const pending = new Map<
-    number,
-    {
-      resolve(value: OpusDecoded): void;
-      reject(error: Error): void;
-      timer: ReturnType<typeof setTimeout>;
-    }
-  >();
+  const pending = new Map<number, Awaiting>();
   let sequence = 0;
   let closed = false;
   const close = () => {
@@ -54,19 +53,15 @@ async function createThreadedOpusInput(): Promise<OpusInput> {
   (worker as Worker & { onexit?: () => void }).onexit = close;
   const request = (audio?: Uint8Array) =>
     new Promise<OpusDecoded>((resolve, reject) => {
-      if (closed) {
-        reject(new MessageHubHandlerError('Opus decoder closed', 'VOICE_STREAM_DECODER_FAILED'));
-        return;
-      }
+      if (closed)
+        throw new MessageHubHandlerError('Opus decoder closed', 'VOICE_STREAM_DECODER_FAILED');
       const id = ++sequence;
       pending.set(id, { resolve, reject, timer: setTimeout(close, 8000) });
       worker.postMessage({ id, audio });
     });
-  try {
-    await request();
-  } catch (error) {
+  await request().catch((error) => {
     close();
     throw error;
-  }
+  });
   return { decode: request, close };
 }
