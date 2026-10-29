@@ -10,7 +10,8 @@ import { CodingPrSweepRepository } from '../../../packages/daemon/src/lib/neo/pa
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 
-const run=resolve(process.argv[2]),url='https://github.com/synthetic/merge/pull/7',head='a'.repeat(40);
+const run=resolve(process.argv.at(-1)!),host=process.argv[2]==='enterprise'?'ghe.company.test':'github.com',url=`https://${host}/synthetic/merge/pull/7`,head='a'.repeat(40);
+if(host!=='github.com')process.env.GH_HOST=host;
 assert.equal(process.env.NODE_ENV,'test');assert.equal(process.env.HOME,join(run,'home'));assert.equal(process.env.HYPERNEO_DATA_DIR,join(run,'data'));
 for(const dir of ['evidence','bin'])mkdirSync(join(run,dir),{recursive:true});
 process.env.PATH=`${join(run,'bin')}:${process.env.PATH}`;
@@ -49,6 +50,6 @@ try{
  const label=pack.operations!.find(op=>op.name==='neo.coding.merge.human')!;
  assert.deepEqual(await label.execute({url,enabled:true},{role:'neo'} as never),{accepted:true});assert.deepEqual(snapshot().labels,[[{name:'human-merge'}]]);
  assert.deepEqual(await label.execute({url,enabled:false},{role:'neo'} as never),{accepted:true});assert.deepEqual(snapshot().labels,[[]]);evidence.explicitHumanIntentLabelTool=true;
- assert.deepEqual(await rpc('pack.preferences.list',{}),preferences);assert.equal(pack.preferences!.mergeBy.default,'owner');evidence.savedPreferencesUnchanged=true;evidence.mergeCommands=mergeCalls();evidence.executorActivated=true;evidence.verified=true;
+ assert.deepEqual(await rpc('pack.preferences.list',{}),preferences);assert.equal(pack.preferences!.mergeBy.default,'owner');evidence.savedPreferencesUnchanged=true;assert(mergeCalls().every(args=>args[2]===url));evidence.host=host;evidence.mergeCommands=mergeCalls();evidence.executorActivated=true;evidence.verified=true;
 }finally{await transport?.close();await app?.cleanup();globalThis.fetch=network;evidence.resourcesStopped=true;writeFileSync(join(run,'evidence/coding-daemon-merge-sweep.json'),JSON.stringify(evidence,null,2));}
 console.log(JSON.stringify(evidence));

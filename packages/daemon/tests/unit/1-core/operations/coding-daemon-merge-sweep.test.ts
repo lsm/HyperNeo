@@ -322,3 +322,57 @@ test('a receipt sharing a candidate cannot hide a failed read with a second resp
   expect(await ledger.write('daemonMerge', { kind: 'list' })).toHaveLength(1);
   expect(merges()).toHaveLength(0);
 });
+
+test.each([undefined, 'GHE.company.test'])(
+  'routes fresh reads and pinned merges to configured host %s despite a matching public PR',
+  async (configured) => {
+    const previous = process.env.GH_HOST;
+    const host = configured?.toLowerCase() ?? 'github.com';
+    if (configured === undefined) delete process.env.GH_HOST;
+    else process.env.GH_HOST = configured;
+    const hosted: SpawnFn = (args) => {
+      const result = spawn(args);
+      const enterprise = args.some((arg) => arg.includes('ghe.company.test'));
+      return {
+        ...result,
+        stdout: new ReadableStream({
+          async start(controller) {
+            const text = await new Response(result.stdout).text();
+            controller.enqueue(
+              new TextEncoder().encode(enterprise ? text.replaceAll('github.com', host) : text)
+            );
+            controller.close();
+          },
+        }),
+      };
+    };
+    try {
+      const run = createCodingDaemonMergeSweep(
+        () => db,
+        ledger,
+        new CodingPrEventRepository(db),
+        {
+          tell: async () => false,
+          wake: async () => true,
+        },
+        hosted
+      );
+      await run(10);
+      expect(merges()).toHaveLength(1);
+      expect(merges()[0][3]).toBe(`https://${host}/synthetic/merge/pull/1`);
+      expect(
+        calls
+          .filter((args) => args[2] === 'view' || args[2] === 'checks')
+          .every((args) => args[3].startsWith(`https://${host}/`))
+      ).toBe(true);
+      expect(
+        calls
+          .filter((args) => args.includes('--hostname'))
+          .every((args) => args[args.indexOf('--hostname') + 1] === host)
+      ).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.GH_HOST;
+      else process.env.GH_HOST = previous;
+    }
+  }
+);
