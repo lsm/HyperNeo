@@ -98,12 +98,14 @@ describe('GitHub Space settings read extraction', () => {
     const r = await readers();
     db.exec('DROP TABLE space_github_source_settings');
     const message = (read: () => unknown) => {
+      let failure: unknown;
       try {
         read();
-        throw new Error('query unexpectedly succeeded');
       } catch (error) {
-        return (error as Error).message;
+        failure = error;
       }
+      expect(failure).toBeInstanceOf(Error);
+      return (failure as Error).message;
     };
     expect(message(() => r.readGitHubSpaceEnabled(db, 'missing'))).toEqual(
       message(() => repo.isSpaceEnabled('missing'))
