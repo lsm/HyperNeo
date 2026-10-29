@@ -46,6 +46,28 @@ try {
   const pack = createCodingPack({ database: () => db, readPrs: async () => [], readClaudeOwners: async () => [], todoPrs: new CodingTodoPrRepository(db), prLedger: ledger, prEvents: new CodingPrEventRepository(db), prSweep: new CodingPrSweepRepository(db), projectRepos: () => [repo], prSweepDeps: { tell: (ref, key, text) => neo!.sendToRef(ref, key, text), wake: (key, text) => neo!.wakeNeo(key, text) }, readLedgerRepo: async () => ({ data: { rateLimit: { remaining: 4000 }, repository: { nameWithOwner: repo, open: { pageInfo: { hasNextPage: false }, nodes: terminal ? [] : nodes() }, done: { nodes: terminal ? nodes() : [] } } } }) });
   await pack.observeSessions!([{ ref: { adapter: 'hyperneo', id: worker }, status: { state: 'running' } as never, lastActivityAt: Date.now(), remotes: [`git@github.com:${repo}.git`], branches: ['slice-1', 'slice-2'], openedPrs: [] }], Date.now());
   const jobs = () => db.prepare("SELECT payload FROM job_queue WHERE queue='mailbox' ORDER BY id").all().map((row: { payload: string }) => JSON.parse(row.payload));
+  const preferencesBefore = await rpc('pack.preferences.list', {});
+  assert.equal((await rpc('pack.preferences.get', { pack: 'coding', scope: { kind: 'repo', key: repo }, key: 'mergeBy' })).preference, null);
+  assert.equal(pack.preferences!.mergeBy.default, 'owner');
+  assert.equal(ledger.policy(repo).mergeBy, 'owner');
+  assert.deepEqual(await rpc('pack.preferences.list', {}), preferencesBefore);
+  assert.equal((await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'repo', key: repo }, key: 'mergeBy', value: 'automatic' })).ok, false);
+  assert.equal((await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'repo', key: repo }, key: 'mergeBy', value: 'daemon' })).ok, true);
+  assert.equal((await rpc('pack.preferences.get', { pack: 'coding', scope: { kind: 'repo', key: repo }, key: 'mergeBy' })).preference.value, 'daemon');
+  const head = 'a'.repeat(40);
+  const facts = { ok: true as const, head, state: 'OPEN', draft: false, mergeable: 'MERGEABLE', requiredCi: { head, green: true }, threads: { head, unresolved: 0 }, reviews: [{ login: 'hyperneo-ai-test', head, state: 'APPROVED' }], files: ['src/app.ts'], labels: [] as string[] };
+  const decisions = {
+    unowned: pack.decideMerge(facts, ledger.policy(repo)),
+    owner: pack.decideMerge(facts, { ...ledger.policy(repo), mergeBy: 'owner' }),
+    staleCi: pack.decideMerge({ ...facts, requiredCi: { head: 'b'.repeat(40), green: true } }, ledger.policy(repo)),
+    unresolved: pack.decideMerge({ ...facts, threads: { head, unresolved: 1 } }, ledger.policy(repo)),
+    unreadable: pack.decideMerge({ ok: false, reason: 'Synthetic GitHub read failure' }, ledger.policy(repo)),
+    humanPolicy: pack.decideMerge(facts, { ...ledger.policy(repo), mergePolicy: 'human' }),
+  };
+  assert.equal(decisions.unowned.kind, 'merge');assert.equal(decisions.owner.kind, 'skip');
+  assert.equal(decisions.staleCi.kind, 'skip');assert.equal(decisions.unresolved.kind, 'skip');
+  assert.equal(decisions.unreadable.kind, 'read_failure');assert.equal(decisions.humanPolicy.kind, 'needs_human_signoff');
+  proof.daemonGate = { decisions, pureBuildOnly: true, mergeExecuted: false, defaultDidNotSave: true };
   const now = Date.now();
   await pack.sweep!(now);
   approved = true; await pack.sweep!(now + 1000);

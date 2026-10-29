@@ -24,6 +24,7 @@ import { type CodingPrSweepRepository, type CodingSweepDeps, sweepCodingPrs } fr
 import { type NeoWorkPrReader } from './work-prs.ts';
 import { wakeCodingUnownedPrs } from './pr-unowned.ts';
 import { recordCodingSmoke } from './delivery-facts.ts';
+import { decideCodingDaemonMerge } from './daemon-merge-gates.ts';
 import { prepareCodingMerge } from './merge-gates.ts';
 import { deliverCodingHealth } from './health-delivery.ts';
 import { CODING_STAGE_PREFERENCES, createCodingWritePlanOperation } from './stage-preferences.ts';
@@ -48,6 +49,7 @@ export function createCodingPack(deps: {
   readLedgerRepo?: CodingLedgerRead;
   readClaudeOwners?: ReturnType<typeof createCodingClaudeOwnerReader>;
 }): NeoPack & {
+  decideMerge: typeof decideCodingDaemonMerge;
   recordSmoke: typeof recordCodingSmoke;
   prepareMerge: typeof prepareCodingMerge;
   review: typeof runCodingReview;
@@ -61,6 +63,7 @@ export function createCodingPack(deps: {
   );
   return {
     ...CODING_PACK_BRIEF,
+    decideMerge: decideCodingDaemonMerge,
     recordSmoke: recordCodingSmoke,
     prepareMerge: prepareCodingMerge,
     operations: [
@@ -95,6 +98,17 @@ export function createCodingPack(deps: {
         default: true,
         ask: 'Require author model and harness provenance and a different reviewer model? Until answered, this is on without saving a preference.',
       },
+      mergeBy: {
+        label: { en: 'Merge executor', 'zh-Hans': '合并执行者' },
+        valueLabels: {
+          owner: { en: 'PR owner', 'zh-Hans': 'PR 负责人' },
+          daemon: { en: 'Daemon', 'zh-Hans': '守护进程' },
+        },
+        scope: 'repo',
+        type: { kind: 'enum', values: ['owner', 'daemon'] },
+        default: 'owner',
+        ask: 'Who should merge eligible PRs? Owner is the default; daemon admission is built, execution is not enabled yet.',
+      },
       mergePolicy: {
         label: { en: 'Merge policy', 'zh-Hans': '合并规则' },
         valueLabels: {
@@ -127,7 +141,7 @@ export function createCodingPack(deps: {
         scope: 'repo',
         type: { kind: 'globs' },
         default: [],
-        ask: 'Which paths or labels require human sign-off?',
+        ask: 'Which path globs or labels require human sign-off? Use label:human-merge for an explicit label; bare names also match labels.',
       },
     },
     prepareExecution: prepareCodingExecution,

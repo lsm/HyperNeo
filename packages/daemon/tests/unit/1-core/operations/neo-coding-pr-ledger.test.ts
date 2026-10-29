@@ -1045,6 +1045,7 @@ test('ledger reads repo preferences before same-pack global fallback', () => {
         .run(pack, scope ? 'repo' : 'global', scope, key, JSON.stringify(value));
     save('other', '', 'mergePolicy', 'ci_only');
     expect(ledger.policy('x/x')).toEqual({
+      mergeBy: 'owner',
       mergePolicy: undefined,
       reviewBot: undefined,
       humanSignoff: undefined,
@@ -1055,11 +1056,13 @@ test('ledger reads repo preferences before same-pack global fallback', () => {
     save('coding', 'X/X', 'mergePolicy', 'human');
     save('coding', 'X/X', 'humanSignoff', []);
     expect(ledger.policy('x/x')).toEqual({
+      mergeBy: 'owner',
       mergePolicy: 'human',
       reviewBot: 'global-bot',
       humanSignoff: [],
     });
     expect(ledger.policy('y/y')).toEqual({
+      mergeBy: 'owner',
       mergePolicy: 'review_bot',
       reviewBot: 'global-bot',
       humanSignoff: ['global/**'],
