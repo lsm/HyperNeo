@@ -1,3 +1,4 @@
+import { pendingTodoCheck } from '../../unit/helpers/todo-check-packs.ts';
 import { testDirectories } from '../../helpers/temporary-directory';
 import { expect, test } from 'bun:test';
 import { spawn, execFileSync } from 'node:child_process';
@@ -72,6 +73,7 @@ test('Costco human input survives a consumed teammate prompt when question.ask o
           input: {
             name: 'neo.question.ask',
             input: {
+              retireWhen: pendingTodoCheck,
               askId: 'costco',
               text: phase === 'reply' ? '周六还是周日去 Costco？' : `Costco ${phase}`,
               kind: 'choice',

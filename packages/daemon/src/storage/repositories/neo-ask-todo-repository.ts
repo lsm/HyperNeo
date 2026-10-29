@@ -1,3 +1,7 @@
+import { enqueueMailboxEntry } from '../../lib/mailbox/enqueue.ts';
+import { createMailboxEntry } from '../../lib/mailbox/entry.ts';
+import { renderAddress } from '../../lib/mailbox/address.ts';
+import { JobQueueRepository } from './job-queue-repository.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { NeoQuestionAnswerRepository } from './neo-question-answer-repository.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
@@ -97,6 +101,7 @@ const TODO_SELECT = `SELECT id, ask_id AS askId, position, title, done_when AS d
 export type NeoQuestionDraft = Pick<
   NeoQuestion,
   | 'text'
+  | 'retireWhen'
   | 'kind'
   | 'options'
   | 'multiple'
@@ -114,7 +119,7 @@ export type NeoQuestionDraft = Pick<
 const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, text, kind, options, multiple, no_label AS noLabel,
   yes_label AS yesLabel, start_todos AS startTodos, state, answer, answered_by AS answeredBy,
   answered_at AS answeredAt, retired_reason AS retiredReason, replaced_by AS replacedBy,
-  confirm_json AS confirmJson, reply_to_json AS replyToJson, artifacts_json AS artifactsJson, source_session_json AS sourceSessionJson, document, created_at AS createdAt FROM neo_questions`;
+  retire_when_json AS retireWhenJson, confirm_json AS confirmJson, reply_to_json AS replyToJson, artifacts_json AS artifactsJson, source_session_json AS sourceSessionJson, document, created_at AS createdAt FROM neo_questions`;
 
 type QuestionRow = Omit<
   NeoQuestion,
@@ -126,7 +131,9 @@ type QuestionRow = Omit<
   | 'replyTo'
   | 'artifacts'
   | 'sourceSession'
+  | 'retireWhen'
 > & {
+  retireWhenJson: string | null;
   artifactsJson: string | null;
   sourceSessionJson: string | null;
   confirmJson: string | null;
@@ -140,6 +147,7 @@ type QuestionRow = Omit<
 const parsed = <T>(json: string | null): T | null => (json ? (JSON.parse(json) as T) : null);
 
 const toQuestion = ({
+  retireWhenJson,
   confirmJson,
   replyToJson,
   artifactsJson,
@@ -147,6 +155,7 @@ const toQuestion = ({
   todoId,
   ...row
 }: QuestionRow): NeoQuestion => ({
+  ...(retireWhenJson ? { retireWhen: JSON.parse(retireWhenJson) as NeoTodoCheck } : {}),
   ...row,
   ...(sourceSessionJson
     ? { sourceSession: JSON.parse(sourceSessionJson) as NeoQuestion['sourceSession'] }
@@ -787,6 +796,59 @@ export class NeoAskTodoRepository {
     return row ? toTodo(row) : null;
   }
 
+  openQuestionChecks() {
+    return this.listQuestionsForAsks(this.listOpenAsks().map((ask) => ask.id))
+      .filter((question) => question.state === 'open')
+      .map((question) => ({
+        question,
+        todo: question.todoId ? this.getTodo(question.todoId) : null,
+      }));
+  }
+
+  retireCheckedQuestion(
+    question: NeoQuestion,
+    check: NeoTodoCheck | null,
+    evidence: string,
+    now: number
+  ): NeoQuestion | null {
+    const current = this.getQuestion(question.id);
+    const ask = current ? this.getAsk(current.askId) : null;
+    if (
+      current?.state !== 'open' ||
+      ask?.status !== 'open' ||
+      JSON.stringify(
+        current.retireWhen ?? (current.todoId ? this.getTodo(current.todoId)?.check : null)
+      ) !== JSON.stringify(check)
+    )
+      return null;
+    const retired = this.retireQuestion(current, evidence, null, now);
+    if (!retired) return null;
+    for (const todo of this.listTodos(current.askId))
+      if (todo.state === 'blocked' && ['question', 'needs-human'].includes(todo.blockedBy ?? ''))
+        this.commitState(todo.id, {}, now, { state: 'no_opinion' });
+    const to = { kind: 'session' as const, sessionId: ask.sessionId };
+    const queued = enqueueMailboxEntry(
+      new JobQueueRepository(this.db),
+      createMailboxEntry({
+        to,
+        origin: renderAddress(to),
+        messageUuid: `neo-question-retired:${current.id}`,
+        message: {
+          type: 'user',
+          parent_tool_use_id: null,
+          inputKind: 'system',
+          neoWakeEvent: true,
+          message: {
+            role: 'user',
+            content: `Retired question ${current.id}: ${evidence}`.replace(/\s+/g, ' '),
+          },
+        },
+      })
+    );
+    if (queued.kind === 'rejected') throw new Error(queued.reason);
+    return retired;
+  }
+
   getQuestion(id: string): NeoQuestion | null {
     const row = this.db.prepare(`${QUESTION_SELECT} WHERE id = ?`).get(id) as QuestionRow | null;
     return row ? toQuestion(row) : null;
@@ -813,7 +875,7 @@ export class NeoAskTodoRepository {
     this.db
       .prepare(
         `INSERT INTO neo_questions (id, ask_id, text, kind, options, multiple, no_label, yes_label,
-           start_todos, confirm_json, document, reply_to_json, todo_id, artifacts_json, source_session_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           start_todos, confirm_json, document, reply_to_json, todo_id, artifacts_json, source_session_json, retire_when_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -831,6 +893,7 @@ export class NeoAskTodoRepository {
         draft.todoId ?? null,
         draft.artifacts ? JSON.stringify(draft.artifacts) : null,
         draft.sourceSession ? JSON.stringify(draft.sourceSession) : null,
+        draft.retireWhen ? JSON.stringify(draft.retireWhen) : null,
         now
       );
     this.touchAsk(askId, now);
@@ -844,13 +907,14 @@ export class NeoAskTodoRepository {
     now: number,
     replyTo?: readonly string[],
     artifacts?: NeoQuestion['artifacts'],
-    sourceSession?: NeoQuestion['sourceSession']
+    sourceSession?: NeoQuestion['sourceSession'],
+    retireWhen?: NeoTodoCheck
   ): void {
     const question = this.getQuestion(id);
     if (!question) return;
     this.db
       .prepare(
-        "UPDATE neo_questions SET start_todos = ?, text = ?, reply_to_json = COALESCE(?, reply_to_json), artifacts_json = COALESCE(?, artifacts_json), source_session_json = ? WHERE id = ? AND state = 'open'"
+        "UPDATE neo_questions SET start_todos = ?, text = ?, reply_to_json = COALESCE(?, reply_to_json), artifacts_json = COALESCE(?, artifacts_json), source_session_json = ?, retire_when_json = COALESCE(?, retire_when_json) WHERE id = ? AND state = 'open'"
       )
       .run(
         JSON.stringify(startTodos),
@@ -858,6 +922,7 @@ export class NeoAskTodoRepository {
         replyTo ? JSON.stringify(replyTo) : null,
         artifacts ? JSON.stringify(artifacts) : null,
         sourceSession ? JSON.stringify(sourceSession) : null,
+        retireWhen ? JSON.stringify(retireWhen) : null,
         id
       );
     this.touchAsk(question.askId, now);
@@ -1096,6 +1161,7 @@ export const neoTodoReads = defineRepositoryOp(
     }
   },
   [
+    'openQuestionChecks',
     'snapshot',
     'doneTodoFacts',
     'askFacts',
@@ -1117,5 +1183,5 @@ export const neoTodoWrites = defineRepositoryOp(
       super(db);
     }
   },
-  ['commitState']
+  ['commitState', 'retireCheckedQuestion']
 );

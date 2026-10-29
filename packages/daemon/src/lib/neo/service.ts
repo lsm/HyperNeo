@@ -1,3 +1,4 @@
+import { createQuestionRetirement } from './question-retirement.ts';
 import { neoStallReminderWrite } from '../../storage/repositories/neo-stall-reminder-write.ts';
 import { NeoSpeech } from './speech.ts';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
@@ -731,6 +732,11 @@ export class NeoService {
       await pack
         .sweep?.(Date.now())
         .catch((error) => this.log.warn(`Neo ${pack.id} sweep failed`, error));
+    const retire = createQuestionRetirement(this.todos, () => this.installedPacks());
+    for (const { question, todo } of await this.todos.read('openQuestionChecks'))
+      await retire(question, todo, Date.now()).catch((error) =>
+        this.log.warn('Question check pending', error)
+      );
     await publishDroppedWork(this, Date.now(), this.appendPublication.bind(this));
     this.notifyChanged();
   }

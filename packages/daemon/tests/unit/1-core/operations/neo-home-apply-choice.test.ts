@@ -1,3 +1,4 @@
+import { pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -91,6 +92,7 @@ async function confirmation(askId: string, path: string, content: string, answer
   const result = await call(
     'neo.question.ask',
     {
+      retireWhen: pendingTodoCheck,
       askId,
       kind: 'yesno',
       text: `Save ${path}\nSHA-256: ${confirm.sha256}`,
@@ -179,6 +181,7 @@ describe('Human-recorded conflict version saves', () => {
     const unrelated = await call(
       'neo.question.ask',
       {
+        retireWhen: pendingTodoCheck,
         askId: question.askId,
         kind: 'choice',
         text: 'Which version?',
