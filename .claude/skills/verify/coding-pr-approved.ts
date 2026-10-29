@@ -16,7 +16,7 @@ assert(!existsSync(join(run, 'data/daemon.db')));
 mkdirSync(join(run, 'evidence'), { recursive: true });
 const url = 'https://github.com/synthetic/project/pull/78', headA = 'a'.repeat(40), headB = 'b'.repeat(40), headC = 'c'.repeat(40);
 const factsPath = join(run, 'facts.json'), callsPath = join(run, 'evidence/requests.jsonl');
-let facts = { head: headA, approvedHead: headB, bot: 'review-bot[bot]', verdict: 'APPROVED', ci: 'pending', fail: '', flip: '' };
+let facts = { head: headA, approvedHead: headB, bot: 'review-bot[bot]', verdict: 'APPROVED', ci: 'pending', fail: '', flip: '', tail: '' };
 const setFacts = (patch: Partial<typeof facts>) => { facts = { ...facts, ...patch }; writeFileSync(factsPath, JSON.stringify(facts)); };
 setFacts({});
 writeFileSync(join(run, 'bin/gh'), `#!${process.execPath}
@@ -29,6 +29,7 @@ let data;
 if (kind === 'view') data = { headRefOid: facts.head, state: 'OPEN' };
 else if (kind === 'reviews') data = [[{ state: facts.verdict, commit_id: facts.approvedHead, html_url: ${JSON.stringify(url + '#review')}, user: { login: facts.bot, type: 'Bot' } }]];
 else data = [{ bucket: facts.ci, name: 'Required', link: ${JSON.stringify(url + '/checks')} }];
+if (kind === 'reviews' && facts.tail) data[0].push({ ...data[0][0], state: facts.tail });
 if (kind !== 'view' && facts.flip) { facts.head = facts.flip; facts.flip = ''; fs.writeFileSync(path, JSON.stringify(facts)); }
 console.log(JSON.stringify(data));
 if (kind === 'checks' && facts.ci !== 'pass') process.exit(facts.ci === 'pending' ? 8 : 1);
@@ -84,13 +85,15 @@ try {
   setFacts({ approvedHead: headA, bot: 'another-bot' }); await sweep();
   assert.notEqual(store.getTodo(added.todo.id)?.state, 'done'); assert.equal(store.getQuestion(card.id)?.state, 'open');
   const before = await rpc('neo.ask.read', { askId: 'question' }); assert.equal(before.entry?.state, 'waiting');
-  setFacts({ bot: 'review-bot[bot]', fail: 'checks' }); await sweep();
-  const todoDone = await rpc('neo.ask.read', { askId: added.todo.askId }); assert.equal(todoDone.entry?.todos.find(todo => todo.id === added.todo!.id)?.state, 'done');
-  const retired = await rpc('neo.question.get', { questionId: card.id }); assert.equal(retired.question?.state, 'retired'); assert(retired.question?.retiredReason?.includes(headA)); assert.equal(retired.question?.answer, null);
+  setFacts({ bot: 'review-bot[bot]', fail: 'checks', tail: 'COMMENTED' }); await sweep();
+  const todoDone = await rpc('neo.ask.read', { askId: added.todo.askId });
+  const retired = await rpc('neo.question.get', { questionId: card.id });
+  receipts.push({ trailingReview: 'COMMENTED', todoDone, retired });
+  assert.equal(todoDone.entry?.todos.find(todo => todo.id === added.todo!.id)?.state, 'done'); assert.equal(retired.question?.state, 'retired'); assert(retired.question?.retiredReason?.includes(headA)); assert.equal(retired.question?.answer, null);
   const after = await rpc('neo.ask.read', { askId: 'question' }); assert.equal(after.entry?.state, 'todo'); assert.equal(after.entry?.todos.find(todo => todo.id === waiting.id)?.blockedBy, null);
   const newer = await ask('new-head'); setFacts({ head: headB, fail: '' }); await service.sweepPacks();
   assert.equal((await rpc('neo.question.get', { questionId: newer.id })).question?.state, 'open');
-  setFacts({ approvedHead: headB }); await service.sweepPacks();
+  setFacts({ approvedHead: headB, tail: 'PENDING' }); await service.sweepPacks();
   const newHeadPassed = await rpc('neo.question.get', { questionId: newer.id }); assert.equal(newHeadPassed.question?.state, 'retired'); assert(newHeadPassed.question?.retiredReason?.includes(headB));
   await preference('mergePolicy', 'ci_only'); const ci = await ask('ci');
   setFacts({ ci: 'pending' }); await service.sweepPacks(); assert.equal((await rpc('neo.question.get', { questionId: ci.id })).question?.state, 'open');

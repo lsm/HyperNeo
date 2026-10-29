@@ -154,7 +154,6 @@ test.each(
     [[review('APPROVED', headB)]],
     [[review(), review('CHANGES_REQUESTED')]],
     [[review(), review('DISMISSED')]],
-    [[review(), review('COMMENTED')]],
     [[{ ...review(), user: null }]],
     [[]],
     [],
@@ -322,5 +321,29 @@ test('a changed configured reviewer invalidates an in-flight approval', async ()
   r.state.duringDecision = () => {
     r.state.policy.reviewBot = 'new-review-bot';
   };
+  expect(await r.check()).toEqual({ done: false, evidence: null });
+});
+
+test.each(['COMMENTED', 'PENDING'])(
+  'a trailing %s review preserves current-head approval',
+  async (state) => {
+    const r = reader();
+    r.state.pages = [[review()], [review(state)]];
+    expect(await r.check()).toMatchObject({ done: true, evidence: expect.stringContaining(headA) });
+  }
+);
+
+test.each(['COMMENTED', 'PENDING'])(
+  'a trailing %s review does not undo a change request',
+  async (state) => {
+    const r = reader();
+    r.state.pages = [[review(), review('CHANGES_REQUESTED')], [review(state)]];
+    expect(await r.check()).toEqual({ done: false, evidence: null });
+  }
+);
+
+test.each(['COMMENTED', 'PENDING'])('%s alone is not approval', async (state) => {
+  const r = reader();
+  r.state.pages = [[review(state)]];
   expect(await r.check()).toEqual({ done: false, evidence: null });
 });

@@ -19,7 +19,10 @@ Observe real neo.todo.add check and neo.question.ask retireWhen receipts for
 {pack:"coding",kind:"pr_approved",params:{url}}. Wrong-bot or old-head approval
 leaves both open. The configured bot’s current-head approval completes the todo,
 retires the unlinked card with full-head evidence, releases its waiting todo,
-and fabricates no human answer. CI does not substitute for bot approval or block
+and fabricates no human answer. The metadata stub appends a COMMENTED review
+after approval; the prior approval must still finish the todo and retire the card.
+The new-head case repeats with a trailing PENDING review. Neither non-decision
+may erase approval, and neither can supply approval by itself. CI does not substitute for bot approval or block
 that policy’s approval check; this is not authorization to merge.
 
 Push a new head: its card stays open until a review on that head approves it.
