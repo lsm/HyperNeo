@@ -191,7 +191,7 @@ export function createNeoPublicationOperation(publish: ReturnType<typeof createN
       'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. Pass verbatim: true to send the message as one field: the full content in fullText with no shortText; a request with both verbatim and shortText is rejected. Optional replyTo lists the received human message ids this publication answers; when omitted, the human inputs whose turn produced this publication are recorded as answered when they are known. Unknown, foreign, queued and non-human reply ids are omitted. Non-project and unavailable links are omitted, including work and consultation links. Unavailable artifact references are omitted. For a document or evidence file, pass the reference artifact.file.register returned in artifacts and say in one sentence what it is.',
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
-    resultSchema: NeoPublicationResultSchema,
+    resultSchema: NeoPublicationResultSchema.and(z.object({ guidance: z.string().optional() })),
     execute: async (input, caller) => publish(input, caller),
   });
 }
