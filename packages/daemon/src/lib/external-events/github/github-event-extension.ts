@@ -1,5 +1,6 @@
 import { gatewayFor } from '../../../storage/db-gateway/db-gateway.ts';
 import { gitHubSpaceEnabledWrites } from '../../../storage/repositories/github-space-enabled-write.ts';
+import { gitHubFilterWrites } from '../../../storage/repositories/github-filter-write.ts';
 import { projectGitHubWatchedRepo } from './github-watched-projection.ts';
 import {
   createGitHubPollSource,
@@ -689,8 +690,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (!params.spaceId || typeof params.enabled !== 'boolean') {
         throw new Error('spaceId and enabled are required');
       }
-      this.repo.setFilterCurrentUser(params.spaceId, params.enabled);
-      await this.persistSpaceConfig(context, params.spaceId);
+      await gatewayFor(this.db).call(
+        gitHubFilterWrites,
+        'persist',
+        params.spaceId,
+        params.enabled,
+        Date.now()
+      );
       context.onSourceConfigChanged({
         source: this.sourceId,
         spaceId: params.spaceId,

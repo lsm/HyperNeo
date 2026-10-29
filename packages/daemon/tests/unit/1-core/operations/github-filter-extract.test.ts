@@ -39,7 +39,7 @@ describe('GitHub filter SQL extraction', () => {
         pass: true,
         mainThreadMovementClaim: false,
         publicRpc: {
-          mainStatementRuns: 3,
+          mainStatementRuns: 0,
           snapshotAndCreationTimesPreserved: true,
           enabledAndPollingIntentPreserved: true,
         },

@@ -1,0 +1,104 @@
+{
+  "publicMutationActivated": true,
+  "publicBaselineReaderConfirmed": true,
+  "mainGuardSelfCheckPassed": true,
+  "phase": "complete",
+  "firstRpcMs": 0.6366669999997612,
+  "publicFilterSnapshotAndNotificationPreserved": true,
+  "snapshotFailurePrecedesNotification": true,
+  "cursorAndOrphanFailureRollBack": true,
+  "knownNotifyFailureKeepsCommittedSnapshot": true,
+  "healthWhileWriterHeldMs": 2.1083330000001297,
+  "deliberatelyHeldWriterMs": 1256.423,
+  "replyAndNotifyWaitForCommit": true,
+  "reorderedReceiptsNeverOverwriteNewerFilter": true,
+  "admissionFailureHasNoFallbackNotifyOrReplay": true,
+  "committedReplyLossHasNoNotifyOrReplay": true,
+  "authorizationPrecedesAdmission": true,
+  "watchedRowsUnchanged": true,
+  "maxLoopLagMs": 14.631250000000136,
+  "commandPosts": 12,
+  "notices": [
+    {
+      "filter": 1,
+      "saved": true,
+      "time": 1793270210352
+    },
+    {
+      "filter": 0,
+      "saved": false,
+      "time": 1793270210352
+    },
+    {
+      "filter": 1,
+      "saved": true,
+      "time": 1793270210359
+    },
+    {
+      "filter": 0,
+      "saved": false,
+      "time": 1793270210360
+    },
+    {
+      "filter": 1,
+      "saved": true,
+      "time": 1793270210362
+    },
+    {
+      "filter": 0,
+      "saved": false,
+      "time": 1793270211625
+    },
+    {
+      "filter": 0,
+      "saved": false,
+      "time": 1793270211625
+    }
+  ],
+  "rssBytes": 545570816,
+  "walBytes": 4128272,
+  "pass": true,
+  "mainSqlAttempts": 0,
+  "metrics": [
+    {
+      "roundTripMs": 0.32858299999998053,
+      "requestBytes": 82,
+      "replyBytes": 1068
+    },
+    {
+      "roundTripMs": 0.11120899999991707,
+      "requestBytes": 83,
+      "replyBytes": 1069
+    },
+    {
+      "roundTripMs": 0.1378749999998945,
+      "requestBytes": 82,
+      "replyBytes": 1068
+    },
+    {
+      "roundTripMs": 0.1097500000000764,
+      "requestBytes": 83,
+      "replyBytes": 1069
+    },
+    {
+      "roundTripMs": 1254.761875,
+      "requestBytes": 82,
+      "replyBytes": 1068
+    },
+    {
+      "roundTripMs": 0.2887080000000424,
+      "requestBytes": 82,
+      "replyBytes": 1068
+    },
+    {
+      "roundTripMs": 0.16770900000028632,
+      "requestBytes": 83,
+      "replyBytes": 1069
+    },
+    {
+      "roundTripMs": 2.6270830000003116,
+      "requestBytes": 82,
+      "replyBytes": 1068
+    }
+  ]
+}

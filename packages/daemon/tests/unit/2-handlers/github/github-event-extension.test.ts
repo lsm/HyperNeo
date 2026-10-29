@@ -8,6 +8,7 @@ import {
   type ExternalEvent,
 } from '../../../../src/lib/external-events';
 import { GitHubEventExtension } from '../../../../src/lib/external-events/github';
+import { ExternalEventExtensionConfigStore as SqliteExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
 import { syncGitHubPollingCapability } from '../../../../src/app';
 import {
   mapEventType,
@@ -11825,6 +11826,7 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
 
   test('setFilterCurrentUser RPC round-trips the setting through the space config', async () => {
     const db = setupDb();
+    seedRpcSpace(db);
     const extension = new GitHubEventExtension(db);
     const clientHub = new MessageHub();
     const hub = new MessageHub();
@@ -11832,7 +11834,13 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
     clientHub.registerTransport(clientTransport);
     hub.registerTransport(serverTransport);
     await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
-    const config = new StaticExternalEventExtensionConfigStore({ globallyEnabled: true });
+    const config = new SqliteExtensionConfigStore(db);
+    await config.setGlobalConfig('github', {
+      source: 'github',
+      globallyEnabled: true,
+      capabilities: { webhooks: true, polling: true, rpcConfig: true },
+      settings: {},
+    });
     const context = {
       publisher: { publish: async () => {} },
       config,

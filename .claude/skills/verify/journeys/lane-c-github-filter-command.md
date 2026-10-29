@@ -34,8 +34,9 @@ is not a 250 ms latency pass.
 Reject admission and drop an actual successful committed reply through the
 worker transport. Each attempt posts once with no automatic replay or main-side
 fallback; committed reply loss still leaves source and saved snapshot consistent.
-Public mutation handlers, capability/timer/notify callbacks and startup remain
-unchanged; their later wiring is a separate slice and is not claimed here.
+The current public filter RPC now uses this command and has a separate wiring
+journey; this fixture retains direct command receipt contracts. Its false
+publicMutationActivated field describes construction-only invocation in this proof.
 Pin all five helper-module hashes and the existing worker transaction contract.
 Save github-filter-command.json; stop sockets/processors, close lock and
 clean up app in finally before wrapper removes data. Never touch live daemon,

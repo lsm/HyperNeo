@@ -1,0 +1,143 @@
+{
+  "base": "b95ed380cb925321ef5416708a774eef37b98312",
+  "ownedBridgeUnits": [
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
+      "name": "constructor",
+      "owner": "GitHubEventExtension",
+      "lines": 9,
+      "sha256": "596a466e48b80cb82c3ba6d6d21102669145b0b966306d8389d03bd793682b68"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
+      "name": "space.github.setFilterCurrentUser",
+      "lines": 20,
+      "sha256": "5bc4af477f78432d36543c93b47167397508ce3b98cf8e8c2f2b509eed1a3160"
+    }
+  ],
+  "ownedBridgeGraphLines": 29,
+  "productionLines": 10,
+  "smokeLines": 1,
+  "delta": [
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
+      "lines": 10
+    },
+    {
+      "file": "scripts/deno-smoke.sh",
+      "lines": 1
+    }
+  ],
+  "stableCommandModules": [
+    {
+      "file": "packages/daemon/src/storage/repositories/github-filter-write.ts",
+      "lines": 42,
+      "sha256": "434a4c86f6b8c809eccc4a39b8a5bdbac1d2b83424e6fb92d74466caf5ead397"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/github-filter-persist.ts",
+      "lines": 14,
+      "sha256": "4b15411862f675f34b3bbd53fba0bd6b1f82adb6e232570b0d90dc1bc440fd79"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/github-watched-repos-read.ts",
+      "lines": 44,
+      "sha256": "4c5945ea131459249bb302cdb27ee6a014fc6aadd5d15f9d402b3226972e6a95"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/github-space-settings-read.ts",
+      "lines": 26,
+      "sha256": "821cdbd20d30a954c0aa6c1c82ad8ff88e098abbd76e522e4072dce26d240681"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/space-extension-config-persist.ts",
+      "lines": 20,
+      "sha256": "3eb49614501626f43b0d679f09a7cfea5ae6d9592070e907adf1c283ed87758f"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-watched-projection.ts",
+      "lines": 29,
+      "sha256": "c9f18fb9061bfe708176fdd065a4a6e1301f7ffd78c03306c074fede5a1686eb"
+    }
+  ],
+  "stableCommandGraphLines": 175,
+  "stableCommandSubtreeSha256": "30759e4dfc3a8c48e8d0d3d5ae30aa17a04c1138f472ab1e52989d6674963599",
+  "commandContract": "Merged175-line data-only filter writer subtree; one existing worker transaction saves filter preference and full projected config, preserving source enable/poll intent/watched rows and creation times, returns config after commit. No replay/constructor effects",
+  "stablePolicyRoots": [
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
+      "name": "start",
+      "owner": "GitHubEventExtension",
+      "lines": 18,
+      "sha256": "41abdeb9228476df2ae9934d76a09f24c5b2041cdcaaa2179411bf56ffc8bddd"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
+      "name": "stop",
+      "owner": "GitHubEventExtension",
+      "lines": 8,
+      "sha256": "338d8843d49b2c30483da1b3a10a59409cb57cd694cf603f03fd00707f2d7fbe"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
+      "name": "assertRpcConfigEnabled",
+      "lines": 9,
+      "sha256": "3a19416016c634b3d5bccf9ea5fa05cdd206cb5cbb73b5b0e10e8baec161f092"
+    }
+  ],
+  "stablePolicyRootsSha256": "114fb471e02a553ec6616a773388e6d9e27545f05db9d7e1645d67cc2901e3da",
+  "notificationBridge": {
+    "notify": {
+      "name": "onSourceConfigChanged",
+      "lines": 6,
+      "sha256": "1bf4a427f4b164f2f0eab40d9796848e60c57b83aded5025a86a9bc1d3a76cee"
+    },
+    "tableMap": {
+      "name": "sourceConfigTables",
+      "sha256": "3fac4d8d7fa15a5bd8c472d32269b97633090ede90f96dc98371c08bc1c8e0d3"
+    }
+  },
+  "stablePublicDependencies": [
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "sha256": "f9e7f2cdcce64c029b74fce48350811f42287d7a1307b41bb489251b89c2d589"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/extension-config-store.ts",
+      "sha256": "30f39909917d79db49f790e89ffcfc9c1b64d15dd27a69a19ed35564bd9d517e"
+    },
+    {
+      "file": "packages/daemon/src/app.ts",
+      "sha256": "d7cba475e25e9a0113f91ed8cb2188ea48fb97da1572ca0da50e94e5bdb4470f"
+    },
+    {
+      "file": "packages/daemon/src/storage/reactive-database.ts",
+      "sha256": "8eaf79b2fafe1bc9b3d04401aed2b15bf1a77d60ec67073191f03489fcb71e35"
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-gateway.ts",
+      "sha256": "54b7739518ba9c5c58bda82f7627a76d8483511949cd3469adc07e5643e09858"
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-gateway-worker.ts",
+      "sha256": "fbaeb4d89aa03a8dcc1e7aa686dedce502c0b279ebb6c2f7f5ef865bda3644b1"
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-op.ts",
+      "sha256": "459703e0371a0b1c351bf571a7a73126f6fd81a824e2ecdfbe0a7916986fbd3c"
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-ops.ts",
+      "sha256": "2d27285d2464c5c90a561762dbccb85bde5d9c79ec7fce872e69998eb0e2e7eb"
+    }
+  ],
+  "wholeExtensionRestoredAstUnchanged": true,
+  "constructorBodyUnchanged": true,
+  "authorizationAndReplyAstUnchanged": true,
+  "policyContract": "Same pre-admission capability/parameter gate and original reply/notification. Notify only after successful receipt, no error fallback/replay. Reordered receipts only signal current state, never rewrite a newer snapshot",
+  "fixtureUpdates": "Current filter extraction helper/journey/CI parent expect0 target main writes; direct SQL contracts and archived evidence retained. One legacy RPC fixture seeds a real Space row and uses the real SQLite config store; assertions unchanged",
+  "netPrepare": 0,
+  "netRun": 0,
+  "baselineIncrease": false,
+  "auditLimit": "Owned graph is one public RPC bridge and unchanged constructor; complete175-line merged command subtree is an audited stable dependency. Gate/start/stop, app notification and shared files pinned. Public readers, other writers and transitive async/plugin/startup closures are not audited or claimed off main."
+}
