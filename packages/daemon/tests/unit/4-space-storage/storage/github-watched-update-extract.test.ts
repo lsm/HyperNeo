@@ -166,7 +166,7 @@ describe('GitHub watched repository UPDATE extraction', () => {
   test('helper retains exact legacy UPDATE SQL/bindings and flag/null/empty-value matrix', async () => {
     const persist = await persistence(),
       prepare = db.prepare.bind(db);
-    let capture: { sql: string; args: unknown[]; rows: Record<string, unknown>[] } | undefined;
+    const captures: { sql: string; args: unknown[]; rows: Record<string, unknown>[] }[] = [];
     vi.spyOn(db, 'prepare').mockImplementation((...args) => {
       const statement = prepare(...args);
       if (!args[0].includes('webhook_secret = COALESCE')) return statement;
@@ -176,7 +176,7 @@ describe('GitHub watched repository UPDATE extraction', () => {
           if (typeof value !== 'function') return value;
           return (...bindings: unknown[]) => {
             const result = Reflect.apply(value, target, bindings);
-            if (key === 'run') capture = { sql: args[0], args: bindings, rows: rows() };
+            if (key === 'run') captures.push({ sql: args[0], args: bindings, rows: rows() });
             return result;
           };
         },
@@ -228,13 +228,15 @@ describe('GitHub watched repository UPDATE extraction', () => {
       for (const patch of cases) {
         seed(state);
         const params = { ...identity, ...patch };
+        captures.length = 0;
         repo.upsertWatchedRepo(params);
-        const legacy = capture!;
+        expect(captures).toHaveLength(1);
+        const legacy = captures[0];
         seed(state);
         const existing = repo.getWatchedRepoById('synthetic-one')!;
-        capture = undefined;
+        captures.length = 0;
         expect(persist(db, params, existing, 41)).toBeUndefined();
-        expect(capture).toEqual(legacy);
+        expect(captures).toEqual([legacy]);
       }
   });
   test('helper preserves caller transaction rollback and id isolation', async () => {
@@ -294,9 +296,9 @@ describe('GitHub watched repository UPDATE extraction', () => {
       expect(
         persist(scratch, { ...identity, enabled: false }, mappedWatchedRow, 41)
       ).toBeUndefined();
-      expect(
-        scratch.prepare('SELECT updated_at FROM space_github_watched_repos').get()!.updated_at
-      ).toBe(41);
+      expect(scratch.prepare('SELECT updated_at FROM space_github_watched_repos').get()).toEqual({
+        updated_at: 41,
+      });
       expect(
         scratch
           .prepare("SELECT name FROM sqlite_master WHERE name='space_github_source_settings'")

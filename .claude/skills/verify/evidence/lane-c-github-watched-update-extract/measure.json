@@ -1,0 +1,127 @@
+{
+  "base": "4977f069fc6b3b76fc296cc6644417bde10fde63",
+  "productionLines": 120,
+  "smokeRegistrationLines": 1,
+  "freshEnvelope": 199,
+  "excludedLines": 102,
+  "totalKnownLines": 301,
+  "measuredUnits": [
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "constructor",
+      "lines": 37,
+      "sha256": "060d24192eb0b29c9fca21a05d86eb7d3d5022d48f967624b5a63718625fbe45"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "upsertWatchedRepo",
+      "lines": 71,
+      "sha256": "6bebfde2df9ffbfba5fd85088f325b3ce26db6b9aa08c6e8ee4430f6088debd1"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "isSpaceEnabled",
+      "lines": 3,
+      "sha256": "f86ecedadb43666d7a5e8b54c31e516ae6b31732510b129455c42cc2d81b78d4"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "getWatchedRepo",
+      "lines": 3,
+      "sha256": "947448e2398e1653cb51d8624e7df59d4d56f3cee3af76b9de17c43fb7c06ac6"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "getWatchedRepoById",
+      "lines": 3,
+      "sha256": "660cfc7e1b688190b54c1e8e0098ad2c132408d804c30cfd7f22f27fa8f82e01"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "name": "updatePollCursorJson",
+      "lines": 3,
+      "sha256": "4396edaf4039cc7cb22789bab7daa9cfc1f02784cf3e5d307e058d51b442243a"
+    }
+  ],
+  "completeHelper": {
+    "file": "packages/daemon/src/storage/repositories/github-watched-update-persist.ts",
+    "lines": 64,
+    "sha256": "c4a07d91b0c58eb2983c0c367c4e31b8943a8569ba48f6c2a9ccace218215e54"
+  },
+  "sharedUuidLeaf": {
+    "file": "packages/shared/src/utils.ts",
+    "name": "generateUUID",
+    "lines": 15,
+    "sha256": "8c108ca66381564d346c97c2b5118abb506ad40144aaca59afe6653d9a34ece6",
+    "fullModuleSha256": "d413711e775c212b49335d6d4409019225a121a04db6acff37044a9217e8e872",
+    "contract": "Complete existing randomUUID/getRandomValues/Math.random UUID fallback function, unchanged; shared barrel/runtime transitive closure not claimed"
+  },
+  "auditedStableDependencies": [
+    {
+      "file": "packages/daemon/src/storage/repositories/github-watched-repo-lookups.ts",
+      "lines": 24,
+      "sha256": "efd6b45d927224ce17fb9d819a4c8d325dcde4cacf1e7c7e75ca7238b18d46c4",
+      "contract": "Key/id SELECT/get/map/null, lower owner/repo, exact Space/id, parse failures and transaction visibility",
+      "exclusionReason": "Previously merged constructor-free data module; exact full-module hash and interface contracts pinned, excluded by explicit Neo boundary approval"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/github-watched-repos-read.ts",
+      "lines": 44,
+      "sha256": "4c5945ea131459249bb302cdb27ee6a014fc6aadd5d15f9d402b3226972e6a95",
+      "contract": "Complete flags/null/default/cursor mapper and ordered SELECT/list; no initialization/writes",
+      "exclusionReason": "Previously merged constructor-free data module; exact full-module hash and interface contracts pinned, excluded by explicit Neo boundary approval"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/github-space-settings-read.ts",
+      "lines": 26,
+      "sha256": "821cdbd20d30a954c0aa6c1c82ad8ff88e098abbd76e522e4072dce26d240681",
+      "contract": "Enabled/polling/filter getters with legacy absent-row defaults; no initialization/writes",
+      "exclusionReason": "Previously merged constructor-free data module; exact full-module hash and interface contracts pinned, excluded by explicit Neo boundary approval"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/github-cursor-persist.ts",
+      "lines": 8,
+      "sha256": "8ec4673c7f96429b885da9367af90c023bf161668f49607c799ea845658d3bae",
+      "contract": "Prepare, JSON serialization, existing clock, run(JSON,time,id); void/caller rollback, no init/retry",
+      "exclusionReason": "Previously merged constructor-free data module; exact full-module hash and interface contracts pinned, excluded by explicit Neo boundary approval"
+    }
+  ],
+  "stablePublicModules": [
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
+      "sha256": "ce078018949e68caec77f649fa06fefb378fbcd696c7ee247764ea8f97c6b414"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/extension-config-store.ts",
+      "sha256": "30f39909917d79db49f790e89ffcfc9c1b64d15dd27a69a19ed35564bd9d517e"
+    },
+    {
+      "file": "packages/daemon/src/app.ts",
+      "sha256": "d7cba475e25e9a0113f91ed8cb2188ea48fb97da1572ca0da50e94e5bdb4470f"
+    }
+  ],
+  "delta": [
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "lines": 56
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/github-watched-update-persist.ts",
+      "lines": 64
+    },
+    {
+      "file": "scripts/deno-smoke.sh",
+      "lines": 1
+    }
+  ],
+  "updateStatementAstSha256": "518d3bce3a744bf6edac98a02687145f8da0ad09131e261db4e6f6cc19a85baa",
+  "repositoryOnlyImportAndUpdateDelegation": true,
+  "allOtherRepositoryUnitsAndPolicyUnchanged": true,
+  "netPrepare": 0,
+  "netRun": 0,
+  "baselineIncrease": false,
+  "mainThreadMovementClaim": false,
+  "authorization": "Neo explicitly approved these four previously merged constructor-free modules (102 lines) outside fresh 199, total known 301. Pin full-module hashes/contracts and test interfaces. Stop/report if review challenges envelope; no argument or widening.",
+  "contract": "Existing-row UPDATE only, exact SQL/binds/flag/default/COALESCE/null behavior, existing row identity, supplied time, void result and caller transaction retained. No helper clock, UUID, constructor, retry, new transaction or public activation.",
+  "auditLimit": "No full public/shared-barrel/runtime transitive closure claim. INSERT, remaining UPSERT/cursor/reset/webhook policy and original main-side callbacks remain in place. Later INSERT, reduced UPSERT, atomic command and public wiring are separate gated and remeasured slices."
+}
