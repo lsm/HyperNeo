@@ -44,6 +44,7 @@ export type NeoTodoBlocker =
   | 'failure'
   | 'question'
   | 'needs-human'
+  | 'environment'
   | 'stalled'
   | 'held';
 

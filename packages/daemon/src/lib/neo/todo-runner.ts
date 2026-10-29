@@ -669,6 +669,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           result.ref.daemon === ref.daemon
         );
       });
+      if (dispatch && turn === turns.reduce((last, item) => (item.at >= last.at ? item : last))) {
+        const receipt = (await deps.write(neoTodoRunnerWrites, {
+          method: 'blocker',
+          args: [todo, ref, dispatch.id, turn, Date.now()],
+        })) as ReturnType<InstanceType<typeof neoTodoRunnerWrites.Repository>['blocker']>;
+        if (receipt.changed) deps.changed();
+      }
       if (dispatch)
         await deliverNeoTurnReport(
           ask,
@@ -738,7 +745,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         const ref = sessions.readRef(todo.id);
         const ask = store.getAsk(todo.askId);
         return ((todo.state === 'doing' && todo.report) ||
-          (todo.state === 'blocked' && ['worker', 'stalled'].includes(todo.blockedBy ?? ''))) &&
+          (todo.state === 'blocked' &&
+            ['worker', 'stalled', 'environment'].includes(todo.blockedBy ?? ''))) &&
           ref &&
           ask?.status === 'open'
           ? { value: { ref, ask } }
@@ -757,6 +765,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           ...(sent?.receipt ? { receipt: sent.receipt } : {}),
         });
         await observe(todo.id, outcome, target.ref);
+        if (todo.blockedBy === 'environment') return;
         const live = readDriverLive(outcome);
         await sessions.write(
           'recordProgress',

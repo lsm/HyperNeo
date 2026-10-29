@@ -300,11 +300,12 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   }
 
   recordNudge(todoId: string, incident: FollowThroughIncident): void {
+    const blockerReport = incident.blockerReport ?? this.readNudge(todoId)?.blockerReport;
     this.db
       .prepare(
         "INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, 'core', 'nudge', ?) ON CONFLICT(todo_id, pack, key) DO UPDATE SET value_json = excluded.value_json"
       )
-      .run(todoId, JSON.stringify(incident));
+      .run(todoId, JSON.stringify({ ...incident, ...(blockerReport ? { blockerReport } : {}) }));
   }
 
   doingTodoOn(

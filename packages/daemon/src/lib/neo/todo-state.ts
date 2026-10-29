@@ -93,7 +93,7 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
       !['done', 'closed_unverified', 'failed'].includes(todo.state) &&
       !(
         todo.state === 'blocked' &&
-        ['failure', 'stalled', 'held', 'check'].includes(todo.blockedBy ?? '')
+        ['failure', 'stalled', 'held', 'check', 'environment'].includes(todo.blockedBy ?? '')
       )
     ) {
       if (

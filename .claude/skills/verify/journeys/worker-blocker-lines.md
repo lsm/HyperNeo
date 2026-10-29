@@ -13,5 +13,5 @@ The real work.status adapter and Neo refresh must turn an exact final
 `Blocked (needs_human): reason` line into a needs-human todo and open reply
 card. An exact environment line becomes an environment blocker without a
 human card. A marker before a different last line keeps ordinary behavior.
-Read the resulting public snapshot and retain blocker-lines.json and proof.log.
+Read the resulting public snapshot, answer its synthetic human card through the public RPC, and verify delivery to the assigned worker without reopening the card on report replay. Retain blocker-lines.json and proof.log.
 No model reasoning or GUI rendering is claimed. All owned resources close in finally.

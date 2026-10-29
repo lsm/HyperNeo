@@ -43,6 +43,13 @@ try {
   else assert.notEqual(current?.blockedBy,'needs-human');
  }
  report.snapshot=await rpc('neo.snapshot',{});
+ const humanQuestion=service.todos.listQuestions('needs_human').find(q=>q.state==='open')!;
+ report.answer=await rpc('neo.question.answer',{questionId:humanQuestion.id,answer:'Synthetic approval granted'});
+ await service.refreshDriverWork();
+ const after=service.todos.getTodo('todo-needs_human');
+ assert.notEqual(after?.blockedBy,'needs-human');
+ assert.equal(service.todos.listQuestions('needs_human').filter(q=>q.state==='open').length,0);
+ report.afterAnswer={todo:after,routes:service.todos.questionAnswers.list(humanQuestion.id)};
  assert(JSON.stringify(report.snapshot).includes('Awaiting synthetic approval'));
  report.passed=true;
 } catch(error){report.error=String(error);throw error;}
