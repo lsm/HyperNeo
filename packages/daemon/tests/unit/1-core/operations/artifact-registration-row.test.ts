@@ -10,11 +10,22 @@ describe('artifact registration committed row admission', () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'sdk-backup-bind-')));
     try {
       runArtifactProofChild(
-        fileURLToPath(new URL('../../../../../../.claude/skills/verify/sdk-backup-directory-umask.ts', import.meta.url)),
+        fileURLToPath(
+          new URL(
+            '../../../../../../.claude/skills/verify/sdk-backup-directory-umask.ts',
+            import.meta.url
+          )
+        ),
         root
       );
-      expect(JSON.parse(readFileSync(join(root, 'evidence/permissions.json'), 'utf8'))).toMatchObject({
-        observedMask: '177', directoryMode: '700', backupMode: '600', socketMode: '600', error: '',
+      expect(
+        JSON.parse(readFileSync(join(root, 'evidence/permissions.json'), 'utf8'))
+      ).toMatchObject({
+        observedMask: '177',
+        directoryMode: '700',
+        backupMode: '600',
+        socketMode: '600',
+        error: '',
         backup: { quickCheck: 'ok', rows: 0 },
       });
     } finally {

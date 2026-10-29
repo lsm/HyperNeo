@@ -1,5 +1,6 @@
 import { runtimeWorkerUrl } from '../lib/runtime-worker-url.ts';
 import { randomUUID } from 'node:crypto';
+import { mkdirSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type { Database } from './sqlite-compat.ts';
 
@@ -74,6 +75,7 @@ export class SdkBodyCopyTerminalError extends Error {
 }
 
 export function sdkBodyBackupChannel(dbPath: string, backupPath: string, signal: AbortSignal) {
+  mkdirSync(dirname(backupPath), { recursive: true, mode: 0o700 });
   const worker = new Worker(
     runtimeWorkerUrl(
       './sdk-message-body-backup-worker.ts',
