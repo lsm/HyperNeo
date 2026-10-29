@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import { subscribeToStructuredLogs, type StructuredLogEvent } from '@hyperneo/shared';
-import { createNeoPublisher } from '../../../../src/lib/neo/publication-operation.ts';
+import {
+  createNeoPublisher,
+  createNeoPublicationOperation,
+} from '../../../../src/lib/neo/publication-operation.ts';
+import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
@@ -58,6 +63,29 @@ describe('Neo publication without runtime input attribution', () => {
     });
   });
   afterEach(() => mailbox.close());
+
+  test('published and retried messages tell the model no assistant text is needed unless a record was requested', async () => {
+    const handler = createOperationMcpHandler(
+      createOperationRegistry([createNeoPublicationOperation(publish)]),
+      () => caller
+    );
+    const send = (input = draft) => handler({ name: 'neo.publication.publish', input });
+    const first = JSON.parse((await send()).content[0].text);
+    expect(first).toMatchObject({
+      accepted: true,
+      created: true,
+      guidance:
+        'Already shown to the user; no assistant text this turn except a requested transcript/record or required scheduled-wake summary.',
+    });
+    const retry = JSON.parse((await send()).content[0].text);
+    expect(retry).toMatchObject({ accepted: true, created: false, guidance: first.guidance });
+    expect(ledger.list(conversationId)).toHaveLength(1);
+    const conflict = JSON.parse(
+      (await send({ ...draft, fullText: 'A different message.' })).content[0].text
+    );
+    expect(conflict.accepted).toBe(false);
+    expect(conflict.guidance).toBeUndefined();
+  });
 
   test('timestamps publication after the durable write without logging its text', async () => {
     const logs: StructuredLogEvent[] = [];
