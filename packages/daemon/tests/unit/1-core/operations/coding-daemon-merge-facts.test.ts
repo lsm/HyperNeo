@@ -93,6 +93,20 @@ describe('readCodingDaemonMergeFacts', () => {
     });
     expect(calls.at(-1)).toContain('headRefOid,state');
   });
+  test('accepts a mixed-case GitHub hostname without GH_HOST', async () => {
+    const configured = process.env.GH_HOST;
+    delete process.env.GH_HOST;
+    try {
+      const canonical = await readCodingDaemonMergeFacts(db, url, spawn);
+      expect(canonical.ok).toBe(true);
+      expect(
+        await readCodingDaemonMergeFacts(db, url.replace('github.com', 'GitHub.com'), spawn)
+      ).toEqual(canonical);
+    } finally {
+      if (configured === undefined) delete process.env.GH_HOST;
+      else process.env.GH_HOST = configured;
+    }
+  });
   test.each(['/labels', '/reviews', 'checks', 'graphql'])(
     'fails closed on an unreadable %s',
     async (part) => {
