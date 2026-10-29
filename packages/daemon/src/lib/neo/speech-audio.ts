@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { Logger } from '../logger.ts';
+import { voiceDiagnostic } from '../voice/diagnostics.ts';
 type Target = { id: string; sessionId: string; clientId: string; text: string };
 
 export class NeoSpeechAudio {
@@ -64,12 +65,15 @@ export class NeoSpeechAudio {
   }
 
   start(target: Target, voice: string): void {
+    const timing = { speechId: target.id, sessionId: target.sessionId, clientId: target.clientId };
+    voiceDiagnostic('voice.tts.queued', { ...timing, atMs: Date.now() });
     const controller = new AbortController();
     this.jobs.set(target.id, controller);
     const expires = setTimeout(() => controller.abort(), 180_000);
     const job = this.serial
       .then(async () => {
         controller.signal.throwIfAborted();
+        voiceDiagnostic('voice.tts.request_started', { ...timing, atMs: Date.now() });
         const response = await this.request(this.url('/v1/audio/speech'), {
           method: 'POST',
           signal: controller.signal,
@@ -96,6 +100,8 @@ export class NeoSpeechAudio {
             const { done, value } = await reader.read();
             if (done) break;
             controller.signal.throwIfAborted();
+            if (!bytes && value.byteLength)
+              voiceDiagnostic('voice.tts.first_chunk', { ...timing, atMs: Date.now() });
             bytes += value.byteLength;
             if (bytes > 5_760_000) throw new Error('speech_audio_too_long');
             for (let offset = 0; offset < value.length; offset += 3840) {
@@ -109,6 +115,8 @@ export class NeoSpeechAudio {
                 })
               )
                 throw new Error('speech_client_disconnected');
+              if (seq === 1)
+                voiceDiagnostic('voice.tts.first_chunk_sent', { ...timing, atMs: Date.now() });
             }
           }
           if (!bytes || bytes % 2) throw new Error('invalid_speech_audio');
@@ -121,12 +129,14 @@ export class NeoSpeechAudio {
             })
           )
             throw new Error('speech_client_disconnected');
+          voiceDiagnostic('voice.tts.finished', { ...timing, atMs: Date.now() });
         } finally {
           await reader.cancel().catch(() => {});
         }
       })
       .catch(async () => {
         if (!this.jobs.has(target.id)) return;
+        voiceDiagnostic('voice.tts.failed', { ...timing, atMs: Date.now() });
         new Logger('NeoSpeechAudio').warn('Speech synthesis failed', {
           id: target.id,
           reason: controller.signal.aborted ? 'deadline_exceeded' : 'upstream_or_audio_error',

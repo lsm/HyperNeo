@@ -39,11 +39,12 @@ serial queue, with one upstream request at a time; terminal acknowledgments and
 disconnect abort it. No audio or credentials are persisted. Phone playback and
 buffering are separately proved by the native spoken-replies journey.
 
-Voice conversation instructions belong in NEO_ROOT_TURN_END, not every human
-message. The replay also sends real neo.message.send input through the RPC door
-and reads its stored SDK prompt: require only [input: live_voice; speech: on],
-with original public human content unchanged and no repeated tool instructions.
-The input/speech fact is source and playback state, not authority to speak.
+The replay also sends real neo.message.send input through the RPC door and reads
+its stored SDK prompt: require [input: live_voice; speech: on] followed in that
+same text block by the human-approved speak-first instruction. Every live voice
+input with speech on carries it; typed, dictation and speech-off inputs do not.
+The focused intake suite checks that matrix. Preserve original human content and
+the existing system prompt; this is a per-input instruction, not a tool gate.
 
 Production synthesis uses the operator-provided HYPERNEO_SPEECH_URL base, with
 /v1/audio/speech and /v1/audio/voices beneath it; the phone does not configure
@@ -80,3 +81,21 @@ Include neo-refusals.test.ts and operation-name-families.test.ts with the focuse
 speech/intake suite: catalog rejection codes need an actionable shared explanation,
 and the registered speech operation names must remain sorted. The complete static
 check alone does not execute those runtime registration guards.
+
+For server latency diagnostics, require voice-timing.json from the same real
+WebSocket/MCP replay. One speech id must connect queued, request_started,
+first_chunk, first_chunk_sent and finished; a live input has its message id at
+durable acceptance. The focused speech/intake/publication tests also hold the
+writer or audio source to prove timestamps occur at their actual boundaries,
+exclude text/PCM and preserve retry deduplication. Publication persistence and
+playing receipts are server observations, never screen-visible or first-played
+timestamps. Query exported timing events or explicitly selected daemon JSONL
+files with voice-timing-read.py; it only prints fixed stages, ids and times.
+No phone timing or exact input-to-say attribution is inferred from proximity.
+
+The real MCP say result must carry speech-only guidance after successful queued,
+playing or played admission: do not duplicate the utterance as screen/final text,
+but still publish substantive results separately. Submitted is not confirmed
+playback. Rejections, cancelled/failed retries and non-say operations must not
+carry that guidance. Keep this as model guidance, without blocking publications
+or adding timers; do not claim a synthetic tool result proves model compliance.

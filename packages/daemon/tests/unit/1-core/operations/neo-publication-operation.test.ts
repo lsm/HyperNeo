@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
+import { subscribeToStructuredLogs, type StructuredLogEvent } from '@hyperneo/shared';
 import { createNeoPublisher } from '../../../../src/lib/neo/publication-operation.ts';
 import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
@@ -57,6 +58,36 @@ describe('Neo publication without runtime input attribution', () => {
     });
   });
   afterEach(() => mailbox.close());
+
+  test('timestamps publication after the durable write without logging its text', async () => {
+    const logs: StructuredLogEvent[] = [];
+    const unsubscribe = subscribeToStructuredLogs((event) => {
+      if (event.message === 'voice.publication.persisted') logs.push(event);
+    });
+    let release = () => {};
+    held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    try {
+      const pending = publish(draft, caller);
+      await Promise.resolve();
+      expect(logs).toHaveLength(0);
+      release();
+      const receipt = await pending;
+      expect(receipt.accepted).toBe(true);
+      await publish(draft, caller);
+      expect(logs).toHaveLength(1);
+      expect(logs[0].metadata).toMatchObject({
+        sessionId: root.sessionId,
+        requestId: draft.requestId,
+        atMs: expect.any(Number),
+      });
+      expect(JSON.stringify(logs)).not.toContain(draft.fullText);
+    } finally {
+      release();
+      unsubscribe();
+    }
+  });
 
   test('publication notifications wait for the durable write receipt', async () => {
     let release = () => {};

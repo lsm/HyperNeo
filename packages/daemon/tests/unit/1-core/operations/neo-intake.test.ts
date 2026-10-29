@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import type { Session } from '@hyperneo/shared';
+import { subscribeToStructuredLogs, type Session, type StructuredLogEvent } from '@hyperneo/shared';
 import {
   admitNeoIntake,
   neoIntakeMessage,
@@ -32,6 +32,32 @@ const target = { id: input.sessionId, status: 'active' as const, config: {} };
 const binding = { sessionId: input.sessionId, projectId: null, kind: 'neo' as const };
 
 describe('Neo intake gates', () => {
+  test.each([
+    ['live_voice', true, true],
+    ['live_voice', false, false],
+    ['live_voice', undefined, false],
+    ['text', true, false],
+    ['dictation', true, false],
+  ] as const)(
+    'speak-first instruction for %s with speech %s is %s',
+    (inputMode, speech, enabled) => {
+      const instruction =
+        "Voice input: before any other tool call or work, call neo.speech.say with one short spoken reply to what the human just said (acknowledge it, say what you'll do, or answer it if it's quick). Then continue.";
+      const message = neoIntakeMessage({ ...input, inputMode, speech });
+      const blocks = message.message.content;
+      expect(Array.isArray(blocks)).toBe(true);
+      const marker = Array.isArray(blocks)
+        ? blocks.find((block) => block.type === 'text' && block.text.startsWith('[input:'))
+        : null;
+      expect(marker?.type === 'text' && marker.text.includes(instruction)).toBe(enabled);
+      if (enabled)
+        expect(marker).toEqual({
+          type: 'text',
+          text: `[input: live_voice; speech: on]\n${instruction}`,
+        });
+      expect(message.humanContent).toEqual([{ type: 'text', text: input.content }]);
+    }
+  );
   test('voice state reaches the model as one short fact without repeating prompt instructions', () => {
     const spoken = neoIntakeMessage({ ...input, speech: true });
     expect(JSON.stringify(spoken.message.content)).toContain('[speech: on]');
@@ -122,6 +148,26 @@ describe('durable Neo intake operation', () => {
       caller
     );
   }
+  test('timestamps one accepted live input without its content or duplicate retries', async () => {
+    const logs: StructuredLogEvent[] = [];
+    const unsubscribe = subscribeToStructuredLogs((event) => {
+      if (event.message === 'voice.input.accepted') logs.push(event);
+    });
+    try {
+      const voice = { ...input, inputMode: 'live_voice', speech: true };
+      await invoke(voice);
+      await invoke(voice);
+      expect(logs).toHaveLength(1);
+      expect(logs[0].metadata).toMatchObject({
+        sessionId: input.sessionId,
+        messageId: input.requestId,
+        atMs: expect.any(Number),
+      });
+      expect(JSON.stringify(logs)).not.toContain(input.content);
+    } finally {
+      unsubscribe();
+    }
+  });
   test('an archived root session rejects the ask before any write', async () => {
     sessions.set(input.sessionId, { ...target, status: 'archived' as never });
     const registry = createOperationRegistry([createNeoIntakeOperation(db, repo)]);
