@@ -15,8 +15,10 @@ export class NeoSpeechAudio {
 
   private url(path: string): URL {
     if (!this.base) throw new Error('speech_backend_not_configured');
-    const url = new URL(this.base.replace(/\/$/, '') + path);
+    const address = this.base.replace(/\/$/, '') + path;
+    const url = URL.canParse(address) ? new URL(address) : null;
     if (
+      !url ||
       url.username ||
       url.password ||
       url.search ||

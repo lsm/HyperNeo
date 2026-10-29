@@ -67,3 +67,11 @@ same typed unavailable result through the real WebSocket door, restarts only
 that listener and requires catalog recovery. Focused tests also require typed
 unavailable results for fetch connection errors and timeout/abort rejections;
 unexpected infrastructure errors still fail the operation.
+
+`upstream <explicit-base-url>` mode checks an independently managed synthesis
+service. Only run it with an explicitly authorized backend; it never changes
+or stops that backend. Both the 503 toggle and listener-close failure injection
+are limited to local synthetic mode. Upstream mode checks a healthy catalog and
+streaming, and reports both injected-failure evidence flags as false. Invalid
+backend configuration includes malformed URLs and missing schemes; both must
+return invalid_speech_backend without attempting a network request.

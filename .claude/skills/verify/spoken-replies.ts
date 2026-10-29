@@ -141,11 +141,11 @@ try {
     assert.equal(clients[1].events.length,0);
     assert((await call('listen',{sessionId,enabled:true,audio:true,voice:'vivian'},1)).ok);
     assert((await call('catalog',{},1)).ok);
-    catalogAvailable=false;
-    assert.deepEqual(await call('catalog',{},1),{ok:false,reason:'speech_backend_unavailable'});
-    catalogAvailable=true;
-    assert((await call('catalog',{},1)).ok);
     if (!upstream) {
+      catalogAvailable=false;
+      assert.deepEqual(await call('catalog',{},1),{ok:false,reason:'speech_backend_unavailable'});
+      catalogAvailable=true;
+      assert((await call('catalog',{},1)).ok);
       fixture.closeAllConnections();
       await new Promise<void>(done=>fixture.close(()=>done()));
       assert.deepEqual(await call('catalog',{},1),{ok:false,reason:'speech_backend_unavailable'});
@@ -162,7 +162,7 @@ try {
     const audioBytes=Buffer.concat(frames.map(event=>Buffer.from(event.pcm,'base64'))).length;
     if(!upstream) assert.equal(audioBytes,153600); else assert(audioBytes>0);
     assert((await call('ack',{sessionId,id:streamed.id,state:'played'},1)).ok);
-    console.log(JSON.stringify({voiceMetadataShort:true, catalogTypedRejection:true, catalogConnectionRefused:!upstream, serverAudioStreaming:true, upstream:upstream?.origin, audioBytes, chunks:frames.length, passed:true, realWebSocket:true, mcp:true, writerWorker:true, unrelatedClientSilent:true, noReplay:true, fullQueueRetry:true, ...evidence()}));
+    console.log(JSON.stringify({voiceMetadataShort:true, catalogTypedRejection:!upstream, catalogConnectionRefused:!upstream, serverAudioStreaming:true, upstream:upstream?.origin, audioBytes, chunks:frames.length, passed:true, realWebSocket:true, mcp:true, writerWorker:true, unrelatedClientSilent:true, noReplay:true, fullQueueRetry:true, ...evidence()}));
   }
 } finally {
   writeFileSync(join(run,'evidence/spoken-replies.json'),JSON.stringify(evidence(),null,2));
