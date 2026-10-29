@@ -1,0 +1,30 @@
+{
+  "redCommit": "2b1634f7c1548ef2d618755b0af00830e1a87f10",
+  "redUnitTests": {
+    "passed": 2,
+    "failed": 4,
+    "failure": "Constructor-free GitHub watched INSERT is unavailable"
+  },
+  "redNative": {
+    "legacyPublicRpcPassed": true,
+    "failure": "Constructor-free GitHub watched INSERT is unavailable"
+  },
+  "greenUnitAndNativeParentTests": {
+    "passed": 270,
+    "files": 3
+  },
+  "strictTypeScript6": "pass",
+  "repositoryCheck": "pass",
+  "bunNative": "pass",
+  "denoNative": "pass",
+  "proofHarnessCorrection": "Normalize scratch SQLite row prototypes across runtimes; compare every field unchanged",
+  "productionLines": 72,
+  "smokeRegistrationLines": 1,
+  "freshEnvelope": 146,
+  "excludedStableLines": 166,
+  "totalKnownLines": 312,
+  "mainThreadMovementClaim": false,
+  "scope": "Verbatim INSERT extraction only; UUID/time/Space fallback remain caller-side; existing UPDATE and activation/reset policy unchanged",
+  "debt": "https://github.com/lsm/HyperNeo/issues/9418",
+  "laterAdditionalExclusionsRequireNeoDecision": true
+}

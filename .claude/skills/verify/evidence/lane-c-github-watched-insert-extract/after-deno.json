@@ -1,0 +1,13 @@
+{
+  "mainThreadMovementClaim": false,
+  "boundary": "Verbatim new-row INSERT extraction; fresh envelope 146, excluded audited stable data modules 166, total known 312. Public writes remain main-side; full public/shared-barrel/runtime closure unclaimed",
+  "publicRpcMs": 3.3056669999998576,
+  "publicRpc": {
+    "mainInserts": 2,
+    "newInsertsObserved": true,
+    "callerUuidTimeFallbackAndCursorPreserved": true,
+    "existingUpdateAndSavedConfigPreserved": true
+  },
+  "constructorFreeSuppliedInputsFailureAndRollbackPreserved": true,
+  "pass": true
+}
