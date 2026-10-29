@@ -1498,8 +1498,7 @@ export class QueryRunner {
         episode =
           episodeId &&
           !(error instanceof QueryFailureCapError) &&
-          !isNetworkUnreachableError(errorMessage) &&
-          !errorMessage.includes(STREAM_STALL_ERROR)
+          !isNetworkUnreachableError(errorMessage)
             ? await this.failures.failure(errorMessage, episodeId)
             : session.metadata.queryFailureEpisode;
       }

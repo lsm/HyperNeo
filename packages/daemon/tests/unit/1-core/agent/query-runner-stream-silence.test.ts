@@ -286,7 +286,7 @@ describe('QueryRunner stream silence watchdog', () => {
     } as unknown as SDKMessage;
   }
 
-  it('retries a silent request once, then holds the turn for the network without latching', async () => {
+  it('retries a silent request once, then holds the turn for the network while stalls still count', async () => {
     const { runner, ctx } = createRunner('s1');
     const outage = mock(async (_errorText: string) => true);
     ctx.onNetworkOutage = outage;
@@ -302,8 +302,8 @@ describe('QueryRunner stream silence watchdog', () => {
     expect(spawnNexts.length).toBe(2);
     expect(String(outage.mock.calls[0][0])).toContain('Model stream stalled');
     expect(handleErrorSpy.mock.calls.length).toBe(0);
-    expect(ctx.session.metadata.queryFailureEpisode?.failures ?? 0).toBe(0);
-    expect(ctx.session.metadata.queryFailureEpisode?.failed ?? false).toBe(false);
+    expect(ctx.session.metadata.queryFailureEpisode?.failures).toBe(2);
+    expect(ctx.session.metadata.queryFailureEpisode?.failed).toBe(false);
   });
 
   it('never cuts a slow request that keeps streaming', async () => {
