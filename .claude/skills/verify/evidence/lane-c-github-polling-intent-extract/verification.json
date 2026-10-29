@@ -1,0 +1,22 @@
+{
+  "redCommit": "a0fdc707196a38e2204dc32b23a2a9bd7f443acf",
+  "red": {
+    "legacyCharacterizationPassed": true,
+    "missingHelperContractsFailed": 4,
+    "nativePublicBaselinePassed": true,
+    "nativeFailedAt": "missing SQL helper"
+  },
+  "green": {
+    "newUnitContracts": 5,
+    "newNativeParent": 1,
+    "existingGitHubExtensionTests": 263,
+    "strictTypeScript6": "pass; new helper, repository and two new tests",
+    "rootCheck": "pass",
+    "bunNative": "after-bun.json",
+    "denoNative": "after-deno.json"
+  },
+  "mainThreadMovementClaim": false,
+  "scope": "Verbatim SQL extraction; public polling and snapshot mutations remain on main. Clock, bindings, result, flags, conflict and caller rollback preserved. Constructor/backfill and watched/cursor policy untouched. Full transitive public closure not audited.",
+  "deploymentSmoke": "Neo-owned, not run",
+  "cleanup": "Synthetic sockets/processors/owned app and scratch DB closed; wrapper temporary data removed; live daemon/build untouched"
+}

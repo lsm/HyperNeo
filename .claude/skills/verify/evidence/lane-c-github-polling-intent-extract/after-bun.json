@@ -1,0 +1,26 @@
+{
+  "mainThreadMovementClaim": false,
+  "boundary": "Verbatim polling-intent UPSERT extraction only; public polling and saved config writes remain main-side, constructor/backfill unchanged",
+  "publicRpcMs": 1.171583000000055,
+  "publicRpc": {
+    "replies": [
+      {
+        "spaceId": "synthetic-polling-intent",
+        "pollingEnabled": false
+      },
+      {
+        "spaceId": "synthetic-polling-intent",
+        "pollingEnabled": true
+      },
+      {
+        "spaceId": "synthetic-polling-intent-empty",
+        "pollingEnabled": false
+      }
+    ],
+    "mainStatementRuns": 3,
+    "snapshotAndCreationTimesPreserved": true,
+    "enabledAndFilterFlagPreserved": true
+  },
+  "suppliedTimeVoidResultAndCallerRollbackPreserved": true,
+  "pass": true
+}
