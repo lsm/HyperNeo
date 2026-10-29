@@ -159,7 +159,7 @@ export class CodingPrEventRepository {
       .run(key);
   }
 
-  route(row: Pick<CodingPrTransition, 'repo' | 'number'>): { owner: WorkRef | null } {
+  route(row: Pick<CodingPrTransition, 'repo' | 'number'>) {
     const found = this.db
       .prepare(
         `SELECT owner
@@ -167,6 +167,7 @@ export class CodingPrEventRepository {
       )
       .get(row.repo, row.number) as { owner: string | null } | null;
     return {
+      mergeBy: new CodingPrLedgerRepository(this.db).policy(row.repo).mergeBy,
       owner:
         codingRepoWatched(this.db, row.repo) && found?.owner
           ? (JSON.parse(found.owner) as WorkRef)
@@ -188,7 +189,11 @@ export async function deliverCodingPrEvents(
     }
     for (const row of await repo.pendingEventsLater()) {
       const event = planCodingPrEvent(row);
-      const owner = (await repo.routeLater(row)).owner;
+      const { owner, mergeBy } = await repo.routeLater(row);
+      if (row.state === 'approved_green' && mergeBy === 'daemon') {
+        if (owner) await repo.acceptEvent(row, owner);
+        continue;
+      }
       if (!owner) continue;
       const told = event ? await deps.tell(owner, event.key, event.text).catch(() => false) : true;
       if (told) await repo.acceptEvent(row, owner);

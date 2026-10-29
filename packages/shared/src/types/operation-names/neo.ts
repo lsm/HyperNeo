@@ -8,6 +8,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.ask.settle',
   'neo.coding.assign',
   'neo.coding.merge.prepare',
+  'neo.coding.merge.human',
   'neo.coding.pr.file',
   'neo.coding.result',
   'neo.coding.smoke',

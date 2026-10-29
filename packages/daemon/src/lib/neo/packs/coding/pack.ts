@@ -1,3 +1,5 @@
+import { createCodingHumanMergeOperation } from './human-merge-operation.ts';
+import { createCodingDaemonMergeSweep } from './daemon-merge-sweep.ts';
 import { codingWatchedRepos, initializeCodingWatches } from './watched-repos.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { createCodingPrFileOperation } from './pr-file-operation.ts';
@@ -56,6 +58,12 @@ export function createCodingPack(deps: {
   prepareMerge: typeof prepareCodingMerge;
   review: typeof runCodingReview;
 } {
+  const mergeSweep = createCodingDaemonMergeSweep(
+    deps.database,
+    deps.prLedger,
+    deps.prEvents,
+    deps.prSweepDeps
+  );
   const readClaudeOwners = deps.readClaudeOwners ?? createCodingClaudeOwnerReader();
   const todos = createCodingTodoPack(
     deps.todoPrs,
@@ -70,6 +78,7 @@ export function createCodingPack(deps: {
     recordSmoke: recordCodingSmoke,
     prepareMerge: prepareCodingMerge,
     operations: [
+      createCodingHumanMergeOperation(),
       createCodingWritePlanOperation(deps.database),
       createCodingPrFileOperation(deps.database),
       createCodingGithubReadOperation({
@@ -110,7 +119,7 @@ export function createCodingPack(deps: {
         scope: 'repo',
         type: { kind: 'enum', values: ['owner', 'daemon'] },
         default: 'owner',
-        ask: 'Who should merge eligible PRs? Owner is the default; daemon admission is built, execution is not enabled yet.',
+        ask: 'Who should merge eligible PRs? Owner is the default; daemon squash-merges eligible PRs after fresh gates pass.',
       },
       mergePolicy: {
         label: { en: 'Merge policy', 'zh-Hans': '合并规则' },
@@ -176,6 +185,7 @@ export function createCodingPack(deps: {
         now
       );
       await wakeCodingUnownedPrs(deps.prEvents, deps.prSweepDeps.wake, now);
+      await mergeSweep(now);
       await sweepCodingPrs(deps.prSweep, deps.prSweepDeps, now);
     },
     stats: async (now) => ({

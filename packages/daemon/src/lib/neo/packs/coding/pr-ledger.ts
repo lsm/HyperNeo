@@ -421,7 +421,11 @@ export class CodingPrLedgerRepository {
   }
 
   pollContext(repo: string) {
-    return { watched: this.watches(repo), health: this.health.read(repo) };
+    return {
+      watched: this.watches(repo),
+      health: this.health.read(repo),
+      policy: this.policy(repo),
+    };
   }
 
   pollSnapshotCurrent(repos: readonly string[]) {
