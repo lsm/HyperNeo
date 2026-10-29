@@ -292,6 +292,19 @@ describe('coding merge operation', () => {
     f.data.reviews.push([{ ...human, state: 'DISMISSED' }]);
     expect((await f.prepare()).accepted).toBe(false);
   });
+  test.each(['README.md', '*.md'])(
+    'bare path %s requires human signoff without labels',
+    async (pattern) => {
+      const f = fixture();
+      f.stage('qa');
+      f.data.pr.files = [{ path: 'README.md' }];
+      expect((await f.prepare()).accepted).toBe(true);
+      f.setting('humanSignoff', [pattern]);
+      expect((await f.prepare()).accepted).toBe(false);
+      f.data.reviews.push([{ ...f.data.reviews[0][0], user: { login: 'human', type: 'User' } }]);
+      expect((await f.prepare()).accepted).toBe(true);
+    }
+  );
   test('label rules apply only to matching labels; truncated files stay closed', async () => {
     const f = fixture();
     f.stage('qa');

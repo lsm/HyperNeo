@@ -78,6 +78,13 @@ describe('decideCodingDaemonMerge', () => {
     );
     expect(decideCodingDaemonMerge({ ...facts, labels: null }, scoped).kind).toBe('read_failure');
   });
+  test.each(['README.md', '*.md'])('bare path %s still triggers daemon signoff', (pattern) => {
+    const scoped = { ...policy, humanSignoff: [pattern] };
+    expect(decideCodingDaemonMerge(facts, scoped).kind).toBe('merge');
+    expect(
+      decideCodingDaemonMerge({ ...facts, files: ['README.md'], labels: [] }, scoped).kind
+    ).toBe('needs_human_signoff');
+  });
   test('holds path matches and unreadable facts closed', () => {
     const scoped = { ...policy, humanSignoff: ['docs/design/**'] };
     expect(

@@ -61,6 +61,20 @@ try {
     { threads: { ...threads, unresolvedThreadUrls: [`${url}#finding`] } },
     { changedHead: 'b'.repeat(40) },
   ]) { publish(bad); assert.equal((await prepare()).accepted, false, JSON.stringify(bad)); }
+  const barePathProof = [];
+  for (const pattern of ['README.md', '*.md']) {
+    await setting('humanSignoff', []);
+    publish({ pr: { ...pr, files: [{ path: 'README.md' }], labels: [] } });
+    assert.equal((await prepare()).accepted, true, 'Control: bot and CI admit with no signoff rule');
+    await setting('humanSignoff', [pattern]);
+    const refused = await prepare();
+    assert.equal(refused.accepted, false, `${pattern}: bare path requires a human even without labels`);
+    publish({ pr: { ...pr, files: [{ path: 'README.md' }], labels: [] }, reviews: [reviews, [{ ...reviews[0], user: { login: 'human', type: 'User' }, html_url: `${url}#human` }]] });
+    const withHuman = await prepare();
+    assert.equal(withHuman.accepted, true, `${pattern}: current human approval satisfies signoff`);
+    barePathProof.push({ pattern, withoutRule: true, withoutHuman: refused, withHuman, labels: [] });
+  }
+  evidence.push({ barePathProof, productionChangeRequired: false });
   publish(); await setting('humanSignoff', ['src/**']);
   assert.equal((await prepare()).accepted, false, 'Applicable human sign-off required');
   publish({ reviews: [[{ ...reviews[0], user: null }], reviews, [{ ...reviews[0], user: { login: 'human', type: 'User' }, html_url: `${url}#human` }]] });

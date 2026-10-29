@@ -21,6 +21,13 @@ findings, missing applicable human sign-off and a head changed at the final read
 Only a passing case records a receipt and returns the exact SHA-pinned manual
 squash command. It executes no merge and leaves the todo doing.
 
+Bare path globs `README.md` and `*.md` must still require human approval when
+README.md changes and the PR has no labels. The real RPC first admits a control
+with no sign-off rule, refuses with each bare path rule, then admits only after
+a current non-author human approval. `observed.json` retains `barePathProof`.
+This pins the existing path behavior alongside the actual-label regression;
+bare patterns participate in both file and label matching.
+
 Keep `evidence/observed.json` (`verified: true`) and `evidence/gh.jsonl` outside
 the worktree. The fixture preserves a null-user historical review and puts the identified bot
 and human approvals on later pages. Use `coding-review-pages.md` for installed
