@@ -1,0 +1,42 @@
+{
+  "redCommit": "175f0291ea010141a6574a2b4baf5038bab9ab5d",
+  "redUnitTests": {
+    "passed": 1,
+    "failed": 7,
+    "failure": "Atomic GitHub polling writer is unavailable"
+  },
+  "redNative": {
+    "publicBaselineReader": true,
+    "mainGuardSelfCheck": true,
+    "failure": "Unknown write DB op: github.space.polling.write"
+  },
+  "greenFocusedTests": {
+    "passed": 9,
+    "files": 2
+  },
+  "strictTypeScript6": "pass",
+  "repositoryCheck": "pass",
+  "bunNative": "pass",
+  "denoNative": "pass",
+  "freshEnvelope": 199,
+  "excludedStableLines": 166,
+  "totalKnownLines": 365,
+  "newExclusions": 0,
+  "completeCommandLines": 41,
+  "productionAndRegistryLines": 43,
+  "smokeRegistrationLines": 1,
+  "publicMutationActivated": false,
+  "contract": "One existing gateway IMMEDIATE commit for eligible polling flags/cursor, intent and sanitized saved config; post-loop shared intent/config clock; no constructor, callbacks, resources or replay",
+  "proofs": [
+    "Exact committed receipt via real listConfig RPC",
+    "Webhook-secret enabling skip; disabling all rows; disabled-row/cursor policy preserved",
+    "Snapshot/cursor write failures roll back prior flags and intent",
+    "Malformed cursor, orphan and invalid Space keys leave no partial state",
+    "Held writer delays acknowledgement while public config and health stay responsive",
+    "Admission rejection does not write/replay",
+    "Actual committed acknowledgement loss does not replay; snapshot consistent",
+    "No target SQL writes on main; other Spaces and constructor backfill unchanged"
+  ],
+  "debt": "https://github.com/lsm/HyperNeo/issues/9418",
+  "furtherExclusionsRequireNeoTableDecision": true
+}

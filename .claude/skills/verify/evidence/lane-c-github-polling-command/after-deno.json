@@ -1,0 +1,49 @@
+{
+  "publicMutationActivated": false,
+  "publicBaselineReaderConfirmed": true,
+  "mainGuardSelfCheckPassed": true,
+  "phase": "complete",
+  "firstCommandMs": 0.69337500000006,
+  "atomicReceiptVisibleThroughPublicRpc": true,
+  "eligibleFlagsWebhookSkipAndCursorPreserved": true,
+  "creationAndPostLoopSharedTimesPreserved": true,
+  "otherSpaceAndConstructorBackfillUntouched": true,
+  "snapshotFailureRollsBackFlagsIntentAndConfig": true,
+  "cursorWriteFailureRollsBackEarlierFlagWrite": true,
+  "malformedCursorLeavesNoPartialState": true,
+  "orphanAndInvalidIdLeaveNoPartialState": true,
+  "healthWhileWriterHeldMs": 2.487250000000131,
+  "deliberatelyHeldWriterMs": 1302.395125,
+  "ackWaitsForAtomicCommit": true,
+  "admissionFailureDoesNotWriteOrReplay": true,
+  "actualCommittedReplyLossDoesNotReplay": true,
+  "finalFlagsIntentAndSnapshotConverged": true,
+  "maxLoopLagMs": 3.0495419999997466,
+  "commandPosts": 10,
+  "rssBytes": 535052288,
+  "walBytes": 4128272,
+  "pass": true,
+  "mainSqlAttempts": 0,
+  "metrics": [
+    {
+      "roundTripMs": 0.5950000000000273,
+      "requestBytes": 61,
+      "replyBytes": 1513
+    },
+    {
+      "roundTripMs": 0.21908400000006623,
+      "requestBytes": 62,
+      "replyBytes": 1516
+    },
+    {
+      "roundTripMs": 1300.438667,
+      "requestBytes": 61,
+      "replyBytes": 1513
+    },
+    {
+      "roundTripMs": 2.811749999999847,
+      "requestBytes": 62,
+      "replyBytes": 1516
+    }
+  ]
+}
