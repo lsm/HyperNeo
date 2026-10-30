@@ -16,7 +16,7 @@ assert(!existsSync(join(run, 'data/daemon.db')));
 mkdirSync(join(run, 'evidence'), { recursive: true });
 const url = 'https://github.com/synthetic/project/pull/78', headA = 'a'.repeat(40), headB = 'b'.repeat(40), headC = 'c'.repeat(40);
 const factsPath = join(run, 'facts.json'), callsPath = join(run, 'evidence/requests.jsonl');
-let facts = { head: headA, approvedHead: headB, bot: 'review-bot[bot]', verdict: 'APPROVED', ci: 'pending', fail: '', flip: '', tail: '' };
+let facts = { head: headA, approvedHead: headB, bot: 'review-bot[bot]', verdict: 'APPROVED', ci: 'pending', fail: '', flip: '', tail: '', actorType: 'Bot' };
 const setFacts = (patch: Partial<typeof facts>) => { facts = { ...facts, ...patch }; writeFileSync(factsPath, JSON.stringify(facts)); };
 setFacts({});
 writeFileSync(join(run, 'bin/gh'), `#!${process.execPath}
@@ -27,7 +27,7 @@ const kind = args.includes('view') ? 'view' : args.includes('checks') ? 'checks'
 if (kind === 'unknown' || facts.fail === kind) { console.error('Synthetic read refused'); process.exit(1); }
 let data;
 if (kind === 'view') data = { headRefOid: facts.head, state: 'OPEN' };
-else if (kind === 'reviews') data = [[{ state: facts.verdict, commit_id: facts.approvedHead, html_url: ${JSON.stringify(url + '#review')}, user: { login: facts.bot, type: 'Bot' } }]];
+else if (kind === 'reviews') data = [[{ state: facts.verdict, commit_id: facts.approvedHead, html_url: ${JSON.stringify(url + '#review')}, user: { login: facts.bot, type: facts.actorType } }]];
 else data = [{ bucket: facts.ci, name: 'Required', link: ${JSON.stringify(url + '/checks')} }];
 if (kind === 'reviews' && facts.tail) data[0].push({ ...data[0][0], state: facts.tail });
 if (kind !== 'view' && facts.flip) { facts.head = facts.flip; facts.flip = ''; fs.writeFileSync(path, JSON.stringify(facts)); }
@@ -85,7 +85,15 @@ try {
   setFacts({ approvedHead: headA, bot: 'another-bot' }); await sweep();
   assert.notEqual(store.getTodo(added.todo.id)?.state, 'done'); assert.equal(store.getQuestion(card.id)?.state, 'open');
   const before = await rpc('neo.ask.read', { askId: 'question' }); assert.equal(before.entry?.state, 'waiting');
-  setFacts({ bot: 'review-bot[bot]', fail: 'checks', tail: 'COMMENTED' }); await sweep();
+  db.prepare("UPDATE neo_pack_preferences SET value_json = ? WHERE pack = 'coding' AND scope_key = 'synthetic/project' AND key = 'reviewBot'").run(JSON.stringify('review-bot[bot]'));
+  setFacts({ bot: 'review-bot', actorType: 'User', tail: 'COMMENTED' }); await sweep();
+  const humanCollisionTodo = await rpc('neo.ask.read', { askId: added.todo.askId });
+  const humanCollisionCard = await rpc('neo.question.get', { questionId: card.id });
+  receipts.push({ humanCollisionTodo, humanCollisionCard });
+  assert.notEqual(humanCollisionTodo.entry?.todos.find(todo => todo.id === added.todo!.id)?.state, 'done');
+  assert.equal(humanCollisionCard.question?.state, 'open');
+  await preference('reviewBot', 'review-bot');
+  setFacts({ bot: 'review-bot[bot]', actorType: 'Bot', fail: 'checks', tail: 'COMMENTED' }); await sweep();
   const todoDone = await rpc('neo.ask.read', { askId: added.todo.askId });
   const retired = await rpc('neo.question.get', { questionId: card.id });
   receipts.push({ trailingReview: 'COMMENTED', todoDone, retired });

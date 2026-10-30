@@ -50,8 +50,10 @@ bunx vitest run --config vitest.config.ts tests/unit/1-core/operations/{coding-p
 ```
 
 Bot identity must agree with the existing manual gate, ledger state and daemon
-admission gate: case and GitHub's trailing [bot] marker denote the same configured
-reviewer; a different login never qualifies. Run the actual recorded manual
+admission gate: case matches the same login, and GitHub's trailing [bot] marker aliases only
+a known Bot actor. A User or missing actor type cannot impersonate a configured
+suffixed bot; the regular approval proof exercises that collision before the
+legitimate Bot passes. Run the actual recorded manual
 admission RPC with that alias through the shared wrapper as well:
 
 ```sh
@@ -61,3 +63,11 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/alias-evidence-directory
 The fixture uses fixture-bot in saved policy and fixture-bot[bot] on the paginated
 review. A passing gate must return its recorded SHA-pinned command and execute no
 merge. Keep its observed.json and gh.jsonl along with the approval-check proof.
+
+Also run coding-merge-admission.ts with --human-collision through the shared
+wrapper in a fresh evidence directory. The fixture seeds a saved suffixed login directly (the current preference tool
+refuses suffixes). The real operation must refuse a User
+named fixture-bot against saved fixture-bot[bot], with no merge receipt written.
+After replacing that synthetic author with the real Bot identity, all ordinary
+manual admission checks must still pass. GraphQL ledger review authors carry
+`type: __typename`; REST authors retain `user.type`.

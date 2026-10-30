@@ -46,3 +46,9 @@ Use --bot-alias before the final run-directory argument to repeat with GitHub's
 REST fixture-bot[bot] login against a saved fixture-bot policy. The same complete
 operation-door cases must pass. The helper accepts the shared proof-run.sh wrapper;
 that wrapper retains evidence and removes its owned daemon data.
+
+The --human-collision mode seeds the saved fixture-bot[bot] policy directly
+because the current preference tool refuses suffixes and supplies an APPROVED review
+from the distinct fixture-bot User. This must refuse admission without recording
+a gate. It then supplies the genuine Bot and repeats the complete admission
+proof. Unknown actor types are covered by the focused policy contracts.

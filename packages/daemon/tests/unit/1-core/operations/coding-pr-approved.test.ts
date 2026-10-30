@@ -354,13 +354,18 @@ import { decideCodingDaemonMerge } from '../../../../src/lib/neo/packs/coding/da
 
 test.each(
   [
-    { configured: 'review-bot', author: 'REVIEW-BOT[bot]', passes: true },
-    { configured: 'Review-Bot[bot]', author: 'review-bot', passes: true },
-    { configured: 'review-bot', author: 'different-bot[bot]', passes: false },
+    { configured: 'review-bot', author: 'REVIEW-BOT[bot]', actorType: 'Bot', passes: true },
+    { configured: 'Review-Bot[bot]', author: 'review-bot', actorType: 'Bot', passes: true },
+    { configured: 'review-bot[bot]', author: 'review-bot', actorType: 'User', passes: false },
+    { configured: 'review-bot[bot]', author: 'review-bot', actorType: undefined, passes: false },
+    { configured: 'review-bot', author: 'review-bot[bot]', actorType: undefined, passes: false },
+    { configured: 'review-bot', author: 'review-bot[bot]', actorType: 'User', passes: false },
+    { configured: 'review-bot', author: 'different-bot[bot]', actorType: 'Bot', passes: false },
+    { configured: 'review-bot', author: 'review-bot', actorType: 'User', passes: true },
   ].flatMap((row) => ['manual', 'ledger', 'daemon'].map((surface) => ({ ...row, surface })))
 )(
   '$surface shares the approval check bot login matcher ($configured, $author)',
-  async ({ configured, author, passes, surface }) => {
+  async ({ configured, author, actorType, passes, surface }) => {
     const policy: CodingMergePolicy = {
       mergeBy: 'daemon',
       mergePolicy: 'review_bot',
@@ -368,9 +373,13 @@ test.each(
       humanSignoff: [],
     };
     const r = reader(policy);
-    r.state.pages = [[review('APPROVED', headA, author)]];
+    r.state.pages = [
+      [{ ...review('APPROVED', headA, author), user: { login: author, type: actorType } }],
+    ];
     expect((await r.check()).done).toBe(passes);
-    const reviews = [{ state: 'APPROVED', commit: { oid: headA }, author: { login: author } }];
+    const reviews = [
+      { state: 'APPROVED', commit: { oid: headA }, author: { login: author, type: actorType } },
+    ];
     if (surface === 'manual') {
       const result = await runCodingReview(
         { reviewBot: configured, head: headA, reviews },
@@ -411,7 +420,7 @@ test.each(
             threads: { head: headA, unresolved: 0 },
             files: [],
             labels: [],
-            reviews: [{ head: headA, login: author, state: 'APPROVED' }],
+            reviews: [{ head: headA, login: author, type: actorType, state: 'APPROVED' }],
           },
           policy
         ).kind
