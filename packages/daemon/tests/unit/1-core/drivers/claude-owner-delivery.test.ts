@@ -154,7 +154,7 @@ function fixture(registered = false) {
 }
 
 describe('createClaudeCodeAdapter owner-aware delivery', () => {
-  test.each(['default', 'auto', 'bypassPermissions'])(
+  test.each(['default', 'auto', 'plan', 'bypassPermissions'])(
     'plain CLI in %s receives without a permission hold',
     async (mode) => {
       const f = fixture();
