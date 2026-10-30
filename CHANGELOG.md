@@ -4,6 +4,35 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.52.0] - 2026-10-30
+
+### Todo follow-through
+
+- Remind Neo about each stalled todo, and daily about check-only todos; keep delivery reminders concise (#9436, #9450, #9430).
+- Record a worker's final-line blocker and let Neo triage human blockers before asking the human (#9447, #9479).
+- Retire Neo questions once their pack checks pass (#9441).
+
+### Coding and PR merges
+
+- Merge coding PRs from the daemon once saved merge policy and approval hold; isolate unreadable PRs in merge sweeps (#9432, #9444, #9457, #9454, #9475).
+- Include saved merge facts in coding context (#9460).
+
+### Voice
+
+- Resume voice streams after a client disconnects, and accept Opus input for resumable streams (#9424, #9453).
+
+### Fixes
+
+- Route Claude sends by verified receiver ownership (#9473).
+- Reclaim only scratch directories the daemon positively owns; keep SDK backup directory access during startup (#9439, #9452).
+- Find unloaded cards in web Work search; distinguish report documents from home versions (#9413, #9481).
+- Clean temporary directories owned by test fixtures (#9428).
+
+### Groundwork
+
+- Google connections: isolated status and credentials, identity checks during code exchange, one-use loopback consent and human lifecycle operations (#9470, #9476, #9477, #9482); shared account connections design (#8623).
+- Move GitHub watched-repository, polling, filter and Space-enable persistence onto the DB writer (#9395, #9398, #9400, #9402, #9404, #9406, #9408, #9410, #9412, #9417, #9420, #9422, #9426).
+
 ## [0.51.0] - 2026-10-28
 
 ### Voice replies
