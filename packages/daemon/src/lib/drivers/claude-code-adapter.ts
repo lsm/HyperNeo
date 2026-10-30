@@ -1,6 +1,10 @@
+import { listProcesses, type ProcessLister } from '../process-watchdog.ts';
+import { readClaudeSenderMode } from './claude-receiver-mode.ts';
+import { requireClaudeCliOwner } from './claude-session-owner.ts';
+import { reject } from './work-operations.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import { readClaudeCliStatus } from './claude-cli-status.ts';
-import type { ClaudeLiveSession } from './claude-desktop-adapter.ts';
+import type { ClaudeDesktopRecord, ClaudeLiveSession } from './claude-desktop-adapter.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { basename } from 'node:path';
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
@@ -8,7 +12,17 @@ import { claudeTranscriptCwd, isTempCwd } from './claude-feed.ts';
 import { listFeedFilesAsync, readFeedPrefix } from './work-feed.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import { mergePlaceGroups, withChatEvidence } from './places.ts';
-import type { FindQuery, PlaceGroup, WorkAdapter, WorkSummary } from './types.ts';
+import type {
+  FindQuery,
+  PlaceGroup,
+  WorkAdapter,
+  WorkSummary,
+  WorkRef,
+  WorkCallContext,
+  WorkDelivery,
+  Result,
+  Rejected,
+} from './types.ts';
 
 const SESSIONS_PER_PLACE = 10;
 const TITLE_CHARS = 80;
@@ -20,8 +34,12 @@ export interface ClaudeCodeAdapterDeps {
   sendInbox?: (
     sessionId: string,
     text: string,
-    context: Parameters<NonNullable<WorkAdapter['send']>>[2]
-  ) => ReturnType<NonNullable<WorkAdapter['send']>>;
+    context: WorkCallContext,
+    fromMode: 'bypass' | 'prompting'
+  ) => Promise<Result<WorkDelivery>>;
+  desktopRecords?: () => Promise<readonly ClaudeDesktopRecord[]>;
+  desktopSend?: WorkAdapter['send'];
+  listProcesses?: ProcessLister;
   liveSessions?: () => Promise<readonly ClaudeLiveSession[]>;
   machine: string;
   searchChats: (text: string) => Promise<readonly WorkChatMatch[]>;
@@ -179,6 +197,91 @@ const runClaudeCodeFind = (superpipe({})('claude-code-find-work') as PipelineAPI
   scan: () => Promise<ClaudeFolder[]>
 ) => Promise<PlaceGroup[]>;
 
+function selectClaudeSendTarget(
+  ref: WorkRef,
+  records: readonly ClaudeDesktopRecord[]
+): { value: WorkRef } | { reason: Rejected } {
+  const matches = records.filter((record) => record.cliSessionId === ref.id);
+  return matches.length > 1
+    ? {
+        reason: reject(
+          'unreachable',
+          'Claude Desktop registration is ambiguous; no message was sent.'
+        ),
+      }
+    : {
+        value: matches.length
+          ? { ...ref, adapter: 'claude-desktop', id: matches[0].sessionId }
+          : ref,
+      };
+}
+
+const sendClaudeCliMessage = (superpipe({})('send-claude-cli-message') as PipelineAPI)
+  .input(['ref', 'message', 'context', 'deps'])
+  .pipe(
+    async (deps: ClaudeCodeAdapterDeps) => (await deps.liveSessions?.().catch(() => [])) ?? [],
+    'deps',
+    'live'
+  )
+  .pipe(
+    (ref: WorkRef, live: readonly ClaudeLiveSession[]) => requireClaudeCliOwner(ref.id, live),
+    ['ref', 'live'],
+    'result:outcome'
+  )
+  .pipe(
+    (ref: WorkRef, live: readonly ClaudeLiveSession[], deps: ClaudeCodeAdapterDeps) =>
+      readClaudeSenderMode(ref.id, live, deps.listProcesses ?? listProcesses),
+    ['ref', 'live', 'deps'],
+    'mode'
+  )
+  .pipe(
+    (mode: 'bypass' | 'prompting' | Rejected) =>
+      typeof mode === 'string' ? { value: mode } : { reason: mode },
+    'mode',
+    'result:outcome'
+  )
+  .pipe(
+    (
+      mode: 'bypass' | 'prompting',
+      ref: WorkRef,
+      message: string,
+      context: WorkCallContext,
+      deps: ClaudeCodeAdapterDeps
+    ) => deps.sendInbox!(ref.id, message, context, mode),
+    ['outcome', 'ref', 'message', 'context', 'deps'],
+    'outcome'
+  )
+  .endAsync('outcome') as (
+  ref: WorkRef,
+  message: string,
+  context: WorkCallContext,
+  deps: ClaudeCodeAdapterDeps
+) => Promise<Result<WorkDelivery>>;
+
+function sendClaudeTarget(
+  ref: WorkRef,
+  message: string,
+  context: WorkCallContext,
+  deps: ClaudeCodeAdapterDeps
+): Promise<Result<WorkDelivery>> | Rejected {
+  return ref.adapter === 'claude-desktop'
+    ? (deps.desktopSend?.(ref, message, context) ??
+        reject('unsupported', 'The registered Claude Desktop send path is unavailable.'))
+    : sendClaudeCliMessage(ref, message, context, deps);
+}
+
+const sendClaudeCodeMessage = (superpipe({})('send-claude-code-message') as PipelineAPI)
+  .input(['ref', 'message', 'context', 'deps'])
+  .pipe((deps: ClaudeCodeAdapterDeps) => deps.desktopRecords?.() ?? [], 'deps', 'records')
+  .pipe(selectClaudeSendTarget, ['ref', 'records'], 'result:outcome')
+  .pipe(sendClaudeTarget, ['outcome', 'message', 'context', 'deps'], 'outcome')
+  .endAsync('outcome') as (
+  ref: WorkRef,
+  message: string,
+  context: WorkCallContext,
+  deps: ClaudeCodeAdapterDeps
+) => Promise<Result<WorkDelivery>>;
+
 export function createClaudeCodeAdapter(deps: ClaudeCodeAdapterDeps): WorkAdapter {
   const cache: FolderCache = new Map();
   const projectsDir = deps.projectsDir;
@@ -200,7 +303,8 @@ export function createClaudeCodeAdapter(deps: ClaudeCodeAdapterDeps): WorkAdapte
     : undefined;
   const sendInbox = deps.sendInbox;
   const send: WorkAdapter['send'] = sendInbox
-    ? (ref, message, context) => sendInbox(ref.id, message, context)
+    ? (ref, message, context) =>
+        sendClaudeCodeMessage(ref, message, context, { ...deps, liveSessions })
     : undefined;
   return {
     id: 'claude-code',

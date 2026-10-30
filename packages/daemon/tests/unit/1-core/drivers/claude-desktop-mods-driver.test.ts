@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, lstat, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, lstat, readFile, rm, writeFile } from 'node:fs/promises';
 import { request } from 'node:http';
 import { join } from 'node:path';
 import { register } from '../../../../claude-desktop-bridge/hooks/register';
@@ -54,7 +54,13 @@ describe('Claude Desktop mods driver wiring', () => {
     recordFile = join(scope, 'local_desktop.json');
     await writeFile(
       recordFile,
-      JSON.stringify({ sessionId: ref.id, cliSessionId: sid, title: 'Desktop', cwd: dir })
+      JSON.stringify({
+        sessionId: ref.id,
+        cliSessionId: sid,
+        title: 'Desktop',
+        cwd: dir,
+        permissionMode: 'auto',
+      })
     );
     await writeFile(
       join(dir, '456.json'),
@@ -72,6 +78,10 @@ describe('Claude Desktop mods driver wiring', () => {
     errors = [];
     liveReads = 0;
     nativeSent = [];
+    const project = join(dir, 'projects', dir.replace(/[/.]/g, '-'));
+    await mkdir(project, { recursive: true });
+    const transcript = join(project, `${sid}.jsonl`);
+    await writeFile(transcript, '');
     adapterDeps = {
       sessionsDir: join(dir, 'records'),
       projectsDir: join(dir, 'projects'),
@@ -80,11 +90,20 @@ describe('Claude Desktop mods driver wiring', () => {
         liveReads++;
         return [{ sessionId: sid, pid: 456, owner: 'desktop', status: 'busy' }];
       },
-      sendInbox: async (id, text, call) => {
+      sendInbox: async (id, text, call, fromMode) => {
         expect(id).toBe(sid);
         expect(call).toBe(context);
+        expect(fromMode).toBe('prompting');
         nativeSent.push(text);
-        return { ok: true, value: { delivered: false, unconfirmed: true } };
+        const inputId = crypto.randomUUID();
+        await appendFile(
+          transcript,
+          JSON.stringify({ type: 'user', uuid: inputId, message: { content: text } }) + '\n'
+        );
+        return {
+          ok: true,
+          value: { delivered: false, unconfirmed: true, receipt: { executionId: sid, inputId } },
+        };
       },
       spawn: () => {
         throw new Error('No CLI/headless fallback may be spawned');
@@ -242,13 +261,34 @@ describe('Claude Desktop mods driver wiring', () => {
       expect(adapter.queue).toBeUndefined();
       expect(adapter.stop).toBeUndefined();
       expect(adapter.withdraw).toBeUndefined();
-      await adapter.send!(ref, 'send peer', context);
-      await adapter.steer!(ref, 'steer peer', context);
+      expect(await adapter.send!(ref, 'send peer', context)).toMatchObject({
+        ok: true,
+        value: { delivered: true },
+      });
+      expect(await adapter.steer!(ref, 'steer peer', context)).toMatchObject({
+        ok: true,
+        value: { delivered: true },
+      });
       expect(nativeSent).toEqual(['send peer', 'steer peer']);
       await expect(lstat(configFile)).rejects.toMatchObject({ code: 'ENOENT' });
       expect(commands()).toEqual([]);
     }
   );
+
+  test('a missing receiver mode refuses native input without inventing a class', async () => {
+    const adapter = start({});
+    await writeFile(
+      recordFile,
+      JSON.stringify({ sessionId: ref.id, cliSessionId: sid, title: 'Desktop', cwd: dir })
+    );
+    expect(await adapter.send!(ref, 'Do not guess', context)).toMatchObject({
+      ok: false,
+      reason: 'unsupported',
+      detail: expect.stringMatching(/receiver.*mode.*unknown/i),
+    });
+    expect(nativeSent).toEqual([]);
+    expect(commands()).toEqual([]);
+  });
 
   test('configured startup failure is logged and controls report unavailable without fallback', async () => {
     const adapter = start({
@@ -308,8 +348,14 @@ describe('Claude Desktop mods driver wiring', () => {
         (job) => (job.payload.message as { inputKind: string }).inputKind === 'system'
       )
     ).toBe(true);
-    await adapter.send!(ref, 'native send', context);
-    await adapter.steer!(ref, 'native steer', context);
+    expect(await adapter.send!(ref, 'native send', context)).toMatchObject({
+      ok: true,
+      value: { delivered: true },
+    });
+    expect(await adapter.steer!(ref, 'native steer', context)).toMatchObject({
+      ok: true,
+      value: { delivered: true },
+    });
     expect(nativeSent).toEqual(['native send', 'native steer']);
     expect(errors).toEqual([]);
   });
