@@ -38,6 +38,7 @@ describe('root Neo system prompt', () => {
       `${NEO_ROOT_PROMPT}\n\n${NEO_FOCUSED_DISCUSSION}\n\n${NEO_ROOT_TURN_END}`
     );
     expect(neoPrompt([])).not.toContain(NEO_GOAL_CYCLE);
+    expect(neoPrompt([])).toContain('Your Bash commands are capped at 2 minutes');
     expect(NEO_ROOT_TURN_END).toContain('On a scheduled goal wake');
     expect(NEO_ROOT_TURN_END).toContain('On other turns');
     expect(NEO_ROOT_TURN_END).toContain('end the turn without text');

@@ -196,6 +196,18 @@ describe('QueryOptionsBuilder', () => {
               ),
             },
           });
+          for (const error of [
+            'Exit code 137\nCommand timed out after 2m 0s',
+            'Exit code 143\nCommand timed out after 2m 0s\n\nCAP=120000 MAX=120000',
+          ]) {
+            expect(
+              await hook({ ...base, error }, 'synthetic', { signal: new AbortController().signal })
+            ).toMatchObject({
+              hookSpecificOutput: {
+                additionalContext: expect.stringContaining('its outcome is unknown'),
+              },
+            });
+          }
           for (const input of [
             { ...base, error: 'Exit code 1\nBuild failed' },
             { ...base, error: 'Exit code 124\nCommand timed out after 2m 0s' },
