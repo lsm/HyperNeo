@@ -30,17 +30,23 @@ async function request(old: OfflineGrant, fetchImpl: typeof fetch, signal: Abort
     redirect: 'error',
     signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
   });
-  return { ok: response.ok, body: await readGoogleTokenJson(response.body) };
+  return {
+    status: response.status,
+    body: response.ok ? await readGoogleTokenJson(response.body) : await response.body?.cancel(),
+  };
 }
 function renewed(
   response: Awaited<ReturnType<typeof request>>,
   old: OfflineGrant,
   now: () => number
 ): RefreshOutcome {
-  if (!response.ok)
+  if (response.status < 200 || response.status >= 300)
     return {
       ok: false,
-      reason: response.body?.error === 'invalid_grant' ? 'reconnect_needed' : 'refresh_failed',
+      reason:
+        response.status >= 400 && response.status < 500 && ![408, 429].includes(response.status)
+          ? 'reconnect_needed'
+          : 'refresh_failed',
     };
   const value = grant.parse(response.body);
   return {

@@ -67,13 +67,12 @@ export function createGoogleTokenAccess(deps: {
   const now = deps.now ?? Date.now;
   const flights = new Map<string, Promise<Access>>();
   const controllers = new Map<string, AbortController>();
-  const retries = new Map<string, number>();
+  const retries = new Map<string, { until: number; storage?: boolean }>();
   const apply = async (decision: Decision): Promise<Access> => {
     if (decision.kind === 'disable')
       await deps.save({ ...decision.connection, health: 'reconnect_needed' });
-    if (decision.kind === 'backoff') retries.set(decision.id, decision.until);
+    if (decision.kind === 'backoff') retries.set(decision.id, { until: decision.until });
     if (decision.kind === 'persist') {
-      await deps.save({ ...decision.connection, health: 'reconnect_needed' });
       await deps.vault.replace(decision.connection, decision.tokens);
       await deps.save(decision.connection);
       retries.delete(decision.connection.id);
@@ -100,17 +99,22 @@ export function createGoogleTokenAccess(deps: {
       'result:result'
     )
     .pipe(
-      async (connection: ConnectionStatus): Promise<Loaded> => ({
-        connection,
-        tokens: await deps.vault.read(connection).catch(() => null),
-      }),
+      async (connection: ConnectionStatus): Promise<{ value: Loaded } | { reason: Access }> => {
+        const retry = retries.get(connection.id);
+        if (retry?.storage && retry.until > now()) return { reason: failed('refresh_failed') };
+        const tokens = await deps.vault.read(connection);
+        const current = tokens ? { ...connection, scopes: tokens.scopes } : connection;
+        if (JSON.stringify(current.scopes) !== JSON.stringify(connection.scopes))
+          await deps.save(current);
+        return { value: { connection: current, tokens } };
+      },
       'result',
-      'loaded'
+      'result:result'
     )
     .pipe(
       (loaded: Loaded, signal: AbortSignal) =>
-        planAccess(loaded, now(), retries.get(loaded.connection.id) ?? 0, signal.aborted),
-      ['loaded', 'signal'],
+        planAccess(loaded, now(), retries.get(loaded.connection.id)?.until ?? 0, signal.aborted),
+      ['result', 'signal'],
       'result:result'
     )
     .pipe(
@@ -138,7 +142,10 @@ export function createGoogleTokenAccess(deps: {
       controllers.set(id, controller);
       const result = deps
         .serial(() => execute(id, AbortSignal.any([deps.closed, controller.signal])))
-        .catch(() => failed('refresh_failed'));
+        .catch(() => {
+          retries.set(id, { until: now() + 60000, storage: true });
+          return failed('refresh_failed');
+        });
       flights.set(id, result);
       void result.finally(() => {
         flights.delete(id);

@@ -31,10 +31,7 @@ const services = new WeakMap<Database, ServiceEntry>();
 
 export function configureGoogleConnections(db: Database, deps: GoogleConnectionDependencies) {
   if (!services.has(db)) services.set(db, { deps, closed: new AbortController() });
-}
-
-export function closeGoogleConnections(db: Database) {
-  services.get(db)?.closed.abort();
+  return services.get(db)!.closed;
 }
 
 export function getGoogleConnectionService(sql: Database, deps: GoogleConnectionDependencies = {}) {

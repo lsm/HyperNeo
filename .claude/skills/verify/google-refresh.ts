@@ -19,6 +19,7 @@ for (const key of ['GH_TOKEN', 'GITHUB_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE
 mkdirSync(join(run, 'evidence'), { recursive: true });
 let now = Date.now(), calls = 0, cancellations = 0, starts = 0, stops = 0;
 let phase = '', mode = '', expectedRefresh = '';
+let locked = false, failVaultWrite = false, vaultReads = 0;
 let scheduled: (() => Promise<void>) | undefined;
 const evidence: unknown[] = [];
 const timers = new Set<ReturnType<typeof setTimeout>>();
@@ -30,10 +31,11 @@ const fake = await createHttpWsServer({ hostname: '127.0.0.1', port: 0, fetch: a
   assert.equal(form.get('client_id'), 'synthetic-client');
   assert.equal(form.get('client_secret'), 'synthetic-client-secret');
   calls++;
+  if (mode === 'policy') return new Response('Forbidden', { status: 403 });
   if (mode === 'invalid') return Response.json({ error: 'invalid_grant', error_description: 'synthetic-sensitive-detail' }, { status: 400 });
   if (mode === 'transient' && calls === 1) return Response.json({ error: 'temporarily_unavailable' }, { status: 503 });
-  const grant = { access_token: `synthetic-access-${calls}`, expires_in: 3600, token_type: 'Bearer', ...(mode === 'rotation' && calls === 1 ? { refresh_token: 'synthetic-rotated' } : {}) };
-  if (mode === 'rotation' && calls === 1) expectedRefresh = 'synthetic-rotated';
+  const grant = { access_token: `synthetic-access-${calls}`, expires_in: 3600, token_type: 'Bearer', ...((mode === 'rotation' || mode === 'metadata') && calls === 1 ? { refresh_token: 'synthetic-rotated' } : {}), ...(mode === 'metadata' ? { scope: 'openid email https://www.googleapis.com/auth/gmail.readonly' } : {}) };
+  if ((mode === 'rotation' || mode === 'metadata') && calls === 1) expectedRefresh = 'synthetic-rotated';
   if (mode === 'hold') return new Promise<Response>((done) => {
     const timer = setTimeout(() => { timers.delete(timer); done(Response.json(grant)); }, 2000);
     timers.add(timer);
@@ -49,7 +51,15 @@ const fetchImpl = ((url: string | URL, init?: RequestInit) => {
   return fetch(`http://127.0.0.1:${fake.port}/token`, init).finally(() => init?.signal?.removeEventListener('abort', notice));
 }) as typeof fetch;
 const deps = {
-  createStore: (db: ConstructorParameters<typeof DatabaseCredentialStore>[0]) => new DatabaseCredentialStore(db, 'synthetic-proof-key'),
+  createStore: (db: ConstructorParameters<typeof DatabaseCredentialStore>[0]) => {
+    const store = new DatabaseCredentialStore(db, 'synthetic-proof-key');
+    return {
+      get: async (service: string, account: string) => { vaultReads++; return locked ? null : store.get(service, account); },
+      set: async (service: string, account: string, value: string) => { if (failVaultWrite) { failVaultWrite = false; throw new Error('Synthetic vault write failure'); } await store.set(service, account, value); },
+      delete: store.delete.bind(store), listServices: store.listServices.bind(store),
+      getStatus: () => locked ? { backend: 'keychain-unavailable' as const, keychainAvailable: false } : { backend: 'database' as const, keychainAvailable: false },
+    };
+  },
   startLogin: async () => { throw new Error('This refresh journey must never start consent'); },
   fetchImpl, now: () => now,
   schedule: (tick: () => Promise<void>) => { starts++; scheduled = tick; return () => { stops++; scheduled = undefined; }; },
@@ -93,12 +103,43 @@ async function waitForRequest() {
   while (calls === 0) { assert(Date.now() < until, 'refresh request never started'); await new Promise((done) => setTimeout(done, 10)); }
 }
 try {
-  for (phase of ['invalid', 'rotation', 'transient', 'disconnect', 'shutdown']) {
+  for (phase of ['invalid', 'rotation', 'transient', 'disconnect', 'shutdown', 'vault-read', 'vault-write', 'metadata', 'policy']) {
+    locked = false; failVaultWrite = false; vaultReads = 0;
     calls = 0; now = Date.now(); expectedRefresh = 'synthetic-refresh'; mode = phase;
     let app = await boot();
     try {
       await seed(app);
-      if (phase === 'invalid') {
+      if (phase === 'vault-read') {
+        locked = true;
+        await advance(60000);
+        assert.equal((await status(app)).health, 'healthy'); assert.equal(calls, 0);
+        const attempts = vaultReads;
+        await advance(30000); assert.equal(vaultReads, attempts);
+        locked = false; await advance(31000);
+        assert.equal((await status(app)).health, 'healthy'); assert.equal(calls, 1);
+      } else if (phase === 'vault-write') {
+        failVaultWrite = true;
+        await advance(60000); assert.equal(calls, 1);
+        assert.equal((await status(app)).health, 'healthy');
+        await advance(30000); assert.equal(calls, 1);
+        await advance(31000); assert.equal(calls, 2);
+        assert.equal((await status(app)).health, 'healthy');
+      } else if (phase === 'metadata') {
+        const gateway = app.db.gateway;
+        const original = gateway.call.bind(gateway);
+        let fail = true;
+        gateway.call = (async (...args: unknown[]) => {
+          if (fail && args[0] === googleConnectionWrites && args[1] === 'put') { fail = false; throw new Error('Synthetic metadata failure'); }
+          return Reflect.apply(original, undefined, args);
+        }) as typeof gateway.call;
+        await advance(60000); assert.equal(calls, 1);
+        assert.equal((await status(app)).health, 'healthy');
+        await app.cleanup(); app = await boot();
+        assert.equal(calls, 1);
+        assert((await status(app)).scopes.includes('https://www.googleapis.com/auth/gmail.readonly'));
+        await advance(3540000); assert.equal(calls, 2);
+        assert.equal((await status(app)).health, 'healthy');
+      } else if (phase === 'invalid' || phase === 'policy') {
         await advance(60000);
         assert.equal((await status(app)).health, 'reconnect_needed');
         assert.equal(calls, 1);
@@ -141,4 +182,4 @@ assert.equal(starts, stops); assert.equal(scheduled, undefined);
 const text = JSON.stringify({ surface: 'isolated daemon with real management RPC, fake clock scheduler and fake Google HTTP; no token RPC', evidence, starts, stops, resourcesClosed: true }, null, 2);
 for (const secret of ['synthetic-access-', 'synthetic-rotated', 'synthetic-refresh', 'synthetic-client-secret', 'synthetic-sensitive-detail']) assert(!text.includes(secret));
 writeFileSync(join(run, 'evidence/google-refresh.json'), text);
-console.log('PASS: proactive refresh, rotation/omission across restart, single-flight ticks, invalid_grant health, backoff, disconnect and shutdown cancellation; resources closed');
+console.log('PASS: proactive refresh, rotation/omission across restart, single-flight ticks, permanent OAuth refusal, vault/metadata fault recovery, backoff, disconnect and shutdown cancellation; resources closed');

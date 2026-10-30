@@ -18,7 +18,11 @@ door shows reconnect-needed after `invalid_grant`, which stops further attempts
 even across restart. A transient failure backs off and recovers after the clock
 advances. Disconnect and daemon cleanup abort an in-flight HTTP refresh; a late
 response cannot restore erased credentials. Restart after shutdown can renew the
-preserved grant. Evidence contains status only, never tokens or client secrets.
+preserved grant. Synthetic vault-lock and vault-write failures stay healthy and
+recover after backoff. A metadata-write fault after rotation remains eligible;
+restart repairs scopes from the durable bundle without another token request.
+Permanent OAuth denials (including a non-JSON 403) require reconnect and stop
+requests; 408/429 remain retryable. Evidence contains status only, never tokens or client secrets.
 All daemons, clock registrations, workers and HTTP listeners close in finally.
 
 An empty instance must not open its Google vault or initialize an artifact
