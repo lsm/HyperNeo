@@ -39,11 +39,17 @@ try {
   await service.refreshDriverWork();
   const current=service.todos.getTodo(id),questions=service.todos.listQuestions(ask.id).filter(q=>q.todoId===id&&q.state==='open');
   (report.cases as unknown[]).push({kind,status,todo:current,questions});
-  if(kind!=='ordinary'){assert.equal(current?.blockedBy,kind==='needs_human'?'needs-human':'environment');assert.equal(questions.length,kind==='needs_human'?1:0);}
+  if(kind!=='ordinary'){assert.equal(current?.blockedBy,kind==='needs_human'?'needs-human':'environment');assert.equal(questions.length,0);}
   else assert.notEqual(current?.blockedBy,'needs-human');
  }
  report.snapshot=await rpc('neo.snapshot',{});
+ const jobs=app.db.getDatabase().prepare("SELECT payload FROM job_queue WHERE queue='mailbox'").all();
+ report.neoWake=jobs;
+ assert(JSON.stringify(jobs).includes('If you can answer this, reply to the worker'));
+ const originalNow=Date.now;Date.now=()=>originalNow()+60*60_000;
+ try {await service.refreshDriverWork();} finally {Date.now=originalNow;}
  const humanQuestion=service.todos.listQuestions('needs_human').find(q=>q.state==='open')!;
+ assert(humanQuestion);
  report.answer=await rpc('neo.question.answer',{questionId:humanQuestion.id,answer:'Synthetic approval granted'});
  await service.refreshDriverWork();
  const after=service.todos.getTodo('todo-needs_human');
