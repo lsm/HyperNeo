@@ -1,10 +1,11 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 
+type ReviewAuthor = { login: string; type?: string };
 type ReviewInput = {
   reviewBot?: string;
   head: string;
   reviews: readonly {
-    author?: { login: string } | null;
+    author?: ReviewAuthor | null;
     commit?: { oid: string } | null;
     state: string;
   }[];
@@ -14,16 +15,18 @@ type BotReview = { kind: 'bot'; head: string; login: string; approved: boolean }
 type ReviewDecision = BotReview | { kind: 'session'; head: string };
 type ReviewResult = BotReview | { kind: 'session'; head: string; sessionId: string };
 
-const reviewLogin = (login?: string) => login?.toLowerCase().replace(/\[bot\]$/, '');
-export const codingReviewMatches = (actual?: string, configured?: string) =>
-  !!configured && reviewLogin(actual) === reviewLogin(configured);
+const reviewLogin = (login: string) => login.toLowerCase().replace(/\[bot\]$/, '');
+export const codingReviewMatches = (actual?: ReviewAuthor | null, configured?: string) =>
+  !!configured &&
+  (actual?.login.toLowerCase() === configured.toLowerCase() ||
+    (actual?.type === 'Bot' && reviewLogin(actual.login) === reviewLogin(configured)));
 
 export const codingReviewOnHead = (input: ReviewInput) =>
   input.reviews
     .filter(
       (review) =>
         review.commit?.oid === input.head &&
-        codingReviewMatches(review.author?.login, input.reviewBot) &&
+        codingReviewMatches(review.author, input.reviewBot) &&
         review.state !== 'COMMENTED' &&
         review.state !== 'PENDING'
     )

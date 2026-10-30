@@ -83,7 +83,7 @@ const readDecision = async (
     reviews: reviews.data.flat().map((review) => ({
       state: review.state,
       commit: { oid: review.commit_id },
-      author: review.user ? { login: review.user.login } : null,
+      author: review.user,
     })),
   });
   return latest?.state === 'APPROVED' ? { value: head } : pending();

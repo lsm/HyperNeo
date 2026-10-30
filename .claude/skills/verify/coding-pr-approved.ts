@@ -89,9 +89,12 @@ try {
   setFacts({ bot: 'review-bot', actorType: 'User', tail: 'COMMENTED' }); await sweep();
   const humanCollisionTodo = await rpc('neo.ask.read', { askId: added.todo.askId });
   const humanCollisionCard = await rpc('neo.question.get', { questionId: card.id });
-  receipts.push({ humanCollisionTodo, humanCollisionCard });
+  const humanCollisionWaiting = await rpc('neo.ask.read', { askId: 'question' });
+  receipts.push({ humanCollisionTodo, humanCollisionCard, humanCollisionWaiting });
   assert.notEqual(humanCollisionTodo.entry?.todos.find(todo => todo.id === added.todo!.id)?.state, 'done');
   assert.equal(humanCollisionCard.question?.state, 'open');
+  assert.equal(humanCollisionWaiting.entry?.state, 'waiting');
+  assert.equal(humanCollisionWaiting.entry?.todos.find(todo => todo.id === waiting.id)?.blockedBy, 'needs-human');
   await preference('reviewBot', 'review-bot');
   setFacts({ bot: 'review-bot[bot]', actorType: 'Bot', fail: 'checks', tail: 'COMMENTED' }); await sweep();
   const todoDone = await rpc('neo.ask.read', { askId: added.todo.askId });

@@ -204,7 +204,7 @@ export function createCodingMergeOperation(deps: Deps) {
               ...(route.kind === 'bot'
                 ? reviews.filter(
                     (r) =>
-                      codingReviewMatches(r.user?.login, route.login) &&
+                      codingReviewMatches(r.user, route.login) &&
                       r.commit_id === route.head &&
                       r.state === 'APPROVED'
                   )

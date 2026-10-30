@@ -88,7 +88,7 @@ export const Node = z.object({
         z.object({
           state: z.string(),
           commit: z.object({ oid: z.string() }).nullable(),
-          author: z.object({ login: z.string() }).nullable().optional(),
+          author: z.object({ login: z.string(), type: z.string().optional() }).nullish(),
         })
       ),
     })

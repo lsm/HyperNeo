@@ -61,7 +61,7 @@ export const prepareCodingMerge = (superpipe({})('coding.prepare-manual-merge') 
         review.approved === true &&
         'login' in review &&
         typeof review.login === 'string' &&
-        codingReviewMatches(review.login, contract.bot)
+        codingReviewMatches({ login: review.login }, contract.bot)
           ? review.login
           : !contract.bot &&
               review.kind === 'session' &&
