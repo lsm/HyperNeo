@@ -38,6 +38,7 @@ try {
       for (const {home,ask} of fixtures) {
         const card=page.locator(`[data-ask="${ask}"]:visible`);
         await card.waitFor();
+        await card.getByText(home?'direction.md '+ 'a'.repeat(64):'Ordinary question with a document',{exact:true}).first().waitFor();
         const label=language==='en'?(home?'View full versions':'View full report'):(home?'查看完整版本':'查看完整内容');
         const wrong=language==='en'?(home?'View full report':'View full versions'):(home?'查看完整内容':'查看完整版本');
         assert.equal(await card.getByRole('button',{name:wrong,exact:true}).count(),0);
@@ -50,14 +51,14 @@ try {
           assert((await dialog.innerText()).includes(label));
           assert.equal(await dialog.locator('script').count(),0);
           const screenshot=`question-document-${language}-${home?'home':'report'}-${state}.png`;
-          await page.screenshot({path:`${run}/evidence/${screenshot}`,fullPage:true});
+          await page.screenshot({path:`${run}/evidence/${screenshot}`,fullPage:true,animations:'disabled'});
           results.push({language,home,state,label,literalContent:true,screenshot});
           await dialog.getByRole('button',{name:/close|关闭/i}).click();
         }
         await page.getByRole('dialog').first().getByRole('button',{name:/close|关闭/i}).click();
       }
       assert.equal(await page.evaluate(()=>window.documentInjected),undefined);
-    } catch(error) { await page.screenshot({path:`${run}/evidence/question-document-${language}-failure.png`,fullPage:true}); throw error; } finally { await page.close(); }
+    } catch(error) { await page.screenshot({path:`${run}/evidence/question-document-${language}-failure.png`,fullPage:true,animations:'disabled'}); throw error; } finally { await page.close(); }
   }
   writeFileSync(`${run}/evidence/question-document-labels.json`,JSON.stringify({passed:true,results},null,2));
 } catch(error) { writeFileSync(`${run}/evidence/question-document-labels.json`,JSON.stringify({passed:false,error:String(error),results},null,2));throw error; } finally { await browser.close(); }
