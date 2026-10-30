@@ -25,7 +25,12 @@ head and required checks are green. Never enable GitHub auto-merge.
 The repo-scoped `mergeBy` preference defaults to `owner` without saving a value.
 `daemon` runs fresh merge gates in the coding sweep, squash-merges eligible PRs
 on their exact head, records receipts and tells the owner or Neo. Do not chase
-owners to merge in daemon repos. Human policy and sign-off still require the human.
+owners to merge in daemon repos. A fresh OPEN result releases a failed attempt for
+retry; all gates are checked again. Unreadable outcomes retain the receipt and CLI
+error without consuming the retry budget. The daemon stops after three confirmed
+failed attempts per head and tells Neo the last error; resolve it before manual action.
+Retry-limit reports remain pending until Neo accepts them, even if the PR closes
+or repository policy changes. Human policy and sign-off still require the human.
 When the human wants to merge a PR themselves, call neo.coding.merge.human with
 its URL and enabled:true to add human-merge; use enabled:false if they change
 their mind. Never change saved

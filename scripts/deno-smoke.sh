@@ -680,7 +680,7 @@ env -i HOME="$CODING_DAEMON_BUILD_RUN/home" PATH="$PATH" TMPDIR="$CODING_DAEMON_
 	HYPERNEO_DATA_DIR="$CODING_DAEMON_BUILD_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/coding-daemon-merge-build.ts" "$CODING_DAEMON_BUILD_RUN"
 
-for CODING_DAEMON_SWEEP_VARIANT in enterprise policy-revoke merge-fails late-label per-pr; do
+for CODING_DAEMON_SWEEP_VARIANT in enterprise policy-revoke merge-fails late-label per-pr retry-once legacy-open uncertain-error limit-gone external-owned; do
 	CODING_DAEMON_SWEEP_RUN="$WORK_DIR/coding-daemon-merge-sweep-$CODING_DAEMON_SWEEP_VARIANT"
 	mkdir -p "$CODING_DAEMON_SWEEP_RUN/home" "$CODING_DAEMON_SWEEP_RUN/tmp"
 	env -i HOME="$CODING_DAEMON_SWEEP_RUN/home" PATH="$PATH" TMPDIR="$CODING_DAEMON_SWEEP_RUN/tmp" NODE_ENV=test \

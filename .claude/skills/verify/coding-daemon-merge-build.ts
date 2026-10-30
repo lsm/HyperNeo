@@ -39,8 +39,9 @@ try{
  db.exec('ALTER TABLE pack_coding_repo_aliases RENAME TO synthetic_unavailable_aliases');
  try{const unreadable=await readCodingDaemonMergeFacts(db,url);assert.equal(unreadable.ok,false);if(!unreadable.ok)assert.match(unreadable.reason,/: .+/, 'Reader exceptions need a readable explanation');}finally{db.exec('ALTER TABLE synthetic_unavailable_aliases RENAME TO pack_coding_repo_aliases');}
  evidence.readFailureExplained=true;
+ const retryUrl=url.replace('/7','/8'),uncertainUrl=url.replace('/7','/9'),limitUrl=url.replace('/7','/10');
  const prepare=db.prepare.bind(db);let watching=false,mainSql=0;
- db.prepare=((sql:string)=>{if(watching&&sql.includes('pack_coding_daemon_merges')){mainSql++;throw new Error('Receipt SQL on main');}return prepare(sql);}) as typeof db.prepare;
+ db.prepare=((sql:string)=>{if(watching&&sql.includes('pack_coding_daemon_merge')){mainSql++;throw new Error('Receipt SQL on main');}return prepare(sql);}) as typeof db.prepare;
  try{
  db.exec('BEGIN IMMEDIATE');held=true;watching=true;
  let replied=false;const pending=ledger.write('daemonMerge',{kind:'begin',url,head,actor:'daemon:synthetic',at:1});void pending.then(()=>{replied=true;});
@@ -49,12 +50,18 @@ try{
  assert.deepEqual(await ledger.write('daemonMerge',{kind:'begin',url,head,actor:'other',at:2}),[]);
  assert.deepEqual(await ledger.write('daemonMerge',{kind:'notified',url,head,at:3}),[]);
  const receipt=await ledger.write('daemonMerge',{kind:'finish',url,head,commit:'c'.repeat(40),at:4});assert.equal(receipt[0].actor,'daemon:synthetic');assert.equal(receipt[0].startedAt,1);assert.equal(receipt[0].mergedAt,4);evidence.receipt=receipt[0];
- assert.deepEqual(await ledger.write('daemonMerge',{kind:'finish',url,head,commit:'d'.repeat(40),at:5}),[]);assert.equal(mainSql,0);evidence.mainSql=mainSql;
+ assert.deepEqual(await ledger.write('daemonMerge',{kind:'finish',url,head,commit:'d'.repeat(40),at:5}),[]);
+ for(const at of [11,12]){const [attempt]=await ledger.write('daemonMerge',{kind:'begin',url:retryUrl,head,actor:'daemon:synthetic',at});await ledger.write('daemonMerge',{...attempt,kind:'failed',at:attempt.startedAt,error:'Synthetic command failure'});await ledger.write('daemonMerge',{...attempt,kind:'void',at:attempt.startedAt});}
+ const [uncertain]=await ledger.write('daemonMerge',{kind:'begin',url:uncertainUrl,head,actor:'daemon:synthetic',at:20});await ledger.write('daemonMerge',{...uncertain,kind:'uncertain',at:uncertain.startedAt,error:'Synthetic lost reply'});assert.deepEqual(await ledger.write('daemonMerge',{kind:'failures',url:uncertainUrl,head}),[]);evidence.uncertainReceipt=(await ledger.write('daemonMerge',{kind:'list'})).find(row=>row.url===uncertainUrl);
+ for(const at of [31,32,33]){const [attempt]=await ledger.write('daemonMerge',{kind:'begin',url:limitUrl,head,actor:'daemon:synthetic',at});await ledger.write('daemonMerge',{...attempt,kind:'failed',at:attempt.startedAt,error:'Synthetic limit failure'});await ledger.write('daemonMerge',{...attempt,kind:'void',at:attempt.startedAt});}
+ assert.equal(mainSql,0);evidence.mainSql=mainSql;
  }finally{watching=false;if(held){db.exec('ROLLBACK');held=false;}db.prepare=prepare;}
  await transport.close();transport=undefined;await app.cleanup();app=undefined;
  app=await createDaemonApp({config,verbose:false});await app.spaceRuntimeService.ready();await app.jobProcessor.stop();
- const restarted=new CodingPrLedgerRepository(app.db.getDatabase());const recovered=await restarted.write('daemonMerge',{kind:'list'});assert.deepEqual(recovered,[evidence.receipt]);evidence.receiptSurvivesRestart=true;
- await restarted.write('daemonMerge',{kind:'notified',url,head,at:6});assert.deepEqual(await restarted.write('daemonMerge',{kind:'list'}),[]);evidence.completedNotificationAcknowledged=true;
+ const restarted=new CodingPrLedgerRepository(app.db.getDatabase());const recovered=await restarted.write('daemonMerge',{kind:'list'});assert.deepEqual(recovered,[evidence.receipt,evidence.uncertainReceipt]);evidence.receiptSurvivesRestart=true;
+ await restarted.write('daemonMerge',{kind:'notified',url,head,at:6});const [uncertainRecovered]=await restarted.write('daemonMerge',{kind:'list'});assert.equal(uncertainRecovered.error,'Synthetic lost reply');assert.deepEqual(await restarted.write('daemonMerge',{kind:'failures',url:uncertainUrl,head}),[]);await restarted.write('daemonMerge',{...uncertainRecovered,kind:'failed',at:uncertainRecovered.startedAt,error:uncertainRecovered.error!});await restarted.write('daemonMerge',{...uncertainRecovered,kind:'void',at:uncertainRecovered.startedAt});assert.equal((await restarted.write('daemonMerge',{kind:'failures',url:uncertainUrl,head}))[0].failures,1);evidence.uncertainErrorSurvivesRestartWithoutConsumingBudget=true;assert.deepEqual(await restarted.write('daemonMerge',{kind:'list'}),[]);evidence.completedNotificationAcknowledged=true;
+ const pendingLimits=await restarted.write('daemonMerge',{kind:'limits'});assert.equal(pendingLimits.length,1);assert.equal(pendingLimits[0].url,limitUrl);assert.equal(pendingLimits[0].error,'Synthetic limit failure');evidence.unsentLimitSurvivesRestart=true;await restarted.write('daemonMerge',{kind:'limitNotified',url:limitUrl,head,at:40});assert.deepEqual(await restarted.write('daemonMerge',{kind:'limits'}),[]);evidence.limitAckRemovesPending=true;
+ const failures=await restarted.write('daemonMerge',{kind:'failures',url:retryUrl,head});assert.equal(failures[0].failures,2);assert.equal(failures[0].error,'Synthetic command failure');const [last]=await restarted.write('daemonMerge',{kind:'begin',url:retryUrl,head,actor:'daemon:synthetic',at:13});assert(last);await restarted.write('daemonMerge',{...last,kind:'failed',at:last.startedAt,error:'Third command failure'});await restarted.write('daemonMerge',{...last,kind:'void',at:last.startedAt});assert.deepEqual(await restarted.write('daemonMerge',{kind:'begin',url:retryUrl,head,actor:'daemon:synthetic',at:14}),[]);evidence.retryBudgetSurvivesDaemonRestart=true;
  const calls=readFileSync(join(run,'evidence/gh.jsonl'),'utf8').trim().split('\n').filter(Boolean).map(line=>JSON.parse(line));assert(calls.every((args:string[])=>!args.includes('merge')));evidence.mergeCommands=0;evidence.verified=true;
 }finally{await transport?.close();await app?.cleanup();globalThis.fetch=network;evidence.resourcesStopped=true;writeFileSync(join(run,'evidence/coding-daemon-merge-build.json'),JSON.stringify(evidence,null,2));}
 console.log(JSON.stringify(evidence));
