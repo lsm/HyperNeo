@@ -1,5 +1,6 @@
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { createConnectionList } from '../connections/list-operation.ts';
+import { createGoogleConnectionOperations } from '../connections/operations.ts';
 import { readWorkerIdentity, sessionWorkerRef } from '../neo/worker-identity.ts';
 import { invokeOperation } from './invoke.ts';
 import { createArtifactReadOperations } from '../artifacts/read-operations.ts';
@@ -130,6 +131,7 @@ export function createDatabaseOperationCatalog(
       }),
       createHumanDeviceResetOperation(() => db.getDatabase()),
       createConnectionList(() => db.getDatabase()),
+      ...createGoogleConnectionOperations(() => db.getDatabase()),
       createDaemonSnapshotOperation({
         readResources: (input) => new DaemonInventoryRepository(db.getDatabase()).read(input),
         readCapabilities: (caller) =>
