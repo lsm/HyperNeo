@@ -1504,6 +1504,47 @@ describe('Settled question previews', () => {
 });
 
 describe('Question full-version document', () => {
+  it.each(['en', 'zh-Hans'] as const)(
+    'distinguishes full reports from home versions in %s',
+    async (language) => {
+      locale.value = language;
+      const reportLabel = language === 'en' ? 'View full report' : '查看完整内容';
+      const versionsLabel = language === 'en' ? 'View full versions' : '查看完整版本';
+      for (const state of ['open', 'answered', 'retired'] as const) {
+        for (const home of [false, true]) {
+          const document = 'Literal report <script>unsafe()</script>';
+          const view = render(
+            <NeoAskTodos
+              entry={entry({
+                questions: [
+                  question('label', {
+                    text: 'Synthetic question',
+                    state,
+                    document,
+                    confirm: home ? { path: 'direction.md', sha256: 'a'.repeat(64) } : null,
+                  }),
+                ],
+              })}
+              onAnswer={() => {}}
+            />
+          );
+          if (state !== 'open')
+            fireEvent.click(view.container.querySelector('[data-ask-details-toggle]')!);
+          const label = home ? versionsLabel : reportLabel;
+          expect(
+            view.queryByRole('button', { name: home ? reportLabel : versionsLabel, exact: true })
+          ).toBeNull();
+          fireEvent.click(view.getByRole('button', { name: label, exact: true }));
+          const dialog = (await view.findAllByRole('dialog')).at(-1)!;
+          expect(dialog.textContent).toContain(label);
+          expect(dialog.querySelector('pre')?.textContent).toBe(document);
+          expect(dialog.querySelector('script')).toBeNull();
+          cleanup();
+        }
+      }
+    }
+  );
+
   it.each(['open', 'answered', 'retired'] as const)(
     'keeps the %s card short and opens literal full text',
     async (state) => {
@@ -1518,6 +1559,7 @@ describe('Question full-version document', () => {
             questions: [
               question('document', {
                 text: 'direction.md: compact diff',
+                confirm: { path: 'direction.md', sha256: 'a'.repeat(64) },
                 state,
                 document,
               } as Partial<NeoQuestionEntry>),
