@@ -153,6 +153,7 @@ export const escalateWorkerBlocker = (superpipe({})('neo.worker-blocker-fallback
         now - prior.triagedAt >= 60 * 60_000 &&
         ref &&
         sessions.inputs.list(todoId).at(-1)?.id === prior.dispatchId &&
+        !store.questionAnswers.pending().some((route) => route.todoId === todoId) &&
         !store
           .listQuestions(todo.askId)
           .some(
