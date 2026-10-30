@@ -31,7 +31,8 @@ let state: string,
   reviewHead: string,
   unresolved: boolean,
   deliver: boolean,
-  hideOutcome: boolean;
+  hideOutcome: boolean,
+  mergeFailed: boolean;
 const policy = (key: string, value: unknown) =>
   db
     .prepare(
@@ -43,7 +44,7 @@ const spawn: SpawnFn = (args) => {
   let data: unknown;
   if (args[2] === 'merge') {
     expect(args.slice(-3)).toEqual(['--squash', '--match-head-commit', head]);
-    state = 'MERGED';
+    if (!mergeFailed) state = 'MERGED';
   } else if (args[2] === 'edit') labels = args.includes('--add-label') ? ['human-merge'] : [];
   else if (args.includes('graphql'))
     data = {
@@ -89,7 +90,9 @@ const spawn: SpawnFn = (args) => {
       mergeCommit: state === 'MERGED' ? { oid: 'c'.repeat(40) } : null,
     };
   const broken =
-    (fail && args.some((a) => a.includes(fail))) || (hideOutcome && state === 'MERGED');
+    (fail && args.some((a) => a.includes(fail))) ||
+    (hideOutcome && state === 'MERGED') ||
+    (mergeFailed && args[2] === 'merge');
   return {
     stdout: new Response(JSON.stringify(data ?? {})).body,
     stderr: new Response('').body,
@@ -134,6 +137,7 @@ beforeEach(async () => {
   unresolved = false;
   deliver = true;
   hideOutcome = false;
+  mergeFailed = false;
   policy('mergeBy', 'daemon');
   policy('mergePolicy', 'review_bot');
   policy('reviewBot', 'bot');
@@ -430,4 +434,35 @@ test('an unreadable final saved policy fails closed before launching the merge',
   } finally {
     fault.mockRestore();
   }
+});
+
+test('a failed open attempt surfaces a held receipt without retrying or hiding a later merge', async () => {
+  mergeFailed = true;
+  deliver = false;
+  const accepted = new Set<string>();
+  const run = sweep(spawn, {
+    tell: async () => false,
+    wake: async (key, text) => {
+      if (!deliver) return false;
+      if (!accepted.has(key)) {
+        accepted.add(key);
+        notices.push(text);
+      }
+      return true;
+    },
+  });
+  await run(10);
+  expect(merges()).toHaveLength(1);
+  expect(notices).toEqual([]);
+  expect(await ledger.write('daemonMerge', { kind: 'list' })).toHaveLength(1);
+  deliver = true;
+  await run(11);
+  await run(12);
+  expect(notices).toEqual([expect.stringContaining(`held: ${url} head ${head}`)]);
+  state = 'MERGED';
+  await run(13);
+  expect(merges()).toHaveLength(1);
+  expect(notices).toHaveLength(2);
+  expect(notices[1]).toContain('merged by daemon:coding-sweep');
+  expect(await ledger.write('daemonMerge', { kind: 'list' })).toEqual([]);
 });
