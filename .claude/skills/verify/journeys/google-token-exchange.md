@@ -5,6 +5,9 @@ bash .claude/skills/verify/proof-run.sh /absolute/evidence/google-token-exchange
   .claude/skills/verify/google-token-exchange.ts
 ```
 
+Run the same helper with `VERIFY_PROOF_RUNTIME=deno` and the pinned Deno 2.9.4
+on PATH to exercise the second supported runtime. Keep each evidence directory fresh.
+
 The shared setup supplies a fresh HOME/data/database, test mode and no credentials.
 The helper boots an isolated daemon and a local fake Google token/JWKS server on
 ephemeral ports; it refuses all other network targets and closes both in finally.

@@ -89,9 +89,6 @@ VERIFY_PORT=9311 bun .claude/skills/verify/rpc.ts rpc:providers.create \
 
 ## In-process RPC proofs
 
-Google token exchange has its own isolated HTTP/daemon construction proof in
-`journeys/google-token-exchange.md`; it needs no model or real account.
-
 On macOS, run `bash .claude/skills/verify/resource-check.sh` before every heavy
 verification job or dependency install. It checks `memory_pressure` and disk
 space; stop if free memory is below 25% or disk space below 25 GiB. Run only
