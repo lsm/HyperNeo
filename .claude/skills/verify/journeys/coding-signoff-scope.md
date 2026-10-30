@@ -21,7 +21,7 @@ It also exercises `mergeBy` through the public preference RPCs: unanswered stays
 unsaved and defaults to owner, invalid values are refused, and daemon reads back.
 The coding pack's pure admission gate admits an unowned eligible PR, skips owner
 execution, stale CI and unresolved threads, reports GitHub read failure and
-requires human sign-off for human policy. The synthetic ledger heads cannot pass fresh execution admission; no merge
+requires human sign-off for human policy. The refusing GitHub stub must produce visible read holds; no merge
 command is invoked. Complete chronological review facts and required-check/thread
 observations must belong to the current head; incomplete reads use read_failure.
 Unit contracts cover stale/wrong/revoked bot approval and label/path matching.

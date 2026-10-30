@@ -303,13 +303,7 @@ test('a receipt sharing a candidate cannot hide a failed read with a second resp
     }
     return spawn(args);
   };
-  const run = sweep(flaky, {
-    tell: async () => false,
-    wake: async (_key, text) => {
-      notices.push(text);
-      return true;
-    },
-  });
+  const run = sweep(flaky);
   await expect(run(10)).rejects.toThrow('Merge held:');
   expect(failed).toBe(true);
   expect(notices).toEqual([]);

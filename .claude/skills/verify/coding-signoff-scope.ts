@@ -70,11 +70,11 @@ try {
   proof.daemonGate = { decisions, pureDecision: true, mergeExecuted: false, defaultDidNotSave: true };
   const now = Date.now();
   await pack.sweep!(now);
-  approved = true; await pack.sweep!(now + 1000);
+  approved = true; await assert.rejects(pack.sweep!(now + 1000), /Merge held:/);
   proof.approved = { snapshot: await rpc('neo.snapshot', {}), ledger: ledger.list(), mailbox: jobs() };
   const states = ledger.list().map(row => [row.number, row.state]);
   assert.equal((await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'repo', key: repo }, key: 'humanSignoff', value: ['label:needs-human'] })).ok, true);
-  await pack.sweep!(now + 1500);
+  await assert.rejects(pack.sweep!(now + 1500), /Merge held:/);
   const labelStates = ledger.list().map(row => [row.number, row.state]);
   proof.labelPolicy = { snapshot: await rpc('neo.snapshot', {}), ledger: ledger.list(), mailbox: jobs() };
   terminal = true; await pack.sweep!(now + 2000);
