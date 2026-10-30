@@ -304,12 +304,29 @@ test('daemon execution suppresses owner merge events and reminders', async () =>
   expect(messages[0]).toContain('Merge confirmed:');
 });
 
-test('one unreadable candidate holds the whole merge batch', async () => {
+test('an unreadable first PR does not block a mergeable sibling', async () => {
   const rows = await ledger.read('list');
   await ledger.write('replace', 'synthetic/merge', [...rows, { ...rows[0], number: 2 }], 2);
-  await expect(sweep()(10)).rejects.toThrow('Merge held:');
-  expect(merges()).toHaveLength(0);
-  expect(await ledger.write('daemonMerge', { kind: 'list' })).toEqual([]);
+  const partial: SpawnFn = (args) => {
+    const result = spawn(args);
+    if (args[2] === 'view' && args[3] === url)
+      return { ...result, exited: Promise.resolve(1), exitCode: 1 };
+    return {
+      ...result,
+      stdout: new ReadableStream({
+        async start(controller) {
+          const text = await new Response(result.stdout).text();
+          controller.enqueue(new TextEncoder().encode(text.replaceAll(url, url.replace('/1', '/2'))));
+          controller.close();
+        },
+      }),
+    };
+  };
+  await sweep(partial)(10);
+  expect(merges().map((args) => args[3])).toEqual([url.replace('/1', '/2')]);
+  expect(notices).toEqual([expect.stringContaining(url.replace('/1', '/2'))]);
+  await sweep(partial)(11);
+  expect(merges()).toHaveLength(1);
 });
 
 test('a receipt sharing a candidate cannot hide a failed read with a second response', async () => {
