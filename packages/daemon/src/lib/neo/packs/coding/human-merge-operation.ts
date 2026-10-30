@@ -9,7 +9,7 @@ export const createCodingHumanMergeOperation = (spawn: SpawnFn = spawnProcess) =
   defineOperation({
     name: 'neo.coding.merge.human',
     description:
-      'When the human chooses to merge a PR themselves, add its human-merge label with enabled:true; remove it with enabled:false when they change their mind. For mergeBy=daemon repos do not chase owners to merge. Configured humanSignoff labels hold daemon merging. Never changes repository preferences.',
+      'When the human chooses to merge a PR themselves, add its human-merge label with enabled:true; remove it with enabled:false when they change their mind. For mergeBy=daemon repos do not chase owners to merge; failed attempts retry with fresh gates, up to three failures per head, then report the error to Neo. Configured humanSignoff labels hold daemon merging. Never changes repository preferences.',
     inputSchema: z.object({ url: z.string().url(), enabled: z.boolean() }).strict(),
     resultSchema: z.object({ accepted: z.boolean(), reason: z.string().optional() }),
     policy: { safetyClass: 'mutate', roles: ['neo'] },

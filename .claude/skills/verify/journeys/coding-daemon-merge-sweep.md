@@ -32,7 +32,8 @@ preferences captured before execution must remain unchanged.
 The unit contracts additionally cover overlapping sweep invocations, every gate,
 open/moved reserved attempts and recovering a successful merge whose first
 confirmation read failed. Build-slice proof covers durable receipts across daemon
-restart. Issued uncertain attempts are not retried; unissued reservations are voided.
+restart. A successful command with unreadable confirmation retains its receipt until facts recover.
+Failed commands or fresh OPEN results release their receipts; retries recheck every gate.
 Readable held warnings are durably acknowledged and terminal attempts retire; confirmation stays distinct.
 
 The helper saves coding-daemon-merge-sweep.json and the exact CLI invocation log,
@@ -44,8 +45,9 @@ real preference RPC during GitHub checks; final admission must issue no merge.
 The final-read/API-call interval and in-flight writers remain an explicitly
 accepted limitation pending [#9458](https://github.com/lsm/HyperNeo/issues/9458).
 
-Add `merge-fails` to prove a failed CLI attempt stays OPEN, surfaces its held receipt
-on delivery recovery, and is not retried. Unreadable facts hold only their own PR; the sweep logs its URL and read reason and continues.
+Add `merge-fails` to prove failed CLI attempts release their receipts, stop at three
+failures per head across pack recreation, and deliver the PR URL, head and last error
+to Neo after notification recovery. Unreadable facts hold only their own PR; the sweep logs its URL and read reason and continues.
 
 Add `late-label` to add human-merge after the batch snapshot; it must hold, then resume on label removal.
 
@@ -54,3 +56,14 @@ sweep must finish, log the failed PR with its read reason, merge only the siblin
 with the exact full head, notify Neo, and issue no second merge on the next sweep.
 Final admission and confirmation read failures are also isolated per PR; unreadable
 receipts remain pending for recovery.
+
+Add `retry-once` to fail the first command with a required-check error, recreate the
+pack, then merge on the second sweep. Assert exactly two pinned commands and one
+confirmation, and retain the original CLI error in the hold log. `coding-daemon-merge-build.ts`
+also checks the durable failure budget through a real daemon restart; its synthetic
+writer records are distinct from the sweep's CLI execution proof.
+
+Add `legacy-open` to seed an unfinished receipt from the previous build. With
+fresh facts confirming OPEN, the full sweep must release that attempt, consume
+one failure from the durable budget and merge through current admission without
+a manual receipt edit.

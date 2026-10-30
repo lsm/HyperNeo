@@ -32,12 +32,15 @@ begin receipt while health remains responsive. After commit, executor, head
 and start time are immutable; completion cannot be overwritten and pending
 receipts cannot be acknowledged as notified. Restart preserves the completed
 receipt; successful notification acknowledgement removes it from pending work.
-Target receipt SQL must be zero on main. The helper closes both instances,
+Target receipt and failure-budget SQL must be zero on main. Synthetic failed
+attempts release their receipts while preserving the failure budget. Restart
+must preserve two failures and their error; the third consumes the remaining
+budget and another begin must be refused. The helper closes both instances,
 saves coding-daemon-merge-build.json and its gh read log; the wrapper removes
 all synthetic daemon data after preserving evidence.
 
-This is a build proof. The sweep and owner merge instructions remain unchanged,
-no merge command is executed, and real merge delivery, GUI and deployment are
-unverified. The activation slice must prove the actual sweep/merge/notification
-path and uncertainty recovery. Repeat on Deno when installed; CI registers the
+This helper proves fact reads and writer durability; it executes no merge
+command. The separate coding-daemon-merge-sweep journey proves execution,
+retry and confirmation behavior. Real merge delivery, GUI and deployment are
+unverified here. Repeat on Deno when installed; CI registers the
 same helper in required Deno smoke.

@@ -1,8 +1,11 @@
-import { homedir } from 'node:os';
+import {
+  CODING_DAEMON_MERGE_MAX_ATTEMPTS,
+  planCodingMergeAttempt,
+  runCodingMergeAttempt,
+} from './daemon-merge-attempt.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { Logger } from '../../../logger.ts';
-import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import type { CodingPrLedgerRepository, CodingMergePolicy } from './pr-ledger.ts';
@@ -61,15 +64,43 @@ export function createCodingDaemonMergeSweep(
       await record({ ...receipt, kind: receipt.mergeCommit ? 'notified' : 'held', at: now });
     return notified;
   };
-  const finish = async (receipt: Receipt, pr: Observed['facts'], now: number) => {
-    if (!pr.ok) return;
-    if (pr.head !== receipt.head || pr.state !== 'MERGED' || !pr.mergeCommit) {
-      if ((await notify(receipt, now)) && pr.state !== 'OPEN')
-        await record({ ...receipt, kind: 'retired', at: now });
+  const retryLimit = async (url: string, head: string) => {
+    const [failure] = await record({ kind: 'failures', url, head });
+    if (!failure || (failure.failures ?? 0) < CODING_DAEMON_MERGE_MAX_ATTEMPTS) return false;
+    await delivery
+      .wake(
+        `coding-daemon-retry-limit:${url}:${head}`,
+        `Daemon merge stopped after ${failure.failures} failed attempts: ${url} head ${head}. Last error: ${failure.error}. Inspect GitHub and resolve the failure before manual action.`
+      )
+      .catch(() => false);
+    return true;
+  };
+  const finish = async (
+    receipt: Receipt,
+    pr: Observed['facts'],
+    now: number,
+    error: string | null = null
+  ) => {
+    const outcome = planCodingMergeAttempt(receipt.head, pr, error);
+    if (error) log.warn('Daemon merge held', { url: receipt.url, reason: error });
+    if (outcome.kind === 'retry') {
+      if (!error) log.warn('Daemon merge held', { url: receipt.url, reason: outcome.error });
+      await record({ ...receipt, kind: 'failed', at: receipt.startedAt, error: outcome.error });
+      await record({ ...receipt, kind: 'void', at: receipt.startedAt });
+      await retryLimit(receipt.url, receipt.head);
       return;
     }
-    const [merged] = await record({ ...receipt, kind: 'finish', commit: pr.mergeCommit, at: now });
-    if (merged) await notify(merged, now);
+    if (outcome.kind === 'confirmed') {
+      const [merged] = await record({
+        ...receipt,
+        kind: 'finish',
+        commit: outcome.commit,
+        at: now,
+      });
+      if (merged) await notify(merged, now);
+    } else if (pr.ok && (await notify(receipt, now)) && pr.state !== 'OPEN') {
+      await record({ ...receipt, kind: 'retired', at: now });
+    }
   };
   const merge = (superpipe({})('coding.sweep-daemon-merge') as PipelineAPI)
     .input(['observed', 'now'])
@@ -78,7 +109,9 @@ export function createCodingDaemonMergeSweep(
       async (observed: Observed, now: number) => {
         const { url, head } = observed;
         const [receipt] = await record({ kind: 'begin', url, head, actor, at: now });
-        return receipt ? { value: receipt } : { reason: 'already_attempted' };
+        return receipt
+          ? { value: receipt }
+          : { reason: (await retryLimit(url, head)) ? 'retry_limit_reached' : 'already_attempted' };
       },
       ['result', 'now'],
       'result:result'
@@ -96,13 +129,9 @@ export function createCodingDaemonMergeSweep(
           if (!admitted) await record({ ...receipt, kind: 'void', at: receipt.startedAt });
         }
         // oxlint-disable-next-line no-warning-comments -- TODO(#9458): accepted final-read/in-flight-writer race.
-        await runGhJson(
-          ['gh', 'pr', 'merge', receipt.url, '--squash', '--match-head-commit', receipt.head],
-          homedir(),
-          spawn
-        ).catch(() => {});
+        const error = await runCodingMergeAttempt(receipt.url, receipt.head, spawn);
         const facts = await read(receipt.url);
-        await finish(receipt, facts, now);
+        await finish(receipt, facts, now, error);
         return facts.ok ? 'attempted' : 'read_failure';
       },
       ['result', 'observed', 'now'],

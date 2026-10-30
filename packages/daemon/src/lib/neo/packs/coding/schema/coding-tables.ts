@@ -6,6 +6,11 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     started_at INTEGER NOT NULL, merge_commit TEXT, merged_at INTEGER, notified_at INTEGER,
     PRIMARY KEY (url, head)
   );
+  CREATE TABLE IF NOT EXISTS pack_coding_daemon_merge_failures (
+    url TEXT NOT NULL, head TEXT NOT NULL, actor TEXT NOT NULL,
+    started_at INTEGER NOT NULL, error TEXT NOT NULL,
+    PRIMARY KEY (url, head, started_at)
+  );
   CREATE TABLE IF NOT EXISTS pack_coding_daemon_merge_notices (
     url TEXT NOT NULL, head TEXT NOT NULL, kind TEXT NOT NULL, at INTEGER NOT NULL,
     PRIMARY KEY (url, head, kind),

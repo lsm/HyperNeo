@@ -45,7 +45,7 @@ const spawn: SpawnFn = (args) => {
   calls.push(args);
   let data: unknown;
   if (args[2] === 'merge') {
-    expect(args.slice(-3)).toEqual(['--squash', '--match-head-commit', head]);
+    expect(args.slice(-3)).toEqual(['--squash', '--match-head-commit', actualHead]);
     if (!mergeFailed) state = 'MERGED';
   } else if (args[2] === 'edit') labels = args.includes('--add-label') ? ['human-merge'] : [];
   else if (args.includes('graphql'))
@@ -93,7 +93,7 @@ const spawn: SpawnFn = (args) => {
     };
   const broken =
     (fail && args.some((a) => a.includes(fail))) ||
-    (hideOutcome && state === 'MERGED') ||
+    (hideOutcome && state === 'MERGED' && args[2] !== 'merge') ||
     (mergeFailed && args[2] === 'merge');
   return {
     stdout: new Response(JSON.stringify(data ?? {})).body,
@@ -259,17 +259,14 @@ describe('daemon merge sweep behavior', () => {
     expect(notices).toHaveLength(1);
     expect(await ledger.write('daemonMerge', { kind: 'list' })).toEqual([]);
   });
-  test.each(['same', 'moved'])(
-    'warns without retrying a reserved attempt on %s head',
-    async (which) => {
-      await reserve(2);
-      if (which === 'moved') actualHead = 'b'.repeat(40);
-      await sweep()(10);
-      await sweep()(11);
-      expect(merges()).toHaveLength(0);
-      expect(notices.some((text) => text.includes('held: ' + url + ' head ' + head))).toBe(true);
-    }
-  );
+  test.each(['same', 'moved'])('recovers a reserved OPEN attempt on %s head', async (which) => {
+    await reserve(2);
+    if (which === 'moved') actualHead = 'b'.repeat(40);
+    await sweep()(10);
+    await sweep()(11);
+    expect(merges()).toHaveLength(which === 'same' ? 1 : 0);
+    expect(warnings.some((args) => JSON.stringify(args).includes('previous attempt'))).toBe(true);
+  });
 });
 test('human merge operation adds and removes the label on explicit intent', async () => {
   const operation = createCodingHumanMergeOperation(spawn);
@@ -511,35 +508,41 @@ test('an unreadable final saved policy fails closed before launching the merge',
   }
 });
 
-test('a failed open attempt surfaces a held receipt without retrying or misattributing an external merge', async () => {
+test('three failed attempts stop durably and tell Neo the error even after rejected delivery', async () => {
   mergeFailed = true;
   deliver = false;
-  db.prepare('UPDATE pack_coding_pr_ledger SET owner=?').run(
-    JSON.stringify({ adapter: 'claude-desktop', id: 'synthetic-owner' })
-  );
-  const receive = async (...args: unknown[]) => {
+  const accepted = new Set<string>();
+  const receive = async (key: string, text: string) => {
     if (!deliver) return false;
-    notices.push(String(args.at(-1)));
+    if (!accepted.has(key)) {
+      accepted.add(key);
+      notices.push(text);
+    }
     return true;
   };
-  const run = sweep(spawn, { tell: receive, wake: receive });
-  await run(10);
-  expect(merges()).toHaveLength(1);
+  const deps = { wake: receive };
+  for (let tick = 10; tick < 13; tick++) await sweep(spawn, deps)(tick);
+  expect(merges()).toHaveLength(3);
   expect(notices).toEqual([]);
-  expect(await ledger.write('daemonMerge', { kind: 'list' })).toHaveLength(1);
-  deliver = true;
-  await run(11);
-  await run(12);
-  expect(notices).toEqual([expect.stringContaining(`held: ${url} head ${head}`)]);
-  state = 'MERGED';
-  await run(13);
-  expect(merges()).toHaveLength(1);
-  expect(notices).toHaveLength(2);
-  expect(notices[1]).toContain('Merge confirmed:');
-  expect(notices[1]).not.toContain('merged by');
-  expect(notices[1]).toContain('c'.repeat(40));
-  expect(notices[1]).toContain('confirmation sweep');
   expect(await ledger.write('daemonMerge', { kind: 'list' })).toEqual([]);
+  ledger = new CodingPrLedgerRepository(db);
+  deliver = true;
+  await sweep(spawn, deps)(13);
+  await sweep(spawn, deps)(14);
+  expect(merges()).toHaveLength(3);
+  expect(notices).toEqual([expect.stringContaining('Required check still settling')]);
+  expect(notices[0]).toContain('3 failed attempts');
+  expect(notices[0]).toContain(url);
+  expect(notices[0]).toContain(head);
+  actualHead = 'b'.repeat(40);
+  reviewHead = actualHead;
+  mergeFailed = false;
+  const rows = await ledger.read('list');
+  await ledger.write('replace', 'synthetic/merge', [{ ...rows[0], head: actualHead }], 15);
+  await sweep(spawn, deps)(16);
+  expect(merges()).toHaveLength(4);
+  expect(merges()[3].at(-1)).toBe(actualHead);
+  expect(notices.filter((text) => text.includes('Merge confirmed:'))).toHaveLength(1);
 });
 
 test('terminal unconfirmed receipts retire durably after their held warning', async () => {
@@ -570,4 +573,49 @@ test('a failed merge command is retried by the next sweep and confirms only once
     'Daemon merge held',
     { url, reason: expect.stringContaining('Required check still settling') },
   ]);
+});
+
+test('a successful CLI exit with a fresh OPEN PR releases its receipt for retry', async () => {
+  mergeFailed = true;
+  const open: SpawnFn = (args) => {
+    const result = spawn(args);
+    return args[2] === 'merge' ? { ...result, exited: Promise.resolve(0), exitCode: 0 } : result;
+  };
+  await sweep(open)(10);
+  mergeFailed = false;
+  await sweep()(11);
+  expect(merges()).toHaveLength(2);
+  expect(notices.filter((text) => text.includes('Merge confirmed:'))).toHaveLength(1);
+});
+
+test('recovery does not count a failure twice after interruption before receipt release', async () => {
+  const [receipt] = await reserve(2);
+  await ledger.write('daemonMerge', {
+    ...receipt,
+    kind: 'failed',
+    at: receipt.startedAt,
+    error: 'interrupted failure',
+  });
+  await sweep()(10);
+  expect(merges()).toHaveLength(1);
+  expect(await ledger.write('daemonMerge', { kind: 'failures', url, head })).toMatchObject([
+    { failures: 1 },
+  ]);
+});
+
+test('retry budget is enforced even when successive sweeps share a timestamp', async () => {
+  mergeFailed = true;
+  for (let attempt = 0; attempt < 5; attempt++) await sweep()(10);
+  expect(merges()).toHaveLength(3);
+});
+
+test('an observed merge wins over a command error and is never retried', async () => {
+  const uncertain: SpawnFn = (args) => {
+    const result = spawn(args);
+    return args[2] === 'merge' ? { ...result, exited: Promise.resolve(1), exitCode: 1 } : result;
+  };
+  await sweep(uncertain)(10);
+  await sweep(uncertain)(11);
+  expect(merges()).toHaveLength(1);
+  expect(notices.filter((text) => text.includes('Merge confirmed:'))).toHaveLength(1);
 });
