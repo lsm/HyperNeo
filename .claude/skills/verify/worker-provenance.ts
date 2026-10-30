@@ -227,6 +227,13 @@ try {
       const deliveredMergeFacts = inputs.findLast(entry => entry.type === 'user').message.content;
       evidence.push({ deliveredMergeFacts });
       assert(deliveredMergeFacts.includes('synthetic/reviewed merge policy: review_bot; review bot: hyperneo-ai-test; human sign-off: docs/design/**; merge by: owner'), deliveredMergeFacts);
+      assert.deepEqual(await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/reviewed' }, key: 'mergeBy', value: 'daemon' }), { ok: true });
+      await invokeTodo('neo.todo.continue', { todoId: codingTodo.todo.id, message: 'Continue the PR task.' });
+      const nextInputs = readFileSync(transcript, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      const goalOnlyMergeFacts = nextInputs.findLast(entry => entry.type === 'user').message.content;
+      evidence.push({ goalOnlyMergeFacts });
+      assert(goalOnlyMergeFacts.includes('synthetic/reviewed merge policy: review_bot; review bot: hyperneo-ai-test; human sign-off: docs/design/**; merge by: daemon'), goalOnlyMergeFacts);
+
     }
     const codexStatus = await rpc<Result<WorkDetail>>('work.status', { ref: codexRef });
     assert(codexStatus.ok, JSON.stringify(codexStatus));

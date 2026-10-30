@@ -12,7 +12,9 @@ preferences through the real public operation, adds and binds a coding todo
 through production MCP operations, and continues it through neo.todo.continue.
 The actual synthetic Claude Desktop inbox writes the input into its transcript.
 That delivered input must contain review_bot, hyperneo-ai-test, docs/design/**
-and the effective owner merge executor. Keep observed.json, proof.log and the
+and the effective owner merge executor. A second short follow-up names no
+repository in its message: its structured PR goal must supply the repository,
+and the input must reflect a newly saved daemon executor. Keep observed.json, proof.log and the
 wrapper's run-status.json. Existing provenance and retained-identity checks
 still run. This proves the production pack hook and native delivery path,
 not provider consumption or native UI rendering.

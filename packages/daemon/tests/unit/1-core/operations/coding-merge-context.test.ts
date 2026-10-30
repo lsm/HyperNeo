@@ -127,6 +127,7 @@ test('briefs identify named repositories and deduplicate case, URL and shorthand
     expect(brief).toContain('other/project merge policy: human');
     expect(f.pack.workerBrief!('Work in SYNTHETIC/REVIEWED.', identity)).toContain(facts);
     expect(f.pack.workerBrief!('Work in synthetic/reviewed-extra.', identity)).not.toContain(facts);
+    expect(f.pack.workerBrief!('Work in synthetic/reviewed.md.', identity)).not.toContain(facts);
   } finally {
     f.db.close();
   }
