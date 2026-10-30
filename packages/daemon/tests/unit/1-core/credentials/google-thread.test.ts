@@ -12,7 +12,8 @@ import { googleConnectionWrites } from '../../../../src/storage/repositories/goo
 let db: Awaited<ReturnType<typeof createTestDb>>;
 let mcp: ReturnType<typeof createOperationMcpHandler>;
 let fetchImpl: ReturnType<typeof vi.fn<typeof fetch>>;
-let mode: string, rawDraft: string, method: string, path: string;
+let mode: string;
+let caller: { sessionId?: string; role?: 'neo' | 'universal_read' };
 let vault: ConnectionVault;
 const row = {
   id: 'one',
@@ -66,9 +67,7 @@ const message = (id: string, full: boolean) => ({
 beforeEach(async () => {
   db = await createTestDb();
   mode = 'normal';
-  rawDraft = '';
-  method = '';
-  path = '';
+  caller = { sessionId: 'synthetic-worker', role: 'neo' };
   const store = new DatabaseCredentialStore(db.getDatabase(), 'synthetic-key');
   vault = new ConnectionVault(
     store,
@@ -87,9 +86,8 @@ beforeEach(async () => {
     expect(url.origin).toBe('https://gmail.googleapis.com');
     expect(new Headers(init?.headers).get('authorization')).toBe('Bearer synthetic-access');
     expect(init?.redirect).toBe('error');
-    method = init?.method ?? 'GET';
-    path = url.pathname;
-    expect(path).not.toMatch(/\/send$/);
+    const path = url.pathname;
+    expect(init?.method ?? 'GET').toBe('GET');
     if (path.endsWith('/threads/thread-one')) {
       expect(url.searchParams.get('format')).toBe('minimal');
       return Response.json({
@@ -104,16 +102,7 @@ beforeEach(async () => {
       return Response.json(
         message(path.split('/').at(-1)!, url.searchParams.get('format') === 'full')
       );
-    expect(
-      path === '/gmail/v1/users/me/drafts' || path === '/gmail/v1/users/me/drafts/draft-one'
-    ).toBe(true);
-    expect(method === 'POST' || method === 'PUT').toBe(true);
-    const data = JSON.parse(init?.body as string);
-    rawDraft = Buffer.from(data.message.raw, 'base64url').toString('utf8');
-    return Response.json({
-      id: 'draft-one',
-      message: { id: method === 'POST' ? 'message-one' : 'message-two', threadId: 'thread-one' },
-    });
+    throw new Error('Unexpected Google request');
   });
   mcp = createOperationMcpHandler(
     createOperationRegistry(
@@ -122,7 +111,7 @@ beforeEach(async () => {
         fetchImpl,
       })
     ),
-    () => ({ sessionId: 'synthetic-worker', role: 'neo' })
+    () => caller
   );
 });
 afterEach(() => db.close());
@@ -130,15 +119,6 @@ const invoke = async (name: string, input: unknown) =>
   JSON.parse((await mcp({ name, input })).content[0].text);
 const read = (extra: Record<string, unknown> = {}) =>
   invoke('gmail.read_thread', { connectionId: 'one', threadId: 'thread-one', limit: 1, ...extra });
-const draft = (extra: Record<string, unknown> = {}) =>
-  invoke('gmail.draft', {
-    connectionId: 'one',
-    to: ['recipient@example.test'],
-    subject: 'Hello 你好',
-    text: body,
-    ...extra,
-  });
-
 test('thread metadata is paged without requesting or returning bodies or attachments', async () => {
   const first = await read();
   expect(first).toMatchObject({
@@ -184,56 +164,15 @@ test('cursors cannot cross accounts or silently page a changed thread', async ()
   expect((await read({ cursor: result.nextCursor })).reason).toBe('thread_changed');
 });
 
-test('draft creation uses the verified sender, MIME encoding and never sends', async () => {
-  const result = await draft({
-    attachments: [
-      {
-        filename: 'fixture.bin',
-        mimeType: 'application/octet-stream',
-        data: Buffer.from([0, 1, 255]).toString('base64url'),
-      },
-    ],
-  });
-  expect(result).toMatchObject({ ok: true, draftId: 'draft-one', messageId: 'message-one' });
-  expect(method).toBe('POST');
-  expect(path).toBe('/gmail/v1/users/me/drafts');
-  expect(rawDraft).toContain('From: one@example.test\r\n');
-  expect(rawDraft).toContain('To: recipient@example.test\r\n');
-  expect(rawDraft).toContain(Buffer.from(body).toString('base64'));
-  expect(rawDraft).toContain('AAH/');
-});
-
-test('updating names the existing draft and replaces its MIME message', async () => {
-  expect(await draft({ draftId: 'draft-one', text: 'Changed body' })).toMatchObject({
-    ok: true,
-    draftId: 'draft-one',
-    messageId: 'message-two',
-  });
-  expect(method).toBe('PUT');
-  expect(path).toBe('/gmail/v1/users/me/drafts/draft-one');
-  expect(rawDraft).toContain(Buffer.from('Changed body').toString('base64'));
-});
-
-test.each([
-  { draftId: '../messages/send' },
-  { to: ['user@example.test\r\nBcc:other@example.test'] },
-  { subject: 'header\r\nBcc:other@example.test' },
-  { send: true },
-  { attachments: [{ filename: 'x', mimeType: 'text/plain', data: 'bad%%%' }] },
-])('invalid drafts fail before writes: %j', async (extra) => {
-  expect((await draft(extra)).code).toBe('invalid_input');
-  expect(fetchImpl).not.toHaveBeenCalled();
-});
-
-test('missing compose scope refuses draft creation and no send operation exists', async () => {
+test('thread reads require an eligible session and a granted read scope before network access', async () => {
+  caller = {};
+  expect((await read()).reason).toBe('session_required');
+  caller = { sessionId: 'synthetic-worker', role: 'neo' };
   await vault.replace(row, {
     accessToken: 'synthetic-access',
     expiresAt: Date.now() + 3600000,
-    scopes: [row.scopes[0]],
+    scopes: [],
   });
-  expect((await draft()).reason).toBe('missing_scope');
+  expect((await read()).reason).toBe('missing_scope');
   expect(fetchImpl).not.toHaveBeenCalled();
-  expect(
-    (await invoke('gmail.send_draft', { connectionId: 'one', draftId: 'draft-one' })).code
-  ).toBe('unknown_operation');
 });

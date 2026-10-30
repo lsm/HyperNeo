@@ -11,7 +11,7 @@ import { googleConnectionReads } from '../../storage/repositories/google-connect
 import { connectionStatus } from './status.ts';
 import type { createConnectionLifecycle } from './lifecycle.ts';
 const failure = z.object({ ok: z.literal(false), reason: z.string() });
-const id = z.string().min(1).max(200);
+export const id = z.string().min(1).max(200);
 const searchInput = z
   .object({
     connectionId: id,
@@ -37,7 +37,7 @@ const messageSchema = z.object({
     })
     .default({ headers: [] }),
 });
-const itemSchema = z.object({
+export const itemSchema = z.object({
   id,
   threadId: id,
   subject: z.string(),
@@ -46,7 +46,7 @@ const itemSchema = z.object({
   snippet: z.string(),
   truncated: z.boolean(),
 });
-const policy = {
+export const policy = {
   safetyClass: 'read' as const,
   roles: ['neo', 'workflow_worker', 'direct_task_worker', 'long_term_agent'] as const,
 };
@@ -54,7 +54,7 @@ const scope = 'https://www.googleapis.com/auth/gmail.readonly';
 const base = 'https://gmail.googleapis.com/gmail/v1/users/me/messages';
 type Input = z.infer<typeof searchInput>;
 type Service = ReturnType<typeof createConnectionLifecycle>;
-const admit = (caller: OperationCaller) =>
+export const admit = (caller: OperationCaller) =>
   isAgentSessionCaller(caller)
     ? { value: caller }
     : { reason: { ok: false as const, reason: 'session_required' } };
@@ -77,7 +77,7 @@ function messageUrl(id: string) {
   ]).toString();
   return url.href;
 }
-function project(value: unknown) {
+export function project(value: unknown) {
   const message = messageSchema.parse(value);
   const header = (name: string) =>
     message.payload.headers.find((header) => header.name.toLowerCase() === name)?.value ?? '';
