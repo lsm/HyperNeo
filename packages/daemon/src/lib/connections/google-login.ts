@@ -44,7 +44,7 @@ export async function startGoogleLogin(
   const answer = (status: number) =>
     new Response(
       status === 200
-        ? 'Connected. Return to the app.'
+        ? 'Authorization received. Return to the app to finish connecting.'
         : 'Connection not completed. Return to the app.',
       {
         status,

@@ -93,7 +93,9 @@ test('uses loopback PKCE and only phase-1 scopes, then validates a signed identi
   ]);
   const response = await fetch(callback(redirect, url.searchParams.get('state')!));
   expect(response.status).toBe(200);
-  expect(await response.text()).not.toContain('synthetic-access');
+  const text = await response.text();
+  expect(text).toContain('Authorization received');
+  expect(text).not.toContain('synthetic-access');
   expect(await session.result).toMatchObject({
     ok: true,
     accountId: 'synthetic-subject',
