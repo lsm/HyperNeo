@@ -97,7 +97,8 @@ const spawn: SpawnFn = (args) => {
     (mergeFailed && args[2] === 'merge');
   return {
     stdout: new Response(JSON.stringify(data ?? {})).body,
-    stderr: new Response('').body,
+    stderr: new Response(mergeFailed && args[2] === 'merge' ? 'Required check still settling' : '')
+      .body,
     exited: Promise.resolve(broken ? 1 : 0),
     exitCode: broken ? 1 : 0,
     kill() {},
@@ -553,4 +554,20 @@ test('terminal unconfirmed receipts retire durably after their held warning', as
   await sweep()(12);
   expect(merges()).toHaveLength(0);
   expect(notices).toHaveLength(1);
+});
+
+test('a failed merge command is retried by the next sweep and confirms only once', async () => {
+  mergeFailed = true;
+  await sweep()(10);
+  expect(merges()).toHaveLength(1);
+  mergeFailed = false;
+  const restarted = sweep();
+  await restarted(11);
+  await restarted(12);
+  expect(merges()).toHaveLength(2);
+  expect(notices.filter((text) => text.includes('Merge confirmed:'))).toHaveLength(1);
+  expect(warnings).toContainEqual([
+    'Daemon merge held',
+    { url, reason: expect.stringContaining('Required check still settling') },
+  ]);
 });
