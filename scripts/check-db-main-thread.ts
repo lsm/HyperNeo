@@ -9,6 +9,7 @@ const workers = new Set([
   'lib/event-loop-watchdog-worker.ts',
   'lib/neo/project-mirror-worker.ts',
   'storage/db-gateway/db-gateway-worker.ts',
+  'storage/repositories/google-connections-worker.ts',
   'storage/repositories/agent-memory-embed-worker.ts',
   'storage/sdk-message-body-admission-worker.ts',
   'storage/sdk-message-body-backup-worker.ts',
