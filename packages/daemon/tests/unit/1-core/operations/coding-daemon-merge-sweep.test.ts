@@ -119,6 +119,8 @@ const sweep = (customSpawn: SpawnFn = spawn, overrides: Partial<CodingSweepDeps>
     customSpawn
   );
 const merges = () => calls.filter((args) => args[2] === 'merge');
+const reserve = (at: number) =>
+  ledger.write('daemonMerge', { kind: 'begin', url, head, actor: 'daemon:coding-sweep', at });
 beforeEach(async () => {
   db = new Database(':memory:');
   runMigrations(db, () => {});
@@ -166,29 +168,35 @@ describe('daemon merge sweep behavior', () => {
     await Promise.all([run(10), run(11)]);
     await run(12);
     expect(merges()).toHaveLength(1);
-    expect(
-      notices.some((text) => text.includes(head) && text.includes('daemon:coding-sweep'))
-    ).toBe(true);
+    expect(notices).toEqual([expect.stringContaining(head)]);
     const rows = db.prepare('SELECT * FROM pack_coding_daemon_merges').all();
     expect(rows).toMatchObject([
       { head, actor: 'daemon:coding-sweep', merge_commit: 'c'.repeat(40) },
     ]);
   });
-  test.each(['owner', 'human', 'label', 'path', 'ci', 'review', 'thread', 'head', 'closed'])(
+  test.each(['owner', 'human', 'path', 'ci', 'review', 'thread', 'head', 'closed', 'late'])(
     'holds %s',
     async (condition) => {
       if (condition === 'owner') policy('mergeBy', 'owner');
       if (condition === 'human') policy('mergePolicy', 'human');
-      if (condition === 'label') labels = ['human-merge'];
       if (condition === 'path') files = ['docs/design/merge.md'];
       if (condition === 'ci') ci = 'pending';
       if (condition === 'review') reviewHead = 'b'.repeat(40);
       if (condition === 'thread') unresolved = true;
       if (condition === 'head') actualHead = 'b'.repeat(40);
       if (condition === 'closed') state = 'CLOSED';
-      await sweep()(10);
+      const delayed: SpawnFn = (args) => {
+        if (
+          condition === 'late' &&
+          args[2] === 'view' &&
+          calls.filter((a) => a[2] === 'view').length === 1
+        )
+          labels = ['human-merge'];
+        return spawn(args);
+      };
+      await sweep(delayed)(10);
       expect(merges()).toHaveLength(0);
-      if (['label', 'path'].includes(condition))
+      if (['path', 'late'].includes(condition))
         expect(notices.some((text) => text.includes('sign-off'))).toBe(true);
     }
   );
@@ -219,19 +227,17 @@ describe('daemon merge sweep behavior', () => {
     expect(notices).toHaveLength(1);
     expect(await ledger.write('daemonMerge', { kind: 'list' })).toEqual([]);
   });
-  test('never retries a reserved attempt on an open or moved head', async () => {
-    await ledger.write('daemonMerge', {
-      kind: 'begin',
-      url,
-      head,
-      actor: 'daemon:coding-sweep',
-      at: 2,
-    });
-    await sweep()(10);
-    actualHead = 'b'.repeat(40);
-    await sweep()(11);
-    expect(merges()).toHaveLength(0);
-  });
+  test.each(['same', 'moved'])(
+    'warns without retrying a reserved attempt on %s head',
+    async (which) => {
+      await reserve(2);
+      if (which === 'moved') actualHead = 'b'.repeat(40);
+      await sweep()(10);
+      await sweep()(11);
+      expect(merges()).toHaveLength(0);
+      expect(notices.some((text) => text.includes('held: ' + url + ' head ' + head))).toBe(true);
+    }
+  );
 });
 test('human merge operation adds and removes the label on explicit intent', async () => {
   const operation = createCodingHumanMergeOperation(spawn);
@@ -283,13 +289,7 @@ test('one unreadable candidate holds the whole merge batch', async () => {
 });
 
 test('a receipt sharing a candidate cannot hide a failed read with a second response', async () => {
-  await ledger.write('daemonMerge', {
-    kind: 'begin',
-    url,
-    head,
-    actor: 'daemon:coding-sweep',
-    at: 1,
-  });
+  await reserve(1);
   await ledger.write('daemonMerge', { kind: 'finish', url, head, commit: 'c'.repeat(40), at: 2 });
   state = 'MERGED';
   let failed = false;
