@@ -67,6 +67,7 @@ beforeEach(() => {
   vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window);
   request.mockReset().mockImplementation(async (_method, data: Invocation) => {
     const { name } = data;
+    if (data.input === undefined) throw new Error('Invalid input: expected object');
     if (name === 'connections.list') return { connections: accounts };
     if (name === 'connections.google.login') return attempt;
     if (name === 'connections.google.connect' || name === 'connections.google.disconnect')

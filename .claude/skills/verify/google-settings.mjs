@@ -78,5 +78,14 @@ try {
     assert.equal(await page.getByLabel('Desktop client ID', { exact: true }).count(), 0);
   }
   await context.close();
+} catch (error) {
+  const failures = [];
+  for (const context of browser.contexts()) for (const page of context.pages()) {
+    const text = await page.locator('body').innerText().catch(() => 'page closed');
+    failures.push({ url: page.url(), text });
+    await page.screenshot({ path: `${run}/evidence/google-settings-${phase}-failure.png`, fullPage: true }).catch(() => {});
+  }
+  writeFileSync(`${run}/evidence/google-settings-${phase}-failure.json`, JSON.stringify(failures, null, 2));
+  throw error;
 } finally { await browser.close(); }
 writeFileSync(`${run}/evidence/google-settings-${phase}.json`, JSON.stringify({ observations, browserClosed: true }, null, 2));
