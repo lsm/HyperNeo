@@ -679,3 +679,42 @@ test('an unreadable failed third attempt keeps its error until OPEN recovery sur
   expect(notices).toEqual([expect.stringContaining('Required check still settling')]);
   expect(notices[0]).toContain('3 failed attempts');
 });
+
+test('an undelivered retry-limit notice survives removal from the candidate set', async () => {
+  mergeFailed = true;
+  deliver = false;
+  for (const at of [10, 11, 12]) await sweep()(at);
+  expect(merges()).toHaveLength(3);
+  policy('mergeBy', 'owner');
+  await ledger.write('replace', 'synthetic/merge', [], 13);
+  deliver = true;
+  await sweep()(14);
+  await sweep()(15);
+  expect(merges()).toHaveLength(3);
+  expect(notices).toEqual([expect.stringContaining('3 failed attempts')]);
+  expect(notices[0]).toContain('Required check still settling');
+});
+
+test('an external merge after a failed attempt still notifies its owner through ledger events', async () => {
+  const owner = { adapter: 'hyperneo', id: 'fixture-owner' };
+  db.prepare('UPDATE pack_coding_pr_ledger SET owner=?').run(JSON.stringify(owner));
+  mergeFailed = true;
+  await sweep()(10);
+  expect(merges()).toHaveLength(1);
+  const rows = await ledger.read('list');
+  const transitions = await ledger.write(
+    'replace',
+    'synthetic/merge',
+    [{ ...rows[0], state: 'merged', closedAt: 11 }],
+    11
+  );
+  const receive = async (_owner: unknown, _key: string, text: string) => {
+    notices.push(text);
+    return true;
+  };
+  const events = new CodingPrEventRepository(db);
+  await deliverCodingPrEvents(events, transitions, { tell: receive, wake: async () => false });
+  await deliverCodingPrEvents(events, [], { tell: receive, wake: async () => false });
+  expect(notices).toEqual([expect.stringContaining('was merged on head')]);
+  expect(merges()).toHaveLength(1);
+});
