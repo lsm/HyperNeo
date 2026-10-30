@@ -1,3 +1,4 @@
+import { createGoogleThreadOperations } from './google-thread-operations.ts';
 import { createGoogleReadOperations } from './google-read-operations.ts';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -77,6 +78,7 @@ export function createGoogleConnectionOperations(
   const service = () => getGoogleConnectionService(db(), deps);
   return [
     ...createGoogleReadOperations(db, service),
+    ...createGoogleThreadOperations(service),
     defineOperation({
       name: 'connections.google.connect',
       description:
