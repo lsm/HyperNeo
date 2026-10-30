@@ -60,6 +60,7 @@ try {
     await shot('mobile');
     const row = page.getByText('one@example.test', { exact: true });
     const bounds = await row.boundingBox(); assert(bounds.x >= 0 && bounds.x + bounds.width <= 391);
+    assert(bounds.height <= 28, 'a short email must fit one line on the mobile account card');
   } else {
     await page.getByText('one@example.test', { exact: true }).waitFor();
     await page.getByText('Connected', { exact: true }).waitFor();

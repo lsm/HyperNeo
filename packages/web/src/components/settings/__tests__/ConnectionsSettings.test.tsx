@@ -140,7 +140,9 @@ it('keeps the account and closes the blank popup when the daemon rejects a diffe
   };
   render(<MainContent />);
   fireEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
-  expect((await screen.findByRole('alert')).textContent).toContain('account_mismatch');
+  expect((await screen.findByRole('alert')).textContent).toContain(
+    'Sign in with the same Google account to reconnect.'
+  );
   expect(screen.getByText('one@example.test')).toBeTruthy();
   expect(popup.close).toHaveBeenCalledTimes(1);
 });
