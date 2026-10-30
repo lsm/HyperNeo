@@ -26,10 +26,10 @@ Observe observed.json, proof.log and run-status.json for every invocation:
 - With no Desktop installation/records in the synthetic home, a busy or idle
   CLI receiver in default, auto, plan or bypassPermissions accepts the matching input
   without a held receipt. Socket-write results remain explicitly unconfirmed.
-- A registered Desktop UUID addressed through the Code adapter uses the existing
-  Desktop adapter: a live input confirms against the target transcript; a stopped
-  target uses one existing auto headless turn. A registered session currently
-  owned by sdk-cli uses the shared receiver-mode matcher rather than undefined.
+- Start without Claude transcript or Desktop registration directories; create them
+  after daemon startup. A Desktop UUID sent through Code must confirm live input
+  in its transcript, and use one auto headless turn when stopped. Registered
+  sdk-cli owners must still use the shared receiver-mode matcher.
 - Unknown modes, unknown ownership, duplicate live candidates and a wrong local_
   ID write no input. A stopped unregistered CLI target is not resumed. Explicit
   receiver hold/refuse policies remain effective; waiting produces no resend.

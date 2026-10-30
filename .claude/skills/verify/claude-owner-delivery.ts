@@ -15,7 +15,7 @@ const evidence = join(run, 'evidence'), cwd = join(run, 'workspace');
 const records = join(run, 'home/Library/Application Support/Claude/claude-code-sessions/synthetic/account');
 const registrations = join(run, 'home/.claude/sessions');
 const projects = join(run, 'home/.claude/projects', cwd.replace(/[/.]/g, '-'));
-for (const dir of [evidence, cwd, registrations, projects, ...(installed ? [records] : [])]) mkdirSync(dir, { recursive: true });
+for (const dir of [evidence, cwd, registrations]) mkdirSync(dir, { recursive: true });
 chmodSync(registrations, 0o700);
 const id = crypto.randomUUID(), pid = 9001;
 const state = { id, title: 'Synthetic target', cwd, permissionMode: 'auto', pid, status: 'idle' };
@@ -27,8 +27,7 @@ const registrationFile = join(registrations, `${pid}.json`), socketPath = join(r
 const registration = { sessionId: id, pid, procStart: 1, entrypoint: installed ? 'claude-desktop' : 'sdk-cli', version: '2.1.302', peerProtocol: 1, peerFeatures: ['notify_idle'], messagingSocketPath: socketPath };
 const saveRegistration = (value: unknown = registration) => writeFileSync(registrationFile, JSON.stringify(value));
 saveRegistration();
-if (installed) writeFileSync(join(records, `local_${id}.json`), JSON.stringify({ sessionId: `local_${id}`, cliSessionId: id, cwd, title: 'Synthetic target', permissionMode: 'auto' }));
-const transcript = join(projects, `${id}.jsonl`); writeFileSync(transcript, '');
+const transcript = join(projects, `${id}.jsonl`);
 const fixture = join(repo, 'packages/daemon/tests/fixtures/claude-b1-cli.ts');
 writeFileSync(join(run, 'bin/claude'), `#!/usr/bin/env bun\nawait import(${JSON.stringify(fixture)});\n`, { mode: 0o700 });
 for (const name of ['gh', 'open']) writeFileSync(join(run, 'bin', name), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
@@ -67,8 +66,10 @@ await new Promise<void>(done => peer.listen(socketPath, done)); chmodSync(socket
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined, ws: WebSocket | undefined;
 const delay = (ms: number) => new Promise(done => setTimeout(done, ms));
 try {
+  assert(!existsSync(projects) && !existsSync(join(run, 'home/Library/Application Support/Claude/claude-code-sessions')));
   app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
   assert.notEqual(app.server.port, 8399);
+  mkdirSync(projects, { recursive: true }); writeFileSync(transcript, ''); if (installed) { mkdirSync(records, { recursive: true }); writeFileSync(join(records, `local_${id}.json`), JSON.stringify({ sessionId: `local_${id}`, cliSessionId: id, cwd, title: 'Synthetic target', permissionMode: 'auto' })); }
   await app.jobProcessor.stop();
   await app.db.createSession({ id: 'synthetic-origin', title: 'Synthetic origin', workspacePath: cwd, createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
   ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
