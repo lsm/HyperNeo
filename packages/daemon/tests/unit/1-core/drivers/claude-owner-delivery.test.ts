@@ -55,6 +55,16 @@ function fixture(registered = false) {
     held: string[] = [],
     spawns: string[][] = [];
   const listProcesses = async () => [{ pid: 1234, ppid: 1, elapsedSeconds: 2, command }];
+  const recordInput = (text: string) =>
+    appendFileSync(
+      transcript,
+      JSON.stringify({
+        type: 'user',
+        uuid: inputId,
+        timestamp: new Date().toISOString(),
+        message: { role: 'user', content: text },
+      }) + '\n'
+    );
   const sendInbox: NonNullable<ClaudeDesktopAdapterDeps['sendInbox']> = async (
     _,
     text,
@@ -67,16 +77,7 @@ function fixture(registered = false) {
       { messageId: inputId, inputId, text, fromMode }
     );
     frames.push(frame);
-    if (frame.includes(`from-mode=\\"${receiverClass}\\"`))
-      appendFileSync(
-        transcript,
-        JSON.stringify({
-          type: 'user',
-          uuid: inputId,
-          timestamp: new Date().toISOString(),
-          message: { role: 'user', content: text },
-        }) + '\n'
-      );
+    if (frame.includes(`from-mode=\\"${receiverClass}\\"`)) recordInput(text);
     else held.push(text);
     return {
       ok: true,
@@ -99,15 +100,7 @@ function fixture(registered = false) {
     searchChats: async () => [],
     spawn: (args) => {
       spawns.push(args);
-      appendFileSync(
-        transcript,
-        JSON.stringify({
-          type: 'user',
-          uuid: inputId,
-          timestamp: new Date().toISOString(),
-          message: { role: 'user', content: args.at(-1) },
-        }) + '\n'
-      );
+      recordInput(args.at(-1)!);
       return {
         stdout: new Response('').body,
         stderr: new Response('').body,
@@ -119,15 +112,10 @@ function fixture(registered = false) {
   };
   const desktop = createClaudeDesktopAdapter(desktopDeps);
   const deps = {
-    projectsDir: projects,
-    machine: 'synthetic',
-    searchChats: async () => [],
+    ...desktopDeps,
     desktopSessions: async () => new Set(registered ? [id] : []),
     desktopRecords: () => readClaudeDesktopRecords(records, new Map()),
     desktopSend: registered ? desktop.send : undefined,
-    liveSessions: async () => live,
-    listProcesses,
-    sendInbox,
   };
   const code = createClaudeCodeAdapter(deps),
     ref = { adapter: 'claude-code', id };

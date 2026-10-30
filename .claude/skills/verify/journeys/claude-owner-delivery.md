@@ -31,7 +31,7 @@ Observe observed.json, proof.log and run-status.json for every invocation:
   in its transcript, and use one auto headless turn when stopped. Registered
   sdk-cli owners must still use the shared receiver-mode matcher.
 - Unknown modes, unknown ownership, duplicate live candidates and a wrong local_
-  ID write no input. A stopped unregistered CLI target is not resumed. Explicit
+  ID or failed native discovery writes no input. A stopped CLI target is not resumed. Explicit
   receiver hold/refuse policies remain effective; waiting produces no resend.
 - Each native run first sends an opposite-class control directly: the installed
   receive-side gate reports peer_message_hold / mode-mismatch then expired.
@@ -43,12 +43,8 @@ The daemon matrix uses synthetic Desktop peers; the native proof uses the instal
 receiver with a local model. Neither proves GUI approval/rendering, real providers
 or live delivery. Preserve the existing held-retry journey's one-relay fallback.
 
-Also run the optional Desktop plugin's native-send compatibility contracts:
-
-```bash
-cd packages/daemon
-bunx vitest run --config vitest.config.ts tests/unit/1-core/drivers/claude-desktop-mods-driver.test.ts tests/unit/1-core/drivers/claude-owner-delivery.test.ts
-```
+Also run CLI probe and optional Desktop plugin compatibility contracts from `packages/daemon`:
+`bunx vitest run --config vitest.config.ts tests/unit/1-core/drivers/{claude-code-adapter,claude-desktop-mods-driver,claude-owner-delivery}.test.ts`
 
 Its valid receiver fixture must provide a permission mode and receipt-bound
 transcript input. The separate missing-mode case must refuse without sending;

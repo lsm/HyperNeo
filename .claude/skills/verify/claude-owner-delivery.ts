@@ -132,6 +132,7 @@ try {
     assert.match(unknownMode.detail, /receiver.*mode.*unknown/i);
     assert.equal(frames.length, before);
     writeFileSync(join(evidence, 'process-mode'), 'auto');
+    writeFileSync(stateFile, 'invalid discovery output'); const failedProbe = await send('LIVE_PROBE_FAILURE'); assert(!failedProbe.ok && failedProbe.reason === 'unreachable', JSON.stringify(failedProbe)); assert.equal(frames.length, before); saveState();
   }
   saveRegistration({ ...registration, entrypoint: 'unknown-host' });
   const beforeRejected = frames.length;
