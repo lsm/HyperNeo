@@ -1,3 +1,4 @@
+import { codingReviewMatches } from './review.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { CodingMergePolicy } from './pr-ledger.ts';
 import { codingHumanSignoff } from './human-signoff.ts';
@@ -12,7 +13,7 @@ export type CodingDaemonMergeFacts =
       mergeable: string;
       requiredCi: { head: string; green: boolean };
       threads: { head: string; unresolved: number };
-      reviews: readonly { login: string; head: string; state: string }[];
+      reviews: readonly { login: string; type?: string; head: string; state: string }[];
       files: readonly string[] | null;
       labels: readonly string[] | null;
     };
@@ -48,7 +49,7 @@ const requireReview = (facts: Facts, policy: CodingMergePolicy): Gate => {
   const latest = facts.reviews
     .filter(
       (review) =>
-        review.login.toLowerCase() === policy.reviewBot?.toLowerCase() &&
+        codingReviewMatches(review, policy.reviewBot) &&
         !['COMMENTED', 'PENDING'].includes(review.state)
     )
     .at(-1);

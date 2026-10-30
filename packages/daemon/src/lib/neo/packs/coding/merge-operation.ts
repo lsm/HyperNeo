@@ -12,7 +12,7 @@ import { codingReviewerPolicy } from './stage-facts.ts';
 import { createCodingReviewThreadReader } from './connector-review-thread-reader.ts';
 import type { CodingTodoPrRepository } from './todo-prs.ts';
 import type { prepareCodingMerge } from './merge-gates.ts';
-import type { runCodingReview } from './review.ts';
+import { codingReviewMatches, type runCodingReview } from './review.ts';
 
 const Input = z
   .object({
@@ -204,7 +204,7 @@ export function createCodingMergeOperation(deps: Deps) {
               ...(route.kind === 'bot'
                 ? reviews.filter(
                     (r) =>
-                      r.user?.login.toLowerCase() === route.login.toLowerCase() &&
+                      codingReviewMatches(r.user, route.login) &&
                       r.commit_id === route.head &&
                       r.state === 'APPROVED'
                   )

@@ -7,7 +7,7 @@ import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/pac
 import { CodingAssignmentsRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/assignments.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 
-const run = resolve(process.argv[2]);
+const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -18,7 +18,9 @@ const url = 'https://github.com/synthetic/admission/pull/7', head = 'a'.repeat(4
 const author = { adapter: 'fixture', id: 'author' }, ref = { adapter: 'fixture', id: 'verifier' };
 const actor = { kind: 'agent' as const, id: ref.id, model: 'gpt-6', harness: ref.adapter };
 const pr = { url, body: 'Agent: gpt-6-sol (effort: high) via fixture', headRefOid: head, state: 'OPEN', isDraft: false, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', author: { login: 'author' }, changedFiles: 1, files: [{ path: 'src/change.ts' }], labels: [] };
-const reviews = [{ state: 'APPROVED', commit_id: head, user: { login: 'fixture-bot', type: 'Bot' }, html_url: `${url}#review-1` }];
+const humanCollision = process.argv.includes('--human-collision');
+const botLogin = process.argv.includes('--bot-alias') ? 'fixture-bot[bot]' : 'fixture-bot';
+const reviews = [{ state: 'APPROVED', commit_id: head, user: { login: botLogin, type: humanCollision ? 'User' : 'Bot' }, html_url: `${url}#review-1` }];
 const checks = [{ bucket: 'pass', name: 'Required CI', link: `${url}/checks` }];
 const threads = { headOid: head, unresolvedThreadUrls: [] as string[] };
 const publish = (extra = {}) => writeFileSync(join(run, 'fixture.json'), JSON.stringify({ pr, reviews: [reviews], checks, threads, ...extra }));
@@ -46,6 +48,7 @@ try {
   assert.equal((await rpc('operations.describe', { name: 'neo.coding.merge.prepare' })).found, true, 'No supported merge admission door');
   const setting = (key: string, value: unknown) => rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/admission' }, key, value });
   await setting('reviewBot', 'fixture-bot'); await setting('mergePolicy', 'review_bot');
+  if (humanCollision) db.prepare("UPDATE neo_pack_preferences SET value_json = ? WHERE pack = 'coding' AND scope_key = 'synthetic/admission' AND key = 'reviewBot'").run(JSON.stringify('fixture-bot[bot]'));
   const prepare = () => rpc('neo.coding.merge.prepare', { todoId: 'todo', url });
   assert.equal((await prepare()).accepted, false);
   const assigned = await rpc('neo.coding.assign', { todoId: 'todo', url, head, acceptanceContract: 'artifact:acceptance', stage: 'review', candidates: [] });
@@ -53,6 +56,12 @@ try {
   assert(await assignments.recordLater('todo', 'qa', { url, head, newDispatch: true, acceptanceContract: 'artifact:acceptance', write: author, ref, actor }));
   assert.equal((await prepare()).accepted, false, 'Missing Verify must refuse despite bot and CI');
   assert.deepEqual(await rpc('neo.coding.result', { todoId: 'todo', ref, fact: { url, head, stage: 'verify', actor, verdict: 'pass', acceptanceContract: 'artifact:acceptance', evidence: ['artifact:verify'] } }), { ok: true });
+  if (humanCollision) {
+    const refused = await prepare(); evidence.push({ humanCollision: refused });
+    assert.equal(refused.accepted, false, 'A distinct User account cannot impersonate the configured bot');
+    assert(!todos.deliveryFacts.read('todo', url, head));
+    reviews[0].user = { login: 'fixture-bot[bot]', type: 'Bot' }; publish();
+  }
   for (const bad of [
     { checks: [{ ...checks[0], bucket: 'pending' }] },
     { checks: [{ ...checks[0], bucket: 'fail' }] },

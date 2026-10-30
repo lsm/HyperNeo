@@ -1,3 +1,4 @@
+import { checkCodingPrApproved } from './pr-approved.ts';
 import { codingWatchedRepos, initializeCodingWatches } from './watched-repos.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { createCodingPrFileOperation } from './pr-file-operation.ts';
@@ -32,7 +33,8 @@ import { CODING_STAGE_PREFERENCES, createCodingWritePlanOperation } from './stag
 
 export const CODING_PACK_BRIEF: NeoPackBrief = {
   id: 'coding',
-  describe: 'Software work in git repositories: pull requests, CI, review and merging.',
+  describe:
+    'Software work in git repositories: pull requests, CI, review and merging. Check pr_approved {url} waits for saved-policy approval; pr_merged waits for merge.',
   guidance: NEO_PACK_CODING_INSTRUCTIONS,
 };
 
@@ -61,7 +63,8 @@ export function createCodingPack(deps: {
     deps.todoPrs,
     deps.readPrs,
     (url) => deps.prLedger.stateOf(url),
-    deps.readRefStates ?? createCodingRefReader(() => deps.prLedger.refFacts)
+    deps.readRefStates ?? createCodingRefReader(() => deps.prLedger.refFacts),
+    (url) => checkCodingPrApproved(url, (repo) => deps.prLedger.policy(repo))
   );
   return {
     ...CODING_PACK_BRIEF,

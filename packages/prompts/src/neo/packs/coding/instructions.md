@@ -10,7 +10,8 @@ its PR check. Track any required deployment or smoke as its own checkable todo. 
 "owner/repo#N"}}. NOT_PLANNED fails the todo; open or unreadable never completes it.
 Keep the repository's review and merge rules. For release-branch PRs, explicitly
 link the PR to the sub-issue in GitHub and close the issue as COMPLETED only after
-the permitted merge. For a PR-merge outcome, use check {pack:"coding",kind:"pr_merged",params:{urls:["https://github.com/example/project/pull/123"]}}. Existing pr_merged todos keep working. Read GitHub facts with
+the permitted merge. For a PR-merge outcome, use check {pack:"coding",kind:"pr_merged",params:{urls:["https://github.com/example/project/pull/123"]}}. Existing pr_merged todos keep working.
+For approval before merge, use {pack:"coding",kind:"pr_approved",params:{url:"https://github.com/example/project/pull/123"}} with neo.todo.add check or neo.question.ask retireWhen. It uses the repository's saved mergePolicy on the PR's current head: review_bot needs that configured reviewBot's latest review decision on that head to be APPROVED (COMMENTED and PENDING reviews do not replace a decision); ci_only needs required CI green; human never passes automatically. A new head needs fresh approval, and failed reads leave the check unmet. Login matching ignores case; a trailing [bot] alias requires a known GitHub Bot actor across approval checks, ledger and merge gates. User accounts or unknown actor types never qualify through a suffix alias. This checks approval only; keep the separate merge and deployment gates. Read GitHub facts with
 neo.github.read; never ask the human to confirm them. Name refs as owner/repo#N.
 PR events, owner workers' reports and passing pr_merged/issue_closed checks reach
 you as messages; never sleep or poll gh / neo.github.read to wait for review, CI

@@ -74,7 +74,7 @@ const project = ([pr, reviews, checks, threads, labels]: Observed): CodingDaemon
   reviews: reviews
     .flat()
     .flatMap((review) =>
-      review.user ? [{ login: review.user.login, head: review.commit_id, state: review.state }] : []
+      review.user ? [{ ...review.user, head: review.commit_id, state: review.state }] : []
     ),
   files: pr.changedFiles === pr.files.length ? pr.files.map((file) => file.path) : null,
   labels: labels.flat().map((label) => label.name),

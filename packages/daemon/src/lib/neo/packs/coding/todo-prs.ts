@@ -1,4 +1,5 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { codingApprovalUrl } from './pr-approved.ts';
 import { CodingStageFactsRepository } from './stage-facts.ts';
 import { CodingDeliveryFactsRepository } from './delivery-facts.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
@@ -399,7 +400,12 @@ export function codingTodoRepository(
 ): string | null {
   const issue = todo.check?.kind === 'issue_closed' && codingIssueRef(todo.check);
   if (issue) return neoGitRepo(`github.com/${issue.owner}/${issue.repo}`);
-  const urls = todo.check?.pack === 'coding' ? todo.check.params.urls : null;
+  const urls =
+    todo.check?.pack === 'coding'
+      ? todo.check.kind === 'pr_approved'
+        ? [todo.check.params.url]
+        : todo.check.params.urls
+      : null;
   const pr = [...(Array.isArray(urls) ? urls : []), ...claimed]
     .map((url) => (typeof url === 'string' ? parsePrUrl(url) : null))
     .find(Boolean);
@@ -438,6 +444,8 @@ function codingIssueCheck(issue: NeoRefState | undefined): NeoTodoCheckResult {
 }
 
 export function codingTodoDoneWhen(check: NeoTodoCheck): string | null {
+  if (check.kind === 'pr_approved')
+    return `${check.params.url} approved under the repository's saved merge policy`;
   if (check.kind === 'issue_closed') return `${check.params.issue} completed`;
   if (check.kind !== 'pr_merged') return null;
   const refs = codingCheckRefs(check);
@@ -449,6 +457,10 @@ export function codingTodoDoneWhen(check: NeoTodoCheck): string | null {
 export function codingTodoCheckRefusal(
   draft: Pick<NeoTodo, 'check' | 'instruction'>
 ): string | null {
+  if (draft.check?.kind === 'pr_approved')
+    return codingApprovalUrl(draft.check.params.url)
+      ? null
+      : 'pr_approved_invalid_url: params.url must name a pull request.';
   if (draft.check?.kind === 'issue_closed')
     return codingIssueRef(draft.check)
       ? null
@@ -470,6 +482,7 @@ type CodingTodoFacts = {
   observedAt: number;
   incomplete?: true;
   issue?: NeoRefState;
+  approval?: NeoTodoCheckResult;
 };
 
 const readIssueFacts = (superpipe({})('coding.issue-facts') as PipelineAPI)
@@ -604,7 +617,8 @@ export function createCodingTodoPack(
   repo: CodingTodoPrRepository,
   readPrs: NeoWorkPrReader,
   ledger?: CodingLedgerState,
-  readRefs?: NeoRefStateReader
+  readRefs?: NeoRefStateReader,
+  readApproval?: (url: string) => Promise<NeoTodoCheckResult>
 ): NeoTodoPack & NeoTodoFactJudge<CodingTodoFacts | null> {
   const claimsOf = (todo: NeoTodo) => {
     const recorded = new Set(repo.prs(todo.id).flatMap((pr) => codingPrKey(pr.url) ?? []));
@@ -619,6 +633,12 @@ export function createCodingTodoPack(
     detached = false
   ): Promise<CodingTodoFacts | null> => {
     if (todo.check && todo.check.pack !== 'coding') return null;
+    if (todo.check?.kind === 'pr_approved')
+      return {
+        prs: [],
+        observedAt: Date.now(),
+        approval: await readApproval?.(String(todo.check.params.url)),
+      };
     if (todo.check?.kind === 'issue_closed')
       return readIssueFacts(todo, readRefs ?? (async () => []), readPrs, repo, persist);
     const named = claimsOf(todo);
@@ -642,11 +662,13 @@ export function createCodingTodoPack(
     return { prs, observedAt };
   };
   const checked = (todo: NeoTodo, facts: CodingTodoFacts) =>
-    todo.check?.kind === 'issue_closed'
-      ? codingIssueCheck(facts.issue)
-      : todo.check
-        ? codingTodoCheck(todo.check.kind, facts.prs, facts.observedAt)
-        : null;
+    todo.check?.kind === 'pr_approved'
+      ? (facts.approval ?? { done: false, evidence: null })
+      : todo.check?.kind === 'issue_closed'
+        ? codingIssueCheck(facts.issue)
+        : todo.check
+          ? codingTodoCheck(todo.check.kind, facts.prs, facts.observedAt)
+          : null;
   return {
     readFacts,
     judge: (todo, facts) => {

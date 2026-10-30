@@ -165,7 +165,8 @@ describe('neoSettingsPackBriefs', () => {
     expect(neoSettingsPackBriefs()).toEqual([
       {
         id: 'coding',
-        describe: 'Software work in git repositories: pull requests, CI, review and merging.',
+        describe:
+          'Software work in git repositories: pull requests, CI, review and merging. Check pr_approved {url} waits for saved-policy approval; pr_merged waits for merge.',
         guidance: NEO_PACK_CODING_INSTRUCTIONS,
       },
     ]);
