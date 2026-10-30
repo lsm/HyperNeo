@@ -1,6 +1,7 @@
 import {
   CodingPrSweepRepository,
   sweepCodingPrs,
+  type CodingSweepDeps,
 } from '../../../../src/lib/neo/packs/coding/pr-sweep.ts';
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -97,7 +98,7 @@ const spawn: SpawnFn = (args) => {
     kill() {},
   };
 };
-const sweep = () =>
+const sweep = (customSpawn: SpawnFn = spawn, overrides: Partial<CodingSweepDeps> = {}) =>
   createCodingDaemonMergeSweep(
     () => db,
     ledger,
@@ -110,8 +111,9 @@ const sweep = () =>
         if (deliver) notices.push(text);
         return deliver;
       },
+      ...overrides,
     },
-    spawn
+    customSpawn
   );
 const merges = () => calls.filter((args) => args[2] === 'merge');
 beforeEach(async () => {
@@ -263,13 +265,7 @@ test('daemon execution suppresses owner merge events and reminders', async () =>
   await deliverCodingPrEvents(new CodingPrEventRepository(db), [], delivery);
   await sweepCodingPrs(new CodingPrSweepRepository(db), delivery, 20 * 60_000);
   expect(messages).toEqual([]);
-  await createCodingDaemonMergeSweep(
-    () => db,
-    ledger,
-    new CodingPrEventRepository(db),
-    delivery,
-    spawn
-  )(20 * 60_000);
+  await sweep(spawn, delivery)(20 * 60_000);
   expect(messages).toHaveLength(1);
   expect(messages[0]).toContain('merged by daemon:coding-sweep');
 });
@@ -303,19 +299,13 @@ test('a receipt sharing a candidate cannot hide a failed read with a second resp
     }
     return spawn(args);
   };
-  const run = createCodingDaemonMergeSweep(
-    () => db,
-    ledger,
-    new CodingPrEventRepository(db),
-    {
-      tell: async () => false,
-      wake: async (_key, text) => {
-        notices.push(text);
-        return true;
-      },
+  const run = sweep(flaky, {
+    tell: async () => false,
+    wake: async (_key, text) => {
+      notices.push(text);
+      return true;
     },
-    flaky
-  );
+  });
   await run(10);
   expect(failed).toBe(true);
   expect(notices).toEqual([]);
@@ -348,16 +338,7 @@ test.each([undefined, 'GHE.company.test'])(
       };
     };
     try {
-      const run = createCodingDaemonMergeSweep(
-        () => db,
-        ledger,
-        new CodingPrEventRepository(db),
-        {
-          tell: async () => false,
-          wake: async () => true,
-        },
-        hosted
-      );
+      const run = sweep(hosted, { tell: async () => false, wake: async () => true });
       await run(10);
       expect(merges()).toHaveLength(1);
       expect(merges()[0][3]).toBe(`https://${host}/synthetic/merge/pull/1`);
@@ -399,19 +380,13 @@ test.each(['human', undefined])(
 test('a rejected sign-off delivery holds merging but lets the sweep finish and retry', async () => {
   labels = ['human-merge'];
   let wakes = 0;
-  const run = createCodingDaemonMergeSweep(
-    () => db,
-    ledger,
-    new CodingPrEventRepository(db),
-    {
-      tell: async () => false,
-      wake: async () => {
-        if (++wakes === 1) throw new Error('Synthetic mailbox unavailable');
-        return true;
-      },
+  const run = sweep(spawn, {
+    tell: async () => false,
+    wake: async () => {
+      if (++wakes === 1) throw new Error('Synthetic mailbox unavailable');
+      return true;
     },
-    spawn
-  );
+  });
   await expect(run(10)).resolves.toBeUndefined();
   await run(11);
   expect(wakes).toBe(2);
@@ -437,16 +412,7 @@ test.each<[string, unknown]>([
       if (args[2] === 'checks') policy(key, value);
       return spawn(args);
     };
-    await createCodingDaemonMergeSweep(
-      () => db,
-      ledger,
-      new CodingPrEventRepository(db),
-      {
-        tell: async () => false,
-        wake: async () => true,
-      },
-      racing
-    )(10);
+    await sweep(racing, { tell: async () => false, wake: async () => true })(10);
     expect(ledger.policy('synthetic/merge')[key as keyof ReturnType<typeof ledger.policy>]).toEqual(
       value
     );
