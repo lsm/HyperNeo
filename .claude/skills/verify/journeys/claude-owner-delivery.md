@@ -51,3 +51,14 @@ for its one-relay fallback; do not replace it with another retry implementation.
 Both helpers close their sockets, servers and owned processes in finally. The
 shared wrapper retains evidence and removes the disposable homes/data, including
 failures. A nonzero wrapper result is a failed proof even if a PASS line appeared.
+
+Also run the optional Desktop plugin's native-send compatibility contracts:
+
+```bash
+cd packages/daemon
+bunx vitest run --config vitest.config.ts tests/unit/1-core/drivers/claude-desktop-mods-driver.test.ts tests/unit/1-core/drivers/claude-owner-delivery.test.ts
+```
+
+Its valid receiver fixture must provide a permission mode and receipt-bound
+transcript input. The separate missing-mode case must refuse without sending;
+plugin queue controls must continue to preserve confirmed native send/steer.
