@@ -8,7 +8,7 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
   );
   CREATE TABLE IF NOT EXISTS pack_coding_daemon_merge_failures (
     url TEXT NOT NULL, head TEXT NOT NULL, actor TEXT NOT NULL,
-    started_at INTEGER NOT NULL, error TEXT NOT NULL,
+    started_at INTEGER NOT NULL, error TEXT NOT NULL, confirmed_open INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (url, head, started_at)
   );
   CREATE TABLE IF NOT EXISTS pack_coding_daemon_merge_notices (

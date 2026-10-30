@@ -655,6 +655,14 @@ test('an unreadable failed third attempt keeps its error until OPEN recovery sur
     await ledger.write('daemonMerge', { ...receipt, kind: 'void', at: receipt.startedAt });
   }
   mergeFailed = true;
+  const accepted = new Set<string>();
+  const wake = async (key: string, text: string) => {
+    if (!accepted.has(key)) {
+      accepted.add(key);
+      notices.push(text);
+    }
+    return true;
+  };
   let issued = false;
   const unreadable: SpawnFn = (args) => {
     if (args[2] === 'merge') issued = true;
@@ -663,10 +671,10 @@ test('an unreadable failed third attempt keeps its error until OPEN recovery sur
       ? { ...result, exited: Promise.resolve(1), exitCode: 1 }
       : result;
   };
-  await sweep(unreadable)(10);
+  await sweep(unreadable, { wake })(10);
   expect(await ledger.write('daemonMerge', { kind: 'list' })).toHaveLength(1);
   expect(notices).toEqual([]);
-  await sweep()(11);
+  await sweep(spawn, { wake })(11);
   expect(merges()).toHaveLength(1);
   expect(notices).toEqual([expect.stringContaining('Required check still settling')]);
   expect(notices[0]).toContain('3 failed attempts');

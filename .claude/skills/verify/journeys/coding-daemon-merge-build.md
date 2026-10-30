@@ -35,7 +35,9 @@ receipt; successful notification acknowledgement removes it from pending work.
 Target receipt and failure-budget SQL must be zero on main. Synthetic failed
 attempts release their receipts while preserving the failure budget. Restart
 must preserve two failures and their error; the third consumes the remaining
-budget and another begin must be refused. The helper closes both instances,
+budget and another begin must be refused. An uncertain CLI error must retain its
+receipt/error across restart without consuming budget, then count once when
+promoted to a confirmed OPEN failure. The helper closes both instances,
 saves coding-daemon-merge-build.json and its gh read log; the wrapper removes
 all synthetic daemon data after preserving evidence.
 

@@ -32,8 +32,9 @@ preferences captured before execution must remain unchanged.
 The unit contracts additionally cover overlapping sweep invocations, every gate,
 open/moved reserved attempts and recovering a successful merge whose first
 confirmation read failed. Build-slice proof covers durable receipts across daemon
-restart. A successful command with unreadable confirmation retains its receipt until facts recover.
-Failed commands or fresh OPEN results release their receipts; retries recheck every gate.
+restart. Unreadable confirmation retains the receipt and CLI error, even when the command
+exits nonzero. Only a readable OPEN result releases/counts the attempt; retries
+recheck every gate.
 Readable held warnings are durably acknowledged and terminal attempts retire; confirmation stays distinct.
 
 The helper saves coding-daemon-merge-sweep.json and the exact CLI invocation log,
@@ -67,3 +68,9 @@ Add `legacy-open` to seed an unfinished receipt from the previous build. With
 fresh facts confirming OPEN, the full sweep must release that attempt, consume
 one failure from the durable budget and merge through current admission without
 a manual receipt edit.
+
+Add `uncertain-error` to apply the synthetic merge, return a CLI error and fail
+confirmation reads. The receipt and error must survive without consuming retry
+budget. Restore reads and recreate the pack: exactly one confirmation must arrive
+without issuing another merge. A separate regression recovers OPEN after an
+unreadable third command and requires the original CLI error in Neo's limit notice.

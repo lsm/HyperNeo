@@ -81,7 +81,9 @@ export function createCodingDaemonMergeSweep(
     now: number,
     error: string | null = null
   ) => {
-    const outcome = planCodingMergeAttempt(receipt.head, pr, error);
+    const outcome = planCodingMergeAttempt(receipt.head, pr, error ?? receipt.error ?? null);
+    if (!pr.ok && error)
+      await record({ ...receipt, kind: 'uncertain', at: receipt.startedAt, error });
     if (error) log.warn('Daemon merge held', { url: receipt.url, reason: error });
     if (outcome.kind === 'retry') {
       if (!error) log.warn('Daemon merge held', { url: receipt.url, reason: outcome.error });
