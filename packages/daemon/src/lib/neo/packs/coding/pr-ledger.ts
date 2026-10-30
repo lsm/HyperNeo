@@ -1,7 +1,8 @@
+import { codingReviewOnHead } from './review.ts';
 import { codingLedgerPollReads } from './ledger-poll-db.ts';
 import { isRateLimitError } from '../../../session/rate-limit-detector.ts';
 import { codingCanonicalRepo, codingRepoWatched, codingWatchedRepos } from './watched-repos.ts';
-import { posix } from 'node:path';
+import { codingHumanSignoff } from './human-signoff.ts';
 import {
   CodingStageFactsRepository,
   codingReviewerPolicy,
@@ -24,6 +25,7 @@ import { CodingWorkFactsRepository } from './work-facts.ts';
 import { CodingBranchFactsRepository } from './branch-facts.ts';
 import { CodingMergeFactsRepository } from './merge-facts.ts';
 import { getNeoPackPreference } from '../../preferences.ts';
+import { codingMergeContextRepos } from './merge-context.ts';
 import { z } from 'zod';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { Logger } from '../../../logger.ts';
@@ -75,13 +77,19 @@ export const Node = z.object({
       pageInfo: z.object({ hasNextPage: z.boolean() }),
     })
     .nullish(),
+  labels: z
+    .object({
+      nodes: z.array(z.object({ name: z.string() })),
+      pageInfo: z.object({ hasNextPage: z.boolean() }),
+    })
+    .nullish(),
   reviews: z
     .object({
       nodes: z.array(
         z.object({
           state: z.string(),
           commit: z.object({ oid: z.string() }).nullable(),
-          author: z.object({ login: z.string() }).nullable().optional(),
+          author: z.object({ login: z.string(), type: z.string().optional() }).nullish(),
         })
       ),
     })
@@ -147,6 +155,7 @@ export function codingPrReplyAt(pr: Node): number | null {
 
 export interface CodingMergePolicy {
   provenance?: boolean;
+  mergeBy?: 'owner' | 'daemon';
   mergePolicy?: 'review_bot' | 'ci_only' | 'human';
   reviewBot?: string;
   humanSignoff?: readonly string[];
@@ -172,23 +181,21 @@ export function codingPrState(
   if (!policy.mergePolicy) return 'waiting_human';
   const readyCi = noCi || ci === 'SUCCESS';
   const humanSignoff =
-    !!policy.humanSignoff?.length &&
-    (!pr.files ||
-      pr.files.pageInfo.hasNextPage ||
-      policy.humanSignoff.some((pattern) => pattern.startsWith('label:')) ||
-      pr.files.nodes.some((file) =>
-        policy.humanSignoff!.some((pattern) => posix.matchesGlob(file.path, pattern))
-      ));
+    codingHumanSignoff(
+      policy.humanSignoff ?? [],
+      pr.files && !pr.files.pageInfo.hasNextPage ? pr.files.nodes.map((file) => file.path) : null,
+      pr.labels && !pr.labels.pageInfo.hasNextPage
+        ? pr.labels.nodes.map((label) => label.name)
+        : null
+    ) !== false;
   if (policy.mergePolicy === 'human' || (policy.mergePolicy === 'review_bot' && !policy.reviewBot))
     return readyCi ? 'waiting_human' : 'waiting_ci';
   if (policy.mergePolicy === 'review_bot') {
-    const bot = pr.reviews.nodes
-      .filter(
-        (item) =>
-          item.commit?.oid === pr.headRefOid &&
-          item.author?.login.toLowerCase() === policy.reviewBot!.toLowerCase()
-      )
-      .at(-1);
+    const bot = codingReviewOnHead({
+      head: pr.headRefOid,
+      reviewBot: policy.reviewBot,
+      reviews: pr.reviews.nodes,
+    });
     if (bot?.state !== 'APPROVED') return 'waiting_review';
     if (humanSignoff) return 'waiting_human';
     return readyCi ? 'approved_green' : 'approved_pending';
@@ -359,6 +366,56 @@ export class CodingPrLedgerRepository {
     >;
   }
 
+  daemonMerge(
+    change:
+      | { kind: 'list' }
+      | { kind: 'begin' | 'void'; url: string; head: string; actor: string; at: number }
+      | { kind: 'finish'; url: string; head: string; commit: string; at: number }
+      | { kind: 'notified' | 'held' | 'retired'; url: string; head: string; at: number }
+  ) {
+    const columns = `url, head, actor, started_at AS startedAt, merge_commit AS mergeCommit, merged_at AS mergedAt, notified_at AS notifiedAt, (SELECT at FROM pack_coding_daemon_merge_notices n WHERE n.url=pack_coding_daemon_merges.url AND n.head=pack_coding_daemon_merges.head AND n.kind='held') AS heldNotifiedAt`;
+    const statement =
+      change.kind === 'list'
+        ? {
+            sql: `SELECT ${columns} FROM pack_coding_daemon_merges WHERE notified_at IS NULL AND NOT EXISTS (SELECT 1 FROM pack_coding_daemon_merge_notices n WHERE n.url=pack_coding_daemon_merges.url AND n.head=pack_coding_daemon_merges.head AND n.kind='retired') ORDER BY started_at`,
+            args: [],
+          }
+        : change.kind === 'held' || change.kind === 'retired'
+          ? {
+              sql: 'INSERT OR IGNORE INTO pack_coding_daemon_merge_notices(url,head,kind,at) VALUES(?,?,?,?)',
+              args: [change.url, change.head, change.kind, change.at],
+            }
+          : change.kind === 'void'
+            ? {
+                sql: 'DELETE FROM pack_coding_daemon_merges WHERE url=? AND head=? AND actor=? AND started_at=? AND merge_commit IS NULL',
+                args: [change.url, change.head, change.actor, change.at],
+              }
+            : change.kind === 'begin'
+              ? {
+                  sql: `INSERT OR IGNORE INTO pack_coding_daemon_merges(url,head,actor,started_at) VALUES(?,?,?,?) RETURNING ${columns}`,
+                  args: [change.url, change.head, change.actor, change.at],
+                }
+              : change.kind === 'finish'
+                ? {
+                    sql: `UPDATE pack_coding_daemon_merges SET merge_commit=?, merged_at=? WHERE url=? AND head=? AND merge_commit IS NULL RETURNING ${columns}`,
+                    args: [change.commit, change.at, change.url, change.head],
+                  }
+                : {
+                    sql: `UPDATE pack_coding_daemon_merges SET notified_at=? WHERE url=? AND head=? AND merge_commit IS NOT NULL AND notified_at IS NULL RETURNING ${columns}`,
+                    args: [change.at, change.url, change.head],
+                  };
+    return this.db.prepare(statement.sql).all(...statement.args) as {
+      url: string;
+      head: string;
+      actor: string;
+      startedAt: number;
+      mergeCommit: string | null;
+      mergedAt: number | null;
+      notifiedAt: number | null;
+      heldNotifiedAt: number | null;
+    }[];
+  }
+
   pollSnapshot(repos: readonly string[]) {
     const last = this.lastReads();
     return {
@@ -374,7 +431,11 @@ export class CodingPrLedgerRepository {
   }
 
   pollContext(repo: string) {
-    return { watched: this.watches(repo), health: this.health.read(repo) };
+    return {
+      watched: this.watches(repo),
+      health: this.health.read(repo),
+      policy: this.policy(repo),
+    };
   }
 
   pollSnapshotCurrent(repos: readonly string[]) {
@@ -449,6 +510,17 @@ export class CodingPrLedgerRepository {
     return codingReviewerPolicy(this.policy(repo).provenance !== false, body, reviewer);
   }
 
+  policyContextCurrent(text: string) {
+    return gatewayFor(this.db).call(codingLedgerReads, 'policyContext', text);
+  }
+
+  policyContext(text: string, known: readonly string[] = []) {
+    return codingMergeContextRepos(text, [...known, ...this.lastReads().keys()]).map((repo) => ({
+      repo,
+      policy: this.policy(repo),
+    }));
+  }
+
   policy(repo: string): CodingMergePolicy {
     const read = (key: string) => {
       const scope = this.db
@@ -463,6 +535,7 @@ export class CodingPrLedgerRepository {
       )?.value;
     };
     return {
+      mergeBy: (read('mergeBy') ?? 'owner') as CodingMergePolicy['mergeBy'],
       provenance: read('provenance') as boolean | undefined,
       mergePolicy: read('mergePolicy') as CodingMergePolicy['mergePolicy'],
       reviewBot: read('reviewBot') as string | undefined,
@@ -912,6 +985,7 @@ export async function reconcileCodingPrLedger(
 }
 
 type CodingLedgerWrite =
+  | 'daemonMerge'
   | 'acceptTerminalEvent'
   | 'acceptHealthNotice'
   | 'recordHealth'
@@ -931,6 +1005,7 @@ export const codingLedgerWrites = defineRepositoryOp<CodingPrLedgerRepository, C
   'write',
   CodingPrLedgerRepository,
   [
+    'daemonMerge',
     'acceptTerminalEvent',
     'acceptHealthNotice',
     'recordHealth',
@@ -951,5 +1026,5 @@ export const codingLedgerReads = defineRepositoryOp(
   'coding.ledger.read',
   'read',
   CodingPrLedgerRepository,
-  ['lastReads', 'list', 'readHealth'] as const
+  ['lastReads', 'list', 'readHealth', 'policyContext'] as const
 );

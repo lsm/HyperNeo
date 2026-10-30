@@ -67,7 +67,7 @@ async function seed() {
   await feedWorkFiles(app.db.getDatabase(), files(claudePath), claudeFeedSource(new Set()));
   const nativeClaude = join(run, `${claudeOwner}.jsonl`);
   const nativeAt = '1990-01-01T00:00:00Z';
-  const wrapper = JSON.parse(claudeInboxFrame({ sessionId: claudeOwner, pid: 1, socketPath: '/synthetic.sock', version: 'synthetic' }, '/synthetic-reply.sock', { messageId: '22222222-2222-4222-8222-222222222222', inputId: '33333333-3333-4333-8333-333333333333', text: `${marker('native-wrapper')}\nStored answer` }));
+  const wrapper = JSON.parse(claudeInboxFrame({ sessionId: claudeOwner, pid: 1, socketPath: '/synthetic.sock', version: 'synthetic' }, '/synthetic-reply.sock', { messageId: '22222222-2222-4222-8222-222222222222', inputId: '33333333-3333-4333-8333-333333333333', fromMode: 'prompting', text: `${marker('native-wrapper')}\nStored answer` }));
   const nativeRows = [
     wrapper,
     { type: 'user', uuid: 'meta-peer', isMeta: true, origin: { kind: 'peer', body: `${marker('native-meta')}\nStored answer` } },

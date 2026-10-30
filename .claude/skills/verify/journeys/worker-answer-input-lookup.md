@@ -21,7 +21,8 @@ and confirm both old identities remain readable from its persisted history.
 
 A synthetic Claude Desktop record maps local_card to the CLI transcript's UUID.
 Reading that Desktop owner must find answers in actual claudeInboxFrame wrappers,
-peer-origin meta inputs and queued peer attachments; the raw CLI ID must not
+peer-origin meta inputs and queued peer attachments. The synthetic inbox frame
+explicitly declares `fromMode: 'prompting'` as required by the current protocol; the raw CLI ID must not
 impersonate its Desktop owner. The same inputs remain readable as Claude Code
 work on that exact CLI session. The helper also starts one synthetic
 pinned Copilot SDK peer and adds past/future-dated inputs followed by 160 later

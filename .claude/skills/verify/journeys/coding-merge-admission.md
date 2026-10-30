@@ -21,6 +21,13 @@ findings, missing applicable human sign-off and a head changed at the final read
 Only a passing case records a receipt and returns the exact SHA-pinned manual
 squash command. It executes no merge and leaves the todo doing.
 
+Bare path globs `README.md` and `*.md` must still require human approval when
+README.md changes and the PR has no labels. The real RPC first admits a control
+with no sign-off rule, refuses with each bare path rule, then admits only after
+a current non-author human approval. `observed.json` retains `barePathProof`.
+This pins the existing path behavior alongside the actual-label regression;
+bare patterns participate in both file and label matching.
+
 Keep `evidence/observed.json` (`verified: true`) and `evidence/gh.jsonl` outside
 the worktree. The fixture preserves a null-user historical review and puts the identified bot
 and human approvals on later pages. Use `coding-review-pages.md` for installed
@@ -34,3 +41,14 @@ harness, `coding-merge-guidance.md` for delivered instructions, and
 `coding-delivery-completion.md` for post-deploy smoke and historical completion.
 Live GitHub transport and deployment are not verified here. The helper closes
 its own socket and daemon in finally and never touches the human's running app.
+
+Use --bot-alias before the final run-directory argument to repeat with GitHub's
+REST fixture-bot[bot] login against a saved fixture-bot policy. The same complete
+operation-door cases must pass. The helper accepts the shared proof-run.sh wrapper;
+that wrapper retains evidence and removes its owned daemon data.
+
+The --human-collision mode seeds the saved fixture-bot[bot] policy directly
+because the current preference tool refuses suffixes and supplies an APPROVED review
+from the distinct fixture-bot User. This must refuse admission without recording
+a gate. It then supplies the genuine Bot and repeats the complete admission
+proof. Unknown actor types are covered by the focused policy contracts.

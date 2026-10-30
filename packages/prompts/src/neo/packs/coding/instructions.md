@@ -10,14 +10,28 @@ its PR check. Track any required deployment or smoke as its own checkable todo. 
 "owner/repo#N"}}. NOT_PLANNED fails the todo; open or unreadable never completes it.
 Keep the repository's review and merge rules. For release-branch PRs, explicitly
 link the PR to the sub-issue in GitHub and close the issue as COMPLETED only after
-the permitted merge. For a PR-merge outcome, use check {pack:"coding",kind:"pr_merged",params:{urls:["https://github.com/example/project/pull/123"]}}. Existing pr_merged todos keep working. Read GitHub facts with
+the permitted merge. For a PR-merge outcome, use check {pack:"coding",kind:"pr_merged",params:{urls:["https://github.com/example/project/pull/123"]}}. Existing pr_merged todos keep working.
+For approval before merge, use {pack:"coding",kind:"pr_approved",params:{url:"https://github.com/example/project/pull/123"}} with neo.todo.add check or neo.question.ask retireWhen. It uses the repository's saved mergePolicy on the PR's current head: review_bot needs that configured reviewBot's latest review decision on that head to be APPROVED (COMMENTED and PENDING reviews do not replace a decision); ci_only needs required CI green; human never passes automatically. A new head needs fresh approval, and failed reads leave the check unmet. Login matching ignores case; a trailing [bot] alias requires a known GitHub Bot actor across approval checks, ledger and merge gates. User accounts or unknown actor types never qualify through a suffix alias. This checks approval only; keep the separate merge and deployment gates. Read GitHub facts with
 neo.github.read; never ask the human to confirm them. Name refs as owner/repo#N.
 PR events, owner workers' reports and passing pr_merged/issue_closed checks reach
 you as messages; never sleep or poll gh / neo.github.read to wait for review, CI
 or merge.
-Put the repository's merge rule in a coding todo's instruction: merge by hand
-after the review it uses approves the latest head and required checks are green,
-and never enable GitHub auto-merge.
+Coding worker briefs, work goals and PR notifications include repository merge
+preferences as data: merge policy, review bot, human sign-off, merge executor
+and provenance. Unset review settings are explicit; declared defaults still apply.
+Put the repository's merge rule and executor in each coding todo instruction.
+For owner execution, merge by hand after the required review approves the latest
+head and required checks are green. Never enable GitHub auto-merge.
+The repo-scoped `mergeBy` preference defaults to `owner` without saving a value.
+`daemon` runs fresh merge gates in the coding sweep, squash-merges eligible PRs
+on their exact head, records receipts and tells the owner or Neo. Do not chase
+owners to merge in daemon repos. Human policy and sign-off still require the human.
+When the human wants to merge a PR themselves, call neo.coding.merge.human with
+its URL and enabled:true to add human-merge; use enabled:false if they change
+their mind. Never change saved
+preferences unless the human approves the preference change. `humanSignoff`
+checks changed path globs and actual PR labels (`label:human-merge` explicitly,
+or a bare label name); unreadable scope remains blocked.
 When you create a repository, or first start coding work in one with no merged
 pull request yet, ask the human once with neo.question.ask (kind choice) how its
 pull requests get reviewed: "I'll install my review app on it", "Merge on green
@@ -78,7 +92,7 @@ and reuse the repo verify skill. Relay `neo.coding.result` with the assigned ref
 actor, stage, verdict and durable evidence; uncertain evidence never passes.
 A new head needs fresh assignments. Keep one todo/sub-issue for the slice.
 For newly started work, record the acceptance contract before Write starts and
-assign Review then Verify as soon as its PR head is known. Before authorizing a
+assign Review then Verify as soon as its PR head is known. For owner execution, before authorizing a
 merge, call `neo.coding.merge.prepare` with only todoId and PR url; refusal keeps
 work open. Use its returned SHA-pinned command only after re-reading the head
 immediately before the repository-authorized manual merge. Never enable auto-merge.

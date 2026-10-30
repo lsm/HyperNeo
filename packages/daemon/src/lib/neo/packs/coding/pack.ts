@@ -1,3 +1,7 @@
+import { createCodingHumanMergeOperation } from './human-merge-operation.ts';
+import { createCodingDaemonMergeSweep } from './daemon-merge-sweep.ts';
+import { checkCodingPrApproved } from './pr-approved.ts';
+import { withCodingMergeContext } from './merge-context.ts';
 import { codingWatchedRepos, initializeCodingWatches } from './watched-repos.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { createCodingPrFileOperation } from './pr-file-operation.ts';
@@ -24,13 +28,16 @@ import { type CodingPrSweepRepository, type CodingSweepDeps, sweepCodingPrs } fr
 import { type NeoWorkPrReader } from './work-prs.ts';
 import { wakeCodingUnownedPrs } from './pr-unowned.ts';
 import { recordCodingSmoke } from './delivery-facts.ts';
+import { readCodingDaemonMergeFacts } from './daemon-merge-facts.ts';
+import { decideCodingDaemonMerge } from './daemon-merge-gates.ts';
 import { prepareCodingMerge } from './merge-gates.ts';
 import { deliverCodingHealth } from './health-delivery.ts';
 import { CODING_STAGE_PREFERENCES, createCodingWritePlanOperation } from './stage-preferences.ts';
 
 export const CODING_PACK_BRIEF: NeoPackBrief = {
   id: 'coding',
-  describe: 'Software work in git repositories: pull requests, CI, review and merging.',
+  describe:
+    'Software work in git repositories: pull requests, CI, review and merging. Check pr_approved {url} waits for saved-policy approval; pr_merged waits for merge.',
   guidance: NEO_PACK_CODING_INSTRUCTIONS,
 };
 
@@ -48,22 +55,43 @@ export function createCodingPack(deps: {
   readLedgerRepo?: CodingLedgerRead;
   readClaudeOwners?: ReturnType<typeof createCodingClaudeOwnerReader>;
 }): NeoPack & {
+  readMergeFacts: typeof readCodingDaemonMergeFacts;
+  decideMerge: typeof decideCodingDaemonMerge;
   recordSmoke: typeof recordCodingSmoke;
   prepareMerge: typeof prepareCodingMerge;
   review: typeof runCodingReview;
 } {
   const readClaudeOwners = deps.readClaudeOwners ?? createCodingClaudeOwnerReader();
+  const workerContext = (text: string) =>
+    withCodingMergeContext(text, deps.prLedger.policyContext(text, deps.projectRepos()));
+  const notificationContext = async (text: string) =>
+    withCodingMergeContext(text, await deps.prLedger.policyContextCurrent(text));
+  const prSweepDeps: CodingSweepDeps = {
+    tell: async (ref, key, text) =>
+      deps.prSweepDeps.tell(ref, key, await notificationContext(text)),
+    wake: async (key, text) => deps.prSweepDeps.wake(key, await notificationContext(text)),
+  };
+  const mergeSweep = createCodingDaemonMergeSweep(
+    deps.database,
+    deps.prLedger,
+    deps.prEvents,
+    prSweepDeps
+  );
   const todos = createCodingTodoPack(
     deps.todoPrs,
     deps.readPrs,
     (url) => deps.prLedger.stateOf(url),
-    deps.readRefStates ?? createCodingRefReader(() => deps.prLedger.refFacts)
+    deps.readRefStates ?? createCodingRefReader(() => deps.prLedger.refFacts),
+    (url) => checkCodingPrApproved(url, (repo) => deps.prLedger.policy(repo))
   );
   return {
     ...CODING_PACK_BRIEF,
+    readMergeFacts: readCodingDaemonMergeFacts,
+    decideMerge: decideCodingDaemonMerge,
     recordSmoke: recordCodingSmoke,
     prepareMerge: prepareCodingMerge,
     operations: [
+      createCodingHumanMergeOperation(),
       createCodingWritePlanOperation(deps.database),
       createCodingPrFileOperation(deps.database),
       createCodingGithubReadOperation({
@@ -94,6 +122,17 @@ export function createCodingPack(deps: {
         type: { kind: 'boolean' },
         default: true,
         ask: 'Require author model and harness provenance and a different reviewer model? Until answered, this is on without saving a preference.',
+      },
+      mergeBy: {
+        label: { en: 'Merge executor', 'zh-Hans': '合并执行者' },
+        valueLabels: {
+          owner: { en: 'PR owner', 'zh-Hans': 'PR 负责人' },
+          daemon: { en: 'Daemon', 'zh-Hans': '守护进程' },
+        },
+        scope: 'repo',
+        type: { kind: 'enum', values: ['owner', 'daemon'] },
+        default: 'owner',
+        ask: 'Who should merge eligible PRs? Owner is the default; daemon squash-merges eligible PRs after fresh gates pass.',
       },
       mergePolicy: {
         label: { en: 'Merge policy', 'zh-Hans': '合并规则' },
@@ -127,7 +166,7 @@ export function createCodingPack(deps: {
         scope: 'repo',
         type: { kind: 'globs' },
         default: [],
-        ask: 'Which paths or labels require human sign-off?',
+        ask: 'Which path globs or labels require human sign-off? Use label:human-merge for an explicit label; bare names also match labels.',
       },
     },
     prepareExecution: prepareCodingExecution,
@@ -144,22 +183,23 @@ export function createCodingPack(deps: {
     observeSessions: (sessions, now) => deps.prLedger.write('observeSessions', sessions, now),
     sweep: async (now) => {
       await deps.prLedger.write('observeSessions', await readClaudeOwners(), now);
-      await deliverCodingPrEvents(deps.prEvents, [], deps.prSweepDeps);
+      await deliverCodingPrEvents(deps.prEvents, [], prSweepDeps);
       const transitions = await reconcileCodingPrLedger(
         deps.prLedger,
         codingWatchedRepos(deps.database()) ?? deps.projectRepos(),
         deps.readLedgerRepo ?? readCodingLedgerRepo,
         now
       );
-      await deliverCodingPrEvents(deps.prEvents, transitions, deps.prSweepDeps);
+      await deliverCodingPrEvents(deps.prEvents, transitions, prSweepDeps);
       await deliverCodingHealth(
         deps.prLedger,
         codingWatchedRepos(deps.database()) ?? deps.projectRepos(),
-        deps.prSweepDeps.wake,
+        prSweepDeps.wake,
         now
       );
-      await wakeCodingUnownedPrs(deps.prEvents, deps.prSweepDeps.wake, now);
-      await sweepCodingPrs(deps.prSweep, deps.prSweepDeps, now);
+      await wakeCodingUnownedPrs(deps.prEvents, prSweepDeps.wake, now);
+      await sweepCodingPrs(deps.prSweep, prSweepDeps, now);
+      await mergeSweep(now);
     },
     stats: async (now) => ({
       'ready to merge >1h': (await deps.prLedger.read('list')).filter(
@@ -179,7 +219,8 @@ export function createCodingPack(deps: {
       ),
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
     workerRules: NEO_PACK_CODING_WORKER_RULES,
-    workerBrief: withCodingWorkerProvenance,
-    workGoal: withCodingWorkGoal,
+    workerBrief: (instruction, identity) =>
+      withCodingWorkerProvenance(workerContext(instruction), identity),
+    workGoal: (instruction, goal) => workerContext(withCodingWorkGoal(instruction, goal)),
   };
 }

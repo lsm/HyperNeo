@@ -151,7 +151,16 @@ describe('claude-desktop adapter against the app session records', () => {
       admitInbox: sendInbox
         ? (context) => requireClaudeReplyDestination(context, { hasSession: () => false })
         : undefined,
-      listProcesses: async () => [],
+      listProcesses: async () => {
+        const sessions = live instanceof Error ? [] : typeof live === 'function' ? live() : live;
+        const records = await readClaudeDesktopRecords(dir, new Map());
+        return sessions.map((session) => ({
+          pid: session.pid!,
+          ppid: 1,
+          elapsedSeconds: 1,
+          command: `claude --permission-mode ${records.find((record) => record.cliSessionId === session.sessionId)?.permissionMode ?? 'auto'}`,
+        }));
+      },
       sessionsDir: dir,
       projectsDir: join(dir, 'projects'),
       machine: 'laptop',

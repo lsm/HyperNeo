@@ -1,0 +1,166 @@
+{
+  "base": "75e957774d88babaf8746e2ab952fad955fbb46c",
+  "completeCommand": {
+    "file": "packages/daemon/src/storage/repositories/github-polling-enabled-write.ts",
+    "lines": 66,
+    "sha256": "63c68646034af002fbd1e155e41e6092b61b840f5f59195c616829eb5a39869c"
+  },
+  "freshDependencies": [
+    {
+      "file": "packages/daemon/src/storage/repositories/github-watched-insert-persist.ts",
+      "lines": 40,
+      "sha256": "33762632a91f8cb641f0809423691faf8f5470705e5b5d958929062052eadaaa",
+      "contract": "Complete exact INSERT, caller UUID/Space flag/time, defaults/void/caller rollback",
+      "includedInFresh": true
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/github-polling-intent-persist.ts",
+      "lines": 14,
+      "sha256": "5b570a3167d3d45636d57d7bd02cc86cbff7bea14927bd4ba12949b9b5ad649f",
+      "contract": "Exact intent UPSERT, source enable preserved on conflict, supplied time/void/caller rollback",
+      "includedInFresh": true
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/space-extension-config-persist.ts",
+      "lines": 20,
+      "sha256": "3eb49614501626f43b0d679f09a7cfea5ae6d9592070e907adf1c283ed87758f",
+      "contract": "Exact saved config UPSERT/JSON, source/key/creation and supplied time/caller rollback",
+      "includedInFresh": true
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-watched-projection.ts",
+      "lines": 29,
+      "sha256": "c9f18fb9061bfe708176fdd065a4a6e1301f7ffd78c03306c074fede5a1686eb",
+      "contract": "Complete saved projection, configured/null secret sentinel, omits raw secret, Space and cursor",
+      "includedInFresh": true
+    }
+  ],
+  "uuidLeaf": {
+    "file": "packages/shared/src/utils.ts",
+    "lines": 15,
+    "sha256": "8c108ca66381564d346c97c2b5118abb506ad40144aaca59afe6653d9a34ece6",
+    "fullModuleSha256": "d413711e775c212b49335d6d4409019225a121a04db6acff37044a9217e8e872",
+    "contract": "Complete existing UUID randomUUID/getRandomValues/Math.random leaf included fresh; shared barrel/runtime transitive closure unclaimed"
+  },
+  "auditedStableDependencies": [
+    {
+      "file": "packages/daemon/src/storage/repositories/github-watched-repo-lookups.ts",
+      "lines": 24,
+      "sha256": "efd6b45d927224ce17fb9d819a4c8d325dcde4cacf1e7c7e75ca7238b18d46c4",
+      "contract": "Key/id SELECT/get/map/null, lower owner/repo, exact Space/id, parse failures and transaction visibility",
+      "exclusionReason": "Six previously merged constructor-free modules explicitly approved for exclusion, full-module hashes and interfaces pinned; sixth UPSERT40 specifically authorized, no further exclusions"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/github-watched-repos-read.ts",
+      "lines": 44,
+      "sha256": "4c5945ea131459249bb302cdb27ee6a014fc6aadd5d15f9d402b3226972e6a95",
+      "contract": "Complete flags/null/default/cursor mapper and ordered SELECT/list; no initialization/writes",
+      "exclusionReason": "Six previously merged constructor-free modules explicitly approved for exclusion, full-module hashes and interfaces pinned; sixth UPSERT40 specifically authorized, no further exclusions"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/github-space-settings-read.ts",
+      "lines": 26,
+      "sha256": "821cdbd20d30a954c0aa6c1c82ad8ff88e098abbd76e522e4072dce26d240681",
+      "contract": "Enabled/polling/filter getters with legacy absent-row defaults; no initialization/writes",
+      "exclusionReason": "Six previously merged constructor-free modules explicitly approved for exclusion, full-module hashes and interfaces pinned; sixth UPSERT40 specifically authorized, no further exclusions"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/github-cursor-persist.ts",
+      "lines": 8,
+      "sha256": "8ec4673c7f96429b885da9367af90c023bf161668f49607c799ea845658d3bae",
+      "contract": "Prepare, JSON serialization, existing clock, run(JSON,time,id); void/caller rollback, no init/retry",
+      "exclusionReason": "Six previously merged constructor-free modules explicitly approved for exclusion, full-module hashes and interfaces pinned; sixth UPSERT40 specifically authorized, no further exclusions"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/github-watched-update-persist.ts",
+      "lines": 64,
+      "sha256": "c4a07d91b0c58eb2983c0c367c4e31b8943a8569ba48f6c2a9ccace218215e54",
+      "contract": "Existing-row UPDATE, exact flags/default/COALESCE/null/bind order, row id, supplied time/void/caller transaction; no init/clock/UUID/replay",
+      "exclusionReason": "Six previously merged constructor-free modules explicitly approved for exclusion, full-module hashes and interfaces pinned; sixth UPSERT40 specifically authorized, no further exclusions"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/github-watched-upsert-persist.ts",
+      "lines": 40,
+      "sha256": "c108d5f4cff7893041110ad4c28154c7922b8a6204388a68ab7ab9a0cf5addd9",
+      "contract": "Complete constructor-free UPSERT, UUID/clock/Space fallback order, row/cursor policy and caller transaction",
+      "exclusionReason": "Six previously merged constructor-free modules explicitly approved for exclusion, full-module hashes and interfaces pinned; sixth UPSERT40 specifically authorized, no further exclusions"
+    }
+  ],
+  "freshEnvelope": 184,
+  "excludedLines": 206,
+  "totalKnownLines": 390,
+  "newExclusions": 1,
+  "authorizedSixthDependency": true,
+  "productionAndRegistryLines": 68,
+  "registryLines": 2,
+  "smokeRegistrationLines": 1,
+  "delta": [
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-ops.ts",
+      "lines": 2
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/github-polling-enabled-write.ts",
+      "lines": 66
+    },
+    {
+      "file": "scripts/deno-smoke.sh",
+      "lines": 1
+    }
+  ],
+  "infrastructure": [
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-op.ts",
+      "sha256": "459703e0371a0b1c351bf571a7a73126f6fd81a824e2ecdfbe0a7916986fbd3c"
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-gateway.ts",
+      "sha256": "54b7739518ba9c5c58bda82f7627a76d8483511949cd3469adc07e5643e09858"
+    },
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-gateway-worker.ts",
+      "sha256": "fbaeb4d89aa03a8dcc1e7aa686dedce502c0b279ebb6c2f7f5ef865bda3644b1"
+    }
+  ],
+  "stablePublic": [
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-event-extension.ts",
+      "sha256": "ce078018949e68caec77f649fa06fefb378fbcd696c7ee247764ea8f97c6b414"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/extension-config-store.ts",
+      "sha256": "30f39909917d79db49f790e89ffcfc9c1b64d15dd27a69a19ed35564bd9d517e"
+    },
+    {
+      "file": "packages/daemon/src/lib/external-events/github/github-repository.ts",
+      "sha256": "0ba34aa52c14110b08f01d751a213fe62aac3b1a458f471a5f9143a1e53f8723"
+    },
+    {
+      "file": "packages/daemon/src/app.ts",
+      "sha256": "d7cba475e25e9a0113f91ed8cb2188ea48fb97da1572ca0da50e94e5bdb4470f"
+    }
+  ],
+  "publicMutationActivated": false,
+  "netPrepare": 0,
+  "netRun": 0,
+  "netTransaction": 0,
+  "baselineIncrease": false,
+  "spaceValidationAstUnchanged": true,
+  "postLoopSharedClock": true,
+  "namedDirectPipeline": true,
+  "pipelineName": "github-space-polling-commit",
+  "pipeStages": [
+    "requirePollingSpace",
+    "listGitHubWatchedRepos",
+    "selectPollingTargets",
+    "persistPollingTargets",
+    "() => Date.now()",
+    "persistGitHubPollingIntent",
+    "readPollingSnapshot",
+    "(db: Database, spaceId: string, config: SpaceExternalEventSourceConfig, now: number) =>\n      persistSpaceExtensionConfig(db, spaceId, 'github', config, now)",
+    "(config: SpaceExternalEventSourceConfig) => ({ config })"
+  ],
+  "contract": "run({spaceId,enabled}) changes eligible flags using existing UPSERT, skips enabled webhooks with secrets only when enabling, persists intent and sanitized exact snapshot with one post-loop clock, returns config after existing gateway IMMEDIATE commit. No constructor/callback/filesystem/network/retry. Public mutation not activated.",
+  "infrastructureContract": "Existing native and inline write DbOp gateway owns IMMEDIATE transaction and posts/resolves receipt after commit. No worker/lane/gateway changes; SQLite/framework internals are existing infrastructure, not a new owned business subtree.",
+  "auditLimit": "Authorized six excluded206, only UPSERT40 added, whole fresh command/data modules and UUID leaf counted; no full public/shared-barrel/runtime transitive closure claim. Superpipe is existing pinned infrastructure. Further exclusions require Neo table decision; stop/report envelope objections. Public polling/capability/timer/notification wiring is separate."
+}

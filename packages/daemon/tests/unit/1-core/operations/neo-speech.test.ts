@@ -108,8 +108,9 @@ describe('spoken replies separate from publications', () => {
     });
     const receipt = JSON.parse(spoken.content[0].text);
     expect(receipt).toMatchObject({ ok: true, state: 'queued' });
-    expect(receipt.guidance).toContain('Do not repeat this utterance verbatim');
-    expect(receipt.guidance).toContain('Publish substantive results on screen separately');
+    expect(receipt.guidance).toBe(
+      'Already sent for speech; no assistant text this turn except a requested transcript/record or required scheduled-wake summary.'
+    );
     expect(JSON.stringify(receipt)).not.toContain('PRIVATE_SPOKEN_ACKNOWLEDGMENT');
     const retried = await call(
       'say',

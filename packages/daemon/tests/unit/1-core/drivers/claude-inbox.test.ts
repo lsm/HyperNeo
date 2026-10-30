@@ -8,6 +8,7 @@ import {
   claudeInboxFrame,
   type ClaudeInboxFrameEvent,
   type ClaudeInboxTarget,
+  type ClaudeInboxSubmission,
   openClaudeInbox,
   removeOwnedClaudeInboxPath,
 } from '../../../../src/lib/drivers/claude-inbox';
@@ -16,6 +17,7 @@ const submission = () => ({
   messageId: randomUUID(),
   inputId: randomUUID(),
   text: '调查 "文件"\n再汇报',
+  fromMode: 'bypass' as const,
 });
 
 describe('removeOwnedClaudeInboxPath', () => {
@@ -59,6 +61,15 @@ const target: ClaudeInboxTarget = {
 };
 
 describe('claudeInboxFrame', () => {
+  test('refuses a missing permission class rather than inventing bypass', () => {
+    expect(() =>
+      claudeInboxFrame(target, '/tmp/a.sock', {
+        ...submission(),
+        fromMode: undefined,
+      } as unknown as ClaudeInboxSubmission)
+    ).toThrow();
+  });
+
   test.each(['prompting', 'bypass'] as const)(
     'uses the selected %s sender side in direct frames',
     (fromMode) => {

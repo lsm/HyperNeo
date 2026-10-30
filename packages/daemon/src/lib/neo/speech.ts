@@ -118,7 +118,7 @@ export class NeoSpeech {
               ? {
                   ...receipt,
                   guidance:
-                    'This is a speech-only response. Do not repeat this utterance verbatim in a screen publication or final text reply. For a spoken acknowledgment alone, continue the work or finish without adding text. Publish substantive results on screen separately. Speech submission alone does not prove playback.',
+                    'Already sent for speech; no assistant text this turn except a requested transcript/record or required scheduled-wake summary.',
                 }
               : receipt,
           'receipt',

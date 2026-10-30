@@ -1,3 +1,5 @@
+import { recordWorkerBlocker } from '../../lib/neo/worker-blocker.ts';
+import type { WorkRef } from '../../lib/drivers/types.ts';
 import { recoverNeoTodoStart } from './neo-todo-start-recovery.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -124,9 +126,10 @@ class NeoTodoRunnerState {
         notify('neo_asks');
       },
       undefined,
-      () => notify('neo_questions')
+      () => notify('neo_questions'),
+      changes
     );
-    this.sessions = new NeoTodoSessionRepository(db);
+    this.sessions = new NeoTodoSessionRepository(db, changes);
     this.policies = neoTodoPolicies(db);
   }
   recompute(
@@ -141,6 +144,16 @@ class NeoTodoRunnerState {
   claim(id: string, now: number) {
     return { ...claim(this.store, this.sessions, this.policies, id, now), changed: this.changed };
   }
+  blocker(
+    todo: NeoTodo,
+    ref: WorkRef,
+    dispatchId: string,
+    turn: { id: string; at: number; message: string },
+    now: number
+  ) {
+    const result = recordWorkerBlocker(this.store, this.sessions, todo, ref, dispatchId, turn, now);
+    return { todo: result, changed: this.changed };
+  }
   recover(id: string, now: number) {
     const recovery = recoverNeoTodoStart(this.store, this.sessions, id, now);
     if (recovery) this.changes?.notifyChange('neo_todo_sessions');
@@ -152,5 +165,5 @@ export const neoTodoRunnerWrites = defineRepositoryOp(
   'neo.todoRunnerWrites',
   'write',
   NeoTodoRunnerState,
-  ['recompute', 'claim', 'recover']
+  ['recompute', 'claim', 'recover', 'blocker']
 );

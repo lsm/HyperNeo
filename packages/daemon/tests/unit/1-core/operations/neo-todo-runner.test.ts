@@ -1,3 +1,4 @@
+import { createNeoQuestionAnswerDelivery } from '../../../../src/lib/neo/question-answer-delivery.ts';
 import { driverExchangeReport, readDriverLanded } from '../../../../src/lib/neo/driver-work.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
@@ -957,6 +958,7 @@ describe('neo todo runner', () => {
           askId: 'ask',
           kind: 'reply',
           text: 'Prepared',
+          todoId: todo.id,
           focused: true,
           sourceSession: ref,
         };
@@ -2354,6 +2356,166 @@ describe('failed todo retry in place', () => {
       expect(inputs[0]).toEqual(original);
       expect(inputs[1].id).not.toBe(original.id);
       expect(h.sessions.readRetries(todo.id)).toBe(1);
+    } finally {
+      h.db.close();
+    }
+  });
+});
+
+describe('worker final-line blockers', () => {
+  test.each(['needs_human', 'environment'] as const)(
+    'routes %s to its todo without nudging the worker',
+    async (kind) => {
+      const h = setup(false);
+      try {
+        const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+        await h.runner.start(todo.id);
+        const dispatch = h.sessions.inputs.list(todo.id)[0];
+        const message = `Work is unfinished.\nBlocked (${kind}): Awaiting a synthetic prerequisite${kind === 'needs_human' ? '\r\n' : ''}`;
+        h.setStatus({
+          ok: true,
+          value: {
+            status: 'done',
+            lastActivityAt: dispatch.acceptedAt + 100,
+            turnEnds: [{ id: 'blocker-turn', at: dispatch.acceptedAt + 100, message }],
+          },
+        });
+        await h.runner.refresh(() => {});
+        expect(h.store.getTodo(todo.id)).toMatchObject({
+          state: 'blocked',
+          blockedBy: kind === 'needs_human' ? 'needs-human' : 'environment',
+          blockedReason: 'Awaiting a synthetic prerequisite',
+          report: message,
+        });
+        const questions = h.store
+          .listQuestions('ask')
+          .filter((q) => q.todoId === todo.id && q.state === 'open');
+        expect(questions).toHaveLength(kind === 'needs_human' ? 1 : 0);
+        if (kind === 'needs_human')
+          expect(questions[0]).toMatchObject({
+            kind: 'reply',
+            text: 'Awaiting a synthetic prerequisite',
+          });
+        expect(h.calls.filter((c) => c.name === 'work.send')).toHaveLength(0);
+        await h.runner.refresh(() => {});
+        expect(
+          h.store.listQuestions('ask').filter((q) => q.todoId === todo.id && q.state === 'open')
+        ).toHaveLength(questions.length);
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+  test.each([
+    'Blocked (needs_human): Approval\nMore text',
+    '> Blocked (needs_human): Approval',
+    ' Blocked (needs_human): Approval',
+    'Blocked (needs_human): Approval\n\n',
+    'blocked (needs_human): Approval',
+    'Blocked (needs-human): Approval',
+    'Blocked (environment):',
+    'Blocked (environment):   ',
+    'Ordinary report',
+  ])('leaves non-contract prose unchanged: %s', async (message) => {
+    const h = setup(false);
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      await h.runner.start(todo.id);
+      const dispatch = h.sessions.inputs.list(todo.id)[0];
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: dispatch.acceptedAt + 100,
+          turnEnds: [{ id: 'ordinary-turn', at: dispatch.acceptedAt + 100, message }],
+        },
+      });
+      await h.runner.refresh(() => {});
+      expect(h.store.getTodo(todo.id)).toMatchObject({
+        state: 'doing',
+        blockedBy: null,
+        report: null,
+      });
+      expect(h.store.listQuestions('ask').filter((q) => q.todoId === todo.id)).toHaveLength(0);
+    } finally {
+      h.db.close();
+    }
+  });
+});
+
+describe('worker blocker ownership', () => {
+  test.each(['focused', 'old-input', 'held', 'replaced'] as const)(
+    'ignores a %s report',
+    async (guard) => {
+      const h = setup(false);
+      try {
+        const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+        await h.runner.start(todo.id);
+        const input = h.sessions.inputs.list(todo.id)[0],
+          current = h.store.getTodo(todo.id)!;
+        if (guard === 'focused')
+          h.store.focusAsk(
+            'ask',
+            { ...ref, name: null, label: 'Worker', provider: 'claude', link: null },
+            Date.now()
+          );
+        if (guard === 'held')
+          h.store.updateTodo(current, { state: 'blocked', blockedBy: 'held' }, Date.now());
+        if (guard === 'replaced')
+          h.sessions.recordRef(todo.id, { adapter: 'hyperneo', id: 'replacement' }, Date.now());
+        const at = input.acceptedAt + (guard === 'old-input' ? -1 : 100);
+        h.setStatus({
+          ok: true,
+          value: {
+            status: 'done',
+            lastActivityAt: at,
+            turnEnds: [{ id: 'stale', at, message: 'Blocked (needs_human): Stale approval' }],
+          },
+        });
+        await h.runner.refresh(() => {});
+        expect(h.store.getTodo(todo.id)?.blockedBy).not.toBe('needs-human');
+        expect(h.store.listQuestions('ask').filter((q) => q.todoId === todo.id)).toHaveLength(0);
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+  test('keeps an answered blocker from reopening after incident reset', async () => {
+    const h = setup(false);
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      await h.runner.start(todo.id);
+      const input = h.sessions.inputs.list(todo.id)[0];
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: input.acceptedAt + 100,
+          turnEnds: [
+            { id: 'once', at: input.acceptedAt + 100, message: 'Blocked (needs_human): Approval' },
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      const question = h.store.listQuestions('ask').find((q) => q.todoId === todo.id)!;
+      h.store.answerQuestion(question, 'Approved', 'chat', Date.now());
+      await createNeoQuestionAnswerDelivery(
+        h.store,
+        h.sessions,
+        async () =>
+          completed({ kind: 'accepted', mailboxId: 'answer-mailbox', messageId: 'answer-message' }),
+        async () => {},
+        h.runner.recompute,
+        (error) => {
+          throw error;
+        }
+      )(question.id);
+      h.sessions.recordNudge(todo.id, { since: Date.now(), nudges: 0 });
+      await h.runner.refresh(() => {});
+      expect(
+        h.store.listQuestions('ask').filter((q) => q.todoId === todo.id && q.state === 'open')
+      ).toHaveLength(0);
+      expect(h.store.getTodo(todo.id)?.blockedBy).not.toBe('needs-human');
     } finally {
       h.db.close();
     }

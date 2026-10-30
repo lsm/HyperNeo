@@ -1,6 +1,14 @@
 const STEP = 20 * 60_000;
 
 export type FollowThroughIncident = {
+  stallReminder?: {
+    since: number;
+    delivered: { id: string; at: number }[];
+    pending?: string;
+    sessionId?: string;
+  };
+  checkOnlyReminder?: FollowThroughIncident['stallReminder'];
+  blockerReport?: { id: string; dispatchId: string; at: number };
   since: number;
   nudges: number;
   at?: number;

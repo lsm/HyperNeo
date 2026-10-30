@@ -44,6 +44,7 @@ export type NeoTodoBlocker =
   | 'failure'
   | 'question'
   | 'needs-human'
+  | 'environment'
   | 'stalled'
   | 'held';
 
@@ -93,6 +94,7 @@ export interface NeoQuestionSource extends WorkerIdentity {
 }
 
 export interface NeoQuestion extends ArtifactProjection {
+  retireWhen?: NeoTodoCheck;
   sourceSession?: NeoQuestionSource;
   todoId?: string | null;
   document?: string | null;

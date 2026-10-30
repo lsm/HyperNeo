@@ -1,3 +1,9 @@
+import { sdkMessageWrites } from './sdk-message-writes.ts';
+import { ChangeRecorder } from '../db-gateway/db-op.ts';
+import type { ReactiveDatabase } from '../reactive-database.ts';
+import { JobQueueRepository } from './job-queue-repository.ts';
+import { SDKMessageRepository } from './sdk-message-repository.ts';
+import { sdkMailboxFailure } from './sdk-message-transactions.ts';
 import { neoTodoReady } from '../../lib/neo/todo-dependencies.ts';
 import { neoTodoAwaitsHuman } from '../../lib/neo/todo-state.ts';
 import { NeoTurnReportReceipts } from '../../lib/neo/turn-report-receipts.ts';
@@ -120,10 +126,53 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
 
   readonly inputs: WorkDeliveryInputRepository;
   readonly turnReports: NeoTurnReportReceipts;
-  constructor(db: Database) {
+  constructor(
+    db: Database,
+    private readonly changes?: Pick<ReactiveDatabase, 'notifyChange'>
+  ) {
     super(db, 'neo_todo_sessions', 'todo_id');
     this.inputs = new WorkDeliveryInputRepository(db);
     this.turnReports = new NeoTurnReportReceipts(db);
+  }
+
+  cancelCheckOnlyReminder(todoId: string): void {
+    const incident = this.readNudge(todoId);
+    const reminder = incident?.checkOnlyReminder;
+    if (!reminder?.pending) return;
+    const todos = new NeoAskTodoRepository(this.db);
+    const todo = todos.getTodo(todoId)!;
+    const sessionId = reminder.sessionId ?? todos.getAsk(todo.askId)!.sessionId;
+    const jobs = new JobQueueRepository(this.db);
+    const job = jobs.getLatestByPayload('mailbox', {
+      'to.sessionId': sessionId,
+      messageUuid: reminder.pending,
+    });
+    const sdk = new SDKMessageRepository(this.db);
+    const receipt = sdk.getUserDeliveryReceipt(sessionId, reminder.pending);
+    if (receipt?.status === 'consumed')
+      reminder.delivered = [{ id: reminder.pending, at: receipt.timestamp }];
+    else if (job) {
+      const changes = new ChangeRecorder();
+      const result = sdkMailboxFailure.run(this.db, { job }, changes);
+      if (result.failure) throw new Error(result.failure);
+      jobs.markDeadIfActive(job.id, 'check_only_todo_no_longer_queued');
+      jobs.cancelDelivery(sessionId, reminder.pending);
+      for (const change of changes.changes) this.changes?.notifyChange(change.table, change.scope);
+      this.changes?.notifyChange('sdk_messages', { sessionId });
+      this.changes?.notifyChange('job_queue', { sessionId });
+    }
+    if (!job && receipt && receipt.status !== 'consumed') {
+      sdkMessageWrites.run(
+        this.db,
+        { method: 'markDeliveryFailedByUuid', args: [sessionId, reminder.pending] },
+        new ChangeRecorder()
+      );
+      jobs.cancelDelivery(sessionId, reminder.pending);
+      this.changes?.notifyChange('sdk_messages', { sessionId });
+      this.changes?.notifyChange('job_queue', { sessionId });
+    }
+    delete reminder.pending;
+    this.recordNudge(todoId, { ...incident!, checkOnlyReminder: reminder });
   }
 
   recordProgress(todoId: string, progress: NeoDriverProgress, now: number): boolean {
@@ -300,11 +349,12 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   }
 
   recordNudge(todoId: string, incident: FollowThroughIncident): void {
+    const blockerReport = incident.blockerReport ?? this.readNudge(todoId)?.blockerReport;
     this.db
       .prepare(
         "INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, 'core', 'nudge', ?) ON CONFLICT(todo_id, pack, key) DO UPDATE SET value_json = excluded.value_json"
       )
-      .run(todoId, JSON.stringify(incident));
+      .run(todoId, JSON.stringify({ ...incident, ...(blockerReport ? { blockerReport } : {}) }));
   }
 
   doingTodoOn(
@@ -332,6 +382,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     this.db
       .prepare('INSERT OR IGNORE INTO neo_todo_sessions (todo_id, target) VALUES (?, ?)')
       .run(todoId, JSON.stringify(target));
+    this.cancelCheckOnlyReminder(todoId);
   }
 
   recordIdentity(

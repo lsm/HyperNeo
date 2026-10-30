@@ -37,7 +37,7 @@ const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, 
 
 const Text = z.string().trim().min(1);
 
-const TodoCheck = z.object({
+export const TodoCheck = z.object({
   pack: Text,
   kind: Text,
   params: z.record(z.string(), z.unknown()).default({}),
@@ -334,7 +334,16 @@ export const NeoTodoSchema = z.object({
   blockedReason: z.string().nullable(),
   nextAction: z.string().nullable(),
   blockedBy: z
-    .enum(['check', 'worker', 'failure', 'question', 'needs-human', 'stalled', 'held'])
+    .enum([
+      'check',
+      'worker',
+      'failure',
+      'question',
+      'needs-human',
+      'environment',
+      'stalled',
+      'held',
+    ])
     .nullable(),
   priority: TodoPriority,
   dependsOn: z.array(z.string()).nullable(),
@@ -771,7 +780,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.edit',
       description:
-        'Change a todo on an open ask you own: title or check {pack, kind, params}; the completion sentence is generated from the check, or reword it directly with doneWhen. addUrls appends PR URLs to its PR-merge check. Duplicate claims and URLs unsupported by the check are recorded without blocking the edit. Prefer editing to adding a duplicate PR todo. Or record completion evidence (done met for what you read, reported for a claim you cannot read); without a passed outcome check it stays open, blocked by its check, and finishes by itself once the check passes; attach a document or evidence file as the reference artifact.file.register returned in artifacts, with one sentence of evidence, not the pasted document. A todo with an unanswered card is refused until the human answers it. To hold or release a todo use neo.todo.hold. priority changes where waiting work starts in the queue. instruction with target gives a todo that has not started and has no instruction its work; the queue then starts it like any approved step. A start target for a coding todo needs target.place from work.find.',
+        'Change a todo on an open ask you own: title or check {pack, kind, params}; the completion sentence is generated from the check, or reword it directly with doneWhen. addUrls appends PR URLs to its PR-merge check. Duplicate claims and URLs unsupported by the check are recorded without blocking the edit. Prefer editing to adding a duplicate PR todo. Or record completion evidence (done met for what you read, reported for a claim you cannot read); without a passed outcome check it stays open, blocked by its check, and finishes by itself once the check passes; attach a document or evidence file as the reference artifact.file.register returned in artifacts, with one sentence of evidence, not the pasted document. A todo with an unanswered card is refused until the human answers it. Worker final-line blockers are recorded automatically: needs_human opens a human reply card, so leave its worker waiting for the human; handle environment blockers by retrying or escalating their cause. To hold or release a todo use neo.todo.hold. priority changes where waiting work starts in the queue. A check-only todo queued without instruction or target reminds Neo daily after 24 hours: provide both, or hold/remove it. instruction with target gives a todo that has not started and has no instruction its work; the queue then starts it like any approved step. A start target for a coding todo needs target.place from work.find.',
       inputSchema: Edit,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

@@ -5,7 +5,7 @@ import { planNudge } from '../../nudge.ts';
 import type { WorkRef } from '../../../drivers/types.ts';
 import { Logger } from '../../../logger.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
-import type { CodingPrState } from './pr-ledger.ts';
+import { CodingPrLedgerRepository, type CodingPrState } from './pr-ledger.ts';
 
 export const CODING_PR_FRESH_MS = 15 * 60_000;
 export const CODING_PR_REMINDERS = 2;
@@ -24,6 +24,7 @@ export type CodingSweepRow = {
   readAt: number;
   nudges: number;
   owner: WorkRef | null;
+  mergeBy?: 'owner' | 'daemon';
 };
 
 export type CodingSweepDeps = {
@@ -55,6 +56,7 @@ export function planCodingPrNudge(
   row: CodingSweepRow,
   now: number
 ): { kind: 'remind' | 'escalate'; nudges: number } | null {
+  if (row.state === 'approved_green' && row.mergeBy === 'daemon') return null;
   if (!STATE_TEXT[row.state] || !row.owner || now - row.readAt > CODING_PR_FRESH_MS) return null;
   return planNudge({ since: row.stateSince, nudges: row.nudges }, now);
 }
@@ -97,7 +99,11 @@ export class CodingPrSweepRepository {
         .all() as (Omit<CodingSweepRow, 'owner'> & { owner: string })[]
     )
       .filter((row) => codingRepoWatched(this.db, row.repo))
-      .map((row) => ({ ...row, owner: JSON.parse(row.owner) as WorkRef }));
+      .map((row) => ({
+        ...row,
+        mergeBy: new CodingPrLedgerRepository(this.db).policy(row.repo).mergeBy,
+        owner: JSON.parse(row.owner) as WorkRef,
+      }));
   }
 
   markLater(row: CodingSweepRow, nudges: number, now: number): Promise<void> {

@@ -1,3 +1,4 @@
+import { neoStallReminderWrite } from '../repositories/neo-stall-reminder-write.ts';
 import { historySnapshotReads } from '../repositories/sdk-history-snapshot-read.ts';
 import { toolRecoveryWrites } from '../repositories/tool-continuation-recovery-repository.ts';
 import {
@@ -112,6 +113,10 @@ import { cancelRateLimitDelivery } from '../repositories/rate-limit-cancel-write
 import { claimOwnedInputWithdrawal } from '../repositories/owned-input-withdrawal-write.ts';
 import type { DbOp } from './db-op.ts';
 import { credentialStoreWrites } from '../repositories/credential-store-writes.ts';
+import {
+  googleConnectionReads,
+  googleConnectionWrites,
+} from '../repositories/google-connections-worker.ts';
 import { enqueueSessionDelivery } from '../repositories/session-delivery-enqueue-write.ts';
 import { releaseRateLimitDeliveries } from '../repositories/rate-limit-retry-write.ts';
 import { providerRpcWrites } from '../repositories/provider-rpc-writes.ts';
@@ -165,6 +170,7 @@ import { globalExtensionConfigWrites } from '../repositories/global-extension-co
 import { spaceExtensionConfigWrites } from '../repositories/space-extension-config-write.ts';
 import { gitHubSpaceEnabledWrites } from '../repositories/github-space-enabled-write.ts';
 import { gitHubFilterWrites } from '../repositories/github-filter-write.ts';
+import { gitHubPollingWrites } from '../repositories/github-polling-enabled-write.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -203,6 +209,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     reserveNeoHomeProjects,
     neoTodoSessionReads,
     neoTodoSessionWrites,
+    neoStallReminderWrite,
     codingTodoPrReads,
     neoTodoReads,
     neoTodoWrites,
@@ -258,6 +265,8 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     releaseRateLimitDeliveries,
     providerRpcWrites,
     credentialStoreWrites,
+    googleConnectionReads,
+    googleConnectionWrites,
     enqueueSessionDelivery,
     jobStaleReclaimWrites,
     mailboxExpiryReads,
@@ -307,5 +316,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     spaceExtensionConfigWrites,
     gitHubSpaceEnabledWrites,
     gitHubFilterWrites,
+    gitHubPollingWrites,
   ].map((op) => [op.name, op])
 );

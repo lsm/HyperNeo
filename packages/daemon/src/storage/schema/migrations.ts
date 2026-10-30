@@ -1,3 +1,5 @@
+import { runMigration467 } from './m467-google-connections.ts';
+import { runMigration466 } from './m466-neo-question-retire-when.ts';
 import { runMigration461 } from './m461-neo-card-search-fts.ts';
 import { runMigration462 } from './m462-trigram-fts.ts';
 import { runMigration463 } from './m463-neo-todo-priority.ts';
@@ -985,6 +987,8 @@ export function runMigrations(
   run(migrationMarkerKey(463), () => runMigration463(db));
   run(migrationMarkerKey(464), () => runMigration464(db));
   run(migrationMarkerKey(465), () => runMigration465(db));
+  run(migrationMarkerKey(466), () => runMigration466(db));
+  run(migrationMarkerKey(467), () => runMigration467(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

@@ -209,7 +209,7 @@ export class NeoHomeRepository {
               .slice(
                 0,
                 350
-              )}\n\nLocal → remote (excerpt):\n\n${'`'.repeat(8)}diff\n${excerpt.slice(0, 1000).replaceAll('`', '\u02cb')}\n${'`'.repeat(8)}\n\nWhich version should we use? View full versions before choosing. Your answer records a choice; it does not apply a change by itself. Ask Neo to save the chosen version; protected documents require separate confirmation.`,
+              )}\n\nLocal → remote (excerpt):\n\n${'`'.repeat(8)}diff\n${excerpt.slice(0, 1000).replaceAll('`', '\u02cb')}\n${'`'.repeat(8)}\n\nWhich version should we use? View full report before choosing. Your answer records a choice; it does not apply a change by itself. Ask Neo to save the chosen version; protected documents require separate confirmation.`,
             document: versions.length
               ? versions.join('\n\n────────────────\n\n')
               : `Local (${local})\n\nRemote (${remote})\n\nNo document differences; the branch histories diverge. Review the preserved histories with the human before reconciling.`,

@@ -579,7 +579,7 @@ export async function createHyperneoSession(
   let sessionId: string | undefined;
   try {
     if (prepared && workerSandboxOn(request.preparation?.sandbox))
-      await installClaudeNativeWrites(prepared.value.directory, [folder]);
+      await installClaudeNativeWrites(prepared.value.directory, [folder], true);
     sessionId = await deps.sessions.create(
       prepared?.value.directory ?? folder,
       request.title,

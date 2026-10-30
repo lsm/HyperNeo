@@ -674,6 +674,26 @@ env -i HOME="$TODO_MUTATION_COMMIT_RUN/home" PATH="$PATH" TMPDIR="$TODO_MUTATION
 	HYPERNEO_DATA_DIR="$TODO_MUTATION_COMMIT_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-mutation-commit.ts" verify "$TODO_MUTATION_COMMIT_RUN"
 
+CODING_DAEMON_BUILD_RUN="$WORK_DIR/coding-daemon-merge-build"
+mkdir -p "$CODING_DAEMON_BUILD_RUN/home" "$CODING_DAEMON_BUILD_RUN/tmp"
+env -i HOME="$CODING_DAEMON_BUILD_RUN/home" PATH="$PATH" TMPDIR="$CODING_DAEMON_BUILD_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$CODING_DAEMON_BUILD_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/coding-daemon-merge-build.ts" "$CODING_DAEMON_BUILD_RUN"
+
+for CODING_DAEMON_SWEEP_VARIANT in enterprise policy-revoke merge-fails late-label per-pr; do
+	CODING_DAEMON_SWEEP_RUN="$WORK_DIR/coding-daemon-merge-sweep-$CODING_DAEMON_SWEEP_VARIANT"
+	mkdir -p "$CODING_DAEMON_SWEEP_RUN/home" "$CODING_DAEMON_SWEEP_RUN/tmp"
+	env -i HOME="$CODING_DAEMON_SWEEP_RUN/home" PATH="$PATH" TMPDIR="$CODING_DAEMON_SWEEP_RUN/tmp" NODE_ENV=test \
+		HYPERNEO_DATA_DIR="$CODING_DAEMON_SWEEP_RUN/data" LOG_LEVEL=warn \
+		deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/coding-daemon-merge-sweep.ts" "$CODING_DAEMON_SWEEP_VARIANT" "$CODING_DAEMON_SWEEP_RUN"
+done
+
+CODING_SIGNOFF_RUN="$WORK_DIR/coding-signoff-scope"
+mkdir -p "$CODING_SIGNOFF_RUN/home" "$CODING_SIGNOFF_RUN/tmp"
+env -i HOME="$CODING_SIGNOFF_RUN/home" PATH="$PATH" TMPDIR="$CODING_SIGNOFF_RUN/tmp" NODE_ENV=test \
+	HYPERNEO_DATA_DIR="$CODING_SIGNOFF_RUN/data" LOG_LEVEL=warn \
+	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/coding-signoff-scope.ts" "$CODING_SIGNOFF_RUN"
+
 TODO_REMOVE_WRITER_RUN="$WORK_DIR/todo-remove-writer"
 mkdir -p "$TODO_REMOVE_WRITER_RUN/home" "$TODO_REMOVE_WRITER_RUN/tmp"
 env -i HOME="$TODO_REMOVE_WRITER_RUN/home" PATH="$PATH" TMPDIR="$TODO_REMOVE_WRITER_RUN/tmp" NODE_ENV=test \
@@ -824,4 +844,5 @@ env -i HOME="$WORK_DIR/github-cursor-persist-extract/home" PATH="$PATH" TMPDIR="
 env -i HOME="$WORK_DIR/github-watched-update-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-watched-update-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-watched-update-extract.ts" "$WORK_DIR/github-watched-update-extract"
 env -i HOME="$WORK_DIR/github-watched-insert-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-watched-insert-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-watched-insert-extract.ts" "$WORK_DIR/github-watched-insert-extract"
 env -i HOME="$WORK_DIR/github-watched-upsert-lift/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-watched-upsert-lift/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-watched-upsert-lift.ts" "$WORK_DIR/github-watched-upsert-lift"
+env -i HOME="$WORK_DIR/github-polling-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-polling-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-polling-command.ts" "$WORK_DIR/github-polling-command"
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"
