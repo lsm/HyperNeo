@@ -662,7 +662,7 @@ export class NeoAskTodoRepository {
       triagePending:
         triagedAt !== undefined &&
         !this.listQuestions(todo.askId).some(
-          (q) => q.todoId === todo.id && q.state === 'answered' && q.createdAt >= triagedAt
+          (q) => q.todoId === todo.id && q.state === 'answered' && (q.answeredAt ?? 0) >= triagedAt
         ),
       answerPending:
         todo.blockedBy === 'needs-human' &&

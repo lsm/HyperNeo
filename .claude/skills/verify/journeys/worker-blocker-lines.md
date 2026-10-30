@@ -22,3 +22,7 @@ An answered card whose worker-delivery route is still pending must not create
 another human card after the hour. The focused runner regression rejects the
 send, observes one pending answer route, then refreshes twice: the answered card
 stays the only card and the todo keeps waiting for delivery.
+
+Repeat the helper with `verify --prior-question` to start with a linked card
+created before worker triage. Its later human answer must release the hold after
+delivery; its earlier creation time must not cause another fallback card.
