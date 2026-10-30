@@ -24,6 +24,9 @@ export class ConnectionVault {
 
   async read(connection: ConnectionStatus): Promise<ConnectionTokens | null> {
     const stored = await this.store.get(...this.address(connection));
+    const status = this.storageStatus();
+    if (stored === null && status.backend.startsWith('keychain') && !status.keychainAvailable)
+      throw new Error('Connection vault is unavailable');
     return stored === null ? null : connectionTokens.parse(JSON.parse(stored));
   }
 

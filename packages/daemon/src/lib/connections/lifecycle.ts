@@ -3,6 +3,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { startGoogleLogin } from './google-login.ts';
 import type { ConnectionVault } from './vault.ts';
 import type { ConnectionStatus, GoogleConnectionAttempt as View } from './status.ts';
+import { createGoogleTokenAccess } from './token-access.ts';
 
 type Login = Awaited<ReturnType<typeof startGoogleLogin>>;
 type Outcome = Awaited<Login['result']>;
@@ -113,6 +114,8 @@ export function createConnectionLifecycle(deps: {
   vault: ConnectionVault;
   startLogin: typeof startGoogleLogin;
   closed: AbortSignal;
+  fetchImpl?: typeof fetch;
+  now?: () => number;
 }) {
   let current: Flow | undefined;
   let pending = Promise.resolve();
@@ -124,6 +127,7 @@ export function createConnectionLifecycle(deps: {
     );
     return result;
   };
+  const access = createGoogleTokenAccess({ ...deps, serial });
   const cancel = () => {
     if (current) {
       current.cancelled = true;
@@ -133,6 +137,7 @@ export function createConnectionLifecycle(deps: {
   };
   deps.closed.addEventListener('abort', cancel, { once: true });
   return {
+    token: access.token,
     connect: (input: Partial<Client> & { connectionId?: string }) =>
       serial<View>(async () => {
         if (deps.closed.aborted) return { state: 'failed', reason: 'cancelled' };
@@ -181,6 +186,7 @@ export function createConnectionLifecycle(deps: {
             (view) => {
               flow.view = view;
               flow.login = undefined;
+              if (view.state === 'complete' && view.connectionId) access.resume(view.connectionId);
             },
             () => {
               flow.view = { state: 'failed', reason: 'storage_failed' };
@@ -193,13 +199,15 @@ export function createConnectionLifecycle(deps: {
       ...(current && (!loginId || current.id === loginId) ? current.view : { state: 'missing' }),
       storage: deps.vault.storageStatus(),
     }),
-    disconnect: (connectionId: string) =>
-      serial(async () => {
+    disconnect: (connectionId: string) => {
+      access.cancel(connectionId);
+      return serial(async () => {
         const connection = (await deps.read()).find((record) => record.id === connectionId);
         if (!connection) return { ok: false, reason: 'unknown_connection' };
         current?.deniedAccounts.add(connection.accountId);
         if (current?.connectionId === connectionId) cancel();
         return disconnect(connection, deps.save, deps.vault);
-      }),
+      });
+    },
   };
 }

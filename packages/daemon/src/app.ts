@@ -110,6 +110,7 @@ import {
 import { releaseSessionKeyBridges } from './lib/providers/provider-key-bridge.js';
 import { getProviderRegistry } from './lib/providers/registry.js';
 import { OAuthRefreshScheduler } from './lib/credentials/oauth-refresh-scheduler.js';
+import { createGoogleConnectionRefreshLoop } from './lib/connections/refresh-loop.ts';
 import { ProviderCredentialManager } from './lib/credentials/provider-credential-manager.js';
 import { KeychainUnavailableError } from './lib/credentials/credential-store.js';
 import { sameCredentialIdentity } from './lib/credentials/credential-identity.js';
@@ -359,6 +360,7 @@ export interface CreateDaemonAppOptions {
   verbose?: boolean;
   standalone?: boolean;
   onStructuredLogSinkReady?: (flush: () => Promise<void>) => void;
+  googleConnections?: Parameters<typeof createGoogleConnectionRefreshLoop>[1];
 }
 
 export interface DaemonAppContext {
@@ -709,6 +711,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       );
       internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
     });
+    const googleRefresh = createGoogleConnectionRefreshLoop(
+      db.getDatabase(),
+      options.googleConnections
+    );
     const oauthRefreshScheduler = new OAuthRefreshScheduler(credentialManager, {
       registry: providerRegistry,
       recoverDormantProvider: async (providerId) => {
@@ -1237,6 +1243,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         () => messageDeliveryProcessor.stopPolling(),
         () => unsubscribeProviderFailureChanges?.(),
         () => oauthRefreshScheduler.stop(),
+        () => googleRefresh.stop(),
         () => jobProcessor.stop(),
         () => mailboxExpireProcessor.stop(),
         () => taskAgentManager?.cleanupAll(),
@@ -1587,6 +1594,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       }
     }
 
+    googleRefresh.start();
     if (usesHumanLogin()) {
       oauthRefreshScheduler.start();
       logInfo('[Daemon] OAuth refresh scheduler started');
@@ -1776,6 +1784,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         processWatchdog.stop();
         logInfo('[Daemon] Process watchdog stopped');
         await oauthRefreshScheduler.stop();
+        await googleRefresh.stop();
         logInfo('[Daemon] OAuth refresh scheduler stopped');
         messageDeliveryProcessor.stopPolling();
         logInfo('[Daemon] Message-delivery job polling stopped');

@@ -14,32 +14,64 @@ import { googleClient, googleConnectionAttempt } from './status.ts';
 import { startGoogleLogin } from './google-login.ts';
 import { createConnectionLifecycle } from './lifecycle.ts';
 
-const services = new WeakMap<Database, Promise<ReturnType<typeof createConnectionLifecycle>>>();
 const policy = { safetyClass: 'human_only' as const, caller: 'local_user' as const };
+
+export type GoogleConnectionDependencies = {
+  createStore?: typeof createCredentialStore;
+  startLogin?: typeof startGoogleLogin;
+  fetchImpl?: typeof fetch;
+  now?: () => number;
+};
+type ServiceEntry = {
+  deps: GoogleConnectionDependencies;
+  closed: AbortController;
+  pending?: Promise<ReturnType<typeof createConnectionLifecycle>>;
+};
+const services = new WeakMap<Database, ServiceEntry>();
+
+export function configureGoogleConnections(db: Database, deps: GoogleConnectionDependencies) {
+  if (!services.has(db)) services.set(db, { deps, closed: new AbortController() });
+  return services.get(db)!.closed;
+}
+
+export function getGoogleConnectionService(sql: Database, deps: GoogleConnectionDependencies = {}) {
+  configureGoogleConnections(sql, deps);
+  const entry = services.get(sql)!;
+  entry.closed.signal.throwIfAborted();
+  const configured = entry.deps;
+  let pending = entry.pending;
+  if (!pending) {
+    const gateway = gatewayFor(sql);
+    pending = gateway.call(artifactIdentityWrites, 'ensure', randomUUID()).then((identity) => {
+      entry.closed.signal.throwIfAborted();
+      return createConnectionLifecycle({
+        read: () => gateway.call(googleConnectionReads, 'list'),
+        save: (connection) => gateway.call(googleConnectionWrites, 'put', connection),
+        vault: new ConnectionVault(
+          (configured.createStore ?? createCredentialStore)(sql),
+          identity
+        ),
+        startLogin:
+          configured.startLogin ??
+          ((client) => startGoogleLogin(client, { fetchImpl: configured.fetchImpl })),
+        fetchImpl: configured.fetchImpl,
+        now: configured.now,
+        closed: AbortSignal.any([gateway.closeSignal, entry.closed.signal]),
+      });
+    });
+    entry.pending = pending;
+    void pending.catch(() => {
+      entry.pending = undefined;
+    });
+  }
+  return pending;
+}
 
 export function createGoogleConnectionOperations(
   db: () => Database,
-  deps = { createStore: createCredentialStore, startLogin: startGoogleLogin }
+  deps: GoogleConnectionDependencies = {}
 ) {
-  const service = () => {
-    const sql = db();
-    let pending = services.get(sql);
-    if (!pending) {
-      const gateway = gatewayFor(sql);
-      pending = gateway.call(artifactIdentityWrites, 'ensure', randomUUID()).then((identity) =>
-        createConnectionLifecycle({
-          read: () => gateway.call(googleConnectionReads, 'list'),
-          save: (connection) => gateway.call(googleConnectionWrites, 'put', connection),
-          vault: new ConnectionVault(deps.createStore(sql), identity),
-          startLogin: deps.startLogin,
-          closed: gateway.closeSignal,
-        })
-      );
-      services.set(sql, pending);
-      void pending.catch(() => services.delete(sql));
-    }
-    return pending;
-  };
+  const service = () => getGoogleConnectionService(db(), deps);
   return [
     defineOperation({
       name: 'connections.google.connect',

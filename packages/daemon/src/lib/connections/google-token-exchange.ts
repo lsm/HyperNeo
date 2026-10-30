@@ -19,12 +19,8 @@ const tokenSchema = z.object({
 });
 type Token = z.infer<typeof tokenSchema>;
 
-async function tokenJson(response: Response) {
-  if (!response.ok) {
-    await response.body?.cancel();
-    throw new Error('Token exchange failed');
-  }
-  const reader = response.body?.getReader();
+export async function readGoogleTokenJson(body: Response['body']) {
+  const reader = body?.getReader();
   if (!reader) throw new Error('Missing token response');
   let size = 0;
   const chunks: Uint8Array[] = [];
@@ -36,11 +32,19 @@ async function tokenJson(response: Response) {
       if (size > 65536) throw new Error('Token response too large');
       chunks.push(value);
     }
-    return tokenSchema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
   } finally {
     await reader.cancel();
     reader.releaseLock();
   }
+}
+
+async function tokenJson(response: Response) {
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new Error('Token exchange failed');
+  }
+  return tokenSchema.parse(await readGoogleTokenJson(response.body));
 }
 
 async function requestToken(
