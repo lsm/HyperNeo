@@ -619,3 +619,55 @@ test('an observed merge wins over a command error and is never retried', async (
   expect(merges()).toHaveLength(1);
   expect(notices.filter((text) => text.includes('Merge confirmed:'))).toHaveLength(1);
 });
+
+test('a failed CLI reply with unreadable confirmation preserves its receipt and later confirms once', async () => {
+  hideOutcome = true;
+  const lost: SpawnFn = (args) => {
+    const result = spawn(args);
+    return args[2] === 'merge'
+      ? {
+          ...result,
+          exited: Promise.resolve(1),
+          exitCode: 1,
+          stderr: new Response('Connection lost after merge').body,
+        }
+      : result;
+  };
+  await sweep(lost)(10);
+  expect(await ledger.write('daemonMerge', { kind: 'list' })).toHaveLength(1);
+  expect(await ledger.write('daemonMerge', { kind: 'failures', url, head })).toEqual([]);
+  hideOutcome = false;
+  await sweep(lost)(11);
+  await sweep(lost)(12);
+  expect(merges()).toHaveLength(1);
+  expect(notices.filter((text) => text.includes('Merge confirmed:'))).toHaveLength(1);
+});
+
+test('an unreadable failed third attempt keeps its error until OPEN recovery surfaces the limit', async () => {
+  for (const at of [1, 2]) {
+    const [receipt] = await reserve(at);
+    await ledger.write('daemonMerge', {
+      ...receipt,
+      kind: 'failed',
+      at: receipt.startedAt,
+      error: 'Earlier failure',
+    });
+    await ledger.write('daemonMerge', { ...receipt, kind: 'void', at: receipt.startedAt });
+  }
+  mergeFailed = true;
+  let issued = false;
+  const unreadable: SpawnFn = (args) => {
+    if (args[2] === 'merge') issued = true;
+    const result = spawn(args);
+    return issued && args[2] === 'view'
+      ? { ...result, exited: Promise.resolve(1), exitCode: 1 }
+      : result;
+  };
+  await sweep(unreadable)(10);
+  expect(await ledger.write('daemonMerge', { kind: 'list' })).toHaveLength(1);
+  expect(notices).toEqual([]);
+  await sweep()(11);
+  expect(merges()).toHaveLength(1);
+  expect(notices).toEqual([expect.stringContaining('Required check still settling')]);
+  expect(notices[0]).toContain('3 failed attempts');
+});
