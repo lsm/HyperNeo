@@ -3,7 +3,9 @@ import type { ConnectionVault } from './vault.ts';
 import type { ConnectionStatus, ConnectionTokens } from './status.ts';
 import { refreshGoogleGrant, type OfflineGrant, type RefreshOutcome } from './refresh-token.ts';
 
-type Access = { ok: true; accessToken: string; expiresAt: number } | { ok: false; reason: string };
+type Access =
+  | { ok: true; accessToken: string; expiresAt: number; scopes: string[] }
+  | { ok: false; reason: string };
 type Loaded = { connection: ConnectionStatus; tokens: ConnectionTokens | null };
 type Plan = Loaded & { offline?: OfflineGrant };
 type Decision =
@@ -16,16 +18,18 @@ const access = (tokens: ConnectionTokens): Access => ({
   ok: true,
   accessToken: tokens.accessToken,
   expiresAt: tokens.expiresAt,
+  scopes: tokens.scopes,
 });
 function planAccess(
   loaded: Loaded,
   now: number,
   retryAt: number,
-  aborted: boolean
+  aborted: boolean,
+  force: boolean
 ): { value: Plan } | { reason: Access } {
   if (aborted) return { reason: failed('cancelled') };
   const { tokens } = loaded;
-  if (tokens && tokens.expiresAt - now > 120000) return { reason: access(tokens) };
+  if (!force && tokens && tokens.expiresAt - now > 120000) return { reason: access(tokens) };
   if (retryAt > now)
     return { reason: tokens && tokens.expiresAt > now ? access(tokens) : failed('refresh_failed') };
   const offline =
@@ -65,7 +69,7 @@ export function createGoogleTokenAccess(deps: {
   fetchImpl?: typeof fetch;
 }) {
   const now = deps.now ?? Date.now;
-  const flights = new Map<string, Promise<Access>>();
+  const flights = new Map<string, { force: boolean; result: Promise<Access> }>();
   const controllers = new Map<string, AbortController>();
   const retries = new Map<string, { until: number; storage?: boolean }>();
   const apply = async (decision: Decision): Promise<Access> => {
@@ -80,7 +84,7 @@ export function createGoogleTokenAccess(deps: {
     return decision.result;
   };
   const execute = (superpipe({})('google-connection-access') as PipelineAPI)
-    .input(['id', 'signal'])
+    .input(['id', 'signal', 'force'])
     .pipe(
       async (id: string) => (await deps.read()).find((row) => row.id === id),
       'id',
@@ -112,9 +116,15 @@ export function createGoogleTokenAccess(deps: {
       'result:result'
     )
     .pipe(
-      (loaded: Loaded, signal: AbortSignal) =>
-        planAccess(loaded, now(), retries.get(loaded.connection.id)?.until ?? 0, signal.aborted),
-      ['result', 'signal'],
+      (loaded: Loaded, signal: AbortSignal, force: boolean) =>
+        planAccess(
+          loaded,
+          now(),
+          retries.get(loaded.connection.id)?.until ?? 0,
+          signal.aborted,
+          force
+        ),
+      ['result', 'signal', 'force'],
       'result:result'
     )
     .pipe(
@@ -132,21 +142,24 @@ export function createGoogleTokenAccess(deps: {
       'decision'
     )
     .pipe(apply, 'decision', 'result')
-    .endAsync('result') as (id: string, signal: AbortSignal) => Promise<Access>;
-  return {
-    token(id: string): Promise<Access> {
+    .endAsync('result') as (id: string, signal: AbortSignal, force: boolean) => Promise<Access>;
+  const handle = {
+    token(id: string, force = false): Promise<Access> {
       if (deps.closed.aborted) return Promise.resolve(failed('cancelled'));
       const pending = flights.get(id);
-      if (pending) return pending;
+      if (pending)
+        return force && !pending.force
+          ? pending.result.then(() => handle.token(id, true))
+          : pending.result;
       const controller = new AbortController();
       controllers.set(id, controller);
       const result = deps
-        .serial(() => execute(id, AbortSignal.any([deps.closed, controller.signal])))
+        .serial(() => execute(id, AbortSignal.any([deps.closed, controller.signal]), force))
         .catch(() => {
           retries.set(id, { until: now() + 60000, storage: true });
           return failed('refresh_failed');
         });
-      flights.set(id, result);
+      flights.set(id, { force, result });
       void result.finally(() => {
         flights.delete(id);
         controllers.delete(id);
@@ -160,4 +173,5 @@ export function createGoogleTokenAccess(deps: {
       retries.delete(id);
     },
   };
+  return handle;
 }

@@ -1,3 +1,4 @@
+import { createGoogleReadOperations } from './google-read-operations.ts';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Database } from '../../storage/sqlite-compat.ts';
@@ -21,6 +22,7 @@ export type GoogleConnectionDependencies = {
   startLogin?: typeof startGoogleLogin;
   fetchImpl?: typeof fetch;
   now?: () => number;
+  apiTimeoutMs?: number;
 };
 type ServiceEntry = {
   deps: GoogleConnectionDependencies;
@@ -56,6 +58,7 @@ export function getGoogleConnectionService(sql: Database, deps: GoogleConnection
           ((client) => startGoogleLogin(client, { fetchImpl: configured.fetchImpl })),
         fetchImpl: configured.fetchImpl,
         now: configured.now,
+        apiTimeoutMs: configured.apiTimeoutMs,
         closed: AbortSignal.any([gateway.closeSignal, entry.closed.signal]),
       });
     });
@@ -73,6 +76,7 @@ export function createGoogleConnectionOperations(
 ) {
   const service = () => getGoogleConnectionService(db(), deps);
   return [
+    ...createGoogleReadOperations(db, service),
     defineOperation({
       name: 'connections.google.connect',
       description:
