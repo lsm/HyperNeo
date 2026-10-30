@@ -6,7 +6,7 @@ import { runMigration467 } from '../../../../src/storage/schema/m467-google-conn
 import {
   googleConnectionReads,
   googleConnectionWrites,
-} from '../../../../src/storage/repositories/google-connections.ts';
+} from '../../../../src/storage/repositories/google-connections-worker.ts';
 import { ConnectionVault } from '../../../../src/lib/connections/vault.ts';
 import {
   DatabaseCredentialStore,
@@ -134,7 +134,7 @@ test('human status operation returns metadata only and refuses agent management 
       {},
       { source: 'mcp', sessionId: 'synthetic-worker', role: 'neo' }
     );
-    expect(denied).toMatchObject({ kind: 'error', error: { code: 'forbidden' } });
+    expect(denied).toMatchObject({ kind: 'failed', code: 'forbidden' });
     await writer.close();
   } finally {
     database.close();

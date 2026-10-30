@@ -1,3 +1,4 @@
+import { runMigration467 } from './m467-google-connections.ts';
 import { runMigration456 } from './m456-neo-todo-query-indexes.ts';
 import { runMigration447 } from './m447-neo-todo-removed-index.ts';
 import { runMigration445 } from './m445-job-queue-message-lookup-index.ts';
@@ -1162,4 +1163,5 @@ function createIndexes(db: BunDatabase): void {
   runMigration428(db);
   runMigration429(db);
   runMigration432(db);
+  runMigration467(db);
 }
