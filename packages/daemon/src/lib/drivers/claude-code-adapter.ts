@@ -218,7 +218,11 @@ function selectClaudeSendTarget(
 
 const sendClaudeCliMessage = (superpipe({})('send-claude-cli-message') as PipelineAPI)
   .input(['ref', 'message', 'context', 'deps'])
-  .pipe((deps: ClaudeCodeAdapterDeps) => deps.liveSessions?.() ?? [], 'deps', 'live')
+  .pipe(
+    async (deps: ClaudeCodeAdapterDeps) => (await deps.liveSessions?.().catch(() => [])) ?? [],
+    'deps',
+    'live'
+  )
   .pipe(
     (ref: WorkRef, live: readonly ClaudeLiveSession[]) => requireClaudeCliOwner(ref.id, live),
     ['ref', 'live'],
@@ -299,7 +303,8 @@ export function createClaudeCodeAdapter(deps: ClaudeCodeAdapterDeps): WorkAdapte
     : undefined;
   const sendInbox = deps.sendInbox;
   const send: WorkAdapter['send'] = sendInbox
-    ? (ref, message, context) => sendClaudeCodeMessage(ref, message, context, deps)
+    ? (ref, message, context) =>
+        sendClaudeCodeMessage(ref, message, context, { ...deps, liveSessions })
     : undefined;
   return {
     id: 'claude-code',
