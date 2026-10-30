@@ -316,3 +316,15 @@ test('an API rejection can force refresh of an otherwise unexpired grant', async
   });
   expect(fetchImpl).toHaveBeenCalledTimes(1);
 });
+
+test('an overlapping cached read does not swallow a forced refresh after API 401', async () => {
+  await vault.replace(connection, { ...tokens, expiresAt: now + 3600000 });
+  const cached = token();
+  const forced = (lifecycle.token as (id: string, force?: boolean) => Promise<Access>)(
+    connection.id,
+    true
+  );
+  expect(await cached).toMatchObject({ ok: true, accessToken: tokens.accessToken });
+  expect(await forced).toMatchObject({ ok: true, accessToken: grant.access_token });
+  expect(fetchImpl).toHaveBeenCalledTimes(1);
+});
