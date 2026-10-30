@@ -369,32 +369,41 @@ export class CodingPrLedgerRepository {
   daemonMerge(
     change:
       | { kind: 'list' }
-      | { kind: 'begin'; url: string; head: string; actor: string; at: number }
+      | { kind: 'begin' | 'void'; url: string; head: string; actor: string; at: number }
       | { kind: 'finish'; url: string; head: string; commit: string; at: number }
-      | { kind: 'notified'; url: string; head: string; at: number }
+      | { kind: 'notified' | 'held' | 'retired'; url: string; head: string; at: number }
   ) {
-    const columns =
-      'url, head, actor, started_at AS startedAt, merge_commit AS mergeCommit, merged_at AS mergedAt, notified_at AS notifiedAt';
+    const columns = `url, head, actor, started_at AS startedAt, merge_commit AS mergeCommit, merged_at AS mergedAt, notified_at AS notifiedAt, (SELECT at FROM pack_coding_daemon_merge_notices n WHERE n.url=pack_coding_daemon_merges.url AND n.head=pack_coding_daemon_merges.head AND n.kind='held') AS heldNotifiedAt`;
     const statement =
       change.kind === 'list'
         ? {
-            sql: `SELECT ${columns} FROM pack_coding_daemon_merges WHERE notified_at IS NULL ORDER BY started_at`,
+            sql: `SELECT ${columns} FROM pack_coding_daemon_merges WHERE notified_at IS NULL AND NOT EXISTS (SELECT 1 FROM pack_coding_daemon_merge_notices n WHERE n.url=pack_coding_daemon_merges.url AND n.head=pack_coding_daemon_merges.head AND n.kind='retired') ORDER BY started_at`,
             args: [],
           }
-        : change.kind === 'begin'
+        : change.kind === 'held' || change.kind === 'retired'
           ? {
-              sql: `INSERT OR IGNORE INTO pack_coding_daemon_merges(url,head,actor,started_at) VALUES(?,?,?,?) RETURNING ${columns}`,
-              args: [change.url, change.head, change.actor, change.at],
+              sql: 'INSERT OR IGNORE INTO pack_coding_daemon_merge_notices(url,head,kind,at) VALUES(?,?,?,?)',
+              args: [change.url, change.head, change.kind, change.at],
             }
-          : change.kind === 'finish'
+          : change.kind === 'void'
             ? {
-                sql: `UPDATE pack_coding_daemon_merges SET merge_commit=?, merged_at=? WHERE url=? AND head=? AND merge_commit IS NULL RETURNING ${columns}`,
-                args: [change.commit, change.at, change.url, change.head],
+                sql: 'DELETE FROM pack_coding_daemon_merges WHERE url=? AND head=? AND actor=? AND started_at=? AND merge_commit IS NULL',
+                args: [change.url, change.head, change.actor, change.at],
               }
-            : {
-                sql: `UPDATE pack_coding_daemon_merges SET notified_at=? WHERE url=? AND head=? AND merge_commit IS NOT NULL AND notified_at IS NULL RETURNING ${columns}`,
-                args: [change.at, change.url, change.head],
-              };
+            : change.kind === 'begin'
+              ? {
+                  sql: `INSERT OR IGNORE INTO pack_coding_daemon_merges(url,head,actor,started_at) VALUES(?,?,?,?) RETURNING ${columns}`,
+                  args: [change.url, change.head, change.actor, change.at],
+                }
+              : change.kind === 'finish'
+                ? {
+                    sql: `UPDATE pack_coding_daemon_merges SET merge_commit=?, merged_at=? WHERE url=? AND head=? AND merge_commit IS NULL RETURNING ${columns}`,
+                    args: [change.commit, change.at, change.url, change.head],
+                  }
+                : {
+                    sql: `UPDATE pack_coding_daemon_merges SET notified_at=? WHERE url=? AND head=? AND merge_commit IS NOT NULL AND notified_at IS NULL RETURNING ${columns}`,
+                    args: [change.at, change.url, change.head],
+                  };
     return this.db.prepare(statement.sql).all(...statement.args) as {
       url: string;
       head: string;
@@ -403,6 +412,7 @@ export class CodingPrLedgerRepository {
       mergeCommit: string | null;
       mergedAt: number | null;
       notifiedAt: number | null;
+      heldNotifiedAt: number | null;
     }[];
   }
 
@@ -421,7 +431,11 @@ export class CodingPrLedgerRepository {
   }
 
   pollContext(repo: string) {
-    return { watched: this.watches(repo), health: this.health.read(repo) };
+    return {
+      watched: this.watches(repo),
+      health: this.health.read(repo),
+      policy: this.policy(repo),
+    };
   }
 
   pollSnapshotCurrent(repos: readonly string[]) {

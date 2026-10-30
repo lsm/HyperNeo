@@ -6,6 +6,11 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     started_at INTEGER NOT NULL, merge_commit TEXT, merged_at INTEGER, notified_at INTEGER,
     PRIMARY KEY (url, head)
   );
+  CREATE TABLE IF NOT EXISTS pack_coding_daemon_merge_notices (
+    url TEXT NOT NULL, head TEXT NOT NULL, kind TEXT NOT NULL, at INTEGER NOT NULL,
+    PRIMARY KEY (url, head, kind),
+    FOREIGN KEY (url, head) REFERENCES pack_coding_daemon_merges(url, head) ON DELETE CASCADE
+  );
   CREATE TABLE IF NOT EXISTS pack_coding_delivery_facts (
     todo_id TEXT NOT NULL REFERENCES neo_todos(id) ON DELETE CASCADE,
     url TEXT NOT NULL,
