@@ -45,6 +45,7 @@ const fake = await createHttpWsServer({ hostname: '127.0.0.1', port: 0, fetch: a
   const form = new URLSearchParams(await request.text());
   assert.equal(form.get('redirect_uri'), authorization.get('redirect_uri'));
   assert.equal(form.get('client_id'), authorization.get('client_id'));
+  assert.equal(form.get('client_secret'), 'synthetic-client-secret');
   assert.equal(form.get('code'), 'synthetic-code');
   assert.equal(createHash('sha256').update(form.get('code_verifier')!).digest('base64url'), authorization.get('code_challenge'));
   const header = Buffer.from(JSON.stringify({ alg: 'RS256', kid: 'synthetic-key' })).toString('base64url');
@@ -91,7 +92,7 @@ try {
         ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
       });
       const connect = async (connectionId?: string) => {
-        const start = await call('connections.google.connect', { clientId: 'synthetic-client', clientSecret: 'synthetic-client-secret', connectionId });
+        const start = await call('connections.google.connect', connectionId ? { connectionId } : { clientId: 'synthetic-client', clientSecret: 'synthetic-client-secret' });
         assert.equal(start.state, 'pending');
         const authorize = new URL(start.authorizeUrl);
         const consent = await fetch(`${origin}/authorize?${authorize.searchParams}`, { redirect: 'manual' });
@@ -124,6 +125,9 @@ try {
         const connections = (await call('connections.list')).connections;
         assert.equal(connections.length, 2); assert(connections.every((row: any) => row.health === 'healthy'));
         assert.equal((await call('connections.google.login', { loginId: oldLogin })).state, 'missing');
+        subject = 'synthetic-subject-1';
+        const reconnect = await connect(firstId);
+        assert.equal(reconnect.state, 'complete'); assert.equal(reconnect.connectionId, firstId);
         assert.deepEqual(await call('connections.google.disconnect', { connectionId: firstId }), { ok: true });
         const after = (await call('connections.list')).connections;
         assert.equal(after.find((row: any) => row.id === firstId).health, 'disconnected');

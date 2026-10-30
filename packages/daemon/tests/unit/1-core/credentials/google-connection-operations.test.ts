@@ -129,6 +129,22 @@ test('reconnect refuses another account and preserves the existing healthy grant
   expect(JSON.parse(row.status_json).health).toBe('healthy');
 });
 
+test('reconnect reuses the saved client without returning its secret to the caller', async () => {
+  const start = await call('connections.google.connect', client);
+  attempts[0].resolve(success);
+  const first = await settle(start.loginId);
+  const reconnect = await call('connections.google.connect', {
+    connectionId: first.connectionId,
+  });
+  expect(reconnect.state).toBe('pending');
+  attempts[1].resolve(success);
+  expect(await settle(reconnect.loginId)).toMatchObject({
+    state: 'complete',
+    connectionId: first.connectionId,
+  });
+  expect(JSON.stringify(reconnect)).not.toContain(client.clientSecret);
+});
+
 test('disconnect cancels a pending reconnect, disables the account and erases only its bundle', async () => {
   const start = await call('connections.google.connect', client);
   attempts[0].resolve(success);
