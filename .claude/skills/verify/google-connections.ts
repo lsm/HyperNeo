@@ -91,21 +91,27 @@ try {
         };
         ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
       });
-      const connect = async (connectionId?: string) => {
-        const start = await call('connections.google.connect', connectionId ? { connectionId } : { clientId: 'synthetic-client', clientSecret: 'synthetic-client-secret' });
-        assert.equal(start.state, 'pending');
-        const authorize = new URL(start.authorizeUrl);
-        const consent = await fetch(`${origin}/authorize?${authorize.searchParams}`, { redirect: 'manual' });
+      const authorize = async (start: { authorizeUrl: string }) => {
+        const consentUrl = new URL(start.authorizeUrl);
+        const consent = await fetch(`${origin}/authorize?${consentUrl.searchParams}`, { redirect: 'manual' });
         const callback = await fetch(consent.headers.get('location')!);
         assert.equal(callback.status, 200);
         assert(!(await callback.text()).includes('synthetic-access'));
+      };
+      const settle = async (loginId: string) => {
         const until = Date.now() + 10000;
         for (;;) {
-          const view = await call('connections.google.login', { loginId: start.loginId });
+          const view = await call('connections.google.login', { loginId });
           if (view.state !== 'pending') return view;
           assert(Date.now() < until, 'login did not settle');
           await new Promise((done) => setTimeout(done, 20));
         }
+      };
+      const connect = async (connectionId?: string) => {
+        const start = await call('connections.google.connect', connectionId ? { connectionId } : { clientId: 'synthetic-client', clientSecret: 'synthetic-client-secret' });
+        assert.equal(start.state, 'pending');
+        await authorize(start);
+        return settle(start.loginId);
       };
       const mcp = createOperationMcpHandler(() => registry, () => ({ sessionId: 'synthetic-worker', role: 'neo' }));
       const refused = await mcp({ name: 'connections.google.connect', input: { clientId: 'synthetic-client' } });
@@ -120,6 +126,15 @@ try {
         const mismatch = await connect(firstId);
         assert.equal(mismatch.state, 'failed'); assert.equal(mismatch.reason, 'account_mismatch');
         assert.equal((await call('connections.list')).connections.filter((row: any) => row.health === 'healthy').length, 2);
+        const pending = await call('connections.google.connect', { clientId: 'synthetic-client', clientSecret: 'synthetic-client-secret' });
+        await call('connections.google.disconnect', { connectionId: firstId });
+        subject = 'synthetic-subject-1';
+        await authorize(pending);
+        const cancelled = await settle(pending.loginId);
+        assert.equal(cancelled.state, 'failed'); assert.equal(cancelled.reason, 'cancelled');
+        assert.equal((await call('connections.list')).connections.find((row: any) => row.id === firstId).health, 'disconnected');
+        const deliberate = await connect();
+        assert.equal(deliberate.state, 'complete'); assert.equal(deliberate.connectionId, firstId);
         oldLogin = (await call('connections.google.connect', { clientId: 'synthetic-client', connectionId: firstId })).loginId;
       } else {
         const connections = (await call('connections.list')).connections;

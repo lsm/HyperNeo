@@ -14,7 +14,9 @@ The helper calls the production management operations through the real WebSocket
 door, injecting only the fake Google transport and synthetic encrypted-store key.
 Actual consent redirects, loopback callbacks, token exchange and signed JWKS
 verification complete two accounts. Reconnect with the wrong account must fail
-without changing either healthy grant. A pending attempt closes with the daemon;
+without changing either healthy grant. Disconnect during an unbound consent
+attempt must prevent its late callback from restoring the same account; a new
+explicit consent after disconnect may reconnect it. A pending attempt closes with the daemon;
 after restart both accounts remain and the old attempt is missing. Reconnect by
 connection ID reuses the encrypted client details without returning them. Disconnect
 disables and erases only its named bundle, preserving both metadata rows and the

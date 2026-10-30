@@ -145,6 +145,31 @@ test('reconnect reuses the saved client without returning its secret to the call
   expect(JSON.stringify(reconnect)).not.toContain(client.clientSecret);
 });
 
+test.each(['same', 'other'])(
+  'disconnect prevents a pending unbound login from restoring the %s account',
+  async (account) => {
+    const start = await call('connections.google.connect', client);
+    attempts[0].resolve(success);
+    const first = await settle(start.loginId);
+    const pending = await call('connections.google.connect', client);
+    expect(
+      await call('connections.google.disconnect', { connectionId: first.connectionId })
+    ).toEqual({ ok: true });
+    attempts[1].resolve(account === 'same' ? success : { ...success, accountId: 'other-subject' });
+    const view = await settle(pending.loginId);
+    expect(view.state).toBe(account === 'same' ? 'failed' : 'complete');
+    if (account === 'same') expect(view.reason).toBe('cancelled');
+    const row = db
+      .getDatabase()
+      .prepare('SELECT status_json FROM google_connections WHERE id = ?')
+      .get(first.connectionId) as { status_json: string };
+    expect(JSON.parse(row.status_json).health).toBe('disconnected');
+    expect(db.getDatabase().prepare('SELECT * FROM provider_credentials').all()).toHaveLength(
+      account === 'same' ? 0 : 1
+    );
+  }
+);
+
 test('disconnect cancels a pending reconnect, disables the account and erases only its bundle', async () => {
   const start = await call('connections.google.connect', client);
   attempts[0].resolve(success);
