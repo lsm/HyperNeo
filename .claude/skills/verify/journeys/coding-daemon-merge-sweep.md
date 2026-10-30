@@ -38,3 +38,8 @@ attempt; operators must investigate such a receipt rather than replaying merges.
 The helper saves coding-daemon-merge-sweep.json and the exact CLI invocation log,
 stops its daemon and preserves evidence before the wrapper removes synthetic data.
 No GUI, live GitHub merge or installed daemon deployment is exercised.
+
+Add `policy-revoke` after the helper path to change mergeBy to owner through the
+real preference RPC during GitHub checks; final admission must issue no merge.
+The final-read/API-call interval and in-flight writers remain an explicitly
+accepted limitation pending [#9458](https://github.com/lsm/HyperNeo/issues/9458).

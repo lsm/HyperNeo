@@ -2,7 +2,7 @@ import {
   CodingPrSweepRepository,
   sweepCodingPrs,
 } from '../../../../src/lib/neo/packs/coding/pr-sweep.ts';
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
@@ -324,13 +324,14 @@ test('a receipt sharing a candidate cannot hide a failed read with a second resp
 });
 
 test.each([undefined, 'GHE.company.test'])(
-  'routes fresh reads and pinned merges to configured host %s despite a matching public PR',
+  'routes host %s; in-flight writer revocation remains a known limitation (#9458)',
   async (configured) => {
     const previous = process.env.GH_HOST;
     const host = configured?.toLowerCase() ?? 'github.com';
     if (configured === undefined) delete process.env.GH_HOST;
     else process.env.GH_HOST = configured;
     const hosted: SpawnFn = (args) => {
+      if (args[2] === 'merge') policy('mergeBy', 'owner');
       const result = spawn(args);
       const enterprise = args.some((arg) => arg.includes('ghe.company.test'));
       return {
@@ -360,6 +361,7 @@ test.each([undefined, 'GHE.company.test'])(
       await run(10);
       expect(merges()).toHaveLength(1);
       expect(merges()[0][3]).toBe(`https://${host}/synthetic/merge/pull/1`);
+      expect(ledger.policy('synthetic/merge').mergeBy).toBe('owner');
       expect(
         calls
           .filter((args) => args[2] === 'view' || args[2] === 'checks')
@@ -424,9 +426,10 @@ test('waiting_human rows are signaling-only even if fresh gates would allow merg
   expect(merges()).toHaveLength(0);
 });
 
-test.each([
+test.each<[string, unknown]>([
   ['mergeBy', 'owner'],
   ['mergePolicy', 'human'],
+  ['humanSignoff', ['src/**']],
 ])(
   'a human change to %s=%s during fresh GitHub reads revokes daemon admission',
   async (key, value) => {
@@ -444,7 +447,21 @@ test.each([
       },
       racing
     )(10);
-    expect(ledger.policy('synthetic/merge')[key as 'mergeBy' | 'mergePolicy']).toBe(value);
+    expect(ledger.policy('synthetic/merge')[key as keyof ReturnType<typeof ledger.policy>]).toEqual(
+      value
+    );
     expect(merges()).toHaveLength(0);
   }
 );
+
+test('an unreadable final saved policy fails closed before launching the merge', async () => {
+  const fault = spyOn(ledger, 'policy').mockImplementation(() => {
+    throw new Error('Policy read unavailable');
+  });
+  try {
+    await expect(sweep()(10)).rejects.toThrow('Policy read unavailable');
+    expect(merges()).toHaveLength(0);
+  } finally {
+    fault.mockRestore();
+  }
+});

@@ -39,21 +39,18 @@ export function createCodingDaemonMergeSweep(
     ledger.write('daemonMerge', change);
   const read = (url: string) => readCodingDaemonMergeFacts(database(), url, spawn);
   const notify = async (receipt: Receipt, now: number) => {
-    const pr = parsePrUrl(receipt.url)!;
-    const route = { repo: `${pr.owner}/${pr.repo}`, number: Number(pr.number) };
-    const { owner } = await events.routeLater(route);
+    const { owner: org, repo, number } = parsePrUrl(receipt.url)!;
+    const { owner } = await events.routeLater({ repo: `${org}/${repo}`, number: +number });
     const key = `coding-daemon-merged:${receipt.url}:${receipt.head}`;
     const text = `${receipt.url} merged by ${receipt.actor} on head ${receipt.head} at ${new Date(receipt.mergedAt!).toISOString()} (${receipt.mergeCommit}).`;
     const told = owner && (await delivery.tell(owner, key, text).catch(() => false));
     if (told || (await delivery.wake(key, text).catch(() => false)))
       await record({ ...receipt, kind: 'notified', at: now });
   };
-  const finish = async (receipt: Receipt, facts: Observed['facts'], now: number) => {
-    if (!facts.ok || facts.head !== receipt.head || facts.state !== 'MERGED' || !facts.mergeCommit)
-      return;
-    const commit = facts.mergeCommit;
-    const [completed] = await record({ ...receipt, kind: 'finish', commit, at: now });
-    if (completed) await notify(completed, now);
+  const finish = async (receipt: Receipt, pr: Observed['facts'], now: number) => {
+    if (!pr.ok || pr.head !== receipt.head || pr.state !== 'MERGED' || !pr.mergeCommit) return;
+    const [merged] = await record({ ...receipt, kind: 'finish', commit: pr.mergeCommit, at: now });
+    if (merged) await notify(merged, now);
   };
   const merge = (superpipe({})('coding.sweep-daemon-merge') as PipelineAPI)
     .input(['observed', 'now'])
@@ -68,7 +65,11 @@ export function createCodingDaemonMergeSweep(
       'result:result'
     )
     .pipe(
-      async (receipt: Receipt, now: number) => {
+      async (receipt: Receipt, observed: Observed, now: number) => {
+        const { owner, repo } = parsePrUrl(receipt.url)!;
+        const fresh = admit({ ...observed, policy: ledger.policy(`${owner}/${repo}`) });
+        if ('reason' in fresh) return fresh.reason;
+        // oxlint-disable-next-line no-warning-comments -- TODO(#9458): accepted final-read/in-flight-writer race.
         await runGhJson(
           ['gh', 'pr', 'merge', receipt.url, '--squash', '--match-head-commit', receipt.head],
           homedir(),
@@ -78,7 +79,7 @@ export function createCodingDaemonMergeSweep(
         await finish(receipt, facts, now);
         return facts.ok ? 'attempted' : 'read_failure';
       },
-      ['result', 'now'],
+      ['result', 'observed', 'now'],
       'result'
     )
     .endAsync('result') as (observed: Observed, now: number) => Promise<unknown>;
