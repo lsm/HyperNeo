@@ -5,6 +5,11 @@ bash .claude/skills/verify/proof-run.sh /absolute/evidence/google-loopback \
   .claude/skills/verify/google-loopback.ts
 ```
 
+Also run the same command with `--slow-token` after the helper path, using a
+fresh evidence directory. Its 12-second fake token response must still complete
+within the exchange's 15-second bound, without the callback resetting at Bun's
+default 10-second HTTP idle timeout.
+
 Use `VERIFY_PROOF_RUNTIME=deno` with pinned Deno 2.9.4 on PATH for the second
 runtime. The shared isolated setup supplies fresh HOME/data/database and test mode.
 No model, credentials, real Google endpoint or GUI is used.

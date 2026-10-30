@@ -8,7 +8,8 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createHttpWsServer } from '../../../packages/daemon/src/lib/runtime-server/index.ts';
 import { startGoogleLogin } from '../../../packages/daemon/src/lib/connections/google-login.ts';
 
-const run = resolve(process.argv[2]);
+const run = resolve(process.argv.at(-1)!);
+const slowToken = process.argv.includes('--slow-token');
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -22,7 +23,7 @@ const jwk = { ...pair.publicKey.export({ format: 'jwk' }), kid: 'synthetic-key',
 let authorization: URLSearchParams;
 let exchanges = 0;
 const evidence: unknown[] = [];
-const fake = await createHttpWsServer({ hostname: '127.0.0.1', port: 0, fetch: async (request) => {
+const fake = await createHttpWsServer({ hostname: '127.0.0.1', port: 0, idleTimeoutSeconds: 30, fetch: async (request) => {
   const url = new URL(request.url);
   if (url.pathname === '/certs') return Response.json({ keys: [jwk] });
   if (url.pathname === '/authorize') {
@@ -42,6 +43,7 @@ const fake = await createHttpWsServer({ hostname: '127.0.0.1', port: 0, fetch: a
   assert.equal(form.get('client_id'), authorization.get('client_id'));
   assert.equal(form.get('code'), 'synthetic-code');
   assert.equal(createHash('sha256').update(form.get('code_verifier')!).digest('base64url'), authorization.get('code_challenge'));
+  if (slowToken) await new Promise((done) => setTimeout(done, 12000));
   const header = Buffer.from(JSON.stringify({ alg: 'RS256', kid: 'synthetic-key' })).toString('base64url');
   const payload = Buffer.from(JSON.stringify({ sub: 'synthetic-subject', email: 'one@example.test', email_verified: true, nonce: authorization.get('nonce'), iss: 'https://accounts.google.com', aud: authorization.get('client_id'), exp: Math.floor(Date.now() / 1000) + 300, iat: Math.floor(Date.now() / 1000) })).toString('base64url');
   const unsigned = `${header}.${payload}`;
@@ -103,5 +105,5 @@ try {
   assert.equal(exchanges, 1);
   evidence.push({ expiry: true, cancellation: true, denial: true, extraTokenExchanges: 0 });
 } finally { for (const session of sessions) session.cancel(); fake.stop(true); await app?.cleanup(); }
-writeFileSync(join(run, 'evidence/google-loopback.json'), JSON.stringify({ surface: 'actual fake consent HTTP redirect, loopback callback and token/JWKS endpoints in an isolated test-daemon process; login operations/UI remain later', evidence, resourcesClosed: true }, null, 2));
+writeFileSync(join(run, 'evidence/google-loopback.json'), JSON.stringify({ surface: 'actual fake consent HTTP redirect, loopback callback and token/JWKS endpoints in an isolated test-daemon process; login operations/UI remain later', slowToken, evidence, resourcesClosed: true }, null, 2));
 console.log('PASS: fake consent redirect, PKCE binding, one exchange under replay, wrong callbacks, expiry/cancellation/denial; resources closed');
