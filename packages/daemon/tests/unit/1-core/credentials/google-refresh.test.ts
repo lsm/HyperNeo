@@ -306,3 +306,13 @@ test.each([408, 429])('retryable HTTP %s preserves healthy metadata', async (sta
   expect(await token()).toEqual({ ok: false, reason: 'refresh_failed' });
   expect(fetchImpl).toHaveBeenCalledTimes(1);
 });
+
+test('an API rejection can force refresh of an otherwise unexpired grant', async () => {
+  await vault.replace(connection, { ...tokens, expiresAt: now + 3600000 });
+  const forced = lifecycle.token as (id: string, force?: boolean) => Promise<Access>;
+  expect(await forced(connection.id, true)).toMatchObject({
+    ok: true,
+    accessToken: grant.access_token,
+  });
+  expect(fetchImpl).toHaveBeenCalledTimes(1);
+});
