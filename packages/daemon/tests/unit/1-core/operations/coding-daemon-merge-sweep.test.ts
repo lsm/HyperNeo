@@ -243,6 +243,11 @@ test('human merge operation adds and removes the label on explicit intent', asyn
   const operation = createCodingHumanMergeOperation(spawn);
   const caller = { role: 'neo' } as Parameters<typeof operation.execute>[1];
   expect(await operation.execute({ url, enabled: true }, caller)).toEqual({ accepted: true });
+  const before = calls.length;
+  const denied = { ...caller, role: 'direct_task_worker' as const };
+  const result = await operation.execute({ url, enabled: false }, denied);
+  expect(result).toMatchObject({ accepted: false });
+  expect(calls).toHaveLength(before);
   expect(labels).toEqual(['human-merge']);
   await sweep()(10);
   expect(merges()).toHaveLength(0);
@@ -262,16 +267,11 @@ test('daemon execution suppresses owner merge events and reminders', async () =>
     20 * 60_000
   );
   const messages: string[] = [];
-  const delivery = {
-    tell: async (_ref: unknown, _key: string, text: string) => {
-      messages.push(text);
-      return true;
-    },
-    wake: async (_key: string, text: string) => {
-      messages.push(text);
-      return true;
-    },
+  const receive = async (...args: unknown[]) => {
+    messages.push(String(args.at(-1)));
+    return true;
   };
+  const delivery = { tell: receive, wake: receive };
   await deliverCodingPrEvents(new CodingPrEventRepository(db), [], delivery);
   await sweepCodingPrs(new CodingPrSweepRepository(db), delivery, 20 * 60_000);
   expect(messages).toEqual([]);
