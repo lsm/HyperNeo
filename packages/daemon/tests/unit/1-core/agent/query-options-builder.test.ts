@@ -160,6 +160,7 @@ describe('QueryOptionsBuilder', () => {
         }).build();
         expect(options.env?.BASH_DEFAULT_TIMEOUT_MS).toBe(capped ? '120000' : '600000');
         expect(options.env?.BASH_MAX_TIMEOUT_MS).toBe(capped ? '120000' : '600000');
+        expect(options.env?.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe(capped ? '1' : undefined);
         const post =
           options.hooks?.PostToolUse?.filter((entry) => entry.matcher === 'Bash').flatMap(
             (entry) => entry.hooks
@@ -215,6 +216,22 @@ describe('QueryOptionsBuilder', () => {
             tool_input: { command: 'sleep 130', timeout: 600000 },
             tool_use_id: 'synthetic',
           };
+          expect(
+            await hook(
+              {
+                ...base,
+                tool_response: {
+                  stdout: '',
+                  stderr: '',
+                  interrupted: false,
+                  backgroundTaskId: 'still-running',
+                  timedOutAfterMs: 120000,
+                },
+              },
+              'synthetic',
+              { signal: new AbortController().signal }
+            )
+          ).toEqual({});
           const timeout = await hook(
             {
               ...base,
