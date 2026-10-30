@@ -196,7 +196,7 @@ describe('daemon merge sweep behavior', () => {
     'does nothing when %s cannot be read',
     async (part) => {
       fail = part;
-      await sweep()(10);
+      await expect(sweep()(10)).rejects.toThrow('Merge held:');
       expect(merges()).toHaveLength(0);
       expect(notices).toEqual([]);
       expect(await ledger.write('daemonMerge', { kind: 'list' })).toEqual([]);
@@ -204,7 +204,7 @@ describe('daemon merge sweep behavior', () => {
   );
   test('recovers an uncertain merged outcome without repeating the command and retries notice', async () => {
     hideOutcome = true;
-    await sweep()(10);
+    await expect(sweep()(10)).rejects.toThrow('Merge held:');
     expect(merges()).toHaveLength(1);
     expect(notices).toEqual([]);
     hideOutcome = false;
@@ -271,13 +271,13 @@ test('daemon execution suppresses owner merge events and reminders', async () =>
   expect(messages).toEqual([]);
   await sweep(spawn, delivery)(20 * 60_000);
   expect(messages).toHaveLength(1);
-  expect(messages[0]).toContain('merged by daemon:coding-sweep');
+  expect(messages[0]).toContain('Merge confirmed:');
 });
 
 test('one unreadable candidate holds the whole merge batch', async () => {
   const rows = await ledger.read('list');
   await ledger.write('replace', 'synthetic/merge', [...rows, { ...rows[0], number: 2 }], 2);
-  await sweep()(10);
+  await expect(sweep()(10)).rejects.toThrow('Merge held:');
   expect(merges()).toHaveLength(0);
   expect(await ledger.write('daemonMerge', { kind: 'list' })).toEqual([]);
 });
@@ -310,7 +310,7 @@ test('a receipt sharing a candidate cannot hide a failed read with a second resp
       return true;
     },
   });
-  await run(10);
+  await expect(run(10)).rejects.toThrow('Merge held:');
   expect(failed).toBe(true);
   expect(notices).toEqual([]);
   expect(await ledger.write('daemonMerge', { kind: 'list' })).toHaveLength(1);
@@ -436,7 +436,7 @@ test('an unreadable final saved policy fails closed before launching the merge',
   }
 });
 
-test('a failed open attempt surfaces a held receipt without retrying or hiding a later merge', async () => {
+test('a failed open attempt surfaces a held receipt without retrying or misattributing an external merge', async () => {
   mergeFailed = true;
   deliver = false;
   const accepted = new Set<string>();
@@ -463,6 +463,9 @@ test('a failed open attempt surfaces a held receipt without retrying or hiding a
   await run(13);
   expect(merges()).toHaveLength(1);
   expect(notices).toHaveLength(2);
-  expect(notices[1]).toContain('merged by daemon:coding-sweep');
+  expect(notices[1]).toContain('Merge confirmed:');
+  expect(notices[1]).not.toContain('merged by');
+  expect(notices[1]).toContain('c'.repeat(40));
+  expect(notices[1]).toContain('confirmation sweep');
   expect(await ledger.write('daemonMerge', { kind: 'list' })).toEqual([]);
 });
