@@ -1,3 +1,4 @@
+import { codingReviewOnHead } from './review.ts';
 import { codingLedgerPollReads } from './ledger-poll-db.ts';
 import { isRateLimitError } from '../../../session/rate-limit-detector.ts';
 import { codingCanonicalRepo, codingRepoWatched, codingWatchedRepos } from './watched-repos.ts';
@@ -189,13 +190,11 @@ export function codingPrState(
   if (policy.mergePolicy === 'human' || (policy.mergePolicy === 'review_bot' && !policy.reviewBot))
     return readyCi ? 'waiting_human' : 'waiting_ci';
   if (policy.mergePolicy === 'review_bot') {
-    const bot = pr.reviews.nodes
-      .filter(
-        (item) =>
-          item.commit?.oid === pr.headRefOid &&
-          item.author?.login.toLowerCase() === policy.reviewBot!.toLowerCase()
-      )
-      .at(-1);
+    const bot = codingReviewOnHead({
+      head: pr.headRefOid,
+      reviewBot: policy.reviewBot,
+      reviews: pr.reviews.nodes,
+    });
     if (bot?.state !== 'APPROVED') return 'waiting_review';
     if (humanSignoff) return 'waiting_human';
     return readyCi ? 'approved_green' : 'approved_pending';

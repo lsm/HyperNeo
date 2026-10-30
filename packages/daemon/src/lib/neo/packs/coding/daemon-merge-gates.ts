@@ -1,3 +1,4 @@
+import { codingReviewMatches } from './review.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { CodingMergePolicy } from './pr-ledger.ts';
 import { codingHumanSignoff } from './human-signoff.ts';
@@ -48,7 +49,7 @@ const requireReview = (facts: Facts, policy: CodingMergePolicy): Gate => {
   const latest = facts.reviews
     .filter(
       (review) =>
-        review.login.toLowerCase() === policy.reviewBot?.toLowerCase() &&
+        codingReviewMatches(review.login, policy.reviewBot) &&
         !['COMMENTED', 'PENDING'].includes(review.state)
     )
     .at(-1);

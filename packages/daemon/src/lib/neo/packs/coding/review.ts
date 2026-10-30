@@ -14,12 +14,16 @@ type BotReview = { kind: 'bot'; head: string; login: string; approved: boolean }
 type ReviewDecision = BotReview | { kind: 'session'; head: string };
 type ReviewResult = BotReview | { kind: 'session'; head: string; sessionId: string };
 
+const reviewLogin = (login?: string) => login?.toLowerCase().replace(/\[bot\]$/, '');
+export const codingReviewMatches = (actual?: string, configured?: string) =>
+  !!configured && reviewLogin(actual) === reviewLogin(configured);
+
 export const codingReviewOnHead = (input: ReviewInput) =>
   input.reviews
     .filter(
       (review) =>
         review.commit?.oid === input.head &&
-        review.author?.login.toLowerCase() === input.reviewBot?.toLowerCase() &&
+        codingReviewMatches(review.author?.login, input.reviewBot) &&
         review.state !== 'COMMENTED' &&
         review.state !== 'PENDING'
     )

@@ -46,7 +46,7 @@ neo-file-packs.test.ts: their built-in and adopted file-pack catalogs cover the 
 After the shared resource check, run from packages/daemon:
 
 ```sh
-bunx vitest run --config vitest.config.ts tests/unit/1-core/operations/{coding-pr-approved,neo-packs,neo-file-packs,neo-coding-todo-prs,neo-coding-todo-policy,neo-coding-review,neo-coding-merge-gates,neo-question-retire-when,neo-check-only-reminders}.test.ts
+bunx vitest run --config vitest.config.ts tests/unit/1-core/operations/{coding-pr-approved,neo-packs,neo-file-packs,neo-coding-todo-prs,neo-coding-todo-policy,neo-coding-review,neo-coding-merge-gates,neo-coding-merge-operation,neo-coding-pr-ledger,coding-daemon-merge,neo-question-retire-when,neo-check-only-reminders}.test.ts
 ```
 
 Bot identity must agree with the existing manual gate, ledger state and daemon

@@ -17,7 +17,6 @@ type Subject = {
 type Head = { headRefOid: string; state: string };
 type Gate<T> = { value: T } | { reason: NeoTodoCheckResult };
 const pending = (): { reason: NeoTodoCheckResult } => ({ reason: { done: false, evidence: null } });
-const login = (value: string) => value.toLowerCase().replace(/\[bot\]$/, '');
 export const codingApprovalUrl = (url: unknown) => {
   const pr = typeof url === 'string' ? parsePrUrl(url) : null;
   return pr &&
@@ -80,11 +79,11 @@ const readDecision = async (
   if (!reviews.success) return pending();
   const latest = codingReviewOnHead({
     head: head.headRefOid,
-    reviewBot: login(subject.policy.reviewBot!),
+    reviewBot: subject.policy.reviewBot,
     reviews: reviews.data.flat().map((review) => ({
       state: review.state,
       commit: { oid: review.commit_id },
-      author: review.user ? { login: login(review.user.login) } : null,
+      author: review.user ? { login: review.user.login } : null,
     })),
   });
   return latest?.state === 'APPROVED' ? { value: head } : pending();

@@ -1,3 +1,4 @@
+import { codingReviewMatches } from './review.ts';
 import type { CodingMergeLocalAdmission } from './merge-local-state.ts';
 import type { WorkRef } from '../../../drivers/types.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -60,7 +61,7 @@ export const prepareCodingMerge = (superpipe({})('coding.prepare-manual-merge') 
         review.approved === true &&
         'login' in review &&
         typeof review.login === 'string' &&
-        review.login.toLowerCase() === contract.bot?.toLowerCase()
+        codingReviewMatches(review.login, contract.bot)
           ? review.login
           : !contract.bot &&
               review.kind === 'session' &&
