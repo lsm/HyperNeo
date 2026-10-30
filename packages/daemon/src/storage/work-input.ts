@@ -2,7 +2,7 @@ import { defineRepositoryOp } from './db-gateway/db-op.ts';
 import type { Database } from './sqlite-compat.ts';
 import { readWorkInputTurn, type WorkTurn } from './work-turns.ts';
 
-export interface WorkInputIdentity {
+interface WorkInputIdentity {
   adapter: 'codex-desktop' | 'claude-code';
   marker: string;
 }

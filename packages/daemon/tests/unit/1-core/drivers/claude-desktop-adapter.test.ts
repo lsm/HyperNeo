@@ -140,12 +140,14 @@ describe('claude-desktop adapter against the app session records', () => {
     exitCode = 0,
     onSpawn = () => {},
     output: { stdout?: string; stderr?: string } = { stderr: exitCode ? 'relay failed' : '' },
-    sendInbox?: ClaudeDesktopAdapterDeps['sendInbox']
+    sendInbox?: ClaudeDesktopAdapterDeps['sendInbox'],
+    readInput?: ClaudeDesktopAdapterDeps['readInput']
   ) {
     spawned = [];
     clock = 0;
     return createClaudeDesktopAdapter({
       sendInbox,
+      readInput,
       admitInbox: sendInbox
         ? (context) => requireClaudeReplyDestination(context, { hasSession: () => false })
         : undefined,
@@ -189,6 +191,29 @@ describe('claude-desktop adapter against the app session records', () => {
       },
     });
   }
+
+  test('finds an exact input marker under the Desktop record owning CLI session', async () => {
+    const driver = adapter(
+      [],
+      0,
+      () => {},
+      {},
+      undefined,
+      async (id, marker) => ({
+        messageId: `${id}:input`,
+        role: 'user',
+        at: 1,
+        text: `${marker}\nStored answer`,
+      })
+    );
+    expect(await driver.readInput?.('local_a1', '[worker-answer:exact]')).toMatchObject({
+      messageId: 'cli-a1:input',
+      text: '[worker-answer:exact]\nStored answer',
+    });
+    expect(await driver.readInput?.('cli-a1', '[worker-answer:exact]')).toBeNull();
+    expect(await driver.readInput?.('unknown', '[worker-answer:exact]')).toBeNull();
+    expect(spawned).toEqual([]);
+  });
 
   test.each([false, true])(
     'an import between CLI turns leaves Desktop UI unconfirmed (second turn completed: %s)',

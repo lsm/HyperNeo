@@ -1,6 +1,7 @@
 import { WorkerIdentitySchema } from './worker-identity-schema.ts';
 import { z } from 'zod';
 import type { WorkTurnPage } from '../../storage/work-turn-page.ts';
+import type { WorkTurn } from '../../storage/work-turns.ts';
 import { workStartConfiguration } from './start-configuration.ts';
 import { workStartPreparation } from './start-preparation.ts';
 import type { OperationCaller } from '../operations/registry.ts';
@@ -309,6 +310,7 @@ export interface WorkAdapter {
   readonly supportsStartEffort?: boolean;
   readonly supportsStartPreparation?: boolean;
   find(query: FindQuery): PlaceGroup[] | Promise<PlaceGroup[]>;
+  readonly readInput?: (sessionId: string, marker: string) => Promise<WorkTurn | null>;
   readonly readTurns?: (
     sessionId: string,
     around: string | undefined,

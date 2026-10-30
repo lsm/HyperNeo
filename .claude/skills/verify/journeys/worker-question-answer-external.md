@@ -6,6 +6,10 @@ Use SKILL.md's metadata-only in-process wrapper, with no model or fixed HTTP por
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory .claude/skills/verify/worker-question-answer-external.ts
 ```
 
+Pass `past` or `future` after the helper path (before the wrapper appends its
+run directory) to select peer transcript timestamps one day behind or ahead of
+the querying daemon. Run both modes sequentially with distinct evidence paths.
+
 The helper owns a fresh daemon, HOME/data/DB and synthetic Codex SQLite state,
 rollout and Desktop Unix socket. Its ps shim reports only the synthetic Desktop;
 its open and gh shims refuse host app launches and GitHub access. No credentials,
@@ -25,25 +29,24 @@ For another card with an 80-character title, let the peer accept the input but
 close its connection before acknowledging it. Withhold the input's rollout entry temporarily. The adapter's
 not_delivered result must lack notSent. Restart only this daemon and run its
 real refresh handler: the card must stay pending with no new peer input. Publish
-that accepted input into the synthetic rollout, append 60 newer unrelated inputs,
-then refresh again. work.status must reconcile the exact worker-answer marker, accept delivery and return doing,
+that accepted input into the synthetic rollout, append 160 newer unrelated inputs,
+then refresh again. The card must reconcile the exact worker-answer marker through
+work.read, accept delivery and return doing,
 without resending. An extra refresh must leave the peer input count at three.
 Before the uncertain attempt, the helper also forces a definite refusal and
-records 60 inputs while the answer waits. A new claim persists its dispatch time
-in the existing route JSON; definite refusals clear that time along with the claim.
-Reconciliation requests since that durable attempt time, so the first input after
-the attempt remains readable beyond the default eight-input window and before
-the 50-input result limit. Restart must preserve the claim's bound. The default
-work.status view intentionally omits the marker; reconciliation.json also keeps
-the bounded since view that contains it. Missing retained peer history remains
-uncertain; elapsed time never authorizes a resend or hold release.
+records 60 inputs while the answer waits. Feed the native rollout through the
+production index ingester before each owned refresh. Reconciliation must use the
+exact marker on the assigned worker via work.read, without a timestamp bound.
+Both default and old bounded work.status views intentionally omit the accepted
+marker; reconciliation.json records that the card still becomes accepted.
+Restart must preserve the claim so no uncertain send is replayed. Missing retained
+peer history remains uncertain; elapsed time never authorizes a resend or hold release.
 
-Known limits tracked outside this journey's current proof:
+Related coverage and known limits:
 
-- [#8874](https://github.com/lsm/HyperNeo/issues/8874): the local attempt-time
-  bound is not robust to peer clock skew or histories beyond the bounded view.
-  Recovery needs an exact owning-peer marker or input-ID lookup, with proofs for
-  clocks ahead and behind, restart, and more than 8/50 intervening inputs.
+- [#8874](https://github.com/lsm/HyperNeo/issues/8874): these two clock modes now
+  prove exact card recovery beyond 8/50 inputs. The owning-peer lookup journey
+  separately covers remote routing, Desktop alias mapping and owned Copilot history.
 - [#8888](https://github.com/lsm/HyperNeo/issues/8888): a slow external send can
   outlast the card client's reply timeout after the answer is stored. This
   journey does not prove prompt acknowledgement with a slow peer; that follow-up

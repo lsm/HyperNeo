@@ -7,7 +7,7 @@ import { workStartPreparation } from './start-preparation.ts';
 import { reject } from './work-operations.ts';
 import { errorMessage } from '../utils/error-message.ts';
 import { copilotOwnsSession, createCopilotFind } from './copilot-find.ts';
-import { readCopilotHistory } from './copilot-history.ts';
+import { readCopilotHistory, createCopilotInputReader } from './copilot-history.ts';
 import type * as W from './types.ts';
 
 type Receipt = W.WorkStarted['receipt'];
@@ -38,6 +38,7 @@ export function createCopilotAdapter(
   const live = new Map<string, Worker>();
   const transactions = new Map<string, Promise<unknown>>();
   const starts = new Set<Promise<W.Result<W.WorkStarted>>>();
+  const readInput = createCopilotInputReader();
   const launching = new Set<string>();
   let closed = false;
   const path = (id: string) => join(deps.directory, `${id}.json`);
@@ -506,6 +507,10 @@ export function createCopilotAdapter(
   return {
     ...discovery,
     find,
+    readInput: async (id, marker) =>
+      copilotOwnsSession(deps.directory, id)
+        ? readInput(join(deps.directory, id, 'session-state', id, 'events.jsonl'), id, marker)
+        : null,
     readTurns: (id, around, before, after, cursor) => {
       if (!copilotOwnsSession(deps.directory, id)) return null;
       return readCopilotHistory(

@@ -1,6 +1,44 @@
-import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
 import { z } from 'zod';
 import type { WorkTurnPage } from '../../storage/work-turn-page.ts';
+import type { WorkTurn } from '../../storage/work-turns.ts';
+
+export function createCopilotInputReader() {
+  const misses = new Map<string, { stamp: string; markers: Set<string> }>();
+  return async (file: string, sessionId: string, marker: string): Promise<WorkTurn | null> => {
+    let stamp: string;
+    try {
+      const info = lstatSync(file);
+      stamp = `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+    } catch {
+      return null;
+    }
+    const key = JSON.stringify([file, sessionId]);
+    const previous = misses.get(key);
+    if (previous?.stamp === stamp && previous.markers.has(marker)) return null;
+    const markers = previous?.stamp === stamp ? previous.markers : new Set<string>();
+    let complete = true;
+    let cursor: WorkTurnPage['nextCursor'];
+    do {
+      const page = readCopilotHistory(file, sessionId, undefined, 10, 10, cursor, () => {
+        complete = false;
+      });
+      if (page.availability === 'reply_unavailable') return null;
+      const match = page.turns.find(
+        (turn) =>
+          turn.role === 'user' && (turn.text === marker || turn.text.startsWith(`${marker}\n`))
+      );
+      if (match) return match;
+      cursor = page.nextCursor;
+      if (cursor) await new Promise((done) => setTimeout(done, 0));
+    } while (cursor);
+    if (complete) {
+      markers.add(marker);
+      misses.set(key, { stamp, markers });
+    }
+    return null;
+  };
+}
 
 const Event = z.object({
   type: z.string(),
@@ -22,7 +60,8 @@ export function readCopilotHistory(
   around: string | undefined,
   before: number,
   after: number,
-  cursor?: WorkTurnPage['nextCursor']
+  cursor?: WorkTurnPage['nextCursor'],
+  onUnparsed?: () => void
 ): WorkTurnPage {
   const unavailable: WorkTurnPage = { turns: [], availability: 'reply_unavailable' };
   let fd: number | undefined;
@@ -49,7 +88,8 @@ export function readCopilotHistory(
     const turns: (WorkTurnPage['turns'][number] & { position: number })[] = [];
     const seen = new Set<string>();
     let incomplete = last !== count - 1;
-    if (last < 0 || (start && !position))
+    if (last < 0 || (start && !position)) {
+      onUnparsed?.();
       return {
         ...unavailable,
         availability: 'incomplete',
@@ -57,6 +97,7 @@ export function readCopilotHistory(
           ? { nextCursor: { sessionId, before: start, copilot: { stamp, size: info.size } } }
           : {}),
       };
+    }
     while (position <= last) {
       const newline = bytes.indexOf(10, position);
       const offset = position;
@@ -100,6 +141,7 @@ export function readCopilotHistory(
         position: start + offset,
       });
     }
+    if (incomplete) onUnparsed?.();
     const anchor = around ? turns.findIndex((t) => t.messageId === around) : -1;
     if (around && anchor < 0) return unavailable;
     const selected = around

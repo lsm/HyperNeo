@@ -1,5 +1,7 @@
 import { testDirectories } from '../../../helpers/temporary-directory';
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import {
   appendFileSync,
   existsSync,
@@ -59,7 +61,6 @@ function setup(projectFolder?: string) {
   });
   const deps = {
     cliPath,
-    timeoutMs: 1500,
     directory: join(run, 'owned'),
     machine: 'test',
     projectFolder: () => projectFolder ?? run,
@@ -113,6 +114,154 @@ afterEach(async () => {
 });
 
 describe('Copilot owned history and discovery', () => {
+  for (const later of [0, 80])
+    test(`an oversized unreadable event with ${later} later records stays uncertain and uncached`, async () => {
+      const f = setup();
+      const work = await f.start('[worker-answer:small]\nDecision');
+      await f.restart();
+      const file = f.history(work);
+      const oversizedStart = fs.statSync(file).size;
+      appendFileSync(
+        file,
+        JSON.stringify({
+          type: 'user.message',
+          timestamp: '1990-01-01T00:00:00Z',
+          data: {
+            messageId: 'oversized',
+            content: `[worker-answer:oversized]\n${'x'.repeat(300000)}`,
+          },
+        }) + '\n'
+      );
+      const oversizedEnd = fs.statSync(file).size;
+      for (let n = 0; n < later; n++)
+        appendFileSync(
+          file,
+          JSON.stringify({
+            type: 'user.message',
+            timestamp: '1990-01-01T00:00:00Z',
+            data: { messageId: `after-${n}`, content: 'x'.repeat(2000) },
+          }) + '\n'
+        );
+      const pageStart = fs.statSync(file).size - 262144;
+      expect(pageStart).toBeGreaterThan(oversizedStart);
+      expect(pageStart).toBeLessThan(oversizedEnd);
+      const reads = spyOn(fs, 'readSync');
+      syncBuiltinESMExports();
+      try {
+        expect(await f.adapter.readInput!(work.ref.id, '[worker-answer:oversized]')).toBeNull();
+        reads.mockClear();
+        expect(await f.adapter.readInput!(work.ref.id, '[worker-answer:oversized]')).toBeNull();
+        expect(reads.mock.calls.length).toBeGreaterThan(0);
+        expect(await f.adapter.readInput!(work.ref.id, '[worker-answer:small]')).toMatchObject({
+          role: 'user',
+        });
+        expect(readFileSync(join(f.run, 'calls.jsonl'), 'utf8')).not.toContain('session.resume');
+      } finally {
+        reads.mockRestore();
+        syncBuiltinESMExports();
+      }
+    });
+
+  test('unchanged missing inputs read no history again, but append, rewrite and replacement are visible', async () => {
+    const f = setup();
+    const work = await f.start();
+    await f.restart();
+    const file = f.history(work);
+    const event = (name: string) =>
+      JSON.stringify({
+        type: 'user.message',
+        timestamp: '1990-01-01T00:00:00Z',
+        data: { messageId: name, content: `[worker-answer:${name}]\nDecision` },
+      }) + '\n';
+    appendFileSync(file, event('seed'));
+    for (let n = 0; n < 160; n++)
+      appendFileSync(file, event('noise').replace('Decision', 'x'.repeat(2000)));
+    const reads = spyOn(fs, 'readSync');
+    syncBuiltinESMExports();
+    const bytes = () =>
+      reads.mock.results.reduce(
+        (sum, result) => sum + (result.type === 'return' ? Number(result.value) : 0),
+        0
+      );
+    const find = (name: string) => f.adapter.readInput!(work.ref.id, `[worker-answer:${name}]`);
+    try {
+      expect(await find('late')).toBeNull();
+      expect(bytes()).toBeGreaterThan(300000);
+      reads.mockClear();
+      for (let n = 0; n < 3; n++) expect(await find('late')).toBeNull();
+      expect(bytes()).toBe(0);
+      expect(await find('seed')).toMatchObject({ messageId: 'user:seed' });
+      appendFileSync(file, event('late'));
+      expect(await find('late')).toMatchObject({ messageId: 'user:late' });
+      fs.utimesSync(file, 1000, 1000);
+      expect(await find('next')).toBeNull();
+      const stamp = fs.statSync(file);
+      const text = readFileSync(file, 'utf8');
+      writeFileSync(file, text.replaceAll('late', 'next'));
+      fs.utimesSync(file, stamp.atime, stamp.mtime);
+      expect(fs.statSync(file).mtimeMs).toBe(stamp.mtimeMs);
+      expect(fs.statSync(file).size).toBe(stamp.size);
+      expect(await find('next')).toMatchObject({ messageId: 'user:next' });
+      expect(await find('last')).toBeNull();
+      renameSync(file, file + '.preserved');
+      writeFileSync(file, text.replaceAll('late', 'last'));
+      fs.utimesSync(file, stamp.atime, stamp.mtime);
+      expect(await find('last')).toMatchObject({ messageId: 'user:last' });
+      await f.restart();
+      reads.mockClear();
+      expect(await find('late')).toBeNull();
+      expect(bytes()).toBeGreaterThan(300000);
+      expect(readFileSync(join(f.run, 'calls.jsonl'), 'utf8')).not.toContain('session.resume');
+    } finally {
+      reads.mockRestore();
+      syncBuiltinESMExports();
+    }
+  });
+
+  test('finds an exact input marker beyond the recent input and byte windows after restart', async () => {
+    const f = setup();
+    const work = await f.start();
+    const file = f.history(work);
+    const event = (id: string, type: string, content: string, timestamp = '1990-01-01T00:00:00Z') =>
+      JSON.stringify({ type, timestamp, data: { messageId: id, content } }) + '\n';
+    appendFileSync(file, event('old-marker', 'user.message', '[worker-answer:old]\nStored answer'));
+    appendFileSync(
+      file,
+      event(
+        'future-marker',
+        'user.message',
+        '[worker-answer:future]\nStored answer',
+        '2090-01-01T00:00:00Z'
+      )
+    );
+    appendFileSync(
+      file,
+      event('quote', 'assistant.message', '[worker-answer:quote]\nAgent quotation')
+    );
+    appendFileSync(
+      file,
+      event('partial', 'user.message', '[worker-answer:partial]suffix\nAnother identity')
+    );
+    for (let n = 0; n < 160; n++)
+      appendFileSync(file, event(`noise-${n}`, 'user.message', 'x'.repeat(2000)));
+    expect(
+      f.read(work, undefined, 10, 10)?.turns.some((turn) => turn.text.includes('[worker-answer:'))
+    ).toBe(false);
+    await f.restart();
+    for (const [marker, id] of [
+      ['old', 'old-marker'],
+      ['future', 'future-marker'],
+    ])
+      expect(await f.adapter.readInput?.(work.ref.id, `[worker-answer:${marker}]`)).toMatchObject({
+        messageId: `user:${id}`,
+        role: 'user',
+      });
+    for (const marker of ['quote', 'partial', 'missing'])
+      expect(await f.adapter.readInput?.(work.ref.id, `[worker-answer:${marker}]`)).toBeNull();
+    expect(await f.adapter.readInput?.('external', '[worker-answer:old]')).toBeNull();
+    expect(readFileSync(join(f.run, 'calls.jsonl'), 'utf8')).not.toContain('session.resume');
+  });
+
   test('reads user/tool/assistant text with stable IDs, deduplicates and survives restart without resume', async () => {
     const f = setup();
     const work = await f.start();
