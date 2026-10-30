@@ -8,7 +8,7 @@ export const NEO_BASH_TIMEOUT_ENV = {
 };
 
 const TIMEOUT_CONTEXT =
-  "This command hit the 2-minute limit and was stopped; its outcome is unknown. Don't retry it here. If it is long work (install, build, download), hand it to a worker with work.start/work.send — give the exact command and goal and ask it to report the result. If it may need a password or a GUI (e.g. installing an app), tell the human it needs them on the machine, give the exact command or download link, and how to confirm it worked.";
+  "This command hit the 2-minute limit and was stopped; its outcome is unknown. Don't retry it here. If it is long work (install, build, download), hand it to a worker with work.start/work.send — give the exact command and goal and ask it to report the result. If it may need a password or a GUI (e.g. installing an app), tell the human it needs them on the machine, give the exact command or download link, and how to confirm it worked. As root Neo, assign this through neo.todo.add {start:true}, or neo.todo.continue for an existing todo; that todo flow performs the work.start/work.send handoff. Do not call work.start/work.send directly.";
 
 type BashResult = Extract<HookInput, { hook_event_name: 'PostToolUse' | 'PostToolUseFailure' }>;
 

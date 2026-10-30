@@ -18,7 +18,9 @@ Read neo-bash-cap.json and root-events.jsonl: root Neo must inherit 120000 for
 both timeout variables despite saved 600000 defaults, disable SDK background
 tasks for root Neo only, return the native timeout
 failure around 120 seconds without completing, and receive the requested
-additional context in the next actual model request. The ordinary worker must
+additional context in the next actual model request, including the explicit
+root-only neo.todo.add/neo.todo.continue routing and prohibition on direct
+work.start/work.send calls. The ordinary worker must
 retain 600000, finish its short command and receive no coordinator-only context.
 The script records native hook inputs without synthesizing a timeout signal.
 The first real full run reproduced automatic backgrounding at 120000; timeout
