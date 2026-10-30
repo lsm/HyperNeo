@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import { createTestDb } from '../../../helpers/database.ts';
-import { DatabaseCredentialStore } from '../../../../src/lib/credentials/credential-store.ts';
+import {
+  KeychainStatusCredentialStore,
+  KeychainUnavailableError,
+  DatabaseCredentialStore,
+} from '../../../../src/lib/credentials/credential-store.ts';
 import { createConnectionLifecycle } from '../../../../src/lib/connections/lifecycle.ts';
 import { ConnectionVault } from '../../../../src/lib/connections/vault.ts';
 import type { ConnectionStatus, ConnectionTokens } from '../../../../src/lib/connections/status.ts';
@@ -38,10 +42,11 @@ const token = () =>
   (lifecycle as unknown as { token: (id: string) => Promise<Access> }).token(connection.id);
 const read = () => db.gateway.call(googleConnectionReads, 'list');
 const save = (row: ConnectionStatus) => db.gateway.call(googleConnectionWrites, 'put', row);
+let persist: typeof save;
 const make = () =>
   createConnectionLifecycle({
     read,
-    save,
+    save: (row) => persist(row),
     vault,
     closed: closed.signal,
     fetchImpl,
@@ -73,6 +78,7 @@ beforeEach(async () => {
   await save(connection);
   await vault.replace(connection, tokens);
   fetchImpl = vi.fn<typeof fetch>(async () => Response.json(grant));
+  persist = save;
   lifecycle = make();
 });
 afterEach(async () => {
@@ -196,4 +202,107 @@ test('disconnect aborts an in-flight refresh and a late grant cannot resurrect t
   expect(aborted).toBe(true);
   expect(await vault.read(connection)).toBeNull();
   expect((await read())[0].health).toBe('disconnected');
+});
+
+test('a vault read failure preserves healthy metadata and backs off before reading again', async () => {
+  const lookup = vi
+    .spyOn(vault, 'read')
+    .mockRejectedValueOnce(new Error('synthetic decrypt failure'));
+  expect(await token()).toEqual({ ok: false, reason: 'refresh_failed' });
+  expect((await read())[0].health).toBe('healthy');
+  expect(await token()).toEqual({ ok: false, reason: 'refresh_failed' });
+  expect(lookup).toHaveBeenCalledTimes(1);
+  now += 60001;
+  expect(await token()).toMatchObject({ ok: true, accessToken: grant.access_token });
+  expect((await read())[0].health).toBe('healthy');
+});
+
+test('a locked keychain with no fallback copy recovers without consent', async () => {
+  let stored = JSON.stringify(tokens);
+  const get = vi
+    .fn(async () => stored)
+    .mockRejectedValueOnce(new KeychainUnavailableError('synthetic locked store'));
+  const keychain = new KeychainStatusCredentialStore({
+    get,
+    set: async (_service, _account, value) => {
+      stored = value;
+    },
+    delete: async () => {},
+    listServices: async () => [],
+  });
+  vault = new ConnectionVault(keychain, 'synthetic-keychain-instance');
+  lifecycle = make();
+  expect(await token()).toEqual({ ok: false, reason: 'refresh_failed' });
+  expect((await read())[0].health).toBe('healthy');
+  expect(await token()).toEqual({ ok: false, reason: 'refresh_failed' });
+  expect(get).toHaveBeenCalledTimes(1);
+  now += 60001;
+  expect(await token()).toMatchObject({ ok: true, accessToken: grant.access_token });
+  expect(fetchImpl).toHaveBeenCalledTimes(1);
+});
+
+test('a confirmed missing bundle still requires reconnect', async () => {
+  await vault.remove(connection);
+  expect(await token()).toEqual({ ok: false, reason: 'reconnect_needed' });
+  expect((await read())[0].health).toBe('reconnect_needed');
+  expect(fetchImpl).not.toHaveBeenCalled();
+});
+
+test('a failed vault replacement leaves the grant eligible for automatic retry', async () => {
+  fetchImpl.mockImplementation(async () => Response.json({ ...grant, refresh_token: undefined }));
+  vi.spyOn(vault, 'replace').mockRejectedValueOnce(new Error('synthetic write failure'));
+  expect(await token()).toEqual({ ok: false, reason: 'refresh_failed' });
+  expect((await read())[0].health).toBe('healthy');
+  expect(await vault.read(connection)).toEqual(tokens);
+  now += 60001;
+  expect(await token()).toMatchObject({ ok: true, accessToken: grant.access_token });
+});
+
+test('a failed metadata write keeps the persisted grant eligible and repairs scopes after restart', async () => {
+  const scopes = ['openid', 'email', 'https://www.googleapis.com/auth/gmail.readonly'];
+  fetchImpl.mockImplementation(async () => Response.json({ ...grant, scope: scopes.join(' ') }));
+  let fail = true;
+  persist = async (row) => {
+    if (fail) {
+      fail = false;
+      throw new Error('synthetic metadata failure');
+    }
+    return save(row);
+  };
+  expect(await token()).toEqual({ ok: false, reason: 'refresh_failed' });
+  expect((await read())[0].health).toBe('healthy');
+  expect(await vault.read(connection)).toMatchObject({ accessToken: grant.access_token });
+  lifecycle = make();
+  expect(await token()).toMatchObject({ ok: true, accessToken: grant.access_token });
+  expect((await read())[0].scopes).toEqual(scopes);
+  expect(fetchImpl).toHaveBeenCalledTimes(1);
+});
+
+test.each([
+  [400, 'invalid_client'],
+  [400, 'unauthorized_client'],
+  [401, 'invalid_client'],
+  [403, 'not-json'],
+])(
+  'permanent OAuth denial (%s %s) requires reconnect and stops requests',
+  async (status, error) => {
+    fetchImpl.mockImplementation(
+      async () =>
+        new Response(error === 'not-json' ? 'Forbidden' : JSON.stringify({ error }), { status })
+    );
+    expect(await token()).toEqual({ ok: false, reason: 'reconnect_needed' });
+    expect((await read())[0].health).toBe('reconnect_needed');
+    now += 86400000;
+    expect(await token()).toEqual({ ok: false, reason: 'reconnect_needed' });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  }
+);
+
+test.each([408, 429])('retryable HTTP %s preserves healthy metadata', async (status) => {
+  fetchImpl.mockImplementation(async () => new Response('Temporary failure', { status }));
+  expect(await token()).toMatchObject({ ok: true, accessToken: tokens.accessToken });
+  expect((await read())[0].health).toBe('healthy');
+  now += 31000;
+  expect(await token()).toEqual({ ok: false, reason: 'refresh_failed' });
+  expect(fetchImpl).toHaveBeenCalledTimes(1);
 });
