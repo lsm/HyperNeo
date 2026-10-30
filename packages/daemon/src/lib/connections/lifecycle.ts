@@ -1,3 +1,4 @@
+import { createGoogleHttp } from './google-http.ts';
 import { randomUUID } from 'node:crypto';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { startGoogleLogin } from './google-login.ts';
@@ -116,6 +117,7 @@ export function createConnectionLifecycle(deps: {
   closed: AbortSignal;
   fetchImpl?: typeof fetch;
   now?: () => number;
+  apiTimeoutMs?: number;
 }) {
   let current: Flow | undefined;
   let pending = Promise.resolve();
@@ -128,6 +130,7 @@ export function createConnectionLifecycle(deps: {
     return result;
   };
   const access = createGoogleTokenAccess({ ...deps, serial });
+  const http = createGoogleHttp({ ...deps, token: access.token });
   const cancel = () => {
     if (current) {
       current.cancelled = true;
@@ -138,6 +141,7 @@ export function createConnectionLifecycle(deps: {
   deps.closed.addEventListener('abort', cancel, { once: true });
   return {
     token: access.token,
+    http,
     connect: (input: Partial<Client> & { connectionId?: string }) =>
       serial<View>(async () => {
         if (deps.closed.aborted) return { state: 'failed', reason: 'cancelled' };
@@ -201,6 +205,7 @@ export function createConnectionLifecycle(deps: {
     }),
     disconnect: (connectionId: string) => {
       access.cancel(connectionId);
+      http.cancel(connectionId);
       return serial(async () => {
         const connection = (await deps.read()).find((record) => record.id === connectionId);
         if (!connection) return { ok: false, reason: 'unknown_connection' };

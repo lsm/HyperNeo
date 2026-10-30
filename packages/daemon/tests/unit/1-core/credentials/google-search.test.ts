@@ -199,3 +199,21 @@ test.each([
   expect(apiCalls).toHaveLength(1);
   expect(JSON.stringify(result)).not.toContain('synthetic-access');
 });
+
+test.each([
+  { limit: 0 },
+  { limit: 11 },
+  { limit: 1.5 },
+  { cursor: 'x'.repeat(2049) },
+  { query: 'x'.repeat(1001) },
+  { connectionId: '' },
+  { url: 'https://example.invalid' },
+])('search refuses unsupported input before fetching: %j', async (extra) => {
+  const result = await invoke('gmail.search', {
+    connectionId: 'one',
+    query: 'subject:fixture',
+    ...extra,
+  });
+  expect(result.code).toBe('invalid_input');
+  expect(fetchImpl).not.toHaveBeenCalled();
+});
