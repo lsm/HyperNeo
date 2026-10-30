@@ -2572,6 +2572,57 @@ describe('worker blocker ownership', () => {
       }
     }
   );
+  test('does not re-ask while an answered fallback cannot reach the worker', async () => {
+    const h = setup(false);
+    const clock = vi.spyOn(Date, 'now');
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      await h.runner.start(todo.id);
+      const input = h.sessions.inputs.list(todo.id)[0],
+        start = Date.now() + 100;
+      clock.mockReturnValue(start);
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: start,
+          turnEnds: [
+            { id: 'answer-pending', at: start, message: 'Blocked (needs_human): Approval needed' },
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      clock.mockReturnValue(start + 60 * 60_000);
+      await h.runner.refresh(() => {});
+      const question = h.store.listQuestions('ask').find((q) => q.todoId === todo.id)!;
+      h.store.answerQuestion(question, 'Approved', 'chat', Date.now());
+      await createNeoQuestionAnswerDelivery(
+        h.store,
+        h.sessions,
+        async () => completed({ kind: 'rejected', reason: 'Synthetic transport failure' }),
+        async () => {},
+        h.runner.recompute,
+        (error) => {
+          throw error;
+        }
+      )(question.id);
+      expect(h.store.questionAnswers.pending().filter((r) => r.todoId === todo.id)).toHaveLength(1);
+      clock.mockReturnValue(start + 61 * 60_000);
+      await h.runner.refresh(() => {});
+      await h.runner.refresh(() => {});
+      expect(
+        h.store.listQuestions('ask').filter((q) => q.todoId === todo.id && q.state === 'open')
+      ).toHaveLength(0);
+      expect(
+        h.store.listQuestions('ask').filter((q) => q.todoId === todo.id && q.state === 'answered')
+      ).toHaveLength(1);
+      expect(h.store.getTodo(todo.id)?.blockedBy).toBe('needs-human');
+      expect(h.calls.filter((c) => c.name === 'work.send')).toHaveLength(0);
+    } finally {
+      clock.mockRestore();
+      h.db.close();
+    }
+  });
   test('keeps an answered blocker from reopening after incident reset', async () => {
     const h = setup(false);
     try {
