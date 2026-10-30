@@ -24,7 +24,7 @@ Inspect initial, preview and complete-question screenshots. Both settled bodies
 must be short, with answer/date or retirement reason visible. Read all opens the
 complete safe Markdown including its final table/link/text; only this dialog
 renders that full body. Close returns to the bounded preview. Short questions
-have no Read all. View full versions still opens the separate literal document.
+have no Read all. View full report still opens the separate literal document.
 Open-question answer controls remain available. Component tests cover Chinese
 labels, safe Markdown and attached artifacts. Confirm dialog bounds and no
 horizontal overflow; vertical scrolling is intentional for long full text.

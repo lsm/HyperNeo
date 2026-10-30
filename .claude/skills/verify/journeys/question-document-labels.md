@@ -16,7 +16,7 @@ Fixture seeding uses one transaction and a bounded 10-second SQLite busy timeout
 to serialize with startup body copying; a lock timeout fails the proof.
 It drives the real built /neo page in English and Simplified Chinese. For open,
 answered and retired cards, click the document button and observe its dialog:
-home proposals retain View full versions / 查看完整版本; all other documents use
+confirm-bound home proposals retain View full versions / 查看完整版本; all other documents use
 View full report / 查看完整内容. The full document stays literal and script text
 never executes. This is a label change; do not claim home saves or model reasoning.
 
@@ -24,3 +24,7 @@ Keep question-document-labels.json and its twelve screenshots. Failure captures
 its page and records the error; an aborted browser launch is not a pass. The
 helper closes every page and browser. Stop the isolated daemon and mock before
 removing their run directory as required by SKILL.md.
+
+Unbound home sync-conflict cards are reports too: the discriminator is confirm,
+not document wording or choice options. Run neo-home-conflicts for that real
+producer and neo-settled-question-preview for historical report documents.

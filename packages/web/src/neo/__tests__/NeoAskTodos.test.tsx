@@ -1545,6 +1545,27 @@ describe('Question full-version document', () => {
     }
   );
 
+  it('labels unbound home conflict versions as a full report', () => {
+    locale.value = 'en';
+    const view = render(
+      <NeoAskTodos
+        entry={entry({
+          questions: [
+            question('conflict', {
+              text: 'Home sync conflict: direction.md',
+              kind: 'choice',
+              options: ['Keep local', 'Use remote'],
+              document: 'Local version\nLocal full text\nRemote version\nRemote full text',
+              confirm: null,
+            }),
+          ],
+        })}
+        onAnswer={() => {}}
+      />
+    );
+    expect(view.getByRole('button', { name: 'View full report', exact: true })).toBeTruthy();
+    expect(view.queryByRole('button', { name: 'View full versions', exact: true })).toBeNull();
+  });
   it.each(['open', 'answered', 'retired'] as const)(
     'keeps the %s card short and opens literal full text',
     async (state) => {
