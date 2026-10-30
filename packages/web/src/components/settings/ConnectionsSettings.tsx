@@ -67,6 +67,7 @@ const scopeLabels: Record<string, MessageKey> = {
 export function ConnectionsSettings() {
   const [view, setView] = useState<View>({ accounts: [], attempt: { state: 'missing' } });
   const [error, setError] = useState('');
+  const [readError, setReadError] = useState('');
   const [busy, setBusy] = useState(false);
   const [setup, setSetup] = useState<{ connectionId?: string } | null>(null);
   const [clientId, setClientId] = useState('');
@@ -75,12 +76,13 @@ export function ConnectionsSettings() {
   const popup = useRef<Window | null>(null);
   const reload = useCallback(async (command?: Command) => {
     const next = await update(command);
+    setReadError('');
     setView(next);
     return next.receipt;
   }, []);
   useEffect(() => {
     const load = () => {
-      void reload().catch((failure: unknown) => setError(String(failure)));
+      void reload().catch((failure: unknown) => setReadError(String(failure)));
     };
     load();
     const timer = setInterval(load, view.attempt.state === 'pending' ? 1000 : 15000);
@@ -115,7 +117,8 @@ export function ConnectionsSettings() {
     }
     window?.close();
   };
-  const failure = error || (view.attempt.state === 'failed' ? view.attempt.reason : '');
+  const failure =
+    error || readError || (view.attempt.state === 'failed' ? view.attempt.reason : '');
   return (
     <SettingsSection
       title={t('connections.title')}
