@@ -127,9 +127,7 @@ export function createConnectionLifecycle(deps: {
     );
     return result;
   };
-  const closing = new AbortController();
-  const closed = AbortSignal.any([deps.closed, closing.signal]);
-  const access = createGoogleTokenAccess({ ...deps, serial, closed });
+  const access = createGoogleTokenAccess({ ...deps, serial });
   const cancel = () => {
     if (current) {
       current.cancelled = true;
@@ -137,13 +135,12 @@ export function createConnectionLifecycle(deps: {
       current.login = undefined;
     }
   };
-  closed.addEventListener('abort', cancel, { once: true });
+  deps.closed.addEventListener('abort', cancel, { once: true });
   return {
     token: access.token,
-    close: () => closing.abort(),
     connect: (input: Partial<Client> & { connectionId?: string }) =>
       serial<View>(async () => {
-        if (closed.aborted) return { state: 'failed', reason: 'cancelled' };
+        if (deps.closed.aborted) return { state: 'failed', reason: 'cancelled' };
         const account = (await deps.read()).find((record) => record.id === input.connectionId);
         if (input.connectionId && !account)
           return { state: 'failed', reason: 'unknown_connection' };
@@ -155,7 +152,7 @@ export function createConnectionLifecycle(deps: {
         if (!client) return { state: 'failed', reason: 'client_not_configured' };
         cancel();
         const login = await deps.startLogin(client);
-        if (closed.aborted) {
+        if (deps.closed.aborted) {
           login.cancel();
           return { state: 'failed', reason: 'cancelled' };
         }
@@ -178,7 +175,7 @@ export function createConnectionLifecycle(deps: {
                 outcome,
                 flow,
                 current,
-                closed.aborted,
+                deps.closed.aborted,
                 deps.read,
                 deps.save,
                 deps.vault

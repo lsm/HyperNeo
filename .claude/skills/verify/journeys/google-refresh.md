@@ -21,6 +21,17 @@ response cannot restore erased credentials. Restart after shutdown can renew the
 preserved grant. Evidence contains status only, never tokens or client secrets.
 All daemons, clock registrations, workers and HTTP listeners close in finally.
 
+An empty instance must not open its Google vault or initialize an artifact
+identity merely because the refresh loop starts. The Google refresh-loop unit
+contract pins lazy creation and shutdown of a service created by a human action.
+Repeat the native-worker identity regression with:
+
+```bash
+VERIFY_PROOF_RUNTIME=deno bash .claude/skills/verify/proof-run.sh \
+  /absolute/evidence/google-empty-identity \
+  .claude/skills/verify/lane-c-artifact-identity-command.ts
+```
+
 Unit contracts additionally cover expired-token refusal during backoff, malformed
 or oversized responses, missing offline credentials and per-grant single-flight
 access. No real Google interoperability or OS keychain account is verified here.

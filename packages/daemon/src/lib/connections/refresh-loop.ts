@@ -3,43 +3,50 @@ import type { Database } from '../../storage/sqlite-compat.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { googleConnectionReads } from '../../storage/repositories/google-connections-worker.ts';
 import type { ConnectionStatus } from './status.ts';
-import { getGoogleConnectionService, type GoogleConnectionDependencies } from './operations.ts';
+import {
+  getGoogleConnectionService,
+  configureGoogleConnections,
+  closeGoogleConnections,
+  type GoogleConnectionDependencies,
+} from './operations.ts';
 
 type Service = Awaited<ReturnType<typeof getGoogleConnectionService>>;
 const refresh = (superpipe({})('google-connections-refresh-due') as PipelineAPI)
-  .input(['db', 'service'])
+  .input(['db', 'createService'])
   .pipe((db: Database) => gatewayFor(db).call(googleConnectionReads, 'list'), 'db', 'rows')
   .pipe(
-    (rows: ConnectionStatus[]) =>
-      rows.filter((row) => row.health === 'healthy').map((row) => row.id),
+    (rows: ConnectionStatus[]) => {
+      const ids = rows.filter((row) => row.health === 'healthy').map((row) => row.id);
+      return ids.length ? { value: ids } : { reason: 'idle' };
+    },
     'rows',
-    'ids'
+    'result:result'
   )
+  .pipe((createService: () => Promise<Service>) => createService(), 'createService', 'service')
   .pipe(
     async (ids: string[], service: Service) => {
       await Promise.all(ids.map((id) => service.token(id)));
     },
-    ['ids', 'service'],
+    ['result', 'service'],
     'result'
   )
-  .endAsync('result') as (db: Database, service: Service) => Promise<void>;
+  .endAsync('result') as (
+  db: Database,
+  createService: () => Promise<Service>
+) => Promise<void | 'idle'>;
 
 export function createGoogleConnectionRefreshLoop(
   db: Database,
   deps: GoogleConnectionDependencies & { schedule?: (tick: () => Promise<void>) => () => void } = {}
 ) {
+  configureGoogleConnections(db, deps);
   let stopped = false;
   let active: Promise<void> | undefined;
-  let current: Service | undefined;
   let stopTimer: (() => void) | undefined;
   const tick = (): Promise<void> => {
     if (stopped) return Promise.resolve();
-    active ??= getGoogleConnectionService(db, deps)
-      .then((service) => {
-        current = service;
-        if (stopped) service.close();
-        else return refresh(db, service);
-      })
+    active ??= refresh(db, () => getGoogleConnectionService(db))
+      .then(() => {})
       .catch(() => {})
       .finally(() => {
         active = undefined;
@@ -64,7 +71,7 @@ export function createGoogleConnectionRefreshLoop(
       stopped = true;
       stopTimer?.();
       stopTimer = undefined;
-      current?.close();
+      closeGoogleConnections(db);
       await active;
     },
   };
