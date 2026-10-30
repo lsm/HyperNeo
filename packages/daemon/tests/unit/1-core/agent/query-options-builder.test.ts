@@ -196,6 +196,23 @@ describe('QueryOptionsBuilder', () => {
               ),
             },
           });
+          const routed = await hook(
+            { ...base, error: 'Exit code 143\nCommand timed out after 2m 0s' },
+            'synthetic',
+            { signal: new AbortController().signal }
+          );
+          expect(routed).toMatchObject({
+            hookSpecificOutput: {
+              additionalContext: expect.stringContaining('neo.todo.add {start:true}'),
+            },
+          });
+          expect(routed).toMatchObject({
+            hookSpecificOutput: {
+              additionalContext: expect.stringContaining(
+                'Do not call work.start/work.send directly.'
+              ),
+            },
+          });
           for (const error of [
             'Exit code 137\nCommand timed out after 2m 0s',
             'Exit code 143\nCommand timed out after 2m 0s\n\nCAP=120000 MAX=120000',

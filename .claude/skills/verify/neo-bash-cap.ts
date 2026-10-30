@@ -81,6 +81,8 @@ try {
       if (full) {
         assert(hooks.some(input => input.hook_event_name === 'PostToolUseFailure' && /Command timed out after/.test(input.error)));
         assert(JSON.stringify(own).includes('This command hit the 2-minute limit and was stopped; its outcome is unknown.'));
+        assert(JSON.stringify(own).includes('neo.todo.add {start:true}'));
+        assert(JSON.stringify(own).includes('Do not call work.start/work.send directly.'));
         assert(!JSON.stringify(own).includes('COMMAND_COMPLETED\\n'));
         assert(result.elapsed >= 120000 && result.elapsed < 145000);
       }
