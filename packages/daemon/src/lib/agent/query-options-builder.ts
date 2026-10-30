@@ -82,6 +82,7 @@ import { getCoordinatorAgents } from './coordinator-agents.ts';
 import { type ExaWebToolsActivation, resolveExaWebToolsActivation } from './exa-web-tools.ts';
 import { decideFallbackModelCuration } from './fallback-model-curation.ts';
 import { createLoopDetectorHooks } from './loop-detector-hook.ts';
+import { createNeoBashTimeoutHook, NEO_BASH_TIMEOUT_ENV } from './neo-bash-cap.ts';
 import {
   createOutputLimiterPostHook,
   createOutputLimiterPreHook,
@@ -506,7 +507,11 @@ export class QueryOptionsBuilder {
       : handoffDraftDirectory(getDataDir(), this.ctx.session.id);
     if (handoffDirectory) additionalDirectories?.push(handoffDirectory);
     if (handoffDirectory) workerSandbox?.sandbox.filesystem.allowWrite.push(handoffDirectory);
-    const hooks = this.buildHooks(overrides?.askUserQuestionHook ?? this.askUserQuestionHook);
+    const rootNeo = neo?.projectId === null;
+    const hooks = this.buildHooks(
+      overrides?.askUserQuestionHook ?? this.askUserQuestionHook,
+      rootNeo
+    );
     const requestedPermissionMode = this.getPermissionMode();
     const permissionMode =
       requestedPermissionMode === 'bypassPermissions' &&
@@ -586,6 +591,7 @@ export class QueryOptionsBuilder {
         ...(!neo && this.getCwd() ? workerWorkEnvironment(this.getCwd()!) : {}),
         ...workerSandbox?.env,
         ...readAccess?.env,
+        ...(rootNeo ? NEO_BASH_TIMEOUT_ENV : {}),
       },
       executable: config.executable ?? (isRunningUnderBun() ? 'bun' : undefined),
       executableArgs: config.executableArgs,
@@ -1100,7 +1106,7 @@ export class QueryOptionsBuilder {
     return 'bypassPermissions';
   }
 
-  private buildHooks(askUserQuestionHook?: HookCallback): Options['hooks'] {
+  private buildHooks(askUserQuestionHook?: HookCallback, rootNeo = false): Options['hooks'] {
     const hooks: NonNullable<Options['hooks']> = {};
     const preToolUse: NonNullable<Options['hooks']>['PreToolUse'] = [];
 
@@ -1171,6 +1177,11 @@ export class QueryOptionsBuilder {
 
     const postFailureHooks: NonNullable<Options['hooks']>['PostToolUseFailure'] = [];
     postFailureHooks.push({ hooks: [loopDetectorHooks.postToolUseFailure] });
+    if (rootNeo) {
+      const timeoutHook = createNeoBashTimeoutHook();
+      postHooks.push({ matcher: 'Bash', hooks: [timeoutHook] });
+      postFailureHooks.push({ matcher: 'Bash', hooks: [timeoutHook] });
+    }
     hooks.PostToolUseFailure = postFailureHooks;
     return hooks;
   }

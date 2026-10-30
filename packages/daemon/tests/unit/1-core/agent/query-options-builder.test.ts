@@ -129,6 +129,179 @@ describe('QueryOptionsBuilder', () => {
   afterEach(() => {});
 
   describe('build', () => {
+    it.each([
+      ['root', 'neo', null, true],
+      ['focused', 'project', 'synthetic-project', false],
+      ['worker', 'worker', null, false],
+      ['unbound', null, null, false],
+    ] as const)('limits Bash only for the %s session', async (_name, kind, projectId, capped) => {
+      const sqlite = new BunDatabase(':memory:');
+      try {
+        createNeoTables(sqlite);
+        mockSession.id = `neo:${generateUUID()}`;
+        mockSettingsManager.getGlobalSettings = mock(() => ({
+          settingSources: [],
+          outputLimiter: { enabled: false },
+          env: { BASH_DEFAULT_TIMEOUT_MS: '600000', BASH_MAX_TIMEOUT_MS: '600000' },
+        }));
+        if (projectId)
+          sqlite
+            .prepare(
+              'INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES (?,?,?,?,?,?,?)'
+            )
+            .run(projectId, 'Synthetic', '', '', 1, 1, 1);
+        if (kind)
+          sqlite
+            .prepare('INSERT INTO neo_session_bindings (session_id,concern_id,kind) VALUES (?,?,?)')
+            .run(mockSession.id, projectId, kind);
+        const options = await new QueryOptionsBuilder({
+          ...mockContext,
+          db: { ...mockContext.db!, getDatabase: () => sqlite },
+        }).build();
+        expect(options.env?.BASH_DEFAULT_TIMEOUT_MS).toBe(capped ? '120000' : '600000');
+        expect(options.env?.BASH_MAX_TIMEOUT_MS).toBe(capped ? '120000' : '600000');
+        expect(options.env?.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe(capped ? '1' : undefined);
+        const post =
+          options.hooks?.PostToolUse?.filter((entry) => entry.matcher === 'Bash').flatMap(
+            (entry) => entry.hooks
+          ) ?? [];
+        const failure =
+          options.hooks?.PostToolUseFailure?.filter((entry) => entry.matcher === 'Bash').flatMap(
+            (entry) => entry.hooks
+          ) ?? [];
+        expect(post.length).toBe(capped ? 1 : 0);
+        expect(failure.length).toBe(capped ? 1 : 0);
+        for (const hook of failure) {
+          const base = {
+            hook_event_name: 'PostToolUseFailure' as const,
+            session_id: mockSession.id,
+            transcript_path: '',
+            cwd: '/synthetic',
+            tool_name: 'Bash',
+            tool_input: { command: 'sleep 130', timeout: 600000 },
+            tool_use_id: 'synthetic',
+            is_interrupt: false,
+          };
+          expect(
+            await hook(
+              { ...base, error: 'Exit code 143\nCommand timed out after 2m 0s' },
+              'synthetic',
+              { signal: new AbortController().signal }
+            )
+          ).toMatchObject({
+            hookSpecificOutput: {
+              hookEventName: 'PostToolUseFailure',
+              additionalContext: expect.stringContaining(
+                'hand it to a worker with work.start/work.send'
+              ),
+            },
+          });
+          const routed = await hook(
+            { ...base, error: 'Exit code 143\nCommand timed out after 2m 0s' },
+            'synthetic',
+            { signal: new AbortController().signal }
+          );
+          expect(routed).toMatchObject({
+            hookSpecificOutput: {
+              additionalContext: expect.stringContaining('neo.todo.add {start:true}'),
+            },
+          });
+          expect(routed).toMatchObject({
+            hookSpecificOutput: {
+              additionalContext: expect.stringContaining(
+                'Do not call work.start/work.send directly.'
+              ),
+            },
+          });
+          for (const error of [
+            'Exit code 137\nCommand timed out after 2m 0s',
+            'Exit code 143\nCommand timed out after 2m 0s\n\nCAP=120000 MAX=120000',
+          ]) {
+            expect(
+              await hook({ ...base, error }, 'synthetic', { signal: new AbortController().signal })
+            ).toMatchObject({
+              hookSpecificOutput: {
+                additionalContext: expect.stringContaining('its outcome is unknown'),
+              },
+            });
+          }
+          for (const input of [
+            { ...base, error: 'Exit code 1\nBuild failed' },
+            { ...base, error: 'Exit code 124\nCommand timed out after 2m 0s' },
+            { ...base, error: 'Exit code 143\nCommand timed out after 2m 0s', is_interrupt: true },
+            { ...base, error: 'Exit code 143\nCommand timed out after 2m 0s', tool_name: 'Read' },
+          ])
+            expect(
+              await hook(input, 'synthetic', { signal: new AbortController().signal })
+            ).toEqual({});
+        }
+        for (const hook of post) {
+          const base = {
+            hook_event_name: 'PostToolUse' as const,
+            session_id: mockSession.id,
+            transcript_path: '',
+            cwd: '/synthetic',
+            tool_name: 'Bash',
+            tool_input: { command: 'sleep 130', timeout: 600000 },
+            tool_use_id: 'synthetic',
+          };
+          expect(
+            await hook(
+              {
+                ...base,
+                tool_response: {
+                  stdout: '',
+                  stderr: '',
+                  interrupted: false,
+                  backgroundTaskId: 'still-running',
+                  timedOutAfterMs: 120000,
+                },
+              },
+              'synthetic',
+              { signal: new AbortController().signal }
+            )
+          ).toEqual({});
+          const timeout = await hook(
+            {
+              ...base,
+              tool_response: {
+                stdout: '',
+                stderr: '',
+                interrupted: false,
+                timedOutAfterMs: 120000,
+              },
+            },
+            'synthetic',
+            { signal: new AbortController().signal }
+          );
+          expect(timeout).toMatchObject({
+            hookSpecificOutput: {
+              hookEventName: 'PostToolUse',
+              additionalContext: expect.stringContaining(
+                'This command hit the 2-minute limit and was stopped; its outcome is unknown.'
+              ),
+            },
+          });
+          expect(
+            await hook(
+              {
+                ...base,
+                tool_response: {
+                  stdout: 'Command timed out after 2m',
+                  stderr: '',
+                  interrupted: false,
+                },
+              },
+              'synthetic',
+              { signal: new AbortController().signal }
+            )
+          ).toEqual({});
+        }
+      } finally {
+        sqlite.close();
+      }
+    });
+
     it('prepared SDK workers honor a persisted local binding opt-out', async () => {
       const root = join(handoffDataDir, 'local-binding-opt-out');
       mkdirSync(join(root, '.git/info'), { recursive: true });
