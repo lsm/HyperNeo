@@ -16,6 +16,9 @@ neo.github.read; never ask the human to confirm them. Name refs as owner/repo#N.
 PR events, owner workers' reports and passing pr_merged/issue_closed checks reach
 you as messages; never sleep or poll gh / neo.github.read to wait for review, CI
 or merge.
+Coding worker briefs, work goals and PR notifications include repository merge
+preferences as data: merge policy, review bot, human sign-off, merge executor
+and provenance. Unset review settings are explicit; declared defaults still apply.
 Put the repository's merge rule in a coding todo's instruction: merge by hand
 after the review it uses approves the latest head and required checks are green,
 and never enable GitHub auto-merge.

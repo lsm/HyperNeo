@@ -1,4 +1,5 @@
 import { checkCodingPrApproved } from './pr-approved.ts';
+import { withCodingMergeContext } from './merge-context.ts';
 import { codingWatchedRepos, initializeCodingWatches } from './watched-repos.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { createCodingPrFileOperation } from './pr-file-operation.ts';
@@ -59,6 +60,15 @@ export function createCodingPack(deps: {
   review: typeof runCodingReview;
 } {
   const readClaudeOwners = deps.readClaudeOwners ?? createCodingClaudeOwnerReader();
+  const workerContext = (text: string) =>
+    withCodingMergeContext(text, deps.prLedger.policyContext(text, deps.projectRepos()));
+  const notificationContext = async (text: string) =>
+    withCodingMergeContext(text, await deps.prLedger.policyContextCurrent(text));
+  const prSweepDeps: CodingSweepDeps = {
+    tell: async (ref, key, text) =>
+      deps.prSweepDeps.tell(ref, key, await notificationContext(text)),
+    wake: async (key, text) => deps.prSweepDeps.wake(key, await notificationContext(text)),
+  };
   const todos = createCodingTodoPack(
     deps.todoPrs,
     deps.readPrs,
@@ -164,22 +174,22 @@ export function createCodingPack(deps: {
     observeSessions: (sessions, now) => deps.prLedger.write('observeSessions', sessions, now),
     sweep: async (now) => {
       await deps.prLedger.write('observeSessions', await readClaudeOwners(), now);
-      await deliverCodingPrEvents(deps.prEvents, [], deps.prSweepDeps);
+      await deliverCodingPrEvents(deps.prEvents, [], prSweepDeps);
       const transitions = await reconcileCodingPrLedger(
         deps.prLedger,
         codingWatchedRepos(deps.database()) ?? deps.projectRepos(),
         deps.readLedgerRepo ?? readCodingLedgerRepo,
         now
       );
-      await deliverCodingPrEvents(deps.prEvents, transitions, deps.prSweepDeps);
+      await deliverCodingPrEvents(deps.prEvents, transitions, prSweepDeps);
       await deliverCodingHealth(
         deps.prLedger,
         codingWatchedRepos(deps.database()) ?? deps.projectRepos(),
-        deps.prSweepDeps.wake,
+        prSweepDeps.wake,
         now
       );
-      await wakeCodingUnownedPrs(deps.prEvents, deps.prSweepDeps.wake, now);
-      await sweepCodingPrs(deps.prSweep, deps.prSweepDeps, now);
+      await wakeCodingUnownedPrs(deps.prEvents, prSweepDeps.wake, now);
+      await sweepCodingPrs(deps.prSweep, prSweepDeps, now);
     },
     stats: async (now) => ({
       'ready to merge >1h': (await deps.prLedger.read('list')).filter(
@@ -199,7 +209,8 @@ export function createCodingPack(deps: {
       ),
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
     workerRules: NEO_PACK_CODING_WORKER_RULES,
-    workerBrief: withCodingWorkerProvenance,
-    workGoal: withCodingWorkGoal,
+    workerBrief: (instruction, identity) =>
+      withCodingWorkerProvenance(workerContext(instruction), identity),
+    workGoal: (instruction, goal) => workerContext(withCodingWorkGoal(instruction, goal)),
   };
 }

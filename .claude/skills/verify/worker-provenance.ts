@@ -18,7 +18,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import type { Result, WorkDelivery, WorkDetail, WorkStarted } from '../../../packages/daemon/src/lib/drivers/types.ts';
 
-const [portText, runText] = process.argv.slice(2);
+const portText = process.argv[2], runText = process.argv.at(-1)!;
 const run = resolve(runText);
 const port = Number(portText);
 assert(Number.isInteger(port) && port >= 0 && port < 65536 && port !== 8399);
@@ -216,6 +216,24 @@ try {
       sessions.bind(todo.id, ref, Date.now());
       assert.equal(sessions.readCard(todo.id)?.model, model);
       evidence.push({ deliveredTask: task, card });
+    }
+    if (process.argv.includes('--merge-facts')) {
+      for (const [key, value] of Object.entries({ mergePolicy: 'review_bot', reviewBot: 'hyperneo-ai-test', humanSignoff: ['docs/design/**'] }))
+        assert.deepEqual(await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/reviewed' }, key, value }), { ok: true });
+      const codingTodo = await invokeTodo('neo.todo.add', { askId: opened.todos[0].askId, title: 'Coding merge facts', check: { pack: 'coding', kind: 'pr_approved', params: { url: 'https://github.com/synthetic/reviewed/pull/78' } } });
+      await invokeTodo('neo.todo.bind', { todoId: codingTodo.todo.id, ref });
+      await invokeTodo('neo.todo.continue', { todoId: codingTodo.todo.id, message: 'Continue https://github.com/synthetic/reviewed/pull/78.' });
+      const inputs = readFileSync(transcript, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      const deliveredMergeFacts = inputs.findLast(entry => entry.type === 'user').message.content;
+      evidence.push({ deliveredMergeFacts });
+      assert(deliveredMergeFacts.includes('synthetic/reviewed merge policy: review_bot; review bot: hyperneo-ai-test; human sign-off: docs/design/**; merge by: owner'), deliveredMergeFacts);
+      assert.deepEqual(await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/reviewed' }, key: 'mergeBy', value: 'daemon' }), { ok: true });
+      await invokeTodo('neo.todo.continue', { todoId: codingTodo.todo.id, message: 'Continue the PR task.' });
+      const nextInputs = readFileSync(transcript, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      const goalOnlyMergeFacts = nextInputs.findLast(entry => entry.type === 'user').message.content;
+      evidence.push({ goalOnlyMergeFacts });
+      assert(goalOnlyMergeFacts.includes('synthetic/reviewed merge policy: review_bot; review bot: hyperneo-ai-test; human sign-off: docs/design/**; merge by: daemon'), goalOnlyMergeFacts);
+
     }
     const codexStatus = await rpc<Result<WorkDetail>>('work.status', { ref: codexRef });
     assert(codexStatus.ok, JSON.stringify(codexStatus));
