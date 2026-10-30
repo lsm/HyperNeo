@@ -46,3 +46,5 @@ accepted limitation pending [#9458](https://github.com/lsm/HyperNeo/issues/9458)
 
 Add `merge-fails` to prove a failed CLI attempt stays OPEN, surfaces its held receipt
 on delivery recovery, and is not retried. Unreadable facts still halt the sweep.
+
+Add `late-label` to add human-merge after the batch snapshot; post-reservation reads must hold it.

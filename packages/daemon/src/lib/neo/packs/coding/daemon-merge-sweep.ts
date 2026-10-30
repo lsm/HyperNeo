@@ -50,7 +50,7 @@ export function createCodingDaemonMergeSweep(
     if (receipt.mergeCommit && notified) await record({ ...receipt, kind: 'notified', at: now });
   };
   const finish = async (receipt: Receipt, pr: Observed['facts'], now: number) => {
-    if (!pr.ok || pr.head !== receipt.head) return;
+    if (!pr.ok || pr.head !== receipt.head) return pr.ok ? notify(receipt, now) : undefined;
     if (pr.state !== 'MERGED' || !pr.mergeCommit) return notify(receipt, now);
     const [merged] = await record({ ...receipt, kind: 'finish', commit: pr.mergeCommit, at: now });
     if (merged) await notify(merged, now);
@@ -70,6 +70,7 @@ export function createCodingDaemonMergeSweep(
     .pipe(
       async (receipt: Receipt, observed: Observed, now: number) => {
         const { owner, repo } = parsePrUrl(receipt.url)!;
+        observed = { ...observed, facts: await read(receipt.url) };
         const fresh = admit({ ...observed, policy: ledger.policy(`${owner}/${repo}`) });
         if ('reason' in fresh) return fresh.reason;
         // oxlint-disable-next-line no-warning-comments -- TODO(#9458): accepted final-read/in-flight-writer race.
@@ -110,8 +111,7 @@ export function createCodingDaemonMergeSweep(
       else await finish(receipt, facts.get(receipt.url)!, now);
     }
     for (const candidate of candidates) {
-      const observed = { ...candidate, facts: facts.get(candidate.url)! };
-      const outcome = await merge(observed, now);
+      const outcome = await merge({ ...candidate, facts: facts.get(candidate.url)! }, now);
       if (outcome === 'read_failure') throw new Error(`Merge held: ${candidate.url}`);
       if (outcome === 'needs_human_signoff')
         await delivery
