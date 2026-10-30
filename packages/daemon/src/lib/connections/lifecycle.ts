@@ -20,7 +20,7 @@ type Flow = {
   connectionId: string;
   accountId?: string;
   client: Client;
-  login: Login;
+  login?: Login;
   cancelled: boolean;
   view: View;
 };
@@ -132,7 +132,8 @@ export function createConnectionLifecycle(deps: {
   const cancel = () => {
     if (current) {
       current.cancelled = true;
-      current.login.cancel();
+      current.login?.cancel();
+      current.login = undefined;
     }
   };
   deps.closed.addEventListener('abort', cancel, { once: true });
@@ -178,9 +179,11 @@ export function createConnectionLifecycle(deps: {
           .then(
             (view) => {
               flow.view = view;
+              flow.login = undefined;
             },
             () => {
               flow.view = { state: 'failed', reason: 'storage_failed' };
+              flow.login = undefined;
             }
           );
         return { ...flow.view, authorizeUrl: login.authorizeUrl };
