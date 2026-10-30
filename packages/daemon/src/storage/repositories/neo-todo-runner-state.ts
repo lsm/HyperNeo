@@ -1,4 +1,4 @@
-import { recordWorkerBlocker } from '../../lib/neo/worker-blocker.ts';
+import { escalateWorkerBlocker, recordWorkerBlocker } from '../../lib/neo/worker-blocker.ts';
 import type { WorkRef } from '../../lib/drivers/types.ts';
 import { recoverNeoTodoStart } from './neo-todo-start-recovery.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -154,6 +154,9 @@ class NeoTodoRunnerState {
     const result = recordWorkerBlocker(this.store, this.sessions, todo, ref, dispatchId, turn, now);
     return { todo: result, changed: this.changed };
   }
+  escalate(id: string, now: number) {
+    return escalateWorkerBlocker(this.store, this.sessions, id, now);
+  }
   recover(id: string, now: number) {
     const recovery = recoverNeoTodoStart(this.store, this.sessions, id, now);
     if (recovery) this.changes?.notifyChange('neo_todo_sessions');
@@ -165,5 +168,5 @@ export const neoTodoRunnerWrites = defineRepositoryOp(
   'neo.todoRunnerWrites',
   'write',
   NeoTodoRunnerState,
-  ['recompute', 'claim', 'recover', 'blocker']
+  ['recompute', 'claim', 'recover', 'blocker', 'escalate']
 );

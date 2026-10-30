@@ -1,3 +1,4 @@
+import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -8,6 +9,7 @@ import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/run
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { waitForSdkBodyCopy } from './wait-for-sdk-body-copy.ts';
 const run = resolve(process.argv.at(-1)!);
+const priorQuestion=process.argv.includes('--prior-question');
 assert.equal(process.env.NODE_ENV, 'test'); assert.equal(process.env.HOME, join(run, 'home')); assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 for (const name of ['workspace','evidence','bin']) mkdirSync(join(run,name),{recursive:true});
 writeFileSync(join(run,'bin/gh'),'#!/bin/sh\nexit 1\n',{mode:0o700});
@@ -34,18 +36,45 @@ try {
   await service.todoSessions.inputs.recordOutcome(dispatch,{ref,receipt:{executionId:worker,inputId:worker+'-input'}},at);
   await app.db.saveUserMessage(worker,{type:'user',uuid:worker+'-input',session_id:worker,parent_tool_use_id:null,message:{role:'user',content:'Synthetic assigned work'}} as SDKMessage,'consumed');
   await new Promise(done=>setTimeout(done,5));
+  if(priorQuestion&&kind==='needs_human') {
+   const source={...ref,name:null,label:'Synthetic worker',provider:'hyperneo',link:null};
+   const q=service.todos.askQuestion('prior-worker-question',ask.id,{text:'Prior synthetic approval',kind:'reply',options:null,multiple:false,noLabel:null,yesLabel:null,startTodos:null,todoId:id,sourceSession:source},at);
+   service.todos.questionAnswers.bind(q.id,id,source);
+  }
   await app.db.saveSDKMessage(worker,{type:'result',subtype:'success',uuid:crypto.randomUUID(),parent_tool_use_id:null,is_error:false,result:message,duration_ms:1,duration_api_ms:1,num_turns:1,total_cost_usd:0,usage:{input_tokens:1,output_tokens:1},modelUsage:{},permission_denials:[]} as SDKMessage);
   const status=await rpc('work.status',{ref,since:at});
   await service.refreshDriverWork();
   const current=service.todos.getTodo(id),questions=service.todos.listQuestions(ask.id).filter(q=>q.todoId===id&&q.state==='open');
   (report.cases as unknown[]).push({kind,status,todo:current,questions});
-  if(kind!=='ordinary'){assert.equal(current?.blockedBy,kind==='needs_human'?'needs-human':'environment');assert.equal(questions.length,kind==='needs_human'?1:0);}
+  if(kind!=='ordinary'){assert.equal(current?.blockedBy,kind==='needs_human'?'needs-human':'environment');assert.equal(questions.length,priorQuestion&&kind==='needs_human'?1:0);}
   else assert.notEqual(current?.blockedBy,'needs-human');
  }
  report.snapshot=await rpc('neo.snapshot',{});
- const humanQuestion=service.todos.listQuestions('needs_human').find(q=>q.state==='open')!;
- report.answer=await rpc('neo.question.answer',{questionId:humanQuestion.id,answer:'Synthetic approval granted'});
- await service.refreshDriverWork();
+ const jobs=app.db.getDatabase().prepare("SELECT payload FROM job_queue WHERE queue='mailbox'").all();
+ report.neoWake=jobs;
+ assert(JSON.stringify(jobs).includes('If you can answer this, reply to the worker'));
+ const originalNow=Date.now;
+ const registry=app.sessionManager.getOperationRegistry();
+ const refused=createOperationRegistry(registry.entries.map(entry=>entry.name==='message.send'?{...entry,execute:async()=>({kind:'rejected',reason:'Synthetic transport unavailable'})}:entry));
+ Date.now=()=>originalNow()+60*60_000;
+ let humanQuestion;
+ try {
+  await service.refreshDriverWork();
+  report.afterDeadline={todo:service.todos.getTodo('todo-needs_human'),nudge:service.todoSessions.readNudge('todo-needs_human'),questions:service.todos.listQuestions('needs_human')};
+  humanQuestion=service.todos.listQuestions('needs_human').find(q=>q.state==='open')!;
+  assert(humanQuestion);
+  app.sessionManager.setOperationRegistryProvider(()=>refused);
+  report.answer=await rpc('neo.question.answer',{questionId:humanQuestion.id,answer:'Synthetic approval granted'});
+  await service.refreshDriverWork();
+  await service.refreshDriverWork();
+  report.pendingAnswer=await rpc('neo.question.get',{questionId:humanQuestion.id});
+  report.pendingSnapshot=await rpc('neo.snapshot',{});
+  assert.equal(service.todos.questionAnswers.pending().filter(route=>route.todoId==='todo-needs_human').length,1);
+  assert.equal(service.todos.listQuestions('needs_human').filter(q=>q.state==='open').length,0);
+  app.sessionManager.setOperationRegistryProvider(()=>registry);
+  await service.deliverQuestionAnswers(humanQuestion.id);
+  await service.refreshDriverWork();
+ } finally {app.sessionManager.setOperationRegistryProvider(()=>registry);Date.now=originalNow;}
  const after=service.todos.getTodo('todo-needs_human');
  assert.notEqual(after?.blockedBy,'needs-human');
  assert.equal(service.todos.listQuestions('needs_human').filter(q=>q.state==='open').length,0);

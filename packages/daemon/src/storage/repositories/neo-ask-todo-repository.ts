@@ -651,10 +651,19 @@ export class NeoAskTodoRepository {
     const live = this.db
       .prepare('SELECT ref, live_status AS status FROM neo_todo_sessions WHERE todo_id = ?')
       .get(todo.id) as { ref: string | null; status: string | null } | null;
+    const triagedAt =
+      todo.blockedBy === 'needs-human'
+        ? new NeoTodoSessionRepository(this.db).readNudge(todo.id)?.blockerReport?.triagedAt
+        : undefined;
     return {
       todo,
       change,
       judgement,
+      triagePending:
+        triagedAt !== undefined &&
+        !this.listQuestions(todo.askId).some(
+          (q) => q.todoId === todo.id && q.state === 'answered' && (q.answeredAt ?? 0) >= triagedAt
+        ),
       answerPending:
         todo.blockedBy === 'needs-human' &&
         this.questionAnswers.pending().some((route) => route.todoId === todo.id),

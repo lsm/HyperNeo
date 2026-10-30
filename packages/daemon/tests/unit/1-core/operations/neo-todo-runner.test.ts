@@ -2390,18 +2390,110 @@ describe('worker final-line blockers', () => {
         const questions = h.store
           .listQuestions('ask')
           .filter((q) => q.todoId === todo.id && q.state === 'open');
-        expect(questions).toHaveLength(kind === 'needs_human' ? 1 : 0);
-        if (kind === 'needs_human')
-          expect(questions[0]).toMatchObject({
-            kind: 'reply',
-            text: 'Awaiting a synthetic prerequisite',
-          });
+        expect(questions).toHaveLength(0);
+        if (kind === 'needs_human') {
+          const wake = h.told.filter((text) => text.includes('If you can answer this'));
+          expect(wake).toHaveLength(1);
+          expect(wake[0]).toContain(`todo ${todo.id}`);
+          expect(wake[0]).toContain('Awaiting a synthetic prerequisite');
+          expect(wake[0]).toContain(
+            'neo.question.ask (yesno or choice with options) linked to this todo.'
+          );
+        }
         expect(h.calls.filter((c) => c.name === 'work.send')).toHaveLength(0);
         await h.runner.refresh(() => {});
         expect(
           h.store.listQuestions('ask').filter((q) => q.todoId === todo.id && q.state === 'open')
         ).toHaveLength(questions.length);
       } finally {
+        h.db.close();
+      }
+    }
+  );
+  test.each(['unchanged', 'edited', 'question', 'closed', 'new-input'] as const)(
+    'only falls back after an untouched hour: %s',
+    async (action) => {
+      const h = setup(false);
+      const clock = vi.spyOn(Date, 'now');
+      try {
+        const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+        await h.runner.start(todo.id);
+        const input = h.sessions.inputs.list(todo.id)[0];
+        const start = Date.now() + 100;
+        clock.mockReturnValue(start);
+        h.setStatus({
+          ok: true,
+          value: {
+            status: 'done',
+            lastActivityAt: start,
+            turnEnds: [
+              {
+                id: 'triage',
+                at: start,
+                message: 'Blocked (needs_human): Awaiting Neo confirmation',
+              },
+            ],
+          },
+        });
+        await h.runner.refresh(() => {});
+        expect(h.store.listQuestions('ask').filter((q) => q.todoId === todo.id)).toHaveLength(0);
+        const waiting = h.store.getTodo(todo.id)!;
+        clock.mockReturnValue(start + 1);
+        await h.runner.recompute(waiting);
+        expect(h.store.getTodo(todo.id)?.updatedAt).toBe(waiting.updatedAt);
+        clock.mockReturnValue(start + 60 * 60_000 - 1);
+        await h.runner.refresh(() => {});
+        expect(h.store.listQuestions('ask').filter((q) => q.todoId === todo.id)).toHaveLength(0);
+        if (action === 'edited')
+          h.store.updateTodo(h.store.getTodo(todo.id)!, { title: 'Neo acted' }, Date.now());
+        if (action === 'question')
+          h.store.askQuestion(
+            'neo-choice',
+            'ask',
+            {
+              text: 'Approve this?',
+              kind: 'yesno',
+              options: null,
+              multiple: false,
+              noLabel: null,
+              yesLabel: null,
+              startTodos: null,
+              todoId: todo.id,
+              document: null,
+            },
+            Date.now()
+          );
+        if (action === 'closed')
+          h.store.updateTodo(h.store.getTodo(todo.id)!, { state: 'removed' }, Date.now());
+        if (action === 'new-input')
+          await h.sessions.inputs.accept(
+            todo.id,
+            'neo',
+            { verb: 'send', ref },
+            'Neo replied',
+            Date.now()
+          );
+        clock.mockReturnValue(start + 60 * 60_000);
+        await h.runner.refresh(() => {});
+        const open = h.store
+          .listQuestions('ask')
+          .filter((q) => q.todoId === todo.id && q.state === 'open');
+        expect(open).toHaveLength(action === 'unchanged' || action === 'question' ? 1 : 0);
+        if (action === 'edited') expect(h.store.getTodo(todo.id)?.blockedBy).toBe('needs-human');
+        if (action === 'unchanged') {
+          expect(open[0]).toMatchObject({
+            kind: 'reply',
+            text: 'Awaiting Neo confirmation',
+            sourceSession: { id: ref.id },
+          });
+          await h.runner.refresh(() => {});
+          expect(
+            h.store.listQuestions('ask').filter((q) => q.todoId === todo.id && q.state === 'open')
+          ).toHaveLength(1);
+        }
+        expect(h.calls.filter((c) => c.name === 'work.send')).toHaveLength(0);
+      } finally {
+        clock.mockRestore();
         h.db.close();
       }
     }
@@ -2480,6 +2572,123 @@ describe('worker blocker ownership', () => {
       }
     }
   );
+  test('releases a prior question answered after worker triage', async () => {
+    const h = setup(false),
+      clock = vi.spyOn(Date, 'now');
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      await h.runner.start(todo.id);
+      const start = Date.now(),
+        source = { ...ref, name: null, label: 'Worker', provider: 'hyperneo', link: null };
+      const question = h.store.askQuestion(
+        'older-card',
+        'ask',
+        {
+          text: 'Prior approval',
+          kind: 'reply',
+          options: null,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+          startTodos: null,
+          todoId: todo.id,
+          sourceSession: source,
+        },
+        start
+      );
+      h.store.questionAnswers.bind(question.id, todo.id, source);
+      clock.mockReturnValue(start + 100);
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: start + 100,
+          turnEnds: [
+            {
+              id: 'older-question',
+              at: start + 100,
+              message: 'Blocked (needs_human): Prior approval',
+            },
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      expect(h.store.getTodo(todo.id)?.blockedBy).toBe('needs-human');
+      clock.mockReturnValue(start + 200);
+      h.store.answerQuestion(question, 'Approved', 'chat', Date.now());
+      await createNeoQuestionAnswerDelivery(
+        h.store,
+        h.sessions,
+        async () =>
+          completed({ kind: 'accepted', mailboxId: 'answer-mailbox', messageId: 'answer-message' }),
+        async () => {},
+        h.runner.recompute,
+        (error) => {
+          throw error;
+        }
+      )(question.id);
+      expect(h.store.getTodo(todo.id)?.blockedBy).not.toBe('needs-human');
+      clock.mockReturnValue(start + 61 * 60_000);
+      await h.runner.refresh(() => {});
+      expect(
+        h.store.listQuestions('ask').filter((q) => q.todoId === todo.id && q.state === 'open')
+      ).toHaveLength(0);
+    } finally {
+      clock.mockRestore();
+      h.db.close();
+    }
+  });
+  test('does not re-ask while an answered fallback cannot reach the worker', async () => {
+    const h = setup(false);
+    const clock = vi.spyOn(Date, 'now');
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      await h.runner.start(todo.id);
+      const input = h.sessions.inputs.list(todo.id)[0],
+        start = Date.now() + 100;
+      clock.mockReturnValue(start);
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: start,
+          turnEnds: [
+            { id: 'answer-pending', at: start, message: 'Blocked (needs_human): Approval needed' },
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      clock.mockReturnValue(start + 60 * 60_000);
+      await h.runner.refresh(() => {});
+      const question = h.store.listQuestions('ask').find((q) => q.todoId === todo.id)!;
+      h.store.answerQuestion(question, 'Approved', 'chat', Date.now());
+      await createNeoQuestionAnswerDelivery(
+        h.store,
+        h.sessions,
+        async () => completed({ kind: 'rejected', reason: 'Synthetic transport failure' }),
+        async () => {},
+        h.runner.recompute,
+        (error) => {
+          throw error;
+        }
+      )(question.id);
+      expect(h.store.questionAnswers.pending().filter((r) => r.todoId === todo.id)).toHaveLength(1);
+      clock.mockReturnValue(start + 61 * 60_000);
+      await h.runner.refresh(() => {});
+      await h.runner.refresh(() => {});
+      expect(
+        h.store.listQuestions('ask').filter((q) => q.todoId === todo.id && q.state === 'open')
+      ).toHaveLength(0);
+      expect(
+        h.store.listQuestions('ask').filter((q) => q.todoId === todo.id && q.state === 'answered')
+      ).toHaveLength(1);
+      expect(h.store.getTodo(todo.id)?.blockedBy).toBe('needs-human');
+      expect(h.calls.filter((c) => c.name === 'work.send')).toHaveLength(0);
+    } finally {
+      clock.mockRestore();
+      h.db.close();
+    }
+  });
   test('keeps an answered blocker from reopening after incident reset', async () => {
     const h = setup(false);
     try {
@@ -2497,6 +2706,12 @@ describe('worker blocker ownership', () => {
         },
       });
       await h.runner.refresh(() => {});
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 60 * 60_000);
+      try {
+        await h.runner.refresh(() => {});
+      } finally {
+        clock.mockRestore();
+      }
       const question = h.store.listQuestions('ask').find((q) => q.todoId === todo.id)!;
       h.store.answerQuestion(question, 'Approved', 'chat', Date.now());
       await createNeoQuestionAnswerDelivery(

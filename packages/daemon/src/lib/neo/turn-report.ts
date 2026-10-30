@@ -37,6 +37,9 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
         prefix,
         live?.waitingFor ? `Waiting for: ${live.waitingFor}` : '',
         turn.message || 'worker ended its turn with no reply',
+        !statusOnly && todo.blockedBy === 'needs-human'
+          ? 'If you can answer this, reply to the worker and continue the todo; if only the human can decide, ask them with neo.question.ask (yesno or choice with options) linked to this todo.'
+          : '',
       ]
         .filter(Boolean)
         .join('\n\n');
