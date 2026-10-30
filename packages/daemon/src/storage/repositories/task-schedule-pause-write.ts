@@ -12,6 +12,11 @@ class TaskSchedulePauseWriter {
     private readonly changes?: ReactiveDatabase
   ) {}
 
+  ensurePaused(id: string) {
+    const schedule = new TaskScheduleRepository(this.db).getById(id);
+    return schedule?.status === 'paused' ? schedule : this.pause(id);
+  }
+
   pause(id: string) {
     const schedule = new ScheduleService({
       db: this.db,
@@ -29,5 +34,5 @@ export const taskSchedulePauseWrites = defineRepositoryOp(
   'task.schedule.pause.write',
   'write',
   TaskSchedulePauseWriter,
-  ['pause'] as const
+  ['pause', 'ensurePaused'] as const
 );
