@@ -29,7 +29,8 @@ owners to merge in daemon repos. A fresh OPEN result releases a failed attempt f
 retry; all gates are checked again. Unreadable outcomes retain the receipt and CLI
 error without consuming the retry budget. The daemon stops after three confirmed
 failed attempts per head and tells Neo the last error; resolve it before manual action.
-Human policy and sign-off still require the human.
+Retry-limit reports remain pending until Neo accepts them, even if the PR closes
+or repository policy changes. Human policy and sign-off still require the human.
 When the human wants to merge a PR themselves, call neo.coding.merge.human with
 its URL and enabled:true to add human-merge; use enabled:false if they change
 their mind. Never change saved

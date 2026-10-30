@@ -67,12 +67,16 @@ export function createCodingDaemonMergeSweep(
   const retryLimit = async (url: string, head: string) => {
     const [failure] = await record({ kind: 'failures', url, head });
     if (!failure || (failure.failures ?? 0) < CODING_DAEMON_MERGE_MAX_ATTEMPTS) return false;
-    await delivery
-      .wake(
-        `coding-daemon-retry-limit:${url}:${head}`,
-        `Daemon merge stopped after ${failure.failures} failed attempts: ${url} head ${head}. Last error: ${failure.error}. Inspect GitHub and resolve the failure before manual action.`
-      )
-      .catch(() => false);
+    if (
+      failure.notifiedAt === null &&
+      (await delivery
+        .wake(
+          `coding-daemon-retry-limit:${url}:${head}`,
+          `Daemon merge stopped after ${failure.failures} failed attempts: ${url} head ${head}. Last error: ${failure.error}. Inspect GitHub and resolve the failure before manual action.`
+        )
+        .catch(() => false))
+    )
+      await record({ kind: 'limitNotified', url, head, at: Date.now() });
     return true;
   };
   const finish = async (
@@ -141,6 +145,8 @@ export function createCodingDaemonMergeSweep(
     )
     .endAsync('result') as (observed: Observed, now: number) => Promise<unknown>;
   const sweep = async (now: number): Promise<void> => {
+    for (const failure of await record({ kind: 'limits' }))
+      await retryLimit(failure.url, failure.head);
     const rows = (await ledger.read('list')).filter(
       (row) => row.closedAt === null && ['approved_green', 'waiting_human'].includes(row.state)
     );

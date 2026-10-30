@@ -74,3 +74,11 @@ confirmation reads. The receipt and error must survive without consuming retry
 budget. Restore reads and recreate the pack: exactly one confirmation must arrive
 without issuing another merge. A separate regression recovers OPEN after an
 unreadable third command and requires the original CLI error in Neo's limit notice.
+
+Add `limit-gone` to exhaust retries while Neo delivery is unavailable, close the
+PR and switch its policy to owner, then restore delivery. The pending limit
+report must still reach Neo exactly once. Add `external-owned` to fail one
+attempt and then apply an external merge. The normal ledger MERGED event must
+notify the linked owner once; only approved-green manual merge instructions
+are suppressed for daemon execution. Terminal fixtures must contain the PR
+only in the done connection with a real closedAt value.

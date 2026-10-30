@@ -46,3 +46,7 @@ command. The separate coding-daemon-merge-sweep journey proves execution,
 retry and confirmation behavior. Real merge delivery, GUI and deployment are
 unverified here. Repeat on Deno when installed; CI registers the
 same helper in required Deno smoke.
+
+An unsent retry-limit report must survive the real daemon restart with its last
+error. Acknowledgement through the writer removes it from the pending-report
+reader without depending on a live PR candidate.
