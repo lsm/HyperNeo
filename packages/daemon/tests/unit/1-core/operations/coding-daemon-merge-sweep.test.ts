@@ -54,7 +54,7 @@ const spawn: SpawnFn = (args) => {
             url,
             headRefOid: actualHead,
             reviewThreads: {
-              nodes: unresolved ? [{ isResolved: false, url: url + '#thread' }] : [],
+              nodes: unresolved ? [{ id: 't', isResolved: false, comments: { nodes: [] } }] : [],
               pageInfo: { hasNextPage: false, endCursor: null },
             },
           },
