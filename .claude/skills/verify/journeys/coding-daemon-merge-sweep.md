@@ -45,6 +45,12 @@ The final-read/API-call interval and in-flight writers remain an explicitly
 accepted limitation pending [#9458](https://github.com/lsm/HyperNeo/issues/9458).
 
 Add `merge-fails` to prove a failed CLI attempt stays OPEN, surfaces its held receipt
-on delivery recovery, and is not retried. Unreadable facts still halt the sweep.
+on delivery recovery, and is not retried. Unreadable facts hold only their own PR; the sweep logs its URL and read reason and continues.
 
 Add `late-label` to add human-merge after the batch snapshot; it must hold, then resume on label removal.
+
+Add `per-pr` to seed an unreadable first PR and a mergeable sibling. The full pack
+sweep must finish, log the failed PR with its read reason, merge only the sibling
+with the exact full head, notify Neo, and issue no second merge on the next sweep.
+Final admission and confirmation read failures are also isolated per PR; unreadable
+receipts remain pending for recovery.

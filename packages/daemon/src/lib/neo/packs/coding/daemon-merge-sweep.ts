@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
+import { Logger } from '../../../logger.ts';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
@@ -9,6 +10,8 @@ import type { CodingPrEventRepository } from './pr-events.ts';
 import type { CodingSweepDeps } from './pr-sweep.ts';
 import { readCodingDaemonMergeFacts } from './daemon-merge-facts.ts';
 import { decideCodingDaemonMerge } from './daemon-merge-gates.ts';
+
+const log = new Logger('CodingDaemonMerge');
 
 type Receipt = ReturnType<CodingPrLedgerRepository['daemonMerge']>[number];
 type Candidate = { url: string; head: string; policy: CodingMergePolicy; approvedGreen: boolean };
@@ -21,10 +24,12 @@ const admit = (observed: Observed) => {
     observed.facts.ok &&
     observed.facts.state === 'OPEN'
       ? 'needs_human_signoff'
-      : decision.kind;
+      : decision.kind === 'skip' || decision.kind === 'read_failure'
+        ? decision.reason
+        : decision.kind;
   return decision.kind === 'merge' && decision.head === observed.head && observed.approvedGreen
     ? { value: observed }
-    : { reason };
+    : { reason: decision.kind === 'merge' ? 'ledger_head_or_approval_changed' : reason };
 };
 
 export function createCodingDaemonMergeSweep(
@@ -37,7 +42,11 @@ export function createCodingDaemonMergeSweep(
   const actor = 'daemon:coding-sweep';
   const record = (change: Parameters<CodingPrLedgerRepository['daemonMerge']>[0]) =>
     ledger.write('daemonMerge', change);
-  const read = (url: string) => readCodingDaemonMergeFacts(database(), url, spawn);
+  const read = async (url: string) => {
+    const facts = await readCodingDaemonMergeFacts(database(), url, spawn);
+    if (!facts.ok) log.warn('Daemon merge held', { url, reason: facts.reason });
+    return facts;
+  };
   const notify = async (receipt: Receipt, now: number) => {
     if (!receipt.mergeCommit && receipt.heldNotifiedAt) return true;
     const { owner: org, repo, number } = parsePrUrl(receipt.url)!;
@@ -118,14 +127,19 @@ export function createCodingDaemonMergeSweep(
     const facts = new Map(
       await Promise.all(pending.map(async (url) => [url, await read(url)] as const))
     );
-    if ([...facts.values()].some((fact) => !fact.ok)) throw new Error(`Merge held: ${pending}`);
     for (const receipt of receipts) {
+      if (!facts.get(receipt.url)!.ok) continue;
       if (receipt.mergeCommit) await notify(receipt, now);
       else await finish(receipt, facts.get(receipt.url)!, now);
     }
     for (const candidate of candidates) {
+      if (!facts.get(candidate.url)!.ok) continue;
       const outcome = await merge({ ...candidate, facts: facts.get(candidate.url)! }, now);
-      if (outcome === 'read_failure') throw new Error(`Merge held: ${candidate.url}`);
+      if (
+        typeof outcome === 'string' &&
+        !['attempted', 'read_failure', 'already_attempted'].includes(outcome)
+      )
+        log.warn('Daemon merge held', { url: candidate.url, reason: outcome });
       if (outcome === 'needs_human_signoff')
         await delivery
           .wake(

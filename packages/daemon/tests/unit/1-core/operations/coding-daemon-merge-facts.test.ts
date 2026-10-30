@@ -111,7 +111,10 @@ describe('readCodingDaemonMergeFacts', () => {
     'fails closed on an unreadable %s',
     async (part) => {
       fail = part;
-      expect((await readCodingDaemonMergeFacts(db, url, spawn)).ok).toBe(false);
+      expect(await readCodingDaemonMergeFacts(db, url, spawn)).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('synthetic read failure'),
+      });
     }
   );
   test('rejects missing pages and a head changed during acquisition', async () => {
