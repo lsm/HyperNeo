@@ -26,7 +26,7 @@ for (const { home, ask } of fixtures) {
     sql += `INSERT INTO neo_questions(id,ask_id,text,kind,state,answer,answered_by,answered_at,retired_reason,created_at,document,confirm_json) VALUES(${quote(crypto.randomUUID())},${quote(ask)},${quote(home?'direction.md '+ 'a'.repeat(64):'Ordinary question with a document')},'yesno',${quote(state)},${state==='answered'?quote('"yes"'):'NULL'},${state==='answered'?"'button'":'NULL'},${state==='answered'?now:'NULL'},${state==='retired'?"'Synthetic retirement'":'NULL'},${now},${quote(document)},${home?quote(confirm):'NULL'});`;
   }
 }
-execFileSync('sqlite3', [`${run}/data/daemon.db`, sql]);
+execFileSync('sqlite3', ['-cmd', '.timeout 10000', `${run}/data/daemon.db`, `BEGIN IMMEDIATE;${sql}COMMIT;`], {timeout:15000});
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({headless:true,...(process.env.VERIFY_BROWSER?{executablePath:process.env.VERIFY_BROWSER}:{})});
 const results = [];

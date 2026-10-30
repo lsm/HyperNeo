@@ -12,6 +12,8 @@ NODE_PATH=<directory containing playwright> VERIFY_BROWSER=<installed Chromium e
 
 The helper opens a synthetic Neo through RPC and seeds only its isolated DB with
 ordinary report questions and home questions carrying confirm {path,sha256}.
+Fixture seeding uses one transaction and a bounded 10-second SQLite busy timeout
+to serialize with startup body copying; a lock timeout fails the proof.
 It drives the real built /neo page in English and Simplified Chinese. For open,
 answered and retired cards, click the document button and observe its dialog:
 home proposals retain View full versions / 查看完整版本; all other documents use
