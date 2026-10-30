@@ -43,7 +43,7 @@ export function createCodingDaemonMergeSweep(
     const { owner } = await events.routeLater({ repo: `${org}/${repo}`, number: +number });
     const key = `coding-daemon-${receipt.mergeCommit ? 'merged' : 'held'}:${receipt.url}:${receipt.head}`;
     const text = receipt.mergeCommit
-      ? `${receipt.url} merged by ${receipt.actor} on head ${receipt.head} at ${new Date(receipt.mergedAt!).toISOString()} (${receipt.mergeCommit}).`
+      ? `Merge confirmed: ${receipt.url} head ${receipt.head}, commit ${receipt.mergeCommit}. Receipt executor ${receipt.actor}; confirmation sweep ${new Date(receipt.mergedAt!).toISOString()}.`
       : `Daemon merge held: ${receipt.url} head ${receipt.head}. No merge confirmed; automatic retries are held. Inspect GitHub/auth status and the receipt before manual action.`;
     const told = owner && (await delivery.tell(owner, key, text).catch(() => false));
     const notified = told || (await delivery.wake(key, text).catch(() => false));
@@ -104,7 +104,7 @@ export function createCodingDaemonMergeSweep(
     const facts = new Map(
       await Promise.all(pending.map(async (url) => [url, await read(url)] as const))
     );
-    if ([...facts.values()].some((fact) => !fact.ok)) return;
+    if ([...facts.values()].some((fact) => !fact.ok)) throw new Error(`Merge held: ${pending}`);
     for (const receipt of receipts) {
       if (receipt.mergeCommit) await notify(receipt, now);
       else await finish(receipt, facts.get(receipt.url)!, now);
@@ -112,7 +112,7 @@ export function createCodingDaemonMergeSweep(
     for (const candidate of candidates) {
       const observed = { ...candidate, facts: facts.get(candidate.url)! };
       const outcome = await merge(observed, now);
-      if (outcome === 'read_failure') return;
+      if (outcome === 'read_failure') throw new Error(`Merge held: ${candidate.url}`);
       if (outcome === 'needs_human_signoff')
         await delivery
           .wake(
