@@ -128,7 +128,8 @@ export function ConnectionsSettings() {
     >
       {failure && (
         <p role="alert" class="text-sm text-danger">
-          {t('connections.failed')}: {failure}
+          {t('connections.failed')}:{' '}
+          {failure === 'account_mismatch' ? t('connections.sameAccount') : failure}
         </p>
       )}
       {view.attempt.storage?.warning && (
@@ -203,7 +204,7 @@ export function ConnectionsSettings() {
       <SettingsGroup>
         {view.accounts.map((account) => (
           <div key={account.id} class="flex flex-wrap items-start justify-between gap-4 px-4 py-4">
-            <div class="min-w-0 flex-1">
+            <div class="min-w-48 flex-1">
               <p class="break-all font-medium text-fg">{account.email}</p>
               <p class="text-sm text-fg-soft">{t(`connections.${account.health}`)}</p>
               <p class="mt-2 text-xs text-fg-muted">{t('connections.scopes')}</p>

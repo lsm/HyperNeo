@@ -49,7 +49,7 @@ try {
     await shot('connected');
     await fetch(`${fakeOrigin}/fixture`, { method: 'POST', body: JSON.stringify({ subject: 'synthetic-other' }) });
     await consent(() => page.getByRole('button', { name: 'Reconnect', exact: true }).click());
-    await page.getByRole('alert').filter({ hasText: 'account_mismatch' }).waitFor();
+    await page.getByRole('alert').filter({ hasText: 'Sign in with the same Google account to reconnect.' }).waitFor();
     assert.equal(await page.getByText('other@example.test', { exact: true }).count(), 0);
     await shot('mismatch');
     await fetch(`${fakeOrigin}/fixture`, { method: 'POST', body: JSON.stringify({ subject: 'synthetic-one' }) });

@@ -18,6 +18,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'connections.cancel': '取消',
   'connections.storageWarning': '请解锁系统凭据存储以恢复访问；可用时会使用加密本地存储。',
   'connections.scopes': '已授权的权限',
+  'connections.sameAccount': '请使用原来的 Google 账号重新连接。',
   'connections.failed': 'Google 连接失败',
   'connections.identity': '账号身份',
   'connections.email': '电子邮箱',

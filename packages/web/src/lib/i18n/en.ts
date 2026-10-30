@@ -18,6 +18,7 @@ export const en = {
   'connections.storageWarning':
     'Unlock your system credential store to restore access. Encrypted local storage is used when available.',
   'connections.scopes': 'Granted access',
+  'connections.sameAccount': 'Sign in with the same Google account to reconnect.',
   'connections.failed': 'Google connection failed',
   'connections.identity': 'Account identity',
   'connections.email': 'Email address',
