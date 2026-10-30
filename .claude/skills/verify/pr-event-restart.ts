@@ -11,7 +11,7 @@ import { CodingPrEventRepository } from '../../../packages/daemon/src/lib/neo/pa
 import { CodingPrSweepRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-sweep.ts';
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 
-const run = resolve(process.argv[2]), repo = 'synthetic/no-policy', worker = 'synthetic-event-owner';
+const run = resolve(process.argv.at(-1)!), repo = 'synthetic/no-policy', worker = 'synthetic-event-owner';
 assert.equal(process.env.NODE_ENV, 'test'); assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data')); assert(!existsSync(join(run, 'data')));
 for (const key of ['GH_TOKEN', 'GITHUB_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN']) assert.equal(process.env[key], undefined);
@@ -47,6 +47,9 @@ async function close() { await neo?.dispose(); neo = undefined; await app?.clean
 try {
   await open();
   sql().prepare("UPDATE neo_pack_preferences SET value_json = ? WHERE pack = 'coding' AND key = 'watchedRepos'").run(JSON.stringify([repo]));
+  if (process.argv.includes('--merge-facts'))
+    for (const [key, value] of Object.entries({ mergePolicy: 'review_bot', reviewBot: 'hyperneo-ai-test', humanSignoff: ['docs/design/**'] }))
+      sql().prepare("INSERT OR REPLACE INTO neo_pack_preferences VALUES ('coding','repo',?,?,?,'human',1)").run(repo, key, JSON.stringify(value));
   const now = Date.now();
   for (const id of ['synthetic-event-neo', worker]) await app!.db.createSession({ id, title: id, workspacePath: join(run, 'home'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
   neo!.repo.reserveBinding({ sessionId: 'synthetic-event-neo', projectId: null, kind: 'neo' });
@@ -61,12 +64,21 @@ try {
   const mail = jobs(); evidence.afterRestart = { ledger: rows(), mailbox: mail };
   assert.equal(mail.length, 1); assert.equal(mail[0].to.sessionId, worker);
   assert(JSON.stringify(mail[0]).includes('has requested changes on head head-18'));
+  if (process.argv.includes('--merge-facts'))
+    assert(JSON.stringify(mail[0]).includes(`${repo} merge policy: review_bot; review bot: hyperneo-ai-test; human sign-off: docs/design/**; merge by: owner`));
   await pack!.sweep!(now + 4);
   assert.equal(jobs().length, 1);
   decision = null; ci = 'SUCCESS'; await pack!.sweep!(now + 5); ci = 'FAILURE'; await pack!.sweep!(now + 6);
   const skipped = warnings.filter((line) => line.includes('skipped'));
   evidence.skippedWarnings = skipped;
   assert(skipped.includes(`PR event neo-pr-event:${repo}#2:head-2:failing skipped: ${repo}#2 has no owner`));
+  if (process.argv.includes('--merge-facts')) {
+    sql().prepare('UPDATE pack_coding_pr_ledger SET state_since = ?, nudges = 2 WHERE number = 188').run(now - 60 * 60_000);
+    await pack!.sweep!(now + 7);
+    const escalations = jobs().filter(message => message.to.sessionId === 'synthetic-event-neo');
+    evidence.mergeFactsEscalations = escalations;
+    assert(escalations.some(message => JSON.stringify(message).includes(`${repo} merge policy: review_bot; review bot: hyperneo-ai-test; human sign-off: docs/design/**; merge by: owner`)));
+  }
   evidence.verified = true;
   console.log(JSON.stringify({ verified: true, ownerMailboxEvents: 1, repeatDuplicates: 0, unownedSkipLogged: true, providerTurns: 0 }));
 } finally {
