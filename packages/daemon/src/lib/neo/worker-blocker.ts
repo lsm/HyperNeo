@@ -83,32 +83,18 @@ export const recordWorkerBlocker = (superpipe({})('neo.worker-final-blocker') as
     ) => {
       const { todo } = scope;
       if (blocker.kind === 'needs-human') {
-        const source = { ...workerIdentity(ref, null), provider: ref.adapter, link: null };
-        let question = store
-          .listQuestions(todo.askId)
-          .find((q) => q.todoId === todo.id && q.state === 'open');
-        if (question && isNeoTodoStalledCard(question.text)) {
-          store.retireQuestion(question, 'its worker reported a human blocker', null, now);
-          question = undefined;
-        }
-        question ??= store.askQuestion(
-          crypto.randomUUID(),
-          todo.askId,
-          {
-            text: blocker.reason,
-            kind: 'reply',
-            options: null,
-            multiple: false,
-            noLabel: null,
-            yesLabel: null,
-            startTodos: null,
-            todoId: todo.id,
-            document: turn.message,
-            sourceSession: source,
-          },
-          now
-        );
-        store.questionAnswers.bind(question.id, todo.id, source);
+        for (const question of store.listQuestions(todo.askId))
+          if (
+            question.todoId === todo.id &&
+            question.state === 'open' &&
+            isNeoTodoStalledCard(question.text)
+          )
+            store.retireQuestion(
+              question,
+              'its worker reported a blocker for Neo to triage',
+              null,
+              now
+            );
       }
       const result = store.updateTodo(
         todo,
@@ -118,7 +104,7 @@ export const recordWorkerBlocker = (superpipe({})('neo.worker-final-blocker') as
           blockedReason: blocker.reason,
           nextAction:
             blocker.kind === 'needs-human'
-              ? 'Waiting for a human answer.'
+              ? 'Neo must answer the worker or ask the human with options.'
               : 'Resolve the environment failure, then retry or escalate.',
           report: turn.message,
         },
@@ -126,7 +112,12 @@ export const recordWorkerBlocker = (superpipe({})('neo.worker-final-blocker') as
       );
       sessions.recordNudge(todo.id, {
         ...(sessions.readNudge(todo.id) ?? { since: now, nudges: 0 }),
-        blockerReport: { id: scope.key, dispatchId, at: turn.at },
+        blockerReport: {
+          id: scope.key,
+          dispatchId,
+          at: turn.at,
+          ...(blocker.kind === 'needs-human' ? { triagedAt: result.updatedAt } : {}),
+        },
       });
       return result;
     },
@@ -142,3 +133,67 @@ export const recordWorkerBlocker = (superpipe({})('neo.worker-final-blocker') as
   turn: Turn,
   now: number
 ) => NeoTodo | null;
+
+export const escalateWorkerBlocker = (superpipe({})('neo.worker-blocker-fallback') as PipelineAPI)
+  .input(['store', 'sessions', 'todoId', 'now'])
+  .pipe(
+    (
+      store: NeoAskTodoRepository,
+      sessions: NeoTodoSessionRepository,
+      todoId: string,
+      now: number
+    ) => {
+      const todo = store.getTodo(todoId),
+        prior = sessions.readNudge(todoId)?.blockerReport;
+      const ref = sessions.readRef(todoId);
+      return todo?.state === 'blocked' &&
+        todo.blockedBy === 'needs-human' &&
+        store.getAsk(todo.askId)?.status === 'open' &&
+        prior?.triagedAt === todo.updatedAt &&
+        now - prior.triagedAt >= 60 * 60_000 &&
+        ref &&
+        sessions.inputs.list(todoId).at(-1)?.id === prior.dispatchId &&
+        !store
+          .listQuestions(todo.askId)
+          .some(
+            (q) => q.state === 'open' && (q.todoId === todoId || q.startTodos?.includes(todoId))
+          )
+        ? { value: { todo, ref } }
+        : { reason: null };
+    },
+    ['store', 'sessions', 'todoId', 'now'],
+    'result:due'
+  )
+  .pipe(
+    (store: NeoAskTodoRepository, due: { todo: NeoTodo; ref: WorkRef }, now: number) => {
+      const { todo, ref } = due;
+      const source = { ...workerIdentity(ref, null), provider: ref.adapter, link: null };
+      const question = store.askQuestion(
+        crypto.randomUUID(),
+        todo.askId,
+        {
+          text: todo.blockedReason!,
+          kind: 'reply',
+          options: null,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+          startTodos: null,
+          todoId: todo.id,
+          document: todo.report,
+          sourceSession: source,
+        },
+        now
+      );
+      store.questionAnswers.bind(question.id, todo.id, source);
+      return question;
+    },
+    ['store', 'due', 'now'],
+    'result'
+  )
+  .end('result') as (
+  store: NeoAskTodoRepository,
+  sessions: NeoTodoSessionRepository,
+  todoId: string,
+  now: number
+) => unknown;

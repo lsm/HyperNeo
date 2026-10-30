@@ -9,6 +9,7 @@ export interface TodoStateFacts {
   askOpen: boolean;
   questionOpen: boolean;
   answerPending?: boolean;
+  triagePending?: boolean;
   dispatched: boolean;
   live: string | null;
   change: NeoTodoPatch;
@@ -49,16 +50,22 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
     judgement.state !== 'done' &&
     change.state !== 'removed' &&
     facts.askOpen &&
-    (facts.questionOpen || facts.answerPending)
+    (facts.questionOpen ||
+      facts.answerPending ||
+      (facts.triagePending && !Object.keys(change).length))
   )
     return {
-      patch: {
-        ...change,
-        state: 'blocked',
-        blockedBy: 'needs-human',
-        blockedReason: todo.blockedReason,
-        nextAction: todo.nextAction,
-      },
+      patch: Object.fromEntries(
+        Object.entries({
+          ...change,
+          state: 'blocked',
+          blockedBy: 'needs-human',
+          blockedReason: todo.blockedReason,
+          nextAction: todo.nextAction,
+        }).filter(
+          ([key, value]) => Object.keys(change).length || value !== todo[key as keyof NeoTodo]
+        )
+      ) as NeoTodoPatch,
       startNext: null,
     };
   let patch = { ...change };

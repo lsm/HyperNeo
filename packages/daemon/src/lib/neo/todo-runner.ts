@@ -679,7 +679,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       if (dispatch)
         await deliverNeoTurnReport(
           ask,
-          todo,
+          store.getTodo(todo.id) ?? todo,
           dispatch.id,
           ref,
           readDriverLive(outcome),
@@ -746,7 +746,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         const ask = store.getAsk(todo.askId);
         return ((todo.state === 'doing' && todo.report) ||
           (todo.state === 'blocked' &&
-            ['worker', 'stalled', 'environment'].includes(todo.blockedBy ?? ''))) &&
+            ['worker', 'stalled', 'environment', 'needs-human'].includes(todo.blockedBy ?? ''))) &&
           ref &&
           ask?.status === 'open'
           ? { value: { ref, ask } }
@@ -765,7 +765,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           ...(sent?.receipt ? { receipt: sent.receipt } : {}),
         });
         await observe(todo.id, outcome, target.ref);
-        if (todo.blockedBy === 'environment') return;
+        if (['environment', 'needs-human'].includes(todo.blockedBy ?? '')) return;
         const live = readDriverLive(outcome);
         await sessions.write(
           'recordProgress',
@@ -1327,6 +1327,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       for (const { todoId, ref } of await sessions.read('awaitingReports'))
         await settle(todoId, ref).catch((error) => warn('Todo session refresh pending', error));
       for (const todo of await store.read('listCheckable')) {
+        if (todo.blockedBy === 'needs-human')
+          await deps
+            .write(neoTodoRunnerWrites, { method: 'escalate', args: [todo.id, Date.now()] })
+            .catch((error) => warn('Worker blocker fallback pending', error));
         await waitOnHuman(todo, Date.now()).catch((error) =>
           warn('Todo human wait pending', error)
         );

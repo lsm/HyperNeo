@@ -48,6 +48,7 @@ try {
  assert(JSON.stringify(jobs).includes('If you can answer this, reply to the worker'));
  const originalNow=Date.now;Date.now=()=>originalNow()+60*60_000;
  try {await service.refreshDriverWork();} finally {Date.now=originalNow;}
+ report.afterDeadline={todo:service.todos.getTodo('todo-needs_human'),nudge:service.todoSessions.readNudge('todo-needs_human'),questions:service.todos.listQuestions('needs_human')};
  const humanQuestion=service.todos.listQuestions('needs_human').find(q=>q.state==='open')!;
  assert(humanQuestion);
  report.answer=await rpc('neo.question.answer',{questionId:humanQuestion.id,answer:'Synthetic approval granted'});

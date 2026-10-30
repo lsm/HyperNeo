@@ -2437,6 +2437,10 @@ describe('worker final-line blockers', () => {
         });
         await h.runner.refresh(() => {});
         expect(h.store.listQuestions('ask').filter((q) => q.todoId === todo.id)).toHaveLength(0);
+        const waiting = h.store.getTodo(todo.id)!;
+        clock.mockReturnValue(start + 1);
+        await h.runner.recompute(waiting);
+        expect(h.store.getTodo(todo.id)?.updatedAt).toBe(waiting.updatedAt);
         clock.mockReturnValue(start + 60 * 60_000 - 1);
         await h.runner.refresh(() => {});
         expect(h.store.listQuestions('ask').filter((q) => q.todoId === todo.id)).toHaveLength(0);
@@ -2475,6 +2479,7 @@ describe('worker final-line blockers', () => {
           .listQuestions('ask')
           .filter((q) => q.todoId === todo.id && q.state === 'open');
         expect(open).toHaveLength(action === 'unchanged' || action === 'question' ? 1 : 0);
+        if (action === 'edited') expect(h.store.getTodo(todo.id)?.blockedBy).toBe('needs-human');
         if (action === 'unchanged') {
           expect(open[0]).toMatchObject({
             kind: 'reply',
