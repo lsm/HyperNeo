@@ -5,7 +5,7 @@ import { googleConnectionReads } from '../../storage/repositories/google-connect
 import { defineOperation } from '../operations/registry.ts';
 import { connectionStatus } from './status.ts';
 
-export function createConnectionList(db: Database) {
+export function createConnectionList(db: () => Database) {
   return defineOperation({
     name: 'connections.list',
     description: 'List this instance’s connected accounts and health. Never returns credentials.',
@@ -13,7 +13,7 @@ export function createConnectionList(db: Database) {
     inputSchema: z.object({}).strict(),
     resultSchema: z.object({ connections: z.array(connectionStatus) }),
     execute: async () => ({
-      connections: await gatewayFor(db).call(googleConnectionReads, 'list'),
+      connections: await gatewayFor(db()).call(googleConnectionReads, 'list'),
     }),
   });
 }

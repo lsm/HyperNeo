@@ -129,7 +129,7 @@ export function createDatabaseOperationCatalog(
         revoked: announceDeviceRevoked,
       }),
       createHumanDeviceResetOperation(() => db.getDatabase()),
-      createConnectionList(db.getDatabase()),
+      createConnectionList(() => db.getDatabase()),
       createDaemonSnapshotOperation({
         readResources: (input) => new DaemonInventoryRepository(db.getDatabase()).read(input),
         readCapabilities: (caller) =>
