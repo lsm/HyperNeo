@@ -1,3 +1,4 @@
+import { createGoogleCalendarOperations } from './google-calendar-operations.ts';
 import { createGoogleDraftOperations } from './google-draft-operations.ts';
 import { createGoogleThreadOperations } from './google-thread-operations.ts';
 import { createGoogleReadOperations } from './google-read-operations.ts';
@@ -81,6 +82,7 @@ export function createGoogleConnectionOperations(
     ...createGoogleReadOperations(db, service),
     ...createGoogleThreadOperations(service),
     ...createGoogleDraftOperations(db, service),
+    ...createGoogleCalendarOperations(service),
     defineOperation({
       name: 'connections.google.connect',
       description:
