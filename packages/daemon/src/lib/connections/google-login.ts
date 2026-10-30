@@ -58,6 +58,7 @@ export async function startGoogleLogin(
   const server = await createHttpWsServer({
     hostname: '127.0.0.1',
     port: 0,
+    idleTimeoutSeconds: 30,
     fetch: async (request) => {
       const url = new URL(request.url);
       const expected = new URL(redirectUri);
