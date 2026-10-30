@@ -26,6 +26,10 @@ own synthetic database and observe the persisted account. Reconnect, disconnect,
 reload and confirm that the disabled account remains visible. Reconnect after
 credential erasure asks for client configuration again. Capture the result.
 
+While consent is pending, inject one temporary reader outage. The error appears
+and clears on a successful poll without another action. Failed action notices
+remain visible when ordinary reads succeed.
+
 The helpers retain screenshots and visible-text observations; no tokens are
 returned through the browser operations or written into browser storage.
 All browsers, popups, HTTP/WS listeners, loopback callbacks and daemons close in

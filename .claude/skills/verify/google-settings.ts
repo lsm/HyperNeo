@@ -8,6 +8,7 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createHttpWsServer } from '../../../packages/daemon/src/lib/runtime-server/index.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 import { DatabaseCredentialStore } from '../../../packages/daemon/src/lib/credentials/credential-store.ts';
+import { googleConnectionReads } from '../../../packages/daemon/src/storage/repositories/google-connections-worker.ts';
 import { startGoogleLogin } from '../../../packages/daemon/src/lib/connections/google-login.ts';
 
 const run = resolve(process.argv[2]);
@@ -53,7 +54,7 @@ const fetchImpl = ((url: string | URL, init?: RequestInit) => {
   assert(paths[String(url)], 'external request refused');
   return fetch(`${fakeOrigin}${paths[String(url)]}`, init);
 }) as typeof fetch;
-let starts = 0, stops = 0;
+let starts = 0, stops = 0, readFault = false;
 try {
   for (const phase of ['initial', 'restart']) {
     const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false, googleConnections: {
@@ -64,11 +65,18 @@ try {
     let server: Awaited<ReturnType<typeof createHttpWsServer>> | undefined;
     try {
       await app.jobProcessor.stop();
+      const gateway = app.db.gateway;
+      const original = gateway.call.bind(gateway);
+      gateway.call = (async (...args: unknown[]) => {
+        if (readFault && args[0] === googleConnectionReads) throw new Error('Synthetic transient read outage');
+        return Reflect.apply(original, undefined, args);
+      }) as typeof gateway.call;
       const port = app.server.port; assert.notEqual(port, 8399); app.server.stop(true);
       const dist = resolve('packages/web/dist');
       const types: Record<string, string> = { '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
       server = await createHttpWsServer({ hostname: '127.0.0.1', port, websocket: createWebSocketHandlers(app.transport, app.sessionManager), fetch: async (request, upgrade, client) => {
         const path = new URL(request.url).pathname;
+        if (path === '/__fixture/read-fault') { readFault = new URL(request.url).searchParams.get('on') === '1'; return Response.json({ ok: true }); }
         if (path === '/ws') return upgrade(request, { connectionSessionId: 'global', device: await app.authenticateUpgrade(request, client?.remoteAddress ?? null) }) ?? new Response('Upgrade refused', { status: 500 });
         const file = resolve(dist, `.${path}`);
         if (!file.startsWith(`${dist}/`)) return new Response('Not found', { status: 404 });

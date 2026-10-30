@@ -217,3 +217,42 @@ it('translates connection controls, health and access', async () => {
   expect(screen.getByText('需要重新连接')).toBeTruthy();
   expect(screen.getByText('读取 Gmail')).toBeTruthy();
 });
+
+function capturePoll() {
+  const polls: Array<() => void> = [];
+  const interval = globalThis.setInterval;
+  vi.spyOn(globalThis, 'setInterval').mockImplementation((callback, delay, ...args) => {
+    if (delay === 15000 || delay === 1000)
+      polls.push(() => {
+        if (typeof callback === 'function') callback(...args);
+      });
+    return interval(callback, delay, ...args);
+  });
+  return () => polls.at(-1)!();
+}
+
+it('clears a temporary read error when polling recovers without another action', async () => {
+  const poll = capturePoll();
+  accounts = [account];
+  request.mockRejectedValueOnce(new Error('synthetic transient read outage'));
+  render(<MainContent />);
+  expect((await screen.findByRole('alert')).textContent).toContain(
+    'synthetic transient read outage'
+  );
+  poll();
+  await screen.findByText('one@example.test');
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+it('preserves a failed action notice while successful polling adds fresh account data', async () => {
+  const poll = capturePoll();
+  accounts = [account];
+  command = () => ({ ok: false, reason: 'credential_delete_failed' });
+  render(<MainContent />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }));
+  await screen.findByRole('alert');
+  accounts = [account, { ...account, id: 'other', email: 'two@example.test' }];
+  poll();
+  await screen.findByText('two@example.test');
+  expect(screen.getByRole('alert').textContent).toContain('credential_delete_failed');
+});

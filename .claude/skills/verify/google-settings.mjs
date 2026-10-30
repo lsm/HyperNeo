@@ -23,11 +23,20 @@ try {
     for (const secret of ['synthetic-secret', 'synthetic-access', 'synthetic-refresh']) assert(!text.includes(secret));
     observations.push({ name, text });
   };
-  const consent = async (begin) => {
+  const consent = async (begin, recoverRead = false) => {
     const popupEvent = page.waitForEvent('popup');
     await begin();
     const popup = await popupEvent;
     await popup.getByRole('heading', { name: 'Fake Google consent' }).waitFor();
+    await page.getByRole('status').waitFor();
+    if (recoverRead) {
+      await fetch(`http://127.0.0.1:${port}/__fixture/read-fault?on=1`, { method: 'POST' });
+      await page.getByRole('alert').filter({ hasText: 'Synthetic transient read outage' }).waitFor();
+      await shot('read-error');
+      await fetch(`http://127.0.0.1:${port}/__fixture/read-fault?on=0`, { method: 'POST' });
+      await page.getByRole('alert').waitFor({ state: 'hidden' });
+      await shot('read-recovered');
+    }
     await shot('pending');
     await popup.getByRole('link', { name: 'Approve synthetic account' }).click();
     await popup.getByText('Authorization received. Return to the app to finish connecting.').waitFor();
@@ -41,7 +50,7 @@ try {
     await page.getByRole('button', { name: 'Connect Google', exact: true }).click();
     await page.getByLabel('Desktop client ID', { exact: true }).fill('synthetic-client');
     await page.getByLabel('Client secret (optional)', { exact: true }).fill('synthetic-secret');
-    await consent(() => page.getByRole('button', { name: 'Continue to Google', exact: true }).click());
+    await consent(() => page.getByRole('button', { name: 'Continue to Google', exact: true }).click(), true);
     await page.getByText('one@example.test', { exact: true }).waitFor();
     await page.getByText('Connected', { exact: true }).waitFor();
     await page.getByText('Read Gmail', { exact: true }).waitFor();
