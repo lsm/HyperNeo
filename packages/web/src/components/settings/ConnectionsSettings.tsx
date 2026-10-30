@@ -25,7 +25,7 @@ type Command = {
 };
 type Receipt = Partial<Attempt> & { ok?: boolean };
 type View = { accounts: Account[]; attempt: Attempt };
-const call = async <T,>(name: Parameters<typeof invokeOperation>[1], input?: unknown) =>
+const call = async <T,>(name: Parameters<typeof invokeOperation>[1], input: unknown = {}) =>
   invokeOperation<T>(await connectionManager.getHub(), name, input);
 
 const update = (superpipe({})('google-connection-settings') as PipelineAPI)
