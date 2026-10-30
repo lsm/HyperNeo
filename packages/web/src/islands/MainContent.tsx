@@ -43,6 +43,11 @@ const ProvidersSettings = lazy(() =>
     default: m.ProvidersSettings,
   }))
 );
+const ConnectionsSettings = lazy(() =>
+  import('../components/settings/ConnectionsSettings.tsx').then((m) => ({
+    default: m.ConnectionsSettings,
+  }))
+);
 const VoiceSettings = lazy(() =>
   import('../components/settings/VoiceSettings.tsx').then((m) => ({ default: m.VoiceSettings }))
 );
@@ -451,6 +456,7 @@ export default function MainContent() {
                 {settingsSection === 'general' && <GeneralSettings />}
                 {settingsSection === 'appearance' && <AppearanceSettings />}
                 {settingsSection === 'providers' && <ProvidersSettings />}
+                {settingsSection === 'connections' && <ConnectionsSettings />}
                 {settingsSection === 'voice' && <VoiceSettings />}
                 {settingsSection === 'exa' && <ExaSettings />}
                 {settingsSection === 'app-mcp-servers' && <AppMcpServersSettings />}

@@ -1,3 +1,4 @@
+import { t } from '../lib/i18n/index.ts';
 import { CheckGlyph, ChevronLeftGlyph } from '../components/icons/common-glyphs.tsx';
 import { useState, useEffect, useMemo } from 'preact/hooks';
 import {
@@ -43,6 +44,12 @@ const SETTINGS_SECTIONS: Array<{
     accent: 'text-cat-purple bg-cat-purple/15',
   },
   { id: 'providers', label: 'Providers', icon: 'cloud', accent: 'text-info-soft bg-sky-500/15' },
+  {
+    id: 'connections',
+    label: 'Connections',
+    icon: 'plug',
+    accent: 'text-accent-soft bg-accent/15',
+  },
   { id: 'voice', label: 'Voice', icon: 'mic', accent: 'text-cat-rose bg-rose-500/15' },
   { id: 'exa', label: 'Exa Search', icon: 'search', accent: 'text-cat-teal bg-cat-teal/15' },
   {
@@ -501,7 +508,9 @@ export function ContextPanel() {
                       >
                         <SectionIcon type={section.icon} />
                       </span>
-                      <span class="truncate text-sm font-medium">{section.label}</span>
+                      <span class="truncate text-sm font-medium">
+                        {section.id === 'connections' ? t('connections.title') : section.label}
+                      </span>
                     </button>
                   );
                 })}
