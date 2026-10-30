@@ -109,6 +109,7 @@ test('wrong path, method and state cannot consume consent or call the token endp
   wrong.pathname = '/wrong';
   expect((await fetch(wrong)).status).toBe(400);
   expect((await fetch(redirect, { method: 'POST' })).status).toBe(400);
+  expect((await fetch(redirect, { headers: { host: 'wrong.example.test' } })).status).toBe(400);
   expect((await fetch(callback(redirect, 'wrong'))).status).toBe(400);
   expect(calls).toBe(0);
   expect((await fetch(callback(redirect, url.searchParams.get('state')!))).status).toBe(200);
