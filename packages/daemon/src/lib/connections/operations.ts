@@ -10,25 +10,11 @@ import {
 import { createCredentialStore } from '../credentials/credential-store.ts';
 import { defineOperation } from '../operations/registry.ts';
 import { ConnectionVault } from './vault.ts';
-import { googleClient } from './status.ts';
+import { googleClient, googleConnectionAttempt } from './status.ts';
 import { startGoogleLogin } from './google-login.ts';
 import { createConnectionLifecycle } from './lifecycle.ts';
 
 const services = new WeakMap<Database, Promise<ReturnType<typeof createConnectionLifecycle>>>();
-const view = z.object({
-  state: z.enum(['pending', 'complete', 'failed', 'missing']),
-  loginId: z.string().optional(),
-  connectionId: z.string().optional(),
-  reason: z.string().optional(),
-  authorizeUrl: z.string().url().optional(),
-  storage: z
-    .object({
-      backend: z.enum(['keychain', 'keychain-unavailable', 'keychain-fallback', 'database']),
-      keychainAvailable: z.boolean(),
-      warning: z.string().optional(),
-    })
-    .optional(),
-});
 const policy = { safetyClass: 'human_only' as const, caller: 'local_user' as const };
 
 export function createGoogleConnectionOperations(
@@ -61,9 +47,14 @@ export function createGoogleConnectionOperations(
         'Connect Google or reconnect the named account. Returns a one-use consent URL, never credentials.',
       policy,
       inputSchema: googleClient
+        .partial()
         .extend({ connectionId: z.string().min(1).max(200).optional() })
-        .strict(),
-      resultSchema: view,
+        .strict()
+        .refine(
+          (input) => input.clientId || (input.connectionId && !input.clientSecret),
+          'Provide clientId, or connectionId to reuse saved client details.'
+        ),
+      resultSchema: googleConnectionAttempt,
       execute: async (input) => (await service()).connect(input),
     }),
     defineOperation({
@@ -71,7 +62,7 @@ export function createGoogleConnectionOperations(
       description: 'Read the status of this instance’s current Google consent attempt.',
       policy,
       inputSchema: z.object({ loginId: z.string().min(1).max(200).optional() }).strict(),
-      resultSchema: view,
+      resultSchema: googleConnectionAttempt,
       execute: async ({ loginId }) => (await service()).status(loginId),
     }),
     defineOperation({

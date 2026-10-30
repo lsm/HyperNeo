@@ -16,6 +16,23 @@ export const googleClient = z.object({
   clientSecret: z.string().max(1000).optional(),
 });
 
+export const googleConnectionAttempt = z.object({
+  state: z.enum(['pending', 'complete', 'failed', 'missing']),
+  loginId: z.string().optional(),
+  connectionId: z.string().optional(),
+  reason: z.string().optional(),
+  authorizeUrl: z.string().url().optional(),
+  storage: z
+    .object({
+      backend: z.enum(['keychain', 'keychain-unavailable', 'keychain-fallback', 'database']),
+      keychainAvailable: z.boolean(),
+      warning: z.string().optional(),
+    })
+    .optional(),
+});
+
+export type GoogleConnectionAttempt = z.infer<typeof googleConnectionAttempt>;
+
 export const connectionTokens = z.object({
   accessToken: z.string().min(1),
   refreshToken: z.string().min(1).optional(),

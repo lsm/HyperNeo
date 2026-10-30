@@ -2,19 +2,11 @@ import { randomUUID } from 'node:crypto';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { startGoogleLogin } from './google-login.ts';
 import type { ConnectionVault } from './vault.ts';
-import type { ConnectionStatus } from './status.ts';
+import type { ConnectionStatus, GoogleConnectionAttempt as View } from './status.ts';
 
 type Login = Awaited<ReturnType<typeof startGoogleLogin>>;
 type Outcome = Awaited<Login['result']>;
 type Client = Parameters<typeof startGoogleLogin>[0];
-type View = {
-  state: 'pending' | 'complete' | 'failed' | 'missing';
-  loginId?: string;
-  connectionId?: string;
-  reason?: string;
-  authorizeUrl?: string;
-  storage?: ReturnType<ConnectionVault['storageStatus']>;
-};
 type Flow = {
   id: string;
   connectionId: string;
@@ -124,8 +116,8 @@ export function createConnectionLifecycle(deps: {
   const serial = <T>(action: () => Promise<T>) => {
     const result = pending.then(action);
     pending = result.then(
-      () => {},
-      () => {}
+      () => undefined,
+      () => undefined
     );
     return result;
   };
@@ -138,14 +130,19 @@ export function createConnectionLifecycle(deps: {
   };
   deps.closed.addEventListener('abort', cancel, { once: true });
   return {
-    connect: (input: Client & { connectionId?: string }) =>
+    connect: (input: Partial<Client> & { connectionId?: string }) =>
       serial<View>(async () => {
         if (deps.closed.aborted) return { state: 'failed', reason: 'cancelled' };
         const account = (await deps.read()).find((record) => record.id === input.connectionId);
         if (input.connectionId && !account)
           return { state: 'failed', reason: 'unknown_connection' };
+        const client = input.clientId
+          ? { clientId: input.clientId, clientSecret: input.clientSecret }
+          : account
+            ? (await deps.vault.read(account))?.client
+            : undefined;
+        if (!client) return { state: 'failed', reason: 'client_not_configured' };
         cancel();
-        const client = { clientId: input.clientId, clientSecret: input.clientSecret };
         const login = await deps.startLogin(client);
         if (deps.closed.aborted) {
           login.cancel();
