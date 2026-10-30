@@ -7,7 +7,7 @@ bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/coding
 ```
 
 Add `enterprise` after the helper path to repeat with synthetic `GH_HOST`;
-required Deno smoke uses this variant. Reads and the merge command must target
+required Deno smoke repeats every variant. Reads and the merge command must target
 that host, while the default remains github.com. The unit regression supplies
 a matching public PR on the same head and proves it is never selected.
 
@@ -33,7 +33,7 @@ The unit contracts additionally cover overlapping sweep invocations, every gate,
 open/moved reserved attempts and recovering a successful merge whose first
 confirmation read failed. Build-slice proof covers durable receipts across daemon
 restart. At-most-once reservations deliberately do not retry an uncertain open
-attempt; operators must investigate such a receipt rather than replaying merges.
+attempt; readable held receipts notify the owner or Neo, with a distinct merged notice later.
 
 The helper saves coding-daemon-merge-sweep.json and the exact CLI invocation log,
 stops its daemon and preserves evidence before the wrapper removes synthetic data.
@@ -43,3 +43,6 @@ Add `policy-revoke` after the helper path to change mergeBy to owner through the
 real preference RPC during GitHub checks; final admission must issue no merge.
 The final-read/API-call interval and in-flight writers remain an explicitly
 accepted limitation pending [#9458](https://github.com/lsm/HyperNeo/issues/9458).
+
+Add `merge-fails` to prove a failed CLI attempt stays OPEN, surfaces its held receipt
+on delivery recovery, and is not retried. Unreadable facts still halt the sweep.

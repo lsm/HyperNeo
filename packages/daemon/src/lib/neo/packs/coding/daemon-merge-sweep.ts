@@ -41,14 +41,17 @@ export function createCodingDaemonMergeSweep(
   const notify = async (receipt: Receipt, now: number) => {
     const { owner: org, repo, number } = parsePrUrl(receipt.url)!;
     const { owner } = await events.routeLater({ repo: `${org}/${repo}`, number: +number });
-    const key = `coding-daemon-merged:${receipt.url}:${receipt.head}`;
-    const text = `${receipt.url} merged by ${receipt.actor} on head ${receipt.head} at ${new Date(receipt.mergedAt!).toISOString()} (${receipt.mergeCommit}).`;
+    const key = `coding-daemon-${receipt.mergeCommit ? 'merged' : 'held'}:${receipt.url}:${receipt.head}`;
+    const text = receipt.mergeCommit
+      ? `${receipt.url} merged by ${receipt.actor} on head ${receipt.head} at ${new Date(receipt.mergedAt!).toISOString()} (${receipt.mergeCommit}).`
+      : `Daemon merge held: ${receipt.url} head ${receipt.head}. No merge confirmed; automatic retries are held. Inspect GitHub/auth status and the receipt before manual action.`;
     const told = owner && (await delivery.tell(owner, key, text).catch(() => false));
-    if (told || (await delivery.wake(key, text).catch(() => false)))
-      await record({ ...receipt, kind: 'notified', at: now });
+    const notified = told || (await delivery.wake(key, text).catch(() => false));
+    if (receipt.mergeCommit && notified) await record({ ...receipt, kind: 'notified', at: now });
   };
   const finish = async (receipt: Receipt, pr: Observed['facts'], now: number) => {
-    if (!pr.ok || pr.head !== receipt.head || pr.state !== 'MERGED' || !pr.mergeCommit) return;
+    if (!pr.ok || pr.head !== receipt.head) return;
+    if (pr.state !== 'MERGED' || !pr.mergeCommit) return notify(receipt, now);
     const [merged] = await record({ ...receipt, kind: 'finish', commit: pr.mergeCommit, at: now });
     if (merged) await notify(merged, now);
   };
@@ -119,10 +122,5 @@ export function createCodingDaemonMergeSweep(
           .catch(() => false);
     }
   };
-  let running = Promise.resolve();
-  return (now: number) => {
-    const next = running.then(() => sweep(now));
-    running = next.catch(() => {});
-    return next;
-  };
+  return (now: number) => events.exclusive(() => sweep(now));
 }
