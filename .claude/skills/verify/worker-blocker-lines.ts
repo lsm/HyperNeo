@@ -9,6 +9,7 @@ import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/run
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { waitForSdkBodyCopy } from './wait-for-sdk-body-copy.ts';
 const run = resolve(process.argv.at(-1)!);
+const priorQuestion=process.argv.includes('--prior-question');
 assert.equal(process.env.NODE_ENV, 'test'); assert.equal(process.env.HOME, join(run, 'home')); assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 for (const name of ['workspace','evidence','bin']) mkdirSync(join(run,name),{recursive:true});
 writeFileSync(join(run,'bin/gh'),'#!/bin/sh\nexit 1\n',{mode:0o700});
@@ -35,12 +36,17 @@ try {
   await service.todoSessions.inputs.recordOutcome(dispatch,{ref,receipt:{executionId:worker,inputId:worker+'-input'}},at);
   await app.db.saveUserMessage(worker,{type:'user',uuid:worker+'-input',session_id:worker,parent_tool_use_id:null,message:{role:'user',content:'Synthetic assigned work'}} as SDKMessage,'consumed');
   await new Promise(done=>setTimeout(done,5));
+  if(priorQuestion&&kind==='needs_human') {
+   const source={...ref,name:null,label:'Synthetic worker',provider:'hyperneo',link:null};
+   const q=service.todos.askQuestion('prior-worker-question',ask.id,{text:'Prior synthetic approval',kind:'reply',options:null,multiple:false,noLabel:null,yesLabel:null,startTodos:null,todoId:id,sourceSession:source},at);
+   service.todos.questionAnswers.bind(q.id,id,source);
+  }
   await app.db.saveSDKMessage(worker,{type:'result',subtype:'success',uuid:crypto.randomUUID(),parent_tool_use_id:null,is_error:false,result:message,duration_ms:1,duration_api_ms:1,num_turns:1,total_cost_usd:0,usage:{input_tokens:1,output_tokens:1},modelUsage:{},permission_denials:[]} as SDKMessage);
   const status=await rpc('work.status',{ref,since:at});
   await service.refreshDriverWork();
   const current=service.todos.getTodo(id),questions=service.todos.listQuestions(ask.id).filter(q=>q.todoId===id&&q.state==='open');
   (report.cases as unknown[]).push({kind,status,todo:current,questions});
-  if(kind!=='ordinary'){assert.equal(current?.blockedBy,kind==='needs_human'?'needs-human':'environment');assert.equal(questions.length,0);}
+  if(kind!=='ordinary'){assert.equal(current?.blockedBy,kind==='needs_human'?'needs-human':'environment');assert.equal(questions.length,priorQuestion&&kind==='needs_human'?1:0);}
   else assert.notEqual(current?.blockedBy,'needs-human');
  }
  report.snapshot=await rpc('neo.snapshot',{});

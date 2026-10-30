@@ -2572,6 +2572,72 @@ describe('worker blocker ownership', () => {
       }
     }
   );
+  test('releases a prior question answered after worker triage', async () => {
+    const h = setup(false),
+      clock = vi.spyOn(Date, 'now');
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      await h.runner.start(todo.id);
+      const start = Date.now(),
+        source = { ...ref, name: null, label: 'Worker', provider: 'hyperneo', link: null };
+      const question = h.store.askQuestion(
+        'older-card',
+        'ask',
+        {
+          text: 'Prior approval',
+          kind: 'reply',
+          options: null,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+          startTodos: null,
+          todoId: todo.id,
+          sourceSession: source,
+        },
+        start
+      );
+      h.store.questionAnswers.bind(question.id, todo.id, source);
+      clock.mockReturnValue(start + 100);
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: start + 100,
+          turnEnds: [
+            {
+              id: 'older-question',
+              at: start + 100,
+              message: 'Blocked (needs_human): Prior approval',
+            },
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      expect(h.store.getTodo(todo.id)?.blockedBy).toBe('needs-human');
+      clock.mockReturnValue(start + 200);
+      h.store.answerQuestion(question, 'Approved', 'chat', Date.now());
+      await createNeoQuestionAnswerDelivery(
+        h.store,
+        h.sessions,
+        async () =>
+          completed({ kind: 'accepted', mailboxId: 'answer-mailbox', messageId: 'answer-message' }),
+        async () => {},
+        h.runner.recompute,
+        (error) => {
+          throw error;
+        }
+      )(question.id);
+      expect(h.store.getTodo(todo.id)?.blockedBy).not.toBe('needs-human');
+      clock.mockReturnValue(start + 61 * 60_000);
+      await h.runner.refresh(() => {});
+      expect(
+        h.store.listQuestions('ask').filter((q) => q.todoId === todo.id && q.state === 'open')
+      ).toHaveLength(0);
+    } finally {
+      clock.mockRestore();
+      h.db.close();
+    }
+  });
   test('does not re-ask while an answered fallback cannot reach the worker', async () => {
     const h = setup(false);
     const clock = vi.spyOn(Date, 'now');
