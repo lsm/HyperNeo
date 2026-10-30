@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileS
 import { join, resolve } from 'node:path';
 const repo = resolve(import.meta.dir, '../../..');
 const receiverMode = process.argv[2] ?? 'default';
-assert(['default', 'auto', 'bypassPermissions'].includes(receiverMode));
+assert(['default', 'auto', 'plan', 'bypassPermissions'].includes(receiverMode));
 const { createDaemonApp } = await import(join(repo, 'packages/daemon/src/app.ts'));
 const { getConfig } = await import(join(repo, 'packages/daemon/src/config.ts'));
 const run = resolve(process.argv.at(-1)!);

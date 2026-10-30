@@ -49,7 +49,7 @@ export function claudeReceiverClass(
   mode: string | null | undefined
 ): { value: 'bypass' | 'prompting' } | { reason: Rejected } {
   if (mode === 'bypassPermissions') return { value: 'bypass' };
-  return mode && ['auto', 'default', 'acceptEdits', 'dontAsk'].includes(mode)
+  return mode && ['auto', 'default', 'acceptEdits', 'dontAsk', 'plan'].includes(mode)
     ? { value: 'prompting' }
     : {
         reason: reject(

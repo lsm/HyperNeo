@@ -84,7 +84,7 @@ try {
     ws!.addEventListener('message', receive);
     ws!.send(JSON.stringify({ id: requestId, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name: 'work.send', input: { ref: { adapter, id: target }, from: 'session:synthetic-origin', message: label } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
-  const modes = installed ? ['auto'] : ['default', 'auto', 'bypassPermissions'];
+  const modes = installed ? ['auto'] : ['default', 'auto', 'plan', 'bypassPermissions'];
   for (const receiverMode of modes) {
     mode = receiverMode === 'bypassPermissions' ? 'bypass' : 'prompting';
     writeFileSync(join(evidence, 'process-mode'), receiverMode);
@@ -146,7 +146,7 @@ try {
   const raw = app.db.getDatabase();
   const receiptJobs = raw.query("SELECT queue, status, payload FROM job_queue WHERE payload LIKE '%Claude inbox transport fact%'").all();
   observed.push({ result: 'pass', installed, syntheticPeer: true, expiryMs: 250, port: app.server.port, receiptJobs });
-  console.log(`PASS: isolated daemon ${installed ? 'registered Desktop live/stopped/CLI-owned' : 'Desktop absent; CLI default/auto/bypass; unknown mode; hold/refuse without resend'}; owner uniqueness and wrong-id refusal.`);
+  console.log(`PASS: isolated daemon ${installed ? 'registered Desktop live/stopped/CLI-owned' : 'Desktop absent; CLI default/auto/plan/bypass; unknown mode; hold/refuse without resend'}; owner uniqueness and wrong-id refusal.`);
 } finally {
   for (const timer of timers) clearTimeout(timer);
   ws?.close(); await app?.cleanup(); await new Promise<void>(done => peer.close(() => done()));

@@ -15,7 +15,7 @@ VERIFY_CLAUDE=/absolute/path/to/installed/claude \
   .claude/skills/verify/claude-owner-native.ts default
 ```
 
-Repeat the native invocation into separate evidence directories with `auto`
+Repeat the native invocation into separate evidence directories with `auto`, `plan`
 and `bypassPermissions` to exercise those installed receiver modes. Select
 `TMPDIR=/private/tmp` for the native socket paths, per shared setup. The native
 helper owns an ephemeral loopback model server, so omit the 8000/8001 preflight.
@@ -27,7 +27,7 @@ is the installed executable named by VERIFY_CLAUDE, not the discovery fixture.
 Observe observed.json, proof.log and run-status.json for every invocation:
 
 - With no Desktop installation/records in the synthetic home, a busy or idle
-  CLI receiver in default, auto or bypassPermissions accepts the matching input
+  CLI receiver in default, auto, plan or bypassPermissions accepts the matching input
   without a held receipt. Socket-write results remain explicitly unconfirmed.
 - A registered Desktop UUID addressed through the Code adapter uses the existing
   Desktop adapter: a live input confirms against the target transcript; a stopped
