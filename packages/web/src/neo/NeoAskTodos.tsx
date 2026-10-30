@@ -274,12 +274,13 @@ function SettledQuestionBody({ question }: { question: NeoQuestionEntry }) {
 function QuestionDocument({ question }: { question: NeoQuestionEntry }) {
   const [open, setOpen] = useState(false);
   if (!question.document) return null;
+  const label = t(question.confirm ? 'question.document' : 'question.report');
   return (
     <>
       <button type="button" class={neoPlainClass} onClick={() => setOpen(true)}>
-        {t('question.document')}
+        {label}
       </button>
-      <Modal isOpen={open} onClose={() => setOpen(false)} title={t('question.document')} size="xl">
+      <Modal isOpen={open} onClose={() => setOpen(false)} title={label} size="xl">
         <pre class="whitespace-pre-wrap break-words text-sm text-fg">{question.document}</pre>
       </Modal>
     </>

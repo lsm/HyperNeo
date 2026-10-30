@@ -28,9 +28,9 @@ same document. The save request must not write its proposed notes file.
 
 Headless Chrome visits the actual built `/neo` at 1280 and 390 pixels, opens Your
 work on the phone width, waits for the real drawer and Markdown rendering, then
-opens View full versions. It waits for the document animation before screenshots;
+opens View full report. It waits for the document animation before screenshots;
 the literal `<pre>` text must exactly equal the persisted document, markup must
-not execute, and answer controls remain usable. This is unattended headless
+not execute, and answer controls remain usable (choice buttons include their A/B/C letter prefixes). This is unattended headless
 verification, not an interactive GUI run. No human answer is sent by the browser.
 
 Evidence is under `$RUN/evidence/`: `neo-home-conflicts.json`,

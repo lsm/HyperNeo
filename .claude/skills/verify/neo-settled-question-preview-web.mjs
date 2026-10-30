@@ -40,8 +40,8 @@ export async function verifySettledPreview(page, fixture, { touch = false, evide
   }
   result.completeText=true;result.closed=true;
   assert.equal(await history.locator('#neo-ref-question-answered-short').getByRole('button',{name:'Read all',exact:true}).count(),0);
-  await use(first.getByRole('button',{name:'View full versions',exact:true}));
-  const versions=page.getByRole('dialog',{name:'View full versions',exact:true});assert.equal(await versions.locator('pre').innerText(),'Literal original versions');
+  await use(first.getByRole('button',{name:'View full report',exact:true}));
+  const versions=page.getByRole('dialog',{name:'View full report',exact:true});assert.equal(await versions.locator('pre').innerText(),'Literal original versions');
   await use(versions.getByRole('button',{name:'Close modal'}));result.documentsSeparate=true;
   await first.scrollIntoViewIfNeeded();await settle();
   await page.screenshot({path:`${evidence}/${touch?'mobile':'desktop'}-preview.png`,scale:'css'});

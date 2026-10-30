@@ -87,6 +87,7 @@ export const en = {
   'question.openSession': 'Open session',
   'question.openSessionTitle': 'Open session: {name}',
   'question.document': 'View full versions',
+  'question.report': 'View full report',
   'question.readAll': 'Read all',
   'question.reply': 'Reply in chat',
   'question.confirm': 'Confirm',
