@@ -95,7 +95,7 @@ describe('Claude inbox driver runtime', () => {
     expect(driver.admit(context)).toEqual({ value: context.from });
     expect(opens).toBe(0);
     const text = 'exact text\n"调查"';
-    const result = await driver.send(sessionId, text, context);
+    const result = await driver.send(sessionId, text, context, 'prompting');
     expect(result).toMatchObject({ ok: true, value: { delivered: false, unconfirmed: true } });
     expect(writes).toHaveLength(1);
     expect(writes[0].text).toBe(text);
@@ -122,7 +122,7 @@ describe('Claude inbox driver runtime', () => {
     ]);
     expect(errors).toEqual([]);
     expect(closes).toBe(1);
-    await expect(driver.send(sessionId, text, context)).rejects.toThrow('closed');
+    await expect(driver.send(sessionId, text, context, 'prompting')).rejects.toThrow('closed');
   });
 
   test.each(['send', 'steer'] as const)(
@@ -170,7 +170,7 @@ describe('Claude inbox driver runtime', () => {
   );
 
   test('receipt facts use separate identities and never become a human approval', async () => {
-    await driver.send(sessionId, 'question', context);
+    await driver.send(sessionId, 'question', context, 'prompting');
     const event: ClaudeInboxEvent = {
       kind: 'receipt',
       sessionId,
@@ -221,7 +221,7 @@ describe('Claude inbox driver runtime', () => {
       })
     );
     deps.liveSessions = async () => [{ sessionId, pid: 456, status: 'busy', owner: 'desktop' }];
-    expect(await driver.send(sessionId, 'task', context)).toMatchObject({
+    expect(await driver.send(sessionId, 'task', context, 'prompting')).toMatchObject({
       ok: true,
       value: { delivered: false, unconfirmed: true },
     });
@@ -239,7 +239,7 @@ describe('Claude inbox driver runtime', () => {
   });
 
   test('revalidates the reply destination when a later reply arrives', async () => {
-    await driver.send(sessionId, 'text', context);
+    await driver.send(sessionId, 'text', context, 'prompting');
     deps.hasSession = () => false;
     emits[0](reply());
     await driver.close();
@@ -257,7 +257,7 @@ describe('Claude inbox driver runtime', () => {
       await pending;
       return { kind: 'rejected', reason: 'mailbox unavailable' };
     };
-    await driver.send(sessionId, 'text', context);
+    await driver.send(sessionId, 'text', context, 'prompting');
     emits[0](reply());
     const closed = driver.close();
     release();

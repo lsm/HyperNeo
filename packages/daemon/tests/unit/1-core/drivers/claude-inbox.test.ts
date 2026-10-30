@@ -8,6 +8,7 @@ import {
   claudeInboxFrame,
   type ClaudeInboxFrameEvent,
   type ClaudeInboxTarget,
+  type ClaudeInboxSubmission,
   openClaudeInbox,
   removeOwnedClaudeInboxPath,
 } from '../../../../src/lib/drivers/claude-inbox';
@@ -62,7 +63,10 @@ const target: ClaudeInboxTarget = {
 describe('claudeInboxFrame', () => {
   test('refuses a missing permission class rather than inventing bypass', () => {
     expect(() =>
-      claudeInboxFrame(target, '/tmp/a.sock', { ...submission(), fromMode: undefined })
+      claudeInboxFrame(target, '/tmp/a.sock', {
+        ...submission(),
+        fromMode: undefined,
+      } as unknown as ClaudeInboxSubmission)
     ).toThrow();
   });
 

@@ -1,9 +1,6 @@
 # Claude UUID delivery follows ownership and receiver permission class
 
-Read the shared SKILL.md setup. These proofs never use the human's homes,
-credentials, Desktop records, sessions or daemon. Run one heavy job at a time.
-
-Use proof-run.sh with a fresh absolute evidence directory for each invocation:
+Read shared SKILL.md for isolated setup, resource checks and cleanup.
 
 ```bash
 bash .claude/skills/verify/proof-run.sh "$EVIDENCE/plain" \
@@ -42,15 +39,9 @@ Observe observed.json, proof.log and run-status.json for every invocation:
   Next, an actual isolated-daemon work.send during an active model turn reaches
   the native model's next request without any held event for that input UUID.
 
-The daemon/peer matrix simulates Desktop, process discovery and the native peer;
-the native proof exercises the actual installed receive-side runtime with a local
-model mock. Neither proves Desktop GUI rendering, GUI approval, real provider
-behavior or a live-session send. Preserve the existing Desktop held-retry journey
-for its one-relay fallback; do not replace it with another retry implementation.
-
-Both helpers close their sockets, servers and owned processes in finally. The
-shared wrapper retains evidence and removes the disposable homes/data, including
-failures. A nonzero wrapper result is a failed proof even if a PASS line appeared.
+The daemon matrix uses synthetic Desktop peers; the native proof uses the installed
+receiver with a local model. Neither proves GUI approval/rendering, real providers
+or live delivery. Preserve the existing held-retry journey's one-relay fallback.
 
 Also run the optional Desktop plugin's native-send compatibility contracts:
 

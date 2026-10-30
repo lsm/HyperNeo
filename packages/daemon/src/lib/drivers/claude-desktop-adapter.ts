@@ -152,7 +152,7 @@ export interface ClaudeDesktopAdapterDeps {
     sessionId: string,
     message: string,
     context: WorkCallContext,
-    fromMode?: ClaudeInboxSubmission['fromMode']
+    fromMode: ClaudeInboxSubmission['fromMode']
   ) => Promise<Result<WorkDelivery>>;
   prepareExecution?: WorkExecutionPreparer;
   sessionsDir: string;

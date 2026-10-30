@@ -35,7 +35,7 @@ export interface ClaudeCodeAdapterDeps {
     sessionId: string,
     text: string,
     context: WorkCallContext,
-    fromMode?: 'bypass' | 'prompting'
+    fromMode: 'bypass' | 'prompting'
   ) => Promise<Result<WorkDelivery>>;
   desktopRecords?: () => Promise<readonly ClaudeDesktopRecord[]>;
   desktopSend?: WorkAdapter['send'];

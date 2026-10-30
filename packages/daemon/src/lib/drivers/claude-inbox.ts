@@ -19,7 +19,7 @@ export interface ClaudeInboxSubmission {
   messageId: string;
   inputId: string;
   text: string;
-  fromMode?: 'bypass' | 'prompting';
+  fromMode: 'bypass' | 'prompting';
 }
 
 export type ClaudeInboxEvent =
