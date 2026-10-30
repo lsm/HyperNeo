@@ -89,9 +89,6 @@ VERIFY_PORT=9311 bun .claude/skills/verify/rpc.ts rpc:providers.create \
 
 ## In-process RPC proofs
 
-For connection metadata/vault status, use `journeys/connections-base.md`; it
-needs no model or external service and owns its isolated daemon resources.
-
 On macOS, run `bash .claude/skills/verify/resource-check.sh` before every heavy
 verification job or dependency install. It checks `memory_pressure` and disk
 space; stop if free memory is below 25% or disk space below 25 GiB. Run only
