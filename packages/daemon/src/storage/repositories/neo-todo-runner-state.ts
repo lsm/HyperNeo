@@ -126,9 +126,10 @@ class NeoTodoRunnerState {
         notify('neo_asks');
       },
       undefined,
-      () => notify('neo_questions')
+      () => notify('neo_questions'),
+      changes
     );
-    this.sessions = new NeoTodoSessionRepository(db);
+    this.sessions = new NeoTodoSessionRepository(db, changes);
     this.policies = neoTodoPolicies(db);
   }
   recompute(

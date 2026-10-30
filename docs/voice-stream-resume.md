@@ -12,14 +12,15 @@ the same connection, but cannot recover it across connections.
 
 | Method | Request | Successful response |
 | --- | --- | --- |
-| `voice.stream.start` | `{encoding:"pcm16", sampleRate:16000, language?:"zh"\|"en"}` | `{streamId, via:"streaming"\|"batch", resumable:boolean, fallback?:string}` |
+| `voice.stream.start` | `{encoding?:"pcm16"\|"opus", sampleRate?:16000, language?:"zh"\|"en"}` | `{streamId, via:"streaming"\|"batch", resumable:boolean, formats:["pcm16","opus"], fallback?:string}` |
 | `voice.stream.chunk` | `{streamId, audioBase64, offset?:number}` | `{ok:true}` |
 | `voice.stream.resume` | `{streamId}` | `{ok:true, receivedBytes:number}` |
 | `voice.stream.stop` | `{streamId}` | `{text:string, via:"streaming"\|"batch"}` |
 | `voice.stream.cancel` | `{streamId}` | `{ok:true}` |
 
-Offsets and receivedBytes count **decoded PCM bytes from the start of the
-recording**, excluding any WAV header and base64 encoding. An omitted offset
+Offsets and receivedBytes count **decoded PCM bytes for PCM16**, excluding WAV
+headers and base64 encoding. For [Opus input](voice-opus.md), they count encoded
+bytes including packet-length prefixes; they do not count decoded samples. An omitted offset
 appends exactly as before. An offset is a nonnegative safe integer. A replayed
 prefix is dropped; only its unseen tail is appended and forwarded to ASR. Fully
 received chunks are acknowledged without another ASR write. Any newly appended

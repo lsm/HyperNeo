@@ -12,10 +12,18 @@ describe('neoPackBriefs', () => {
     expect(neoPackBriefs(NEO_DEFAULT_PACKS)).toEqual([
       {
         id: 'coding',
-        describe: 'Software work in git repositories: pull requests, CI, review and merging.',
+        describe:
+          'Software work in git repositories: pull requests, CI, review and merging. Check pr_approved {url} waits for saved-policy approval; pr_merged waits for merge.',
         guidance: NEO_PACK_CODING_INSTRUCTIONS,
       },
     ]);
+  });
+
+  test('publishes approval checks for both todos and question retirement in the coding guidance', () => {
+    const guidance = neoPackBriefs(NEO_DEFAULT_PACKS)[0].guidance?.replace(/\s+/g, ' ');
+    expect(guidance).toContain('kind:"pr_approved",params:{url:');
+    expect(guidance).toContain('neo.todo.add check or neo.question.ask retireWhen');
+    expect(guidance).toContain('human never passes automatically');
   });
 
   test('keeps only installed packs the enable list names', () => {

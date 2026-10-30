@@ -156,8 +156,9 @@ export function registerVoiceHandlers(
   messageHub.onRequest<{ encoding?: string; sampleRate?: number; language?: string }>(
     'voice.stream.start',
     async (data, context) => {
-      if (data?.encoding !== 'pcm16' || data.sampleRate !== 16_000)
-        throw new Error('Voice streams take pcm16 audio at 16000 Hz');
+      const encoding = data?.encoding ?? 'pcm16';
+      if (!['pcm16', 'opus'].includes(encoding) || (data?.sampleRate ?? 16_000) !== 16_000)
+        throw new Error('Voice streams take pcm16 or opus audio at 16000 Hz');
       const clientId = context?.clientId ?? context?.sessionId ?? 'global';
       const owner = ownerOf(clientId);
       expireIdleVoiceStreams(Date.now());
@@ -176,7 +177,7 @@ export function registerVoiceHandlers(
         const streamId = crypto.randomUUID();
         const started = await VoiceStream.start(streamId, {
           clientId,
-          language: data.language === 'zh' || data.language === 'en' ? data.language : undefined,
+          language: data?.language === 'zh' || data?.language === 'en' ? data?.language : undefined,
           voice: () => settingsManager.getGlobalSettings().voice,
           credentialManager,
           transcribeWav: (audioBase64) =>
@@ -199,6 +200,17 @@ export function registerVoiceHandlers(
           },
         });
         if ('error' in started) throw new Error(started.error);
+        if (encoding === 'opus') {
+          try {
+            await started.stream.enableOpus();
+          } catch (error) {
+            started.stream.close('decoder_failed');
+            throw new MessageHubHandlerError(
+              error instanceof Error ? error.message : String(error),
+              'VOICE_STREAM_DECODER_FAILED'
+            );
+          }
+        }
         const router = messageHub.getRouter?.();
         if (context?.clientId && router && !router.getClientById(context.clientId)) {
           started.stream.close('client_disconnected');
@@ -224,6 +236,7 @@ export function registerVoiceHandlers(
         return {
           streamId,
           via: started.via,
+          formats: ['pcm16', 'opus'],
           resumable: owner.startsWith('device:'),
           ...('fallback' in started && started.fallback ? { fallback: started.fallback } : {}),
         };
@@ -255,15 +268,27 @@ export function registerVoiceHandlers(
       const stream = ownedStream(data?.streamId, context);
       if ((data.audioBase64 ?? '').length > MAX_CHUNK_BASE64_LENGTH)
         throw new Error('Audio data exceeds the 10 MB voice input limit');
-      const tail = voiceChunkTail(
-        Buffer.from(data.audioBase64 ?? '', 'base64'),
-        data.offset,
-        stream.receivedBytes
-      );
-      if (typeof tail === 'string')
-        throw new MessageHubHandlerError('Invalid voice chunk offset: ' + tail, tail);
-      const refused = tail.byteLength || data.offset === undefined ? stream.write(tail) : null;
-      if (refused) throw new Error(refused);
+      const audio = Buffer.from(data.audioBase64 ?? '', 'base64');
+      try {
+        const refused = await stream.writeInput(
+          () => {
+            const tail = voiceChunkTail(audio, data.offset, stream.receivedBytes);
+            if (typeof tail === 'string')
+              throw new MessageHubHandlerError('Invalid voice chunk offset: ' + tail, tail);
+            return tail;
+          },
+          audio.byteLength,
+          data.offset === undefined
+        );
+        if (refused) throw new Error(refused);
+      } catch (error) {
+        if (
+          error instanceof MessageHubHandlerError &&
+          ['VOICE_STREAM_INVALID_OPUS', 'VOICE_STREAM_DECODER_FAILED'].includes(error.code ?? '')
+        )
+          deleteVoiceStream(data.streamId);
+        throw error;
+      }
       return { ok: true };
     }
   );
@@ -274,7 +299,11 @@ export function registerVoiceHandlers(
     const owned = voiceStreams.get(data.streamId);
     if (owned) owned.touchedAt = Date.now();
     if (!('error' in result) || !result.retryable) deleteVoiceStream(data.streamId);
-    if ('error' in result) throw new Error(result.error);
+    if ('error' in result)
+      throw new MessageHubHandlerError(
+        result.error,
+        result.error === 'Incomplete Opus packet' ? 'VOICE_STREAM_INCOMPLETE_OPUS' : 'HANDLER_ERROR'
+      );
     return result;
   });
 

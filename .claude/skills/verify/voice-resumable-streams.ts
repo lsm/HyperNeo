@@ -1,11 +1,17 @@
+import { opusFixture } from '../../../packages/daemon/tests/helpers/opus-fixture.ts';
+import WebSocket, { WebSocketServer } from 'ws';
+import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { openSync, closeSync, writeFileSync, readFileSync, copyFileSync, mkdirSync } from 'node:fs';
+import { openSync, closeSync, writeFileSync, readFileSync, copyFileSync, mkdirSync, existsSync } from 'node:fs';
 import { createServer, connect as connectTcp } from 'node:net';
 import { join } from 'node:path';
-import WebSocket, { WebSocketServer } from 'ws';
 
-const [mode, run] = process.argv.slice(2);
+const [mode, ...args] = process.argv.slice(2);
+const run = args.at(-1)!;
+const binary = args.length > 1 ? args[0] : null;
+const isOpus = mode.startsWith('opus');
+const transcript = (bytes: Buffer, fallback: string) => isOpus ? createHash('sha256').update(bytes).digest('hex') : fallback;
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 for (const part of ['data', 'evidence']) mkdirSync(join(run, part), { recursive: true });
@@ -29,6 +35,11 @@ asr.on('connection', (socket) => {
     if (!binary && JSON.parse(String(data)).type !== 'CloseStream') return;
     if (binary) record.chunks.push(Buffer.from(data as Buffer));
     const pcm = Buffer.concat(record.chunks);
+    if (isOpus) {
+      socket.send(JSON.stringify({ type: 'Results', is_final: !binary, channel: { alternatives: [{ transcript: createHash('sha256').update(pcm).digest('hex') }] } }));
+      if (!binary) socket.close(1000);
+      return;
+    }
     const samples = [];
     for (let i = 0; i < pcm.length; i += 2) samples.push(pcm.readInt16LE(i));
     socket.send(JSON.stringify({ type: 'Results', is_final: !binary, channel: { alternatives: [{ transcript: samples.join(',') }] } }));
@@ -36,13 +47,17 @@ asr.on('connection', (socket) => {
   });
 });
 copyFileSync('.claude/skills/verify/gh-stub.sh', join(run, 'bin/gh'));
+writeFileSync(join(run, 'bin/security'), '#!/bin/sh\nprintf "unexpected-discovery\\n" >> "$HYPERNEO_DATA_DIR/security-attempts"\nexit 1\n', { mode: 0o700 });
 const log = openSync(join(run, 'evidence/daemon.log'), 'w');
-const daemon = spawn(process.execPath, ['packages/cli/main.ts', '--port', String(port), '--host', '127.0.0.1', '--db-path', join(run, 'data/daemon.db')], {
-  env: { ...process.env, HYPERNEO_WORKSPACE_PATH: run }, stdio: ['ignore', log, log],
+const deno = mode.includes('deno');
+observed.daemonRuntime = binary ? 'compiled-bun' : deno ? 'deno' : 'bun';
+const daemon = spawn(binary ?? (deno ? 'deno' : process.execPath), binary ? ['--port', String(port), '--host', '127.0.0.1', '--db-path', join(run, 'data/daemon.db')] : deno ? ['run', '-A', 'main.ts'] : ['packages/cli/main.ts', '--port', String(port), '--host', '127.0.0.1', '--db-path', join(run, 'data/daemon.db')], {
+  cwd: binary ? run : deno ? join(process.cwd(), 'packages/daemon') : process.cwd(),
+  env: { ...process.env, HYPERNEO_WORKSPACE_PATH: run, HYPERNEO_PORT: String(port), HYPERNEO_HOST: '127.0.0.1', DB_PATH: join(run, 'data/daemon.db'), HF_HUB_OFFLINE: '1', TRANSFORMERS_OFFLINE: '1' }, stdio: ['ignore', log, log],
 });
 closeSync(log);
 writeFileSync(join(run, 'daemon.pid'), String(daemon.pid));
-const exited = new Promise<void>((done) => daemon.once('exit', () => done()));
+const exited = new Promise<{ code: number | null; signal: string | null }>((done) => daemon.once('exit', (code, signal) => done({ code, signal })));
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
 async function connect(credential?: string) {
   const url = `ws://127.0.0.1:${port}/ws`;
@@ -95,7 +110,7 @@ try {
   await first.call('voice.stream.chunk', { streamId: legacy.streamId, audioBase64: pcm([7, 8]) });
   await first.call('voice.stream.chunk', { streamId: legacy.streamId, audioBase64: pcm([9]) });
   observed.legacy = await first.call('voice.stream.stop', { streamId: legacy.streamId });
-  assert.deepEqual(observed.legacy, { text: '7,8,9', via: 'streaming' });
+  assert.deepEqual(observed.legacy, { text: transcript(Buffer.from(new Int16Array([7, 8, 9]).buffer), '7,8,9'), via: 'streaming' });
   const code = await first.call('operation.invoke', { name: 'device.pair.create', input: { kind: 'human', name: 'Synthetic phone' } });
   assert.equal(typeof code.code, 'string');
   syntheticSecrets.push(String(code.code));
@@ -107,23 +122,41 @@ try {
   first = await connect(credential);
   assert.equal((await first.call('operation.invoke', { name: 'device.pair.pending', input: {} })).ok, true);
   observed.pairedIdentityConfirmed = true;
-  const started = await first.call('voice.stream.start', { encoding: 'pcm16', sampleRate: 16_000 });
+  const fixture = isOpus ? await opusFixture() : null;
+  const started = await first.call('voice.stream.start', { encoding: fixture ? 'opus' : 'pcm16', sampleRate: 16_000 });
   observed.started = started;
-  await first.call('voice.stream.chunk', { streamId: started.streamId, audioBase64: pcm([1, 2, 3]), offset: 0 });
+  assert.deepEqual(started.formats, ['pcm16', 'opus']);
+  const cut = fixture ? fixture.boundaries[1] + 1 : 6;
+  const initial = fixture ? fixture.encoded.subarray(0, cut).toString('base64') : pcm([1, 2, 3]);
+  await first.call('voice.stream.chunk', { streamId: started.streamId, audioBase64: initial, offset: 0 });
   observed.disconnectCode = await first.drop();
   assert.equal(observed.disconnectCode, 1006);
   let second = await connect(credential);
   observed.resume = await second.call('voice.stream.resume', { streamId: started.streamId });
-  assert.deepEqual(observed.resume, { ok: true, receivedBytes: 6 });
+  assert.deepEqual(observed.resume, { ok: true, receivedBytes: cut });
   assert.equal(started.resumable, true);
-  await second.call('voice.stream.chunk', { streamId: started.streamId, audioBase64: pcm([1, 2, 3]), offset: 0 });
-  await second.call('voice.stream.chunk', { streamId: started.streamId, audioBase64: pcm([3, 4, 5]), offset: 4 });
+  await second.call('voice.stream.chunk', { streamId: started.streamId, audioBase64: initial, offset: 0 });
+  await second.call('voice.stream.chunk', { streamId: started.streamId, audioBase64: fixture ? fixture.encoded.subarray(cut - 1).toString('base64') : pcm([3, 4, 5]), offset: fixture ? cut - 1 : 4 });
   observed.stopped = await second.call('voice.stream.stop', { streamId: started.streamId });
-  assert.deepEqual(observed.stopped, { text: '1,2,3,4,5', via: 'streaming' });
-  assert.deepEqual(Buffer.concat(records[1].chunks), Buffer.from(new Int16Array([1, 2, 3, 4, 5]).buffer));
+  const expectedPcm = fixture?.pcm ?? Buffer.from(new Int16Array([1, 2, 3, 4, 5]).buffer);
+  assert.deepEqual(observed.stopped, { text: transcript(expectedPcm, '1,2,3,4,5'), via: 'streaming' });
+  assert.deepEqual(Buffer.concat(records[1].chunks), expectedPcm);
+  if (fixture) observed.bandwidth = { encodedBytes: fixture.encoded.length, decodedBytes: expectedPcm.length, encodedBytesPerMinute: fixture.encoded.length * 60, decodedSha256: createHash('sha256').update(expectedPcm).digest('hex') };
   observed.finalEvents = second.events.filter((event) => event.isFinal);
   assert.equal((observed.finalEvents as unknown[]).length, 1);
   observed.legacyReconnects = 0;
+  if (fixture) {
+    const malformed = await second.call('voice.stream.start', { encoding: 'opus' });
+    await assert.rejects(() => second.call('voice.stream.chunk', { streamId: malformed.streamId, audioBase64: Buffer.from([0, 0]).toString('base64') }), (error: Error & { code?: string }) => error.code === 'VOICE_STREAM_INVALID_OPUS');
+    await assert.rejects(() => second.call('voice.stream.resume', { streamId: malformed.streamId }), (error: Error & { code?: string }) => error.code === 'VOICE_STREAM_NOT_FOUND');
+    const partial = await second.call('voice.stream.start', { encoding: 'opus' });
+    await second.call('voice.stream.chunk', { streamId: partial.streamId, audioBase64: fixture.encoded.subarray(0, 1).toString('base64'), offset: 0 });
+    await assert.rejects(() => second.call('voice.stream.stop', { streamId: partial.streamId }), (error: Error & { code?: string }) => error.code === 'VOICE_STREAM_INCOMPLETE_OPUS');
+    assert.equal((await second.call('voice.stream.resume', { streamId: partial.streamId })).receivedBytes, 1);
+    await second.call('voice.stream.chunk', { streamId: partial.streamId, audioBase64: fixture.encoded.subarray(1).toString('base64'), offset: 1 });
+    assert.deepEqual(await second.call('voice.stream.stop', { streamId: partial.streamId }), { text: transcript(expectedPcm, ''), via: 'streaming' });
+    observed.invalidAndIncompleteOpus = 'refused, retired or completed after remaining bytes';
+  }
   for (let index = 0; index < 9; index++) {
     const legacyPhone = await connect(credential);
     const recording = await legacyPhone.call('voice.stream.start', { encoding: 'pcm16', sampleRate: 16_000 });
@@ -131,7 +164,7 @@ try {
     if (index < 8) await legacyPhone.drop();
     else {
       observed.legacyReconnectFinal = await legacyPhone.call('voice.stream.stop', { streamId: recording.streamId });
-      assert.deepEqual(observed.legacyReconnectFinal, { text: '8', via: 'streaming' });
+      assert.deepEqual(observed.legacyReconnectFinal, { text: transcript(Buffer.from(new Int16Array([8]).buffer), '8'), via: 'streaming' });
     }
     observed.legacyReconnects = index + 1;
   }
@@ -155,9 +188,9 @@ try {
   await assert.rejects(() => second.call('voice.stream.resume', { streamId: cancelled.streamId }), (error: Error & { code?: string }) => error.code === 'VOICE_STREAM_NOT_FOUND');
   assert(records.every((record) => record.closed), 'replacement left an ASR connection open');
   observed.detachedRelaysRetired = true;
-  if (mode !== 'quick') {
-    const abandoned = await second.call('voice.stream.start', { encoding: 'pcm16', sampleRate: 16_000 });
-    await second.call('voice.stream.chunk', { streamId: abandoned.streamId, audioBase64: pcm([42]), offset: 0 });
+  if (!mode.endsWith('quick')) {
+    const abandoned = await second.call('voice.stream.start', { encoding: fixture ? 'opus' : 'pcm16', sampleRate: 16_000 });
+    await second.call('voice.stream.chunk', { streamId: abandoned.streamId, audioBase64: fixture ? initial : pcm([42]), offset: 0 });
     const disconnectedAt = Date.now();
     await second.drop();
     await sleep(119_000);
@@ -173,7 +206,7 @@ try {
       return error.code === 'VOICE_STREAM_NOT_FOUND';
     });
   }
-  observed.passed = true;
+  observed.protocolPassed = true;
 } catch (error) {
   observed.error = error instanceof Error ? { message: error.message, code: (error as Error & { code?: string }).code } : String(error);
   throw error;
@@ -183,14 +216,20 @@ try {
   await new Promise<void>((done) => asr.close(() => done()));
   daemon.kill('SIGTERM');
   const shutdownDeadline = setTimeout(() => daemon.kill('SIGKILL'), 15_000);
-  try { await exited; } finally { clearTimeout(shutdownDeadline); }
-  observed.daemonExitCode = daemon.exitCode;
+  const status = await exited.finally(() => clearTimeout(shutdownDeadline));
+  observed.daemonExitCode = status.code;
+  observed.daemonExitSignal = status.signal;
   const logText = readFileSync(join(run, 'evidence/daemon.log'), 'utf8');
   observed.syntheticSecretsAbsent = syntheticSecrets.every((secret) => !logText.includes(secret));
+  observed.credentialDiscoveryAbsent = !existsSync(join(run, 'data/security-attempts'));
+  observed.databaseClosedErrorAbsent = !/database (?:is|has been) closed/i.test(logText);
+  observed.passed = observed.protocolPassed === true && status.code === 0 && status.signal === null && observed.syntheticSecretsAbsent === true && observed.credentialDiscoveryAbsent === true && observed.databaseClosedErrorAbsent === true;
   writeFileSync(join(run, 'evidence/daemon.log'), syntheticSecrets.reduce((text, secret) => text.replaceAll(secret, '[synthetic secret redacted]'), logText));
   writeFileSync(join(run, 'evidence/voice-resumable.json'), JSON.stringify(observed, null, 2));
   assert(observed.syntheticSecretsAbsent, 'synthetic pairing secret appeared in evidence');
-  assert.equal(daemon.exitCode, 0, 'isolated daemon did not shut down cleanly');
+  assert.equal(observed.daemonExitCode, 0, 'isolated daemon did not shut down cleanly');
+  assert.equal(observed.daemonExitSignal, null, 'isolated daemon exited by signal');
+  assert(observed.credentialDiscoveryAbsent, 'isolated daemon attempted credential discovery');
   assert(!/database (?:is|has been) closed/i.test(readFileSync(join(run, 'evidence/daemon.log'), 'utf8')), 'closed database during proof shutdown');
 }
 console.log(JSON.stringify(observed));

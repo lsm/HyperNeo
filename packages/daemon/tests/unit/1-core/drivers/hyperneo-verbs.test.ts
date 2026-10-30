@@ -9,7 +9,9 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+import { vi } from 'vitest';
+import { workerWorkLocations } from '../../../../src/lib/work-locations';
 import { execFileSync } from 'node:child_process';
 import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
 import { sessionReplyCall } from '../../../../src/lib/messaging/session-reply';
@@ -91,6 +93,7 @@ describe('hyperneo adapter send and status', () => {
   beforeEach(() => {
     configureWorkerSandbox(() => 'always');
     source = mkdtempSync(join(tmpdir(), 'hn-prepared-source-'));
+    vi.stubEnv('HYPERNEO_DATA_DIR', join(source, 'data'));
     execFileSync('git', ['init', source]);
     projectBase = join(source, 'project-storage');
     handed = [];
@@ -141,6 +144,7 @@ describe('hyperneo adapter send and status', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     configureWorkerSandbox(() => 'off');
     db.close();
     rmSync(source, { recursive: true, force: true });
@@ -302,6 +306,16 @@ describe('hyperneo adapter send and status', () => {
         JSON.parse(readFileSync(join(directory, '.claude/settings.local.json'), 'utf8')).sandbox
           .enabled
       ).toBe(true);
+      const ownership = join(
+        source,
+        'data/work/scratch-owners',
+        `${basename(workerWorkLocations(directory).scratch)}.json`
+      );
+      expect(JSON.parse(readFileSync(ownership, 'utf8'))).toMatchObject({
+        kind: 'hyperneo-daemon-scratch-v1',
+        pid: process.pid,
+        root: directory,
+      });
       expect(existsSync(projectBase)).toBe(false);
       expect(handed).toHaveLength(1);
       expect(released).toBe(false);

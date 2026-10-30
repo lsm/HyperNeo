@@ -139,8 +139,8 @@ class NeoAskSettlement {
     db: Database,
     private readonly changes: Changes = undefined
   ) {
-    this.store = new NeoAskTodoRepository(db);
-    this.sessions = new NeoTodoSessionRepository(db);
+    this.store = new NeoAskTodoRepository(db, undefined, undefined, undefined, changes);
+    this.sessions = new NeoTodoSessionRepository(db, changes);
   }
   snapshot(id: string) {
     return snapshot(this.store, id);
