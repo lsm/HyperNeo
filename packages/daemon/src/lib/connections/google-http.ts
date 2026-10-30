@@ -5,6 +5,7 @@ import type { createGoogleTokenAccess } from './token-access.ts';
 type Token = ReturnType<typeof createGoogleTokenAccess>['token'];
 type Grant = Extract<Awaited<ReturnType<Token>>, { ok: true }>;
 export type GoogleReply = { ok: true; data: unknown } | { ok: false; reason: string };
+type Write = { method: 'POST' | 'PUT'; body: string };
 type Reply = { response: Response; token: string };
 const denied = (reason: string) => ({ ok: false as const, reason });
 function admit(grant: Awaited<ReturnType<Token>>, scope: string) {
@@ -47,27 +48,43 @@ export function createGoogleHttp(deps: {
   apiTimeoutMs?: number;
 }) {
   const active = new Map<string, Set<AbortController>>();
-  const request = async (grant: Grant, url: string, signal: AbortSignal): Promise<Reply> => ({
+  const request = async (
+    grant: Grant,
+    url: string,
+    signal: AbortSignal,
+    payload?: Write
+  ): Promise<Reply> => ({
     response: await (deps.fetchImpl ?? fetch)(url, {
-      headers: { Authorization: `Bearer ${grant.accessToken}` },
+      ...payload,
+      headers: {
+        Authorization: `Bearer ${grant.accessToken}`,
+        ...(payload ? { 'Content-Type': 'application/json' } : {}),
+      },
       redirect: 'error',
       signal,
     }),
     token: grant.accessToken,
   });
   const run = (superpipe({})('google-read-request') as PipelineAPI)
-    .input(['id', 'url', 'scope', 'signal'])
+    .input(['id', 'url', 'scope', 'signal', 'payload'])
     .pipe((id: string) => deps.token(id), 'id', 'grant')
     .pipe(admit, ['grant', 'scope'], 'result:result')
-    .pipe(request, ['result', 'url', 'signal'], 'reply')
+    .pipe(request, ['result', 'url', 'signal', 'payload'], 'reply')
     .pipe(
-      async (reply: Reply, id: string, scope: string, url: string, signal: AbortSignal) => {
+      async (
+        reply: Reply,
+        id: string,
+        scope: string,
+        url: string,
+        signal: AbortSignal,
+        payload?: Write
+      ) => {
         if (reply.response.status !== 401) return { value: reply };
         await reply.response.body?.cancel();
         const next = admit(await deps.token(id, true), scope);
-        return 'reason' in next ? next : { value: await request(next.value, url, signal) };
+        return 'reason' in next ? next : { value: await request(next.value, url, signal, payload) };
       },
-      ['reply', 'id', 'scope', 'url', 'signal'],
+      ['reply', 'id', 'scope', 'url', 'signal', 'payload'],
       'result:result'
     )
     .pipe(finish, 'result', 'result')
@@ -75,27 +92,34 @@ export function createGoogleHttp(deps: {
     id: string,
     url: string,
     scope: string,
-    signal: AbortSignal
+    signal: AbortSignal,
+    payload?: Write
   ) => Promise<GoogleReply>;
+  const perform = async (
+    id: string,
+    url: string,
+    scope: string,
+    payload?: Write
+  ): Promise<GoogleReply> => {
+    const controller = new AbortController();
+    const requests = active.get(id) ?? new Set<AbortController>();
+    active.set(id, requests);
+    requests.add(controller);
+    const timeout = AbortSignal.timeout(deps.apiTimeoutMs ?? 10000);
+    const signal = AbortSignal.any([controller.signal, deps.closed, timeout]);
+    try {
+      return await run(id, url, scope, signal, payload);
+    } catch {
+      return denied(timeout.aborted ? 'timeout' : signal.aborted ? 'cancelled' : 'request_failed');
+    } finally {
+      requests.delete(controller);
+      if (!requests.size) active.delete(id);
+    }
+  };
   return {
-    async get(id: string, url: string, scope: string): Promise<GoogleReply> {
-      const controller = new AbortController();
-      const requests = active.get(id) ?? new Set<AbortController>();
-      active.set(id, requests);
-      requests.add(controller);
-      const timeout = AbortSignal.timeout(deps.apiTimeoutMs ?? 10000);
-      const signal = AbortSignal.any([controller.signal, deps.closed, timeout]);
-      try {
-        return await run(id, url, scope, signal);
-      } catch {
-        return denied(
-          timeout.aborted ? 'timeout' : signal.aborted ? 'cancelled' : 'request_failed'
-        );
-      } finally {
-        requests.delete(controller);
-        if (!requests.size) active.delete(id);
-      }
-    },
+    get: (id: string, url: string, scope: string) => perform(id, url, scope),
+    write: (id: string, url: string, scope: string, method: Write['method'], body: string) =>
+      perform(id, url, scope, { method, body }),
     cancel(id: string) {
       for (const request of active.get(id) ?? []) request.abort();
     },
