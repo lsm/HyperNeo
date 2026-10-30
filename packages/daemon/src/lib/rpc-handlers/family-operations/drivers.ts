@@ -305,13 +305,19 @@ export async function ownClaudeSessions(
 function claudeCodeAdapters(
   searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>,
   ownedSessions: () => ReadonlySet<string>,
-  inbox: FamilyOperationContext['claudeInbox']
+  inbox: FamilyOperationContext['claudeInbox'],
+  desktop: WorkAdapter | undefined
 ): WorkAdapter[] {
   if (!existsSync(join(homedir(), '.claude', 'projects'))) return [];
   const cache: ClaudeRecordCache = new Map();
   return [
     createClaudeCodeAdapter({
       sendInbox: inbox?.send,
+      desktopSend: desktop?.send,
+      desktopRecords: async () =>
+        existsSync(CLAUDE_DESKTOP_SESSIONS)
+          ? readClaudeDesktopRecords(CLAUDE_DESKTOP_SESSIONS, cache)
+          : [],
       projectsDir: join(homedir(), '.claude', 'projects'),
       liveSessions: () => readLiveClaudeSessions(spawnProcess),
       ownedSessions,
@@ -585,6 +591,13 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     }).chats;
   };
   const ownChats = (text: string) => searchChats(text, ['message', 'task']);
+  const desktop = claudeDesktopAdapters(
+    searchChats,
+    prepareExecution,
+    context.claudeInbox,
+    context.claudeDesktopMods,
+    () => neoWorkerPermissionMode(context.deps.db.getGlobalSettings().neo)
+  );
   const adapters = [
     createHyperneoAdapter({
       readTurnEnds: (sessionId, since) =>
@@ -627,14 +640,13 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       searchChats,
       prepareExecution
     ),
-    ...claudeDesktopAdapters(
+    ...desktop,
+    ...claudeCodeAdapters(
       searchChats,
-      prepareExecution,
+      () => readHyperneoSdkSessions(db()),
       context.claudeInbox,
-      context.claudeDesktopMods,
-      () => neoWorkerPermissionMode(context.deps.db.getGlobalSettings().neo)
+      desktop[0]
     ),
-    ...claudeCodeAdapters(searchChats, () => readHyperneoSdkSessions(db()), context.claudeInbox),
     ...acpAgentAdapters(
       () => new Set(context.deps.db.listAcpSessionIds().map((session) => session.acpSessionId)),
       context

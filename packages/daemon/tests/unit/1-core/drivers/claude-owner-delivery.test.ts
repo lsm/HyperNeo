@@ -204,17 +204,21 @@ describe('createClaudeCodeAdapter owner-aware delivery', () => {
     expect(readFileSync(f.transcript, 'utf8')).toContain('CLI owner marker');
   });
 
-  test('unknown CLI mode is a specific refusal without writing', async () => {
-    const f = fixture();
-    f.emptyCommand();
-    expect(await f.code.send!(f.ref, 'Never guess mode', context)).toMatchObject({
-      ok: false,
-      reason: 'unsupported',
-      detail: expect.stringMatching(/receiver.*mode.*unknown/i),
-    });
-    expect(f.frames).toEqual([]);
-    expect(f.spawns).toEqual([]);
-  });
+  test.each([false, true])(
+    'unknown CLI mode is a specific refusal without writing (registered: %s)',
+    async (registered) => {
+      const f = fixture(registered);
+      if (registered) f.live([{ sessionId: f.id, owner: 'cli', pid: 1234, status: 'busy' }]);
+      f.emptyCommand();
+      expect(await f.code.send!(f.ref, 'Never guess mode', context)).toMatchObject({
+        ok: false,
+        reason: 'unsupported',
+        detail: expect.stringMatching(/receiver.*mode.*unknown/i),
+      });
+      expect(f.frames).toEqual([]);
+      expect(f.spawns).toEqual([]);
+    }
+  );
 
   test.each(['zero', 'duplicate', 'unknown', 'wrong-id'])(
     '%s ownership cannot send or resume',

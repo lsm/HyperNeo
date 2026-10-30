@@ -133,8 +133,12 @@ describe('Claude inbox driver runtime', () => {
         searchChats: async () => [],
         desktopSessions: async () => new Set(),
         sendInbox: driver.send,
+        liveSessions: deps.liveSessions,
+        listProcesses: async () => [
+          { pid: 456, ppid: 1, elapsedSeconds: 1, command: 'claude --permission-mode auto' },
+        ],
       });
-      expect(adapter.capabilities).toEqual(['find', 'send', 'steer']);
+      expect(adapter.capabilities).toEqual(['find', 'status', 'send', 'steer']);
       expect(adapter.queue).toBeUndefined();
       expect(adapter.withdraw).toBeUndefined();
       expect(adapter.stop).toBeUndefined();

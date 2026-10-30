@@ -22,6 +22,7 @@ function record(id: string, fields: Record<string, unknown> = {}) {
     title: id,
     isArchived: false,
     lastActivityAt: 0,
+    permissionMode: 'auto',
     ...fields,
   };
 }
@@ -92,6 +93,15 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
       projectsDir: join(dir, 'projects'),
       machine: 'laptop',
       liveSessions: async () => live,
+      listProcesses: async () =>
+        live
+          .filter((session) => session.owner === 'cli')
+          .map((session) => ({
+            pid: session.pid!,
+            ppid: 1,
+            elapsedSeconds: 1,
+            command: 'claude --permission-mode auto',
+          })),
       folderExists: () => true,
       makeFolder: () => {},
       homeDir: '/Users/test',

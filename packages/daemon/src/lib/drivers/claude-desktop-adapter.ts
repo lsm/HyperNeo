@@ -8,7 +8,11 @@ import {
   readClaudeWorkerSandbox,
 } from './claude-native-writes.ts';
 import { collectDescendantPids, listProcesses, type ProcessLister } from '../process-watchdog.ts';
-import { readClaudeReceiverMode } from './claude-receiver-mode.ts';
+import {
+  readClaudeReceiverMode,
+  readClaudeSenderMode,
+  claudeReceiverClass,
+} from './claude-receiver-mode.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
 import type { createClaudeDesktopModsDriver } from './claude-desktop-mods-driver.ts';
@@ -1122,19 +1126,21 @@ async function sendOwnedClaudeMessage(
   const path = await locateClaudeTranscript(deps.projectsDir, record);
   const before = await transcriptSize(path);
   const receiver = desktop ? await readCurrentDesktopReceiver(record, deps) : record;
+  const desktopMode = claudeReceiverClass(receiver?.permissionMode);
+  const fromMode = desktop
+    ? 'value' in desktopMode
+      ? desktopMode.value
+      : desktopMode.reason
+    : await readClaudeSenderMode(
+        record.cliSessionId,
+        liveSessions,
+        deps.listProcesses ?? listProcesses
+      );
+  if (typeof fromMode !== 'string') return fromMode;
   const direct =
     deps.sendInbox && context && receiver
       ? await deps
-          .sendInbox(
-            record.cliSessionId,
-            message,
-            context,
-            desktop
-              ? receiver.permissionMode === 'bypassPermissions'
-                ? 'bypass'
-                : 'prompting'
-              : undefined
-          )
+          .sendInbox(record.cliSessionId, message, context, fromMode)
           .catch((error: unknown) =>
             reject('not_delivered', error instanceof Error ? error.message : String(error))
           )
