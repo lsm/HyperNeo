@@ -48,3 +48,16 @@ After the shared resource check, run from packages/daemon:
 ```sh
 bunx vitest run --config vitest.config.ts tests/unit/1-core/operations/{coding-pr-approved,neo-packs,neo-file-packs,neo-coding-todo-prs,neo-coding-todo-policy,neo-coding-review,neo-coding-merge-gates,neo-question-retire-when,neo-check-only-reminders}.test.ts
 ```
+
+Bot identity must agree with the existing manual gate, ledger state and daemon
+admission gate: case and GitHub's trailing [bot] marker denote the same configured
+reviewer; a different login never qualifies. Run the actual recorded manual
+admission RPC with that alias through the shared wrapper as well:
+
+```sh
+bash .claude/skills/verify/proof-run.sh /absolute/fresh/alias-evidence-directory .claude/skills/verify/coding-merge-admission.ts --bot-alias
+```
+
+The fixture uses fixture-bot in saved policy and fixture-bot[bot] on the paginated
+review. A passing gate must return its recorded SHA-pinned command and execute no
+merge. Keep its observed.json and gh.jsonl along with the approval-check proof.

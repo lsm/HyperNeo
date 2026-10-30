@@ -7,7 +7,7 @@ import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/pac
 import { CodingAssignmentsRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/assignments.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 
-const run = resolve(process.argv[2]);
+const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -18,7 +18,8 @@ const url = 'https://github.com/synthetic/admission/pull/7', head = 'a'.repeat(4
 const author = { adapter: 'fixture', id: 'author' }, ref = { adapter: 'fixture', id: 'verifier' };
 const actor = { kind: 'agent' as const, id: ref.id, model: 'gpt-6', harness: ref.adapter };
 const pr = { url, body: 'Agent: gpt-6-sol (effort: high) via fixture', headRefOid: head, state: 'OPEN', isDraft: false, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', author: { login: 'author' }, changedFiles: 1, files: [{ path: 'src/change.ts' }], labels: [] };
-const reviews = [{ state: 'APPROVED', commit_id: head, user: { login: 'fixture-bot', type: 'Bot' }, html_url: `${url}#review-1` }];
+const botLogin = process.argv.includes('--bot-alias') ? 'fixture-bot[bot]' : 'fixture-bot';
+const reviews = [{ state: 'APPROVED', commit_id: head, user: { login: botLogin, type: 'Bot' }, html_url: `${url}#review-1` }];
 const checks = [{ bucket: 'pass', name: 'Required CI', link: `${url}/checks` }];
 const threads = { headOid: head, unresolvedThreadUrls: [] as string[] };
 const publish = (extra = {}) => writeFileSync(join(run, 'fixture.json'), JSON.stringify({ pr, reviews: [reviews], checks, threads, ...extra }));

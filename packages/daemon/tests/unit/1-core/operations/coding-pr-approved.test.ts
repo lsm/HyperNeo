@@ -347,3 +347,75 @@ test.each(['COMMENTED', 'PENDING'])('%s alone is not approval', async (state) =>
   r.state.pages = [[review(state)]];
   expect(await r.check()).toEqual({ done: false, evidence: null });
 });
+
+import { Node, codingPrState } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
+import { runCodingReview } from '../../../../src/lib/neo/packs/coding/review.ts';
+import { decideCodingDaemonMerge } from '../../../../src/lib/neo/packs/coding/daemon-merge-gates.ts';
+
+test.each(
+  [
+    { configured: 'review-bot', author: 'REVIEW-BOT[bot]', passes: true },
+    { configured: 'Review-Bot[bot]', author: 'review-bot', passes: true },
+    { configured: 'review-bot', author: 'different-bot[bot]', passes: false },
+  ].flatMap((row) => ['manual', 'ledger', 'daemon'].map((surface) => ({ ...row, surface })))
+)(
+  '$surface shares the approval check bot login matcher ($configured, $author)',
+  async ({ configured, author, passes, surface }) => {
+    const policy: CodingMergePolicy = {
+      mergeBy: 'daemon',
+      mergePolicy: 'review_bot',
+      reviewBot: configured,
+      humanSignoff: [],
+    };
+    const r = reader(policy);
+    r.state.pages = [[review('APPROVED', headA, author)]];
+    expect((await r.check()).done).toBe(passes);
+    const reviews = [{ state: 'APPROVED', commit: { oid: headA }, author: { login: author } }];
+    if (surface === 'manual') {
+      const result = await runCodingReview(
+        { reviewBot: configured, head: headA, reviews },
+        {
+          startReviewer: async () => {
+            throw new Error('Configured bot must not dispatch a reviewer');
+          },
+        }
+      );
+      expect(result).toMatchObject({ kind: 'bot', approved: passes });
+    } else if (surface === 'ledger') {
+      const pr = Node.parse({
+        number: 78,
+        title: 'Approval',
+        headRefName: 'approval',
+        headRefOid: headA,
+        state: 'OPEN',
+        isDraft: false,
+        mergeable: 'MERGEABLE',
+        reviewDecision: null,
+        closedAt: null,
+        reviews: { nodes: reviews },
+        files: { nodes: [], pageInfo: { hasNextPage: false } },
+        labels: { nodes: [], pageInfo: { hasNextPage: false } },
+        commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] },
+      });
+      expect(codingPrState(pr, true, policy)).toBe(passes ? 'approved_green' : 'waiting_review');
+    } else {
+      expect(
+        decideCodingDaemonMerge(
+          {
+            ok: true,
+            head: headA,
+            state: 'OPEN',
+            draft: false,
+            mergeable: 'MERGEABLE',
+            requiredCi: { head: headA, green: true },
+            threads: { head: headA, unresolved: 0 },
+            files: [],
+            labels: [],
+            reviews: [{ head: headA, login: author, state: 'APPROVED' }],
+          },
+          policy
+        ).kind
+      ).toBe(passes ? 'merge' : 'skip');
+    }
+  }
+);
