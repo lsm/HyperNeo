@@ -14,6 +14,7 @@ type Flow = {
   client: Client;
   login?: Login;
   cancelled: boolean;
+  deniedAccounts: Set<string>;
   view: View;
 };
 type Admitted = { flow: Flow; outcome: Extract<Outcome, { ok: true }> };
@@ -29,6 +30,8 @@ function admit(
   if (closed || flow.cancelled || flow !== active)
     return { reason: { state: 'failed', reason: 'cancelled' } };
   if (!outcome.ok) return { reason: { state: 'failed', reason: outcome.reason } };
+  if (flow.deniedAccounts.has(outcome.accountId))
+    return { reason: { state: 'failed', reason: 'cancelled' } };
   if (flow.accountId && flow.accountId !== outcome.accountId)
     return { reason: { state: 'failed', reason: 'account_mismatch' } };
   return { value: { flow, outcome } };
@@ -156,6 +159,7 @@ export function createConnectionLifecycle(deps: {
           client,
           login,
           cancelled: false,
+          deniedAccounts: new Set(),
           view: { state: 'pending', loginId: id },
         };
         current = flow;
@@ -193,6 +197,7 @@ export function createConnectionLifecycle(deps: {
       serial(async () => {
         const connection = (await deps.read()).find((record) => record.id === connectionId);
         if (!connection) return { ok: false, reason: 'unknown_connection' };
+        current?.deniedAccounts.add(connection.accountId);
         if (current?.connectionId === connectionId) cancel();
         return disconnect(connection, deps.save, deps.vault);
       }),
