@@ -308,7 +308,6 @@ function claudeCodeAdapters(
   inbox: FamilyOperationContext['claudeInbox'],
   desktop: WorkAdapter | undefined
 ): WorkAdapter[] {
-  if (!existsSync(join(homedir(), '.claude', 'projects'))) return [];
   const cache: ClaudeRecordCache = new Map();
   return [
     createClaudeCodeAdapter({
@@ -342,7 +341,6 @@ function claudeDesktopAdapters(
   permissionMode: () => string
 ): WorkAdapter[] {
   const sessionsDir = CLAUDE_DESKTOP_SESSIONS;
-  if (!existsSync(sessionsDir)) return [];
   const deps: ClaudeDesktopAdapterDeps = {
     mods: mods?.ready,
     sessionsDir,
