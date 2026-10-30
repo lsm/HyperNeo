@@ -33,6 +33,7 @@ const fake = await createHttpWsServer({ hostname: '127.0.0.1', port: 0, fetch: a
     return Response.json({ id: 'thread-one', historyId: mode === 'changed' ? 'revision-two' : 'revision-one', messages: Array.from({ length: 3 }, (_, index) => ({ id: `${account}-message-${index}` })) });
   }
   if (url.pathname.includes('/attachments/')) {
+    if (mode === 'external-body' && url.pathname.endsWith('/body-one')) return Response.json({ size: 12000, data: Buffer.from('x'.repeat(12000)).toString('base64url') });
     if (mode === 'attachment-error') return new Response('synthetic-sensitive-detail', { status: 429 });
     return Response.json({ size: mode === 'page-budget' ? 8192 : 3, data: (mode === 'page-budget' ? Buffer.alloc(8192) : Buffer.from([0, 1, 255])).toString('base64url') });
   }
@@ -40,7 +41,7 @@ const fake = await createHttpWsServer({ hostname: '127.0.0.1', port: 0, fetch: a
   const full = url.searchParams.get('format') === 'full';
   const text = mode === 'body-limit' || mode === 'page-budget' ? 'x'.repeat(10000) : 'Hello 你好';
   const data = mode === 'latin' ? Buffer.from([99, 97, 102, 233]) : Buffer.from(text);
-  const textPart = { mimeType: 'text/plain', headers: [{ name: 'Content-Type', value: mode === 'latin' ? 'text/plain; charset=iso-8859-1' : 'text/plain; charset=utf-8' }], body: { data: data.toString('base64url'), size: data.length } };
+  const textPart = { mimeType: 'text/plain', headers: [{ name: 'Content-Type', value: mode === 'latin' ? 'text/plain; charset=iso-8859-1' : 'text/plain; charset=utf-8' }], body: mode === 'external-body' ? { attachmentId: 'body-one', size: 12000 } : { data: data.toString('base64url'), size: data.length } };
   const files = Array.from({ length: mode === 'attachment-count' ? 5 : mode === 'page-budget' ? 2 : 1 }, (_, index) => ({ mimeType: 'application/octet-stream', filename: `fixture-${index}.bin`, body: { attachmentId: `attachment-${index}`, size: mode === 'attachment-limit' ? 100000 : mode === 'page-budget' ? 8192 : 3 } }));
   const parts = mode === 'part-count' ? Array.from({ length: 40 }, () => textPart) : [textPart, ...files];
   return Response.json({ id: url.pathname.split('/').at(-1), threadId: 'thread-one', snippet: 'Preview', payload: { mimeType: 'multipart/mixed', headers: [{ name: 'Subject', value: `Fixture ${account}` }, { name: 'From', value: 'sender@example.test' }, { name: 'To', value: `${account}@example.test` }], ...(full ? { parts } : {}) } });
@@ -89,6 +90,7 @@ try {
   mode = 'normal'; result = await read({ body: true, attachments: true });
   assert.equal(result.items[0].bodyParts[0].text, 'Hello 你好'); assert.equal(result.items[0].attachments[0].data, Buffer.from([0, 1, 255]).toString('base64url'));
   assert.equal((await read({ connectionId: 'two' })).items[0].subject, 'Fixture two');
+  mode = 'external-body'; result = await read({ body: true }); assert.equal(result.items[0].bodyParts[0].text.length, 4096); assert.equal(result.items[0].truncated, true);
   mode = 'latin'; assert.equal((await read({ body: true })).items[0].bodyParts[0].text, 'café');
   mode = 'body-limit'; result = await read({ body: true }); assert.equal(result.items[0].bodyParts[0].text.length, 4096); assert.equal(result.items[0].truncated, true);
   mode = 'attachment-limit'; before = requests.length; result = await read({ attachments: true });
