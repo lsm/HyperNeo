@@ -13,12 +13,12 @@ export const createCodingHumanMergeOperation = (spawn: SpawnFn = spawnProcess) =
     inputSchema: z.object({ url: z.string().url(), enabled: z.boolean() }).strict(),
     resultSchema: z.object({ accepted: z.boolean(), reason: z.string().optional() }),
     policy: { safetyClass: 'mutate', roles: ['neo'] },
-    execute: async ({ url, enabled }) => {
-      const pr = parsePrUrl(url.toLowerCase());
+    execute: async ({ url, enabled }, caller) => {
+      const pr = caller.role === 'neo' ? parsePrUrl(url.toLowerCase()) : null;
       const refused = {
         accepted: false,
         reason:
-          'The human-merge label could not be updated. Use an allowed GitHub PR URL and retry the requested label change.',
+          'Only Neo can update human-merge on an allowed GitHub PR URL. Retry the human-requested label change through Neo.',
       };
       if (!pr || (pr.host !== 'github.com' && pr.host !== process.env.GH_HOST?.toLowerCase()))
         return refused;
