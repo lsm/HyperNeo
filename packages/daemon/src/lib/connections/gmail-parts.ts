@@ -63,7 +63,8 @@ export async function readGmailParts(
       size: part.body.size ?? 0,
     };
     let data = part.body.data;
-    if (summary.size > 8192 && (file || part.body.attachmentId)) {
+    const limit = file ? 8192 : 48000;
+    if (summary.size > limit) {
       if (file) attachments.push({ ...summary, omitted: 'byte_limit' });
       else bodyParts.push({ mimeType: part.mimeType, omitted: 'byte_limit' });
       truncated = true;
@@ -72,10 +73,10 @@ export async function readGmailParts(
     if (data === undefined && part.body.attachmentId) {
       const reply = await load(part.body.attachmentId);
       if (!reply.ok) return reply;
-      data = z.object({ data: z.string().max(10924) }).parse(reply.data).data;
+      data = z.object({ data: z.string().max(Math.ceil(limit / 3) * 4) }).parse(reply.data).data;
     }
     const content = bytes(data ?? '');
-    if (file && content.length > 8192) throw new Error('Attachment byte limit exceeded');
+    if (content.length > limit) throw new Error('Part byte limit exceeded');
     if (file) attachments.push({ ...summary, data: content.toString('base64url') });
     else {
       const type = part.headers.find(

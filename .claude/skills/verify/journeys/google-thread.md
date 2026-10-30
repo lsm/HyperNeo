@@ -17,7 +17,7 @@ account before I/O and refuse a changed thread. Scope/session refusal happens
 before API access. Attachment failures retain their bounded failure reason.
 
 Limits are visible: ten messages per page, 32 MIME parts per message, 4,096 text
-characters per message, two attachments of at most 8 KiB each, and 64 KiB per
+characters per message (externally stored text parts are fetched up to 48,000 bytes), two attachments of at most 8 KiB each, and 64 KiB per
 result. Oversized attachments are omitted; clipped bodies, excess parts/files and
 remaining pages set `truncated`. A page that hits its byte budget resumes at the
 first unreturned message. A single projected message that cannot fit returns
