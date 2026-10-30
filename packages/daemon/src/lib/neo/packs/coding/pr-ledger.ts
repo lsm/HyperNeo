@@ -25,6 +25,7 @@ import { CodingWorkFactsRepository } from './work-facts.ts';
 import { CodingBranchFactsRepository } from './branch-facts.ts';
 import { CodingMergeFactsRepository } from './merge-facts.ts';
 import { getNeoPackPreference } from '../../preferences.ts';
+import { codingMergeContextRepos } from './merge-context.ts';
 import { z } from 'zod';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { Logger } from '../../../logger.ts';
@@ -497,6 +498,17 @@ export class CodingPrLedgerRepository {
 
   reviewerPolicy(repo: string, body: string, reviewer: z.infer<typeof CodingActor>) {
     return codingReviewerPolicy(this.policy(repo).provenance !== false, body, reviewer);
+  }
+
+  policyContextCurrent(text: string) {
+    return gatewayFor(this.db).call(codingLedgerReads, 'policyContext', text);
+  }
+
+  policyContext(text: string, known: readonly string[] = []) {
+    return codingMergeContextRepos(text, [...known, ...this.lastReads().keys()]).map((repo) => ({
+      repo,
+      policy: this.policy(repo),
+    }));
   }
 
   policy(repo: string): CodingMergePolicy {
@@ -1004,5 +1016,5 @@ export const codingLedgerReads = defineRepositoryOp(
   'coding.ledger.read',
   'read',
   CodingPrLedgerRepository,
-  ['lastReads', 'list', 'readHealth'] as const
+  ['lastReads', 'list', 'readHealth', 'policyContext'] as const
 );
