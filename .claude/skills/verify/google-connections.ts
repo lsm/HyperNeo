@@ -6,9 +6,6 @@ import { request as httpRequest } from 'node:http';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createHttpWsServer } from '../../../packages/daemon/src/lib/runtime-server/index.ts';
-import { startGoogleLogin } from '../../../packages/daemon/src/lib/connections/google-login.ts';
-import { createGoogleConnectionOperations } from '../../../packages/daemon/src/lib/connections/operations.ts';
-import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 import { DatabaseCredentialStore } from '../../../packages/daemon/src/lib/credentials/credential-store.ts';
 
@@ -63,20 +60,16 @@ const fetchImpl = ((url: string | URL, init?: RequestInit) => {
 let firstId = '', secondId = '', oldLogin = '';
 try {
   for (const phase of ['initial', 'restart']) {
-    const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
+    const googleConnections = {
+      createStore: (db: ConstructorParameters<typeof DatabaseCredentialStore>[0]) => new DatabaseCredentialStore(db, 'synthetic-proof-key'),
+      fetchImpl,
+    };
+    const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false, googleConnections });
     let ws: WebSocket | undefined;
     try {
       assert.notEqual(app.server.port, 8399);
       await app.jobProcessor.stop();
-      const base = app.sessionManager.getOperationRegistry();
-      const registry = createOperationRegistry([
-        ...base.entries.filter((entry) => !entry.name.startsWith('connections.google.')),
-        ...createGoogleConnectionOperations(() => app.db.getDatabase(), {
-          createStore: (db) => new DatabaseCredentialStore(db, 'synthetic-proof-key'),
-          startLogin: (client) => startGoogleLogin(client, { fetchImpl }),
-        }),
-      ]);
-      app.sessionManager.setOperationRegistryProvider(() => registry);
+      const registry = app.sessionManager.getOperationRegistry();
       ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
       await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('WebSocket unavailable')); });
       const call = (name: string, input: unknown = {}) => new Promise<any>((done, fail) => {

@@ -88,13 +88,15 @@ export function createGoogleTokenAccess(deps: {
       'connection'
     )
     .pipe(
-      (connection: ConnectionStatus | undefined) =>
-        !connection
-          ? { reason: failed('unknown_connection') }
-          : connection.health !== 'healthy'
-            ? { reason: failed(connection.health) }
-            : { value: connection },
-      'connection',
+      (connection: ConnectionStatus | undefined, signal: AbortSignal) =>
+        signal.aborted
+          ? { reason: failed('cancelled') }
+          : !connection
+            ? { reason: failed('unknown_connection') }
+            : connection.health !== 'healthy'
+              ? { reason: failed(connection.health) }
+              : { value: connection },
+      ['connection', 'signal'],
       'result:result'
     )
     .pipe(

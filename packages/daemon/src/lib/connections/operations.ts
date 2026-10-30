@@ -17,29 +17,40 @@ import { createConnectionLifecycle } from './lifecycle.ts';
 const services = new WeakMap<Database, Promise<ReturnType<typeof createConnectionLifecycle>>>();
 const policy = { safetyClass: 'human_only' as const, caller: 'local_user' as const };
 
+export type GoogleConnectionDependencies = {
+  createStore?: typeof createCredentialStore;
+  startLogin?: typeof startGoogleLogin;
+  fetchImpl?: typeof fetch;
+  now?: () => number;
+};
+
+export function getGoogleConnectionService(sql: Database, deps: GoogleConnectionDependencies = {}) {
+  let pending = services.get(sql);
+  if (!pending) {
+    const gateway = gatewayFor(sql);
+    pending = gateway.call(artifactIdentityWrites, 'ensure', randomUUID()).then((identity) =>
+      createConnectionLifecycle({
+        read: () => gateway.call(googleConnectionReads, 'list'),
+        save: (connection) => gateway.call(googleConnectionWrites, 'put', connection),
+        vault: new ConnectionVault((deps.createStore ?? createCredentialStore)(sql), identity),
+        startLogin:
+          deps.startLogin ?? ((client) => startGoogleLogin(client, { fetchImpl: deps.fetchImpl })),
+        fetchImpl: deps.fetchImpl,
+        now: deps.now,
+        closed: gateway.closeSignal,
+      })
+    );
+    services.set(sql, pending);
+    void pending.catch(() => services.delete(sql));
+  }
+  return pending;
+}
+
 export function createGoogleConnectionOperations(
   db: () => Database,
-  deps = { createStore: createCredentialStore, startLogin: startGoogleLogin }
+  deps: GoogleConnectionDependencies = {}
 ) {
-  const service = () => {
-    const sql = db();
-    let pending = services.get(sql);
-    if (!pending) {
-      const gateway = gatewayFor(sql);
-      pending = gateway.call(artifactIdentityWrites, 'ensure', randomUUID()).then((identity) =>
-        createConnectionLifecycle({
-          read: () => gateway.call(googleConnectionReads, 'list'),
-          save: (connection) => gateway.call(googleConnectionWrites, 'put', connection),
-          vault: new ConnectionVault(deps.createStore(sql), identity),
-          startLogin: deps.startLogin,
-          closed: gateway.closeSignal,
-        })
-      );
-      services.set(sql, pending);
-      void pending.catch(() => services.delete(sql));
-    }
-    return pending;
-  };
+  const service = () => getGoogleConnectionService(db(), deps);
   return [
     defineOperation({
       name: 'connections.google.connect',
