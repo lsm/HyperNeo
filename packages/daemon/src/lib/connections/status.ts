@@ -11,11 +11,17 @@ export const connectionStatus = z.object({
 
 export type ConnectionStatus = z.infer<typeof connectionStatus>;
 
+export const googleClient = z.object({
+  clientId: z.string().trim().min(1).max(500),
+  clientSecret: z.string().max(1000).optional(),
+});
+
 export const connectionTokens = z.object({
   accessToken: z.string().min(1),
   refreshToken: z.string().min(1).optional(),
   expiresAt: z.number().finite().positive(),
   scopes: connectionStatus.shape.scopes,
+  client: googleClient.optional(),
 });
 
 export type ConnectionTokens = z.infer<typeof connectionTokens>;

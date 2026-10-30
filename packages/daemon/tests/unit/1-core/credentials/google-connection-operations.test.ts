@@ -6,6 +6,7 @@ import { createGoogleConnectionOperations } from '../../../../src/lib/connection
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import type { startGoogleLogin } from '../../../../src/lib/connections/google-login.ts';
+import { ConnectionVault } from '../../../../src/lib/connections/vault.ts';
 
 type Attempt = Awaited<ReturnType<typeof startGoogleLogin>>;
 type Outcome = Awaited<Attempt['result']>;
@@ -99,6 +100,14 @@ test('connect stores a verified grant and returns no credentials in operation re
   const encrypted = db.getDatabase().prepare('SELECT * FROM provider_credentials').all();
   expect(encrypted).toHaveLength(1);
   expect(JSON.stringify(encrypted)).not.toContain('synthetic-access');
+  const identity = db
+    .getDatabase()
+    .prepare('SELECT daemon_id FROM artifact_file_identity')
+    .get() as { daemon_id: string };
+  const connection = JSON.parse(rows[0].status_json);
+  expect((await new ConnectionVault(store, identity.daemon_id).read(connection))?.client).toEqual(
+    client
+  );
 });
 
 test('reconnect refuses another account and preserves the existing healthy grant', async () => {
@@ -179,4 +188,49 @@ test('agent management is refused before opening a listener or reading credentia
     ).toMatchObject({ kind: 'failed', code: 'forbidden' });
   }
   expect(attempts).toHaveLength(0);
+});
+
+test('connecting an already known Google account keeps its stable connection id', async () => {
+  const first = await call('connections.google.connect', client);
+  attempts[0].resolve(success);
+  const connected = await settle(first.loginId);
+  const again = await call('connections.google.connect', client);
+  attempts[1].resolve(success);
+  expect(await settle(again.loginId)).toMatchObject({ connectionId: connected.connectionId });
+  expect(db.getDatabase().prepare('SELECT * FROM google_connections').all()).toHaveLength(1);
+});
+
+test('failed credential erasure is explicit while the connection remains disabled', async () => {
+  const start = await call('connections.google.connect', client);
+  attempts[0].resolve(success);
+  const connected = await settle(start.loginId);
+  vi.spyOn(store, 'delete').mockRejectedValueOnce(new Error('synthetic secret detail'));
+  expect(
+    await call('connections.google.disconnect', { connectionId: connected.connectionId })
+  ).toEqual({ ok: false, reason: 'credential_delete_failed' });
+  const row = db.getDatabase().prepare('SELECT status_json FROM google_connections').get() as {
+    status_json: string;
+  };
+  expect(JSON.parse(row.status_json).health).toBe('disconnected');
+  expect(db.getDatabase().prepare('SELECT * FROM provider_credentials').all()).toHaveLength(1);
+  expect(
+    await call('connections.google.disconnect', { connectionId: connected.connectionId })
+  ).toEqual({ ok: true });
+});
+
+test('storage warnings are visible but extra secret fields cannot cross the status door', async () => {
+  Object.assign(store, {
+    getStatus: () => ({
+      backend: 'keychain-fallback',
+      keychainAvailable: false,
+      warning: 'Synthetic degraded storage',
+      accessToken: 'must-not-cross-status',
+    }),
+  });
+  const response = await call('connections.google.login');
+  expect(response).toMatchObject({
+    state: 'missing',
+    storage: { backend: 'keychain-fallback', warning: 'Synthetic degraded storage' },
+  });
+  expect(JSON.stringify(response)).not.toContain('must-not-cross-status');
 });
