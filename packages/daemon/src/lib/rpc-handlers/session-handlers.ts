@@ -1221,6 +1221,7 @@ export function setupSessionHandlers(
         };
       }
       await current.restart({
+        skipTranscriptGuard: true,
         beforeStart: async () => {
           if (!identityRollback) return;
           await db.updateSession(targetSessionId, {

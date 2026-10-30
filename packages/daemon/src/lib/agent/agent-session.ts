@@ -1201,7 +1201,7 @@ export class AgentSession
   async resetQuery(options?: {
     restartQuery?: boolean;
     hardReset?: boolean;
-  }): Promise<{ success: boolean; error?: string }> {
+  }): Promise<{ success: boolean; error?: string; blocked?: boolean }> {
     this.rateLimitWatchdog.cancel();
     this.networkPause.stop();
     if (options?.hardReset && this.queryRunner instanceof QueryRunner)
@@ -1902,14 +1902,17 @@ export class AgentSession
     return this.queryModeHandler.handleQueryTrigger(options);
   }
 
-  async restartQuery(): Promise<void> {
-    await this.lifecycleManager.restartQuery();
+  async restartQuery(): Promise<{ blocked: boolean }> {
+    return await this.lifecycleManager.restartQuery();
   }
 
-  async restart(options?: { beforeStart?: () => void | Promise<void> }): Promise<void> {
+  async restart(options?: {
+    beforeStart?: () => void | Promise<void>;
+    skipTranscriptGuard?: boolean;
+  }): Promise<{ blocked: boolean }> {
     this.rateLimitWatchdog.cancel();
     this.networkPause.stop();
-    await this.lifecycleManager.restart(options);
+    return await this.lifecycleManager.restart(options);
   }
 
   getRewindPoints(): RewindPoint[] {

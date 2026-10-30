@@ -1507,6 +1507,29 @@ describe('QueryLifecycleManager', () => {
       expect(setIdleSpy).toHaveBeenCalled();
     });
 
+    test('keeps the message replayable when timeout reset blocks on sdk_resume_choice', async () => {
+      const tmpTestDir = mkdtempSync(join(tmpdir(), 'kai-test-'));
+      try {
+        process.env.TEST_SDK_SESSION_DIR = tmpTestDir;
+        const timeoutError = new Error('Queue timeout');
+        timeoutError.name = 'MessageQueueTimeoutError';
+
+        spyOn(messageQueue, 'enqueueWithId').mockImplementation(async () => {
+          mockContext.session.sdkSessionId = 'missing-sdk-session';
+          throw timeoutError;
+        });
+
+        await manager.startQueryAndEnqueue('msg-123', 'Hello');
+        await new Promise((r) => setTimeout(r, 200));
+
+        expect(saveHyperNeoActionMessageSpy).toHaveBeenCalled();
+        expect(updateMessageStatusSpy).not.toHaveBeenCalled();
+      } finally {
+        delete process.env.TEST_SDK_SESSION_DIR;
+        rmSync(tmpTestDir, { recursive: true, force: true });
+      }
+    });
+
     test('marks enqueued message failed when timeout retry fails', async () => {
       const timeoutError = new Error('Queue timeout');
       timeoutError.name = 'MessageQueueTimeoutError';
@@ -1776,6 +1799,37 @@ describe('QueryLifecycleManager', () => {
     });
 
     describe('restart()', () => {
+      test('blocks on sdk_resume_choice when the transcript is missing', async () => {
+        mockContext.session.sdkSessionId = 'missing-sdk-session';
+        manager = new QueryLifecycleManager(mockContext);
+
+        await manager.restart();
+
+        expect(startStreamingCalled).toBe(false);
+        expect(saveHyperNeoActionMessageSpy).toHaveBeenCalled();
+        expect(mockContext.queryObject).toBeNull();
+      });
+
+      test('reports blocked and releases delivery waiters when the gate stops the restart', async () => {
+        mockContext.session.sdkSessionId = 'missing-sdk-session';
+        manager = new QueryLifecycleManager(mockContext);
+
+        const result = await manager.restart();
+
+        expect(result.blocked).toBe(true);
+        expect(releaseIdleWaitersSpy).toHaveBeenCalledTimes(1);
+      });
+
+      test('starts anyway when the caller resolves the resume choice (skipTranscriptGuard)', async () => {
+        mockContext.session.sdkSessionId = 'missing-sdk-session';
+        manager = new QueryLifecycleManager(mockContext);
+
+        await manager.restart({ skipTranscriptGuard: true });
+
+        expect(startStreamingCalled).toBe(true);
+        expect(saveHyperNeoActionMessageSpy).not.toHaveBeenCalled();
+      });
+
       test(
         'uses worktreePath when session has worktree — preserves sdkSessionId',
         async () => {
@@ -1839,6 +1893,23 @@ describe('QueryLifecycleManager', () => {
     });
 
     describe('reset()', () => {
+      test('blocks on sdk_resume_choice when restartAfter finds a missing transcript', async () => {
+        mockContext.session.sdkSessionId = 'missing-sdk-session';
+        mockContext.queryObject = {
+          interrupt: mock(async () => {}),
+        } as unknown as QueryLifecycleManagerContext['queryObject'];
+        mockContext.queryPromise = Promise.resolve();
+        manager = new QueryLifecycleManager(mockContext);
+
+        const result = await manager.reset({ restartAfter: true });
+
+        expect(result.success).toBe(true);
+        expect(result.blocked).toBe(true);
+        expect(startStreamingCalled).toBe(false);
+        expect(saveHyperNeoActionMessageSpy).toHaveBeenCalled();
+        expect(releaseIdleWaitersSpy).toHaveBeenCalledTimes(1);
+      });
+
       test(
         'uses worktreePath when session has worktree — preserves sdkSessionId',
         async () => {

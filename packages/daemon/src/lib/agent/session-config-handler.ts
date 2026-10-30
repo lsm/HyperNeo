@@ -11,7 +11,7 @@ export interface SessionConfigHandlerContext {
 
   settingsManager: SettingsManager;
   getProcessingState(): { status: string };
-  restartQuery(): Promise<void>;
+  restartQuery(): Promise<{ blocked: boolean }>;
 }
 
 export class SessionConfigHandler {
