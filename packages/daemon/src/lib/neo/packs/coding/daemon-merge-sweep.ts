@@ -39,6 +39,7 @@ export function createCodingDaemonMergeSweep(
     ledger.write('daemonMerge', change);
   const read = (url: string) => readCodingDaemonMergeFacts(database(), url, spawn);
   const notify = async (receipt: Receipt, now: number) => {
+    if (!receipt.mergeCommit && receipt.heldNotifiedAt) return true;
     const { owner: org, repo, number } = parsePrUrl(receipt.url)!;
     const { owner } = await events.routeLater({ repo: `${org}/${repo}`, number: +number });
     const key = `coding-daemon-${receipt.mergeCommit ? 'merged' : 'held'}:${receipt.url}:${receipt.head}`;
@@ -47,11 +48,17 @@ export function createCodingDaemonMergeSweep(
       : `Daemon merge held: ${receipt.url} head ${receipt.head}. No merge confirmed; automatic retries are held. Inspect GitHub/auth status and the receipt before manual action.`;
     const told = owner && (await delivery.tell(owner, key, text).catch(() => false));
     const notified = told || (await delivery.wake(key, text).catch(() => false));
-    if (receipt.mergeCommit && notified) await record({ ...receipt, kind: 'notified', at: now });
+    if (notified)
+      await record({ ...receipt, kind: receipt.mergeCommit ? 'notified' : 'held', at: now });
+    return notified;
   };
   const finish = async (receipt: Receipt, pr: Observed['facts'], now: number) => {
-    if (!pr.ok || pr.head !== receipt.head) return pr.ok ? notify(receipt, now) : undefined;
-    if (pr.state !== 'MERGED' || !pr.mergeCommit) return notify(receipt, now);
+    if (!pr.ok) return;
+    if (pr.head !== receipt.head || pr.state !== 'MERGED' || !pr.mergeCommit) {
+      if ((await notify(receipt, now)) && pr.state !== 'OPEN')
+        await record({ ...receipt, kind: 'retired', at: now });
+      return;
+    }
     const [merged] = await record({ ...receipt, kind: 'finish', commit: pr.mergeCommit, at: now });
     if (merged) await notify(merged, now);
   };
@@ -70,9 +77,15 @@ export function createCodingDaemonMergeSweep(
     .pipe(
       async (receipt: Receipt, observed: Observed, now: number) => {
         const { owner, repo } = parsePrUrl(receipt.url)!;
-        observed = { ...observed, facts: await read(receipt.url) };
-        const fresh = admit({ ...observed, policy: ledger.policy(`${owner}/${repo}`) });
-        if ('reason' in fresh) return fresh.reason;
+        let admitted = false;
+        try {
+          observed = { ...observed, facts: await read(receipt.url) };
+          const fresh = admit({ ...observed, policy: ledger.policy(`${owner}/${repo}`) });
+          if ('reason' in fresh) return fresh.reason;
+          admitted = true;
+        } finally {
+          if (!admitted) await record({ ...receipt, kind: 'void', at: receipt.startedAt });
+        }
         // oxlint-disable-next-line no-warning-comments -- TODO(#9458): accepted final-read/in-flight-writer race.
         await runGhJson(
           ['gh', 'pr', 'merge', receipt.url, '--squash', '--match-head-commit', receipt.head],

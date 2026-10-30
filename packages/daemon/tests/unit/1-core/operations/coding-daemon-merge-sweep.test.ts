@@ -198,16 +198,35 @@ describe('daemon merge sweep behavior', () => {
       expect(merges()).toHaveLength(0);
       if (['path', 'late'].includes(condition))
         expect(notices.some((text) => text.includes('sign-off'))).toBe(true);
+      if (condition === 'late') {
+        labels = [];
+        await sweep(delayed)(11);
+        expect(merges()).toHaveLength(1);
+      }
     }
   );
-  test.each(['/labels', '/reviews', 'checks', 'graphql', 'view'])(
+  test.each(['/labels', '/reviews', 'checks', 'graphql', 'view', 'final'])(
     'does nothing when %s cannot be read',
     async (part) => {
       fail = part;
-      await expect(sweep()(10)).rejects.toThrow('Merge held:');
+      const delayed: SpawnFn = (args) => {
+        if (
+          part === 'final' &&
+          args[2] === 'view' &&
+          calls.filter((a) => a[2] === 'view').length === 2
+        )
+          fail = 'view';
+        return spawn(args);
+      };
+      await expect(sweep(delayed)(10)).rejects.toThrow('Merge held:');
       expect(merges()).toHaveLength(0);
       expect(notices).toEqual([]);
       expect(await ledger.write('daemonMerge', { kind: 'list' })).toEqual([]);
+      if (part === 'final') {
+        fail = '';
+        await sweep()(11);
+        expect(merges()).toHaveLength(1);
+      }
     }
   );
   test('recovers an uncertain merged outcome without repeating the command and retries notice', async () => {
@@ -253,6 +272,11 @@ test('human merge operation adds and removes the label on explicit intent', asyn
   expect(merges()).toHaveLength(0);
   expect(await operation.execute({ url, enabled: false }, caller)).toEqual({ accepted: true });
   expect(labels).toEqual([]);
+  fail = 'edit';
+  const failedEdit = await operation.execute({ url, enabled: true }, caller);
+  expect(failedEdit).toMatchObject({ accepted: false, reason: expect.stringContaining('GitHub') });
+  expect(failedEdit).not.toMatchObject({ reason: expect.stringContaining('Only Neo') });
+  fail = '';
   expect(
     await operation.execute({ url: 'https://attacker.example/pr/1', enabled: true }, caller)
   ).toMatchObject({ accepted: false });
@@ -425,6 +449,7 @@ test('an unreadable final saved policy fails closed before launching the merge',
   try {
     await expect(sweep()(10)).rejects.toThrow('Policy read unavailable');
     expect(merges()).toHaveLength(0);
+    expect(await ledger.write('daemonMerge', { kind: 'list' })).toEqual([]);
   } finally {
     fault.mockRestore();
   }
@@ -433,18 +458,15 @@ test('an unreadable final saved policy fails closed before launching the merge',
 test('a failed open attempt surfaces a held receipt without retrying or misattributing an external merge', async () => {
   mergeFailed = true;
   deliver = false;
-  const accepted = new Set<string>();
-  const run = sweep(spawn, {
-    tell: async () => false,
-    wake: async (key, text) => {
-      if (!deliver) return false;
-      if (!accepted.has(key)) {
-        accepted.add(key);
-        notices.push(text);
-      }
-      return true;
-    },
-  });
+  db.prepare('UPDATE pack_coding_pr_ledger SET owner=?').run(
+    JSON.stringify({ adapter: 'claude-desktop', id: 'synthetic-owner' })
+  );
+  const receive = async (...args: unknown[]) => {
+    if (!deliver) return false;
+    notices.push(String(args.at(-1)));
+    return true;
+  };
+  const run = sweep(spawn, { tell: receive, wake: receive });
   await run(10);
   expect(merges()).toHaveLength(1);
   expect(notices).toEqual([]);
@@ -462,4 +484,18 @@ test('a failed open attempt surfaces a held receipt without retrying or misattri
   expect(notices[1]).toContain('c'.repeat(40));
   expect(notices[1]).toContain('confirmation sweep');
   expect(await ledger.write('daemonMerge', { kind: 'list' })).toEqual([]);
+});
+
+test('terminal unconfirmed receipts retire durably after their held warning', async () => {
+  await reserve(2);
+  actualHead = 'b'.repeat(40);
+  state = 'MERGED';
+  await sweep()(10);
+  expect(notices).toHaveLength(1);
+  expect(await ledger.write('daemonMerge', { kind: 'list' })).toEqual([]);
+  fail = 'view';
+  await ledger.write('replace', 'synthetic/merge', [], 11);
+  await sweep()(12);
+  expect(merges()).toHaveLength(0);
+  expect(notices).toHaveLength(1);
 });

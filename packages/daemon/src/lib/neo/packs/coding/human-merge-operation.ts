@@ -29,6 +29,9 @@ export const createCodingHumanMergeOperation = (spawn: SpawnFn = spawnProcess) =
       const timer = setTimeout(() => proc.kill('SIGKILL'), 30_000);
       try {
         const code = await proc.exited;
+        if (code !== 0)
+          refused.reason =
+            'GitHub label update failed; check the label exists and gh authentication.';
         return code === 0 ? { accepted: true } : refused;
       } finally {
         clearTimeout(timer);

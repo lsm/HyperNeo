@@ -198,8 +198,8 @@ export function createCodingPack(deps: {
         now
       );
       await wakeCodingUnownedPrs(deps.prEvents, prSweepDeps.wake, now);
-      await mergeSweep(now);
       await sweepCodingPrs(deps.prSweep, prSweepDeps, now);
+      await mergeSweep(now);
     },
     stats: async (now) => ({
       'ready to merge >1h': (await deps.prLedger.read('list')).filter(

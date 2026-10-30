@@ -32,8 +32,8 @@ preferences captured before execution must remain unchanged.
 The unit contracts additionally cover overlapping sweep invocations, every gate,
 open/moved reserved attempts and recovering a successful merge whose first
 confirmation read failed. Build-slice proof covers durable receipts across daemon
-restart. At-most-once reservations deliberately do not retry an uncertain open
-attempt; readable held receipts notify the owner or Neo, with a distinct merged notice later.
+restart. Issued uncertain attempts are not retried; unissued reservations are voided.
+Readable held warnings are durably acknowledged and terminal attempts retire; confirmation stays distinct.
 
 The helper saves coding-daemon-merge-sweep.json and the exact CLI invocation log,
 stops its daemon and preserves evidence before the wrapper removes synthetic data.
@@ -47,4 +47,4 @@ accepted limitation pending [#9458](https://github.com/lsm/HyperNeo/issues/9458)
 Add `merge-fails` to prove a failed CLI attempt stays OPEN, surfaces its held receipt
 on delivery recovery, and is not retried. Unreadable facts still halt the sweep.
 
-Add `late-label` to add human-merge after the batch snapshot; post-reservation reads must hold it.
+Add `late-label` to add human-merge after the batch snapshot; it must hold, then resume on label removal.
