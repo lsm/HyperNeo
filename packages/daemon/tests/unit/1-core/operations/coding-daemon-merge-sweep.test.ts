@@ -14,8 +14,10 @@ import {
 } from '../../../../src/lib/neo/packs/coding/pr-events.ts';
 import { createCodingDaemonMergeSweep } from '../../../../src/lib/neo/packs/coding/daemon-merge-sweep.ts';
 import { createCodingHumanMergeOperation } from '../../../../src/lib/neo/packs/coding/human-merge-operation.ts';
+import { Logger } from '../../../../src/lib/logger.ts';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn/types.ts';
 
+let warnings: unknown[][], restoreWarnings: () => void;
 const head = 'a'.repeat(40),
   url = 'https://github.com/synthetic/merge/pull/1';
 let db: Database,
@@ -122,6 +124,11 @@ const merges = () => calls.filter((args) => args[2] === 'merge');
 const reserve = (at: number) =>
   ledger.write('daemonMerge', { kind: 'begin', url, head, actor: 'daemon:coding-sweep', at });
 beforeEach(async () => {
+  warnings = [];
+  const warning = spyOn(Logger.prototype, 'warn').mockImplementation((...args: unknown[]) => {
+    warnings.push(args);
+  });
+  restoreWarnings = () => warning.mockRestore();
   db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -161,7 +168,10 @@ beforeEach(async () => {
     1
   );
 });
-afterEach(() => db.close());
+afterEach(() => {
+  restoreWarnings();
+  db.close();
+});
 describe('daemon merge sweep behavior', () => {
   test('pins a single unowned merge and records executor/head/time across overlapping sweeps', async () => {
     const run = sweep();
@@ -218,7 +228,8 @@ describe('daemon merge sweep behavior', () => {
           fail = 'view';
         return spawn(args);
       };
-      await expect(sweep(delayed)(10)).rejects.toThrow('Merge held:');
+      await expect(sweep(delayed)(10)).resolves.toBeUndefined();
+      expect(warnings).toContainEqual(['Daemon merge held', { url, reason: expect.any(String) }]);
       expect(merges()).toHaveLength(0);
       expect(notices).toEqual([]);
       expect(await ledger.write('daemonMerge', { kind: 'list' })).toEqual([]);
@@ -231,7 +242,8 @@ describe('daemon merge sweep behavior', () => {
   );
   test('recovers an uncertain merged outcome without repeating the command and retries notice', async () => {
     hideOutcome = true;
-    await expect(sweep()(10)).rejects.toThrow('Merge held:');
+    await expect(sweep()(10)).resolves.toBeUndefined();
+    expect(warnings).toContainEqual(['Daemon merge held', { url, reason: expect.any(String) }]);
     expect(merges()).toHaveLength(1);
     expect(notices).toEqual([]);
     hideOutcome = false;
@@ -304,30 +316,55 @@ test('daemon execution suppresses owner merge events and reminders', async () =>
   expect(messages[0]).toContain('Merge confirmed:');
 });
 
-test('an unreadable first PR does not block a mergeable sibling', async () => {
-  const rows = await ledger.read('list');
-  await ledger.write('replace', 'synthetic/merge', [...rows, { ...rows[0], number: 2 }], 2);
-  const partial: SpawnFn = (args) => {
-    const result = spawn(args);
-    if (args[2] === 'view' && args[3] === url)
-      return { ...result, exited: Promise.resolve(1), exitCode: 1 };
-    return {
-      ...result,
-      stdout: new ReadableStream({
-        async start(controller) {
-          const text = await new Response(result.stdout).text();
-          controller.enqueue(new TextEncoder().encode(text.replaceAll(url, url.replace('/1', '/2'))));
-          controller.close();
-        },
-      }),
+test.each(['batch', 'final', 'receipt'])(
+  'an unreadable first PR at %s does not block a mergeable sibling',
+  async (stage) => {
+    let reads = 0;
+    if (stage === 'receipt') await reserve(1);
+    const rows = await ledger.read('list');
+    await ledger.write('replace', 'synthetic/merge', [...rows, { ...rows[0], number: 2 }], 2);
+    const partial: SpawnFn = (args) => {
+      const result = spawn(args);
+      if (args[2] === 'view' && args[3] === url && ++reads > (stage === 'final' ? 2 : 0))
+        return { ...result, exited: Promise.resolve(1), exitCode: 1 };
+      return {
+        ...result,
+        stdout: new ReadableStream({
+          async start(controller) {
+            const text = await new Response(result.stdout).text();
+            controller.enqueue(
+              new TextEncoder().encode(
+                args.some(
+                  (a) =>
+                    a.includes('/pull/2') ||
+                    a.includes('/pulls/2/') ||
+                    a.includes('/issues/2/') ||
+                    a === 'number=2'
+                )
+                  ? text.replaceAll(url, url.replace('/1', '/2'))
+                  : text
+              )
+            );
+            controller.close();
+          },
+        }),
+      };
     };
-  };
-  await sweep(partial)(10);
-  expect(merges().map((args) => args[3])).toEqual([url.replace('/1', '/2')]);
-  expect(notices).toEqual([expect.stringContaining(url.replace('/1', '/2'))]);
-  await sweep(partial)(11);
-  expect(merges()).toHaveLength(1);
-});
+    await sweep(partial)(10);
+    expect(merges().map((args) => args[3])).toEqual([url.replace('/1', '/2')]);
+    expect(notices).toEqual([expect.stringContaining(url.replace('/1', '/2'))]);
+    expect(warnings).toContainEqual([
+      'Daemon merge held',
+      { url, reason: expect.stringContaining('pull:') },
+    ]);
+    await sweep(partial)(11);
+    expect(merges()).toHaveLength(1);
+    if (stage === 'receipt')
+      expect(await ledger.write('daemonMerge', { kind: 'list' })).toMatchObject([
+        { url, mergeCommit: null },
+      ]);
+  }
+);
 
 test('a receipt sharing a candidate cannot hide a failed read with a second response', async () => {
   await reserve(1);
@@ -345,7 +382,8 @@ test('a receipt sharing a candidate cannot hide a failed read with a second resp
     return spawn(args);
   };
   const run = sweep(flaky);
-  await expect(run(10)).rejects.toThrow('Merge held:');
+  await expect(run(10)).resolves.toBeUndefined();
+  expect(warnings).toContainEqual(['Daemon merge held', { url, reason: expect.any(String) }]);
   expect(failed).toBe(true);
   expect(notices).toEqual([]);
   expect(await ledger.write('daemonMerge', { kind: 'list' })).toHaveLength(1);

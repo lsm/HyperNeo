@@ -49,9 +49,22 @@ const collect = async (db: Database, url: string, spawn: SpawnFn) => {
       `repos/${meta.owner}/${meta.repo}/issues/${meta.number}/labels`,
     ]),
   ]);
-  return responses.map((response) => (response.ok ? response.data : null));
+  return {
+    responses: responses.map((response) => (response.ok ? response.data : null)),
+    failures: responses.flatMap((response, index) =>
+      response.ok
+        ? []
+        : [
+            `${['pull', 'reviews', 'required_checks', 'review_threads', 'labels'][index]}: ${response.error}`,
+          ]
+    ),
+  };
 };
-const parse = (responses: unknown[], url: string) => {
+const parse = ({ responses, failures }: Awaited<ReturnType<typeof collect>>, url: string) => {
+  if (failures.length)
+    return failed(
+      `fresh_complete_merge_facts_required: ${failures.join('; ')}. Leave this PR unchanged until every required read succeeds.`
+    );
   const parsed = Response.safeParse(responses);
   return parsed.success &&
     parsed.data[0].url.toLowerCase() === url.toLowerCase() &&
@@ -104,7 +117,11 @@ const read = (superpipe({})('coding.read-daemon-merge-facts') as PipelineAPI)
         homedir(),
         spawn
       );
-      const head = schema.Head.safeParse(result.ok ? result.data : null);
+      if (!result.ok)
+        return failed(
+          `final_head_read_failed: ${result.error}. Leave this PR unchanged until its current head can be read.`
+        );
+      const head = schema.Head.safeParse(result.data);
       return head.success &&
         head.data.headRefOid === observed[0].headRefOid &&
         head.data.state === observed[0].state
