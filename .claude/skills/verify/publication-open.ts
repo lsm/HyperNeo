@@ -23,8 +23,8 @@ let front:ReturnType<typeof Bun.serve>|undefined;
 const evidence:Record<string,unknown>={phase};
 try {
  await app.spaceRuntimeService.ready();await app.jobProcessor.stop();await waitForSdkBodyCopy(app.db.getDatabase());assert.notEqual(app.server.port,8399);
- const conversationId=crypto.randomUUID(), root=`neo:${conversationId}`, worker='local-worker';
- for (const id of [root,worker]) await app.db.createSession({id,title:id===root?'Synthetic Neo':'Local worker',workspacePath:join(run,'workspace'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});
+ const conversationId=crypto.randomUUID(), root=`neo:${conversationId}`, worker='local-worker', room='space-session';
+ for (const id of [root,worker,room]) await app.db.createSession({id,title:id===root?'Synthetic Neo':id===room?'Space session':'Local worker',type:id===room?'space_task_agent':'general',workspacePath:join(run,'workspace'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});
  new NeoRepository(app.db.getDatabase()).reserveBinding({sessionId:root,kind:'neo',projectId:null});
  const original=app.sessionManager.getOperationRegistry(), status=original.entries.find(entry=>entry.name==='work.status')!;
  const registry=createOperationRegistry(original.entries.map(entry=>entry.name==='work.status'?defineOperation({name:'work.status',description:'Synthetic native app metadata',inputSchema:z.unknown(),resultSchema:z.unknown(),execute:(input,caller)=>{
@@ -34,7 +34,7 @@ try {
  }}):entry));app.sessionManager.setOperationRegistryProvider(()=>registry);
  const publish=createOperationMcpHandler(()=>registry,()=>({sessionId:root,role:'neo'}));
  const fixtures=[];
- for(const [session,title] of [[worker,'Local session reply'],['codex-desktop:synthetic-thread','Codex session reply'],['claude-desktop:synthetic-session','Claude session reply'],[undefined,'Ordinary reply']] as const){
+ for(const [session,title] of [[worker,'Local session reply'],[root,'Neo session reply'],[room,'Space session reply'],['codex-desktop:synthetic-thread','Codex session reply'],['claude-desktop:synthetic-session','Claude session reply'],[undefined,'Ordinary reply']] as const){
  const result=JSON.parse((await publish({name:'neo.publication.publish',input:{requestId:crypto.randomUUID(),shortText:title,fullText:`${title}\n\nSynthetic full report`,...(session?{session}:{})}})).content[0].text);
  assert(result.accepted,JSON.stringify(result));fixtures.push({session,title,id:result.publication.publicationId});
  }
