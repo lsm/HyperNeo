@@ -192,32 +192,34 @@ describe('Neo publication without runtime input attribution', () => {
     ).toMatchObject({ accepted: true, publication: { artifacts: [], fullText: draft.fullText } });
   });
 
-  test('omits missing project references without blocking bundled topics', async () => {
+  test.each(['work', 'consultation'])('rejects %s links at the publish input schema', (kind) => {
+    const operation = createNeoPublicationOperation(publish);
+    expect(
+      operation.inputSchema.safeParse({ ...draft, links: [{ kind, id: 'old', label: 'Old' }] })
+        .success
+    ).toBe(false);
+  });
+
+  test('rejects an unknown project without saving and accepts a corrected retry', async () => {
     expect(
       await publish(
         { ...draft, links: [{ kind: 'project', id: 'missing', label: 'Missing' }] },
         caller
       )
-    ).toMatchObject({ accepted: true, publication: { links: [] } });
-    expect(
-      await publish(
-        {
-          ...draft,
-          requestId: 'garden',
-          links: [{ kind: 'project', id: 'garden', label: 'Garden' }],
-        },
-        caller
-      )
-    ).toMatchObject({ accepted: true });
-    expect(
-      await publish(
-        { ...draft, requestId: 'topics', fullText: '# Garden\nDone.\n# Travel\nWaiting.' },
-        caller
-      )
-    ).toMatchObject({
-      accepted: true,
-      publication: { fullText: '# Garden\nDone.\n# Travel\nWaiting.' },
+    ).toEqual({
+      accepted: false,
+      reason: 'unknown_project',
+      detail: 'Unknown project link: missing (Missing)',
     });
+    expect(ledger.list(conversationId)).toHaveLength(0);
+    expect(notify).not.toHaveBeenCalled();
+    const links = [{ kind: 'project' as const, id: 'garden', label: 'Garden' }];
+    expect(await publish({ ...draft, links }, caller)).toMatchObject({
+      accepted: true,
+      created: true,
+      publication: { links },
+    });
+    expect(ledger.list(conversationId)).toEqual([expect.objectContaining({ links })]);
   });
 
   test('omits unknown reply ids without attributing a human answer', async () => {
