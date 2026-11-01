@@ -55,7 +55,7 @@ describe('Neo publication without runtime input attribution', () => {
       getRootBinding: () => repo.defaultBinding(),
       hasProject: (id) => !!repo.getProject(id),
       publication: (conversation: string, id: string) => ledger.get(conversation, id),
-      hasSession: (id: string) => id === 'worker',
+      lookupSession: (id: string) => (id === 'worker' ? 'found' : 'not_found'),
       sourceSession: () => sourceSession,
       append: async (input) => {
         if (held) await held;
@@ -278,6 +278,14 @@ describe('Neo publication without runtime input attribution', () => {
       accepted: false,
       reason: 'publication_conflict',
     });
+  });
+
+  test('keeps an originally empty session empty when retrying in a worker turn', async () => {
+    expect(await publish(draft, caller)).toMatchObject({ accepted: true, created: true });
+    sourceSession = 'worker';
+    expect(await publish(draft, caller)).toMatchObject({ accepted: true, created: false });
+    expect(ledger.list(conversationId)).toHaveLength(1);
+    expect(ledger.list(conversationId)[0].session).toBeUndefined();
   });
 
   test('omits unknown reply ids without attributing a human answer', async () => {

@@ -249,21 +249,28 @@ export class NeoService {
       getBinding: (id) => this.repo.getBindingBySession(id),
       getRootBinding: () => this.repo.defaultBinding(),
       hasProject: (id) => !!this.repo.getProject(id),
-      hasSession: async (id) => {
-        if (this.db.getSession(id)) return true;
+      publication: (conversation, id) => this.publications.get(conversation, id),
+      lookupSession: async (id) => {
+        if (this.db.getSession(id)) return 'found';
         const ref = sessionWorkerRef(id, false);
-        if (ref.adapter === 'hyperneo' && !ref.daemon) return false;
+        if (ref.adapter === 'hyperneo' && !ref.daemon) return 'not_found';
         const status = await invokeOperation(
           this.sessions.getOperationRegistry(),
           'work.status',
           { ref },
           { source: 'internal' }
         );
-        return (
-          status.kind === 'completed' &&
+        if (status.kind !== 'completed') return 'unavailable';
+        if (
           z.object({ ok: z.literal(true), value: WorkSummarySchema }).safeParse(status.value)
             .success
-        );
+        )
+          return 'found';
+        return z
+          .object({ ok: z.literal(false), reason: z.literal('not_found') })
+          .safeParse(status.value).success
+          ? 'not_found'
+          : 'unavailable';
       },
       append: (input) => this.db.gateway.call(neoPublicationWrites, 'append', input),
       notify: notifyPublication,

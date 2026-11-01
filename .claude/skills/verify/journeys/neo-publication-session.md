@@ -15,6 +15,10 @@ retrying saves one row. `neo.conversation.read` also retains `publication.sessio
 A recorded worker sender for every current input, all the same sender, fills the
 field automatically. A mixed/unknown source or an idle turn leaves it absent.
 No prompt text, session title or most-recent worker is used to choose a session.
+Retrying the auto-filled send after the turn ends must retain its first stored
+session and return created:false. Adapter not_found rejects an explicit id; an
+unreachable/failed lookup returns session_lookup_failed and instructs a retry
+with the unchanged requestId/session, never an invented replacement id.
 
 Keep observed.json and proof.log. On the test-first commit the helper fails:
 the publish input does not yet accept session. Resources close in finally and

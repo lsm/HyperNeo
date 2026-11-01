@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { z } from '../../../packages/daemon/node_modules/zod/index.js';
+import { createOperationRegistry, defineOperation } from '../../../packages/daemon/src/lib/operations/registry.ts';
+import { WorkRefSchema } from '../../../packages/daemon/src/lib/drivers/types.ts';
 import { presentPublicationPage } from '../../../packages/web/src/neo/publication-client.ts';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -32,6 +35,17 @@ try {
   const repo = new NeoRepository(app.db.getDatabase());
   repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
   repo.saveProject({ id: 'garden', title: 'Garden', summary: '', context: '' }, 0);
+  let adapterAvailable = false;
+  const original = app.sessionManager.getOperationRegistry();
+  const registry = createOperationRegistry([...original.entries.filter((entry) => entry.name !== 'work.status'), defineOperation({
+    name: 'work.status', description: 'Synthetic external session', inputSchema: z.object({ ref: WorkRefSchema }), resultSchema: z.unknown(),
+    execute: ({ ref }) => {
+      if (ref.id === 'synthetic-failure') throw new Error('Synthetic adapter error');
+      if (ref.id !== 'synthetic-external') return { ok: false, reason: 'not_found' };
+      return adapterAvailable ? { ok: true, value: { ref, title: 'External worker', place: { machine: 'synthetic', name: 'Synthetic' }, status: 'running', lastActivityAt: 1 } } : { ok: false, reason: 'unreachable' };
+    },
+  })]);
+  app.sessionManager.getOperationRegistry = () => registry;
   const invoke = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: root, role: 'neo' }));
   const publish = async (requestId: string, session?: string) => JSON.parse((await invoke({ name: 'neo.publication.publish', input: { requestId, shortText: 'Session update', fullText: 'This is the requested session.', session } })).content[0].text);
   ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
@@ -65,6 +79,15 @@ try {
   evidence.web = web;
   assert('value' in web && web.value.state === 'ready');
   assert.equal(web.value.items[0].session, worker);
+  evidence.unavailable = await publish('external-proof', 'codex-desktop:synthetic-external');
+  assert.equal((evidence.unavailable as { reason: string }).reason, 'session_lookup_failed');
+  evidence.lookupError = await publish('failed-proof', 'codex-desktop:synthetic-failure');
+  assert.equal((evidence.lookupError as { reason: string }).reason, 'session_lookup_failed');
+  assert.equal((await read()).items.length, 1);
+  adapterAvailable = true;
+  evidence.adapterRetry = await publish('external-proof', 'codex-desktop:synthetic-external');
+  assert.equal((evidence.adapterRetry as { accepted: boolean }).accepted, true);
+  assert.equal((evidence.adapterRetry as { publication: { session: string } }).publication.session, 'codex-desktop:synthetic-external');
   await new NeoSessionMessageRepository(app.db.getDatabase()).record({ conversationId, messageId: 'worker-report', fromSession: worker, fromName: 'Worker', toSession: root, toName: 'Neo', text: 'Synthetic report', createdAt: new Date().toISOString(), kind: 'session' });
   await app.db.updateSession(root, { processingState: JSON.stringify({ status: 'processing', messageId: 'worker-report' }) });
   evidence.auto = await publish('source-proof');
