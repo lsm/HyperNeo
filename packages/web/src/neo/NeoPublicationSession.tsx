@@ -19,10 +19,14 @@ export function NeoPublicationSession({
     void connectionManager
       .getHub()
       .then((hub) =>
-        invokeOperation<NeoQuestionSource | null>(hub, 'neo.session.link', { session })
+        invokeOperation<NeoQuestionSource | null | { ok: false; reason: string }>(
+          hub,
+          'neo.session.link',
+          { session }
+        )
       )
       .then((value) => {
-        if (current) setSource(value);
+        if (current) setSource(value && 'link' in value ? value : null);
       })
       .catch(() => {
         if (current) setSource(null);

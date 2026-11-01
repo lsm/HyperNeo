@@ -1,3 +1,4 @@
+import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { sessionWorkerRef } from './worker-identity.ts';
 import { neoSessionTrackRootRead } from '../../storage/repositories/neo-session-track-write.ts';
 import { createNeoCardSearchOperation } from './card-search-operation.ts';
@@ -839,11 +840,17 @@ export function createNeoOperations(service: NeoService) {
         }).nullable(),
       ]),
       policy: { safetyClass: 'read' },
-      execute: path('neo.session.link', (input: { session: string }) =>
-        service.readQuestionSource(
-          sessionWorkerRef(input.session, !!service.db.getSession(input.session))
-        )
-      ),
+      execute: path('neo.session.link', async (input: { session: string }) => {
+        const local = service.db.getSession(input.session);
+        const source = local
+          ? {
+              ...workerIdentity({ adapter: 'hyperneo', id: local.id }, local.title),
+              provider: local.config.provider ?? 'hyperneo',
+              link: `/session/${local.id}`,
+            }
+          : await service.readQuestionSource(sessionWorkerRef(input.session, false));
+        return source ?? { ok: false, reason: 'session_unavailable' };
+      }),
     }),
     defineOperation({
       name: 'neo.session.mute',

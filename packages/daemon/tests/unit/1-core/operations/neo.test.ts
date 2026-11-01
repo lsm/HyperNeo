@@ -206,7 +206,7 @@ describe('Neo MVP', () => {
     }
     expect(await invoke('neo.session.link', { session: 'missing' })).toMatchObject({
       kind: 'completed',
-      value: null,
+      value: { ok: false, reason: 'session_unavailable' },
     });
   });
 
