@@ -191,27 +191,30 @@ describe('publication session Open', () => {
       read.mockRestore();
     }
   });
-  it('leaves an unavailable session visible without inventing another target', async () => {
-    const read = vi
-      .spyOn(connectionManager, 'getHub')
-      .mockResolvedValue({ request: async () => null } as never);
-    try {
-      const onOpen = vi.fn();
-      render(
-        <NeoPublicConversation
-          conversation={conversation([], [publication({ session: 'missing', links: [] })])}
-          onOpenSession={onOpen}
-        />
-      );
-      const button = await screen.findByRole('button', { name: 'Open session: missing' });
-      await waitFor(() => expect(button.getAttribute('title')).toBe('This chat didn’t open.'));
-      expect(button.hasAttribute('disabled')).toBe(true);
-      fireEvent.click(button);
-      expect(onOpen).not.toHaveBeenCalled();
-    } finally {
-      read.mockRestore();
+  it.each([null, { ok: false, reason: 'session_unavailable' }])(
+    'leaves an unavailable session visible without inventing another target: %s',
+    async (result) => {
+      const read = vi
+        .spyOn(connectionManager, 'getHub')
+        .mockResolvedValue({ request: async () => result } as never);
+      try {
+        const onOpen = vi.fn();
+        render(
+          <NeoPublicConversation
+            conversation={conversation([], [publication({ session: 'missing', links: [] })])}
+            onOpenSession={onOpen}
+          />
+        );
+        const button = await screen.findByRole('button', { name: 'Open session: missing' });
+        await waitFor(() => expect(button.getAttribute('title')).toBe('This chat didn’t open.'));
+        expect(button.hasAttribute('disabled')).toBe(true);
+        fireEvent.click(button);
+        expect(onOpen).not.toHaveBeenCalled();
+      } finally {
+        read.mockRestore();
+      }
     }
-  });
+  );
 });
 
 describe('durable public conversation presentation', () => {
