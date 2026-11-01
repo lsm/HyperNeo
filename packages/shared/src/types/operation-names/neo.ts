@@ -44,6 +44,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.rule.ask',
   'neo.rule.save',
   'neo.session.archive',
+  'neo.session.link',
   'neo.session.mute',
   'neo.session.track',
   'neo.snapshot',

@@ -30,10 +30,12 @@ export function NeoConversation({
   mute,
   onQuote,
   onOpenWork,
+  onOpenSession,
 }: {
   store: SessionStore;
   onQuote?: (quote: NeoQuote) => void;
   onOpenWork?: (anchor: string, cardReply?: NeoCardReply) => void;
+  onOpenSession?: (link: string, label: string) => void;
   mute?: NeoSessionMute;
   onEditUndelivered?: NeoEditUndelivered;
   pendingAsks?: readonly NeoPendingAsk[];
@@ -91,6 +93,7 @@ export function NeoConversation({
             mute={mute}
             onQuote={onQuote}
             onOpenWork={onOpenWork}
+            onOpenSession={onOpenSession}
           />
         )}
         {pendingAsks

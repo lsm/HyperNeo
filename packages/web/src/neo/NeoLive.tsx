@@ -137,6 +137,10 @@ export function NeoLive() {
   }, [scenesOpen]);
   const [chat, setChat] = useState<{ sessionId: string } | null>(null);
   const closeChat = useCallback(() => setChat(null), []);
+  const openSession = (link: string) =>
+    link.startsWith('/session/')
+      ? setChat({ sessionId: link.slice('/session/'.length) })
+      : window.open(link, '_blank', 'noopener');
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const dragDepth = useRef(0);
   const [draft, setDraft] = useState<string | undefined>(undefined);
@@ -734,6 +738,7 @@ export function NeoLive() {
               store={neo.store}
               sessionId={neo.sessionId}
               replyLabels={replyLabels}
+              onOpenSession={openSession}
               publicConversation={publicConversation}
               onOpenWork={(anchor, cardReply) => {
                 const element = scroll.current ?? mainScroll.current;
@@ -1020,11 +1025,7 @@ export function NeoLive() {
                       )
                     }
                     onLoadDetails={loadNeoAskDetails}
-                    onOpen={(link) =>
-                      link.startsWith('/session/')
-                        ? setChat({ sessionId: link.slice('/session/'.length) })
-                        : window.open(link, '_blank', 'noopener')
-                    }
+                    onOpen={openSession}
                   />
                 ))}
               </section>

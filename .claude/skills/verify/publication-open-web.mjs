@@ -29,8 +29,9 @@ try {
  await page.screenshot({path:`${run}/evidence/${theme}-${touch?'touch':'desktop'}-${entry.session.split(':')[0]}.png`,fullPage:true,animations:'disabled'});
  if(touch)await button.tap();else await button.click();
  if(entry.session==='local-worker') {
- const pane=page.locator('.neo-session-pane');await pane.getByRole('heading',{name:/local-worker/}).waitFor();
+ const pane=page.locator('.neo-session-pane');await pane.getByRole('heading',{name:/Local worker/}).waitFor();
  await pane.getByRole('button',{name:'Back to Neo',exact:true}).click();await button.waitFor();
+ if(!touch && theme==='light'){await button.focus();await button.press('Enter');await pane.getByRole('heading',{name:/Local worker/}).waitFor();await pane.getByRole('button',{name:'Back to Neo',exact:true}).click();}
  } else {
  const expected=entry.session.startsWith('codex')?'codex://threads/synthetic-thread':'claude://claude.ai/epitaxy/synthetic-session';
  assert.equal((await page.evaluate(()=>window.nativeOpens)).at(-1),expected);
