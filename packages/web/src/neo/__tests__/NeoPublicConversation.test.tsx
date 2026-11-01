@@ -11,6 +11,7 @@ import {
 } from '../../lib/artifact-preview-store.ts';
 import type { SessionStore } from '../../lib/session-store.ts';
 import { connectionState } from '../../lib/state.ts';
+import { connectionManager } from '../../lib/connection-manager.ts';
 import { NeoConversation } from '../NeoConversation.tsx';
 import { NeoPublicConversation, PendingAsk, publicAskText } from '../NeoPublicConversation.tsx';
 import { projectNeoPublicConversation } from '../public-conversation.ts';
@@ -137,6 +138,79 @@ describe('message preview references', () => {
     expect(button.hasAttribute('disabled')).toBe(true);
     fireEvent.click(button);
     expect(artifactPreviewStack.value).toHaveLength(0);
+  });
+});
+
+describe('publication session Open', () => {
+  it.each([
+    ['worker', 'hyperneo', '/session/worker'],
+    ['codex-desktop:thread', 'codex-desktop', 'codex://threads/thread'],
+    ['claude-desktop:session', 'claude-desktop', 'claude://claude.ai/epitaxy/session'],
+  ])('opens exactly the named session %s using its card link', async (session, adapter, link) => {
+    const request = vi.fn(async () => ({
+      id: session,
+      adapter,
+      name: 'Named worker',
+      label: 'Named worker',
+      provider: adapter,
+      link,
+    }));
+    const read = vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
+    try {
+      const onOpen = vi.fn();
+      const { container } = render(
+        <NeoPublicConversation
+          conversation={conversation([], [publication({ session, links: [] })])}
+          onOpenSession={onOpen}
+        />
+      );
+      const button = await screen.findByRole('button', { name: 'Open session: Named worker' });
+      expect(button.textContent).toBe('Open');
+      expect(button.querySelector('svg')).toBeTruthy();
+      expect(button.closest('[data-public-entry]')).toBeTruthy();
+      expect(
+        container.querySelectorAll('[data-public-entry] button[aria-label^="Open session:"]')
+      ).toHaveLength(1);
+      expect(request).toHaveBeenCalledWith('operation.invoke', {
+        name: 'neo.session.link',
+        input: { session },
+      });
+      fireEvent.click(button);
+      expect(onOpen).toHaveBeenCalledExactlyOnceWith(link, 'Named worker');
+    } finally {
+      read.mockRestore();
+    }
+  });
+  it('does not infer a session from origins or work links', () => {
+    const read = vi.spyOn(connectionManager, 'getHub');
+    try {
+      render(<NeoPublicConversation conversation={conversation()} onOpenSession={vi.fn()} />);
+      expect(screen.queryByRole('button', { name: /^Open session:/ })).toBeNull();
+      expect(read).not.toHaveBeenCalled();
+    } finally {
+      read.mockRestore();
+    }
+  });
+  it('leaves an unavailable session visible without inventing another target', async () => {
+    const read = vi
+      .spyOn(connectionManager, 'getHub')
+      .mockResolvedValue({ request: async () => null } as never);
+    try {
+      const onOpen = vi.fn();
+      render(
+        <NeoPublicConversation
+          conversation={conversation([], [publication({ session: 'missing', links: [] })])}
+          onOpenSession={onOpen}
+        />
+      );
+      const button = await screen.findByRole('button', { name: 'Open session: missing' });
+      await waitFor(() => expect(button.getAttribute('title')).toBe('This chat didn’t open.'));
+      expect(button.hasAttribute('disabled')).toBe(true);
+      fireEvent.click(button);
+      expect(onOpen).not.toHaveBeenCalled();
+    } finally {
+      read.mockRestore();
+    }
   });
 });
 

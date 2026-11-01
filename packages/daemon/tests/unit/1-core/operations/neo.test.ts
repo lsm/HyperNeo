@@ -140,6 +140,49 @@ describe('Neo MVP', () => {
       sessionId,
     };
   }
+  test('publication Open reuses card session link resolution for exact adapter ids', async () => {
+    sessions.getOperationRegistry = () =>
+      createOperationRegistry([
+        defineOperation({
+          name: 'work.status',
+          description: 'Synthetic native session',
+          inputSchema: z.unknown(),
+          resultSchema: z.unknown(),
+          execute: ({ ref }: { ref: { adapter: string; id: string } }) => ({
+            ok: true,
+            value: {
+              ref,
+              title: 'Exact session',
+              place: { machine: 'synthetic', name: 'Synthetic' },
+              status: 'running',
+              lastActivityAt: 1,
+              link:
+                ref.adapter === 'codex-desktop'
+                  ? `codex://threads/${ref.id}`
+                  : `claude://claude.ai/epitaxy/${ref.id}`,
+            },
+          }),
+        }),
+      ]);
+    for (const [adapter, id, link] of [
+      ['codex-desktop', 'thread', 'codex://threads/thread'],
+      ['claude-desktop', 'session', 'claude://claude.ai/epitaxy/session'],
+    ]) {
+      const result = await invoke('neo.session.link', { session: `${adapter}:${id}` });
+      expect(result).toMatchObject({
+        kind: 'completed',
+        value: { id, adapter, name: 'Exact session', link },
+      });
+    }
+    expect(
+      await invoke(
+        'neo.session.link',
+        { session: 'codex-desktop:thread' },
+        { source: 'mcp', sessionId: 'ordinary', role: 'worker' }
+      )
+    ).toMatchObject({ kind: 'completed', value: { ok: false } });
+  });
+
   test('opening is idempotent, independent of project creation and creates ordinary sessions with a Neo prompt', async () => {
     const ids = await Promise.all([service.open(), service.open(), service.open()]);
     expect(new Set(ids).size).toBe(1);
