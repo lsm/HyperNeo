@@ -31,7 +31,15 @@ const Draft = NeoPublicationObject.omit({
   revisionId: true,
   revisions: true,
 })
-  .extend({ requestId: z.string().min(1).max(160) })
+  .extend({
+    requestId: z.string().min(1).max(160),
+    links: z
+      .array(
+        NeoPublicationObject.shape.links.unwrap().element.extend({ kind: z.literal('project') })
+      )
+      .max(16)
+      .default([]),
+  })
   .superRefine(publicationTextRule);
 type Draft = z.infer<typeof Draft>;
 type Rejection = { accepted: false; reason: string; detail?: string };
@@ -108,6 +116,22 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     .pipe(() => runtime.getRootBinding(), 'caller', 'root')
     .pipe(requirePublicationProducer, ['caller', 'binding', 'root'], 'result:publication')
     .pipe(
+      (draft: Draft, proof: Proof) => {
+        const unknown = draft.links.find((link) => !runtime.hasProject(link.id));
+        return unknown
+          ? {
+              reason: {
+                accepted: false,
+                reason: 'unknown_project',
+                detail: `Unknown project link: ${unknown.id} (${unknown.label})`,
+              },
+            }
+          : { value: proof };
+      },
+      ['submitted', 'publication'],
+      'result:publication'
+    )
+    .pipe(
       (draft: Draft, caller: OperationCaller) => {
         const sessionId = caller.sessionId!;
         const explicit = draft.replyTo?.filter((id) => runtime.receivedHumanInput(sessionId, id));
@@ -124,9 +148,6 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
           )
             ? draft.cardReply
             : undefined,
-          links: draft.links.filter(
-            (link) => link.kind === 'project' && runtime.hasProject(link.id)
-          ),
           artifacts: draft.artifacts?.filter(
             (ref) => !unregisteredArtifact([ref], [runtime.artifact(ref.artifactId, caller)])
           ),
@@ -188,7 +209,7 @@ export function createNeoPublicationOperation(publish: ReturnType<typeof createN
   return defineOperation({
     name: 'neo.publication.publish',
     description:
-      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. Pass verbatim: true to send the message as one field: the full content in fullText with no shortText; a request with both verbatim and shortText is rejected. Optional replyTo lists the received human message ids this publication answers; when omitted, the human inputs whose turn produced this publication are recorded as answered when they are known. Unknown, foreign, queued and non-human reply ids are omitted. Non-project and unavailable links are omitted, including work and consultation links. Unavailable artifact references are omitted. For a document or evidence file, pass the reference artifact.file.register returned in artifacts and say in one sentence what it is.',
+      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. Pass verbatim: true to send the message as one field: the full content in fullText with no shortText; a request with both verbatim and shortText is rejected. Optional replyTo lists the received human message ids this publication answers; when omitted, the human inputs whose turn produced this publication are recorded as answered when they are known. Unknown, foreign, queued and non-human reply ids are omitted. Only project links are accepted; an unknown project id rejects the entire publication without saving. Correct the link and retry with the same requestId. Unavailable artifact references are omitted. For a document or evidence file, pass the reference artifact.file.register returned in artifacts and say in one sentence what it is.',
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
     resultSchema: NeoPublicationResultSchema.and(z.object({ guidance: z.string().optional() })),

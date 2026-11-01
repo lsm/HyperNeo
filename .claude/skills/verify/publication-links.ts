@@ -1,0 +1,72 @@
+import assert from 'node:assert/strict';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
+import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
+
+const run = process.argv[2];
+assert.equal(process.env.NODE_ENV, 'test');
+assert.equal(process.env.HOME, join(run, 'home'));
+assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
+await mkdir(join(run, 'evidence'), { recursive: true });
+await writeFile(join(run, 'bin/gh'), '#!/bin/sh\nexit 73\n', { mode: 0o755 });
+const config = { ...getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db'), workspaceRoot: run }), disableWorktrees: true };
+const app = await createDaemonApp({ config, standalone: false, verbose: false });
+let ws: WebSocket | undefined;
+const evidence: Record<string, unknown> = {};
+try {
+  await app.jobProcessor.stop();
+  assert.equal(config.port, 0);
+  assert.equal(config.disableWorktrees, true);
+  assert.notEqual(app.server.port, 8399);
+  evidence.isolation = { requestedPort: config.port, actualPort: app.server.port, disableWorktrees: config.disableWorktrees };
+  const conversationId = '20000000-0000-4000-8000-000000000001';
+  const root = `neo:${conversationId}`;
+  await app.db.createSession({ id: root, title: 'Synthetic Neo', workspacePath: run, createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { model: 'synthetic' }, metadata: {} } as never);
+  const repo = new NeoRepository(app.db.getDatabase());
+  repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
+  repo.saveProject({ id: 'garden', title: 'Garden', summary: '', context: '' }, 0);
+  const invoke = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: root, role: 'neo' }));
+  const publish = async (links: unknown[]) => JSON.parse((await invoke({ name: 'neo.publication.publish', input: { requestId: 'links-proof', shortText: 'Project update', fullText: 'Open the project below.', links } })).content[0].text);
+  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  await new Promise((resolve, reject) => { ws!.onopen = resolve; ws!.onerror = reject; });
+  const read = () => new Promise<{ ok: boolean; items: { links: unknown[] }[] }>((resolve, reject) => {
+    const id = crypto.randomUUID();
+    const timer = setTimeout(() => reject(new Error('Publication reader timed out')), 10000);
+    ws!.onmessage = event => {
+      const reply = JSON.parse(String(event.data));
+      if ((reply.requestId ?? reply.id) !== id) return;
+      clearTimeout(timer);
+      if (reply.error) reject(new Error(JSON.stringify(reply.error)));
+      else resolve(reply.data);
+    };
+    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name: 'neo.publication.read', input: { conversationId } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
+  });
+  evidence.work = await publish([{ kind: 'work', id: 'old', label: 'Old' }]);
+  evidence.consultation = await publish([{ kind: 'consultation', id: 'old', label: 'Old' }]);
+  evidence.unknown = await publish([{ kind: 'project', id: 'garden', label: 'Garden' }, { kind: 'project', id: 'missing', label: 'Missing' }]);
+  const before = await read();
+  evidence.before = before;
+  assert.equal((evidence.work as { code: string }).code, 'invalid_input');
+  assert.equal((evidence.consultation as { code: string }).code, 'invalid_input');
+  assert.match(JSON.stringify(evidence.unknown), /unknown_project/);
+  assert.match(JSON.stringify(evidence.unknown), /missing/);
+  assert.equal(before.ok, true);
+  assert.equal(before.items.length, 0);
+  const links = [{ kind: 'project', id: 'garden', label: 'Garden' }];
+  evidence.valid = await publish(links);
+  evidence.retry = await publish(links);
+  const after = await read();
+  evidence.after = after;
+  assert.equal((evidence.valid as { created: boolean }).created, true);
+  assert.equal((evidence.retry as { created: boolean }).created, false);
+  assert.equal(after.items.length, 1);
+  assert.deepEqual(after.items[0].links, links);
+  evidence.passed = true;
+} finally {
+  ws?.close();
+  await app.cleanup();
+  await writeFile(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
+}
