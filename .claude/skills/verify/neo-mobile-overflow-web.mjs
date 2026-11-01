@@ -6,8 +6,8 @@ const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, executablePath: process.env.VERIFY_BROWSER });
 const cases = [];
 try {
-  for (const [width, theme] of [[390, 'light'], [360, 'light'], [390, 'dark'], [360, 'dark'], [1280, 'light']]) {
-    const context = await browser.newContext({ viewport: { width, height: width === 360 ? 800 : 844 }, hasTouch: width < 720, isMobile: width < 720, locale: 'en-US', reducedMotion: 'reduce' });
+  for (const [width, theme] of [[390, 'light'], [360, 'light'], [390, 'dark'], [360, 'dark'], [700, 'light'], [700, 'dark'], [1280, 'light']]) {
+    const context = await browser.newContext({ viewport: { width, height: width === 700 ? 400 : width === 360 ? 800 : 844 }, hasTouch: width < 720, isMobile: width < 720, locale: 'en-US', reducedMotion: 'reduce' });
     const page = await context.newPage(), observations = [];
     try {
       await page.addInitScript(theme => localStorage.setItem('theme', theme), theme);

@@ -10,7 +10,7 @@ NODE_PATH=<existing Playwright modules> VERIFY_BROWSER=<Chromium executable> TMP
 The metadata-only helper owns an ephemeral daemon/frontend with synthetic HOME,
 DB and sessions. No model, provider or live daemon is used. It publishes through
 the real MCP door and seeds human messages, long work/todo titles, choice questions
-and worker transcript content. Test at 390x844 and 360x800 with touch emulation,
+and worker transcript content. Test at 390x844, 360x800 and landscape 700x400 with touch emulation,
 in light and dark, plus a 1280px desktop comparison. Cover conversation, expanded
 human messages and publication details, long draft, settings drawer, work sheet,
 All dialog and local session pane. Tap the phone dialog's Close control.
