@@ -55,7 +55,7 @@ export function createArtifactReferenceResolve(
       {
         daemonId,
         home,
-        loadSource: async (key) => sources.load(key),
+        loadSource: async (key) => sources.load(key, caller),
       }
     );
     if (!selected.accepted || !input.file) return selected;

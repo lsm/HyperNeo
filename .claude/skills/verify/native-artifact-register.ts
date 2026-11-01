@@ -113,7 +113,7 @@ try {
     assert.equal((await customGet.execute({ artifactId: custom.artifact.artifactId }, owner) as { accepted: boolean }).accepted, true, 'custom-home authorization must use the registration native state');
     assert.deepEqual(createArtifactRefReader(() => customDb)(custom.artifact.artifactId, owner), custom.artifact);
     const sources = new ArtifactReferenceSourceRepository(customDb, custom.artifact.daemonId, customHome);
-    assert.equal(sources.load({ kind: 'todo', id: context.id })?.bindings[0]?.workspacePath, join(root, 'workspace'));
+    assert.equal(sources.load({ kind: 'todo', id: context.id }, { source: 'rpc', principal: 'local' })?.bindings[0]?.workspacePath, join(root, 'workspace'));
     const largeText = 'Synthetic retained log line\n'.repeat(24000);
     await writeFile(join(root, 'workspace', 'large.log'), largeText);
     const largeInput = { ...customInput, requestId: 'locked-preview', path: 'large.log' };
