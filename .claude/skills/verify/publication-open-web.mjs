@@ -22,6 +22,7 @@ try {
  const button=entry.row.getByRole('button',{name:/^Open session:/});
  if(!entry.session){assert.equal(await button.count(),0);continue;}
  await button.waitFor();await button.scrollIntoViewIfNeeded();await button.waitFor({state:'visible'});
+ if(entry.session==='codex-desktop:linkless'){await page.waitForFunction(id=>document.querySelector(`[data-message-ref="${id}"] button[aria-label^="Open session:"]`)?.title==='This chat didn’t open.',entry.id,{timeout:3000});assert(await button.isDisabled());assert(Number(await button.evaluate(el=>getComputedStyle(el).opacity))<0.8);await entry.row.screenshot({path:`${run}/evidence/${theme}-${touch?'touch':'desktop'}-unavailable.png`,animations:'disabled'});continue;}
  await page.waitForFunction(id=>!document.querySelector(`[data-message-ref="${id}"] button[aria-label^="Open session:"]`)?.disabled,entry.id);
  assert.equal((await button.innerText()).trim(),'Open');assert.equal(await button.locator('svg').count(),1);
  const position=await button.boundingBox(),row=await entry.row.boundingBox(),bubble=await entry.row.locator('.neo-message-bubble').boundingBox();

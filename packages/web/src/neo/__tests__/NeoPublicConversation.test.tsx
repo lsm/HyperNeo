@@ -191,7 +191,18 @@ describe('publication session Open', () => {
       read.mockRestore();
     }
   });
-  it.each([null, { ok: false, reason: 'session_unavailable' }])(
+  it.each([
+    null,
+    { ok: false, reason: 'session_unavailable' },
+    {
+      id: 'missing',
+      adapter: 'codex-desktop',
+      name: null,
+      label: 'Named worker',
+      provider: 'Codex',
+      link: null,
+    },
+  ])(
     'leaves an unavailable session visible without inventing another target: %s',
     async (result) => {
       const read = vi

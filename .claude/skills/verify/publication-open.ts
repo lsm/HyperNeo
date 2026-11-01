@@ -29,12 +29,12 @@ try {
  const original=app.sessionManager.getOperationRegistry(), status=original.entries.find(entry=>entry.name==='work.status')!;
  const registry=createOperationRegistry(original.entries.map(entry=>entry.name==='work.status'?defineOperation({name:'work.status',description:'Synthetic native app metadata',inputSchema:z.unknown(),resultSchema:z.unknown(),execute:(input,caller)=>{
  const ref=(input as {ref:{id:string;adapter:string}}).ref;
- if(['codex-desktop','claude-desktop'].includes(ref.adapter))return {ok:true,value:{ref,title:`${ref.adapter} worker`,place:{machine:'synthetic',name:'Synthetic'},status:'running',lastActivityAt:1,link:ref.adapter==='codex-desktop'?`codex://threads/${ref.id}`:`claude://claude.ai/epitaxy/${ref.id}`}};
+ if(['codex-desktop','claude-desktop'].includes(ref.adapter))return {ok:true,value:{ref,title:`${ref.adapter} worker`,place:{machine:'synthetic',name:'Synthetic'},status:'running',lastActivityAt:1,watchHint:ref.id==='linkless'?'Synthetic session has no native app link':undefined,link:ref.id==='linkless'?undefined:ref.adapter==='codex-desktop'?`codex://threads/${ref.id}`:`claude://claude.ai/epitaxy/${ref.id}`}};
  return status.execute(input,caller);
  }}):entry));app.sessionManager.setOperationRegistryProvider(()=>registry);
  const publish=createOperationMcpHandler(()=>registry,()=>({sessionId:root,role:'neo'}));
  const fixtures=[];
- for(const [session,title] of [[worker,'Local session reply'],[root,'Neo session reply'],[room,'Space session reply'],['codex-desktop:synthetic-thread','Codex session reply'],['claude-desktop:synthetic-session','Claude session reply'],[undefined,'Ordinary reply']] as const){
+ for(const [session,title] of [[worker,'Local session reply'],[root,'Neo session reply'],[room,'Space session reply'],['codex-desktop:synthetic-thread','Codex session reply'],['claude-desktop:synthetic-session','Claude session reply'],['codex-desktop:linkless','Session without app link'],[undefined,'Ordinary reply']] as const){
  const result=JSON.parse((await publish({name:'neo.publication.publish',input:{requestId:crypto.randomUUID(),shortText:title,fullText:`${title}\n\nSynthetic full report`,...(session?{session}:{})}})).content[0].text);
  assert(result.accepted,JSON.stringify(result));fixtures.push({session,title,id:result.publication.publicationId});
  }
