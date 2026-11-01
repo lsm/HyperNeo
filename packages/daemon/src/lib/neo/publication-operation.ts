@@ -48,13 +48,15 @@ type Producer = {
   binding: NeoBinding;
   root: NeoBinding;
 };
-type Proof = Producer;
+type Proof = Producer & { session?: string };
 interface NeoPublicationRuntime {
   receivedHumanInput(sessionId: string, messageId: string): boolean;
   currentHumanInputs(sessionId: string): string[];
   getBinding(id: string): NeoBinding | null;
   getRootBinding(): NeoBinding | null;
   hasProject(id: string): boolean;
+  hasSession(id: string): boolean | Promise<boolean>;
+  sourceSession(sessionId: string): string | undefined;
   append(input: NeoPublicationInput): Receipt | Promise<Receipt>;
   notify(): void;
   artifact: ArtifactRefReader;
@@ -132,7 +134,24 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
       'result:publication'
     )
     .pipe(
-      (draft: Draft, caller: OperationCaller) => {
+      async (draft: Draft, proof: Proof, caller: OperationCaller) => {
+        const session = draft.session ?? runtime.sourceSession(caller.sessionId!);
+        const exists = session ? await runtime.hasSession(session) : false;
+        return draft.session && !exists
+          ? {
+              reason: {
+                accepted: false,
+                reason: 'unknown_session',
+                detail: `Unknown session: ${draft.session}`,
+              },
+            }
+          : { value: { ...proof, session: exists ? session : undefined } };
+      },
+      ['submitted', 'publication', 'caller'],
+      'result:publication'
+    )
+    .pipe(
+      (draft: Draft, caller: OperationCaller, proof: Proof) => {
         const sessionId = caller.sessionId!;
         const explicit = draft.replyTo?.filter((id) => runtime.receivedHumanInput(sessionId, id));
         const inferred = draft.cardReply
@@ -142,6 +161,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
               .filter((id) => runtime.receivedHumanInput(sessionId, id));
         return {
           ...draft,
+          session: proof.session,
           replyTo: explicit ?? (inferred.length ? [...new Set(inferred)] : undefined),
           cardReply: draft.cardReply?.sourceMessageIds.every((id) =>
             runtime.receivedHumanInput(sessionId, id)
@@ -153,7 +173,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
           ),
         };
       },
-      ['submitted', 'caller'],
+      ['submitted', 'caller', 'publication'],
       'draft'
     )
     .pipe(
@@ -209,7 +229,7 @@ export function createNeoPublicationOperation(publish: ReturnType<typeof createN
   return defineOperation({
     name: 'neo.publication.publish',
     description:
-      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. Pass verbatim: true to send the message as one field: the full content in fullText with no shortText; a request with both verbatim and shortText is rejected. Optional replyTo lists the received human message ids this publication answers; when omitted, the human inputs whose turn produced this publication are recorded as answered when they are known. Unknown, foreign, queued and non-human reply ids are omitted. Only project links are accepted; an unknown project id rejects the entire publication without saving. Correct the link and retry with the same requestId. Unavailable artifact references are omitted. For a document or evidence file, pass the reference artifact.file.register returned in artifacts and say in one sentence what it is.',
+      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. Pass verbatim: true to send the message as one field: the full content in fullText with no shortText; a request with both verbatim and shortText is rejected. Optional replyTo lists the received human message ids this publication answers; when omitted, the human inputs whose turn produced this publication are recorded as answered when they are known. Unknown, foreign, queued and non-human reply ids are omitted. When a reply is about one session the human may want to open, pass session: its exact session id rather than promising a link in text. Unknown session ids reject the publication without saving; correct the id and retry the same requestId. If session is omitted, the daemon fills it only for an unambiguous recorded sender of the current inputs. Only project links are accepted; an unknown project id rejects the entire publication without saving. Correct the link and retry with the same requestId. Unavailable artifact references are omitted. For a document or evidence file, pass the reference artifact.file.register returned in artifacts and say in one sentence what it is.',
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
     resultSchema: NeoPublicationResultSchema.and(z.object({ guidance: z.string().optional() })),

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { presentPublicationPage } from '../../../packages/web/src/neo/publication-client.ts';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
@@ -35,7 +36,7 @@ try {
   const publish = async (requestId: string, session?: string) => JSON.parse((await invoke({ name: 'neo.publication.publish', input: { requestId, shortText: 'Session update', fullText: 'This is the requested session.', session } })).content[0].text);
   ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise((resolve, reject) => { ws!.onopen = resolve; ws!.onerror = reject; });
-  const read = () => new Promise<{ ok: boolean; items: { session?: string }[] }>((resolve, reject) => {
+  const read = (name = 'neo.publication.read') => new Promise<{ ok: boolean; items: { session?: string; role?: string; publication?: { session?: string } }[] }>((resolve, reject) => {
     const id = crypto.randomUUID();
     const timer = setTimeout(() => reject(new Error('Publication reader timed out')), 10000);
     ws!.onmessage = event => {
@@ -45,7 +46,7 @@ try {
       if (reply.error) reject(new Error(JSON.stringify(reply.error)));
       else resolve(reply.data);
     };
-    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name: 'neo.publication.read', input: { conversationId } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
+    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input: { conversationId } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
   evidence.unknown = await publish('session-proof', 'missing-session');
   evidence.before = await read();
@@ -60,6 +61,10 @@ try {
   assert.equal((evidence.retry as { created: boolean }).created, false);
   assert.equal(after.items.length, 1);
   assert.equal(after.items[0].session, worker);
+  const web = presentPublicationPage(after, { conversationId, after: 0, limit: 50 });
+  evidence.web = web;
+  assert('value' in web && web.value.state === 'ready');
+  assert.equal(web.value.items[0].session, worker);
   await new NeoSessionMessageRepository(app.db.getDatabase()).record({ conversationId, messageId: 'worker-report', fromSession: worker, fromName: 'Worker', toSession: root, toName: 'Neo', text: 'Synthetic report', createdAt: new Date().toISOString(), kind: 'session' });
   await app.db.updateSession(root, { processingState: JSON.stringify({ status: 'processing', messageId: 'worker-report' }) });
   evidence.auto = await publish('source-proof');
@@ -71,6 +76,9 @@ try {
   evidence.idle = await publish('idle-proof');
   assert.equal((evidence.idle as { publication: { session?: string } }).publication.session, undefined);
   evidence.final = await read();
+  const conversation = await read('neo.conversation.read');
+  evidence.conversation = conversation;
+  assert.equal(conversation.items.find((item) => item.role === 'neo')?.publication?.session, worker);
   evidence.passed = true;
 } finally {
   ws?.close();

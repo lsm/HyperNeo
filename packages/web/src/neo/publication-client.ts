@@ -88,6 +88,7 @@ function revision(value: unknown): NonNullable<NeoPublication['revisions']>[numb
     typeof row.revisionId !== 'string' ||
     !uuid.test(row.revisionId) ||
     !text(row.fullText, 16000) ||
+    (row.session !== undefined && !text(row.session, 500)) ||
     !text(row.createdAt, 40) ||
     !Number.isFinite(Date.parse(row.createdAt)) ||
     producer === null ||
@@ -98,6 +99,7 @@ function revision(value: unknown): NonNullable<NeoPublication['revisions']>[numb
     revisionId: row.revisionId,
     ...(shortText !== undefined ? { shortText } : {}),
     fullText: row.fullText,
+    ...(typeof row.session === 'string' ? { session: row.session } : {}),
     createdAt: row.createdAt,
     ...(producer ? { producerInput: producer } : {}),
     ...(ask ? { askOrigin: ask } : {}),
@@ -129,6 +131,7 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
     (verbatim && shortText !== undefined) ||
     (!verbatim && shortText === undefined) ||
     !text(row.fullText, 16000) ||
+    (row.session !== undefined && !text(row.session, 500)) ||
     ask === null ||
     producer === null ||
     !Array.isArray(row.links) ||
@@ -196,6 +199,7 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
     ...(shortText !== undefined ? { shortText } : {}),
     ...(verbatim ? { verbatim: true } : {}),
     fullText: row.fullText,
+    ...(typeof row.session === 'string' ? { session: row.session } : {}),
     ...(ask ? { askOrigin: ask } : {}),
     ...(producer ? { producerInput: producer } : {}),
     links,

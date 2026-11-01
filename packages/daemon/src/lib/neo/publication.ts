@@ -34,6 +34,7 @@ export const NeoPublicationObject = z
       )
       .optional(),
     fullText: text(16000).describe('The details of the topic(s) shortText names.'),
+    session: text(500).optional(),
     links: z
       .array(
         z
@@ -65,6 +66,7 @@ export const NeoPublicationObject = z
             revisionId: z.uuid(),
             shortText: text(2000).optional(),
             fullText: text(16000),
+            session: text(500).optional(),
             createdAt: z.string().datetime(),
             producerInput: origin.optional(),
             askOrigin: origin.optional(),

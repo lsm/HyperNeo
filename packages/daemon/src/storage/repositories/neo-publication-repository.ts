@@ -102,6 +102,7 @@ function appendImmutable(
             revisionId,
             shortText: current.shortText,
             fullText: current.fullText,
+            session: current.session,
             createdAt: current.editedAt ?? current.createdAt,
             producerInput: current.answerInput ?? current.producerInput,
             askOrigin: current.answerOrigin ?? current.askOrigin,
@@ -113,6 +114,7 @@ function appendImmutable(
           shortText: input.shortText,
           fullText: input.fullText,
           links: input.links,
+          session: input.session,
           cardReply: input.cardReply,
           revisionId: input.publicationId,
           revisions,
@@ -164,6 +166,7 @@ function appendImmutable(
           ...original,
           shortText: first.shortText,
           fullText: first.fullText,
+          session: first.session,
           awaiting: first.awaiting,
         }
       : null;
@@ -286,6 +289,7 @@ export class NeoPublicationRepository {
         revisionId: message.revisionId ?? message.publicationId,
         shortText: message.shortText,
         fullText: message.fullText,
+        session: message.session,
         createdAt: message.editedAt ?? message.createdAt,
         producerInput: message.answerInput ?? message.producerInput,
         askOrigin: message.answerOrigin ?? message.askOrigin,

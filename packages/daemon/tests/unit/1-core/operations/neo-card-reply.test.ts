@@ -120,6 +120,33 @@ describe('card reply notices', () => {
       f.db.close();
     }
   });
+  test('coalesced publications retain each revision session without rewinding on retry', async () => {
+    const f = setup();
+    try {
+      await f.ask({ replyTo: [human1] });
+      const { sequence: _sequence, createdAt: _createdAt, ...row } = f.rows()[0];
+      const first = { ...row, publicationId: crypto.randomUUID(), session: 'worker-one' };
+      expect(f.publications.append(first)).toMatchObject({ accepted: true });
+      expect(
+        f.publications.append({
+          ...first,
+          publicationId: crypto.randomUUID(),
+          session: 'worker-two',
+        })
+      ).toMatchObject({ accepted: true });
+      expect(f.rows()[0].session).toBe('worker-two');
+      expect(f.rows()[0].revisions).toContainEqual(
+        expect.objectContaining({ session: 'worker-one' })
+      );
+      expect(f.publications.append(first)).toMatchObject({
+        accepted: true,
+        created: false,
+        publication: { session: 'worker-two' },
+      });
+    } finally {
+      f.db.close();
+    }
+  });
   test('recorded consumed input works without replyTo, background and rejected writes do not notify', async () => {
     const f = setup();
     try {
