@@ -73,7 +73,7 @@ export function NeoSessionOpen({
   return (
     <button
       type="button"
-      class={neoSecondaryClass}
+      class={`${neoSecondaryClass} disabled:cursor-not-allowed disabled:opacity-50`}
       aria-label={label}
       onClick={onOpen}
       disabled={disabled}

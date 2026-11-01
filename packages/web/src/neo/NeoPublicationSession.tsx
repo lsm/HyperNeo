@@ -41,7 +41,7 @@ export function NeoPublicationSession({
       label={t('question.openSessionTitle', { name: source?.name ?? session })}
       disabled={!source?.link}
       busy={source === undefined}
-      title={source === null ? t('session.loadFailed') : undefined}
+      title={source !== undefined && !source?.link ? t('session.loadFailed') : undefined}
       onOpen={() => {
         if (source?.link) onOpen(source.link, source.label);
       }}

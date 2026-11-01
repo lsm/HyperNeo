@@ -40,7 +40,7 @@ try {
  }
  }
  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
- cases.push({touch,theme,localPane:true,nativeLinks:true,ordinaryWithoutOpen:true,topRight:true});
+ cases.push({touch,theme,localPane:true,nativeLinks:true,nativeTargets:await page.evaluate(()=>window.nativeOpens),unavailableHasTooltipAndDimmed:true,ordinaryWithoutOpen:true,topRight:true});
  } catch(error){await page.screenshot({path:`${run}/evidence/failure-${theme}-${touch}.png`,fullPage:true,animations:'disabled'});throw error;} finally {await context.close();}
  }
  const result={passed:true,phase:fixture.phase,cases,nativeAppLaunch:'captured callback only'};writeFileSync(`${run}/evidence/browser.json`,JSON.stringify(result,null,2));console.log(JSON.stringify(result));

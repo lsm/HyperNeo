@@ -10,7 +10,7 @@ NODE_PATH=<existing Playwright modules> VERIFY_BROWSER=<Chromium executable> TMP
 The helper owns an ephemeral daemon/frontend, synthetic HOME/DB and refusing gh.
 No model/provider or live daemon is used. It publishes through the real Neo MCP
 door: local worker, Neo, Space task-agent, Codex-qualified, Claude-qualified
-and no-session replies. Existing
+a link-less native session, and no-session replies. Existing
 work.status metadata is scripted only for the two native adapters; local work
 uses the real driver. Native URL resolution uses the same card source reader.
 
@@ -22,7 +22,8 @@ losing the reply.
 Native links are captured at window.open to avoid launching human apps; do not
 claim actual native Desktop launch. A reply without session has no Open even if
 it has origins or work links. Retain screenshots and browser.json, inspect for
-clipping, and require the wrapper's zero exit plus resourcesClosed:true.
+clipping. A known native session with no app link must show a disabled, visibly
+dimmed Open with an unavailable tooltip, without inventing a URL. Require the wrapper's zero exit plus resourcesClosed:true.
 
 The before phase records the missing controls in the same real browser surface.
 The helper closes browser contexts, frontend and daemon in finally. The wrapper
