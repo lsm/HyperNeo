@@ -140,6 +140,76 @@ describe('Neo MVP', () => {
       sessionId,
     };
   }
+  test('publication Open reuses card session link resolution for exact adapter ids', async () => {
+    sessions.getOperationRegistry = () =>
+      createOperationRegistry([
+        defineOperation({
+          name: 'work.status',
+          description: 'Synthetic native session',
+          inputSchema: z.unknown(),
+          resultSchema: z.unknown(),
+          execute: ({ ref }: { ref: { adapter: string; id: string } }) => ({
+            ok: true,
+            value: {
+              ref,
+              title: 'Exact session',
+              place: { machine: 'synthetic', name: 'Synthetic' },
+              status: 'running',
+              lastActivityAt: 1,
+              link:
+                ref.adapter === 'codex-desktop'
+                  ? `codex://threads/${ref.id}`
+                  : `claude://claude.ai/epitaxy/${ref.id}`,
+            },
+          }),
+        }),
+      ]);
+    for (const [adapter, id, link] of [
+      ['codex-desktop', 'thread', 'codex://threads/thread'],
+      ['claude-desktop', 'session', 'claude://claude.ai/epitaxy/session'],
+    ]) {
+      const result = await invoke('neo.session.link', { session: `${adapter}:${id}` });
+      expect(result).toMatchObject({
+        kind: 'completed',
+        value: { id, adapter, name: 'Exact session', link },
+      });
+    }
+    expect(
+      await invoke(
+        'neo.session.link',
+        { session: 'codex-desktop:thread' },
+        { source: 'mcp', sessionId: 'ordinary', role: 'worker' }
+      )
+    ).toMatchObject({ kind: 'completed', value: { ok: false } });
+  });
+
+  test('publication Open includes local Neo and Space sessions outside the worker inventory', async () => {
+    const original = db.getSession.bind(db);
+    db.getSession = (id: string) =>
+      id === 'neo:published' || id === 'space-session'
+        ? {
+            ...createTestSession(id),
+            title: 'Published local session',
+            type: id.startsWith('neo:') ? 'general' : 'space_task_agent',
+          }
+        : original(id);
+    for (const session of ['neo:published', 'space-session']) {
+      expect(await invoke('neo.session.link', { session })).toMatchObject({
+        kind: 'completed',
+        value: {
+          id: session,
+          adapter: 'hyperneo',
+          name: 'Published local session',
+          link: `/session/${session}`,
+        },
+      });
+    }
+    expect(await invoke('neo.session.link', { session: 'missing' })).toMatchObject({
+      kind: 'completed',
+      value: { ok: false, reason: 'session_unavailable' },
+    });
+  });
+
   test('opening is idempotent, independent of project creation and creates ordinary sessions with a Neo prompt', async () => {
     const ids = await Promise.all([service.open(), service.open(), service.open()]);
     expect(new Set(ids).size).toBe(1);
@@ -357,6 +427,7 @@ describe('Neo MVP', () => {
       'neo.open',
       'neo.restart',
       'neo.rule.save',
+      'neo.session.link',
       'neo.session.mute',
       'neo.session.track',
       'neo.coding.merge.human',

@@ -1,3 +1,5 @@
+import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
+import { sessionWorkerRef } from './worker-identity.ts';
 import { neoSessionTrackRootRead } from '../../storage/repositories/neo-session-track-write.ts';
 import { createNeoCardSearchOperation } from './card-search-operation.ts';
 import { readNeoReply } from './intake.ts';
@@ -824,6 +826,31 @@ export function createNeoOperations(service: NeoService) {
       resultSchema: RulesResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => saveRules(input, caller),
+    }),
+    defineOperation({
+      name: 'neo.session.link',
+      description:
+        'Read the existing work-card source and safe Open link for an exact session id, including adapter-qualified ids. No session is started or changed.',
+      inputSchema: z.object({ session: z.string().min(1).max(500) }),
+      resultSchema: z.union([
+        Failure,
+        WorkerIdentitySchema.extend({
+          provider: z.string(),
+          link: z.string().nullable(),
+        }).nullable(),
+      ]),
+      policy: { safetyClass: 'read' },
+      execute: path('neo.session.link', async (input: { session: string }) => {
+        const local = service.db.getSession(input.session);
+        const source = local
+          ? {
+              ...workerIdentity({ adapter: 'hyperneo', id: local.id }, local.title),
+              provider: local.config.provider ?? 'hyperneo',
+              link: `/session/${local.id}`,
+            }
+          : await service.readQuestionSource(sessionWorkerRef(input.session, false));
+        return source ?? { ok: false, reason: 'session_unavailable' };
+      }),
     }),
     defineOperation({
       name: 'neo.session.mute',

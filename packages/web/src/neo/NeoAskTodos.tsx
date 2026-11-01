@@ -19,6 +19,7 @@ import {
   neoPrimaryClass,
   neoSecondaryClass,
   NeoSessionMark,
+  NeoSessionOpen,
 } from './NeoCardParts.tsx';
 import { neoSessionKind } from './work-driver.ts';
 import { type NeoDoneTodosPage, neoDonePageMerge } from './neo-asks.ts';
@@ -215,15 +216,11 @@ function TodoRow({
       </div>
       {todo.link && todo.state !== 'removed' && onOpen && (
         <div class="flex shrink-0 items-center justify-end gap-2 self-start">
-          <button
-            type="button"
-            class={neoSecondaryClass}
-            aria-label={t('todo.openTitle', { title: todo.title })}
-            onClick={() => onOpen(todo.link!, todo.worker?.label ?? todo.title)}
-          >
-            <NeoSessionMark kind={neoSessionKind(todo.worker?.adapter, todo.link)} />
-            {t('todo.open')}
-          </button>
+          <NeoSessionOpen
+            kind={neoSessionKind(todo.worker?.adapter, todo.link)}
+            label={t('todo.openTitle', { title: todo.title })}
+            onOpen={() => onOpen(todo.link!, todo.worker?.label ?? todo.title)}
+          />
         </div>
       )}
     </div>

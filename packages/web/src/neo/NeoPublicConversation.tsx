@@ -29,6 +29,7 @@ import { NeoIcon } from './NeoIcon.tsx';
 import { messageTime } from './NeoMessage.tsx';
 import { NeoMessageMenu, neoMessageMenuActions, useNeoMessageMenu } from './NeoMessageMenu.tsx';
 import { NeoPreviewReference } from './NeoPreviewReference.tsx';
+import { NeoPublicationSession } from './NeoPublicationSession.tsx';
 import { NeoPublicationHistory } from './NeoPublicationHistory.tsx';
 import { NeoQuoteBar } from './NeoQuoteBar.tsx';
 import { NeoWakeRow } from './NeoWakeRow.tsx';
@@ -420,11 +421,13 @@ function PublicEntry({
   onQuote,
   onSeek,
   onOpenWork,
+  onOpenSession,
   status,
 }: {
   entry: NeoPublicEntry;
   status?: NeoMessageStatus;
   onOpenWork?: (anchor: string, cardReply?: NeoCardReply) => void;
+  onOpenSession?: (link: string, label: string) => void;
   onSeek?: (messageId: string) => void;
   replyLabels?: ReadonlyMap<string, { label: string; askId: string }>;
   onQuote?: (quote: NeoQuote) => void;
@@ -509,6 +512,15 @@ function PublicEntry({
             {t('chat.edited')}
           </span>
         ) : null}
+        {publication?.session && onOpenSession && (
+          <span class="ml-auto self-center">
+            <NeoPublicationSession
+              key={publication.session}
+              session={publication.session}
+              onOpen={onOpenSession}
+            />
+          </span>
+        )}
         {ask && !undelivered && (
           <span
             role="img"
@@ -895,6 +907,7 @@ export function NeoPublicConversation({
   onRetry,
   onLoadEarlier,
   onOpenWork,
+  onOpenSession,
   onEditUndelivered,
   replyLabels,
   mute,
@@ -909,6 +922,7 @@ export function NeoPublicConversation({
   onRetry?: () => void;
   onLoadEarlier?: () => void;
   onOpenWork?: (anchor: string, cardReply?: NeoCardReply) => void;
+  onOpenSession?: (link: string, label: string) => void;
 }) {
   const wakeFor = (id: string) =>
     conversation.entries.find(
@@ -988,6 +1002,7 @@ export function NeoPublicConversation({
                       key={item.key}
                       entry={item}
                       onOpenWork={onOpenWork}
+                      onOpenSession={onOpenSession}
                       replyLabels={labels}
                       onSeek={seek}
                       onQuote={onQuote}
@@ -1004,6 +1019,7 @@ export function NeoPublicConversation({
             key={entry.key}
             entry={entry}
             onOpenWork={onOpenWork}
+            onOpenSession={onOpenSession}
             onEditUndelivered={onEditUndelivered}
             replyLabels={labels}
             onSeek={seek}
