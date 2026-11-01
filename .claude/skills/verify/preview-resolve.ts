@@ -1,3 +1,5 @@
+import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
+import { reserveNeoConversation } from '../../../packages/daemon/src/storage/repositories/neo-conversation-reservation.ts';
 import assert from 'node:assert/strict';
 import { randomUUID, createHash } from 'node:crypto';
 import { readFileSync, realpathSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -60,7 +62,10 @@ assert.deepEqual(await call('artifact.reference.resolve', selected), receipt);
 const todoReceipt = await call('artifact.reference.resolve', { ...selected, requestId: randomUUID(), sourceMessageOrCard: { kind: 'todo', id: 'todo' } });
 assert(todoReceipt.accepted);
 const publications = new NeoPublicationRepository(db);
-const conversationId = randomUUID(); const publicationId = randomUUID(); const revisionId = randomUUID();
+const conversationId = randomUUID();
+reserveNeoConversation(db, conversationId, Date.now());
+new NeoRepository(db).reserveBinding({ sessionId: 'neo', kind: 'neo', projectId: null });
+const publicationId = randomUUID(); const revisionId = randomUUID();
 const origin = { sessionId: 'worker', messageId: 'source' };
 assert(publications.append({ conversationId, publicationId, producerInput: origin, askOrigin: origin, shortText: '```', fullText: 'Read `report.md`', links: [{ kind: 'work', id: 'todo', label: 'Report' }] }).accepted);
 assert(publications.edit(conversationId, publicationId, { shortText: 'New report', fullText: '`missing.md`' }, new Date().toISOString(), 'human', origin, revisionId).accepted);

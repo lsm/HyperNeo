@@ -1,3 +1,5 @@
+import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
+import { reserveNeoConversation } from '../../../packages/daemon/src/storage/repositories/neo-conversation-reservation.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import {
@@ -66,11 +68,14 @@ try {
     ['~/HyperNeo/binary.html', 'unsupported_type'],
     ['~/HyperNeo/large.html', 'size_limit'],
   ];
+  const conversationId = randomUUID();
+  reserveNeoConversation(db, conversationId, Date.now());
+  new NeoRepository(db).reserveBinding({ sessionId: 'neo', kind: 'neo', projectId: null });
   const publicationId = randomUUID();
   const origin = { sessionId: 'neo', messageId: 'm' };
   assert(
     new NeoPublicationRepository(db).append({
-      conversationId: randomUUID(),
+      conversationId,
       publicationId,
       producerInput: origin,
       askOrigin: origin,

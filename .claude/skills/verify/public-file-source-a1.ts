@@ -80,7 +80,7 @@ try {
   assert.equal((await resolve('message', intake, 'report.md')).accepted, true);
   assert.equal((await resolve('publication', publicationId, 'report.md')).accepted, true);
   assert.equal((await resolve('publication', foreignPublication, 'report.md')).accepted, false);
-  const { readPublicFileSource } = await import('../../../packages/daemon/src/lib/artifacts/public-file-source.ts');
+  const { readPublicFileSource } = await import('../../../packages/daemon/src/storage/repositories/public-file-source.ts');
   const human = { source: 'rpc' as const, principal: 'local' as const };
   const before = db.prepare('SELECT COUNT(*) AS n FROM artifact_files').get();
   const source = readPublicFileSource(db, { kind: 'publication', id: publicationId }, human);
@@ -101,6 +101,16 @@ try {
   db.prepare('UPDATE sessions SET workspace_path = NULL WHERE id = ?').run('worker');
   assert.equal(readPublicFileSource(db, { kind: 'todo', id: 'todo' }, human)?.workspacePath, null);
   assert.equal((await resolve('todo', 'todo', 'report.md')).accepted, false);
+  const notVisible = save('worker', 'Read `report.md`.');
+  db.prepare('UPDATE sdk_messages SET is_renderable = 0 WHERE id = ?').run(notVisible);
+  assert.equal((await resolve('message', notVisible, 'report.md')).accepted, false);
+  const mismatchedId = crypto.randomUUID();
+  new NeoConversationAskRepository(db).append({ conversationId, requestId: mismatchedId, askOrigin: { sessionId: 'worker', messageId: mismatchedId }, content: 'Read `report.md`.' });
+  const mismatched = save(root, 'Read `report.md`.', 'user', mismatchedId);
+  assert.equal((await resolve('message', mismatched, 'report.md')).accepted, false);
+  db.prepare('DELETE FROM neo_session_bindings WHERE session_id = ?').run(root);
+  assert.equal(readPublicFileSource(db, { kind: 'publication', id: publicationId }, human), null);
+  assert.equal((await resolve('publication', publicationId, 'report.md')).accepted, false);
   evidence.publicText = true;
   evidence.ownerWorkspace = true;
   evidence.liveReadEditDelete = 'not applicable to A1; covered by A2';
@@ -108,6 +118,7 @@ try {
 } finally {
   ws?.close();
   await app.cleanup();
+  evidence.resourcesClosed = true;
   await writeFile(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
 }
 console.log(JSON.stringify(evidence));
