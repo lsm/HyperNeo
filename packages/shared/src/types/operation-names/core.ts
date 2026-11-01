@@ -5,6 +5,7 @@ export const CORE_OPERATION_NAMES = [
   'artifact.file.read',
   'artifact.file.register',
   'artifact.reference.resolve',
+  'file.reference.read',
   'operations.describe',
   'operations.list',
   'system.build',

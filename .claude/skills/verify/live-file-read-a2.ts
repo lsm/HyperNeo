@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
 import { mkdir, writeFile, unlink, rename, symlink, truncate } from 'node:fs/promises';
-import { existsSync, fstatSync, read } from 'node:fs';
+import { existsSync, read } from 'node:fs';
 import { promisify } from 'node:util';
 import { join } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
+import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
+import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
+import { NeoPublicationRepository } from '../../../packages/daemon/src/storage/repositories/neo-publication-repository.ts';
 import { waitForSdkBodyCopy } from './wait-for-sdk-body-copy.ts';
 
 const run = process.argv[2];
@@ -20,6 +24,8 @@ const original = '# Version A 🦊\n';
 const changed = '# Version B 🦊\n';
 await writeFile(report, original);
 await writeFile(join(workspace, 'notes.txt'), 'plain text');
+await writeFile(join(workspace, 'empty.txt'), '');
+await writeFile(join(run, 'home/probe.txt'), 'home text');
 await writeFile(join(workspace, 'large.txt'), '');
 await truncate(join(workspace, 'large.txt'), 2 * 1024 * 1024 + 1);
 await writeFile(join(workspace, 'bad.txt'), Buffer.concat([Buffer.from('ok'.repeat(2000)), Buffer.from([255])]));
@@ -37,10 +43,26 @@ try {
   await app.db.createSession({ id: 'worker', title: 'Synthetic', workspacePath: workspace, createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { model: 'synthetic' }, metadata: {} } as never);
   const db = app.db.getDatabase();
   const uuid = crypto.randomUUID();
-  const text = ['report.md', 'notes.txt', 'large.txt', 'bad.txt', 'unsupported.pdf', '.env.txt', 'linked.md', 'chunked.txt', '../escape.md', 'gone/report.md'].map(p => `\`${p}\``).join('\n');
+  const text = ['report.md', report, `file://${report}`, '~/probe.txt', 'empty.txt', 'notes.txt', 'large.txt', 'bad.txt', 'unsupported.pdf', '.env.txt', 'linked.md', 'chunked.txt', '../escape.md', 'gone/report.md'].map(p => `\`${p}\``).join('\n');
   app.db.getSDKMessageRepo().saveSDKMessage('worker', { type: 'assistant', uuid, session_id: 'worker', parent_tool_use_id: null, message: { role: 'assistant', content: [{ type: 'text', text }] } } as never);
   const source = db.prepare('SELECT id FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ?').get('worker', uuid) as { id: string };
+  const conversationId = crypto.randomUUID();
+  const neoId = `neo:${conversationId}`;
+  const neoWorkspace = join(run, 'neo-workspace');
+  await mkdir(neoWorkspace);
+  await writeFile(join(neoWorkspace, 'report.md'), '# Public reply report\n');
+  await app.db.createSession({ id: neoId, title: 'Synthetic Neo', workspacePath: neoWorkspace, createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: {}, metadata: {} } as never);
+  const neo = new NeoRepository(db);
+  neo.reserveBinding({ sessionId: neoId, kind: 'neo', projectId: null });
+  const publicationId = crypto.randomUUID();
+  assert(new NeoPublicationRepository(db).append({ conversationId, publicationId, shortText: 'Read the report', fullText: 'Read `report.md`.', links: [] }).accepted);
   await waitForSdkBodyCopy(db);
+  const work = new NeoAskTodoRepository(db);
+  work.openAsk({ id: 'ask', projectId: null, sessionId: neoId, originMessageId: null, title: 'Synthetic', request: 'Synthetic', createdAt: 1 });
+  work.addTodo('todo', 'ask', { title: 'Read `report.md`', doneWhen: '', check: null, instruction: '', named: null }, 1);
+  const sessions = new NeoTodoSessionRepository(db);
+  sessions.create('todo', { verb: 'start', adapter: 'hyperneo', place: { machine: 'local', name: 'Synthetic', folder: workspace } });
+  sessions.recordRef('todo', { adapter: 'hyperneo', id: 'worker', daemon: 'remote' });
   const counts = () => [db.prepare('SELECT COUNT(*) AS n FROM artifact_files').get(), db.prepare('SELECT COUNT(*) AS n FROM artifact_file_identity').get()];
   const before = counts();
   assert.equal(existsSync(join(run, 'data/artifacts')), false);
@@ -55,6 +77,18 @@ try {
   });
   const input = (reference: string, extra = {}) => ({ sourceMessageOrCard: { kind: 'message', id: source.id }, reference, ...extra });
   const tap = (reference: string, extra = {}) => call(input(reference, extra));
+  const noConversation = await call({ sourceMessageOrCard: { kind: 'publication', id: publicationId }, reference: 'report.md' });
+  assert.equal(noConversation.reason, 'forbidden');
+  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM neo_conversation').get() as { n: number }).n, 0);
+  assert.equal(neo.conversationId(), conversationId);
+  const publication = await call({ sourceMessageOrCard: { kind: 'publication', id: publicationId }, reference: 'report.md' });
+  assert.equal(publication.accepted, true);
+  assert.equal(Buffer.from(publication.data!, 'base64').toString(), '# Public reply report\n');
+  evidence.unlinkedPublication = true;
+  assert.equal((await call({ sourceMessageOrCard: { kind: 'todo', id: 'todo' }, reference: 'report.md' })).reason, 'owner_unavailable');
+  for (const ref of [report, `file://${report}`]) assert.equal(Buffer.from((await tap(ref)).data!, 'base64').toString(), original);
+  assert.equal(Buffer.from((await tap('~/probe.txt')).data!, 'base64').toString(), 'home text');
+  assert.deepEqual(await tap('empty.txt'), { accepted: true, kind: 'text', version: (await tap('empty.txt')).version, byteLength: 0, nextOffset: 0, complete: true, data: '' });
   const a = await tap('report.md');
   assert.equal(a.accepted, true);
   assert.equal(a.kind, 'markdown');
@@ -80,7 +114,7 @@ try {
   let offset = 0;
   let version: string | undefined;
   while (true) {
-    const part = await tap('chunked.txt', { offset, maxBytes: 262144, ...(version ? { version } : {}) });
+    const part = await tap('chunked.txt', { offset, maxBytes: 262143, ...(version ? { version } : {}) });
     assert.equal(part.accepted, true);
     const bytes = Buffer.from(part.data!, 'base64');
     assert(bytes.length <= 262144);
@@ -92,14 +126,24 @@ try {
     if (part.complete) break;
   }
   assert.deepEqual(Buffer.concat(chunks), chunked);
+  const eof = await tap('chunked.txt', { offset: chunked.length, version });
+  assert.equal(eof.data, '');
+  assert.equal(eof.complete, true);
   assert.equal((await tap('chunked.txt', { offset: chunked.length + 1, version })).reason, 'invalid_offset');
   await writeFile(join(workspace, 'replacement'), chunked);
   await rename(join(workspace, 'replacement'), join(workspace, 'chunked.txt'));
   assert.equal((await tap('chunked.txt', { offset: 1, version })).reason, 'file_changed');
+  await rename(workspace, `${workspace}-moved`);
+  try { assert.equal((await tap('notes.txt')).reason, 'missing'); }
+  finally { await rename(`${workspace}-moved`, workspace); }
   const { createLiveFileRead } = await import('../../../packages/daemon/src/lib/artifacts/live-file-read.ts');
   const human = { source: 'rpc' as const, principal: 'local' as const };
   const nativeRead = promisify(read);
   await writeFile(report, original);
+  db.prepare('UPDATE sessions SET workspace_path = NULL WHERE id = ?').run('worker');
+  assert.equal((await tap('report.md')).reason, 'owner_unavailable');
+  assert.equal((await tap(report)).accepted, true);
+  db.prepare('UPDATE sessions SET workspace_path = ? WHERE id = ?').run(workspace, 'worker');
   const changing = createLiveFileRead(() => db, process.env.HOME, async (...args) => {
     const result = await nativeRead(...args);
     await writeFile(report, changed);

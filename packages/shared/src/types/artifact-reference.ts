@@ -41,7 +41,10 @@ function candidate(reference: string, explicit: boolean): PreviewReferenceCandid
     if (url.host || url.search || url.hash || /%(?!20)/i.test(url.pathname)) return null;
     path = url.pathname.replace(/%20/gi, ' ');
   } else if (reference.includes(':') || /[?#]/.test(reference)) return null;
-  return documentPath.test(path) && !/[;$|&<>`]/.test(path) && (explicit || !/\s/.test(path))
+  return (documentPath.test(path) ||
+    ((explicit || path.startsWith('/') || path.startsWith('~/')) && /\.[\w-]+$/.test(path))) &&
+    !/[;$|&<>`]/.test(path) &&
+    (explicit || !/\s/.test(path))
     ? { kind: 'local', reference, path }
     : null;
 }
