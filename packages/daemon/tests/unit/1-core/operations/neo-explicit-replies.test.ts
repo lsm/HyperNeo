@@ -307,3 +307,32 @@ test('publication session validation uses the existing adapter lookup for extern
     { source: 'internal' }
   );
 });
+
+test.each(['unreachable', 'execution_failed'])(
+  'session lookup %s is retryable and is not unknown_session',
+  async (failure) => {
+    service.sessions.getOperationRegistry = () =>
+      createOperationRegistry([
+        defineOperation({
+          name: 'work.status',
+          description: 'Synthetic unavailable adapter',
+          inputSchema: z.object({ ref: WorkRefSchema }),
+          resultSchema: z.unknown(),
+          execute: () => {
+            if (failure === 'execution_failed') throw new Error('Synthetic adapter failure');
+            return { ok: false, reason: failure };
+          },
+        }),
+      ]);
+    expect(
+      await invoke('neo.publication.publish', { ...publication, session: 'codex-desktop:known' })
+    ).toMatchObject({
+      value: {
+        accepted: false,
+        reason: 'session_lookup_failed',
+        detail: expect.stringContaining('codex-desktop:known'),
+      },
+    });
+    expect(service.publications.list(conversationId)).toHaveLength(0);
+  }
+);

@@ -54,6 +54,7 @@ describe('Neo publication without runtime input attribution', () => {
       getBinding: (id) => repo.getBindingBySession(id),
       getRootBinding: () => repo.defaultBinding(),
       hasProject: (id) => !!repo.getProject(id),
+      publication: (conversation: string, id: string) => ledger.get(conversation, id),
       hasSession: (id: string) => id === 'worker',
       sourceSession: () => sourceSession,
       append: async (input) => {
@@ -257,6 +258,26 @@ describe('Neo publication without runtime input attribution', () => {
       accepted: true,
     });
     expect(ledger.list(conversationId)[2].session).toBeUndefined();
+  });
+
+  test('pins an auto-filled session when the same request is retried after its turn ends', async () => {
+    sourceSession = 'worker';
+    expect(await publish(draft, caller)).toMatchObject({
+      accepted: true,
+      created: true,
+      publication: { session: 'worker' },
+    });
+    sourceSession = undefined;
+    expect(await publish(draft, caller)).toMatchObject({
+      accepted: true,
+      created: false,
+      publication: { session: 'worker' },
+    });
+    expect(ledger.list(conversationId)).toHaveLength(1);
+    expect(await publish({ ...draft, shortText: 'Changed' }, caller)).toMatchObject({
+      accepted: false,
+      reason: 'publication_conflict',
+    });
   });
 
   test('omits unknown reply ids without attributing a human answer', async () => {

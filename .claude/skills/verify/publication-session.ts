@@ -75,6 +75,10 @@ try {
   await app.db.updateSession(root, { processingState: JSON.stringify({ status: 'idle' }) });
   evidence.idle = await publish('idle-proof');
   assert.equal((evidence.idle as { publication: { session?: string } }).publication.session, undefined);
+  evidence.autoRetry = await publish('source-proof');
+  assert.equal((evidence.autoRetry as { accepted: boolean; created: boolean; publication: { session?: string } }).accepted, true);
+  assert.equal((evidence.autoRetry as { created: boolean }).created, false);
+  assert.equal((evidence.autoRetry as { publication: { session?: string } }).publication.session, worker);
   evidence.final = await read();
   const conversation = await read('neo.conversation.read');
   evidence.conversation = conversation;
