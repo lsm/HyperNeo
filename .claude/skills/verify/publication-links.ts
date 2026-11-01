@@ -12,12 +12,16 @@ assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 await mkdir(join(run, 'evidence'), { recursive: true });
 await writeFile(join(run, 'bin/gh'), '#!/bin/sh\nexit 73\n', { mode: 0o755 });
-const app = await createDaemonApp({ config: getConfig({ host: '127.0.0.1', dbPath: join(run, 'data/daemon.db'), workspaceRoot: run, disableWorktrees: true }), port: 0, standalone: false, verbose: false });
+const config = { ...getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db'), workspaceRoot: run }), disableWorktrees: true };
+const app = await createDaemonApp({ config, standalone: false, verbose: false });
 let ws: WebSocket | undefined;
 const evidence: Record<string, unknown> = {};
 try {
   await app.jobProcessor.stop();
+  assert.equal(config.port, 0);
+  assert.equal(config.disableWorktrees, true);
   assert.notEqual(app.server.port, 8399);
+  evidence.isolation = { requestedPort: config.port, actualPort: app.server.port, disableWorktrees: config.disableWorktrees };
   const conversationId = '20000000-0000-4000-8000-000000000001';
   const root = `neo:${conversationId}`;
   await app.db.createSession({ id: root, title: 'Synthetic Neo', workspacePath: run, createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { model: 'synthetic' }, metadata: {} } as never);

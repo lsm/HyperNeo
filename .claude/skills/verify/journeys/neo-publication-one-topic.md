@@ -13,10 +13,10 @@ The model publishes two labelled topics under a short summary, then each topic
 separately. All three receipts must be accepted and all three messages must appear
 in the publication reader, including the complete bundled message.
 
-A fourth SDK call supplies a valid project link, an unknown reply id and an
+The SDK send with requestId `references` supplies a valid project link, an unknown reply id and an
 invented artifact. Its text is delivered with the valid project link. Earlier
 work-kind and unknown-project attempts must fail without reserving the requestId;
-the fourth call reuses that requestId successfully. Discovered tool guidance
+that send reuses that requestId successfully. Discovered tool guidance
 must say that only project links are accepted and unknown projects reject the send.
 
 For the link admission regression, use the actual daemon/MCP and human RPC reader
