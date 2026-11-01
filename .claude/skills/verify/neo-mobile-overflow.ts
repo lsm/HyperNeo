@@ -56,7 +56,7 @@ try {
     return await file.exists() ? new Response(file) : new Response('Not found', { status: 404 });
   }, websocket: createWebSocketHandlers(app.transport, app.sessionManager) });
   assert.notEqual(front.port, 8399);
-  writeFileSync(join(run, 'fixture.json'), JSON.stringify({ phase, url: `http://127.0.0.1:${front.port}/neo`, humanId, publicationId: published.publication.publicationId, longLink }));
+  writeFileSync(join(run, 'fixture.json'), JSON.stringify({ phase, url: `http://127.0.0.1:${front.port}/neo`, humanId, publicationId: published.publication.publicationId, longLink, desktopBaseline: process.argv.length > 4 ? process.argv[3] : undefined }));
   const browser = await promisify(execFile)('node', ['.claude/skills/verify/neo-mobile-overflow-web.mjs', run], { env: process.env, timeout: 180000, maxBuffer: 4 * 1024 * 1024 });
   evidence.browser = JSON.parse(browser.stdout);
   assert((evidence.browser as { passed: boolean }).passed);

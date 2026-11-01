@@ -31,7 +31,12 @@ try {
       const human = page.locator(`[data-message-ref="${fixture.humanId}"]`);
       const expand = human.getByRole('button', { name: 'Show more', exact: true });
       if (await expand.count()) await expand.press('Enter');
+      assert.equal(await human.locator('[data-clamped]').count(), 0);
       await measure('human-expanded');
+      const publication = page.locator(`[data-message-ref="${fixture.publicationId}"]`);
+      await publication.getByRole('button', { name: 'more', exact: true }).click();
+      await publication.locator('[data-publication-details] table').waitFor();
+      await measure('publication-details');
       const composer = page.getByRole('textbox', { name: 'Message Neo', exact: true });
       await composer.fill(fixture.longLink);
       await measure('composer');
@@ -48,7 +53,7 @@ try {
       await card.locator('[data-ask-details-toggle]').click();
       await page.getByTestId('neo-ask-all-overflow-work').waitFor();
       await measure('all-work');
-      if (fixture.phase === 'after' && width < 720) await page.getByRole('button', { name: 'Close modal', exact: true }).tap();
+      if (fixture.phase === 'after' && width < 720) await page.getByRole('button', { name: 'Close modal', exact: true }).tap({ timeout: 3000 });
       else await page.keyboard.press('Escape');
       if (width < 1120) await page.getByRole('button', { name: 'Close work list', exact: true }).click();
       await page.locator(`[data-message-ref="${fixture.publicationId}"]`).getByRole('button', { name: /^Open session:/ }).click();
@@ -61,8 +66,22 @@ try {
       cases.push({ width, theme, observations, scrollables });
     } finally { await context.close(); }
   }
-  const violations = cases.flatMap(c => c.observations.filter(o => o.document > o.viewport || o.offenders.length).map(o => ({ width: c.width, view: o.view, document: o.document, viewport: o.viewport, offenders: o.offenders })));
-  writeFileSync(`${run}/evidence/browser.json`, JSON.stringify({ phase: fixture.phase, passed: !violations.some(v => v.width < 720), cases, violations }, null, 2));
+  const desktopComparison = [];
+  if (fixture.desktopBaseline) {
+    const baseline = JSON.parse(readFileSync(fixture.desktopBaseline, 'utf8')).cases.find(c => c.width === 1280);
+    const current = cases.find(c => c.width === 1280);
+    for (const before of baseline.observations) {
+      const after = current.observations.find(o => o.view === before.view);
+      for (const prefix of ['neo-chat-rail', 'neo-composer-input', 'neo-scene-list', 'text-sm font-semibold text-fg']) {
+        const select = o => o.boxes.find(b => typeof b.class === 'string' && b.class.startsWith(prefix));
+        const b = select(before), a = select(after);
+        if (b && a) { assert(Math.abs(a.width - b.width) <= 1, `${before.view}: desktop ${prefix} changed`); desktopComparison.push({ view: before.view, prefix, before: b.width, after: a.width }); }
+      }
+    }
+    assert(desktopComparison.length);
+  }
+  const violations = cases.flatMap(c => c.observations.filter(o => o.document > o.viewport || o.offenders.length).map(o => ({ width: c.width, theme: c.theme, view: o.view, document: o.document, viewport: o.viewport, offenders: o.offenders })));
+  writeFileSync(`${run}/evidence/browser.json`, JSON.stringify({ phase: fixture.phase, passed: !violations.some(v => v.width < 720), cases, violations, desktopComparison }, null, 2));
   if (fixture.phase === 'before') assert(violations.length, 'Expected a real overflow reproduction');
   else assert.equal(violations.filter(v => v.width < 720).length, 0, JSON.stringify(violations));
   console.log(JSON.stringify({ passed: true, phase: fixture.phase, violations: violations.length }));
