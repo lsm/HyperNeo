@@ -33,6 +33,7 @@ describe('Neo publication without runtime input attribution', () => {
   const notify = vi.fn();
   let held: Promise<void> | null;
   let failWrite: boolean;
+  let sourceSession: string | undefined;
   beforeEach(() => {
     mailbox = createMailboxTestDb();
     createNeoTables(mailbox.db);
@@ -46,12 +47,16 @@ describe('Neo publication without runtime input attribution', () => {
     notify.mockClear();
     held = null;
     failWrite = false;
+    sourceSession = undefined;
     publish = createNeoPublisher({
       receivedHumanInput: () => false,
       currentHumanInputs: () => [],
       getBinding: (id) => repo.getBindingBySession(id),
       getRootBinding: () => repo.defaultBinding(),
       hasProject: (id) => !!repo.getProject(id),
+      publication: (conversation: string, id: string) => ledger.get(conversation, id),
+      lookupSession: (id: string) => (id === 'worker' ? 'found' : 'not_found'),
+      sourceSession: () => sourceSession,
       append: async (input) => {
         if (held) await held;
         if (failWrite) throw new Error('writer failed');
@@ -220,6 +225,67 @@ describe('Neo publication without runtime input attribution', () => {
       publication: { links },
     });
     expect(ledger.list(conversationId)).toEqual([expect.objectContaining({ links })]);
+  });
+
+  test('rejects an unknown session without saving and accepts a corrected retry', async () => {
+    expect(await publish({ ...draft, session: 'missing' }, caller)).toEqual({
+      accepted: false,
+      reason: 'unknown_session',
+      detail: 'Unknown session: missing',
+    });
+    expect(ledger.list(conversationId)).toHaveLength(0);
+    expect(notify).not.toHaveBeenCalled();
+    expect(await publish({ ...draft, session: 'worker' }, caller)).toMatchObject({
+      accepted: true,
+      created: true,
+      publication: { session: 'worker' },
+    });
+    expect(ledger.list(conversationId)[0]).toMatchObject({ session: 'worker' });
+  });
+
+  test('fills a certain source session and leaves an uncertain source empty', async () => {
+    sourceSession = 'worker';
+    expect(await publish(draft, caller)).toMatchObject({
+      accepted: true,
+      publication: { session: 'worker' },
+    });
+    sourceSession = undefined;
+    const uncertain = await publish({ ...draft, requestId: 'uncertain' }, caller);
+    expect(uncertain).toMatchObject({ accepted: true });
+    expect(ledger.list(conversationId)[1].session).toBeUndefined();
+    sourceSession = 'gone';
+    expect(await publish({ ...draft, requestId: 'gone' }, caller)).toMatchObject({
+      accepted: true,
+    });
+    expect(ledger.list(conversationId)[2].session).toBeUndefined();
+  });
+
+  test('pins an auto-filled session when the same request is retried after its turn ends', async () => {
+    sourceSession = 'worker';
+    expect(await publish(draft, caller)).toMatchObject({
+      accepted: true,
+      created: true,
+      publication: { session: 'worker' },
+    });
+    sourceSession = undefined;
+    expect(await publish(draft, caller)).toMatchObject({
+      accepted: true,
+      created: false,
+      publication: { session: 'worker' },
+    });
+    expect(ledger.list(conversationId)).toHaveLength(1);
+    expect(await publish({ ...draft, shortText: 'Changed' }, caller)).toMatchObject({
+      accepted: false,
+      reason: 'publication_conflict',
+    });
+  });
+
+  test('keeps an originally empty session empty when retrying in a worker turn', async () => {
+    expect(await publish(draft, caller)).toMatchObject({ accepted: true, created: true });
+    sourceSession = 'worker';
+    expect(await publish(draft, caller)).toMatchObject({ accepted: true, created: false });
+    expect(ledger.list(conversationId)).toHaveLength(1);
+    expect(ledger.list(conversationId)[0].session).toBeUndefined();
   });
 
   test('omits unknown reply ids without attributing a human answer', async () => {

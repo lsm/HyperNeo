@@ -1,3 +1,5 @@
+import { z } from 'zod';
+import { WorkRefSchema } from '../../../../src/lib/drivers/types.ts';
 import { pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
@@ -6,6 +8,7 @@ import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
+  defineOperation,
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
 import {
@@ -259,3 +262,77 @@ test('rewording a start question retains its explicit human references', async (
     })
   ).toMatchObject({ value: { ok: true, question: { id: 'start', replyTo: [id] } } });
 });
+
+test('publication session validation uses the existing adapter lookup for external sessions', async () => {
+  const read = mock(({ ref }: { ref: { adapter: string; id: string } }) =>
+    ref.id === 'known'
+      ? {
+          ok: true,
+          value: {
+            ref,
+            title: 'External worker',
+            place: { machine: 'synthetic', name: 'Synthetic' },
+            status: 'running',
+            lastActivityAt: 1,
+          },
+        }
+      : { ok: false, reason: 'not_found' }
+  );
+  service.sessions.getOperationRegistry = () =>
+    createOperationRegistry([
+      defineOperation({
+        name: 'work.status',
+        description: 'Synthetic adapter read',
+        inputSchema: z.object({ ref: WorkRefSchema }),
+        resultSchema: z.unknown(),
+        execute: read,
+      }),
+    ]);
+  expect(
+    await invoke('neo.publication.publish', { ...publication, session: 'codex-desktop:missing' })
+  ).toMatchObject({
+    value: {
+      accepted: false,
+      reason: 'unknown_session',
+      detail: 'Unknown session: codex-desktop:missing',
+    },
+  });
+  expect(
+    await invoke('neo.publication.publish', { ...publication, session: 'codex-desktop:known' })
+  ).toMatchObject({
+    value: { accepted: true, publication: { session: 'codex-desktop:known' } },
+  });
+  expect(read).toHaveBeenLastCalledWith(
+    { ref: { adapter: 'codex-desktop', id: 'known' } },
+    { source: 'internal' }
+  );
+});
+
+test.each(['unreachable', 'execution_failed'])(
+  'session lookup %s is retryable and is not unknown_session',
+  async (failure) => {
+    service.sessions.getOperationRegistry = () =>
+      createOperationRegistry([
+        defineOperation({
+          name: 'work.status',
+          description: 'Synthetic unavailable adapter',
+          inputSchema: z.object({ ref: WorkRefSchema }),
+          resultSchema: z.unknown(),
+          execute: () => {
+            if (failure === 'execution_failed') throw new Error('Synthetic adapter failure');
+            return { ok: false, reason: failure };
+          },
+        }),
+      ]);
+    expect(
+      await invoke('neo.publication.publish', { ...publication, session: 'codex-desktop:known' })
+    ).toMatchObject({
+      value: {
+        accepted: false,
+        reason: 'session_lookup_failed',
+        detail: expect.stringContaining('codex-desktop:known'),
+      },
+    });
+    expect(service.publications.list(conversationId)).toHaveLength(0);
+  }
+);

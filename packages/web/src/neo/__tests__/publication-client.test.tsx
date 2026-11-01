@@ -80,6 +80,16 @@ describe('authored publication client', () => {
     });
   });
 
+  it('preserves optional session references and rejects malformed session ids', () => {
+    const row = { ...item(), session: 'codex-desktop:synthetic-thread' };
+    expect(presentPublicationPage(response([row]), page)).toEqual({
+      value: { state: 'ready', items: [row], nextAfter: 1 },
+    });
+    expect(presentPublicationPage(response([{ ...row, session: '' }]), page)).toEqual({
+      reason: { state: 'unavailable' },
+    });
+  });
+
   it('calls only the bounded authored operation and preserves all authored bytes and attribution', async () => {
     const io = transport();
     expect(await readNeoPublications({ conversationId, after: 0 }, io.getHub, current)).toEqual({

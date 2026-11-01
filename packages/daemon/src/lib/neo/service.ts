@@ -6,7 +6,10 @@ import { neoSessionTrackWrites } from '../../storage/repositories/neo-session-tr
 import { createNeoQuestionAnswerDelivery } from './question-answer-delivery.ts';
 import { wakeFailedHyperneoSession } from './query-failure.ts';
 import type { UUID } from 'node:crypto';
-import { WORKER_BATCH_SENDER } from '../../storage/repositories/neo-session-message-repository.ts';
+import {
+  NeoSessionMessageRepository,
+  WORKER_BATCH_SENDER,
+} from '../../storage/repositories/neo-session-message-repository.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { globalSettingsWrites } from '../../storage/repositories/global-settings-writes.ts';
 import { neoWakeQueueWrite } from '../../storage/repositories/neo-wake-queue-repository.ts';
@@ -226,16 +229,49 @@ export class NeoService {
     };
     this.publish = createNeoPublisher({
       receivedHumanInput: (sessionId, id) => !!receivedNeoHumanInput(this, sessionId, id),
-      currentHumanInputs: (sessionId) => {
-        const state = parseProcessingState(this.db.getSession(sessionId)?.processingState);
-        if (state.status !== 'processing') return [];
-        if (Array.isArray(state.messageIds))
-          return state.messageIds.filter((id): id is string => typeof id === 'string');
-        return typeof state.messageId === 'string' ? [state.messageId] : [];
+      currentHumanInputs: (sessionId) => this.currentInputIds(sessionId),
+      sourceSession: (sessionId) => {
+        const conversation = this.repo.conversationId();
+        if (!conversation) return undefined;
+        const messages = new NeoSessionMessageRepository(this.db.getDatabase());
+        const sources = this.currentInputIds(sessionId).map((id) => {
+          const message = messages.get(conversation, id);
+          return message?.toSession === sessionId &&
+            message.fromSession !== sessionId &&
+            message.fromSession !== WORKER_BATCH_SENDER
+            ? message.fromSession
+            : undefined;
+        });
+        return sources.length && sources.every((source) => source === sources[0])
+          ? sources[0]
+          : undefined;
       },
       getBinding: (id) => this.repo.getBindingBySession(id),
       getRootBinding: () => this.repo.defaultBinding(),
       hasProject: (id) => !!this.repo.getProject(id),
+      publication: (conversation, id) => this.publications.get(conversation, id),
+      lookupSession: async (id) => {
+        if (this.db.getSession(id)) return 'found';
+        const ref = sessionWorkerRef(id, false);
+        if (ref.adapter === 'hyperneo' && !ref.daemon) return 'not_found';
+        const status = await invokeOperation(
+          this.sessions.getOperationRegistry(),
+          'work.status',
+          { ref },
+          { source: 'internal' }
+        );
+        if (status.kind !== 'completed') return 'unavailable';
+        if (
+          z.object({ ok: z.literal(true), value: WorkSummarySchema }).safeParse(status.value)
+            .success
+        )
+          return 'found';
+        return z
+          .object({ ok: z.literal(false), reason: z.literal('not_found') })
+          .safeParse(status.value).success
+          ? 'not_found'
+          : 'unavailable';
+      },
       append: (input) => this.db.gateway.call(neoPublicationWrites, 'append', input),
       notify: notifyPublication,
       artifact: createArtifactRefReader(() => this.db.getDatabase()),
@@ -323,6 +359,14 @@ export class NeoService {
       this.notifyChanged();
     }
   };
+
+  private currentInputIds(sessionId: string): string[] {
+    const state = parseProcessingState(this.db.getSession(sessionId)?.processingState);
+    if (state.status !== 'processing') return [];
+    if (Array.isArray(state.messageIds))
+      return state.messageIds.filter((id): id is string => typeof id === 'string');
+    return typeof state.messageId === 'string' ? [state.messageId] : [];
+  }
 
   private appendPublication(input: NeoPublicationInput) {
     return this.publications.append(input);

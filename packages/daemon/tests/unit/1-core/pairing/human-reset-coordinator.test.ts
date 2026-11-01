@@ -87,7 +87,7 @@ describe('human reset receipt coordinator construction', () => {
     }
   };
 
-  test('the audited reset/receipt and append dependency hashes and contracts are unchanged', () => {
+  test('the reset/receipt and append dependency hashes match the audited contracts', () => {
     const root = new URL('../../../../../../', import.meta.url);
     const hash = (text: string) => createHash('sha256').update(text).digest('hex');
     const dependencies = JSON.parse(
@@ -114,7 +114,7 @@ describe('human reset receipt coordinator construction', () => {
       }
     >;
     for (const [name, group] of Object.entries(dependencies)) {
-      expect(group.lines).toBe(name === 'resetReceipt' ? 142 : 277);
+      expect(group.lines).toBe(name === 'resetReceipt' ? 142 : 282);
       expect(hash(JSON.stringify(group.units))).toBe(group.sha256);
       for (const unit of group.units) {
         const text = readFileSync(new URL(unit.file, root), 'utf8');

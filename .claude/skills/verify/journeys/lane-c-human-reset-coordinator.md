@@ -13,8 +13,11 @@ notifications and closures stay on main after an exact committed receipt. Preser
 the caller's original unknown-outcome error. Never repeat its reset command.
 
 The dependency manifest pins exact source hashes for the unchanged 142-line
-reset/receipt subtree and separately audited 277-line core append subtree. Neo
-authorized this audited-dependency split. Keep both interfaces and all hashes in
+reset/receipt subtree and separately audited 282-line core append subtree. Neo
+authorized this audited-dependency split. The append manifest includes the later
+authorized optional publication session field and its revision retention; the
+142-line reset/receipt subtree and its hash remain unchanged. Original measurement
+files retain the historical 277-line construction baseline. Keep both interfaces and all hashes in
 the contract test and each PR body. Do not change app.ts, service/publication,
 WorkerLane or shared gateway plumbing. This construction journey invokes the
 coordinator directly; use [reset activation](lane-c-human-reset-activation.md)
