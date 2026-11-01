@@ -171,6 +171,8 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'Only main Neo or the human can change the project tree. Ask main Neo to do it.',
   self_dependency: 'A card cannot depend on itself. Remove its own id from dependsOn.',
   session_not_found: 'No Neo session has that sessionId. Pass the id of an existing Neo session.',
+  session_unavailable:
+    'No safe Open link could be read for this exact session. Retry the same session id when its daemon or adapter is available; do not substitute another session.',
   stage_assignment_mismatch:
     'The result does not match the assigned coding actor, worker ref, PR head or acceptance contract. Submit evidence for the exact persisted assignment.',
   stale_ask_revision:
