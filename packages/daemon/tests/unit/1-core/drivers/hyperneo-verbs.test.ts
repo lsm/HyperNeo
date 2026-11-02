@@ -178,7 +178,7 @@ describe('hyperneo adapter send and status', () => {
 
   test('reuse resolves model aliases and effort through the start resolver without creating work', async () => {
     const result = await adapter().resolveStartConfiguration!({
-      place: { machine: 'imac', folder: '/focus/repo' },
+      place: { machine: 'imac', folder: '/focus/repo', name: 'repo' },
       title: 'fixture',
       message: 'fixture',
       model: 'GLM 5.3',
