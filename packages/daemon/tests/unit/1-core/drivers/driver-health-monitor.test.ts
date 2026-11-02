@@ -106,6 +106,57 @@ test('a lost notice acknowledgement reuses its durable identity after restart', 
   expect(f.notices.size).toBe(1);
 });
 
+test('Check now probes again when a scheduled check is already reading recent results', async () => {
+  const f = fixture();
+  const monitor = createDriverHealthMonitor(f.deps);
+  await monitor.check(true);
+  f.setStatus('unavailable');
+  const read = f.deps.read;
+  let release = () => {};
+  let entered = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  let first = true;
+  f.deps.read = async () => {
+    if (first) { first = false; entered(); await held; }
+    return read();
+  };
+  const scheduled = monitor.check();
+  await started;
+  const requested = [monitor.check(true), monitor.check(true)];
+  release();
+  await Promise.all([scheduled, ...requested]);
+  expect(f.stored['codex-desktop'].status).toBe('unavailable');
+  expect(f.probes()).toBe(2);
+});
+
+test('verification retires an undelivered version warning before Neo becomes available', async () => {
+  const f = fixture();
+  f.setNeoAvailable(false);
+  const monitor = createDriverHealthMonitor(f.deps);
+  await monitor.check(true);
+  await monitor.verified('codex-desktop', 'codex-state-discovery', { desktop: '1.0.0' });
+  f.setNeoAvailable(true);
+  await monitor.check();
+  expect(f.notices.size).toBe(0);
+});
+
+test('verification preserves queued health transitions without stale verification guidance', async () => {
+  const f = fixture();
+  f.setNeoAvailable(false);
+  f.setStatus('unavailable');
+  const monitor = createDriverHealthMonitor(f.deps);
+  await monitor.check(true);
+  f.setStatus('ok');
+  await monitor.check(true);
+  await monitor.verified('codex-desktop', 'codex-state-discovery', { desktop: '1.0.0' });
+  f.setNeoAvailable(true);
+  await monitor.check();
+  expect(f.notices.size).toBe(2);
+  expect([...f.notices.values()].some((text) => text.includes('recovered'))).toBe(true);
+  expect([...f.notices.values()].some((text) => /unverified/i.test(text))).toBe(false);
+});
+
 test('verification records the tested version; a later client upgrade remains usable and warns once', async () => {
   const f = fixture();
   const monitor = createDriverHealthMonitor(f.deps);

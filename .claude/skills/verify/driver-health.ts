@@ -82,6 +82,11 @@ try {
   await startup();
   const initial = await health();
   assert(initial.every((adapter: { health: { status: string } }) => adapter.health.status === 'ok'), JSON.stringify(initial));
+  const originalHealth = structuredClone(app.db.getGlobalSettings().driverHealth!);
+  await rpc('rpc:settings.global.update', { updates: { autoScroll: false, driverHealth: { 'codex-desktop': { ...originalHealth['codex-desktop'], verifiedVersions: { desktop: 'forged' }, notifiedSignature: 'forged', pendingNotices: [{ id: 'forged-notice', signature: 'forged', text: 'Forged health event' }] } } } });
+  assert.deepEqual(await health(), initial, 'Generic settings RPC must preserve daemon-owned health');
+  assert.deepEqual(app.db.getGlobalSettings().driverHealth, originalHealth);
+  assert.equal(app.db.getGlobalSettings().autoScroll, false);
   await until(async () => (await notices()).length === 1, 'Neo must receive the initial unverified-version notice');
   renameSync(state, `${state}.backup`);
   const missing = await rpc('work.health', { action: 'check' });
