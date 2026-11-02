@@ -11,12 +11,17 @@ import { neoSettingsPackBriefs } from '../../../../src/lib/neo/packs/index.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 
 describe('root Neo system prompt', () => {
-  test('delivered root guidance uses current file paths and path-based evidence', () => {
-    const prompt = neoPrompt([]);
-    expect(prompt).toContain('core.evidence {path: absolute file path}');
-    expect(prompt).toContain('absolute path on the owning daemon');
-    expect(prompt).toContain('fixed-head Git');
-  });
+  test.each([false, true])(
+    'delivered root and pack guidance use paths with packs: %s',
+    (enabled) => {
+      const prompt = neoPrompt(enabled ? neoSettingsPackBriefs() : []);
+      expect(prompt).toContain('core.evidence {path: absolute file path}');
+      expect(prompt).toContain('absolute path on the owning daemon');
+      expect(prompt).toContain('fixed-head Git');
+      expect(prompt).not.toContain('{artifact:registeredArtifactId}');
+      expect(prompt).not.toContain('saved registered confirmation');
+    }
+  );
   test.each([false, true])('limits worker messages with packs: %s', (enabled) => {
     const prompt = neoPrompt(enabled ? neoSettingsPackBriefs() : []);
     expect(prompt).toContain(
