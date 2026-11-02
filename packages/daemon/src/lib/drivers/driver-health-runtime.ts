@@ -4,7 +4,10 @@ import { z } from 'zod';
 import { createDriverHealthMonitor } from './driver-health.ts';
 import { createDriverHealthProbe, LOCAL_HEALTH_DRIVERS } from './driver-health-probes.ts';
 import { WorkDriverHealthSchema } from './work-operations.ts';
-import { defineOperation } from '../operations/registry.ts';
+import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import { isLocalUser } from '../operations/caller.ts';
+import { isNeoConversationSession } from '../neo/publication-read-operation.ts';
+import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { globalSettingsWrites } from '../../storage/repositories/global-settings-writes.ts';
 import type { FamilyOperationContext } from '../rpc-handlers/family-operations/context.ts';
 import type { WorkAdapter } from './types.ts';
@@ -20,6 +23,7 @@ const Input = z.discriminatedUnion('action', [
       .refine((versions) => Object.keys(versions).length > 0),
   }),
 ]);
+type Denied = { ok: false; reason: 'human_or_neo_only' };
 
 export function createDriverHealthRuntime(
   context: FamilyOperationContext,
@@ -65,7 +69,23 @@ export function createDriverHealthRuntime(
   if (process.env.NODE_ENV !== 'test')
     jobQueue.enqueue({ queue, payload: { scope: 'local', startup: true }, runAt: Date.now() });
   const execute = (superpipe({})('driver-health-command') as PipelineAPI)
-    .input('input')
+    .input(['input', 'caller'])
+    .pipe(
+      (
+        input: z.infer<typeof Input>,
+        caller: OperationCaller
+      ): { value: z.infer<typeof Input> } | { reason: Denied } => {
+        const binding =
+          caller.source === 'mcp' && caller.role === 'neo' && caller.sessionId
+            ? new NeoRepository(db.getDatabase()).getBindingBySession(caller.sessionId)
+            : null;
+        return isLocalUser(caller) || isNeoConversationSession(caller, binding)
+          ? { value: input }
+          : { reason: { ok: false, reason: 'human_or_neo_only' } };
+      },
+      ['input', 'caller'],
+      'result:admission'
+    )
     .pipe(
       async (input: z.infer<typeof Input>) => {
         if (input.action === 'verified')
@@ -73,23 +93,27 @@ export function createDriverHealthRuntime(
         else await monitor.check(true);
         return { ok: true as const, health: await read() };
       },
-      'input',
-      'result'
+      'admission',
+      'admission'
     )
-    .endAsync('result') as (
-    input: z.infer<typeof Input>
-  ) => Promise<{ ok: true; health: Awaited<ReturnType<typeof read>> }>;
+    .endAsync('admission') as (
+    input: z.infer<typeof Input>,
+    caller: OperationCaller
+  ) => Promise<{ ok: true; health: Awaited<ReturnType<typeof read>> } | Denied>;
   return {
     read,
     operation: defineOperation({
       name: 'work.health',
       description:
-        'Check local driver health without starting work, or record a passed driver verify journey. action check refreshes all local checks. action verified requires the adapter, the journey that actually passed, and its exact tested clientVersions; a changed version is rejected. Unverified versions remain usable when status is ok. Read saved status through work.adapters.',
+        'Check local driver health without starting work, or record a passed driver verify journey. Requires the local human or a bound Neo MCP session. action check refreshes all local checks. action verified requires the adapter, the journey that actually passed, and its exact tested clientVersions; a changed version is rejected. Unverified versions remain usable when status is ok. Read saved status through work.adapters.',
       inputSchema: Input,
-      resultSchema: z.object({
-        ok: z.literal(true),
-        health: z.record(z.string(), WorkDriverHealthSchema),
-      }),
+      resultSchema: z.union([
+        z.object({
+          ok: z.literal(true),
+          health: z.record(z.string(), WorkDriverHealthSchema),
+        }),
+        z.object({ ok: z.literal(false), reason: z.literal('human_or_neo_only') }),
+      ]),
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute,
     }),

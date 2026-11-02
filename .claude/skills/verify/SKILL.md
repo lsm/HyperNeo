@@ -360,6 +360,9 @@ work.adapters, then record the exact tested clientVersions with work.health
 `{action: "verified", adapter, journey, clientVersions}`. This records evidence;
 it does not run the journey. Never mark a live client verified from synthetic
 fixture versions, a health self-check alone, or a journey that did not pass.
+Only the local human or a bound Neo MCP session may record verification.
+Workers report the passed journey, evidence and exact tested versions to Neo;
+their MCP caller cannot mark a driver verified.
 For health status and notice coverage, use journeys/driver-health.md. Tests skip
 automatic health startup jobs; that journey explicitly enqueues the real job in
 its isolated daemon before starting its processor.

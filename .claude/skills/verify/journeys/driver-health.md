@@ -27,6 +27,11 @@ also covered by the focused monitor tests.
 
 The review regression first records a passed Codex version while no Neo binding
 exists. Creating the binding must not deliver its obsolete unverified warning.
+Before that verification, direct calls through the real shared MCP invoke
+handler must refuse an ordinary worker and an unbound caller claiming the Neo
+role, leaving all stored health and pending warnings unchanged. Identity fields
+forged in the operation input must not affect admission. Human RPC verification
+and a bound Neo MCP session must both remain allowed.
 A generic settings RPC then attempts to forge the health records, verified
 versions and notice text; all daemon-owned values must remain unchanged while
 an ordinary setting still updates. Finally, the helper holds a scheduled

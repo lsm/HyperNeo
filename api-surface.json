@@ -53134,78 +53134,100 @@
       "name": "work.health",
       "resultSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "health": {
-            "additionalProperties": {
-              "additionalProperties": false,
-              "properties": {
-                "checkedAt": {
-                  "type": "number"
-                },
-                "clientVersions": {
-                  "additionalProperties": {
-                    "type": "string"
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "health": {
+                "additionalProperties": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "checkedAt": {
+                      "type": "number"
+                    },
+                    "clientVersions": {
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "type": "object"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "ok",
+                        "degraded",
+                        "unavailable"
+                      ],
+                      "type": "string"
+                    },
+                    "unverifiedVersion": {
+                      "type": "boolean"
+                    },
+                    "verifiedAt": {
+                      "type": "number"
+                    },
+                    "verifiedJourney": {
+                      "type": "string"
+                    },
+                    "verifiedVersions": {
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "type": "object"
+                    }
                   },
-                  "propertyNames": {
-                    "type": "string"
-                  },
-                  "type": "object"
-                },
-                "reason": {
-                  "type": "string"
-                },
-                "status": {
-                  "enum": [
-                    "ok",
-                    "degraded",
-                    "unavailable"
+                  "required": [
+                    "status",
+                    "reason",
+                    "clientVersions",
+                    "checkedAt",
+                    "unverifiedVersion"
                   ],
-                  "type": "string"
-                },
-                "unverifiedVersion": {
-                  "type": "boolean"
-                },
-                "verifiedAt": {
-                  "type": "number"
-                },
-                "verifiedJourney": {
-                  "type": "string"
-                },
-                "verifiedVersions": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "propertyNames": {
-                    "type": "string"
-                  },
                   "type": "object"
-                }
+                },
+                "propertyNames": {
+                  "type": "string"
+                },
+                "type": "object"
               },
-              "required": [
-                "status",
-                "reason",
-                "clientVersions",
-                "checkedAt",
-                "unverifiedVersion"
-              ],
-              "type": "object"
+              "ok": {
+                "const": true,
+                "type": "boolean"
+              }
             },
-            "propertyNames": {
-              "type": "string"
-            },
+            "required": [
+              "ok",
+              "health"
+            ],
             "type": "object"
           },
-          "ok": {
-            "const": true,
-            "type": "boolean"
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "const": "human_or_neo_only",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ok",
+              "reason"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "ok",
-          "health"
-        ],
-        "type": "object"
+        ]
       }
     },
     {
