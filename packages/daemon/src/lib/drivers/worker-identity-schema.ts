@@ -6,3 +6,7 @@ export const WorkerIdentitySchema = z.object({
   label: z.string(),
   daemon: z.string().optional(),
 });
+export const WorkerOpenSourceSchema = WorkerIdentitySchema.extend({
+  provider: z.string(),
+  link: z.string().nullable(),
+});

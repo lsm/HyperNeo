@@ -2,6 +2,7 @@ import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type {
   NeoPublicationAppendResult,
   NeoPublicationInput,
+  NeoPublication,
 } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -248,7 +249,10 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     .endAsync('publication') as (input: unknown, caller: OperationCaller) => Promise<Receipt>;
 }
 
-export function createNeoPublicationOperation(publish: ReturnType<typeof createNeoPublisher>) {
+export function createNeoPublicationOperation(
+  publish: ReturnType<typeof createNeoPublisher>,
+  present?: (items: NeoPublication[]) => Promise<NeoPublication[]>
+) {
   return defineOperation({
     name: 'neo.publication.publish',
     description:
@@ -256,6 +260,11 @@ export function createNeoPublicationOperation(publish: ReturnType<typeof createN
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
     resultSchema: NeoPublicationResultSchema.and(z.object({ guidance: z.string().optional() })),
-    execute: async (input, caller) => publish(input, caller),
+    execute: async (input, caller) => {
+      const result = await publish(input, caller);
+      return result.accepted && present
+        ? { ...result, publication: (await present([result.publication]))[0] }
+        : result;
+    },
   });
 }

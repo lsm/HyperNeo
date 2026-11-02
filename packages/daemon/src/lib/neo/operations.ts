@@ -1,5 +1,3 @@
-import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
-import { sessionWorkerRef } from './worker-identity.ts';
 import { neoSessionTrackRootRead } from '../../storage/repositories/neo-session-track-write.ts';
 import { createNeoCardSearchOperation } from './card-search-operation.ts';
 import { readNeoReply } from './intake.ts';
@@ -671,22 +669,26 @@ export function createNeoOperations(service: NeoService) {
       service.todos
     ),
     createNeoReorganizeOperation(neoReorganizeRuntime(service)),
-    createNeoPublicationOperation(service.publish),
+    createNeoPublicationOperation(service.publish, (items) => service.presentPublications(items)),
     ...createNeoPublicationChangeOperations({
       getBinding: (id) => service.repo.getBindingBySession(id),
       getRootBinding: () => service.repo.defaultBinding(),
       publications: service.publications,
+      present: (items) => service.presentPublications(items),
       notify: (conversationId) => {
         service.notifyChanged();
         service.notifyPublicationsChanged(conversationId);
       },
     }),
-    createNeoPublicationReadOperation(service.publications),
+    createNeoPublicationReadOperation(service.publications, (items) =>
+      service.presentPublications(items)
+    ),
     createNeoConversationReadOperation(
       service.repo,
       new NeoConversationReader(service.db.getDatabase(), messageStatuses),
       (message) => service.messageNames(message),
-      service.db.getDatabase()
+      service.db.getDatabase(),
+      (items) => service.presentPublications(items)
     ),
     createNeoConversationAskReadOperation(
       service.repo,
@@ -841,14 +843,7 @@ export function createNeoOperations(service: NeoService) {
       ]),
       policy: { safetyClass: 'read' },
       execute: path('neo.session.link', async (input: { session: string }) => {
-        const local = service.db.getSession(input.session);
-        const source = local
-          ? {
-              ...workerIdentity({ adapter: 'hyperneo', id: local.id }, local.title),
-              provider: local.config.provider ?? 'hyperneo',
-              link: `/session/${local.id}`,
-            }
-          : await service.readQuestionSource(sessionWorkerRef(input.session, false));
+        const source = (await service.resolveSessionSource(input.session)).source;
         return source ?? { ok: false, reason: 'session_unavailable' };
       }),
     }),

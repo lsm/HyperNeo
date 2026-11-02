@@ -30,9 +30,11 @@ import type { SessionSchedule } from '../../storage/repositories/session-schedul
 import { neoDerivedId } from './derived-id.ts';
 import { receivedNeoHumanInput } from './human-input.ts';
 import { parseProcessingState } from '../session/space-session-reads.ts';
-import { workerIdentity, workerEngine } from '@hyperneo/shared/types/worker-identity';
+import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { z } from 'zod';
-import { WorkSummarySchema } from '../drivers/types.ts';
+import { readNeoSessionSource } from './session-open-source.ts';
+import { presentNeoPublications } from './publication-presentation.ts';
+import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import { fillPrompt, NEO_SESSION_TRACK } from '@hyperneo/prompts';
 import type {
   GlobalSettings,
@@ -55,10 +57,7 @@ import {
 } from '../../storage/repositories/neo-publication-repository.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
-import {
-  NeoTodoSessionRepository,
-  neoSafeSessionLink,
-} from '../../storage/repositories/neo-todo-session-repository.ts';
+import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { createArtifactRefReader } from '../artifacts/read-operations.ts';
 import { readWorkerIdentity, sessionWorkerRef } from './worker-identity.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
@@ -250,28 +249,7 @@ export class NeoService {
       getRootBinding: () => this.repo.defaultBinding(),
       hasProject: (id) => !!this.repo.getProject(id),
       publication: (conversation, id) => this.publications.get(conversation, id),
-      lookupSession: async (id) => {
-        if (this.db.getSession(id)) return 'found';
-        const ref = sessionWorkerRef(id, false);
-        if (ref.adapter === 'hyperneo' && !ref.daemon) return 'not_found';
-        const status = await invokeOperation(
-          this.sessions.getOperationRegistry(),
-          'work.status',
-          { ref },
-          { source: 'internal' }
-        );
-        if (status.kind !== 'completed') return 'unavailable';
-        if (
-          z.object({ ok: z.literal(true), value: WorkSummarySchema }).safeParse(status.value)
-            .success
-        )
-          return 'found';
-        return z
-          .object({ ok: z.literal(false), reason: z.literal('not_found') })
-          .safeParse(status.value).success
-          ? 'not_found'
-          : 'unavailable';
-      },
+      lookupSession: async (id) => (await this.resolveSessionSource(id)).status,
       append: (input) => this.db.gateway.call(neoPublicationWrites, 'append', input),
       notify: notifyPublication,
       artifact: createArtifactRefReader(() => this.db.getDatabase()),
@@ -492,25 +470,24 @@ export class NeoService {
     );
   }
 
-  async readQuestionSource(ref: WorkRef): Promise<NeoQuestionSource | null> {
-    const result = await invokeOperation(
-      this.sessions.getOperationRegistry(),
-      'work.status',
-      { ref },
-      { source: 'internal' }
+  resolveSessionSource(session: string | WorkRef) {
+    return readNeoSessionSource(
+      session,
+      (id) => this.db.getSession(id),
+      (name, input) =>
+        invokeOperation(this.sessions.getOperationRegistry(), name, input, { source: 'internal' })
     );
-    const current = z
-      .object({ ok: z.literal(true), value: WorkSummarySchema })
-      .safeParse(result.kind === 'completed' ? result.value : null);
-    if (!current.success) return null;
-    const local = ref.adapter === 'hyperneo' && !ref.daemon ? this.db.getSession(ref.id) : null;
-    return {
-      ...workerIdentity(ref, current.data.value.title),
-      provider: local?.config.provider ?? workerEngine(ref.adapter),
-      link:
-        neoSafeSessionLink(current.data.value.link, !!ref.daemon) ??
-        neoSafeSessionLink(current.data.value.remoteLink, true),
-    };
+  }
+
+  async readQuestionSource(ref: WorkRef): Promise<NeoQuestionSource | null> {
+    return (await this.resolveSessionSource(ref)).source;
+  }
+
+  presentPublications(items: NeoPublication[]) {
+    return presentNeoPublications(
+      items,
+      async (id) => (await this.resolveSessionSource(id)).source
+    );
   }
 
   storeWorkerQuestion(ref: WorkRef, report: unknown, stored?: (question: NeoQuestion) => void) {

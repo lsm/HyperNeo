@@ -1,6 +1,7 @@
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import { z } from 'zod';
 import { ArtifactRefSchema } from '../artifacts/file-contracts.ts';
+import { WorkerOpenSourceSchema } from '../drivers/worker-identity-schema.ts';
 
 const text = (max: number) =>
   z
@@ -95,12 +96,21 @@ export function publicationTextRule(
 
 export const NeoPublicationSchema = NeoPublicationObject.superRefine(publicationTextRule);
 
+export const NeoPublicationOutputObject = NeoPublicationObject.extend({
+  sessionSource: WorkerOpenSourceSchema.nullable().optional(),
+  revisions: NeoPublicationObject.shape.revisions
+    .unwrap()
+    .element.extend({ sessionSource: WorkerOpenSourceSchema.nullable().optional() })
+    .array()
+    .optional(),
+});
+
 export const NeoPublicationResultSchema = z.union([
   z.object({ accepted: z.literal(false), reason: z.string(), detail: z.string().optional() }),
   z.object({
     accepted: z.literal(true),
     created: z.boolean(),
-    publication: NeoPublicationObject.extend({
+    publication: NeoPublicationOutputObject.extend({
       sequence: z.number().int().positive(),
       createdAt: z.string(),
     }).superRefine(publicationTextRule),
