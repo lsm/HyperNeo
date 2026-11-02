@@ -107,12 +107,12 @@ describe('Neo artifact taps', () => {
       fireEvent.click(await screen.findByText(path));
       await waitFor(() => expect(refuse).toBeTypeOf('function'));
       expect(screen.getByRole('tab', { name: 'Your work · 1' })).toBeTruthy();
-      const tab = screen.getByRole('tab', { name: path });
+      const tab = screen.getByRole('tab', { name: path.split('/').at(-1) });
       expect(tab.getAttribute('aria-selected')).toBe('true');
       expect(screen.getByRole('status').textContent).toBe('Loading preview…');
-      refuse({ accepted: false, reason: 'unavailable' });
-      await screen.findByText('This file is no longer available to you.');
-      expect(screen.getByRole('tab', { name: path })).toBe(tab);
+      refuse({ accepted: false, reason: 'missing' });
+      await screen.findByText('This file is no longer there.');
+      expect(screen.getByRole('tab', { name: path.split('/').at(-1) })).toBe(tab);
       expect(screen.getByRole('tabpanel').id).toBe(tab.getAttribute('aria-controls'));
       expect(screen.queryByRole('button', { name: 'Back', exact: true })).toBeNull();
       expect(request.mock.calls[0][1].input.reference).toBe(path);
@@ -121,9 +121,7 @@ describe('Neo artifact taps', () => {
         id: publication().publicationId,
       });
       fireEvent.click(screen.getByRole('tab', { name: 'Your work · 1' }));
-      await waitFor(() =>
-        expect(screen.queryByText('This file is no longer available to you.')).toBeNull()
-      );
+      await waitFor(() => expect(screen.queryByText('This file is no longer there.')).toBeNull());
     });
   });
   it('opens a registered document from a question card in the existing preview', () => {

@@ -96,7 +96,7 @@ describe('preview workspace navigation', () => {
     const reference = {
       kind: 'reference' as const,
       source: { kind: 'publication' as const, id: 'p' },
-      reference: 'docs/report.md',
+      reference: 'https://github.com/example/demo/pull/1',
     };
     openArtifactPreview(target('a'));
     pushArtifactPreview(reference);

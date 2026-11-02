@@ -333,7 +333,7 @@ describe('Neo preview Work layout', () => {
   it('keeps an unavailable local reference beside Neo with working Work navigation', async () => {
     viewport = 900;
     mount();
-    request.mockResolvedValue({ accepted: false, reason: 'unavailable' });
+    request.mockResolvedValue({ accepted: false, reason: 'missing' });
     act(() =>
       openArtifactPreview({
         kind: 'reference',
@@ -341,7 +341,7 @@ describe('Neo preview Work layout', () => {
         reference: '~/HyperNeo/引用配色/quote-colour-options.html',
       })
     );
-    await screen.findByText('This file is no longer available to you.');
+    await screen.findByText('This file is no longer there.');
     expect(document.querySelector('.neo-shell')?.classList.contains('neo-preview-focus')).toBe(
       true
     );
@@ -353,15 +353,23 @@ describe('Neo preview Work layout', () => {
   });
 
   it.each([false, true])(
-    'promotes direct references into the Work workspace with existingFile=%s',
+    'keeps direct references live in the Work workspace with existingFile=%s',
     async (file) => {
       viewport = 900;
       mount();
       if (file) await open('a');
       const handler = request.getMockImplementation()!;
       request.mockImplementation((method, params) =>
-        params.name === 'artifact.reference.resolve'
-          ? Promise.resolve({ accepted: true, artifact: { artifactId: 'reference' } })
+        params.name === 'file.reference.read'
+          ? Promise.resolve({
+              accepted: true,
+              kind: 'markdown',
+              version: 'a'.repeat(64),
+              data: Buffer.from('# Document reference').toString('base64'),
+              byteLength: 20,
+              nextOffset: 20,
+              complete: true,
+            })
           : handler(method, params)
       );
       act(() =>
@@ -375,9 +383,15 @@ describe('Neo preview Work layout', () => {
         'true'
       );
       await screen.findByRole('heading', { name: 'Document reference' });
-      await screen.findByRole('tab', { name: 'File reference' });
+      await screen.findByRole('tab', { name: 'reference.md' });
+      expect(artifactPreviewWorkspace.state.value.files.at(-1)?.reference?.reference).toBe(
+        'reference.md'
+      );
+      expect(
+        request.mock.calls.filter(([, call]) => call.name === 'artifact.reference.resolve')
+      ).toHaveLength(0);
       expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
-      fireEvent.click(screen.getByRole('button', { name: 'Close File reference' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Close reference.md' }));
       if (file) {
         await screen.findByRole('heading', { name: 'Document a' });
         expect(screen.getByRole('tab', { name: 'Your work · 1' })).toBeTruthy();

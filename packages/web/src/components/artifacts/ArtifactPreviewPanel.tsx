@@ -12,6 +12,9 @@ import {
 import type { ArtifactResolution } from '../../lib/artifact-reference-client.ts';
 import { ArtifactPreview } from './ArtifactPreview.tsx';
 import { ReferenceView } from './ReferenceView.tsx';
+import { LiveFilePreview } from './LiveFilePreview.tsx';
+import { isLiveReference } from '../../lib/live-file-client.ts';
+import { previewFileKey } from '../../lib/artifact-preview-workspace.ts';
 import {
   ArtifactPreviewTabs,
   artifactTabIds,
@@ -50,10 +53,15 @@ export function ArtifactPreviewPanel({
   const tabbed = fileTabs && desktop;
   const phone = fileTabs && !desktop;
   const files = artifactPreviewWorkspace.state.value.files;
-  const selectedId = top?.kind === 'artifact' ? top.artifactId : null;
+  const selectedId =
+    top?.kind === 'artifact'
+      ? top.artifactId
+      : top && isLiveReference(top)
+        ? previewFileKey({ reference: top, title: '' })
+        : null;
   const workActive = tabbed && !!work && artifactPreviewWorkspace.state.value.open && !top;
   const open = !!top || workActive;
-  const reference = tabbed && top?.kind === 'reference' ? top : undefined;
+  const reference = tabbed && top?.kind === 'reference' && !isLiveReference(top) ? top : undefined;
   const showWork = tabbed && work?.showTab;
   const focusEntry = workActive ? artifactWorkTabId : tabbed && selectedId ? open : stack[0];
   const dialog = useRef<HTMLDivElement>(null);
@@ -273,20 +281,28 @@ export function ArtifactPreviewPanel({
         {tabbed &&
           files.map((file) => (
             <div
-              key={file.artifactId}
-              id={artifactTabIds(file.artifactId).panel}
+              key={previewFileKey(file)}
+              id={artifactTabIds(previewFileKey(file)).panel}
               role="tabpanel"
-              hidden={file.artifactId !== selectedId}
-              aria-labelledby={artifactTabIds(file.artifactId).tab}
-              class={file.artifactId === selectedId ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
+              hidden={previewFileKey(file) !== selectedId}
+              aria-labelledby={artifactTabIds(previewFileKey(file)).tab}
+              class={
+                previewFileKey(file) === selectedId ? 'flex min-h-0 flex-1 flex-col' : 'hidden'
+              }
             >
-              <ArtifactPreview
-                artifactId={file.artifactId}
-                onBack={backArtifactPreview}
-                markdownClass={markdownClass}
-                presentation="tabbed"
-                onMetadata={rememberMetadata}
-              />
+              {file.reference ? (
+                previewFileKey(file) === selectedId && !suspended ? (
+                  <LiveFilePreview target={file.reference} markdownClass={markdownClass} tabbed />
+                ) : null
+              ) : (
+                <ArtifactPreview
+                  artifactId={file.artifactId}
+                  onBack={backArtifactPreview}
+                  markdownClass={markdownClass}
+                  presentation="tabbed"
+                  onMetadata={rememberMetadata}
+                />
+              )}
             </div>
           ))}
         {!tabbed && top?.kind === 'artifact' ? (
@@ -297,7 +313,7 @@ export function ArtifactPreviewPanel({
             onBack={backArtifactPreview}
             markdownClass={markdownClass}
           />
-        ) : top?.kind === 'reference' ? (
+        ) : top?.kind === 'reference' && (!tabbed || !isLiveReference(top)) ? (
           <div
             id={reference ? artifactReferencePanelId : undefined}
             role={reference ? 'tabpanel' : undefined}
