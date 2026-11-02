@@ -169,7 +169,14 @@ test('populated session states retain phone-read fields and extensible metadata'
       pendingQuestion: {
         toolUseId: 'tool',
         askedAt: 1,
-        questions: [{ question: 'Continue?', multiSelect: false, options: [{ label: 'Yes' }] }],
+        questions: [
+          {
+            question: 'Continue?',
+            header: 'Next step',
+            multiSelect: false,
+            options: [{ label: 'Yes', description: 'Continue the public fixture' }],
+          },
+        ],
       },
     },
     { status: 'rate_limit_cooldown', retryCount: 1, maxRetries: 3, retryAt: 1 },
@@ -182,6 +189,25 @@ test('populated session states retain phone-read fields and extensible metadata'
   expect(exported.eventSchemas['state.settings'].properties.settings.additionalProperties).not.toBe(
     false
   );
+});
+test('question headers and option descriptions remain required on the wire', () => {
+  const question = {
+    question: 'Continue?',
+    header: 'Next step',
+    multiSelect: false,
+    options: [{ label: 'Yes', description: 'Continue' }],
+  };
+  const valid = (value: unknown) =>
+    CLIENT_EVENT_SCHEMAS['state.session'].safeParse({
+      ...payloads['state.session'],
+      agentState: {
+        status: 'waiting_for_input',
+        pendingQuestion: { toolUseId: 'tool', askedAt: 1, questions: [value] },
+      },
+    }).success;
+  expect(valid(question)).toBe(true);
+  expect(valid({ ...question, header: undefined })).toBe(false);
+  expect(valid({ ...question, options: [{ label: 'Yes' }] })).toBe(false);
 });
 test('generated event data schemas are stable and expose field types', () => {
   const first = serializeApiSurface([], events, [], CLIENT_EVENT_SCHEMAS);
