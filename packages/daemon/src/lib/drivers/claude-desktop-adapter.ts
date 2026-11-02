@@ -574,7 +574,8 @@ export function claudeTranscriptState(
             entry.type === 'user' &&
               !entry.isMeta &&
               !entry.origin &&
-              (!entry.turnOrigin || entry.turnOrigin === 'human' || entry.turnOrigin === 'user')
+              (!entry.turnOrigin || entry.turnOrigin === 'human' || entry.turnOrigin === 'user'),
+            typeof entry.uuid === 'string' ? entry.uuid : undefined
           );
     if (input) inputs.push(input);
     const next =

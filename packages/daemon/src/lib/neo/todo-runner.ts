@@ -24,6 +24,7 @@ import {
   neoCardSent,
   readDriverActivity,
   readDriverIdentity,
+  readDriverInputs,
   readDriverFollowUp,
   readDriverLive,
   readDriverOpenedPrs,
@@ -36,6 +37,8 @@ import type { NeoPack, NeoTodoCheckResult, NeoTodoJudgement } from './pack-contr
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
 import { sameNeoTodoCheck } from './todo-completion.ts';
 import { neoMoveTodo, neoTodoRepo } from './todo-repo.ts';
+import { planNeoTurnReportSweep } from './turn-report-sweep.ts';
+import { neoTurnOrigin } from './turn-origin.ts';
 import { deliverNeoTurnReport } from './turn-report.ts';
 
 type Rejection = { ok: false; reason: string };
@@ -306,6 +309,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
     .endAsync('status') as (todoId: string, ref: WorkRef, ask: NeoAsk) => Promise<OperationOutcome>;
   const starting = new Set<string>();
+  let reportCursor = 0;
   const caller = (ask: NeoAsk) => driverWorkCaller({ originSessionId: ask.sessionId });
   const recompute = (superpipe({})('neo.todo.recompute-committed') as PipelineAPI)
     .input(['todo', 'patch', 'now', 'judgement'])
@@ -650,15 +654,14 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       !todo ||
       !ask ||
       ask.status !== 'open' ||
-      !['doing', 'blocked'].includes(todo.state) ||
       current?.adapter !== ref.adapter ||
       current.id !== ref.id ||
       current.daemon !== ref.daemon
     )
       return;
-    const inputs = sessions.inputs.list(id);
+    const inputs = sessions.inputs.list(ref);
     for (const turn of turns) {
-      const dispatch = inputs.findLast((input) => {
+      const temporalDispatch = inputs.findLast((input) => {
         const result = input.outcome;
         return (
           input.acceptedAt <= turn.at &&
@@ -669,6 +672,41 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           result.ref.daemon === ref.daemon
         );
       });
+      const anchor = sessions.readFollowAnchor(id) ?? todo.startedAt ?? todo.createdAt;
+      const previous = turns
+        .filter((item) => item.at < turn.at)
+        .reduce((at, item) => Math.max(at, item.at), -Infinity);
+      const receipts = inputs.flatMap((item) =>
+        item.outcome && 'ref' in item.outcome && item.outcome.receipt
+          ? [{ inputId: item.outcome.receipt.inputId, dispatchId: item.id }]
+          : []
+      );
+      const sentReceipt = sessions.readSent(id)?.receipt;
+      if (sentReceipt)
+        receipts.push({
+          inputId: sentReceipt.inputId,
+          dispatchId: temporalDispatch?.id ?? sentReceipt.inputId,
+        });
+      const origin = neoTurnOrigin(readDriverInputs(outcome) ?? [], turn, previous, receipts);
+      if (origin.humanInput !== undefined) {
+        if (turn.at <= anchor) continue;
+        await deliverNeoTurnReport(
+          ask,
+          todo,
+          'human',
+          ref,
+          readDriverLive(outcome),
+          { ...turn, humanInput: origin.humanInput },
+          deps.tell,
+          sessions.turnReports
+        );
+        await sessions.write('recordFollowAnchor', id, turn.at);
+        continue;
+      }
+      const dispatch = origin.dispatchId
+        ? (inputs.find((item) => item.id === origin.dispatchId) ?? { id: origin.dispatchId })
+        : temporalDispatch;
+      if (!['doing', 'blocked'].includes(todo.state)) continue;
       if (dispatch && turn === turns.reduce((last, item) => (item.at >= last.at ? item : last))) {
         const receipt = (await deps.write(neoTodoRunnerWrites, {
           method: 'blocker',
@@ -1324,8 +1362,22 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         if (starting.has(todoId)) continue;
         await recoverStart(todoId).catch((error) => warn('Todo start recovery pending', error));
       }
-      for (const { todoId, ref } of await sessions.read('awaitingReports'))
-        await settle(todoId, ref).catch((error) => warn('Todo session refresh pending', error));
+      const candidates = [];
+      for (const { todoId, ref } of await sessions.read('awaitingReports')) {
+        const todo = store.getTodo(todoId);
+        if (todo?.state === 'doing')
+          await settle(todoId, ref).catch((error) => warn('Todo session refresh pending', error));
+        else if (todo) candidates.push({ todo, ref, ask: store.getAsk(todo.askId)! });
+      }
+      const plan = planNeoTurnReportSweep(candidates, reportCursor);
+      reportCursor = plan.next;
+      for (const { todo, ref, ask } of plan.selected) {
+        const since = sessions.readFollowAnchor(todo.id) ?? todo.startedAt ?? todo.createdAt;
+        await deps
+          .invoke(caller(ask), 'work.status', { ref, since })
+          .then((outcome) => observe(todo.id, outcome, ref))
+          .catch((error) => warn('Worker human turn report pending', error));
+      }
       for (const todo of await store.read('listCheckable')) {
         if (todo.blockedBy === 'needs-human')
           await deps

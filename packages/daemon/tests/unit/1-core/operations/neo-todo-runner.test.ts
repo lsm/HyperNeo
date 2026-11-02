@@ -158,6 +158,230 @@ function setup(
 }
 
 describe('neo todo runner', () => {
+  test.each(['doing', 'done', 'failed', 'closed_unverified', 'blocked', 'todo'] as const)(
+    'reports direct human work once on an open ask with todo state %s',
+    async (state) => {
+      const h = setup(false);
+      try {
+        const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+        await h.runner.start(todo.id);
+        const at = Date.now() + 100;
+        h.store.updateTodo(h.store.getTodo(todo.id)!, { state, report: 'Prior work' }, at - 50);
+        h.setStatus({
+          ok: true,
+          value: {
+            status: 'done',
+            lastActivityAt: at + 100,
+            recentInputs: [
+              {
+                at,
+                text: 'Please change the heading directly.',
+                human: true,
+                inputId: 'human-input',
+              },
+            ],
+            turnEnds: [
+              { id: 'human-turn', startedAt: at, at: at + 100, message: 'Changed the heading.' },
+            ],
+          },
+        });
+        await h.runner.refresh(() => {});
+        await h.runner.refresh(() => {});
+        const reports = h.told.filter((note) => note.startsWith('The human worked directly'));
+        expect(reports).toHaveLength(1);
+        expect(reports[0]).toContain(`ask iOS card, todo ${todo.id}`);
+        expect(reports[0]).toContain('The human said: Please change the heading directly.');
+        expect(reports[0]).toContain('The worker replied: Changed the heading.');
+        expect(reports[0]).not.toContain('dispatch');
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
+  test('reports tracked human turns only after the follow anchor without a dispatch', async () => {
+    const h = setup(false);
+    try {
+      const todo = h.add(null, null);
+      const at = Date.now() + 100;
+      h.sessions.create(todo.id, { verb: 'adopt', ref });
+      h.sessions.recordRef(todo.id, ref, at);
+      h.sessions.recordFollowAnchor(todo.id, at);
+      h.store.updateTodo(todo, { state: 'done' }, at);
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: at + 100,
+          recentInputs: [
+            { at: at - 100, text: 'Before tracking', human: true },
+            { at: at + 10, text: 'Do the new work', human: true },
+          ],
+          turnEnds: [
+            { id: 'old-tracked', startedAt: at - 100, at: at - 10, message: 'Old answer' },
+            { id: 'new-tracked', startedAt: at + 10, at: at + 100, message: 'New answer' },
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      await h.runner.refresh(() => {});
+      expect(h.told).toHaveLength(1);
+      expect(h.told[0]).toContain('The human said: Do the new work');
+      expect(h.told[0]).toContain('The worker replied: New answer');
+      expect(h.sessions.inputs.list(todo.id)).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('dispatch receipt identity wins over a driver human marker', async () => {
+    const h = setup(false);
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      await h.runner.start(todo.id);
+      const dispatch = h.sessions.inputs.list(todo.id)[0];
+      const at = dispatch.acceptedAt + 100;
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: at + 100,
+          recentInputs: [{ at, text: 'Build the rows.', human: true, inputId: receipt.inputId }],
+          turnEnds: [
+            { id: 'dispatch-turn', startedAt: at, at: at + 100, message: 'Normal report' },
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      await h.runner.refresh(() => {});
+      expect(h.told.filter((note) => note.startsWith('Worker turn report'))).toHaveLength(1);
+      expect(h.told.some((note) => note.startsWith('The human worked directly'))).toBe(false);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test.each([
+    'before-start',
+    'shared-dispatch',
+    'closed-ask',
+    'explicit-send',
+    'sent-receipt',
+    'agent-fallback',
+  ])('classifies the initiating input without losing receipt protection: %s', async (scenario) => {
+    const h = setup(false);
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      await h.runner.start(todo.id);
+      const at = Date.now() + 100;
+      const neo = ['shared-dispatch', 'sent-receipt'].includes(scenario);
+      const inputId = neo ? 'other-neo-input' : 'human-input';
+      if (scenario === 'shared-dispatch') {
+        const other = h.add(null, null);
+        const dispatch = await h.sessions.inputs.accept(
+          other.id,
+          'neo',
+          { verb: 'send', ref },
+          'Neo request',
+          at
+        );
+        await h.sessions.inputs.recordOutcome(
+          dispatch,
+          { ref, receipt: { executionId: ref.id, inputId } },
+          at
+        );
+      }
+      if (scenario === 'sent-receipt')
+        h.sessions.recordSent(todo.id, {
+          inputBefore: at,
+          opening: 'Neo request',
+          receipt: { executionId: ref.id, inputId },
+        });
+      if (scenario === 'closed-ask')
+        h.db.prepare("UPDATE neo_asks SET status='done' WHERE id='ask'").run();
+      if (scenario === 'explicit-send')
+        h.db
+          .prepare(`INSERT INTO neo_session_messages
+          (conversation_id,message_id,from_session,to_session,text,created_at)
+          VALUES ('conversation','human-turn-milestone','worker-1','neo','Worker says done',?)`)
+          .run(new Date(at + 10).toISOString());
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: at + 100,
+          recentInputs: [
+            { at, text: 'Direct user instruction', human: scenario !== 'agent-fallback', inputId },
+          ],
+          turnEnds: [
+            {
+              id: 'origin-case',
+              startedAt: at + (scenario === 'before-start' ? 1 : 0),
+              at: at + 100,
+              message: 'Done with direct work',
+            },
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      await h.runner.refresh(() => {});
+      const humanReports = h.told.filter((note) => note.startsWith('The human worked directly'));
+      expect(humanReports).toHaveLength(
+        neo || ['closed-ask', 'agent-fallback'].includes(scenario) ? 0 : 1
+      );
+      if (neo)
+        expect(h.told.filter((note) => note.startsWith('Worker turn report'))).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('caps settled-worker observations per sweep without losing older workers', async () => {
+    const h = setup(false);
+    try {
+      const at = Date.now() + 100;
+      for (let index = 0; index < 21; index++) {
+        const todo = h.add(null, null);
+        const worker = { adapter: 'hyperneo', id: `settled-${index}` };
+        h.sessions.create(todo.id, { verb: 'adopt', ref: worker });
+        h.sessions.recordRef(todo.id, worker, at);
+        h.sessions.recordFollowAnchor(todo.id, at);
+        h.store.updateTodo(todo, { state: 'done' }, at);
+        if (index === 0) {
+          const sibling = h.add(null, null);
+          h.sessions.create(sibling.id, { verb: 'adopt', ref: worker });
+          h.sessions.recordRef(sibling.id, worker, at);
+          h.sessions.recordFollowAnchor(sibling.id, at);
+          h.store.updateTodo(sibling, { state: 'done' }, at);
+        }
+      }
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: at + 100,
+          recentInputs: [{ at: at + 10, text: 'New human work', human: true }],
+          turnEnds: [
+            {
+              id: 'fresh-human-turn',
+              startedAt: at + 10,
+              at: at + 100,
+              message: 'Completed direct work',
+            },
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      expect(h.calls.filter((call) => call.name === 'work.status')).toHaveLength(20);
+      await h.runner.refresh(() => {});
+      expect(h.told.filter((note) => note.startsWith('The human worked directly'))).toHaveLength(
+        21
+      );
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('a refused check stamp preserves the prior worker status and needs-you incident', async () => {
     const h = setup();
     try {

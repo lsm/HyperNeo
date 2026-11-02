@@ -244,6 +244,16 @@ describe('codexTurnState', () => {
 });
 
 describe('codexRecentInputs and reply time', () => {
+  test('exposes the native input id used by dispatch receipts', () => {
+    expect(codexRecentInputs([heardAs('native-input', 'Direct instruction')])).toEqual([
+      {
+        at: Date.parse('2026-10-04T11:00:00.000Z'),
+        text: 'Direct instruction',
+        human: true,
+        inputId: 'native-input',
+      },
+    ]);
+  });
   const at = (iso: string, entry: string) =>
     JSON.stringify({ ...JSON.parse(entry), timestamp: iso });
 
