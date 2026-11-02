@@ -16,7 +16,7 @@ env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/
 
 The helper seeds an ordered ask with a merged first PR and an open next PR,
 then runs the actual driver-refresh job. Observe `first: done`, `next: doing`
-in stored state and `neo.snapshot`, and exactly one `turn/start` received by
+in stored state and `neo.snapshot`, and exactly one native queue submission received by
 the synthetic worker through the real start/send path. Repeating refresh must
 send nothing again. The captured first worker input (`workerRuleDelivered` in
 `evidence/observed.json`) must include rule 10's 30-second PR/issue guidance,
@@ -27,7 +27,9 @@ no further work.
 
 With a non-start ask question open, the dispatched worker stays doing and its
 unreceipted reply is not stored as a result; pending work still waits.
-This synthetic app-server send returns a turn id but no input receipt. The
+The shared peer now acknowledges thread/queue/add. The original scenario writes
+no input ID and therefore returns no input receipt; chain mode additionally
+records the exact clientUserMessageId to prove receive-side consumption. The
 explicit-worker-results journey separately proves storage from matching
 dispatch receipts. The helper then
 pauses a real completion RPC inside its synthetic GitHub read, records a new
@@ -67,3 +69,8 @@ record a distinct new attempt. Restart the daemon and check that the retired
 card and retry history survive. Evidence is in the same `observed.json` under
 `lifecycle`. This checks the daemon RPC and snapshot surface without a model
 turn; it does not claim browser rendering or model adherence to the prompt.
+
+Shared setup now awaits synthetic root-session persistence, sets disableWorktrees
+on the effective config and answers thread/loaded/list before the native queue
+may resume a saved worker. This avoids claiming dispatch proof from an invalid
+synthetic peer response. The dependency Start-card journey reuses this setup.

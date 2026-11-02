@@ -27,6 +27,7 @@ function setup() {
   const store = new NeoAskTodoRepository(db);
   const sessions = new NeoTodoSessionRepository(db);
   const packs = createTodoCheckPacks(db);
+  const sent: Record<string, unknown>[] = [];
   const runner = createNeoTodoRunner({
     limits: () => ({ running: 99, perGroup: 99 }),
     write: gatewayFor(db).run.bind(gatewayFor(db)),
@@ -35,7 +36,25 @@ function setup() {
     packs: () => packs,
     tell: async () => {},
     changed: () => {},
-    invoke: async () => ({ kind: 'completed', value: { ok: true, value: {} } }),
+    invoke: async (_caller, name, input) => {
+      if (name === 'work.send') {
+        sent.push(input);
+        return {
+          kind: 'completed',
+          value: {
+            ok: true,
+            value: { delivered: true, receipt: { executionId: 'w', inputId: crypto.randomUUID() } },
+          },
+        };
+      }
+      return {
+        kind: 'completed',
+        value: {
+          ok: true,
+          value: { ref: { adapter: 'hyperneo', id: 'w' }, status: 'done', lastActivityAt: 0 },
+        },
+      };
+    },
   });
   const controls = { ...runner, resolveTarget: existingTodoTarget };
   const gateway = gatewayFor(db);
@@ -88,10 +107,112 @@ function setup() {
     doneWhen: 'Result verified',
     ...(after ? { after } : {}),
   });
-  return { db, store, sessions, invoke, step };
+  return { db, store, sessions, invoke, step, runner, sent };
 }
 
 describe('todo dependencies', () => {
+  test.each([false, true])(
+    'approved dependency chain advances without Start cards; legacy=%s',
+    async (legacy) => {
+      const { db, store, sessions, invoke, step, runner, sent } = setup();
+      try {
+        const target = { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } };
+        const work = { target, instruction: 'Perform the next approved step.' };
+        const opened = await invoke('neo.ask.open', {
+          title: 'Approved chain',
+          request: 'Complete all three steps.',
+          todos: [
+            { ...step('PR1'), ...work, start: true },
+            { ...step('PR2', [0]), ...work },
+            { ...step('PR3', [1]), ...work },
+          ],
+        });
+        expect(opened.ok).toBe(true);
+        const [first, second, third] = opened.todos;
+        if (legacy) {
+          store.updateTodo(
+            second,
+            {
+              state: 'blocked',
+              blockedBy: 'question',
+              blockedReason: 'Waiting for the human to start it.',
+            },
+            Date.now()
+          );
+          store.askQuestion(
+            'legacy-start',
+            first.askId,
+            {
+              text: 'Start PR2?',
+              kind: 'start',
+              options: null,
+              multiple: false,
+              noLabel: null,
+              yesLabel: null,
+              startTodos: [second.id],
+            },
+            Date.now()
+          );
+        } else expect(store.listQuestions(first.askId)).toHaveLength(0);
+        await runner.recompute(store.getTodo(first.id)!, {}, Date.now(), {
+          state: 'done',
+          evidence: 'PR1 merged.',
+        });
+        await runner.refresh(() => {});
+        expect(store.getTodo(second.id)?.state).toBe('doing');
+        expect(store.getTodo(third.id)?.state).toBe('todo');
+        expect(sessions.readRef(second.id)).toEqual(target.ref);
+        expect(store.listQuestions(first.askId).filter((q) => q.state === 'open')).toHaveLength(0);
+        await runner.recompute(store.getTodo(second.id)!, {}, Date.now(), {
+          state: 'done',
+          evidence: 'PR2 merged.',
+        });
+        await runner.refresh(() => {});
+        expect(store.getTodo(third.id)?.state).toBe('doing');
+        expect(sessions.readRef(third.id)).toEqual(target.ref);
+        expect(sent).toHaveLength(3);
+        await runner.refresh(() => {});
+        expect(sent).toHaveLength(3);
+      } finally {
+        db.close();
+      }
+    }
+  );
+
+  test('an independent unapproved todo still asks and an explicit hold still stops a dependency', async () => {
+    const { db, store, invoke, step, runner, sent } = setup();
+    try {
+      const work = {
+        target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } },
+        instruction: 'Do the work.',
+      };
+      const opened = await invoke('neo.ask.open', {
+        title: 'Unapproved',
+        request: 'Consider work.',
+        todos: [{ ...step('Independent', []), ...work, start: false }],
+      });
+      expect(store.listQuestions(opened.todos[0].askId)).toEqual([
+        expect.objectContaining({ kind: 'start', state: 'open', startTodos: [opened.todos[0].id] }),
+      ]);
+      const added = await invoke('neo.todo.add', {
+        askId: opened.todos[0].askId,
+        ...step('Held dependency', [opened.todos[0].id]),
+        ...work,
+      });
+      expect(added.ok).toBe(true);
+      await invoke('neo.todo.hold', { todoId: added.todo.id, reason: 'Human said wait.' });
+      await runner.recompute(opened.todos[0], {}, Date.now(), {
+        state: 'done',
+        evidence: 'Already satisfied.',
+      });
+      await runner.refresh(() => {});
+      expect(store.getTodo(added.todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'held' });
+      expect(sent).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+
   test('a plan names which earlier steps each step waits for; unnamed steps keep the order', async () => {
     const { db, invoke, step } = setup();
     try {

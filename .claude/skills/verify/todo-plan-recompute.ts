@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -11,7 +12,7 @@ import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/r
 
 const [mode, directory] = process.argv.slice(2),
   run = resolve(directory);
-assert(['before', 'verify'].includes(mode));
+assert(['before', 'verify', 'chain-before', 'chain-verify'].includes(mode));
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -83,7 +84,7 @@ const peer = Bun.serve({
       const call = JSON.parse(String(bytes));
       if (!('id' in call)) return;
       calls.push(call);
-      if (call.method === 'turn/start') {
+      if (['turn/start', 'thread/queue/add'].includes(call.method)) {
         const input = call.params.input
           .map((part: { text?: string }) => part.text ?? '')
           .join('\n');
@@ -95,6 +96,7 @@ const peer = Bun.serve({
             payload: {
               type: 'message',
               role: 'user',
+              ...(mode.startsWith('chain-') ? { id: call.params.clientUserMessageId } : {}),
               content: [{ type: 'input_text', text: input }],
             },
           }) + '\n',
@@ -102,11 +104,13 @@ const peer = Bun.serve({
         );
       }
       const result =
-        call.method === 'thread/turns/list'
+        ['thread/turns/list', 'thread/loaded/list'].includes(call.method)
           ? { data: [] }
           : call.method === 'thread/resume'
             ? { thread: { id: call.params.threadId, status: { type: 'idle' }, turns: [] } }
-            : call.method === 'turn/start'
+            : call.method === 'thread/queue/add'
+              ? { queuedSubmission: { id: crypto.randomUUID() } }
+              : call.method === 'turn/start'
               ? { turn: { id: crypto.randomUUID() } }
               : {};
       socket.send(JSON.stringify({ id: call.id, jsonrpc: '2.0', result }));
@@ -120,10 +124,10 @@ const evidence: Record<string, unknown> = {
 };
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined, ws: WebSocket | undefined;
 let store: NeoAskTodoRepository, sessions: NeoTodoSessionRepository;
-const starts = () => calls.filter((c) => c.method === 'turn/start').length;
+const starts = () => calls.filter((c) => ['turn/start', 'thread/queue/add'].includes(String(c.method))).length;
 const open = async () => {
   app = await createDaemonApp({
-    config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }),
+    config: { ...getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), disableWorktrees: true },
     verbose: false,
   });
   assert.notEqual(app.server.port, 8399);
@@ -202,7 +206,7 @@ const add = (id: string, askId: string, n: number, worker?: string) => {
 };
 try {
   await open();
-  app!.db.createSession({
+  await app!.db.createSession({
     id: root,
     title: 'Synthetic plan proof',
     workspacePath: join(run, 'workspace'),
@@ -224,6 +228,69 @@ try {
     kind: 'neo',
     projectId: null,
   });
+  if (mode.startsWith('chain-')) {
+    const mcp = createOperationMcpHandler(() => app!.sessionManager.getOperationRegistry(), () => ({ sessionId: root, role: 'neo' }));
+    const call = async (name: string, input: unknown) => {
+      const response = await mcp({ name, input });
+      const result = JSON.parse(response.content[0].text);
+      assert(!response.isError && result.ok, JSON.stringify(result));
+      return result;
+    };
+    const target = (id = 'flow') => ({ verb: 'send', ref: { adapter: 'codex-desktop', id } });
+    const step = (title: string, id = 'flow') => ({ title, instruction: `Complete ${title}.`, target: target(id), check: { pack: 'core', kind: 'evidence', params: { path: join(run, title) } } });
+    const chain = async (title: string, id = 'flow') => call('neo.ask.open', { title, request: 'Approved: complete the entire chain.', todos: [{ ...step(`${title}-1`, id), start: true }, { ...step(`${title}-2`, id), after: [0] }, { ...step(`${title}-3`, id), after: [1] }] });
+    const read = async (askId: string) => (await rpc('neo.ask.read', { askId })).entry;
+    const complete = async (title: string) => { writeFileSync(join(run, title), 'Verified outcome'); await refresh(); };
+    const opened = await chain('approved');
+    const [first, second, third] = opened.todos;
+    evidence.initial = await read(first.askId);
+    if (mode === 'chain-before') {
+      assert((evidence.initial as { questions: { kind: string; state: string }[] }).questions.some(q => q.kind === 'start' && q.state === 'open'));
+      await complete(first.title);
+      const blocked = await read(first.askId);
+      assert.equal(blocked.todos.find((t: { id: string }) => t.id === second.id).state, 'blocked');
+      assert.equal(starts(), 1);
+      evidence.reproduced = 'Approved dependency remains blocked by its Start card after predecessor completion';
+      evidence.blocked = blocked;
+    } else {
+      assert.equal((evidence.initial as { questions: unknown[] }).questions.length, 0);
+      assert.equal(starts(), 1);
+      await complete(first.title);
+      let visible = await read(first.askId);
+      assert.equal(visible.todos.find((t: { id: string }) => t.id === second.id).state, 'doing');
+      assert.equal(starts(), 2);
+      await complete(second.title);
+      visible = await read(first.askId);
+      assert.equal(visible.todos.find((t: { id: string }) => t.id === third.id).state, 'doing');
+      assert.equal(starts(), 3);
+      await refresh(); assert.equal(starts(), 3);
+      assert(calls.filter(c => ['turn/start', 'thread/queue/add'].includes(String(c.method))).every(c => (c.params as { threadId: string }).threadId === 'flow'));
+      const added = await call('neo.todo.add', { askId: first.askId, ...step('added'), after: [third.id] });
+      assert.equal((await read(first.askId)).questions.length, 0);
+      await complete(third.title);
+      assert.equal((await read(first.askId)).todos.find((t: { id: string }) => t.id === added.todo.id).state, 'doing');
+      assert.equal(starts(), 4);
+      evidence.advanced = await read(first.askId);
+      const unapproved = await call('neo.ask.open', { title: 'Unapproved', request: 'Consider this work.', todos: [{ ...step('unapproved'), after: [], start: false }] });
+      const waiting = await read(unapproved.todos[0].askId);
+      assert(waiting.questions.some((q: { kind: string; state: string }) => q.kind === 'start' && q.state === 'open'));
+      assert.equal(starts(), 4); evidence.unapproved = waiting;
+      const legacy = await chain('legacy', 'restart');
+      const [a, b] = legacy.todos;
+      store.updateTodo(store.getTodo(b.id)!, { state: 'blocked', blockedBy: 'question', blockedReason: 'Waiting for the human to start it.' }, Date.now());
+      store.askQuestion('legacy-start', a.askId, { kind: 'start', text: 'Start legacy second?', startTodos: [b.id], options: null, multiple: false, noLabel: null, yesLabel: null }, Date.now());
+      await ws!.close(); await app!.cleanup(); app = undefined; ws = undefined;
+      await open();
+      await complete(a.title);
+      const recovered = await read(a.askId);
+      assert.equal(recovered.todos.find((t: { id: string }) => t.id === b.id).state, 'doing');
+      assert(recovered.questions.every((q: { state: string }) => q.state !== 'open'));
+      assert.equal(starts(), 6);
+      await refresh(); assert.equal(starts(), 6);
+      evidence.legacyRecovered = recovered;
+      evidence.verified = true;
+    }
+  } else {
   ask('flow');
   add('first', 'flow', 1);
   add('next', 'flow', 2, 'flow');
@@ -270,7 +337,7 @@ try {
     console.log('REPRODUCED: merged facts leave the next todo pending, with no worker dispatch.');
   } else {
     assert.deepEqual(evidence.initial, { first: 'done', next: 'doing', starts: 1 });
-    const workerInput = JSON.stringify(calls.find((call) => call.method === 'turn/start'));
+    const workerInput = JSON.stringify(calls.find((call) => ['turn/start', 'thread/queue/add'].includes(call.method)));
     evidence.workerRuleDelivered = workerInput;
     assert(workerInput.includes('10. Write PR descriptions and issues for a person to read in 30 seconds.'));
     assert(workerInput.includes('Your full report (rule 9) goes to Neo, not into the PR.'));
@@ -413,8 +480,9 @@ try {
       removedReportHash: hash(store.getTodo('removed')!.report!),
     };
     console.log(
-      'PASS: stored plan advances via actual Codex turn/start once, final step does not dispatch, restart recovers once, blocked/removed and report bytes preserved.'
+      'PASS: stored plan advances via actual Codex native queue submission once, final step does not dispatch, restart recovers once, blocked/removed and report bytes preserved.'
     );
+  }
   }
 } finally {
   ws?.close();
