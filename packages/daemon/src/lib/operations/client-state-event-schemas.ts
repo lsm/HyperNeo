@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { THINKING_LEVELS } from '@hyperneo/shared';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 
 const QuestionResponse = z.object({
@@ -54,7 +55,7 @@ const SessionInfo = z.object({
   config: z.object({
     model: z.string().optional(),
     provider: z.string().optional(),
-    thinkingLevel: z.string().optional(),
+    thinkingLevel: z.enum(THINKING_LEVELS).optional(),
   }),
   metadata: z.object({
     pendingModelSwitch: z.object({ model: z.string(), provider: z.string() }).nullable().optional(),

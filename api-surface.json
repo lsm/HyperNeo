@@ -515,6 +515,15 @@
                       "type": "string"
                     },
                     "thinkingLevel": {
+                      "enum": [
+                        "off",
+                        "think8k",
+                        "think16k",
+                        "think24k",
+                        "think32k",
+                        "think48k",
+                        "think64k"
+                      ],
                       "type": "string"
                     }
                   },
