@@ -30,9 +30,7 @@ export function codexStatePath(home: string): string {
         selected = entry.name;
       }
     }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-  }
+  } catch {}
   return join(directory, selected);
 }
 
