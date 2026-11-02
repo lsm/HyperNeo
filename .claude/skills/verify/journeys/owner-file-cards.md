@@ -13,6 +13,8 @@ The linked-candidate helper must exclude bare/relative local names while keeping
 absolute, home-relative and full Git URLs. The raw candidate grammar and explicit
 source-bound relative RPC reads remain unchanged. Run OwnerPathDisplay,
 NeoPublicConversation and NeoArtifactTaps web tests plus owner-file-cards.test.ts.
+The daemon test also executes the B1 and owner-home browser seed entrypoints in
+fresh synthetic homes and checks their generated Markdown fixture.
 
 For real-browser QA, build web, create a fresh RUN/home/tmp/bin and invoke the
 same native helper as `owner-file-cards.ts --seed RUN` under the scrubbed shared
