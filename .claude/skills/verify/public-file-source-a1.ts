@@ -67,11 +67,14 @@ try {
     ws!.onmessage = event => { const reply = JSON.parse(String(event.data)); if ((reply.requestId ?? reply.id) !== id) return; clearTimeout(timer); if (reply.error) reject(new Error(JSON.stringify(reply.error))); else resolve(reply.data); };
     ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
-  const resolve = (kind: string, id: string, reference: string, extra = {}) => call('artifact.reference.resolve', { sourceMessageOrCard: { kind, id }, reference, requestId: crypto.randomUUID(), ...extra });
+  const resolve = (kind: string, id: string, reference: string, extra = {}) => call('file.reference.read', { sourceMessageOrCard: { kind, id }, reference, ...extra });
   const ordinaryRead = await resolve('message', ordinary, 'report.md');
   assert.equal(ordinaryRead.accepted, true);
-  const content = await call('artifact.file.read', { artifactId: ordinaryRead.artifact!.artifactId });
+  const content = ordinaryRead;
   assert.equal(Buffer.from(content.data!, 'base64').toString(), '# Worker report\n');
+  const retired = await call('artifact.reference.resolve', { sourceMessageOrCard: { kind: 'message', id: ordinary }, reference: 'report.md', requestId: crypto.randomUUID() });
+  assert.equal(retired.accepted, false);
+  assert.equal(retired.reason, 'client_upgrade_required');
   evidence.compatibility = true;
   evidence.hidden = await resolve('message', hidden, 'internal-only.md');
   assert.equal((evidence.hidden as Reply).accepted, false, 'A hidden Neo SDK prompt must not grant a file reference');
@@ -95,7 +98,7 @@ try {
   const remote = readPublicFileSource(db, { kind: 'todo', id: 'todo' }, human);
   assert.equal(remote?.owner.daemon, 'remote');
   assert.equal(remote?.workspacePath, null);
-  assert.equal((await resolve('todo', 'todo', 'report.md')).reason, 'owning_daemon_unavailable');
+  assert.equal((await resolve('todo', 'todo', 'report.md')).reason, 'owner_unavailable');
   assert.deepEqual(db.prepare('SELECT COUNT(*) AS n FROM artifact_files').get(), before);
   links.recordRef('todo', { adapter: 'hyperneo', id: 'worker' });
   db.prepare('UPDATE sessions SET workspace_path = NULL WHERE id = ?').run('worker');
