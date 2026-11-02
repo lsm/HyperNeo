@@ -4,6 +4,7 @@ import { releaseWorkerSandbox } from '../../drivers/worker-sandbox.ts';
 import { sessionSdkPath } from '../../session/sdk-path.ts';
 import { sdkPendingRemoval } from '../../../storage/repositories/sdk-message-transactions.ts';
 import { copilotOwnsSession } from '../../drivers/copilot-find.ts';
+import { createDriverHealthRuntime } from '../../drivers/driver-health-runtime.ts';
 import { createCopilotAdapter } from '../../drivers/copilot-adapter.ts';
 import { dirname, resolve } from 'node:path';
 import { ensureCodexDesktopProject } from '../../drivers/codex-desktop-project.ts';
@@ -623,6 +624,13 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
         marker,
       })
   );
+  const codex = () =>
+    codexDesktopAdapters(
+      (statePath, includeClosed, idPrefix) =>
+        context.deps.db.readCodexSnapshotAsync(statePath, includeClosed, idPrefix),
+      searchChats,
+      prepareExecution
+    );
   const adapters = [
     createHyperneoAdapter({
       readTurnEnds: (sessionId, since) =>
@@ -659,12 +667,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       searchChats: ownChats,
       tasks: spaceTaskControl(context),
     }),
-    ...codexDesktopAdapters(
-      (statePath, includeClosed, idPrefix) =>
-        context.deps.db.readCodexSnapshotAsync(statePath, includeClosed, idPrefix),
-      searchChats,
-      prepareExecution
-    ),
+    ...codex(),
     ...desktop,
     ...claudeCodeAdapters(
       searchChats,
@@ -677,8 +680,24 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       context
     ),
   ];
+  let selectedCodex = adapters.some((adapter) => adapter.id === 'codex-desktop')
+    ? codexStatePath(homedir())
+    : null;
+  const currentAdapters = () => {
+    const path = codexStatePath(homedir());
+    const selected = existsSync(path) ? path : null;
+    if (selected !== selectedCodex) {
+      selectedCodex = selected;
+      const index = adapters.findIndex((adapter) => adapter.id === 'codex-desktop');
+      if (index >= 0) adapters.splice(index, 1);
+      if (selected) adapters.push(...codex());
+    }
+    return adapters;
+  };
+  const health = createDriverHealthRuntime(context, currentAdapters);
   const deps = {
-    adapters: () => adapters,
+    adapters: currentAdapters,
+    health: health.read,
     remote: remoteDaemons,
     daemonName: machine,
     startPlace: neoStartPlace({
@@ -763,6 +782,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
   };
   return [
     createFindWorkOperation(deps),
+    health.operation,
     ...createWorkVerbOperations(deps),
     createNeoSessionArchiveOperation({ ...deps, db: context.deps.db }),
     createReadWorkOperation({

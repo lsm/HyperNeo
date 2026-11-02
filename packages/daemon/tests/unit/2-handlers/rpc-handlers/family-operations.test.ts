@@ -11,6 +11,7 @@ function fakeContext(): FamilyOperationContext {
       db: { getSession: () => null, getDatabase: () => ({}) },
       externalEventStore: {},
       config: { dbPath: '/synthetic/family-operations.db' },
+      jobProcessor: { register: () => {} },
     },
     spaceGoalService: {},
     longHorizonAgentRepo: {},
@@ -41,6 +42,7 @@ describe('collectFamilyOperations', () => {
         'agent.template.instantiate',
         'space.list',
         'space.get',
+        'work.health',
       ])
     );
   });

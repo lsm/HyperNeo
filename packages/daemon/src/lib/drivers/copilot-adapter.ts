@@ -4,7 +4,11 @@ import { workExecutionLocation } from './execution-location.ts';
 import * as fs from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { CopilotModelUnavailableError, openCopilotWorker } from './copilot-worker.ts';
+import {
+  COPILOT_CLI_VERSION,
+  CopilotModelUnavailableError,
+  openCopilotWorker,
+} from './copilot-worker.ts';
 import { selectLocalStartFolder, type StartFolderDeps } from './start-folder.ts';
 import { workStartPreparation } from './start-preparation.ts';
 import { reject } from './work-operations.ts';
@@ -64,7 +68,7 @@ export function createCopilotAdapter(
           write(inputPath(record.work.ref.id, id), input);
     const worker = await openCopilotWorker({
       cliPath: deps.cliPath,
-      expectedVersion: '1.0.105',
+      expectedVersion: COPILOT_CLI_VERSION,
       sessionId: record.work.ref.id,
       cwd: record.directory,
       stateDirectory: join(deps.directory, record.work.ref.id),
