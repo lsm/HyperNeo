@@ -140,6 +140,7 @@ export function createCodingAssignmentOperation(deps: Deps) {
           message,
           provenance: true,
           excludeRefs,
+          actorRole: input.stage,
           ...(workerSandboxOn(pr.isCrossRepository)
             ? {
                 preparation: {

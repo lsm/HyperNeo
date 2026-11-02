@@ -45,7 +45,8 @@ export function readStartedWork(
   freeOn: string | null = null,
   todoId: string | null = null,
   sessionId: string | null = null,
-  includeUnavailable = false
+  includeUnavailable = false,
+  independent = false
 ): StartedWork[] {
   return db
     .prepare(
@@ -72,8 +73,8 @@ export function readStartedWork(
        WHERE ?1 IS NULL OR (worker.adapter=?1
          AND NOT EXISTS (SELECT 1 FROM work_started_sessions marked
            WHERE marked.adapter=worker.adapter AND marked.id=worker.id
-             AND ((?5=0 AND marked.unusable_at>?2) OR marked.reusable=0))
-         AND NOT EXISTS (SELECT 1 FROM actors WHERE actors.adapter=worker.adapter AND actors.id=worker.id)
+             AND ((?5=0 AND marked.unusable_at>?2) OR (?6=0 AND marked.reusable=0)))
+         AND (?6=1 OR NOT EXISTS (SELECT 1 FROM actors WHERE actors.adapter=worker.adapter AND actors.id=worker.id))
          AND NOT EXISTS (SELECT 1 FROM bindings bound JOIN neo_asks ask ON ask.id=bound.ask_id
            WHERE ?5=0 AND bound.adapter=worker.adapter AND bound.id=worker.id AND ask.status='open'
              AND (?3 IS NULL OR ask.id<>(SELECT id FROM requested)))
@@ -90,12 +91,19 @@ export function readStartedWork(
       Date.now() - UNUSABLE_FOR_MS,
       todoId,
       sessionId,
-      includeUnavailable ? 1 : 0
+      includeUnavailable ? 1 : 0,
+      independent ? 1 : 0
     ) as StartedWork[];
 }
 
-export function readFreeWorkers(db: BunDatabase, adapter: string): Set<string> {
-  return new Set(readStartedWork(db, adapter).map((worker) => worker.id));
+export function readFreeWorkers(
+  db: BunDatabase,
+  adapter: string,
+  independent = false
+): Set<string> {
+  return new Set(
+    readStartedWork(db, adapter, null, null, false, independent).map((worker) => worker.id)
+  );
 }
 
 export function readAskWorkers(
@@ -103,11 +111,12 @@ export function readAskWorkers(
   adapter: string,
   todoId?: string,
   sessionId?: string,
-  includeUnavailable = false
+  includeUnavailable = false,
+  independent = false
 ): Set<string> {
   return new Set(
     todoId && sessionId
-      ? readStartedWork(db, adapter, todoId, sessionId, includeUnavailable).map(
+      ? readStartedWork(db, adapter, todoId, sessionId, includeUnavailable, independent).map(
           (worker) => worker.id
         )
       : []

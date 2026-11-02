@@ -695,19 +695,20 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     },
     recordStarted: (
       ref: StartedWork,
-      input: { todoId?: string; preparation?: unknown },
+      input: { todoId?: string; preparation?: unknown; actorRole?: unknown },
       caller: OperationCaller
     ) =>
       recordStartedWork(db(), ref, Date.now(), false, {
         todoId: input.todoId,
         sessionId: caller.role === 'neo' ? caller.sessionId : undefined,
-        reusable: !input.preparation,
+        reusable: !input.preparation && !input.actorRole,
       }),
-    askWorkers: (adapter: string, todoId?: string, sessionId?: string) =>
-      readAskWorkers(db(), adapter, todoId, sessionId),
-    boundWorkers: (adapter: string, todoId?: string, sessionId?: string) =>
-      readAskWorkers(db(), adapter, todoId, sessionId, true),
-    freeWorkers: (adapter: string) => readFreeWorkers(db(), adapter),
+    askWorkers: (adapter: string, todoId?: string, sessionId?: string, independent?: boolean) =>
+      readAskWorkers(db(), adapter, todoId, sessionId, false, independent),
+    boundWorkers: (adapter: string, todoId?: string, sessionId?: string, independent?: boolean) =>
+      readAskWorkers(db(), adapter, todoId, sessionId, true, independent),
+    freeWorkers: (adapter: string, independent?: boolean) =>
+      readFreeWorkers(db(), adapter, independent),
     markUnusable: (ref: StartedWork) => markWorkUnusable(db(), ref),
     reportUncertain: async (report: WorkSendUncertainty) => {
       const to = sessionSender(report.from) ?? new NeoRepository(db()).defaultBinding()?.sessionId;

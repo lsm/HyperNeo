@@ -19,3 +19,8 @@ in finally. No provider turn or live daemon is involved. Unit contracts also cov
 all terminal todo states, sticky ownership after the todo ref changes and upgrade of previously shared workers, role
 isolation, model/effort selection, newest same-ask reuse and oldest-settled reuse.
 Run `stalled-ask-wake.md` for the completed-ask settlement reminder and durable cooldown.
+
+After the worker-reuse prerequisite, also run `worker-owned-worktrees.md`. Its native
+Codex proof wires the daemon ownership callbacks and checks that excluding the ask
+author still permits reuse of an independent Review worker. `actorRole` identifies
+review/verify requests; those workers remain unavailable to future author requests.

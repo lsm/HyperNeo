@@ -192,7 +192,7 @@ describe('coding actor assignments', () => {
     expect(f.starts[0]).toMatchObject({
       excludeRefs: [write],
       provenance: true,
-      actorRole: 'review',
+      actorRole: 'verify',
     });
   });
   test.each([

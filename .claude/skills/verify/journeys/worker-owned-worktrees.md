@@ -14,6 +14,8 @@ coding assignment operation. The coding outcome check, todo completion bookkeepi
 repository, PR metadata and model are synthetic. The native project is registered
 through the real app-server project API. The loopback Responses
 model requests real native shell tools; it cannot fabricate the filesystem receipts.
+The operation registry uses the daemon ownership/reuse callback contract, including
+explicit review/verify actor roles and author exclusions.
 The real bundled app-server creates threads, executes Git, persists rollouts and
 receives the reused turns through its native queue. No human database, credentials,
 real provider, external GitHub, reserved port or Desktop UI is used.

@@ -67,9 +67,19 @@ export interface WorkVerbDeps {
   adapters(): readonly WorkAdapter[];
   remote: RemoteDaemons;
   daemonName: string;
-  freeWorkers?: (adapter: string) => ReadonlySet<string>;
-  askWorkers?: (adapter: string, todoId?: string, sessionId?: string) => ReadonlySet<string>;
-  boundWorkers?: (adapter: string, todoId?: string, sessionId?: string) => ReadonlySet<string>;
+  freeWorkers?: (adapter: string, independent?: boolean) => ReadonlySet<string>;
+  askWorkers?: (
+    adapter: string,
+    todoId?: string,
+    sessionId?: string,
+    independent?: boolean
+  ) => ReadonlySet<string>;
+  boundWorkers?: (
+    adapter: string,
+    todoId?: string,
+    sessionId?: string,
+    independent?: boolean
+  ) => ReadonlySet<string>;
   markUnusable?: (ref: WorkRef) => void;
   isOpenTodo?: (todoId: string, sessionId: string) => boolean;
   recordStarted?: (ref: WorkRef, input: StartInput, caller: OperationCaller) => void;
@@ -111,6 +121,7 @@ export const StartWorkInputSchema = z.object({
   title: z.string().trim().min(1).max(200),
   message: z.string().trim().min(1).max(100_000),
   excludeRefs: z.array(WorkRefSchema).max(30).optional(),
+  actorRole: z.enum(['review', 'verify']).optional(),
   createFolder: z.boolean().optional(),
   provenance: z.boolean().optional(),
   preparation: workStartPreparation.schema.optional(),
@@ -437,9 +448,17 @@ export async function reuseIdleWorker(
     input.createFolder
   )
     return null;
-  const owned = deps.askWorkers?.(adapter.id, input.todoId, caller.sessionId) ?? new Set<string>();
-  const bound = deps.boundWorkers?.(adapter.id, input.todoId, caller.sessionId) ?? owned;
-  const free = deps.freeWorkers?.(adapter.id) ?? new Set<string>();
+  const independent = !!input.actorRole;
+  const excluded = new Set(
+    input.excludeRefs
+      ?.filter((ref) => ref.adapter === adapter.id && !ref.daemon)
+      .map((ref) => ref.id)
+  );
+  const owned =
+    deps.askWorkers?.(adapter.id, input.todoId, caller.sessionId, independent) ?? new Set<string>();
+  const bound =
+    deps.boundWorkers?.(adapter.id, input.todoId, caller.sessionId, independent) ?? owned;
+  const free = deps.freeWorkers?.(adapter.id, independent) ?? new Set<string>();
   if (!bound.size && !free.size) return null;
   const groups = await adapter.find({ folder, includeClosed: false, limit: 50 });
   const found = groups.flatMap((group) => group.work);
@@ -454,10 +473,12 @@ export async function reuseIdleWorker(
     return observed.value;
   };
   let unknownBound = false;
-  for (const id of bound) if (!(await discover(id))) unknownBound = true;
+  for (const id of bound) if (!excluded.has(id) && !(await discover(id))) unknownBound = true;
   const inPlace = (work: WorkSummary) =>
     work.place.folder === folder && work.ref.adapter === adapter.id && !work.ref.daemon;
-  const hasBound = found.some((work) => bound.has(work.ref.id) && inPlace(work));
+  const hasBound = found.some(
+    (work) => bound.has(work.ref.id) && !excluded.has(work.ref.id) && inPlace(work)
+  );
   if (!hasBound && unknownBound) return null;
   for (const id of hasBound ? owned : free) {
     const work = await discover(id);
@@ -465,12 +486,7 @@ export async function reuseIdleWorker(
       !work ||
       !inPlace(work) ||
       (work.status !== 'done' && !(work.status === 'running' && adapter.status)) ||
-      input.excludeRefs?.some(
-        (ref) =>
-          ref.adapter === work.ref.adapter &&
-          ref.id === work.ref.id &&
-          ref.daemon === work.ref.daemon
-      )
+      excluded.has(id)
     )
       continue;
     const key = `${work.ref.adapter}\u0000${work.ref.id}`;
@@ -937,7 +953,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.start',
       description:
-        'Start new work in a place returned by work.find: a session, thread or task titled title, opened with message. Workers are long-lived sessions: title is named for the matter, never a task title. Put the task in message. excludeRefs prevents the named workers receiving a reused start, including PR authors and earlier stage actors. For Neo, a worker stays with its open ask even after its todos finish. Prefer that ask’s most recently used idle worker of the same adapter and folder; if its workers are busy, start a new one. Otherwise reuse a free worker from the ask settled longest ago. Reuse returns reused true and that worker ref. Same-ask reuse ignores model differences unless model is explicit. Review and QA actors are excluded from author reuse. Explicit preparation or createFolder always start new work. Explicit model or effort can reuse only after the adapter resolves and confirms matching identity. Missing or stale todoId is recorded without blocking otherwise permitted work; the receipt includes records. adapter picks the harness: an adapter whose capabilities include start (see work.adapters); a place group lists adapters that only found work there. A place with a daemon starts the work on that daemon. Remote routes reject explicit model with unsupported_model until configuration support can be verified; use a local adapter to request a model. Only Neo or the user can change work on another daemon; other agents get unsupported. For non-coding work, omit place and pass todoId to use the one visible user folder across projects: ~/HyperNeo by default, or exactly the instance workspace path. A different place needs an exact path the user named in chat, even inside the workspace; never invent folders under home. Other new human-named folders keep the existing home-only, non-hidden and existing-parent creation rules. Coding keeps the repository place returned by work.find. model picks the model of a new HyperNeo session or Codex thread; settings.model.get lists HyperNeo id, name and provider. HyperNeo resolves a unique case-insensitive display name, with exact IDs taking precedence; ambiguous names reject with matching IDs. A shared exact ID keeps catalog precedence; use a unique display name to choose a particular provider offer. Codex resolves catalog aliases and refuses unsupported models. Claude desktop refuses explicit model overrides with unsupported_model; omit model to use its app configuration. Optional effort is supported by local HyperNeo (off/low/medium/high/extra high/max/ultra or thinking-level IDs) and Codex: it resolves against the selected model catalog and confirms the applied effort before sending the first turn. Unsupported local adapters and unverified remote routes return unsupported_effort before starting work. For Neo, an idle free worker in the same project may be reused; explicit model/effort requests reuse only when the adapter-resolved configuration matches its recorded status identity. Mismatched or unavailable identity starts fresh. Human starts always create new work. Without model, a new HyperNeo session starts on the default model, or on the newest available one when the default cannot run. Returns the started or reused work with its ref, link and, for HyperNeo or Codex, the model it runs on plus confirmed effort when available, or ok false with a reason such as invalid_place, claude_cli_login_expired, unsupported or unreachable.',
+        'Start new work in a place returned by work.find: a session, thread or task titled title, opened with message. Workers are long-lived sessions: title is named for the matter, never a task title. Put the task in message. excludeRefs prevents the named workers receiving a reused start, including PR authors and earlier stage actors. For Neo, a worker stays with its open ask even after its todos finish. Prefer that ask’s most recently used idle worker of the same adapter and folder; if its workers are busy, start a new one. Otherwise reuse a free worker from the ask settled longest ago. Reuse returns reused true and that worker ref. Same-ask reuse ignores model differences unless model is explicit. actorRole marks review/verify starts; those actors can serve independent roles and are excluded from author reuse. Explicit preparation or createFolder always start new work. Explicit model or effort can reuse only after the adapter resolves and confirms matching identity. Missing or stale todoId is recorded without blocking otherwise permitted work; the receipt includes records. adapter picks the harness: an adapter whose capabilities include start (see work.adapters); a place group lists adapters that only found work there. A place with a daemon starts the work on that daemon. Remote routes reject explicit model with unsupported_model until configuration support can be verified; use a local adapter to request a model. Only Neo or the user can change work on another daemon; other agents get unsupported. For non-coding work, omit place and pass todoId to use the one visible user folder across projects: ~/HyperNeo by default, or exactly the instance workspace path. A different place needs an exact path the user named in chat, even inside the workspace; never invent folders under home. Other new human-named folders keep the existing home-only, non-hidden and existing-parent creation rules. Coding keeps the repository place returned by work.find. model picks the model of a new HyperNeo session or Codex thread; settings.model.get lists HyperNeo id, name and provider. HyperNeo resolves a unique case-insensitive display name, with exact IDs taking precedence; ambiguous names reject with matching IDs. A shared exact ID keeps catalog precedence; use a unique display name to choose a particular provider offer. Codex resolves catalog aliases and refuses unsupported models. Claude desktop refuses explicit model overrides with unsupported_model; omit model to use its app configuration. Optional effort is supported by local HyperNeo (off/low/medium/high/extra high/max/ultra or thinking-level IDs) and Codex: it resolves against the selected model catalog and confirms the applied effort before sending the first turn. Unsupported local adapters and unverified remote routes return unsupported_effort before starting work. For Neo, an idle free worker in the same project may be reused; explicit model/effort requests reuse only when the adapter-resolved configuration matches its recorded status identity. Mismatched or unavailable identity starts fresh. Human starts always create new work. Without model, a new HyperNeo session starts on the default model, or on the newest available one when the default cannot run. Returns the started or reused work with its ref, link and, for HyperNeo or Codex, the model it runs on plus confirmed effort when available, or ok false with a reason such as invalid_place, claude_cli_login_expired, unsupported or unreachable.',
       inputSchema: StartWorkInputSchema,
       resultSchema: StartWorkResultSchema,
       policy: { safetyClass: 'mutate' },
