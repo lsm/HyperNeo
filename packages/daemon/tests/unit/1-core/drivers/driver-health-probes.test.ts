@@ -2,10 +2,28 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { expect, test } from 'bun:test';
+import { vi } from 'vitest';
 import { testDirectories } from '../../../helpers/temporary-directory.ts';
 import { createDriverHealthProbe } from '../../../../src/lib/drivers/driver-health-probes.ts';
 
 const directories = testDirectories();
+
+test('CLI health works without Bun using the same executable lookup as its adapter', async () => {
+  const home = directories(join(tmpdir(), 'driver-health-'));
+  const bin = join(home, 'bin');
+  mkdirSync(bin);
+  mkdirSync(join(home, '.claude', 'projects'), { recursive: true });
+  writeFileSync(join(bin, 'claude'), '#!/bin/sh\necho 2.1.0\n', { mode: 0o700 });
+  vi.stubGlobal('Bun', undefined);
+  vi.stubEnv('PATH', bin);
+  try {
+    const probe = createDriverHealthProbe({ home, adapters: () => [{ id: 'claude-code', find: () => [] }] as never });
+    expect(await probe('claude-code')).toMatchObject({ status: 'ok', clientVersions: { cli: '2.1.0' } });
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+});
 
 test('a Copilot CLI outside the supported pin is degraded before running discovery', async () => {
   const probe = createDriverHealthProbe({
