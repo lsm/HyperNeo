@@ -533,6 +533,20 @@ describe('matter-bound reuse through work.start', () => {
     expect(run.sent).toEqual(['same-folder-free']);
   });
 
+  test('finds the longest-settled free worker outside the recent discovery page', async () => {
+    const run = harness(
+      [
+        { id: 'oldest-free', status: 'done', hiddenFromFind: true },
+        { id: 'recent-free', status: 'done' },
+      ],
+      ['oldest-free', 'recent-free']
+    );
+    expect((await run.start(neo, false, { todoId: 'fresh-matter' })).value?.ref.id).toBe(
+      'oldest-free'
+    );
+    expect(run.sent).toEqual(['oldest-free']);
+  });
+
   test('starts fresh when its bound worker is unavailable rather than borrowing another matter', async () => {
     const run = harness(
       [
