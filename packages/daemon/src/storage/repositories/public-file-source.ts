@@ -42,7 +42,7 @@ export function readPublicFileSource(
         : null,
   });
   if (key.kind === 'publication') {
-    const conversationId = neo.conversationId();
+    const conversationId = neo.readConversationId();
     const owner = neo.defaultBinding();
     if (!conversationId || !owner) return null;
     const publication = new NeoPublicationRepository(db).get(conversationId, key.id);
@@ -103,7 +103,7 @@ export function readPublicFileSource(
     neo.getBindingBySession(row.session_id)?.kind === 'neo'
   ) {
     if (message.type !== 'user' || neo.defaultBinding()?.sessionId !== row.session_id) return null;
-    const conversationId = neo.conversationId();
+    const conversationId = neo.readConversationId();
     const ask = conversationId
       ? new NeoConversationAskRepository(db).find(conversationId, row.sdk_uuid)
       : null;

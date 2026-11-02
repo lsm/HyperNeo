@@ -255,13 +255,15 @@ function openRootDirectory(
   symbols: LibcSymbols,
   atFdcwd: number,
   workspaceRoot: string,
-  flags = 0
+  flags = 0,
+  failed?: () => unknown
 ): number {
   let directoryFd = openDirectory(symbols, atFdcwd, '/', flags);
   for (const component of workspaceRoot.split('/')) {
     if (!component) continue;
     if (directoryFd < 0) return -1;
     const nextFd = openDirectory(symbols, directoryFd, component, flags);
+    if (nextFd < 0) failed?.();
     closeFile(symbols, directoryFd);
     directoryFd = nextFd;
   }
@@ -566,7 +568,8 @@ async function withRegularArtifactDescriptor<Value>(
   root: string,
   segments: string[],
   consume: (fd: number, initial: Stats) => Value | Promise<Value>,
-  maxLinks: number
+  maxLinks: number,
+  onOpenError?: (errno: number) => void
 ): Promise<
   | { accepted: true; value: Value }
   | { accepted: false; reason: 'safe_open_unavailable' | 'unsafe_path' }
@@ -580,18 +583,22 @@ async function withRegularArtifactDescriptor<Value>(
   } catch {
     return { accepted: false, reason: 'unsafe_path' };
   }
+  const failed = () => {
+    onOpenError?.(backend.errno());
+    return { accepted: false as const, reason: 'unsafe_path' as const };
+  };
   const { symbols, atFdcwd } = backend;
   const cloexec = process.platform === 'darwin' ? 0x1000000 : 0x80000;
   let directoryFd = -1;
   let fileFd = -1;
   try {
-    directoryFd = openRootDirectory(symbols, atFdcwd, root, cloexec);
-    if (directoryFd < 0) return { accepted: false, reason: 'unsafe_path' };
+    directoryFd = openRootDirectory(symbols, atFdcwd, root, cloexec, failed);
+    if (directoryFd < 0) return failed();
     for (const segment of segments.slice(0, -1)) {
       const nextFd = openDirectory(symbols, directoryFd, segment, cloexec);
+      if (nextFd < 0) return failed();
       closeFile(symbols, directoryFd);
       directoryFd = nextFd;
-      if (directoryFd < 0) return { accepted: false, reason: 'unsafe_path' };
     }
     fileFd = symbols.openat(
       directoryFd,
@@ -599,7 +606,7 @@ async function withRegularArtifactDescriptor<Value>(
       constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW | cloexec,
       0
     );
-    if (fileFd < 0) return { accepted: false, reason: 'unsafe_path' };
+    if (fileFd < 0) return failed();
     const initial = fstatSync(fileFd);
     if (!initial.isFile() || initial.nlink < 1 || initial.nlink > maxLinks)
       return { accepted: false, reason: 'unsafe_path' };
@@ -613,9 +620,10 @@ async function withRegularArtifactDescriptor<Value>(
 export function withArtifactDescriptor<Value>(
   root: string,
   segments: string[],
-  consume: (fd: number, initial: Stats) => Value | Promise<Value>
+  consume: (fd: number, initial: Stats) => Value | Promise<Value>,
+  onOpenError?: (errno: number) => void
 ) {
-  return withRegularArtifactDescriptor(root, segments, consume, 1);
+  return withRegularArtifactDescriptor(root, segments, consume, 1, onOpenError);
 }
 
 export function withStoredArtifactDescriptor<Value>(

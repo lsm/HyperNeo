@@ -28,8 +28,8 @@ export interface ArtifactPolicyDependencies {
   ) => ArtifactContextBinding | null | Promise<ArtifactContextBinding | null>;
 }
 
-interface OpenPlan {
-  readonly context: ArtifactContext;
+interface OpenPlan<Context = ArtifactContext> {
+  readonly context: Context;
   readonly root: string;
   readonly relativePath: string;
 }
@@ -125,11 +125,13 @@ function within(root: string, path: string): boolean {
   return relative !== '..' && !relative.startsWith('../') && !posix.isAbsolute(relative);
 }
 
-export function resolveArtifactSource(
-  binding: ArtifactContextBinding,
+export function resolveArtifactSource<
+  Binding extends { workspacePath: string | null; context?: ArtifactContext },
+>(
+  binding: Binding,
   source: string,
-  deps: ArtifactPolicyDependencies
-): Gate<OpenPlan> {
+  deps: Pick<ArtifactPolicyDependencies, 'home'> & Partial<ArtifactPolicyDependencies>
+): Gate<OpenPlan<Binding['context']>> {
   if (typeof source !== 'string' || unsafePath(source)) return refused('unsafe_path');
   if (sensitivePath(source)) return refused('sensitive_path');
   if (

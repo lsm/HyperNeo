@@ -363,4 +363,9 @@ export class NeoRepository {
     reserveNeoConversation(this.db, session.slice(4), Date.now());
     return (this.db.prepare('SELECT id FROM neo_conversation').get() as { id: string }).id;
   }
+
+  readConversationId(): string | null {
+    const row = this.db.prepare('SELECT id FROM neo_conversation').get() as { id: string } | null;
+    return row?.id ?? null;
+  }
 }

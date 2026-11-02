@@ -1,3 +1,4 @@
+import { createLiveFileRead } from '../artifacts/live-file-read.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { createConnectionList } from '../connections/list-operation.ts';
 import { createGoogleConnectionOperations } from '../connections/operations.ts';
@@ -121,6 +122,7 @@ export function createDatabaseOperationCatalog(
       ...extra,
       createArtifactRegistration(() => db.getDatabase()),
       ...createArtifactReadOperations(() => db.getDatabase()),
+      createLiveFileRead(() => db.getDatabase()),
       createArtifactReferenceResolve(() => db.getDatabase()),
       createBuildOperation(() => db.getDatabase().prepare('SELECT 1').get()),
       ...createDevicePairingOperations({
