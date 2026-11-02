@@ -75,6 +75,26 @@ async function start(fixture: ReturnType<typeof setup>, message = fixture.reques
 }
 
 describe('owned Copilot lifecycle', () => {
+  test('starts a new repository before its first commit in the project folder', async () => {
+    const f = setup();
+    const folder = join(f.run, 'unborn');
+    expect(spawnSync('git', ['init', '--initial-branch=dev', folder]).status).toBe(0);
+    const repo = realpathSync(folder);
+    const adapter = createCopilotAdapter(f.discovery, {
+      ...f.deps,
+      worktreesDir: join(f.run, 'worktrees'),
+      gitCheckout: async () => ({ repo, linked: false }),
+      spawn: spawnProcess,
+    });
+    owners.push(adapter);
+    const result = await adapter.start!(
+      { ...f.request, place: { machine: 'test', folder: repo, name: 'new repo' } },
+      context
+    );
+    expect(result).toMatchObject({ ok: true, value: { execution: { directory: repo } } });
+    expect(existsSync(join(repo, '.git'))).toBe(true);
+  });
+
   test('starts a coding worker in its own native worktree and reports the project separately', async () => {
     const f = setup();
     const { repo } = createPushedWorkerRepo(f.run);
@@ -100,6 +120,13 @@ describe('owned Copilot lifecycle', () => {
     const folder = result.value.execution!.directory;
     expect(folder).not.toBe(repo);
     expect(existsSync(join(folder, '.git'))).toBe(true);
+    const created = readFileSync(join(folder, 'calls.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+      .find((call) => call.method === 'session.create');
+    expect(created.params.workingDirectory).toBe(folder);
+    expect(created.params.systemMessage.content).toContain(`Worktree: ${folder}`);
     expect(
       spawnSync('git', ['-C', folder, 'rev-parse', '--git-common-dir'], {
         encoding: 'utf8',
