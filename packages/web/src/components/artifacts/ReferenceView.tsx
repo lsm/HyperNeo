@@ -14,10 +14,12 @@ import {
 } from '../../lib/artifact-reference-client.ts';
 import { ArtifactPreview, artifactStateMessage, PreviewHeader } from './ArtifactPreview.tsx';
 import { ArtifactPrSummary } from './ArtifactPrSummary.tsx';
+import { isLiveReference } from '../../lib/live-file-client.ts';
+import { LiveFilePreview } from './LiveFilePreview.tsx';
 
 type Reference = Extract<ArtifactPreviewTarget, { kind: 'reference' }>;
 
-export function ReferenceView({
+function StoredReferenceView({
   target,
   resolved,
   markdownClass,
@@ -113,5 +115,19 @@ export function ReferenceView({
         )}
       </div>
     </section>
+  );
+}
+
+export function ReferenceView(props: Parameters<typeof StoredReferenceView>[0]) {
+  return isLiveReference(props.target) ? (
+    props.suspended ? null : (
+      <LiveFilePreview
+        target={props.target}
+        markdownClass={props.markdownClass}
+        tabbed={props.tabbed}
+      />
+    )
+  ) : (
+    <StoredReferenceView {...props} />
   );
 }

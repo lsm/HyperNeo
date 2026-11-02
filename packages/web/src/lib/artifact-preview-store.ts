@@ -1,6 +1,8 @@
 import { batch, signal } from '@preact/signals';
+import { isLiveReference } from './live-file-client.ts';
 import {
   previewWorkspace,
+  previewFileKey,
   type PreviewWorkspaceEvent,
   type PreviewWorkspaceFile,
 } from './artifact-preview-workspace.ts';
@@ -41,6 +43,11 @@ function writePreviewStack(stack: readonly ArtifactPreviewTarget[], title?: stri
         kind: 'open',
         file: { artifactId: top.artifactId, title: title ?? known?.title ?? '' },
       });
+    } else if (isLiveReference(top)) {
+      workspaceState.value = previewWorkspace.step(workspaceState.value, {
+        kind: 'open',
+        file: { reference: top, title: top.reference.split(/[\\/]/).at(-1) || top.reference },
+      });
     }
   });
 }
@@ -55,14 +62,9 @@ function navigateWorkspace(event: PreviewWorkspaceEvent & { kind: 'select' | 'cl
       event.kind === 'select' ||
       (event.kind === 'close' && before.selectedId !== after.selectedId)
     ) {
-      const file = after.files.find((item) => item.artifactId === after.selectedId);
+      const file = after.files.find((item) => previewFileKey(item) === after.selectedId);
       artifactPreviewStack.value = file
-        ? [
-            {
-              kind: 'artifact',
-              artifactId: file.artifactId,
-            },
-          ]
+        ? [file.reference ?? { kind: 'artifact', artifactId: file.artifactId }]
         : [];
     }
   });
@@ -71,8 +73,8 @@ function navigateWorkspace(event: PreviewWorkspaceEvent & { kind: 'select' | 'cl
 /** @public */
 export const artifactPreviewWorkspace = {
   state: workspaceState,
-  select: (artifactId: string | null) => navigateWorkspace({ kind: 'select', artifactId }),
-  close: (artifactId: string) => navigateWorkspace({ kind: 'close', artifactId }),
+  select: (key: string | null) => navigateWorkspace({ kind: 'select', key }),
+  close: (key: string) => navigateWorkspace({ kind: 'close', key }),
   update: (file: PreviewWorkspaceFile) => navigateWorkspace({ kind: 'update', file }),
 };
 

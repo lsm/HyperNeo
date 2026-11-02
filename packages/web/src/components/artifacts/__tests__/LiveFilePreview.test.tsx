@@ -73,3 +73,45 @@ it('opens current Markdown from a visible path, reloads edits and reports deleti
   await screen.findByText('This file is no longer there.');
   expect(request.mock.calls.every(([, { name }]) => name === 'file.reference.read')).toBe(true);
 });
+
+it.each([
+  ['file_changed', 'This file changed while loading. Reopen it to read the current version.'],
+  ['owner_unavailable', 'The daemon that owns this file is not reachable.'],
+  ['unsupported_type', 'This format has no preview yet.'],
+  ['size_limit', 'This file is too large to preview here.'],
+  ['safe_open_unavailable', 'This platform cannot safely open file references.'],
+])('shows a clear %s refusal without falling back to a captured file', async (reason, message) => {
+  request.mockResolvedValue({ accepted: false, reason });
+  render(<ArtifactPreviewPanel />);
+  act(() => openArtifactPreview({ kind: 'reference', source, reference: 'notes.md' }));
+  await screen.findByText(message);
+  expect(request).toHaveBeenCalledTimes(1);
+  expect(artifactPreviewStack.value.at(-1)?.kind).toBe('reference');
+});
+
+it('clears the displayed content on disconnect and reads the current file on reconnect', async () => {
+  const reply = (text: string) => ({
+    accepted: true,
+    kind: 'markdown',
+    data: Buffer.from(text).toString('base64'),
+    version: 'a'.repeat(64),
+    byteLength: Buffer.byteLength(text),
+    nextOffset: Buffer.byteLength(text),
+    complete: true,
+  });
+  request.mockResolvedValue(reply('# Before disconnect'));
+  render(<ArtifactPreviewPanel />);
+  act(() => openArtifactPreview({ kind: 'reference', source, reference: 'notes.md' }));
+  await screen.findByRole('heading', { name: 'Before disconnect' });
+  act(() => {
+    connectionState.value = 'disconnected';
+  });
+  await screen.findByText('The daemon that owns this file is not reachable.');
+  expect(screen.queryByRole('heading', { name: 'Before disconnect' })).toBeNull();
+  request.mockResolvedValue(reply('# After reconnect'));
+  act(() => {
+    connectionState.value = 'connected';
+  });
+  await screen.findByRole('heading', { name: 'After reconnect' });
+  expect(request).toHaveBeenCalledTimes(2);
+});
