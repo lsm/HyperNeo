@@ -53347,7 +53347,9 @@
               "adapter": {
                 "enum": [
                   "codex-desktop",
-                  "claude-code"
+                  "claude-code",
+                  "claude-desktop",
+                  "copilot-cli"
                 ],
                 "type": "string"
               },
@@ -53408,7 +53410,9 @@
                       "adapter": {
                         "enum": [
                           "codex-desktop",
-                          "claude-code"
+                          "claude-code",
+                          "claude-desktop",
+                          "copilot-cli"
                         ],
                         "type": "string"
                       },
@@ -54926,6 +54930,9 @@
                         },
                         "human": {
                           "type": "boolean"
+                        },
+                        "inputId": {
+                          "type": "string"
                         },
                         "text": {
                           "type": "string"
