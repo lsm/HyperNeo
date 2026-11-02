@@ -10,6 +10,7 @@ import { workStartPreparation } from './start-preparation.ts';
 import { reject } from './work-operations.ts';
 import { errorMessage } from '../utils/error-message.ts';
 import { copilotOwnsSession, createCopilotFind } from './copilot-find.ts';
+import { readCopilotObservations } from './copilot-observations.ts';
 import { readCopilotHistory, createCopilotInputReader } from './copilot-history.ts';
 import type * as W from './types.ts';
 
@@ -205,7 +206,7 @@ export function createCopilotAdapter(
     }
     return record;
   };
-  const detail = (record: Record, receipt?: Receipt): W.Result<W.WorkDetail> => {
+  const detail = (record: Record, receipt?: Receipt, since?: number): W.Result<W.WorkDetail> => {
     if (record.pendingSubmission && !receipt && !record.archived) return unavailable();
     receipt ??= record.latestReceipt ?? record.work.receipt;
     const { work, snapshot } = record;
@@ -238,6 +239,13 @@ export function createCopilotAdapter(
             ? input!.outcome!
             : snapshot.status,
         startReceipt: work.receipt,
+        ...readCopilotObservations(
+          join(deps.directory, work.ref.id, 'session-state', work.ref.id, 'events.jsonl'),
+          work.ref.id,
+          snapshot.inputs,
+          (id) => Object.hasOwn(snapshot.inputs, id) || fs.existsSync(inputPath(work.ref.id, id)),
+          since
+        ),
         execution: { directory: record.directory, machine: deps.machine },
         ...(input?.replyReport ? { lastReply: input.replyReport } : {}),
         inputEvidence:
@@ -259,11 +267,15 @@ export function createCopilotAdapter(
     };
   };
   const status = (superpipe({})('copilot-status') as PipelineAPI)
-    .input(['ref', 'receipt'])
+    .input(['ref', 'receipt', 'since'])
     .pipe(lookup, 'ref', 'result:detail')
     .pipe(refresh, 'detail', 'record')
-    .pipe(detail, ['record', 'receipt'], 'detail')
-    .endAsync('detail') as (ref: W.WorkRef, receipt?: Receipt) => Promise<W.Result<W.WorkDetail>>;
+    .pipe(detail, ['record', 'receipt', 'since'], 'detail')
+    .endAsync('detail') as (
+    ref: W.WorkRef,
+    receipt?: Receipt,
+    since?: number
+  ) => Promise<W.Result<W.WorkDetail>>;
   const admitSend = (record: Record): Gate<Record> => {
     if (record.archived) return { reason: reject('not_open', 'Copilot work is archived.') };
     if (closed || record.pendingSubmission || record.snapshot.status === 'unreachable')
@@ -581,7 +593,7 @@ export function createCopilotAdapter(
     send: (ref, message) => guard(() => send(ref, message), ref.id),
     queue: (ref, message) => guard(() => send(ref, message), ref.id),
     withdraw: (ref, inputId) => guard(() => withdraw(ref, inputId), ref.id),
-    status: (ref, _since, receipt) => guard(() => status(ref, receipt), ref.id),
+    status: (ref, since, receipt) => guard(() => status(ref, receipt, since), ref.id),
     stop: (ref) => guard(() => stop(ref), ref.id),
     archive: (ref, admit) => guard(() => archive(ref, admit), ref.id),
     async close() {

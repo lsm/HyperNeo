@@ -180,6 +180,36 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
           interactionId: `interaction-${input}`,
           delivery: 'idle',
         });
+      if (prompt === 'human-watch') {
+        const timer = setInterval(() => {
+          const path = join(process.cwd(), 'human-request.json');
+          if (!existsSync(path)) return;
+          clearInterval(timer);
+          const human = JSON.parse(readFileSync(path, 'utf8')) as {
+            text: string;
+            earlierInputs?: number;
+          };
+          for (let index = 0; index < (human.earlierInputs ?? 0); index++)
+            event('user.message', {
+              messageId: `earlier-${index}`,
+              interactionId: `earlier-turn-${index}`,
+              content: `Earlier direct note ${index}`,
+            });
+          event('user.message', {
+            messageId: 'human-direct',
+            interactionId: 'human-turn',
+            content: human.text,
+          });
+          event('assistant.message', {
+            messageId: 'human-reply',
+            interactionId: 'human-turn',
+            content: 'Prepared the blue summary directly for the human.',
+            phase: 'final_answer',
+          });
+          event('session.idle', {});
+          writeFileSync(join(process.cwd(), 'human-emitted'), 'ready');
+        }, 5);
+      }
       if (prompt === 'history') {
         event('tool.execution_start', {
           toolCallId: 'tool-1',
