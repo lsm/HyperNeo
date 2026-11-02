@@ -6,7 +6,8 @@ import { SendMessageResultSchema } from '../messaging/message-send.ts';
 import { WorkDeliverySchema } from '../drivers/types.ts';
 import { renderRemoteAddress } from '../mailbox/address.ts';
 import { driverWorkCaller } from './driver-work.ts';
-import { ReadWorkResultSchema } from '../drivers/read-operation.ts';
+import { WorkStatusResultSchema } from '../drivers/work-operations.ts';
+import { ReadWorkInputSchema, ReadWorkResultSchema } from '../drivers/read-operation.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { neoQuestionAnsweredNote } from './question-operations.ts';
 import type { NeoService } from './service.ts';
@@ -111,6 +112,25 @@ export function createNeoQuestionAnswerDelivery(
           const sent = Sent.safeParse(value);
           if (sent.success && !sent.data.value.unconfirmed) receipt = key;
           else if (NotSent.safeParse(value).success) store.questionAnswers.retry(route.id, key);
+        } else if (
+          !ReadWorkInputSchema.safeParse({
+            sessionId: ref.id,
+            input: { adapter: ref.adapter, marker: `[worker-answer:${key}]` },
+          }).success
+        ) {
+          const marker = `[worker-answer:${key}]`;
+          const result = await invoke(caller, 'work.status', { ref, since: 0 });
+          const status = WorkStatusResultSchema.safeParse(
+            result.kind === 'completed' ? result.value : null
+          );
+          if (
+            status.success &&
+            status.data.ok &&
+            status.data.value.ref.adapter === ref.adapter &&
+            status.data.value.ref.id === ref.id &&
+            status.data.value.recentInputs?.some((input) => input.text.split(/\s/, 1)[0] === marker)
+          )
+            receipt = key;
         } else {
           const marker = `[worker-answer:${key}]`;
           const result = await invoke(caller, 'work.read', {

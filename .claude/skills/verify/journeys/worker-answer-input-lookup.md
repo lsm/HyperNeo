@@ -49,3 +49,12 @@ and their synthetic native files, HOME and DB data are removed after evidence is
 saved. This proves the exact lookup foundation for #8874 across indexed native
 inputs, Claude Desktop's owning-session alias and retained owned Copilot input.
 Card reconciliation and hold release remain unverified by this journey.
+
+Upgrade coverage first ingests a transcript with the previous parser's skipped
+peer inputs and a saved EOF offset. Its real work.read RPC must initially return
+not_found. Restarting the isolated daemon without changing the transcript runs
+the one-time migration, which invalidates native feed offsets while preserving
+indexed turns. A production Claude feed tick then exposes the exact input through
+RPC. Both native feed kinds share the offsets table, so both are reread once;
+subsequent starts retain their progressed offsets. Keep upgrade.json with the
+before/after replies. The synthetic native inbox frame includes fromMode.
