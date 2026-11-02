@@ -4,7 +4,6 @@ import { z } from 'zod';
 import { defineOperation } from '../../../operations/registry.ts';
 import { WorkRefSchema } from '../../../drivers/types.ts';
 import { CodingStageFact } from './stage-facts.ts';
-import type { CodingPrLedgerRepository } from './pr-ledger.ts';
 import type { CodingAssignmentsRepository } from './assignments.ts';
 
 const Input = z.object({
@@ -19,10 +18,7 @@ const Input = z.object({
 type Input = z.infer<typeof Input>;
 type Result = { ok: boolean; reason?: string };
 
-export function createCodingResultOperation(
-  assignments: CodingAssignmentsRepository,
-  ledger: CodingPrLedgerRepository
-) {
+export function createCodingResultOperation(assignments: CodingAssignmentsRepository) {
   const record = (superpipe({})('coding.record-assigned-result') as PipelineAPI)
     .input(['input'])
     .pipe(
@@ -40,18 +36,18 @@ export function createCodingResultOperation(
       'result:fact'
     )
     .pipe(
-      async (fact: CodingStageFact): Promise<Result> =>
-        (await ledger.write('recordStage', fact))
+      async (input: Input, fact: CodingStageFact): Promise<Result> =>
+        (await assignments.write('recordResult', input.todoId, fact))
           ? { ok: true }
           : { ok: false, reason: 'head_changed_or_failed_stage' },
-      'fact',
+      ['input', 'fact'],
       'fact'
     )
     .endAsync('fact') as (input: Input) => Promise<Result>;
   return defineOperation({
     name: 'neo.coding.result',
     description:
-      'Record Review or Verify evidence for the exact persisted coding assignment (legacy qa remains accepted). Requires its todo, worker ref, actor identity, PR head and acceptance-contract reference; rejects stale heads, mismatches and attempts to erase a failure. Bot approval is read from GitHub, never submitted through this operation.',
+      'Record Review or Verify evidence for the exact persisted coding assignment (legacy qa remains accepted). Accepts its author or stage todo, worker ref, actor identity, PR head and acceptance-contract reference. A verdict closes only its stage todo; an old-head verdict never updates current-head facts. Legacy assignments reject stale heads; identity mismatches and attempts to erase a failure refuse. Bot approval is read from GitHub, never submitted through this operation.',
     inputSchema: Input,
     resultSchema: z.object({ ok: z.boolean(), reason: z.string().optional() }),
     policy: { safetyClass: 'mutate', roles: ['neo'] },

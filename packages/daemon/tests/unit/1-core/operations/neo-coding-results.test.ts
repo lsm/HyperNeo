@@ -50,7 +50,7 @@ function setup() {
   const assignments = new CodingAssignmentsRepository(db),
     ledger = new CodingPrLedgerRepository(db);
   ledger.stageFacts.observeHead(url, 'head-a', 1);
-  const registry = createOperationRegistry([createCodingResultOperation(assignments, ledger)]);
+  const registry = createOperationRegistry([createCodingResultOperation(assignments)]);
   const result = (input: unknown, role = 'neo' as const) =>
     invokeOperation(registry, 'neo.coding.result', input, { source: 'internal', role });
   return { db, assignments, ledger, result };

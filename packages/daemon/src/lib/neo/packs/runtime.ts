@@ -120,10 +120,7 @@ export function createNeoService(...args: NeoServiceArgs) {
           new CodingAssignmentsRepository(db.getDatabase()),
           (urls) => configured.readDeliveryDeploys(urls)
         ),
-        createCodingResultOperation(
-          new CodingAssignmentsRepository(db.getDatabase()),
-          new CodingPrLedgerRepository(db.getDatabase())
-        ),
+        createCodingResultOperation(new CodingAssignmentsRepository(db.getDatabase())),
       ];
       coding.sessionLinks = async (ref) => {
         const localId = localCodingSessionId(ref);

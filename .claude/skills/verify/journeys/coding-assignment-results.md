@@ -24,7 +24,9 @@ daemon identity. A conflicting ref claimed inside the fact cannot replace it.
 Restarting the daemon preserves the linked write/review/QA assignments and
 results, including both full worker refs. A failure cannot become a pass at the same head. A new head clears both
 stage facts, exposes no assignments for that head and rejects late results.
-The todo stays `doing` throughout: this Build slice changes no completion gate.
+The author todo stays `doing` throughout. Legacy seeded assignments here have no
+stage todo; the coding-actor-assignments journey covers separately bound stage
+todos and their verdict-driven closure.
 Both daemon instances and sockets close in finally.
 
 Keep `evidence/assignment-results.json`, which contains the actual RPC inputs,

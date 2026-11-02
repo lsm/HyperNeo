@@ -24320,6 +24320,9 @@
                     ],
                     "type": "object"
                   },
+                  "stageTodoId": {
+                    "type": "string"
+                  },
                   "url": {
                     "type": "string"
                   },

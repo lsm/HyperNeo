@@ -35,7 +35,9 @@ Observe `evidence/actor-assignments.json` and `gh.jsonl`:
   effort. Verify receives another ref, pinned checkout and full contract. The
   kickoff remains below the message limit and names the immutable acceptance ref.
 - Repeating both assignments and restarting the daemon reuse recorded refs without
-  duplicate starts. Each synthetic work slice retains one todo and its author.
+  duplicate starts. `neo.ask.read` shows the separate exact-head Review/Verify
+  todos with their worker bindings; their author todo retains its original worker.
+  An inconclusive verdict closes its Verify todo while the author remains doing.
 - Explicit human Review starts no session; missing provenance refuses while an
   explicit provenance opt-out permits the default.
 - A preflight-unavailable preferred model falls back to the qualifying default
@@ -49,7 +51,11 @@ finally. The dirty source checkout stays at its original HEAD with its dirty fil
 unchanged. Synthetic source repositories and evidence remain for inspection.
 Retain the evidence before removing the run directory. Unit suites additionally
 cover identity reuse, concurrent calls, stale-start compensation, uncertain
-delivery (no retry), closed PR refusal and human result validation.
+delivery (including a later call with no replay), closed PR refusal and human result validation.
+They also inject binding and closure failures: dispatch acknowledgement plus binding,
+and verdict plus stage closure, each roll back together. Availability reads show
+that a stage worker stays busy until its stage todo closes. An old-head verdict can
+close only its own stage todo; it cannot populate current-head verdict facts.
 
 Not verified: native harness/provider availability or app rendering, autonomous
 model compliance with the role/verify skill, actual external bot approval, or the

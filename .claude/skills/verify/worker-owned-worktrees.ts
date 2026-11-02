@@ -195,6 +195,9 @@ try {
   assert.equal(assigned.kind, 'completed');
   const selected = (assigned as { value: { ok: boolean; assignment: { ref: WorkRef } } }).value; assert(selected.ok, JSON.stringify(assigned));
   assert.deepEqual(selected.assignment.ref, reviewer); const reviewStatus = await done(reviewer, 'review');
+  const reviewTodo = store.listTodos('proof-ask').find(todo => todo.title === `Review PR #7 at ${prHead}`)!;
+  assert(reviewTodo); assert.notEqual(reviewTodo.id, stage.id); assert.deepEqual(sessions.readRef(reviewTodo.id), reviewer);
+  assert(!readFreeWorkers(db, adapter.id).has(reviewer.id), 'A reviewer remains busy on its own todo after its native turn ends');
   assert(reviewStatus.lastReply?.includes(prHead), JSON.stringify(reviewStatus));
   const read = (tag: string) => JSON.parse(readFileSync(join(run, 'evidence', `${tag}.json`), 'utf8'));
   const a = read(first.id), b = read(second.id), c = read('review-warmup'), d = read('review');

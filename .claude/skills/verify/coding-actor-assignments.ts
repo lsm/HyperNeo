@@ -117,10 +117,15 @@ try {
         const botVerify = await assign({ ...bot, stage: 'verify', candidates: [verifyTarget] }); assert(botVerify.ok);
         assert.deepEqual(await rpc('neo.coding.result', { todoId: bot.todoId, ref: botVerify.assignment.ref, fact: { url: bot.url, head, stage: 'verify', actor: botVerify.assignment.actor, verdict: 'inconclusive', acceptanceContract: bot.acceptanceContract, evidence: ['artifact:inconclusive-observation'] } }), { ok: true });
         assert.equal(ledger.stageFacts.read(bot.url)[0].stage, 'qa');
+        const botCard = await rpc('neo.ask.read', { askId: 'ask-bot' }) as { ok: boolean; entry: { todos: {id:string;title:string;state:string}[] } };
+        assert(botCard.ok); assert(botCard.entry.todos.some(todo => todo.title === `Verify PR #7 at ${head}` && todo.state === 'done'));
+        assert.equal(botCard.entry.todos.find(todo => todo.id === bot.todoId)?.state, 'doing');
+
         const session = await seed('session', 8, 'synthetic/session');
         for (const [field, value] of Object.entries({ harness: preferredTarget.adapter, model: preferredTarget.model, effort: preferredTarget.effort })) await setting('synthetic/session', `review.${field}`, value);
         const review = await assign({ ...session, stage: 'review', candidates: [authorModel, defaultTarget, preferredTarget] }); assert(review.ok); assert.equal(review.assignment.actor.harness, preferredTarget.adapter); assert.equal(review.assignment.effort, preferredTarget.effort);
-        const stageTodos = db.prepare('SELECT id,title FROM neo_todos WHERE ask_id=? ORDER BY position').all('ask-session') as {id:string;title:string}[];
+        const stageRead = await rpc('neo.ask.read', { askId: 'ask-session' }) as { ok: boolean; entry: { todos: {id:string;title:string;state:string}[] } };
+        assert(stageRead.ok); const stageTodos = stageRead.entry.todos;
         assert(stageTodos.some(todo => todo.title === `Review PR #8 at ${head}`), 'The ask must show its Review todo before Verify starts');
         evidence.push({ phase, stageTodos });
         const verify = await assign({ ...session, stage: 'verify', candidates: [verifyTarget] }); assert(verify.ok); assert.notEqual(verify.assignment.ref.id, review.assignment.ref.id);
@@ -146,8 +151,8 @@ try {
         const before = attempts;
         const stored = assignments.read('session', 'https://github.com/synthetic/session/pull/8', head); assert(stored.review?.ref);
         const replay = await assign({ todoId: 'session', url: 'https://github.com/synthetic/session/pull/8', head, acceptanceContract: 'artifact:contract-session', stage: 'review', candidates: [] }); assert(replay.ok); assert.deepEqual(replay.assignment.ref, stored.review.ref); assert.equal(attempts, before);
-        assert.equal(db.prepare('SELECT COUNT(*) AS n FROM neo_todos').get().n, 5);
-        assert(db.prepare('SELECT state FROM neo_todos').all().every((row: { state: string }) => row.state === 'doing'));
+        assert.equal(db.prepare('SELECT COUNT(*) AS n FROM neo_todos').get().n, 11);
+        assert.equal(db.prepare("SELECT COUNT(*) AS n FROM neo_todos WHERE state='done'").get().n, 1);
         assert.equal(git(source, 'rev-parse', 'HEAD'), baseHead); assert.equal(readFileSync(join(source, 'behavior.txt'), 'utf8'), 'preserve dirty author source');
         evidence.push({ phase, stored, todoStates: db.prepare('SELECT id,state FROM neo_todos').all() });
       }

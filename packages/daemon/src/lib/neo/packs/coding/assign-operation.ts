@@ -5,9 +5,11 @@ import { isDeepStrictEqual } from 'node:util';
 import { homedir } from 'node:os';
 import { z } from 'zod';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import type { WorkRef } from '../../../drivers/types.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { NeoTodoSessionRepository } from '../../../../storage/repositories/neo-todo-session-repository.ts';
-import { StartWorkResultSchema } from '../../../drivers/work-operations.ts';
+import type { readDriverOutcome, NeoDriverTarget } from '../../driver-work.ts';
+import { StartWorkResultSchema, StopWorkResultSchema } from '../../../drivers/work-operations.ts';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { githubUrlKey, parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { spawnProcess } from '../../../runtime-spawn/index.ts';
@@ -96,9 +98,52 @@ function admit(input: Input, deps: Deps): Gate<Assignment> {
   };
 }
 
+function readStageOutcome(outcome: OperationOutcome): ReturnType<typeof readDriverOutcome> {
+  if (outcome.kind !== 'completed') return { failure: outcome.message };
+  const started = StartWorkResultSchema.parse(outcome.value);
+  if (!started.ok)
+    return { failure: `${started.reason}: ${started.detail}`, reason: started.reason };
+  const { ref, model, effort, link, receipt, lastActivityAt } = started.value;
+  return { ref, model, effort, link, receipt, startedAt: lastActivityAt };
+}
+
+async function dispatchStage(
+  assignments: CodingAssignmentsRepository,
+  sessions: NeoTodoSessionRepository,
+  todoId: string,
+  ask: { sessionId: string },
+  target: Extract<NeoDriverTarget, { verb: 'start' }>,
+  input: Record<string, unknown>,
+  caller: OperationCaller,
+  invoke: Deps['invoke']
+) {
+  const id = await sessions.inputs.accept(
+    todoId,
+    ask.sessionId,
+    target,
+    String(input.message),
+    Date.now()
+  );
+  const reply = await invoke('work.start', input, caller);
+  return assignments.write('recordDispatch', id, todoId, readStageOutcome(reply));
+}
+
 export function createCodingAssignmentOperation(deps: Deps) {
   const assignments = new CodingAssignmentsRepository(deps.db),
     running = new Set<string>();
+  async function stopActor(
+    ref: WorkRef,
+    caller: OperationCaller,
+    stageTodoId: string | undefined,
+    reason: string
+  ) {
+    const outcome = await deps.invoke('work.stop', { ref }, caller);
+    if (outcome.kind !== 'completed') return;
+    const stopped = StopWorkResultSchema.parse(outcome.value);
+    if (stopped.ok && stopped.value.stopped && stageTodoId)
+      await assignments.write('failStage', stageTodoId, reason);
+  }
+
   async function startActor(
     input: Input,
     caller: OperationCaller,
@@ -126,17 +171,35 @@ export function createCodingAssignmentOperation(deps: Deps) {
       });
     const plan = await select(input.candidates);
     if (!plan.ok) return refuse(plan.reason);
+    const target: NeoDriverTarget = { verb: 'start', ...plan.target };
+    const reserved = await assignments.write(
+      'reserveStage',
+      input.todoId,
+      storedStage(input),
+      base,
+      target
+    );
+    const stageTodoId = reserved.todo.id;
+    const sessions = new NeoTodoSessionRepository(deps.db);
+    if (!reserved.created)
+      return refuse(
+        `Stage todo ${stageTodoId} already exists; reconcile its recorded dispatch without replaying it.`
+      );
     const stage = input.stage === 'verify' ? 'Verify' : 'Review';
     const contract = input.stage === 'verify' ? QA_SYSTEM_CONTRACT : REVIEWER_SYSTEM_CONTRACT;
-    const message = `${contract}\n\nCoding-pack ${stage} override for this run:\nThis worker may be reused from prior tasks; independence means it is not this PR's author or another stage actor for this head; reuse from earlier tasks or review rounds is allowed. The shared contract's workflow-specific Bash allowlist and direct GitHub posting procedure are replaced here by checkout in your own folder and reporting through Neo; respect actual permission denials. Before switching, preserve uncommitted or unpushed work: stop and report if the checkout would discard it, and never reset --hard or clean the folder to switch tasks.\n${withCodingWorkerStartBrief('', { pullRequest: Number(parsePrUrl(input.url)!.number), head: input.head, role: input.stage })}\nTodo: ${input.todoId}. PR: ${input.url}. PR number: ${parsePrUrl(input.url)!.number}. Exact head: ${input.head}. Acceptance contract: ${input.acceptanceContract}. Fetch origin, fetch +refs/pull/${parsePrUrl(input.url)!.number}/head:refs/remotes/origin/pull/${parsePrUrl(input.url)!.number}/head, check out exactly ${input.head} in your existing folder, and verify git rev-parse HEAD equals that SHA before inspecting code. Do not switch to a moving branch or alter the author's folder. Read the acceptance contract and cover every criterion and allowed scope. CI covers base integration; skip the shared contract's separate base-integration checkout and base-OID revalidation requirements. A new PR head requires a new assignment and verdict. ${input.stage === 'verify' ? "Use the repository's .claude/skills/verify/SKILL.md (list and read relevant journeys) or Verify section in AGENTS.md. Before changing application code, locate that skill or section; if missing, report that evidence is blocked. Return durable evidence per criterion; stop owned test resources." : 'Return a soundness verdict across every review-contract dimension, with separate bug/integration and goal/scope passes.'} Do not merge, close or complete the todo. Your verdict must name the exact reviewed head ${input.head}; report facts through Neo with this head and contract.`;
+    const message = `${contract}\n\nCoding-pack ${stage} override for this run:\nThis worker may be reused from prior tasks; independence means it is not this PR's author or another stage actor for this head; reuse from earlier tasks or review rounds is allowed. The shared contract's workflow-specific Bash allowlist and direct GitHub posting procedure are replaced here by checkout in your own folder and reporting through Neo; respect actual permission denials. Before switching, preserve uncommitted or unpushed work: stop and report if the checkout would discard it, and never reset --hard or clean the folder to switch tasks.\n${withCodingWorkerStartBrief('', { pullRequest: Number(parsePrUrl(input.url)!.number), head: input.head, role: input.stage })}\nTodo: ${stageTodoId}. Author todo: ${input.todoId}. PR: ${input.url}. PR number: ${parsePrUrl(input.url)!.number}. Exact head: ${input.head}. Acceptance contract: ${input.acceptanceContract}. Fetch origin, fetch +refs/pull/${parsePrUrl(input.url)!.number}/head:refs/remotes/origin/pull/${parsePrUrl(input.url)!.number}/head, check out exactly ${input.head} in your existing folder, and verify git rev-parse HEAD equals that SHA before inspecting code. Do not switch to a moving branch or alter the author's folder. Read the acceptance contract and cover every criterion and allowed scope. CI covers base integration; skip the shared contract's separate base-integration checkout and base-OID revalidation requirements. A new PR head requires a new assignment and verdict. ${input.stage === 'verify' ? "Use the repository's .claude/skills/verify/SKILL.md (list and read relevant journeys) or Verify section in AGENTS.md. Before changing application code, locate that skill or section; if missing, report that evidence is blocked. Return durable evidence per criterion; stop owned test resources." : 'Return a soundness verdict across every review-contract dimension, with separate bug/integration and goal/scope passes.'} Do not merge, close or complete the todo. Your verdict must name the exact reviewed head ${input.head}; report facts through Neo with this head and contract.`;
     const excludeRefs = [base.write, ...(review?.ref ? [review.ref] : [])];
-    const start = (target: z.infer<typeof CodingStageTarget>) =>
-      deps.invoke(
-        'work.start',
+    const start = (configuration: z.infer<typeof CodingStageTarget>) =>
+      dispatchStage(
+        assignments,
+        sessions,
+        stageTodoId,
+        reserved.ask,
+        { verb: 'start', ...configuration },
         {
-          ...target,
-          todoId: input.todoId,
-          title: `${input.stage === 'verify' ? 'Verify' : 'Review'}: ${input.todoId}`,
+          ...configuration,
+          todoId: stageTodoId,
+          title: reserved.todo.title,
           message,
           provenance: true,
           excludeRefs,
@@ -154,19 +217,18 @@ export function createCodingAssignmentOperation(deps: Deps) {
               }
             : {}),
         },
-        caller
+        caller,
+        deps.invoke
       );
-    let outcome = await start(plan.target);
-    if (outcome.kind !== 'completed') return refuse(outcome.message);
-    let started = StartWorkResultSchema.parse(outcome.value);
+    let started = await start(plan.target);
     if (
-      !started.ok &&
+      !('ref' in started) &&
       [
         'unsupported_model',
         'unsupported_effort',
         'unsupported_preparation',
         'unknown_adapter',
-      ].includes(started.reason) &&
+      ].includes(started.reason ?? '') &&
       !isDeepStrictEqual(plan.target, input.candidates[0])
     ) {
       const fallback = await select([input.candidates[0]]);
@@ -175,26 +237,29 @@ export function createCodingAssignmentOperation(deps: Deps) {
         `${started.reason}: preferred configuration unavailable; using the qualifying default.`,
         ...fallback.fallback
       );
-      outcome = await start(fallback.target);
-      if (outcome.kind !== 'completed') return refuse(outcome.message);
-      started = StartWorkResultSchema.parse(outcome.value);
+      started = await start(fallback.target);
     }
-    if (!started.ok) return refuse(`${started.reason}: ${started.detail}`);
-    const { ref, model, effort } = started.value;
-    if (sameCodingWorkRef(ref, base.write) || (review?.ref && sameCodingWorkRef(ref, review.ref)))
+    if (!('ref' in started)) {
+      if (started.reason) await assignments.write('failStage', stageTodoId, started.failure);
+      return refuse(started.failure);
+    }
+    const { ref, model, effort } = started;
+    if (sameCodingWorkRef(ref, base.write) || (review?.ref && sameCodingWorkRef(ref, review.ref))) {
+      await assignments.write('failStage', stageTodoId, 'The actor must be independent.');
       return refuse('The actor must be independent of the author and earlier reviewer.');
+    }
     const actor = { kind: 'agent' as const, id: ref.id, harness: ref.adapter, model: model ?? '' };
     if (
       !model ||
       (input.stage === 'review' &&
         !deps.ledger.reviewerPolicy(repoName(input), pr.body, actor).qualifies)
     ) {
-      await deps.invoke('work.stop', { ref }, caller);
+      await stopActor(ref, caller, stageTodoId, 'The actor did not confirm a qualifying model.');
       return refuse(
         'The started actor did not confirm a qualifying model; configure another actor.'
       );
     }
-    return { value: { ...base, ref, actor, effort, fallback: plan.fallback } };
+    return { value: { ...base, stageTodoId, ref, actor, effort, fallback: plan.fallback } };
   }
 
   const assign = (superpipe({})('coding.assign-actor') as PipelineAPI)
@@ -263,7 +328,12 @@ export function createCodingAssignmentOperation(deps: Deps) {
         if (await assignments.recordLater(input.todoId, storedStage(input), assignment))
           return { ok: true, assignment };
         if (assignment.ref && assignment.actor?.kind === 'agent')
-          await deps.invoke('work.stop', { ref: assignment.ref }, caller);
+          await stopActor(
+            assignment.ref,
+            caller,
+            assignment.stageTodoId,
+            'The head or assignment changed.'
+          );
         return {
           ok: false,
           reason: 'The head or assignment changed; read it again before continuing.',

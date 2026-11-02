@@ -38,7 +38,8 @@ const author = { adapter: write.adapter, place, model: 'gpt-6' };
 const reviewer = { adapter: 'claude-code', place, model: 'claude-opus-5-5' };
 type Start = z.infer<typeof StartWorkInputSchema>;
 function fixture(
-  simulate?: (input: Start, count: number) => Promise<OperationOutcome> | OperationOutcome
+  simulate?: (input: Start, count: number) => Promise<OperationOutcome> | OperationOutcome,
+  stopOutcome?: OperationOutcome
 ) {
   const root = mkdtempSync(join(tmpdir(), 'neo-actor-'));
   const pr = {
@@ -90,7 +91,7 @@ function fixture(
     },
   });
   const registry = createOperationRegistry([
-    createCodingResultOperation(assignments, ledger),
+    createCodingResultOperation(assignments),
     createCodingAssignmentOperation({
       db,
       ledger,
@@ -99,7 +100,9 @@ function fixture(
       invoke: async (name, input) => {
         if (name === 'work.stop') {
           stops.push(input);
-          return { kind: 'completed', value: { ok: true, value: { stopped: true } } };
+          return (
+            stopOutcome ?? { kind: 'completed', value: { ok: true, value: { stopped: true } } }
+          );
         }
         expect(name).toBe('work.start');
         const request = StartWorkInputSchema.parse(input);
@@ -207,8 +210,142 @@ describe('coding actor assignments', () => {
     expect((await f.assign({ head: next })).ok).toBe(true);
     expect(store.listTodos('ask')).toHaveLength(4);
     expect(f.starts[2].todoId).not.toBe(f.starts[0].todoId);
+    const oldVerify = verify.assignment!;
+    expect(
+      await invokeOperation(
+        f.registry,
+        'neo.coding.result',
+        {
+          todoId: f.starts[1].todoId,
+          ref: oldVerify.ref,
+          fact: {
+            url,
+            head,
+            stage: 'verify',
+            actor: oldVerify.actor,
+            verdict: 'pass',
+            acceptanceContract: 'artifact:contract',
+            evidence: ['artifact:old-head-only'],
+          },
+        },
+        { source: 'internal', role: 'neo' }
+      )
+    ).toMatchObject({ value: { ok: true } });
+    expect(store.getTodo(f.starts[1].todoId!)?.state).toBe('done');
+    expect(f.ledger.stageFacts.read(url)).toEqual([]);
+    expect(store.getTodo(f.starts[2].todoId!)?.state).toBe('doing');
   });
 
+  test('a started actor needing human input is still bound to its own busy todo', async () => {
+    const f = fixture((input, count) => ({
+      kind: 'completed',
+      value: {
+        ok: true,
+        value: {
+          ref: { adapter: input.adapter, id: `human-wait-${count}` },
+          title: input.title,
+          place: input.place,
+          status: 'needs_you',
+          lastActivityAt: 1,
+          model: input.model,
+        },
+      },
+    }));
+    const assigned = await f.assign({ candidates: [reviewer] });
+    expect(assigned.ok).toBe(true);
+    expect(f.sessions.readRef(f.starts[0].todoId!)).toEqual(assigned.assignment!.ref);
+    expect(readFreeWorkers(f.db, reviewer.adapter).has('human-wait-1')).toBe(false);
+  });
+  test('settling the ask during dispatch stops the new actor and leaves no assignment', async () => {
+    const f = fixture((input, count) => {
+      f.db.prepare("UPDATE neo_asks SET status='done' WHERE id='ask'").run();
+      return f.success(input, count);
+    });
+    expect((await f.assign()).ok).toBe(false);
+    expect(f.stops).toEqual([{ ref: { adapter: reviewer.adapter, id: 'fresh-1' } }]);
+    expect(f.assignments.read('todo', url, head)).toEqual({});
+    expect(new NeoAskTodoRepository(f.db).getTodo(f.starts[0].todoId!)?.state).toBe('removed');
+  });
+  test('failed stop compensation keeps the started worker busy on its stage todo', async () => {
+    const f = fixture(
+      (input, count) => {
+        f.pr.headRefOid = next;
+        f.publish();
+        f.ledger.stageFacts.observeHead(url, next, 2);
+        return f.success(input, count);
+      },
+      { kind: 'failed', message: 'Synthetic stop unavailable' }
+    );
+    expect((await f.assign()).ok).toBe(false);
+    expect(new NeoAskTodoRepository(f.db).getTodo(f.starts[0].todoId!)?.state).toBe('doing');
+    expect(readFreeWorkers(f.db, reviewer.adapter).has('fresh-1')).toBe(false);
+  });
+  test('a binding failure rolls back the dispatch acknowledgement and never replays the start', async () => {
+    const f = fixture();
+    f.db.exec(`CREATE TRIGGER fail_stage_binding BEFORE UPDATE OF ref ON neo_todo_sessions
+      WHEN NEW.todo_id <> 'todo' AND NEW.ref IS NOT NULL
+      BEGIN SELECT RAISE(ABORT, 'synthetic binding failure'); END`);
+    const outcome = await invokeOperation(
+      f.registry,
+      'neo.coding.assign',
+      {
+        todoId: 'todo',
+        url,
+        head,
+        acceptanceContract: 'artifact:contract',
+        stage: 'review',
+        candidates: [reviewer],
+      },
+      { source: 'internal', role: 'neo' }
+    );
+    expect(outcome.kind).toBe('failed');
+    const stageId = f.starts[0].todoId!;
+    expect(f.sessions.inputs.list(stageId)).toMatchObject([{ outcome: null }]);
+    expect(f.sessions.readRef(stageId)).toBeNull();
+    expect(new NeoAskTodoRepository(f.db).getTodo(stageId)?.state).toBe('blocked');
+    f.db.exec('DROP TRIGGER fail_stage_binding');
+    expect((await f.assign()).ok).toBe(false);
+    expect(f.starts).toHaveLength(1);
+  });
+  test('a verdict and its stage closure roll back together without closing the author', async () => {
+    const f = fixture();
+    const assignment = (await f.assign()).assignment!;
+    f.db.exec(`CREATE TRIGGER fail_stage_close BEFORE UPDATE OF state ON neo_todos
+      WHEN NEW.id <> 'todo' AND NEW.state = 'done'
+      BEGIN SELECT RAISE(ABORT, 'synthetic closure failure'); END`);
+    const input = {
+      todoId: 'todo',
+      ref: assignment.ref,
+      fact: {
+        url,
+        head,
+        stage: 'review',
+        actor: assignment.actor,
+        verdict: 'pass',
+        acceptanceContract: 'artifact:contract',
+        evidence: ['artifact:passed-review'],
+      },
+    };
+    expect(
+      (
+        await invokeOperation(f.registry, 'neo.coding.result', input, {
+          source: 'internal',
+          role: 'neo',
+        })
+      ).kind
+    ).toBe('failed');
+    expect(f.ledger.stageFacts.read(url)).toEqual([]);
+    expect(new NeoAskTodoRepository(f.db).getTodo(f.starts[0].todoId!)?.state).toBe('doing');
+    expect(readFreeWorkers(f.db, assignment.ref!.adapter).has(assignment.ref!.id)).toBe(false);
+    f.db.exec('DROP TRIGGER fail_stage_close');
+    expect(
+      await invokeOperation(f.registry, 'neo.coding.result', input, {
+        source: 'internal',
+        role: 'neo',
+      })
+    ).toMatchObject({ value: { ok: true } });
+    expect(new NeoAskTodoRepository(f.db).getTodo('todo')?.state).toBe('doing');
+  });
   test.each([
     'unsupported_model',
     'unsupported_effort',
@@ -224,7 +361,7 @@ describe('coding actor assignments', () => {
       const gateway = new DbGateway(':memory:', f.db);
       const run = gateway.run.bind(gateway);
       gateway.run = (async (op, args) => {
-        f.db.exec('PRAGMA query_only=ON');
+        if (op.mode === 'read') f.db.exec('PRAGMA query_only=ON');
         try {
           return structuredClone(await run(op, args));
         } finally {
@@ -299,7 +436,7 @@ describe('coding actor assignments', () => {
       excludeRefs: [write, { adapter: reviewer.adapter, id: 'fresh-1' }],
     });
   });
-  test('one todo keeps its author and linked fresh reviewer/Verify; repeated calls reuse exact-head assignments', async () => {
+  test('author and stage todos retain bindings; repeated calls reuse exact-head assignments', async () => {
     const f = fixture();
     const review = await f.assign();
     const verify = await f.assign({ stage: 'verify', candidates: [author] });
@@ -315,8 +452,9 @@ describe('coding actor assignments', () => {
     await f.assign({ stage: 'verify' });
     expect(f.starts).toHaveLength(2);
     expect(f.sessions.readCard('todo')?.ref).toEqual(write);
-    expect(f.db.prepare('SELECT id,state FROM neo_todos').all()).toEqual([
+    expect(f.db.prepare('SELECT id,state FROM neo_todos ORDER BY position').all()).toEqual([
       { id: 'todo', state: 'doing' },
+      ...f.starts.map((start) => ({ id: start.todoId, state: 'doing' })),
     ]);
     expect(Object.keys(f.assignments.read('todo', url, head))).toEqual(['qa', 'review']);
   });
@@ -415,6 +553,8 @@ describe('coding actor assignments', () => {
     });
     expect(f.starts).toHaveLength(1);
     expect(f.assignments.read('todo', url, head)).toEqual({});
+    expect((await f.assign()).ok).toBe(false);
+    expect(f.starts).toHaveLength(1);
   });
   test('a new head requires fresh assignments; contract changes and stale/closed PRs refuse before launch', async () => {
     const f = fixture();

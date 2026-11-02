@@ -633,6 +633,12 @@ export function createCodingTodoPack(
     detached = false
   ): Promise<CodingTodoFacts | null> => {
     if (todo.check && todo.check.pack !== 'coding') return null;
+    if (todo.check?.kind === 'stage_result')
+      return {
+        prs: [],
+        observedAt: Date.now(),
+        approval: { done: todo.state === 'done', evidence: todo.evidence },
+      };
     if (todo.check?.kind === 'pr_approved')
       return {
         prs: [],
@@ -662,7 +668,7 @@ export function createCodingTodoPack(
     return { prs, observedAt };
   };
   const checked = (todo: NeoTodo, facts: CodingTodoFacts) =>
-    todo.check?.kind === 'pr_approved'
+    ['pr_approved', 'stage_result'].includes(todo.check?.kind ?? '')
       ? (facts.approval ?? { done: false, evidence: null })
       : todo.check?.kind === 'issue_closed'
         ? codingIssueCheck(facts.issue)

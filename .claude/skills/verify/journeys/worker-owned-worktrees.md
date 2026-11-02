@@ -25,7 +25,9 @@ Observe `worker-owned-worktrees.json`, individual probe receipts and `calls.json
   the first task, and creates its own task branch at that newer commit.
 - A separate idle native thread is reused for Review. It receives the entire stage
   contract and checks out the supplied PR head, different from the latest target.
-  Its filesystem verdict and native turn result name that exact SHA.
+  Its filesystem verdict and native turn result name that exact SHA. The reviewer
+  is bound to its own Review todo in the same ask and remains busy after its
+  native turn ends, until Neo records its stage verdict.
 - All starts lack preparation. Project matching still identifies the original repo
   while the executed working directories stay in two separate managed worktrees.
   The dirty source checkout remains byte-for-byte unchanged and at its old HEAD.
