@@ -236,6 +236,49 @@ describe('coding actor assignments', () => {
     expect(store.getTodo(f.starts[2].todoId!)?.state).toBe('doing');
   });
 
+  test.each(['review', 'verify'] as const)(
+    'a %s failure cannot hold the other stage worker after its verdict',
+    async (failedStage) => {
+      const f = fixture(),
+        store = new NeoAskTodoRepository(f.db);
+      const review = (await f.assign()).assignment!;
+      const verify = (await f.assign({ stage: 'verify', candidates: [author] })).assignment!;
+      const actors = { review, verify };
+      const result = (stage: 'review' | 'verify', verdict: 'pass' | 'fail') =>
+        invokeOperation(
+          f.registry,
+          'neo.coding.result',
+          {
+            todoId: actors[stage].stageTodoId,
+            ref: actors[stage].ref,
+            fact: {
+              url,
+              head,
+              stage,
+              actor: actors[stage].actor,
+              verdict,
+              acceptanceContract: 'artifact:contract',
+              evidence: [`artifact:${stage}-${verdict}`],
+            },
+          },
+          { source: 'internal', role: 'neo' }
+        );
+      expect(await result(failedStage, 'fail')).toMatchObject({ value: { ok: true } });
+      expect(await result(failedStage, 'pass')).toMatchObject({ value: { ok: false } });
+      const other = failedStage === 'review' ? 'verify' : 'review';
+      expect(store.getTodo(actors[other].stageTodoId!)?.state).toBe('doing');
+      expect(await result(other, 'pass')).toMatchObject({ value: { ok: true } });
+      for (const actor of [review, verify]) {
+        expect(store.getTodo(actor.stageTodoId!)?.state).toBe('done');
+        expect(readFreeWorkers(f.db, actor.ref!.adapter).has(actor.ref!.id)).toBe(true);
+      }
+      expect(f.ledger.stageFacts.read(url).map((fact) => [fact.stage, fact.verdict])).toEqual([
+        ['qa', failedStage === 'verify' ? 'fail' : 'pass'],
+        ['review', failedStage === 'review' ? 'fail' : 'pass'],
+      ]);
+      expect(store.getTodo('todo')?.state).toBe('doing');
+    }
+  );
   test('a started actor needing human input is still bound to its own busy todo', async () => {
     const f = fixture((input, count) => ({
       kind: 'completed',

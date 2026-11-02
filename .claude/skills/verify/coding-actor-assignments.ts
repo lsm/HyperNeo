@@ -131,6 +131,16 @@ try {
         assert(stageTodos.some(todo => todo.title === `Review PR #8 at ${head}`), 'The ask must show its Review todo before Verify starts');
         evidence.push({ phase, stageTodos });
         const verify = await assign({ ...session, stage: 'verify', candidates: [verifyTarget] }); assert(verify.ok); assert.notEqual(verify.assignment.ref.id, review.assignment.ref.id);
+        for (const [stage, assigned, verdict] of [
+          ['review', review, 'fail'], ['verify', verify, 'pass'],
+        ] as const) assert.deepEqual(await rpc('neo.coding.result', {
+          todoId: session.todoId, ref: assigned.assignment.ref,
+          fact: { url: session.url, head, stage, actor: assigned.assignment.actor, verdict,
+            acceptanceContract: session.acceptanceContract, evidence: [`artifact:${stage}-${verdict}`] },
+        }), { ok: true });
+        const verdictCard = await rpc('neo.ask.read', { askId: 'ask-session' }) as typeof stageRead;
+        assert(verdictCard.ok); assert(verdictCard.entry.todos.filter(todo => todo.state === 'done').length === 2);
+        assert.equal(verdictCard.entry.todos.find(todo => todo.id === session.todoId)?.state, 'doing');
         const beforeRetry = attempts;
         assert((await assign({ ...session, stage: 'review', candidates: [] })).ok); assert((await assign({ ...session, stage: 'verify', candidates: [] })).ok); assert.equal(attempts, beforeRetry);
         const human = await seed('human', 9, 'synthetic/human'); const beforeHuman = attempts;
@@ -172,7 +182,7 @@ try {
         const stored = assignments.read('session', 'https://github.com/synthetic/session/pull/8', head); assert(stored.review?.ref);
         const replay = await assign({ todoId: 'session', url: 'https://github.com/synthetic/session/pull/8', head, acceptanceContract: 'artifact:contract-session', stage: 'review', candidates: [] }); assert(replay.ok); assert.deepEqual(replay.assignment.ref, stored.review.ref); assert.equal(attempts, before);
         assert.equal(db.prepare('SELECT COUNT(*) AS n FROM neo_todos').get().n, 17);
-        assert.equal(db.prepare("SELECT COUNT(*) AS n FROM neo_todos WHERE state='done'").get().n, 1);
+        assert.equal(db.prepare("SELECT COUNT(*) AS n FROM neo_todos WHERE state='done'").get().n, 3);
         assert.equal(git(source, 'rev-parse', 'HEAD'), baseHead); assert.equal(readFileSync(join(source, 'behavior.txt'), 'utf8'), 'preserve dirty author source');
         evidence.push({ phase, stored, todoStates: db.prepare('SELECT id,state FROM neo_todos').all() });
       }

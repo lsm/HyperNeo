@@ -38,6 +38,9 @@ Observe `evidence/actor-assignments.json` and `gh.jsonl`:
   duplicate starts. `neo.ask.read` shows the separate exact-head Review/Verify
   todos with their worker bindings; their author todo retains its original worker.
   An inconclusive verdict closes its Verify todo while the author remains doing.
+  A failing Review verdict followed by a passing Verify verdict closes both stage
+  todos, preserves the Review failure and leaves the author doing. Unit coverage
+  also pins the reverse result order and refusal to erase a same-stage failure.
 - Explicit human Review starts no session; missing provenance refuses while an
   explicit provenance opt-out permits the default.
 - A preflight-unavailable preferred model falls back to the qualifying default
