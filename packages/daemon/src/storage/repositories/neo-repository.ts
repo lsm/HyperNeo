@@ -353,15 +353,19 @@ export class NeoRepository {
       .get() as NeoBinding | null;
   }
 
-  conversationId(reserve = true): string | null {
+  conversationId(): string | null {
     const stored = this.db.prepare('SELECT id FROM neo_conversation').get() as {
       id: string;
     } | null;
     if (stored) return stored.id;
-    if (!reserve) return null;
     const session = this.defaultBinding()?.sessionId;
     if (!session?.startsWith('neo:')) return null;
     reserveNeoConversation(this.db, session.slice(4), Date.now());
     return (this.db.prepare('SELECT id FROM neo_conversation').get() as { id: string }).id;
+  }
+
+  readConversationId(): string | null {
+    const row = this.db.prepare('SELECT id FROM neo_conversation').get() as { id: string } | null;
+    return row?.id ?? null;
   }
 }

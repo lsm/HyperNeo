@@ -28,3 +28,8 @@ Do not route the probe through the restricted worker session socket, forge a
 human caller, read credentials, or use someone else's source/file. Ask Neo to
 arrange the existing authorized human RPC door when it is unavailable here.
 Keep the live probe separate from A2.md, which is written only after acceptance.
+
+Run `tests/unit/1-core/pairing/human-reset-coordinator.test.ts` alongside the
+live-file tests: readonly conversation lookup must preserve the audited default
+conversation reservation method and its reset/receipt contract. Do not refresh
+the audit hashes to hide a change to that dependency.
