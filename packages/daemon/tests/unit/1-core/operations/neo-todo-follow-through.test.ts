@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
+import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
@@ -15,7 +16,7 @@ const MIN = 60_000;
 const completed = (value: unknown): OperationOutcome =>
   ({ kind: 'completed', value }) as OperationOutcome;
 
-function world() {
+function world(packs: NeoPack[] = []) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -120,7 +121,7 @@ function world() {
         },
       });
     },
-    packs: () => [],
+    packs: () => packs,
     tell: async (_ask, _todo, note) => {
       if (knobs.tellRefused) throw new Error('synthetic notification refusal');
       knobs.onTell?.();
@@ -501,6 +502,48 @@ describe('a doing todo never sits idle without someone on it', () => {
     expect(w.todo(todo.id).state).toBe('doing');
     expect(w.sessions.get(todo.id)).toMatchObject({ verb: 'start', adapter: 'hyperneo' });
   });
+
+  test.each([false, true])(
+    'stalled replacement applies pack policy (refused=%s)',
+    async (refused) => {
+      const excluded = [{ adapter: 'hyperneo', id: 'author' }];
+      const policy = vi.fn(() =>
+        refused ? { reason: 'identity_not_available' } : { value: excluded }
+      );
+      const w = (current = world([
+        {
+          id: 'fixture',
+          describe: 'Synthetic start policy',
+          instructions: () => null,
+          workerStartExclusions: policy,
+          todos: {
+            schema: () => {},
+            check: async () => ({ done: false, evidence: null }),
+            statusLine: () => null,
+          },
+        },
+      ]));
+      const todo = w.adopt(null);
+      w.store.updateTodo(
+        todo,
+        { check: { pack: 'fixture', kind: 'pending', params: {} } },
+        Date.now()
+      );
+      for (const minutes of [20, 40, 60, 62]) await w.at(minutes);
+      expect(policy).toHaveBeenCalledTimes(1);
+      if (refused) {
+        expect(w.named('work.start')).toEqual([]);
+        expect(w.todo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
+        expect(w.sessions.readRef(todo.id)?.id).toBe('adopted-session');
+        expect(w.sessions.inputs.list(todo.id)).toEqual([]);
+      } else {
+        expect(w.named('work.start')).toHaveLength(1);
+        expect(w.named('work.start')[0].input.excludeRefs).toEqual(excluded);
+        expect(w.todo(todo.id)).toMatchObject({ state: 'doing' });
+        expect(w.sessions.readRef(todo.id)?.id).toBe('worker-1');
+      }
+    }
+  );
 
   test('a stalled todo with no known place puts one card in front of the human', async () => {
     const w = (current = world());

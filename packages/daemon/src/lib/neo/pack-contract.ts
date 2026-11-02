@@ -66,6 +66,8 @@ export interface NeoTodoPack {
 
 export type NeoPackPreferenceLabel = { en: string; 'zh-Hans': string };
 
+type WorkerStartExclusions = { value: readonly WorkRef[] } | { reason: string };
+
 export interface NeoPackPreferenceDeclaration {
   label: NeoPackPreferenceLabel;
   valueLabels: Record<string, NeoPackPreferenceLabel>;
@@ -98,6 +100,7 @@ export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
     openTodoIds: readonly string[]
   ): Record<string, string | number | null>[];
   workerRules?: string;
+  workerStartExclusions?(todo: NeoTodo): WorkerStartExclusions | Promise<WorkerStartExclusions>;
   workerStartBrief?(instruction: string, parameters?: Record<string, unknown>): string;
   workerBrief?(
     instruction: string,

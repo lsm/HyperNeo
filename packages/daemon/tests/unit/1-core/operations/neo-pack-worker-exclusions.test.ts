@@ -115,6 +115,34 @@ describe('core todo starts respect pack worker exclusions', () => {
     }
   });
 
+  test('retry reads current bindings before core dispatches again', async () => {
+    const world = setup();
+    try {
+      await world.open();
+      const ask = world.store.listOpenAsks()[0];
+      const author = await world.invoke('neo.todo.add', {
+        askId: ask.id,
+        ...world.draft('Author'),
+        start: false,
+      });
+      const failed = await world.invoke('neo.todo.add', {
+        askId: ask.id,
+        ...world.draft('Independent work', [author.todo.id]),
+      });
+      expect(failed.todo.state).toBe('failed');
+      expect(world.calls).toEqual([]);
+      world.bind(author.todo.id, 'author');
+      const retried = await world.invoke('neo.todo.retry', { todoId: failed.todo.id });
+      expect(retried.todo.state).toBe('doing');
+      expect(world.checked).toEqual([failed.todo.id, failed.todo.id]);
+      expect(world.calls[0].input.excludeRefs).toEqual([{ adapter: 'fixture', id: 'author' }]);
+      expect(world.sessions.readRef(failed.todo.id)?.id).toBe('prior');
+      expect(world.sessions.inputs.list(failed.todo.id)).toHaveLength(1);
+    } finally {
+      world.db.close();
+    }
+  });
+
   test('packs without a hook keep their existing start input', async () => {
     const world = setup({ hook: false });
     try {
