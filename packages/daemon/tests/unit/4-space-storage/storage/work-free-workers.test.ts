@@ -226,7 +226,7 @@ describe('worker reuse eligibility', () => {
     store.settleAsk(store.getAsk('ask')!, 'done', 'Review finished', 4);
     expect([...readFreeWorkers(db, 'claude-desktop')]).toEqual([]);
   });
-  test('a legacy coding assignment keeps its independent actor out of the author pool', () => {
+  test('legacy actor isolation survives upgrade and assignment-history removal', () => {
     bind('author-step', 'original-author', 'done');
     recordStartedWork(db, { adapter: 'claude-desktop', id: 'legacy-reviewer' });
     db.prepare(
@@ -236,6 +236,10 @@ describe('worker reuse eligibility', () => {
       JSON.stringify({ ref: { adapter: 'claude-desktop', id: 'legacy-reviewer' } })
     );
     store.settleAsk(store.getAsk('ask')!, 'done', 'Completed', 4);
+    expect([...readFreeWorkers(db, 'claude-desktop')]).toEqual(['original-author']);
+    db.exec('ALTER TABLE work_started_sessions DROP COLUMN reusable');
+    runMigration468(db);
+    db.exec("DELETE FROM pack_facts WHERE pack='coding'");
     expect([...readFreeWorkers(db, 'claude-desktop')]).toEqual(['original-author']);
   });
 
