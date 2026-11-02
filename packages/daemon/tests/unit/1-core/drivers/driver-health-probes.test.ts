@@ -100,13 +100,20 @@ for (const standalone of [false, true]) {
         `<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleShortVersionString</key><string>${version}</string></dict></plist>`
       );
     }
-    const probe = createDriverHealthProbe({
-      home,
-      adapters: () => [{ id: 'codex-desktop', find: () => [] }] as never,
-    });
-    expect(await probe('codex-desktop')).toMatchObject({
-      status: 'ok',
-      clientVersions: { desktop: standalone ? '1.2.3' : '26.1027.51404' },
-    });
+    const bin = join(home, 'bin');
+    mkdirSync(bin);
+    vi.stubEnv('PATH', bin);
+    try {
+      const probe = createDriverHealthProbe({
+        home,
+        adapters: () => [{ id: 'codex-desktop', find: () => [] }] as never,
+      });
+      expect(await probe('codex-desktop')).toMatchObject({
+        status: 'ok',
+        clientVersions: { desktop: standalone ? '1.2.3' : '26.1027.51404' },
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 }
