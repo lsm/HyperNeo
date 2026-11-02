@@ -20,14 +20,11 @@ unsupported-type, size-limit, missing-parent, unsafe/sensitive/symlink and absen
 reference refusals. Non-human callers refuse before storage. Check zero new
 artifact/identity rows and no artifacts directory/blobs.
 
-After merge and deployment, read the build through the owner socket. The live
-acceptance additionally needs an authorized paired-human RPC connection and a
-stored readable publication naming an owned synthetic probe file. Read A, edit
-only that probe, reopen for B, delete it and require `missing`; save exact replies.
-Do not route the probe through the restricted worker session socket, forge a
-human caller, read credentials, or use someone else's source/file. Ask Neo to
-arrange the existing authorized human RPC door when it is unavailable here.
-Keep the live probe separate from A2.md, which is written only after acceptance.
+After merge, read the owner build back and rerun the isolated RPC proof from the
+merged commit. This follows the [maintainer-approved server/web acceptance split](https://github.com/lsm/HyperNeo/pull/9509#issuecomment-6570323070);
+it does not require a paired-human RPC connection. Actual path clicks in a Neo reply belong
+to A4. Do not forge a human caller or expand the worker socket's permissions.
+Write A2.md only after merge, deployment/readback and the merged-version proof.
 
 Run `tests/unit/1-core/pairing/human-reset-coordinator.test.ts` alongside the
 live-file tests: readonly conversation lookup must preserve the audited default
