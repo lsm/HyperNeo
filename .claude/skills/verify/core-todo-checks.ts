@@ -132,7 +132,11 @@ try {
   await close(fileTodo, 'blocked');
   writeFileSync(path, 'Synthetic result');
   await close(fileTodo, 'done');
-  const artifactTodo = await add('evidence', { artifact: 'synthetic-artifact' });
+  const countBeforeLegacyAdmission=store.listTodos('ask').length;
+  const refusedArtifact=await rpc('neo.todo.add',{askId:'ask',title:'New artifact evidence',check:{pack:'core',kind:'evidence',params:{artifact:'synthetic-artifact'}}});
+  assert.equal(refusedArtifact.ok,false,'new artifact evidence must use an absolute path instead');
+  assert.equal(store.listTodos('ask').length,countBeforeLegacyAdmission);
+  const artifactTodo=store.addTodo('legacy-artifact-todo','ask',{title:'Legacy evidence',doneWhen:'Registered artifact synthetic-artifact exists.',instruction:null,named:null,check:{pack:'core',kind:'evidence',params:{artifact:'synthetic-artifact'}}},Date.now());
   await close(artifactTodo, 'blocked');
   const artifacts = new ArtifactFileRepository(db);
   artifacts.save(

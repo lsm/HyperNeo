@@ -159,3 +159,18 @@ test('new evidence guidance names absolute paths while stored artifact checks st
     'Registered artifact legacy exists.'
   );
 });
+
+test('new artifact evidence is refused while an unchanged stored check remains editable', () => {
+  const { pack, checked } = fixture();
+  const legacy = checked('evidence', { artifact: 'legacy' });
+  expect(pack.todos!.refuse!({ check: legacy.check, instruction: null })).toEqual(
+    expect.stringContaining('evidence {path: absolute file path}')
+  );
+  expect(pack.todos!.refuse!(legacy, [legacy])).toBeNull();
+  expect(pack.todos!.refuse!(checked('evidence', { artifact: 'different' }), [legacy])).toContain(
+    'invalid_core_check'
+  );
+  expect(
+    pack.todos!.refuse!(legacy, [checked('evidence', { path: '/synthetic/current.md' })])
+  ).toContain('invalid_core_check');
+});
