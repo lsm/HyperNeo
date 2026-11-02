@@ -18,6 +18,8 @@ import type { OperationCaller } from '../../lib/operations/registry.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { neoPublicationEditWrites } from './neo-publication-edit-writes.ts';
 
+export type NeoPublicationWriteResult = NeoPublicationAppendResult & { versionCreated?: true };
+
 type Row = { sequence: number; payloadJson: string; createdAt: string };
 const columns = 'sequence, payload_json AS payloadJson, created_at AS createdAt';
 const page = z.object({
@@ -55,8 +57,8 @@ function appendImmutable(
   db: Database,
   input: NeoPublicationInput,
   payload: string
-): NeoPublicationAppendResult {
-  return db.transaction((): NeoPublicationAppendResult => {
+): NeoPublicationWriteResult {
+  return db.transaction((): NeoPublicationWriteResult => {
     if (input.cardReply) {
       const target = db
         .prepare('SELECT ask_id FROM neo_questions WHERE id = ?')
@@ -126,6 +128,7 @@ function appendImmutable(
         return {
           accepted: true,
           created: false,
+          versionCreated: true,
           publication: { ...next, sequence: current.sequence, createdAt: current.createdAt },
         };
       }
@@ -200,7 +203,7 @@ const append = (superpipe({})('neo-publication-append') as PipelineAPI)
   .end('append') as (
   input: unknown,
   db: Database
-) => NeoPublicationAppendResult | 'invalid_publication';
+) => NeoPublicationWriteResult | 'invalid_publication';
 
 const readPage = (superpipe({})('neo-publication-page') as PipelineAPI)
   .input(['input', 'db'])
@@ -249,7 +252,7 @@ export class NeoPublicationRepository {
     });
   }
 
-  append(input: unknown): NeoPublicationAppendResult {
+  append(input: unknown): NeoPublicationWriteResult {
     const result = append(input, this.db);
     if (result === 'invalid_publication') return { accepted: false, reason: result };
     return result;

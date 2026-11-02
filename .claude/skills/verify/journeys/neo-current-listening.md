@@ -22,6 +22,8 @@ speech reasoning or audio playback. The SDK sandbox is disabled only in this
 owned fixture; OS sandbox enforcement is not exercised.
 
 Busy changes reuse immediate mailbox injection. They can land after the active
-turn ends; publication-time races belong to the follow-up, not a strict same-turn
-runner guarantee. Unit regressions also cover last-enabled-client ownership,
+turn ends; the publication-spoken journey covers publish-time races without a
+strict same-turn runner guarantee. Human input asks for an acknowledgment before
+time-consuming work; a quick answer uses one publication with spoken instead.
+Unit regressions also cover last-enabled-client ownership,
 disconnect, no speech history replay and preserving ordinary session inputs.
