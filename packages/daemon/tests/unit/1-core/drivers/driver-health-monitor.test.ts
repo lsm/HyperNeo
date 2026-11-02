@@ -169,3 +169,15 @@ test('a simultaneous daily check cannot erase a passed version verification', as
   await Promise.all([checking, verifying]);
   expect(f.stored['codex-desktop']).toMatchObject({ verifiedVersions: { desktop: '1.0.0' }, unverifiedVersion: false });
 });
+
+test('one failed Neo notice does not prevent the other clients from being checked', async () => {
+  const f = fixture();
+  f.deps.ids = ['codex-desktop', 'hyperneo'];
+  const notify = f.deps.notify;
+  f.deps.notify = async (id, text) => {
+    if (text.includes('codex-desktop')) throw new Error('Neo admission failed.');
+    return notify(id, text);
+  };
+  await expect(createDriverHealthMonitor(f.deps).check(true)).rejects.toThrow('Neo admission failed');
+  expect(f.stored.hyperneo).toMatchObject({ status: 'ok' });
+});
