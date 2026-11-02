@@ -5,6 +5,7 @@ import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { recordOperationRefusal } from '../../storage/repositories/operation-refusal-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { Logger } from '../logger.ts';
+import type { DeliveryLoadResult } from '../agent/message-delivery.ts';
 import { voiceDiagnostic } from '../voice/diagnostics.ts';
 import { NeoSpeechAudio } from './speech-audio.ts';
 import { neoDerivedId } from './derived-id.ts';
@@ -54,6 +55,31 @@ type SpeechReceipt = {
 type Entry = { id: string; sessionId: string; clientId: string; text: string; state: SpeechState };
 type Listener = { clientId: string; pending: Set<string>; audio: boolean; voice: string };
 
+const listeningInput = (superpipe({})('neo.input.listening') as PipelineAPI)
+  .input(['loaded', 'listening'])
+  .pipe(
+    (loaded: DeliveryLoadResult, listening: boolean) =>
+      `[listening: ${listening ? 'yes' : 'no'}]${
+        listening && loaded.inputKind === 'human'
+          ? "\nHuman input while listening: before any other tool call or work, call neo.speech.say with one short spoken reply to what the human just said (acknowledge it, say what you'll do, or answer it if it's quick). Then continue."
+          : ''
+      }`,
+    ['loaded', 'listening'],
+    'fact'
+  )
+  .pipe(
+    (loaded: DeliveryLoadResult, fact: string): DeliveryLoadResult => ({
+      ...loaded,
+      content:
+        typeof loaded.content === 'string'
+          ? `${loaded.content}\n\n${fact}`
+          : [...loaded.content, { type: 'text', text: fact }],
+    }),
+    ['loaded', 'fact'],
+    'result'
+  )
+  .end('result') as (loaded: DeliveryLoadResult, listening: boolean) => DeliveryLoadResult;
+
 export class NeoSpeech {
   private readonly receipts = new Map<string, Entry>();
   private readonly listeners = new Map<string, Listener>();
@@ -67,7 +93,8 @@ export class NeoSpeech {
     private readonly write: RunDbOp,
     private readonly isNeo: (sessionId: string) => boolean,
     audioBase?: string,
-    audioRequest?: typeof fetch
+    audioRequest?: typeof fetch,
+    private readonly onListeningChanged?: (sessionId: string, listening: boolean) => Promise<void>
   ) {
     this.audio = new NeoSpeechAudio(
       (client, data) => this.send(client, data),
@@ -83,7 +110,11 @@ export class NeoSpeech {
     );
     this.unsubscribe =
       hub.onClientDisconnect?.((id) => {
-        const result = this.serial.then(() => this.disconnect(id));
+        const result = this.serial.then(async () => {
+          const sessions = [...this.listeners].filter(([, listener]) => listener.clientId === id);
+          await this.disconnect(id);
+          for (const [sessionId] of sessions) await this.notifyListening(sessionId, true);
+        });
         this.serial = result.catch(() =>
           new Logger('NeoSpeech').warn('Playback disconnect record failed')
         );
@@ -178,6 +209,18 @@ export class NeoSpeech {
     ];
   }
 
+  prepareInput(sessionId: string, loaded: DeliveryLoadResult): DeliveryLoadResult {
+    return this.isNeo(sessionId) ? listeningInput(loaded, this.listeners.has(sessionId)) : loaded;
+  }
+
+  private async notifyListening(sessionId: string, before: boolean): Promise<void> {
+    const listening = this.listeners.has(sessionId);
+    if (before !== listening)
+      await this.onListeningChanged?.(sessionId, listening).catch(() =>
+        new Logger('NeoSpeech').warn('Listening state injection failed')
+      );
+  }
+
   async dispose(): Promise<void> {
     this.unsubscribe();
     await this.serial;
@@ -198,7 +241,12 @@ export class NeoSpeech {
         speechId: neoDerivedId(`speech:${sessionId}:${input.requestId}`),
         atMs: Date.now(),
       });
-    const result = this.serial.then(() => this.dispatch(action, sessionId, input, caller));
+    const result = this.serial.then(async () => {
+      const before = this.listeners.has(sessionId);
+      const receipt = await this.dispatch(action, sessionId, input, caller);
+      if (action === 'listen') await this.notifyListening(sessionId, before);
+      return receipt;
+    });
     this.serial = result.catch(() => {});
     return result;
   }

@@ -1434,7 +1434,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           taskAgentManager?.getRestoredRateLimitRetryAt(sessionId) ?? null,
         getMessageContent: (sessionId: string, messageUuid: string) =>
           reactiveDb?.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageUuid) ?? null,
-        prepareContent: (loaded, job) => boundDeliveryContent(db.getDatabase(), job, loaded),
+        prepareContent: async (loaded, job) =>
+          rpcHandlers.prepareNeoInput(
+            job.payload.sessionId as string,
+            await boundDeliveryContent(db.getDatabase(), job, loaded)
+          ),
         isSessionArchived: (sessionId: string) =>
           reactiveDb?.db.getSession(sessionId)?.status === 'archived',
         markDeliveryFailed: async (sessionId: string, messageUuid: string) =>

@@ -152,6 +152,7 @@ export function asMessageDeliveryPayload(
 export type DeliveryContent = string | MessageContent[];
 
 export type DeliveryLoadResult = {
+  inputKind?: string;
   content: DeliveryContent;
   sendStatus: string;
   neoBatch?: true;
