@@ -12,6 +12,7 @@ export function ArtifactCards({ artifacts }: { artifacts?: readonly ArtifactRef[
           <button
             type="button"
             aria-label={t('artifact.openNamed', { name: artifact.title })}
+            aria-description={t('artifact.savedAttachment')}
             onClick={() =>
               openArtifactPreview(
                 { kind: 'artifact', artifactId: artifact.artifactId },
@@ -20,6 +21,8 @@ export function ArtifactCards({ artifacts }: { artifacts?: readonly ArtifactRef[
             }
             class="max-w-full break-words rounded-lg border border-line px-3 py-1.5 text-left text-sm hover:bg-fill-soft"
           >
+            <span class="text-fg-muted">{t('artifact.savedAttachment')}</span>
+            {' · '}
             {`${artifact.title} · ${KIND_LABELS[artifact.kind]} · ${formatBytes(artifact.byteLength)} · `}
             <span class="text-accent">{t('artifact.openPreview')}</span>
           </button>

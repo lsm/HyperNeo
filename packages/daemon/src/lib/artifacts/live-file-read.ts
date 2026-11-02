@@ -16,7 +16,7 @@ import { liveFileByteLimit, prepareLiveFileContent } from './live-file-content.t
 const inputSchema = z
   .strictObject({
     sourceMessageOrCard: z.strictObject({
-      kind: z.enum(['message', 'publication', 'todo']),
+      kind: z.enum(['message', 'publication', 'todo', 'question']),
       id: z.string().min(1).max(200),
       revisionId: z.string().min(1).max(200).optional(),
     }),

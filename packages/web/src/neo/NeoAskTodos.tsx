@@ -1,6 +1,7 @@
 import { ChevronRightGlyph } from '../components/icons/common-glyphs.tsx';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { ArtifactCards } from '../components/artifacts/ArtifactCards.tsx';
+import { FileReferenceCards } from '../components/artifacts/FileReferenceCards.tsx';
 import type {
   NeoAskEntry,
   NeoQuestionAnswer,
@@ -213,6 +214,17 @@ function TodoRow({
             </div>
           </div>
         )}
+        <FileReferenceCards
+          source={{ kind: 'todo', id: todo.id }}
+          text={[
+            todo.title,
+            number === undefined ? neoTodoStatus(todo) : todo.doneWhen,
+            ...(onToggle && expanded ? detail : []),
+            ...((!onToggle || expanded) && number === undefined && todo.state === 'blocked'
+              ? [todo.nextAction ?? '']
+              : []),
+          ].join('\n')}
+        />
       </div>
       {todo.link && todo.state !== 'removed' && onOpen && (
         <div class="flex shrink-0 items-center justify-end gap-2 self-start">
@@ -263,6 +275,10 @@ function SettledQuestionBody({ question }: { question: NeoQuestionEntry }) {
         </Modal>
       )}
       <QuestionDocument question={question} />
+      <FileReferenceCards
+        source={{ kind: 'question', id: question.id }}
+        text={[neoQuestionText(question), question.document ?? ''].join('\n')}
+      />
       <ArtifactCards artifacts={question.artifacts} />
     </>
   );
@@ -349,6 +365,10 @@ function QuestionBox({
         class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
       />
       <QuestionDocument question={question} />
+      <FileReferenceCards
+        source={{ kind: 'question', id: question.id }}
+        text={[neoQuestionText(question), question.document ?? ''].join('\n')}
+      />
       <ArtifactCards artifacts={question.artifacts} />
       {question.kind === 'start' &&
         listed.map((todo) => (
