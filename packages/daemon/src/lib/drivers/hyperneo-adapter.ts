@@ -114,6 +114,7 @@ export interface HyperneoSessionControl {
   resolveModel(model: string): Promise<{ id: string; provider: string } | null>;
   effort?(sessionId: string): string | null;
   model(sessionId: string): string | null;
+  provider?(sessionId: string): string | null;
   chooseWorktree(sessionId: string): Promise<void>;
   announce(sessionId: string): void;
   interrupt(sessionId: string): boolean | Promise<boolean>;
@@ -492,6 +493,7 @@ export async function describeHyperneoWork(
 ): Promise<Result<WorkDetail>> {
   const work = toWork(row, deps.machine);
   const model = deps.sessions.model(row.id);
+  const provider = deps.sessions.provider?.(row.id);
   const effort = deps.sessions.effort?.(row.id);
   const turnEnds = since === undefined ? [] : await deps.readTurnEnds(row.id, since);
   const last = row.queryFailureId
@@ -502,6 +504,7 @@ export async function describeHyperneoWork(
     value: {
       ...work,
       ...(model ? { model } : {}),
+      ...(provider ? { provider } : {}),
       ...(effort ? { effort } : {}),
       ...(turnEnds.length ? { turnEnds } : {}),
       status: work.status === 'done' && last?.failed ? 'failed' : work.status,

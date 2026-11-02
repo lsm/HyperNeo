@@ -258,6 +258,7 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
         (entry) => entry.value === sessionManager.getSessionFromDB(sessionId)?.config?.thinkingLevel
       )?.label.toLowerCase() ?? null,
     model: (sessionId) => sessionManager.getSessionFromDB(sessionId)?.config?.model ?? null,
+    provider: (sessionId) => sessionManager.getSessionFromDB(sessionId)?.config?.provider ?? null,
     chooseWorktree: async (sessionId) => {
       await sessionManager.getSessionLifecycle().completeWorktreeChoice(sessionId, 'worktree');
     },

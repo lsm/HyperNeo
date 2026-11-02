@@ -1,3 +1,6 @@
+import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { readHyperneoTurnEnds } from '../../../../src/storage/hyperneo-turn-ends-read.ts';
 import {
   chmodSync,
@@ -28,11 +31,17 @@ import type { MailboxHandoffOutcome } from '../../../../src/lib/mailbox/handoff'
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns';
 
-function control(db: Database, events: string[], withdraw?: HyperneoSessionControl['withdraw']) {
+function control(
+  db: Database,
+  events: string[],
+  withdraw?: HyperneoSessionControl['withdraw'],
+  provider?: HyperneoSessionControl['provider']
+) {
   let selectedModel = 'gpt-6-luna';
   return {
     sessions: {
       ...(withdraw ? { withdraw } : {}),
+      ...(provider ? { provider } : {}),
       resolveModel: async (model: string) =>
         model === 'GLM 5.3'
           ? { id: 'glm-5.3', provider: 'glm' }
@@ -152,7 +161,8 @@ describe('hyperneo adapter send and status', () => {
 
   function adapter(
     prepareExecution?: WorkExecutionPreparer,
-    withdraw?: HyperneoSessionControl['withdraw']
+    withdraw?: HyperneoSessionControl['withdraw'],
+    provider?: HyperneoSessionControl['provider']
   ) {
     fillSdkMessageFixtureColumns(db);
     return createHyperneoAdapter({
@@ -172,9 +182,30 @@ describe('hyperneo adapter send and status', () => {
         });
         return outcome;
       },
-      ...control(db, events, withdraw),
+      ...control(db, events, withdraw, provider),
     });
   }
+
+  test('status preserves the session provider through operation result validation', async () => {
+    const driver = adapter(undefined, undefined, () => 'selected-provider');
+    const registry = createOperationRegistry(
+      createWorkVerbOperations({
+        adapters: () => [driver],
+        remote: { list: () => [], invoke: async () => ({}) },
+        daemonName: 'imac',
+      })
+    );
+    const result = await invokeOperation(
+      registry,
+      'work.status',
+      { ref: { adapter: 'hyperneo', id: 'idle' } },
+      { source: 'rpc' }
+    );
+    expect(result).toMatchObject({
+      kind: 'completed',
+      value: { ok: true, value: { provider: 'selected-provider' } },
+    });
+  });
 
   test('reuse resolves model aliases and effort through the start resolver without creating work', async () => {
     const result = await adapter().resolveStartConfiguration!({
@@ -184,7 +215,10 @@ describe('hyperneo adapter send and status', () => {
       model: 'GLM 5.3',
       effort: 'high',
     });
-    expect(result).toMatchObject({ ok: true, value: { model: 'glm-5.3', effort: 'high' } });
+    expect(result).toMatchObject({
+      ok: true,
+      value: { model: 'glm-5.3', provider: 'glm', effort: 'high' },
+    });
     expect(events).toEqual([]);
     expect(handed).toEqual([]);
   });

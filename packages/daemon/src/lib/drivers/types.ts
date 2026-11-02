@@ -65,6 +65,7 @@ export const WorkSummarySchema = z.object({
     )
     .optional(),
   model: z.string().optional(),
+  provider: z.string().optional(),
   effort: z.string().optional(),
   identityObservation: z
     .object({
@@ -310,7 +311,7 @@ export interface WorkAdapter {
   readonly unsupportedCapabilities?: Partial<Record<WorkVerb, string>>;
   readonly resolveStartConfiguration?: (
     request: StartRequest
-  ) => Promise<Result<z.infer<typeof workStartConfiguration.schema>>>;
+  ) => Promise<Result<z.infer<typeof workStartConfiguration.schema> & { provider?: string }>>;
   readonly supportsStartEffort?: boolean;
   readonly supportsStartPreparation?: boolean;
   find(query: FindQuery): PlaceGroup[] | Promise<PlaceGroup[]>;

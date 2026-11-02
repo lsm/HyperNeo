@@ -33,7 +33,15 @@ function harness(
           const selected = workStartConfiguration.select(request, [
             { id: 'gpt-6.1-sol', aliases: ['Sol 6.1'], efforts: ['high', 'low'], isDefault: true },
           ]);
-          return 'ok' in selected ? selected : { ok: true, value: selected };
+          return 'ok' in selected
+            ? selected
+            : {
+                ok: true,
+                value: {
+                  ...selected,
+                  ...(config.requestedProvider ? { provider: config.requestedProvider } : {}),
+                },
+              };
         }
       : undefined,
     capabilities: ['find', 'start', 'send'],
@@ -81,6 +89,7 @@ function harness(
               lastActivityAt: 1,
               model: config?.model ?? 'claude-opus-5-5',
               effort: config?.effort ?? 'medium',
+              ...(config?.provider ? { provider: config.provider } : {}),
             },
           },
     send: async (ref, message) => {
@@ -244,4 +253,23 @@ describe('work.start configured reuse', () => {
     expect(run.sent).toEqual([]);
     expect(run.started).toEqual([]);
   });
+});
+
+describe('work.start provider-aware reuse', () => {
+  test.each(['selected', 'other', undefined])(
+    'requires the resolved provider to be confirmed: %s',
+    async (provider) => {
+      const id = `provider-${provider}`;
+      const run = harness([{ id, status: 'done' }], [id], {
+        adapter: 'hyperneo',
+        model: 'gpt-6.1-sol',
+        effort: 'high',
+        provider,
+        requestedProvider: 'selected',
+      });
+      const result = await run.start(neo, false, { model: 'Sol 6.1', effort: 'high' });
+      expect(result.value?.ref.id).toBe(provider === 'selected' ? id : 'fresh');
+      expect(run.sent).toEqual(provider === 'selected' ? [id] : []);
+    }
+  );
 });
