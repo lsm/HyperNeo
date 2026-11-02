@@ -4,6 +4,26 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.53.0] - 2026-11-02
+
+### Google connections
+
+- Manage Google accounts in Connections settings and refresh grants through the daemon lifecycle (#9487, #9485).
+- Search Gmail, read bounded threads and prepare unsent MIME drafts through MCP (#9488, #9491, #9492).
+- Read bounded Calendar pages through MCP (#9493).
+
+### Neo replies and files
+
+- Open the session named in a Neo publication using the existing session links (#9499, #9501).
+- Read current text and media from authorized file references, preview path links and show current-file cards in replies (#9505, #9507, #9509, #9511, #9513).
+
+### Fixes
+
+- Reject publication links that cannot be saved (#9497).
+- Cap root Neo Bash commands at two minutes and explain timeout handoffs (#9495).
+- Keep phone Work dialog titles inside the viewport (#9503).
+- Retry failed daemon merge attempts with a durable limit (#9484).
+
 ## [0.52.0] - 2026-10-30
 
 ### Todo follow-through
