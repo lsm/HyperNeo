@@ -52577,6 +52577,24 @@
                       "effort": {
                         "type": "string"
                       },
+                      "execution": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "directory": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "machine": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "directory",
+                          "machine"
+                        ],
+                        "type": "object"
+                      },
                       "hits": {
                         "maximum": 9007199254740991,
                         "minimum": 0,
@@ -52670,6 +52688,9 @@
                           "name"
                         ],
                         "type": "object"
+                      },
+                      "provider": {
+                        "type": "string"
                       },
                       "ref": {
                         "additionalProperties": false,
@@ -53347,7 +53368,9 @@
               "adapter": {
                 "enum": [
                   "codex-desktop",
-                  "claude-code"
+                  "claude-code",
+                  "claude-desktop",
+                  "copilot-cli"
                 ],
                 "type": "string"
               },
@@ -53408,7 +53431,9 @@
                       "adapter": {
                         "enum": [
                           "codex-desktop",
-                          "claude-code"
+                          "claude-code",
+                          "claude-desktop",
+                          "copilot-cli"
                         ],
                         "type": "string"
                       },
@@ -54184,6 +54209,24 @@
                   "effort": {
                     "type": "string"
                   },
+                  "execution": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "directory": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "machine": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "directory",
+                      "machine"
+                    ],
+                    "type": "object"
+                  },
                   "hits": {
                     "maximum": 9007199254740991,
                     "minimum": 0,
@@ -54277,6 +54320,9 @@
                       "name"
                     ],
                     "type": "object"
+                  },
+                  "provider": {
+                    "type": "string"
                   },
                   "receipt": {
                     "additionalProperties": false,
@@ -54917,6 +54963,9 @@
                     ],
                     "type": "object"
                   },
+                  "provider": {
+                    "type": "string"
+                  },
                   "recentInputs": {
                     "items": {
                       "additionalProperties": false,
@@ -54926,6 +54975,9 @@
                         },
                         "human": {
                           "type": "boolean"
+                        },
+                        "inputId": {
+                          "type": "string"
                         },
                         "text": {
                           "type": "string"
