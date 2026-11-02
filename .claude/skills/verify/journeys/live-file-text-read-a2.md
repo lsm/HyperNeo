@@ -21,8 +21,8 @@ reference refusals. Non-human callers refuse before storage. Check zero new
 artifact/identity rows and no artifacts directory/blobs.
 
 After merge, read the owner build back and rerun the isolated RPC proof from the
-merged commit. This is A2 acceptance per the approved boundary update; it does not
-require a paired-human RPC connection. Actual path clicks in a Neo reply belong
+merged commit. This follows the [maintainer-approved server/web acceptance split](https://github.com/lsm/HyperNeo/pull/9509#issuecomment-6570323070);
+it does not require a paired-human RPC connection. Actual path clicks in a Neo reply belong
 to A4. Do not forge a human caller or expand the worker socket's permissions.
 Write A2.md only after merge, deployment/readback and the merged-version proof.
 
