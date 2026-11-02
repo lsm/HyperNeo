@@ -11,7 +11,7 @@ import { QueryOptionsBuilder } from '../../../packages/daemon/src/lib/agent/quer
 
 const [mode, directory] = process.argv.slice(2);
 const run = resolve(directory);
-assert(['verify', 'before', 'copilot', 'copilot-before'].includes(mode));
+assert(['verify', 'before', 'copilot', 'copilot-before', 'copilot-busy', 'copilot-busy-before'].includes(mode));
 const copilot = mode.startsWith('copilot');
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -98,7 +98,7 @@ try {
   todos.updateTodo(todo, { state: 'done', finishedAt: at }, at);
   await Bun.sleep(20);
   if (copilot) {
-    writeFileSync(join(run, 'human-request.json'), JSON.stringify({ text: human }));
+    writeFileSync(join(run, 'human-request.json'), JSON.stringify({ text: human, earlierInputs: mode.includes('busy') ? 60 : 0 }));
     observed.humanSend = { boundary: 'synthetic native CLI human input; no daemon work.send', text: human };
     await wait('Copilot fixture emitted the human turn', () => existsSync(join(run, 'human-emitted')));
   } else {
@@ -110,7 +110,11 @@ try {
   if (mode.endsWith('before')) {
     await Bun.sleep(500);
     assert.equal(toolCalls, 0);
-    observed.reproduced = 'Human turn in completed tracked worker reached no Neo model request';
+    if (mode.includes('busy')) {
+      assert(bodies.some((body) => text(body).includes('The human worked directly')));
+      assert(!bodies.some((body) => text(body).includes('The human said: ' + human)));
+      observed.reproduced = 'Newest human input lost attribution after 60 earlier inputs; no correct same-ask todo';
+    } else observed.reproduced = 'Human turn in completed tracked worker reached no Neo model request';
   } else {
     await wait('Neo records direct human work as a todo', () => todos.listTodos(askId).some((item) => item.title === newTitle));
     assert.equal(toolCalls, 1);

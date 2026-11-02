@@ -70,11 +70,13 @@ async function start(fixture: ReturnType<typeof setup>, message = fixture.reques
 
 describe('owned Copilot lifecycle', () => {
   test.each([
-    [true, 'settled'],
-    [true, 'error'],
-    [true, 'abort-queued'],
-    [false, 'settled'],
-  ] as const)('reports a Copilot turn once with human origin %s after %s', async (human, prior) => {
+    [true, 'settled', 0, 0],
+    [true, 'error', 0, 0],
+    [true, 'abort-queued', 0, 0],
+    [false, 'settled', 0, 0],
+    [true, 'settled', 60, 0],
+    [true, 'settled', 0, 60],
+  ] as const)('reports human=%s %s (%s before/%s after)', async (human, prior, earlier, later) => {
     const fixture = setup();
     const since = Date.now() - 1;
     const work = await start(fixture, prior);
@@ -88,6 +90,14 @@ describe('owned Copilot lifecycle', () => {
         'events.jsonl'
       );
       const events = [
+        ...Array.from({ length: earlier }, (_, index) => ({
+          type: 'user.message',
+          data: {
+            messageId: `earlier-${index}`,
+            interactionId: `earlier-turn-${index}`,
+            content: `Earlier note ${index}`,
+          },
+        })),
         {
           type: 'user.message',
           data: {
@@ -96,6 +106,14 @@ describe('owned Copilot lifecycle', () => {
             content: 'Change the summary directly.',
           },
         },
+        ...Array.from({ length: later }, (_, index) => ({
+          type: 'user.message',
+          data: {
+            messageId: `later-${index}`,
+            interactionId: `later-turn-${index}`,
+            content: `Later note ${index}`,
+          },
+        })),
         {
           type: 'assistant.message',
           data: {
@@ -126,10 +144,26 @@ describe('owned Copilot lifecycle', () => {
     expect(detail.value.recentInputs).toContainEqual(
       expect.objectContaining(
         human
-          ? { inputId: 'human-direct', at, text: 'Change the summary directly.', human: true }
+          ? {
+              inputId: 'human-direct',
+              at: at + earlier,
+              text: 'Change the summary directly.',
+              human: true,
+            }
           : { inputId: work.receipt!.inputId, text: 'settled', human: false }
       )
     );
+    if (earlier) {
+      expect(detail.value.recentInputs).toHaveLength(50);
+      expect(detail.value.recentInputs?.at(-1)?.inputId).toBe('human-direct');
+      const recent = await fixture.adapter.status!(work.ref);
+      expect(recent.ok && recent.value.recentInputs).toHaveLength(8);
+      expect(recent.ok && recent.value.recentInputs?.at(-1)?.inputId).toBe('human-direct');
+    }
+    if (later) {
+      expect(detail.value.recentInputs).toHaveLength(50);
+      expect(detail.value.recentInputs?.at(-1)?.inputId).toBe('later-59');
+    }
     const db = new Database(':memory:');
     try {
       runMigrations(db, () => {});

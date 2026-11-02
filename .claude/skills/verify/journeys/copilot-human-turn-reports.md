@@ -37,3 +37,12 @@ is required; clipped history alone never invents completion. Snapshot metadata
 and durable daemon receipt IDs preserve attribution for evicted and older rows.
 No external session is adopted, resumed or replayed by a status read. Run the
 existing Copilot lifecycle/input/history/retention contracts with this journey.
+
+Repeat with mode copilot-busy to emit 60 earlier native human inputs before the
+completed direct turn. The newest input must still reach Neo with its own text
+and reply, create one same-ask todo and remain deduplicated. Inputs returned by
+status remain chronological: up to 50 since the anchor, prioritizing the selected
+turn endings and then newest other inputs; newest 8 without an anchor. The
+process contract also checks a turn that finishes after 60 later pending inputs.
+Mode copilot-busy-before on the pre-review-fix production source reproduces the
+wrong attribution and missing same-ask todo; retain this helper and CLI fixture.
