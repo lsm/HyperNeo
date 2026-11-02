@@ -65,6 +65,10 @@ describe('API compatibility report', () => {
       .toEqual([expect.objectContaining({ level: 'risky', path: 'result' })]);
     expect(diff(surface(object({}), { oneOf: [a, b] }), surface(object({}), { oneOf: [variant('a', { type: 'number' }), b] })))
       .toContainEqual(expect.objectContaining({ level: 'breaking', path: 'result[a].title' }));
+    expect(diff(surface(object({}), a), surface(object({}), { anyOf: [a, b] })))
+      .toEqual([expect.objectContaining({ level: 'risky', path: 'result' })]);
+    expect(diff(surface(object({}), string), surface(object({}), { type: ['string', 'number'] })))
+      .toEqual([expect.objectContaining({ level: 'risky', path: 'result' })]);
   });
   test('local schema references preserve detailed classifications, including recursive definitions', () => {
     const schema = (names: string[]) => ({
