@@ -241,6 +241,7 @@ try {
     const chain = async (title: string, id = 'flow') => call('neo.ask.open', { title, request: 'Approved: complete the entire chain.', todos: [{ ...step(`${title}-1`, id), start: true }, { ...step(`${title}-2`, id), after: [0] }, { ...step(`${title}-3`, id), after: [1] }] });
     const read = async (askId: string) => (await rpc('neo.ask.read', { askId })).entry;
     const complete = async (title: string) => { writeFileSync(join(run, title), 'Verified outcome'); await refresh(); };
+    const seedLegacy = (todo: { id: string; askId: string }) => { store.updateTodo(store.getTodo(todo.id)!, { state: 'blocked', blockedBy: 'question', blockedReason: 'Waiting for the human to start it.' }, Date.now()); store.askQuestion(crypto.randomUUID(), todo.askId, { kind: 'start', text: 'Start legacy second?', startTodos: [todo.id], options: null, multiple: false, noLabel: null, yesLabel: null }, Date.now()); };
     if (mode === 'chain-parent') {
       const plan = await call('neo.ask.open', { title: 'Parent decision plan', request: 'Complete both repositories after any applicable decision.', todos: [
         { title: 'parent-root-evidence', after: [], check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'parent-root-evidence') } } },
@@ -270,7 +271,9 @@ try {
       const [first, second] = split.todos;
       assert.notEqual(first.askId, second.askId);
       assert.equal((await read(second.askId)).questions.length, 0);
-      await complete(first.title);
+      seedLegacy(second);
+      writeFileSync(join(run, first.title), 'Verified outcome');
+      await call('neo.todo.close', { todoId: first.id, reason: 'First repository verified.' });
       const advanced = await read(second.askId);
       evidence.split = advanced;
       assert.equal(advanced.todos.find((t: { id: string }) => t.id === second.id).state, 'doing');
@@ -330,10 +333,13 @@ try {
       assert.equal(starts(), 4); evidence.unapproved = waiting;
       const legacy = await chain('legacy', 'restart');
       const [a, b] = legacy.todos;
-      const seedLegacy = () => { store.updateTodo(store.getTodo(b.id)!, { state: 'blocked', blockedBy: 'question', blockedReason: 'Waiting for the human to start it.' }, Date.now()); store.askQuestion(crypto.randomUUID(), a.askId, { kind: 'start', text: 'Start legacy second?', startTodos: [b.id], options: null, multiple: false, noLabel: null, yesLabel: null }, Date.now()); };
-      seedLegacy();
-      await call('neo.todo.edit', { todoId: a.id, priority: 'high' });
-      const pruned = await read(a.askId); evidence.legacyPruned = pruned; assert.equal(pruned.todos.find((t: { id: string }) => t.id === b.id).state, 'todo'); seedLegacy();
+      for (const add of [false, true]) {
+        seedLegacy(b);
+        const changed = await call(add ? 'neo.todo.add' : 'neo.todo.edit', add ? { askId: a.askId, ...step('new-independent', 'restart'), after: [] } : { todoId: a.id, priority: 'high' });
+        const pruned = await read(a.askId); evidence[add ? 'extensionPruned' : 'editPruned'] = pruned; assert.equal(pruned.todos.find((t: { id: string }) => t.id === b.id).state, 'todo');
+        if (add) await call('neo.todo.remove', { todoId: changed.todo.id, reason: 'Fixture cleanup after extension assertion.' });
+      }
+      seedLegacy(b);
       await ws!.close(); await app!.cleanup(); app = undefined; ws = undefined;
       await open();
       await complete(a.title);

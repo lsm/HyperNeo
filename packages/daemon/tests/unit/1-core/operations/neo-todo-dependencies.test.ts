@@ -111,7 +111,7 @@ function setup() {
 }
 
 describe('todo dependencies', () => {
-  test.each(['parent', 'sibling', 'linked-parent'] as const)(
+  test.each(['parent', 'sibling', 'linked-parent', 'child'] as const)(
     'a split dependent respects the scope of a %s question',
     async (scope) => {
       const { db, store, invoke, step, runner, sent } = setup();
@@ -136,7 +136,7 @@ describe('todo dependencies', () => {
         const [root, first, second] = opened.todos;
         const question = store.askQuestion(
           'scope-question',
-          scope === 'sibling' ? first.askId : root.askId,
+          scope === 'child' ? second.askId : scope === 'sibling' ? first.askId : root.askId,
           {
             text: 'Review before continuing?',
             kind: 'reply',
@@ -149,12 +149,20 @@ describe('todo dependencies', () => {
           },
           Date.now()
         );
+        store.updateTodo(second, { state: 'blocked', blockedBy: 'question' }, Date.now());
+        const legacy = {
+          ...question,
+          kind: 'start' as const,
+          todoId: null,
+          startTodos: [second.id],
+        };
+        store.askQuestion('legacy-scope', second.askId, legacy, Date.now());
         await runner.recompute(store.getTodo(first.id)!, {}, Date.now(), {
           state: 'done',
           evidence: 'First repository PR merged.',
         });
         await runner.refresh(() => {});
-        if (scope === 'parent') {
+        if (scope === 'parent' || scope === 'child') {
           expect(store.getTodo(second.id)?.state).not.toBe('doing');
           expect(sent).toHaveLength(1);
           store.answerQuestion(question, 'Continue.', 'chat', Date.now());
@@ -168,38 +176,6 @@ describe('todo dependencies', () => {
       }
     }
   );
-
-  test('an approved dependency advances across repository cards without a child Start answer', async () => {
-    const { db, store, sessions, invoke, step, runner, sent } = setup();
-    try {
-      const target = { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } };
-      const work = { target, instruction: 'Complete the approved repository step.' };
-      const opened = await invoke('neo.ask.open', {
-        title: 'Cross-repository chain',
-        request: 'Complete both repository steps.',
-        todos: [
-          { ...step('First repo'), ...work, named: { repository: 'synthetic/first' }, start: true },
-          { ...step('Second repo', [0]), ...work, named: { repository: 'synthetic/second' } },
-        ],
-      });
-      expect(opened.ok).toBe(true);
-      const [first, second] = opened.todos;
-      expect(first.askId).not.toBe(second.askId);
-      expect(store.listQuestions(second.askId)).toHaveLength(0);
-      await runner.recompute(store.getTodo(first.id)!, {}, Date.now(), {
-        state: 'done',
-        evidence: 'First repository PR merged.',
-      });
-      await runner.refresh(() => {});
-      expect(store.getTodo(second.id)?.state).toBe('doing');
-      expect(sessions.readRef(second.id)).toEqual(target.ref);
-      expect(store.listQuestions(second.askId)).toHaveLength(0);
-      await runner.refresh(() => {});
-      expect(sent).toHaveLength(2);
-    } finally {
-      db.close();
-    }
-  });
 
   test.each([false, true])(
     'removing an unstarted predecessor releases its dependent but not independent work; explicit=%s',
@@ -241,25 +217,29 @@ describe('todo dependencies', () => {
     }
   );
 
-  test.each(['approved', 'legacy', 'unstarted'])(
+  test.each(['approved', 'legacy', 'unstarted', 'split', 'split-legacy', 'extend-legacy'])(
     'authorized dependency chain advances without extra Start cards; root=%s',
     async (mode) => {
       const { db, store, sessions, invoke, step, runner, sent } = setup();
       try {
         const target = { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } };
         const work = { target, instruction: 'Perform the next approved step.' };
+        const repo = (name: string) =>
+          mode.startsWith('split') ? { named: { repository: `synthetic/${name}` } } : {};
         const opened = await invoke('neo.ask.open', {
           title: 'Approved chain',
           request: 'Complete all three steps.',
           todos: [
-            { ...step('PR1'), ...work, start: mode !== 'unstarted' },
-            { ...step('PR2', [0]), ...work },
-            { ...step('PR3', [1]), ...work },
+            { ...step('PR1'), ...work, ...repo('first'), start: mode !== 'unstarted' },
+            { ...step('PR2', [0]), ...work, ...repo('second') },
+            { ...step('PR3', [1]), ...work, ...repo('second') },
           ],
         });
         expect(opened.ok).toBe(true);
         const [first, second, third] = opened.todos;
-        if (mode === 'legacy') {
+        expect(first.askId !== second.askId).toBe(mode.startsWith('split'));
+        if (mode.startsWith('split')) expect(store.listQuestions(second.askId)).toHaveLength(0);
+        if (mode.includes('legacy')) {
           store.updateTodo(
             second,
             {
@@ -271,7 +251,7 @@ describe('todo dependencies', () => {
           );
           store.askQuestion(
             'legacy-start',
-            first.askId,
+            second.askId,
             {
               text: 'Start PR2?',
               kind: 'start',
@@ -284,6 +264,8 @@ describe('todo dependencies', () => {
             Date.now()
           );
         } else expect(store.listQuestions(first.askId)).toHaveLength(mode === 'unstarted' ? 1 : 0);
+        if (mode === 'extend-legacy')
+          await invoke('neo.todo.add', { askId: first.askId, ...step('Independent', []), ...work });
         await runner.recompute(store.getTodo(first.id)!, {}, Date.now(), {
           state: 'done',
           evidence: 'PR1 merged.',
@@ -292,7 +274,12 @@ describe('todo dependencies', () => {
         expect(store.getTodo(second.id)?.state).toBe('doing');
         expect(store.getTodo(third.id)?.state).toBe('todo');
         expect(sessions.readRef(second.id)).toEqual(target.ref);
-        expect(store.listQuestions(first.askId).every((q) => q.state === 'retired')).toBe(true);
+        expect(
+          store
+            .listQuestions(first.askId)
+            .filter((q) => q.state !== 'retired')
+            .map((q) => q.state)
+        ).toEqual(mode === 'extend-legacy' ? ['open'] : []);
         await runner.recompute(store.getTodo(second.id)!, {}, Date.now(), {
           state: 'done',
           evidence: 'PR2 merged.',
