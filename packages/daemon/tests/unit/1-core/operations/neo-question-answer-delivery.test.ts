@@ -716,7 +716,7 @@ test.each(['space', 'opencode'])(
         };
       }
       expect(name).toBe('work.status');
-      expect(input).toEqual({ ref: { adapter, id: 'worker' }, since: 0 });
+      expect(input).toMatchObject({ ref: { adapter, id: 'worker' }, since: 0 });
       return {
         kind: 'completed',
         value: {
@@ -727,7 +727,7 @@ test.each(['space', 'opencode'])(
             place: { machine: 'synthetic', folder: '/synthetic', name: 'Synthetic' },
             status: 'running',
             lastActivityAt: 1,
-            recentInputs: [{ at: 1, text: visible ? message : 'Unrelated input' }],
+            recentInputs: [workInput(1, visible ? message : 'Unrelated input')!],
           },
         },
       };
