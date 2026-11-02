@@ -205,7 +205,8 @@ export function diffSchemas(
           side === 'result' ? 'risky' : 'safe',
           `Enum/constant value added: ${added.join(', ')}`
         );
-    } else if (av || bv) send('breaking', 'Enum/constant constraint changed');
+    } else if (av) send(side === 'input' ? 'safe' : 'risky', 'Enum/constant constraint removed');
+    else if (bv) send(side === 'input' ? 'breaking' : 'safe', 'Enum/constant constraint added');
     for (const union of ['anyOf', 'oneOf']) {
       const old = a[union] as unknown[] | undefined,
         next = b[union] as unknown[] | undefined;
