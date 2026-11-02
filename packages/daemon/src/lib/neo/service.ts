@@ -1,11 +1,13 @@
 import { createQuestionRetirement } from './question-retirement.ts';
 import { neoStallReminderWrite } from '../../storage/repositories/neo-stall-reminder-write.ts';
 import { NeoSpeech } from './speech.ts';
+import { ensurePrompt } from '../agent/message-delivery-outbox.ts';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { neoSessionTrackWrites } from '../../storage/repositories/neo-session-track-write.ts';
 import { createNeoQuestionAnswerDelivery } from './question-answer-delivery.ts';
 import { wakeFailedHyperneoSession } from './query-failure.ts';
 import type { UUID } from 'node:crypto';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import {
   NeoSessionMessageRepository,
   WORKER_BATCH_SENDER,
@@ -178,7 +180,39 @@ export class NeoService {
     this.speech = new NeoSpeech(
       hub,
       this.runDbOp,
-      (id) => this.repo.getBindingBySession(id)?.kind === 'neo'
+      (id) => this.repo.getBindingBySession(id)?.kind === 'neo',
+      undefined,
+      undefined,
+      async (id, listening) => {
+        if (this.sessions.getCachedSession(id)?.getProcessingState().status === 'processing')
+          await ensurePrompt({
+            db: this.db.getDatabase(),
+            sdkMessageRepo: this.db.getSDKMessageRepo(),
+            jobQueue: this.db.getJobQueueRepo(),
+            sessionId: id,
+            message: {
+              type: 'user',
+              uuid: crypto.randomUUID() as UUID,
+              session_id: id,
+              parent_tool_use_id: null,
+              inputKind: 'system',
+              isSynthetic: true,
+              message: {
+                role: 'user',
+                content: [
+                  {
+                    type: 'text',
+                    text: listening
+                      ? 'The human is now listening.'
+                      : 'The human stopped listening.',
+                  },
+                ],
+              },
+            } as SDKUserMessage,
+            origin: 'system',
+            delivery: { origin: 'space_inject', injectedMidTurn: true },
+          });
+      }
     );
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());

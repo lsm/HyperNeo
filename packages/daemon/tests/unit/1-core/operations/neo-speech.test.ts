@@ -30,6 +30,7 @@ describe('spoken replies separate from publications', () => {
   let audioController: ReadableStreamDefaultController<Uint8Array>;
   let audioSignal: AbortSignal | null | undefined;
   let synthesis: number;
+  let listeningStates: boolean[];
   let writeGate: (() => Promise<void>) | undefined;
   const call = async (name: string, input: unknown, caller = human) => {
     const result = await invokeOperation(registry, 'neo.speech.' + name, input, caller);
@@ -64,6 +65,7 @@ describe('spoken replies separate from publications', () => {
         send: (data) => messages.push({ client: id, message: JSON.parse(data) }),
       });
     writeGate = undefined;
+    listeningStates = [];
     synthesis = 0;
     hub.onClientDisconnect = (handler) => {
       disconnected = handler;
@@ -89,7 +91,10 @@ describe('spoken replies separate from publications', () => {
           }),
           { headers: { 'content-type': 'audio/pcm' } }
         );
-      }) as typeof fetch
+      }) as typeof fetch,
+      async (_session, enabled) => {
+        listeningStates.push(enabled);
+      }
     );
     registry = createOperationRegistry(speech.operations);
   });
@@ -97,6 +102,22 @@ describe('spoken replies separate from publications', () => {
     await speech.dispose();
     hub.cleanup();
     mailbox.close();
+  });
+
+  test('disconnect updates the listening fact only for the winning client, without replay', async () => {
+    await listen();
+    await listen(true, { ...human, clientId: 'other' });
+    expect(listeningStates).toEqual([true]);
+    disconnected('phone');
+    await listen(true, { ...human, clientId: 'other' });
+    expect(listeningStates).toEqual([true]);
+    disconnected('other');
+    expect(await say()).toMatchObject({ ok: false, reason: 'voice_replies_off' });
+    expect(listeningStates).toEqual([true, false]);
+    await listen();
+    expect(messages.filter((m) => m.message.data.type === 'say')).toHaveLength(0);
+    const ordinary = { content: 'ordinary', sendStatus: 'enqueued' };
+    expect(speech.prepareInput('ordinary', ordinary)).toBe(ordinary);
   });
 
   test('successful speech returns model guidance through MCP without repeating the utterance', async () => {
@@ -144,6 +165,7 @@ describe('spoken replies separate from publications', () => {
     let failedWrites = 0;
     writeGate = async () => {
       writeGate = undefined;
+      listeningStates = [];
       failedWrites++;
       throw new Error('Public fixture receipt-write failure');
     };
@@ -224,7 +246,10 @@ describe('spoken replies separate from publications', () => {
       'http://127.0.0.1:18555',
       (async () => {
         throw error;
-      }) as typeof fetch
+      }) as typeof fetch,
+      async (_session, enabled) => {
+        listeningStates.push(enabled);
+      }
     );
     try {
       expect(
@@ -253,7 +278,10 @@ describe('spoken replies separate from publications', () => {
         (async () => {
           if (!available) throw new Error('Public fixture infrastructure fault');
           return Response.json({ data: [{ id: 'ryan' }] });
-        }) as typeof fetch
+        }) as typeof fetch,
+        async (_session, enabled) => {
+          listeningStates.push(enabled);
+        }
       );
       try {
         const result = await invokeOperation(
@@ -479,6 +507,7 @@ describe('spoken replies separate from publications', () => {
     });
     writeGate = () => {
       writeGate = undefined;
+      listeningStates = [];
       entered();
       return blocked;
     };

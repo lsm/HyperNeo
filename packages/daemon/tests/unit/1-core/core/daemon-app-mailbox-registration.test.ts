@@ -259,28 +259,27 @@ describe('Daemon app mailbox registration', () => {
     spyOn(app!.sessionManager, 'getCachedSession').mockImplementation(
       () => ({ getProcessingState: () => ({ status }) }) as never
     );
-    const inject = spyOn(app!.sessionManager, 'injectMessage').mockResolvedValue();
+    const injected = () =>
+      app!.jobQueue.listActiveByPayload('message_delivery', { sessionId: 'neo:root' });
+    const lastText = () =>
+      app!.db
+        .getSDKMessageRepo()
+        .getDeliveryContent('neo:root', injected().at(-1)!.payload.messageUuid as string)?.content;
     await listening(true);
-    expect(inject).not.toHaveBeenCalled();
+    expect(injected()).toHaveLength(0);
     status = 'processing';
     await listening(false);
-    expect(inject).toHaveBeenLastCalledWith('neo:root', 'The human stopped listening.', {
-      deliveryMode: 'immediate',
-      origin: 'system',
-    });
+    expect(JSON.stringify(lastText())).toContain('The human stopped listening.');
     await listening(true);
-    expect(inject).toHaveBeenLastCalledWith('neo:root', 'The human is now listening.', {
-      deliveryMode: 'immediate',
-      origin: 'system',
-    });
-    const count = inject.mock.calls.length;
+    expect(JSON.stringify(lastText())).toContain('The human is now listening.');
+    const count = injected().length;
     await listening(true, 'other');
     await listening(false, 'listener');
-    expect(inject.mock.calls).toHaveLength(count);
+    expect(injected()).toHaveLength(count);
     expect(await modelInput('worker', 'system')).toContain('[listening: yes]');
     status = 'idle';
     await listening(false, 'other');
-    expect(inject.mock.calls).toHaveLength(count);
+    expect(injected()).toHaveLength(count);
   });
 
   test('an ordinary recipient still receives an untyped worker message immediately', async () => {
