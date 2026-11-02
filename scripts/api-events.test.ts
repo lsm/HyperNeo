@@ -209,6 +209,24 @@ test('question headers and option descriptions remain required on the wire', () 
   expect(valid({ ...question, header: undefined })).toBe(false);
   expect(valid({ ...question, options: [{ label: 'Yes' }] })).toBe(false);
 });
+test('session config model and session status retain their producer constraints', () => {
+  const base = {
+    id: 'fixture',
+    title: 'Public session',
+    workspacePath: null,
+    createdAt: 'now',
+    lastActiveAt: 'now',
+    status: 'active',
+    config: { model: 'model' },
+    metadata: {},
+  };
+  const valid = (sessionInfo: unknown) =>
+    CLIENT_EVENT_SCHEMAS['state.session'].safeParse({ ...payloads['state.session'], sessionInfo })
+      .success;
+  expect(valid(base)).toBe(true);
+  expect(valid({ ...base, config: {} })).toBe(false);
+  expect(valid({ ...base, status: 'not-a-session-status' })).toBe(false);
+});
 test('generated event data schemas are stable and expose field types', () => {
   const first = serializeApiSurface([], events, [], CLIENT_EVENT_SCHEMAS);
   const again = serializeApiSurface([], [...events].reverse(), [], CLIENT_EVENT_SCHEMAS);
