@@ -102,6 +102,17 @@ for (const standalone of [false, true]) {
     }
     const bin = join(home, 'bin');
     mkdirSync(bin);
+    writeFileSync(
+      join(bin, 'plutil'),
+      `#!${process.execPath}
+const { readFileSync } = require('node:fs');
+const plist = readFileSync(process.argv.at(-1), 'utf8');
+const version = plist.match(/<key>CFBundleShortVersionString<\\/key><string>([^<]+)<\\/string>/)?.[1];
+if (!version) process.exit(1);
+process.stdout.write(version);
+`,
+      { mode: 0o700 }
+    );
     vi.stubEnv('PATH', bin);
     try {
       const probe = createDriverHealthProbe({
