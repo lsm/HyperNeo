@@ -7,6 +7,7 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
+import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -79,10 +80,22 @@ try {
   await rpc('rpc:providers.create', { params: { providerId: 'anthropic', displayName: 'Synthetic admission only', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
   const beforeBinding = await rpc('work.health', { action: 'check' });
   assert.equal(beforeBinding.health['codex-desktop'].unverifiedVersion, true);
+  const verification = { action: 'verified', adapter: 'codex-desktop', journey: 'codex-state-discovery', clientVersions: { desktop: '1.0.0' } };
+  const untouched = structuredClone(app.db.getGlobalSettings().driverHealth);
+  for (const role of ['workflow_worker', 'neo'] as const) {
+    const invoke = createOperationMcpHandler(app.sessionManager.getOperationRegistry(), () => ({ sessionId: 'synthetic-unbound-worker', role }));
+    const result = await invoke({ name: 'work.health', input: { ...verification, role: 'neo', sessionId: 'synthetic-neo', principal: 'local' } });
+    const refusal = JSON.parse(result.content[0].text);
+    receipts.push({ name: 'worker-mcp:work.health', role, reply: refusal });
+    assert.deepEqual(refusal, { ok: false, reason: 'human_or_neo_only' });
+    assert.deepEqual(app.db.getGlobalSettings().driverHealth, untouched, 'A refused worker must not change health or suppress pending warnings');
+  }
   await rpc('work.health', { action: 'verified', adapter: 'codex-desktop', journey: 'codex-state-discovery', clientVersions: { desktop: '1.0.0' } });
   await app.db.createSession({ id: 'synthetic-neo', title: 'Synthetic Neo', workspacePath: join(run, 'project'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { model: 'synthetic', queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
   new NeoRepository(app.db.getDatabase()).reserveBinding({ sessionId: 'synthetic-neo', projectId: null, kind: 'neo' });
   await startup();
+  const neoInvoke = createOperationMcpHandler(app.sessionManager.getOperationRegistry(), () => ({ sessionId: 'synthetic-neo', role: 'neo' }));
+  assert.equal(JSON.parse((await neoInvoke({ name: 'work.health', input: verification })).content[0].text).ok, true, 'A bound Neo must retain verification access');
   const initial = await health();
   assert(initial.every((adapter: { health: { status: string } }) => adapter.health.status === 'ok'), JSON.stringify(initial));
   await until(async () => { const read = await rpc('work.read', { sessionId: 'synthetic-neo', before: 10, after: 10 }); return read.ok && read.value.turns.filter((turn: { text: string }) => turn.text.includes('Driver health:')).length >= 4; }, 'Other clients must notify Neo after its binding exists');
@@ -152,7 +165,7 @@ try {
   assert.equal(hash(), before, 'Health checks must leave external state untouched');
   const calls = readFileSync(join(home, 'evidence/calls.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line).method);
   assert(calls.every((name) => ['initialize', 'session/list'].includes(name)), JSON.stringify(calls));
-  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ initial, missing, recovered, upgraded, neoNotices: await notices(), repeatedUnavailableCount: unavailableCount, unchangedExternalDatabase: true, readOnlyAcpCalls: calls, protectedSettings: true, verifiedBeforeNeoBinding: true, forcedCheckAfterScheduledRead: true }, null, 2));
+  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ initial, missing, recovered, upgraded, neoNotices: await notices(), repeatedUnavailableCount: unavailableCount, unchangedExternalDatabase: true, readOnlyAcpCalls: calls, protectedSettings: true, verifiedBeforeNeoBinding: true, forcedCheckAfterScheduledRead: true, workerMcpRefusedWithoutMutation: true, boundNeoMcpAllowed: true, humanRpcAllowed: true }, null, 2));
   console.log('PASS: public RPC health, missing-state reason, one Neo event across repeats/restart, recovery and usable unverified upgrade');
   if (process.argv.includes('--browser')) {
     if (process.argv.includes('--slow-check')) {
