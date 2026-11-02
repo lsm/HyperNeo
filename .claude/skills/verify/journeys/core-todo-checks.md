@@ -13,7 +13,9 @@ bash .claude/skills/verify/proof-run.sh \
 The real WebSocket operation door adds todos while only life-admin is enabled.
 Every completion sentence comes from the check. A missing file and missing
 artifact leave the todo blocked by its check; creating the file or registering the artifact lets
-the same completion door mark them done. Two synthetic cards answered through
+the same completion door mark them done. The artifact branch is a compatibility
+control; new working-file evidence follows `core.evidence {path: absolute file path}`.
+Two synthetic cards answered through
 the human RPC door prove that both no and yes satisfy the recorded-answer check.
 For queued choice and text confirmations plus automatic successor dispatch,
 run `human-confirmed-todos.md`; a human reply satisfies its decision card

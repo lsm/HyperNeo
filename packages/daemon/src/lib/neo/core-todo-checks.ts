@@ -50,7 +50,7 @@ export const coreTodoPolicy = {
   refuse: (draft: Pick<NeoTodo, 'check'>) =>
     doneWhen(draft.check!)
       ? null
-      : 'invalid_core_check: use human_confirmed {questionId}, evidence {artifact} or {path}, or deployed {repo: lsm/HyperNeo, sha: full commit}.',
+      : 'invalid_core_check: use human_confirmed {questionId}, evidence {path: absolute file path}, or deployed {repo: lsm/HyperNeo, sha: full commit}.',
 };
 
 export function createCoreTodoPack(db: Database, contains: Contains): NeoPack {
