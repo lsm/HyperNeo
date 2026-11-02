@@ -25,6 +25,7 @@ import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts'
 import type { NeoTodoRunnerDeps } from '../../../../src/lib/neo/todo-runner.ts';
 import { createSendMessageOperation } from '../../../../src/lib/messaging/message-send.ts';
 import { workInput, recentWorkInputs } from '../../../../src/lib/drivers/work-messages.ts';
+import { readHyperneoInputs } from '../../../../src/lib/drivers/hyperneo-adapter.ts';
 import { readWorkInputTurn } from '../../../../src/storage/work-turns.ts';
 
 async function fixture(path = ':memory:', title = 'Choose a destination') {
@@ -748,3 +749,82 @@ test.each(['space', 'opencode'])(
     }
   }
 );
+
+test('a lost Space answer reconciles after fifty older and 160 later landed inputs', async () => {
+  const f = await fixture();
+  const peer = { ...f.source, adapter: 'space' };
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(10000);
+  let sends = 0;
+  try {
+    new SessionRepository(f.db).createSession({
+      id: 'space-worker',
+      title: 'Space agent',
+      workspacePath: '/synthetic',
+      createdAt: new Date(1).toISOString(),
+      lastActiveAt: new Date(1).toISOString(),
+      status: 'active',
+      config: {},
+      metadata: {},
+    } as Session);
+    const put = (id: string, text: string, at: number) =>
+      f.db
+        .prepare(`INSERT INTO sdk_messages
+      (id,session_id,message_type,sdk_uuid,sdk_message,timestamp,send_status,first_block_type)
+      VALUES (?,'space-worker','user',?,?,?,'consumed','text')`)
+        .run(
+          id,
+          id,
+          JSON.stringify({ type: 'user', message: { role: 'user', content: text } }),
+          new Date(at).toISOString()
+        );
+    for (let n = 0; n < 60; n++) put(`old-${n}`, `Older input ${n}`, 1000 + n);
+    new NeoTodoSessionRepository(f.db).bind('todo', peer, 3);
+    await f.write(peer, f.report);
+    f.store.answerQuestion(f.question, ['Staging'], 'button', 4);
+    const flush = externalDelivery(f, async (_caller, name, input) => {
+      if (name === 'work.send') {
+        sends++;
+        put('accepted-answer', String(input.message), 11000);
+        for (let n = 0; n < 160; n++) put(`later-${n}`, `Later input ${n}`, 12000 + n);
+        return {
+          kind: 'completed',
+          value: { ok: false, reason: 'not_delivered', detail: 'Acknowledgement lost' },
+        };
+      }
+      expect(name).toBe('work.status');
+      return {
+        kind: 'completed',
+        value: {
+          ok: true,
+          value: {
+            ref: { adapter: 'space', id: 'worker' },
+            title: 'Space agent',
+            place: { machine: 'synthetic', folder: '/synthetic', name: 'Synthetic' },
+            status: 'running',
+            lastActivityAt: 12159,
+            recentInputs: readHyperneoInputs(
+              f.db,
+              'space-worker',
+              input.since as number | undefined
+            ),
+          },
+        },
+      };
+    });
+    await flush();
+    expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'pending' }] });
+    expect(
+      readHyperneoInputs(f.db, 'space-worker', 0).every((input) =>
+        input.text.startsWith('Older input')
+      )
+    ).toBe(true);
+    await flush();
+    await flush();
+    expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'accepted' }] });
+    expect(f.store.getTodo('todo')?.blockedBy).toBeNull();
+    expect(sends).toBe(1);
+  } finally {
+    clock.mockRestore();
+    f.db.close();
+  }
+});
