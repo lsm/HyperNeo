@@ -56,6 +56,23 @@ describe('worker reuse eligibility', () => {
 
   afterEach(() => db.close());
 
+  test('unscoped ownership works on reduced project-mirror databases', () => {
+    const mirror = new Database(':memory:');
+    try {
+      mirror.exec(`CREATE TABLE work_started_sessions(adapter TEXT,id TEXT);
+        CREATE TABLE neo_todo_sessions(todo_id TEXT,ref TEXT);
+        INSERT INTO work_started_sessions VALUES('codex-desktop','registered');
+        INSERT INTO neo_todo_sessions VALUES('local','{"adapter":"codex-desktop","id":"bound"}');
+        INSERT INTO neo_todo_sessions VALUES('remote','{"adapter":"codex-desktop","id":"foreign","daemon":"peer"}');`);
+      expect(readStartedWork(mirror)).toEqual([
+        { adapter: 'codex-desktop', id: 'bound' },
+        { adapter: 'codex-desktop', id: 'registered' },
+      ]);
+    } finally {
+      mirror.close();
+    }
+  });
+
   test('only releases usable workers whose matter has settled', () => {
     bind('finished', 'w-done', 'done');
     bind('working', 'w-busy', 'doing');
