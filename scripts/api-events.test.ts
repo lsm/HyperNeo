@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import ts from 'typescript';
 import { z } from '../packages/daemon/node_modules/zod/index.js';
+import { THINKING_LEVELS } from '../packages/shared/src/types.ts';
 import { CLIENT_EVENT_SCHEMAS } from '../packages/daemon/src/lib/operations/client-event-schemas.ts';
 import { clientEventMethods, saveApiSurface, serializeApiSurface } from './api-surface.ts';
 import { diffApiSurfaces, formatApiDiff, type ApiSurface } from './api-diff.ts';
@@ -155,7 +156,7 @@ test('populated session states retain phone-read fields and extensible metadata'
       createdAt: 'now',
       lastActiveAt: 'now',
       status: 'active',
-      config: { model: 'model', provider: 'provider', thinkingLevel: 'high', future: true },
+      config: { model: 'model', provider: 'provider', thinkingLevel: 'think32k', future: true },
       metadata: { pendingModelSwitch: { model: 'next', provider: 'provider' }, future: true },
     },
   };
@@ -189,6 +190,10 @@ test('generated event data schemas are stable and expose field types', () => {
   const surface = JSON.parse(first);
   expect(surface.eventSchemas['voice.stream.text'].properties.isFinal.type).toBe('boolean');
   expect(surface.eventSchemas['liveQuery.snapshot'].properties.rows.type).toBe('array');
+  const session = surface.eventSchemas['state.session'].properties.sessionInfo.anyOf.find(
+    (item: { type: string }) => item.type === 'object'
+  );
+  expect(session.properties.config.properties.thinkingLevel.enum).toEqual([...THINKING_LEVELS]);
   expect(
     surface.eventSchemas['neo.speech'].oneOf ?? surface.eventSchemas['neo.speech'].anyOf
   ).toHaveLength(5);
