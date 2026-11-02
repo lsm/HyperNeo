@@ -151,7 +151,8 @@ late startup copying deterministically.
 The wrapper and Deno smoke trim TMPDIR's trailing slash so HOME/data paths match helpers'
 normalized run paths, including macOS's default TMPDIR.
 For native Unix-socket fixtures, select `TMPDIR=/private/tmp` when invoking the
-wrapper to keep the fresh HOME's socket paths within the OS path-length limit.
+wrapper or Deno smoke to keep the fresh HOME's socket paths within the OS
+path-length limit.
 If the allowed temporary root is longer, `VERIFY_PROOF_PREFIX=r-` shortens the
 wrapper's run name without changing its isolation or cleanup.
 Export a writable TMPDIR for web tests, build tooling and git commands too;
