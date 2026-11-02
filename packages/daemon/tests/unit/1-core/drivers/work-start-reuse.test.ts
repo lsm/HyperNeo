@@ -483,6 +483,18 @@ describe('matter-bound reuse through work.start', () => {
       (await run.start(neo, false, { todoId: 'same-effort-A', effort: 'high' })).value?.ref.id
     ).toBe('same-effort-old');
   });
+  test('reserves a worker for this ask before a delivery with an unknown outcome', async () => {
+    const run = harness(
+      [{ id: 'uncertain-matter', status: 'done', refusal: 'uncertain' }],
+      ['uncertain-matter']
+    );
+    expect((await run.start(neo, false, { todoId: 'uncertain-A' })).ok).toBe(false);
+    expect(run.started).toEqual([]);
+    expect(run.recorded).toEqual([
+      { ref: { adapter: 'claude-desktop', id: 'uncertain-matter' }, todoId: 'uncertain-A' },
+    ]);
+  });
+
   test('an explicit model still refuses an unequal same-ask identity', async () => {
     const run = harness(
       [{ id: 'explicit-same-old', status: 'done' }],
