@@ -36,14 +36,16 @@ try {
   const before=counts();
   ws=new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise((resolve,reject)=>{ws!.onopen=resolve;ws!.onerror=reject;});
-  const read=(id:string,reference='report.md',extra={})=>new Promise<{accepted:boolean;reason?:string;data?:string}>((resolve,reject)=>{
+  const read=(id:string,reference='report.md',extra={})=>new Promise<{accepted:boolean;reason?:string;data?:string;path?:string}>((resolve,reject)=>{
     const requestId=crypto.randomUUID();
     const timeout=setTimeout(()=>reject(new Error('RPC timeout')),10000);
     ws!.onmessage=event=>{const reply=JSON.parse(String(event.data));if((reply.requestId??reply.id)!==requestId)return;clearTimeout(timeout);reply.error?reject(new Error(JSON.stringify(reply.error))):resolve(reply.data);};
     ws!.send(JSON.stringify({id:requestId,type:'REQ',sessionId:'global',method:'operation.invoke',data:{name:'file.reference.read',input:{sourceMessageOrCard:{kind:'question',id,...extra},reference}},timestamp:new Date().toISOString(),version:'1.0.0'}));
   });
   const text=(result:{accepted:boolean;data?:string})=>{assert(result.accepted,JSON.stringify(result));return Buffer.from(result.data!,'base64').toString();};
-  assert.equal(text(await read('worker-question')),'# Correct worker A');
+  const workerRead=await read('worker-question');
+  assert.equal(text(workerRead),'# Correct worker A');
+  assert.equal(workerRead.path,join(run,'workspace/report.md'),'live preview must expose its authorized owner path for ordinary questions');
   assert.equal(text(await read('root-question')),'# Wrong root');
   assert.equal(text(await read('worker-question','detail.md')),'# Public document');
   assert.equal((await read('worker-question','metadata-only.md')).reason,'forbidden');

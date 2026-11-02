@@ -32,12 +32,14 @@ export function ArtifactPreviewPanel({
   work,
   suspended = false,
   expansion,
+  onAskFile,
 }: {
   markdownClass?: string;
   fileTabs?: boolean;
   work?: { id: string; showTab: boolean; count: number };
   suspended?: boolean;
   expansion?: { expanded: boolean; toggle: () => void };
+  onAskFile?: (path: string) => void;
 } = {}) {
   const stack = artifactPreviewStack.value;
   const top = stack.at(-1);
@@ -292,7 +294,12 @@ export function ArtifactPreviewPanel({
             >
               {file.reference ? (
                 previewFileKey(file) === selectedId && !suspended ? (
-                  <LiveFilePreview target={file.reference} markdownClass={markdownClass} tabbed />
+                  <LiveFilePreview
+                    target={file.reference}
+                    markdownClass={markdownClass}
+                    tabbed
+                    onAskFile={onAskFile}
+                  />
                 ) : null
               ) : (
                 <ArtifactPreview
@@ -328,6 +335,7 @@ export function ArtifactPreviewPanel({
               promoteFiles={fileTabs}
               suspended={suspended}
               tabbed={!!reference}
+              onAskFile={onAskFile}
             />
           </div>
         ) : null}

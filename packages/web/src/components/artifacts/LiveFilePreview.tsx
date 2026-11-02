@@ -38,10 +38,12 @@ export function LiveFilePreview({
   target,
   markdownClass,
   tabbed = false,
+  onAskFile,
 }: {
   target: Reference;
   markdownClass?: string;
   tabbed?: boolean;
+  onAskFile?: (path: string) => void;
 }) {
   const connected = connectionState.value === 'connected';
   const active = useRef<AbortController | null>(null);
@@ -99,6 +101,15 @@ export function LiveFilePreview({
         facts={file ? `${KIND_LABELS[file.kind]} · ${formatBytes(file.blob.size)}` : undefined}
         onBack={tabbed ? undefined : backArtifactPreview}
       >
+        {file?.path && onAskFile && (
+          <button
+            type="button"
+            class="rounded-md bg-surface-raised px-3 py-1 text-sm"
+            onClick={() => onAskFile(file.path!)}
+          >
+            {t('artifact.askNeo')}
+          </button>
+        )}
         {file && (
           <button
             type="button"

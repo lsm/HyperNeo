@@ -67,6 +67,7 @@ describe('live source-bound file client', () => {
     { version: 'b'.repeat(64) },
     { byteLength: 7 },
     { kind: 'html' },
+    { path: '/another/workspace/report.md' },
     { nextOffset: 2 },
     { complete: false },
   ])('discards a changed or inconsistent chunk: %j', async (change) => {
