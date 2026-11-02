@@ -1,10 +1,16 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { z } from 'zod';
 import type { Database } from '../../storage/database.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { isNeoConversationSession } from './publication-read-operation.ts';
 import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
-import { workResultSchema, type Result, type WorkRef, type WorkAdapter } from '../drivers/types.ts';
+import {
+  WorkArchivedSchema,
+  type WorkArchived,
+  workResultSchema,
+  type Result,
+  type WorkRef,
+  type WorkAdapter,
+} from '../drivers/types.ts';
 import {
   forwardWork,
   pickRoute,
@@ -15,8 +21,8 @@ import {
 import { isLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 
-const ResultSchema = workResultSchema(z.object({ archived: z.boolean() }));
-type Archived = Result<{ archived: boolean }>;
+const ResultSchema = workResultSchema(WorkArchivedSchema);
+type Archived = Result<WorkArchived>;
 type Deps = WorkVerbDeps & { db: Database };
 type ArchiveRoute = { daemon: string } | { local: NonNullable<WorkAdapter['archive']> };
 
@@ -80,7 +86,7 @@ export function createNeoSessionArchiveOperation(deps: Deps) {
   return defineOperation({
     name: 'neo.session.archive',
     description:
-      'Archive a session by its work.find ref through its driver, through the human caller or a bound Neo session. Refuses sessions a doing todo is working in, running or waiting turns, unsupported drivers and unreadable state. Preserves the conversation. archived false means it was already archived. An attached daemon must also support this operation.',
+      'Archive a session by its work.find ref through its driver, through the human caller or a bound Neo session. Refuses sessions a doing todo is working in, running or waiting turns, unsupported drivers and unreadable state. Preserves the conversation. archived false means it was already archived. Managed clean/pushed worktrees are removed after archiving; the optional worktree receipt reports removal or retention with its reason. Changed, unpushed or unverifiable worktrees are kept. An attached daemon must also support this operation.',
     inputSchema: WorkRefInputSchema,
     resultSchema: ResultSchema,
     policy: { safetyClass: 'mutate', roles: ['neo'] },

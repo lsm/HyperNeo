@@ -1,3 +1,7 @@
+import { createPushedWorkerRepo } from '../../../helpers/native-worker-worktree';
+import { spawnSync } from 'node:child_process';
+import { spawnProcess } from '../../../../src/lib/runtime-spawn/index';
+
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index';
@@ -19,7 +23,9 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pickRoute } from '../../../../src/lib/drivers/work-operations';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import { createWorkVerbOperations, pickRoute } from '../../../../src/lib/drivers/work-operations';
 import { createCopilotAdapter } from '../../../../src/lib/drivers/copilot-adapter';
 import type { StartRequest, WorkCallContext } from '../../../../src/lib/drivers/types';
 
@@ -30,7 +36,7 @@ afterEach(async () => {
   for (const run of runs.splice(0)) rmSync(run, { recursive: true, force: true });
 });
 const context = { from: 'chat', caller: { source: 'rpc' } } as WorkCallContext;
-function setup(flag = '', options: { timeoutMs?: number } = { timeoutMs: 1500 }) {
+function setup(flag = '', options: { timeoutMs?: number } = { timeoutMs: 5000 }) {
   const run = mkdtempSync(join(tmpdir(), 'copilot-adapter-'));
   runs.push(run);
   mkdirSync(join(run, 'home'));
@@ -69,6 +75,80 @@ async function start(fixture: ReturnType<typeof setup>, message = fixture.reques
 }
 
 describe('owned Copilot lifecycle', () => {
+  test('starts a new repository before its first commit in the project folder', async () => {
+    const f = setup();
+    const folder = join(f.run, 'unborn');
+    expect(spawnSync('git', ['init', '--initial-branch=dev', folder]).status).toBe(0);
+    const repo = realpathSync(folder);
+    const adapter = createCopilotAdapter(f.discovery, {
+      ...f.deps,
+      worktreesDir: join(f.run, 'worktrees'),
+      gitCheckout: async () => ({ repo, linked: false }),
+      spawn: spawnProcess,
+    });
+    owners.push(adapter);
+    const result = await adapter.start!(
+      { ...f.request, place: { machine: 'test', folder: repo, name: 'new repo' } },
+      context
+    );
+    expect(result).toMatchObject({ ok: true, value: { execution: { directory: repo } } });
+    expect(existsSync(join(repo, '.git'))).toBe(true);
+  });
+
+  test('starts a coding worker in its own native worktree and reports the project separately', async () => {
+    const f = setup();
+    const { repo } = createPushedWorkerRepo(f.run);
+    const adapter = createCopilotAdapter(f.discovery, {
+      ...f.deps,
+      worktreesDir: join(f.run, 'worktrees'),
+      gitCheckout: async () => ({ repo, linked: false }),
+      spawn: spawnProcess,
+    });
+    owners.push(adapter);
+    const result = await adapter.start!(
+      { ...f.request, place: { machine: 'test', folder: repo, name: 'repo' } },
+      context
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        place: { folder: repo },
+        execution: { machine: 'test', directory: expect.stringContaining('/worktrees/') },
+      },
+    });
+    if (!result.ok) throw new Error(JSON.stringify(result));
+    const folder = result.value.execution!.directory;
+    expect(folder).not.toBe(repo);
+    expect(existsSync(join(folder, '.git'))).toBe(true);
+    const created = readFileSync(join(folder, 'calls.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+      .find((call) => call.method === 'session.create');
+    expect(created.params.workingDirectory).toBe(folder);
+    expect(created.params.systemMessage.content).toContain(`Worktree: ${folder}`);
+    expect(
+      spawnSync('git', ['-C', folder, 'rev-parse', '--git-common-dir'], {
+        encoding: 'utf8',
+      }).stdout.trim()
+    ).toBe(join(realpathSync(repo), '.git'));
+    await adapter.stop!(result.value.ref, context);
+    expect(await adapter.archive!(result.value.ref, () => null)).toMatchObject({
+      ok: true,
+      value: {
+        archived: true,
+        worktree: { directory: folder, removed: false, reason: expect.stringContaining('changes') },
+      },
+    });
+    expect(existsSync(folder)).toBe(true);
+    expect(spawnSync('git', ['-C', folder, 'clean', '-fd']).status).toBe(0);
+    expect(await adapter.archive!(result.value.ref, () => null)).toMatchObject({
+      ok: true,
+      value: { archived: false, worktree: { directory: folder, removed: true } },
+    });
+    expect(existsSync(folder)).toBe(false);
+  });
+
   test.each([
     [true, 'settled', 0, 0],
     [true, 'error', 0, 0],
@@ -369,6 +449,37 @@ describe('owned Copilot lifecycle', () => {
     expect(
       calls.find((call) => call.method === 'session.create').params.systemMessage.content
     ).toContain('HYPERNEO_WORKTREES');
+  });
+
+  test('reuses an idle owned Copilot worker with the same explicit model', async () => {
+    const f = setup('--durable-inputs');
+    const first = await start(f, 'settled');
+    let status = await f.adapter.status!(first.ref);
+    for (let i = 0; i < 100 && (!status.ok || status.value.status !== 'done'); i++) {
+      await new Promise((done) => setTimeout(done, 20));
+      status = await f.adapter.status!(first.ref);
+    }
+    expect(status).toMatchObject({ ok: true, value: { status: 'done' } });
+    const registry = createOperationRegistry(
+      createWorkVerbOperations({
+        adapters: () => [f.adapter],
+        remote: { list: () => [], invoke: async () => ({}) },
+        daemonName: 'test',
+        freeWorkers: () => new Set([first.ref.id]),
+      })
+    );
+    const result = await invokeOperation(
+      registry,
+      'work.start',
+      { adapter: f.adapter.id, ...f.request, message: 'settled' },
+      { source: 'internal', role: 'neo', sessionId: 'neo' }
+    );
+    if (result.kind !== 'completed' || !(result.value as { ok?: boolean }).ok)
+      throw new Error(JSON.stringify(result));
+    expect(result).toMatchObject({
+      kind: 'completed',
+      value: { ok: true, value: { ref: first.ref, reused: true } },
+    });
   });
 
   test('explains strict steering refusal without sending or starting a runtime', () => {

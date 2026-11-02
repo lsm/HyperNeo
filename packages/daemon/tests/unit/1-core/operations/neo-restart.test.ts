@@ -84,6 +84,7 @@ describe('neo.restart operation', () => {
       db,
       {
         updateSession,
+        getOperationRegistry: () => createOperationRegistry([]),
       } as unknown as SessionManager,
       { event: mock(() => {}) } as unknown as MessageHub,
       events

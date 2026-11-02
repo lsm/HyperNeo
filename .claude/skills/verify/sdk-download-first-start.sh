@@ -42,7 +42,11 @@ done
 sleep 2
 cp "$RUN/daemon.log" "$RUN/evidence/daemon.log"
 grep -E '^\[SDK\]' "$RUN/daemon.log"
-sqlite3 -readonly "$RUN/data/daemon.db" "SELECT message_type, substr(sdk_message,1,160) FROM sdk_messages WHERE session_id='$SESSION' ORDER BY rowid" > "$RUN/evidence/session-messages.txt" || true
+rpc rpc:message.sdkMessages "{\"sessionId\":\"$SESSION\",\"limit\":200}" > "$RUN/evidence/session-messages.json"
+EXPECTED_SDK=$(bun -e 'import pkg from "./packages/daemon/package.json"; console.log(pkg.dependencies["@anthropic-ai/claude-agent-sdk"])')
+grep -Fq "(SDK $EXPECTED_SDK)" "$RUN/daemon.log" || { echo "FAIL: compiled server downloaded a different SDK than $EXPECTED_SDK"; exit 1; }
+EXPECTED_CLI=$(bun -e 'import pkg from "./packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/package.json"; console.log(pkg.claudeCodeVersion)')
+bun -e 'const page = (await Bun.file(process.argv[1]).json()).reply; const init = page.sdkMessages.find(m => m.type === "system" && m.subtype === "init"); if (init?.claude_code_version !== process.argv[2]) throw new Error(`Unexpected native SDK version: ${JSON.stringify(init)}`);' "$RUN/evidence/session-messages.json" "$EXPECTED_CLI"
 worst=$(grep -oE 'Event loop blocked for [0-9]+ms' "$RUN/daemon.log" | grep -oE '[0-9]+' | sort -n | tail -1 || true)
 echo "worst event-loop block: ${worst:-none}ms; session answered: $answered"
 grep -q '\[SDK\] Claude Code binary ready: ' "$RUN/daemon.log" || { echo 'FAIL: binary was not downloaded'; exit 1; }

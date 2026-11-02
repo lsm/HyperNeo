@@ -305,6 +305,14 @@ export interface WorkCallContext {
 
 export type WorkRenamed = { renamed: true; title: string };
 
+export const WorkArchivedSchema = z.object({
+  archived: z.boolean(),
+  worktree: z
+    .object({ directory: z.string().min(1), removed: z.boolean(), reason: z.string().optional() })
+    .optional(),
+});
+export type WorkArchived = z.infer<typeof WorkArchivedSchema>;
+
 export interface WorkAdapter {
   readonly id: string;
   readonly capabilities: readonly WorkVerb[];
@@ -352,8 +360,5 @@ export interface WorkAdapter {
     receipt?: WorkDelivery['receipt']
   ) => Promise<Result<WorkDetail>>;
   readonly stop?: (ref: WorkRef, context: WorkCallContext) => Promise<Result<{ stopped: boolean }>>;
-  readonly archive?: (
-    ref: WorkRef,
-    admit: ArchiveAdmission
-  ) => Promise<Result<{ archived: boolean }>>;
+  readonly archive?: (ref: WorkRef, admit: ArchiveAdmission) => Promise<Result<WorkArchived>>;
 }

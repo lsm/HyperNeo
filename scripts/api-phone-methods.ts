@@ -15,7 +15,7 @@ export function extractPhoneMethods(swift: string): string[] {
 export function phoneMethodsFromSource(
   repository: string,
   ref: string
-): { sourceCommit: string; methods: string[] } {
+): { sourceCommit: string; methods: string[]; events: string[] } {
   const git = (...args: string[]) => {
     const result = Bun.spawnSync(['git', '-C', repository, ...args], {
       stdout: 'pipe',
@@ -30,12 +30,20 @@ export function phoneMethodsFromSource(
     .filter(
       (file) => file.endsWith('.swift') && !file.split('/').some((part) => part.endsWith('Tests'))
     );
-  const methods = extractPhoneMethods(
-    files.map((file) => git('show', `${sourceCommit}:${file}`)).join('\n')
-  );
+  const swift = files.map((file) => git('show', `${sourceCommit}:${file}`)).join('\n');
+  const methods = extractPhoneMethods(swift);
   if (!methods.length)
     throw new Error('No literal phone API methods found at the specified source commit');
-  return { sourceCommit, methods };
+  return { sourceCommit, methods, events: extractPhoneEventMethods(swift) };
+}
+export function extractPhoneEventMethods(swift: string): string[] {
+  return [
+    ...new Set(
+      [...swift.matchAll(/\bonEvent\s*\(\s*"([A-Za-z][\w]*(?:\.[\w]+)+)"/g)].map(
+        (match) => match[1]!
+      )
+    ),
+  ].sort();
 }
 if (import.meta.main) {
   const [repository, ref, ...extra] = process.argv.slice(2);

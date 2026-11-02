@@ -40,6 +40,7 @@ import type { SessionScheduler } from '../../scheduler/session-schedules.ts';
 import type { NeoPack } from '../../neo/pack-contract.ts';
 
 export interface FamilyOperationContext {
+  readonly driverHealthNotice?: (id: string, text: string) => Promise<boolean>;
   readonly driverCleanup?: (() => Promise<void>)[];
   readonly sessionScheduler: SessionScheduler;
   readonly goalMandateChange?: (ref: string, revision: string | null) => Promise<string | null>;

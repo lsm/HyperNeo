@@ -1,4 +1,5 @@
 import { withWorkerProvenance } from './worker-provenance.ts';
+import type { DriverHealth } from '@hyperneo/shared/types/settings';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -65,6 +66,7 @@ export interface WorkSendUncertainty {
 
 export interface WorkVerbDeps {
   adapters(): readonly WorkAdapter[];
+  health?: () => Record<string, DriverHealth> | Promise<Record<string, DriverHealth>>;
   remote: RemoteDaemons;
   daemonName: string;
   freeWorkers?: (adapter: string) => ReadonlySet<string>;
@@ -107,7 +109,8 @@ export const StartWorkInputSchema = z.object({
   adapter: z.string().min(1),
   place: PlaceSchema.optional(),
   title: z.string().trim().min(1).max(200),
-  message: MessageSchema,
+  message: z.string().trim().min(1).max(100_000),
+  excludeRefs: z.array(WorkRefSchema).max(30).optional(),
   createFolder: z.boolean().optional(),
   provenance: z.boolean().optional(),
   preparation: workStartPreparation.schema.optional(),
@@ -179,11 +182,23 @@ const RoutedCapabilitySchema = z.enum([
   'archive',
 ]);
 
+export const WorkDriverHealthSchema = z.object({
+  status: z.enum(['ok', 'degraded', 'unavailable']),
+  reason: z.string(),
+  clientVersions: z.record(z.string(), z.string()),
+  checkedAt: z.number(),
+  unverifiedVersion: z.boolean(),
+  verifiedVersions: z.record(z.string(), z.string()).optional(),
+  verifiedAt: z.number().optional(),
+  verifiedJourney: z.string().optional(),
+});
+
 export const WorkAdaptersResultSchema = workResultSchema(
   z.array(
     z.object({
       id: z.string(),
       capabilities: z.array(RoutedCapabilitySchema),
+      health: WorkDriverHealthSchema.optional(),
       unsupportedCapabilities: z.partialRecord(RoutedCapabilitySchema, z.string()).optional(),
     })
   )
@@ -392,7 +407,18 @@ export async function startWork(
   const result = await forwardWork(
     route.daemon,
     'work.start',
-    { ...input, place, from: qualifyRemoteOrigin(from, deps.daemonName) },
+    {
+      ...input,
+      place,
+      ...(input.excludeRefs
+        ? {
+            excludeRefs: input.excludeRefs
+              .filter((ref) => ref.daemon === route.daemon)
+              .map(({ daemon: _daemon, ...ref }) => ref),
+          }
+        : {}),
+      from: qualifyRemoteOrigin(from, deps.daemonName),
+    },
     StartWorkResultSchema,
     deps.remote,
     REMOTE_START_TIMEOUT_MS
@@ -435,10 +461,16 @@ export async function reuseIdleWorker(
     .flatMap((group) => group.work)
     .filter(
       (work) =>
-        work.status === 'done' &&
+        (work.status === 'done' || (work.status === 'running' && !!adapter.status)) &&
         work.place.folder === folder &&
         !work.ref.daemon &&
-        free.has(work.ref.id)
+        free.has(work.ref.id) &&
+        !input.excludeRefs?.some(
+          (ref) =>
+            ref.adapter === work.ref.adapter &&
+            ref.id === work.ref.id &&
+            ref.daemon === work.ref.daemon
+        )
     );
   for (const work of idle) {
     const key = `${work.ref.adapter}\u0000${work.ref.id}`;
@@ -446,13 +478,16 @@ export async function reuseIdleWorker(
     reuseHolds.add(key);
     let status;
     try {
-      status =
-        input.provenance || requested ? await adapter.status?.(work.ref).catch(() => null) : null;
+      status = await adapter.status?.(work.ref).catch(() => null);
     } catch (error) {
       reuseHolds.delete(key);
       throw error;
     }
     const identity = status?.ok ? status.value : null;
+    if (adapter.status && identity?.status !== 'done') {
+      reuseHolds.delete(key);
+      continue;
+    }
     if (
       requested &&
       (!identity ||
@@ -827,20 +862,28 @@ async function listWorkAdapters(
 ): Promise<z.infer<typeof WorkAdaptersResultSchema>> {
   if (daemon && daemon !== deps.daemonName)
     return forwardWork(daemon, 'work.adapters', {}, WorkAdaptersResultSchema, deps.remote);
+  const health = await deps.health?.();
+  const adapters = deps.adapters();
+  const ids = new Set([...adapters.map((adapter) => adapter.id), ...Object.keys(health ?? {})]);
   return {
     ok: true,
-    value: deps.adapters().map((adapter) => ({
-      id: adapter.id,
-      ...(adapter.unsupportedCapabilities
-        ? { unsupportedCapabilities: adapter.unsupportedCapabilities }
-        : {}),
-      capabilities: adapter.capabilities.flatMap((capability) => {
-        const routed = RoutedCapabilitySchema.safeParse(capability);
-        return routed.success && (routed.data === 'find' || adapter[routed.data])
-          ? [routed.data]
-          : [];
-      }),
-    })),
+    value: [...ids].map((id) => {
+      const adapter = adapters.find((entry) => entry.id === id);
+      return {
+        id,
+        ...(health?.[id] ? { health: health[id] } : {}),
+        ...(adapter?.unsupportedCapabilities
+          ? { unsupportedCapabilities: adapter.unsupportedCapabilities }
+          : {}),
+        capabilities:
+          adapter?.capabilities.flatMap((capability) => {
+            const routed = RoutedCapabilitySchema.safeParse(capability);
+            return routed.success && (routed.data === 'find' || adapter[routed.data])
+              ? [routed.data]
+              : [];
+          }) ?? [],
+      };
+    }),
   };
 }
 
@@ -858,7 +901,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.adapters',
       description:
-        'List work adapters on this daemon, or the attached daemon named by daemon, with their available capabilities: find, start, rename, send, steer, queue, withdraw, status, stop, archive. steer means work.send accepts mode steer on that adapter; it is listed only when declared and implemented. Optional unsupportedCapabilities maps unavailable capabilities to their limitation; explicit unsupported requests return that explanation. Archive uses neo.session.archive and requires a human request in a live turn. Use only capabilities listed for the chosen adapter.',
+        'List work adapters on this daemon, or the attached daemon named by daemon, with their available capabilities: find, start, rename, send, steer, queue, withdraw, status, stop, archive. Local client health includes status, reason, installed and verified versions, and check time; unavailable unregistered clients appear with no capabilities. Avoid assigning degraded or unavailable clients. An unverified version remains usable when health is ok. steer means work.send accepts mode steer on that adapter; it is listed only when declared and implemented. Optional unsupportedCapabilities maps unavailable capabilities to their limitation; explicit unsupported requests return that explanation. Archive uses neo.session.archive and requires a human request in a live turn. Use only capabilities listed for the chosen adapter.',
       inputSchema: z.object({ daemon: z.string().min(1).optional() }),
       resultSchema: WorkAdaptersResultSchema,
       policy: { safetyClass: 'read' },
@@ -867,7 +910,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.start',
       description:
-        'Start new work in a place returned by work.find: a session, thread or task titled title, opened with message. Workers are long-lived sessions: title is named for the matter, never a task title. Put the task in message. For Neo, an idle worker of the same adapter in the same folder that holds no open todo takes the message instead of a new session; the result then carries reused true and that worker ref. Explicit preparation or createFolder always start new work. Explicit model or effort can reuse only after the adapter resolves and confirms matching identity. Missing or stale todoId is recorded without blocking otherwise permitted work; the receipt includes records. adapter picks the harness: an adapter whose capabilities include start (see work.adapters); a place group lists adapters that only found work there. A place with a daemon starts the work on that daemon. Remote routes reject explicit model with unsupported_model until configuration support can be verified; use a local adapter to request a model. Only Neo or the user can change work on another daemon; other agents get unsupported. For non-coding work, omit place and pass todoId to use the one visible user folder across projects: ~/HyperNeo by default, or exactly the instance workspace path. A different place needs an exact path the user named in chat, even inside the workspace; never invent folders under home. Other new human-named folders keep the existing home-only, non-hidden and existing-parent creation rules. Coding keeps the repository place returned by work.find. model picks the model of a new HyperNeo session or Codex thread; settings.model.get lists HyperNeo id, name and provider. HyperNeo resolves a unique case-insensitive display name, with exact IDs taking precedence; ambiguous names reject with matching IDs. A shared exact ID keeps catalog precedence; use a unique display name to choose a particular provider offer. Codex resolves catalog aliases and refuses unsupported models. Claude desktop refuses explicit model overrides with unsupported_model; omit model to use its app configuration. Optional effort is supported by local HyperNeo (off/low/medium/high/extra high/max/ultra or thinking-level IDs) and Codex: it resolves against the selected model catalog and confirms the applied effort before sending the first turn. Unsupported local adapters and unverified remote routes return unsupported_effort before starting work. For Neo, an idle free worker in the same project may be reused; explicit model/effort requests reuse only when the adapter-resolved configuration matches its recorded status identity. Mismatched or unavailable identity starts fresh. Human starts always create new work. Without model, a new HyperNeo session starts on the default model, or on the newest available one when the default cannot run. Returns the started or reused work with its ref, link and, for HyperNeo or Codex, the model it runs on plus confirmed effort when available, or ok false with a reason such as invalid_place, claude_cli_login_expired, unsupported or unreachable.',
+        'Start new work in a place returned by work.find: a session, thread or task titled title, opened with message. Workers are long-lived sessions: title is named for the matter, never a task title. Put the task in message. excludeRefs prevents the named workers receiving a reused start, including PR authors and earlier stage actors. For Neo, an idle worker of the same adapter in the same folder that holds no open todo takes the message instead of a new session; the result then carries reused true and that worker ref. Explicit preparation or createFolder always start new work. Explicit model or effort can reuse only after the adapter resolves and confirms matching identity. Missing or stale todoId is recorded without blocking otherwise permitted work; the receipt includes records. adapter picks the harness: an adapter whose capabilities include start (see work.adapters); a place group lists adapters that only found work there. A place with a daemon starts the work on that daemon. Remote routes reject explicit model with unsupported_model until configuration support can be verified; use a local adapter to request a model. Only Neo or the user can change work on another daemon; other agents get unsupported. For non-coding work, omit place and pass todoId to use the one visible user folder across projects: ~/HyperNeo by default, or exactly the instance workspace path. A different place needs an exact path the user named in chat, even inside the workspace; never invent folders under home. Other new human-named folders keep the existing home-only, non-hidden and existing-parent creation rules. Coding keeps the repository place returned by work.find. model picks the model of a new HyperNeo session or Codex thread; settings.model.get lists HyperNeo id, name and provider. HyperNeo resolves a unique case-insensitive display name, with exact IDs taking precedence; ambiguous names reject with matching IDs. A shared exact ID keeps catalog precedence; use a unique display name to choose a particular provider offer. Codex resolves catalog aliases and refuses unsupported models. Claude desktop refuses explicit model overrides with unsupported_model; omit model to use its app configuration. Optional effort is supported by local HyperNeo (off/low/medium/high/extra high/max/ultra or thinking-level IDs) and Codex: it resolves against the selected model catalog and confirms the applied effort before sending the first turn. Unsupported local adapters and unverified remote routes return unsupported_effort before starting work. For Neo, an idle free worker in the same project may be reused; explicit model/effort requests reuse only when the adapter-resolved configuration matches its recorded status identity. Mismatched or unavailable identity starts fresh. Human starts always create new work. For Codex and Copilot, place names the project; execution reports the worker’s actual folder. Repositories without a first commit start in the project folder. Without model, a new HyperNeo session starts on the default model, or on the newest available one when the default cannot run. Returns the started or reused work with its ref, link and, for HyperNeo or Codex, the model it runs on plus confirmed effort when available, or ok false with a reason such as invalid_place, claude_cli_login_expired, unsupported or unreachable.',
       inputSchema: StartWorkInputSchema,
       resultSchema: StartWorkResultSchema,
       policy: { safetyClass: 'mutate' },

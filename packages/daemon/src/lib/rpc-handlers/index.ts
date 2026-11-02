@@ -402,6 +402,7 @@ export interface RPCHandlerSetupResult {
   spaceAgentInactivityWatchdog: SpaceAgentInactivityWatchdogService;
   cancelInactivityWatchdog: () => void;
   sessionScheduler: SessionScheduler;
+  prepareNeoInput: ReturnType<typeof createNeoService>['speech']['prepareInput'];
   notifyScheduleIdle: ReturnType<typeof createNeoService>['notifyScheduleIdle'];
   wakePollingConcern: (key: string, text: string) => Promise<boolean>;
 }
@@ -1570,6 +1571,12 @@ export async function setupRPCHandlers(
     }),
     ...collectFamilyOperations({
       ...familyContext,
+      driverHealthNotice: async (id, text) => {
+        const root = neoService.repo.defaultBinding()?.sessionId;
+        if (!root) return false;
+        await neoService.deliverForward(root, id, text, root, 'event');
+        return true;
+      },
       goalMandateChange: (ref, revision) => neoHome.changedRevision(ref, revision),
       executionPreparations: () => neoService.packs(),
     }),
@@ -1919,5 +1926,6 @@ export async function setupRPCHandlers(
     sessionScheduler,
     wakePollingConcern: (key: string, text: string) => neoService.wakeNeo(key, text),
     notifyScheduleIdle: neoService.notifyScheduleIdle,
+    prepareNeoInput: neoService.speech.prepareInput.bind(neoService.speech),
   };
 }

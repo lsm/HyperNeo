@@ -41,6 +41,11 @@ git push origin vX.Y.Z
 
 Generate an API compatibility report for the release notes before publishing:
 
+The report includes phone-used push payloads once their source ref owns Zod
+contracts. New coverage of a previously untyped payload is labelled coverage-only,
+not a proven safe wire change; it is excluded from compatibility totals. Older
+release tags stay untyped. Event payload changes use result compatibility rules.
+
 ```bash
 bun run api:surface
 bun run api:diff vPREVIOUS

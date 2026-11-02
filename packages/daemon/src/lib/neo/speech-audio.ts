@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { Logger } from '../logger.ts';
 import { voiceDiagnostic } from '../voice/diagnostics.ts';
+import type { ClientEventData } from '../operations/client-event-schemas.ts';
 type Target = { id: string; sessionId: string; clientId: string; text: string };
 
 export class NeoSpeechAudio {
@@ -8,7 +9,7 @@ export class NeoSpeechAudio {
   private serial: Promise<unknown> = Promise.resolve();
 
   constructor(
-    private readonly send: (client: string, data: unknown) => boolean,
+    private readonly send: (client: string, data: ClientEventData<'neo.speech'>) => boolean,
     private readonly failed: (target: Target) => Promise<unknown>,
     private readonly base = process.env.HYPERNEO_SPEECH_URL,
     private readonly request: typeof fetch = fetch

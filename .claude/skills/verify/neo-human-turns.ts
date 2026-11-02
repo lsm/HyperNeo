@@ -118,6 +118,7 @@ try {
   } else {
     await wait('Neo records direct human work as a todo', () => todos.listTodos(askId).some((item) => item.title === newTitle));
     assert.equal(toolCalls, 1);
+    await wait('Neo completes the MCP turn', () => app.db.getDatabase().prepare("SELECT 1 FROM sdk_messages WHERE session_id=? AND message_type='result'").get(root.sessionId) != null);
     const count = bodies.length;
     await refresh();
     await refresh();

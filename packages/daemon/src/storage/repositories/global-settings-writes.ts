@@ -18,6 +18,14 @@ function selectedSettings(settings: GlobalSettings, patch: Patch): Patch {
 }
 
 class GlobalSettingsWriter extends SettingsRepository {
+  readDriverHealth() {
+    return this.getGlobalSettings().driverHealth ?? {};
+  }
+
+  driverHealth(id: string, health: NonNullable<GlobalSettings['driverHealth']>[string]) {
+    super.updateGlobalSettings({ driverHealth: { ...this.readDriverHealth(), [id]: health } });
+  }
+
   neoPreferences(preferences: NeoModelPreference): GlobalSettings {
     const neo = this.getGlobalSettings().neo;
     const fallbacks = preferences.fallbacks ?? neo?.preferences?.fallbacks;
@@ -97,5 +105,5 @@ export const globalSettingsWrites = defineRepositoryOp(
   'settings.global.write',
   'write',
   GlobalSettingsWriter,
-  ['apply', 'rollback', 'neoPreferences', 'neoMute', 'neoRules']
+  ['apply', 'rollback', 'neoPreferences', 'neoMute', 'neoRules', 'driverHealth', 'readDriverHealth']
 );

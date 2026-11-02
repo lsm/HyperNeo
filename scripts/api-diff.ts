@@ -4,6 +4,7 @@ import { diffSchemas, type ApiChange, type ChangeLevel } from './api-diff-schema
 export type ApiSurface = {
   operations: { name: string; inputSchema: unknown; resultSchema: unknown }[];
   events: string[];
+  eventSchemas?: Record<string, unknown>;
 };
 
 export function diffApiSurfaces(
@@ -37,6 +38,23 @@ export function diffApiSurfaces(
     if (!after.events.includes(name))
       emit(name, 'event', 'breaking', 'Server event method removed');
     if (!before.events.includes(name)) emit(name, 'event', 'safe', 'Server event method added');
+    const a = before.eventSchemas?.[name],
+      b = after.eventSchemas?.[name];
+    if (a !== undefined && b !== undefined)
+      diffSchemas(a, b, 'result', (path, level, message) =>
+        emit(name, path.replace(/^result/, 'event.data'), level, message)
+      );
+    else if (a !== undefined) emit(name, 'event.data', 'breaking', 'Event payload schema removed');
+    else if (b !== undefined)
+      changes.push({
+        operation: name,
+        path: 'event.data',
+        level: 'safe',
+        phoneUsed: used.has(name),
+        coverageOnly: true,
+        message:
+          'Payload schema recorded; prior payload was untracked, so historical compatibility is not asserted',
+      });
   }
   return changes.sort(
     (a, b) =>
@@ -53,13 +71,13 @@ export function formatApiDiff(previous: string, current: string, changes: ApiCha
       .join(', ');
   const highest = new Map<string, ApiChange>();
   const severity = { safe: 0, risky: 1, breaking: 2 };
-  for (const change of changes.filter((c) => c.phoneUsed))
+  for (const change of changes.filter((c) => c.phoneUsed && !c.coverageOnly))
     if (
       !highest.has(change.operation) ||
       severity[change.level] > severity[highest.get(change.operation)!.level]
     )
       highest.set(change.operation, change);
-  return `${previous} -> ${current}: phone-used operations: ${count([...highest.values()])}\n\nAll changes: ${count(changes)}. Phone operation counts use each method's highest severity.\n\n${changes.length ? changes.map((c) => `- ${c.level}${c.phoneUsed ? ' [phone]' : ''}: ${c.operation} ${c.path} — ${c.message}`).join('\n') : 'No API surface changes.'}\n`;
+  return `${previous} -> ${current}: phone-used operations: ${count([...highest.values()])}\n\nAll changes: ${count(changes)}. Phone operation counts use each method's highest severity; coverage-only additions are excluded.\n\n${changes.length ? changes.map((c) => `- ${c.level}${c.phoneUsed ? ' [phone]' : ''}${c.coverageOnly ? ' [coverage only]' : ''}: ${c.operation} ${c.path} — ${c.message}`).join('\n') : 'No API surface changes.'}\n`;
 }
 async function main(): Promise<void> {
   const args = process.argv.slice(2),
@@ -84,6 +102,7 @@ async function main(): Promise<void> {
   const phone = JSON.parse(readFileSync(phoneFile, 'utf8')) as {
     sourceCommit: string;
     methods: string[];
+    events?: string[];
     sourceEvidence?: string;
   };
   if (
@@ -104,12 +123,16 @@ async function main(): Promise<void> {
         ) as ApiSurface,
         collected: false,
       };
-  const changes = diffApiSurfaces(before.surface, after.surface, phone.methods);
+  const changes = diffApiSurfaces(before.surface, after.surface, [
+    ...phone.methods,
+    ...(phone.events ?? []),
+  ]);
   const report = `${formatApiDiff(before.ref, after.ref, changes)}\nPhone inventory source: ${phone.sourceCommit}.\n${phone.sourceEvidence ?? 'Source inventory only; installed binary-to-source provenance was not supplied.'}\n`;
   const metadata = ({ surface, ...rest }: typeof before | typeof after) => ({
     ...rest,
     operations: surface.operations.length,
     events: surface.events.length,
+    eventSchemas: Object.keys(surface.eventSchemas ?? {}).length,
   });
   if (json)
     console.log(

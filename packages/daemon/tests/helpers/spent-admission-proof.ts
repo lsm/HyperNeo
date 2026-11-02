@@ -62,9 +62,7 @@ export async function verifySpentAdmission(
       return res.end('{}');
     }
     const active =
-      body.tools?.some((tool: { name: string }) =>
-        tool.name.endsWith('hyperneo-operations__invoke')
-      ) && JSON.stringify(body.messages).includes('synthetic recovery garden');
+      body.tools?.length > 0 && JSON.stringify(body.messages).includes('synthetic recovery garden');
     const text = active ? `Visible synthetic recovery reply ${requests.length + 1}` : 'Probe ready';
     if (active) {
       evidence.inputWithMessageId ??= JSON.stringify(body.messages).includes(
@@ -77,9 +75,12 @@ export async function verifySpentAdmission(
         held = true;
         await hold;
       }
-      if (restarted)
+      if (restarted) {
+        if (JSON.stringify(body.messages).includes('Visible synthetic recovery reply 1'))
+          evidence.resumedContextSeen = true;
         for (const marker of markers)
           if (JSON.stringify(body.messages).includes(marker)) received.add(marker);
+      }
     }
     const message = {
       id: `msg_${randomUUID()}`,
@@ -483,6 +484,15 @@ export async function verifySpentAdmission(
     }
     evidence.afterDelivery = sample();
     evidence.messages = await read();
+    if (scenario !== 'interrupted') {
+      const inits = (await read()).filter(
+        (message) => message.type === 'system' && message.subtype === 'init'
+      );
+      assert(inits.length >= 2, 'restart must initialize the real SDK again');
+      assert.equal(new Set(inits.map((message) => message.session_id)).size, 1);
+      assert.equal(evidence.resumedContextSeen, true, 'resume must retain the previous reply');
+      evidence.resumedNativeSessionId = inits[0].session_id;
+    }
     evidence.received = [...received];
     evidence.passed = true;
   } finally {

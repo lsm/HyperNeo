@@ -105,6 +105,21 @@ bash .claude/skills/verify/resource-check.sh && bun run check
 Portable wrappers invoke this macOS-only check on Darwin; Linux must not require
 `memory_pressure` or `/System/Volumes/Data` to enter a journey.
 
+For full daemon unit runs used by an SDK upgrade, also isolate HOME and TMPDIR:
+startup fixtures can otherwise scan the owner's native-session directories.
+Run the existing suite under `with-run.sh`, retaining its output outside RUN:
+
+```bash
+bash .claude/skills/verify/resource-check.sh && \
+bash .claude/skills/verify/with-run.sh bash -c '
+  mkdir -p "$RUN/home" "$RUN/tmp" "$RUN/bin"
+  cp .claude/skills/verify/gh-stub.sh "$RUN/bin/gh"
+  env -i HOME="$RUN/home" TMPDIR="$RUN/tmp" PATH="$RUN/bin:$PATH" \
+    BUN_INSTALL="$(dirname "$(dirname "$(command -v bun)")")" \
+    TERM=dumb NODE_ENV=test ./scripts/test-daemon.sh
+' > /absolute/persistent-evidence/daemon-unit.log 2>&1
+```
+
 In a standalone clone beneath a directory named `tmp`, Biome can ignore its `.`
 target because the repository excludes `**/tmp`. If `format:check` reports zero
 files, run the same check chain with that one command replaced by
@@ -132,6 +147,8 @@ the helper's evidence JSON and log outside that run, then immediately removes
 its temporary daemon data. It preserves failure status and never deletes the
 run if saving evidence fails. Keep baseline and fixed evidence in separate
 directories; the helper must close its resources in finally.
+Let the owning parent remove data after the helper process exits; deleting home
+or data inside the helper can race native-worker filesystem teardown.
 
 Shell wrappers that own daemon processes must translate INT/TERM to exit 130/143
 as well as registering EXIT cleanup. Preserve cancellation status and evidence
@@ -353,6 +370,18 @@ No HTTP model mock or provider registration is needed. The worker-identity helpe
 implements this setup; it never touches another process's occupied mock port.
 
 ## Native SDK and worker sandbox proofs
+
+After an installed local driver's own journey passes, read its saved health via
+work.adapters, then record the exact tested clientVersions with work.health
+`{action: "verified", adapter, journey, clientVersions}`. This records evidence;
+it does not run the journey. Never mark a live client verified from synthetic
+fixture versions, a health self-check alone, or a journey that did not pass.
+Only the local human or a bound Neo MCP session may record verification.
+Workers report the passed journey, evidence and exact tested versions to Neo;
+their MCP caller cannot mark a driver verified.
+For health status and notice coverage, use journeys/driver-health.md. Tests skip
+automatic health startup jobs; that journey explicitly enqueues the real job in
+its isolated daemon before starting its processor.
 
 Native SDK journeys (including `journeys/neo-bash-cap.md`) and CLI sandbox
 journeys use scrubbed child-process environments and disposable homes too. They

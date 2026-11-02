@@ -18,6 +18,7 @@ import { gunzip } from 'node:zlib';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
+import daemonPackage from '../../../package.json' with { type: 'json' };
 import { getDataDir } from '../data-dir.ts';
 
 const isVerbose = process.env.HYPERNEO_VERBOSE;
@@ -97,7 +98,7 @@ function getSdkVersion(): string {
     }
   } catch {}
 
-  return '0.3.302';
+  return daemonPackage.dependencies[SDK_PACKAGE];
 }
 
 function getCachePath(): string {

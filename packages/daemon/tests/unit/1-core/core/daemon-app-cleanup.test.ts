@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test, jest } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -323,7 +323,6 @@ describe('Daemon App Cleanup', () => {
       async (fails) => {
         const directory = join(tmpdir(), `hyperneo-shutdown-sql-${crypto.randomUUID()}`);
         const path = join(directory, 'daemon.jsonl');
-        jest.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
         const arm = spyOn(watchdog, 'armStallDetectionWhenStartupSettles').mockImplementation(
           (_handle, _settled, options) => options?.onArm?.('startup_settled')
         );
@@ -377,7 +376,6 @@ describe('Daemon App Cleanup', () => {
           if (fails) app?.db.close();
           observer.close();
           arm.mockRestore();
-          jest.useRealTimers();
           rmSync(directory, { recursive: true, force: true });
         }
       }
