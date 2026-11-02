@@ -1,36 +1,67 @@
 import { expect, test } from 'bun:test';
+import type { DriverHealth } from '@hyperneo/shared/types/settings';
 import { createDriverHealthMonitor } from '../../../../src/lib/drivers/driver-health.ts';
 
 function fixture() {
   let now = 1;
-  let status = 'ok';
+  let status: DriverHealth['status'] = 'ok';
   let version = '1.0.0';
   let probes = 0;
   let failNotice = false;
-  const stored: Record<string, any> = {};
+  let available = true;
+  const stored: Record<string, DriverHealth> = {};
   const notices = new Map<string, string>();
   const deps = {
     ids: ['codex-desktop'],
     now: () => now,
     read: async () => structuredClone(stored),
-    save: async (id: string, result: unknown) => { stored[id] = structuredClone(result); },
+    save: async (id: string, result: DriverHealth) => {
+      stored[id] = structuredClone(result);
+    },
     probe: async () => {
       probes++;
-      return { status, reason: status === 'ok' ? 'Readable.' : 'State database is missing.', clientVersions: { desktop: version } };
+      return {
+        status,
+        reason: status === 'ok' ? 'Readable.' : 'State database is missing.',
+        clientVersions: { desktop: version },
+      };
     },
     notify: async (id: string, text: string) => {
+      if (!available) return false;
       notices.set(id, text);
       if (failNotice) throw new Error('Reply was lost.');
       return true;
     },
   };
-  return { deps, stored, notices, probes: () => probes, setNow: (n: number) => { now = n; }, setStatus: (s: string) => { status = s; }, setVersion: (v: string) => { version = v; }, failNotice: (v: boolean) => { failNotice = v; } };
+  return {
+    deps,
+    stored,
+    notices,
+    probes: () => probes,
+    setNow: (n: number) => {
+      now = n;
+    },
+    setStatus: (s: DriverHealth['status']) => {
+      status = s;
+    },
+    setVersion: (v: string) => {
+      version = v;
+    },
+    failNotice: (v: boolean) => {
+      failNotice = v;
+    },
+    setNeoAvailable: (v: boolean) => { available = v; },
+  };
 }
 
 test('daily checks persist status and do not repeat unchanged notices across restart', async () => {
   const f = fixture();
   await createDriverHealthMonitor(f.deps).check(true);
-  expect(f.stored['codex-desktop']).toMatchObject({ status: 'ok', unverifiedVersion: true, clientVersions: { desktop: '1.0.0' } });
+  expect(f.stored['codex-desktop']).toMatchObject({
+    status: 'ok',
+    unverifiedVersion: true,
+    clientVersions: { desktop: '1.0.0' },
+  });
   await createDriverHealthMonitor(f.deps).check(true);
   expect(f.notices.size).toBe(1);
   await createDriverHealthMonitor(f.deps).check();
@@ -44,6 +75,24 @@ test('daily checks persist status and do not repeat unchanged notices across res
   await createDriverHealthMonitor(f.deps).check(true);
   expect([...f.notices.values()].at(-1)).toContain('recovered');
   expect(f.notices.size).toBe(3);
+});
+
+test('missing Neo does not stop daily probes, and queued transitions are delivered once later', async () => {
+  const f = fixture();
+  f.setNeoAvailable(false);
+  f.setStatus('unavailable');
+  const monitor = createDriverHealthMonitor(f.deps);
+  await monitor.check(true);
+  f.setStatus('ok');
+  f.setNow(86_400_002);
+  await monitor.check();
+  expect(f.stored['codex-desktop'].status).toBe('ok');
+  expect(f.notices.size).toBe(0);
+  f.setNeoAvailable(true);
+  await monitor.check();
+  expect(f.notices.size).toBe(2);
+  await monitor.check();
+  expect(f.notices.size).toBe(2);
 });
 
 test('a lost notice acknowledgement reuses its durable identity after restart', async () => {
@@ -60,10 +109,17 @@ test('verification records the tested version; a later client upgrade remains us
   const monitor = createDriverHealthMonitor(f.deps);
   await monitor.check(true);
   await monitor.verified('codex-desktop', 'codex-state-discovery', { desktop: '1.0.0' });
-  expect(f.stored['codex-desktop']).toMatchObject({ verifiedVersions: { desktop: '1.0.0' }, unverifiedVersion: false });
+  expect(f.stored['codex-desktop']).toMatchObject({
+    verifiedVersions: { desktop: '1.0.0' },
+    unverifiedVersion: false,
+  });
   f.setVersion('2.0.0');
   await monitor.check(true);
-  expect(f.stored['codex-desktop']).toMatchObject({ status: 'ok', unverifiedVersion: true, clientVersions: { desktop: '2.0.0' } });
+  expect(f.stored['codex-desktop']).toMatchObject({
+    status: 'ok',
+    unverifiedVersion: true,
+    clientVersions: { desktop: '2.0.0' },
+  });
   expect([...f.notices.values()].at(-1)).toMatch(/unverified/i);
   const count = f.notices.size;
   await monitor.check(true);
@@ -74,6 +130,8 @@ test('a proof cannot mark a different installed version as verified', async () =
   const f = fixture();
   const monitor = createDriverHealthMonitor(f.deps);
   await monitor.check(true);
-  await expect(monitor.verified('codex-desktop', 'codex-state-discovery', { desktop: '0.9.0' })).rejects.toThrow('version');
+  await expect(
+    monitor.verified('codex-desktop', 'codex-state-discovery', { desktop: '0.9.0' })
+  ).rejects.toThrow('version');
   expect(f.stored['codex-desktop'].verifiedVersions).toBeUndefined();
 });
