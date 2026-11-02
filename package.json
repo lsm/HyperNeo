@@ -52,7 +52,10 @@
     "test:db-main-thread": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/check-db-main-thread.test.ts",
     "api:surface": "bun scripts/api-surface.ts",
     "check:api-surface": "bun scripts/api-surface.ts --check",
-    "test:api-surface": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/api-surface.test.ts"
+    "test:api-surface": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/api-surface.test.ts",
+    "api:diff": "bun scripts/api-diff.ts",
+    "api:phone-methods": "bun scripts/api-phone-methods.ts",
+    "test:api-diff": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/api-diff.test.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.13",

@@ -143,6 +143,9 @@ jobs:
       - name: Test API surface snapshot tooling
         run: bun run test:api-surface
 
+      - name: Test API compatibility tooling
+        run: bun run test:api-diff
+
       - name: Test CI gate script
         run: bun run test:ci-gate
 
