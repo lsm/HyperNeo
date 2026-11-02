@@ -331,7 +331,9 @@ describe('Dev Proxy Helper', () => {
         return;
       }
 
-      const controller = createDevProxyController();
+      const { server, port } = await bindTcpServer();
+      await closeTcpServer(server);
+      const controller = createDevProxyController({ port });
       await expect(controller.start()).rejects.toThrow('devproxy is not installed');
     });
   });
