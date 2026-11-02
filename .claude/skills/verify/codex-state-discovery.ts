@@ -38,7 +38,9 @@ const newest = Math.max(...versions);
 const statePath = join(run, 'home/.codex', `state_${newest}.sqlite`);
 const hash = () => createHash('sha256').update(readFileSync(statePath)).digest('hex');
 const before = hash();
-const app = await createDaemonApp({ config: getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db'), disableWorktrees: true }), verbose: false });
+const config = getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db'), disableWorktrees: true });
+assert.equal(config.disableWorktrees, true, 'the proof must explicitly disable worktrees');
+const app = await createDaemonApp({ config, verbose: false });
 const receipts: unknown[] = [];
 async function find() {
   const child = Bun.spawn([process.execPath, join(import.meta.dir, 'rpc.ts'), 'work.find', JSON.stringify({ adapters: ['codex-desktop'], localOnly: true })], {

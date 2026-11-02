@@ -1,4 +1,6 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,6 +24,26 @@ function state(path: string) {
 }
 
 describe('codexStatePath', () => {
+  test('a non-directory Codex home keeps daemon discovery unavailable without throwing', () => {
+    const root = directory(join(tmpdir(), 'codex-invalid-'));
+    writeFileSync(join(root, '.codex'), 'Not a directory');
+    expect(codexStatePath(root)).toBe(join(root, '.codex', 'state_5.sqlite'));
+  });
+
+  test('an unreadable Codex directory keeps the absent-state fallback', () => {
+    const root = home();
+    const read = spyOn(fs, 'readdirSync').mockImplementation(() => {
+      throw Object.assign(new Error('Directory unavailable'), { code: 'EACCES' });
+    });
+    syncBuiltinESMExports();
+    try {
+      expect(codexStatePath(root)).toBe(join(root, '.codex', 'state_5.sqlite'));
+    } finally {
+      read.mockRestore();
+      syncBuiltinESMExports();
+    }
+  });
+
   test('selects the newest numbered database when the previous version remains', () => {
     const root = home();
     for (const version of [5, 6])
