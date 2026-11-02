@@ -1,11 +1,713 @@
 {
+  "eventSchemas": {
+    "liveQuery.delta": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "added": {
+          "description": "Query-specific row contents remain open records; the event envelope does not define each query row model.",
+          "items": {
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "metadata": {
+          "additionalProperties": {},
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "removed": {
+          "description": "Query-specific row contents remain open records; the event envelope does not define each query row model.",
+          "items": {
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "rowCount": {
+          "type": "number"
+        },
+        "subscriptionId": {
+          "type": "string"
+        },
+        "updated": {
+          "description": "Query-specific row contents remain open records; the event envelope does not define each query row model.",
+          "items": {
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "version": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "subscriptionId",
+        "version"
+      ],
+      "type": "object"
+    },
+    "liveQuery.snapshot": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "metadata": {
+          "additionalProperties": {},
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "rows": {
+          "description": "Query-specific row contents remain open records; the event envelope does not define each query row model.",
+          "items": {
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "subscriptionId": {
+          "type": "string"
+        },
+        "version": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "subscriptionId",
+        "version",
+        "rows"
+      ],
+      "type": "object"
+    },
+    "neo.changed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {},
+      "type": "object"
+    },
+    "neo.speech": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "properties": {
+            "format": {
+              "const": "pcm16",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "sampleRate": {
+              "type": "number"
+            },
+            "sessionId": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "const": "say",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "sessionId",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "sessionId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "stop",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "sessionId"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "pcm": {
+              "type": "string"
+            },
+            "seq": {
+              "type": "number"
+            },
+            "sessionId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "audio",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "sessionId",
+            "seq",
+            "pcm"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "seq": {
+              "type": "number"
+            },
+            "sessionId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "end",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "sessionId",
+            "seq"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "sessionId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "sessionId"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "state.session": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "agentState": {
+          "oneOf": [
+            {
+              "properties": {
+                "status": {
+                  "const": "idle",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "messageId": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "queued",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "messageId"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "isCompacting": {
+                  "type": "boolean"
+                },
+                "messageId": {
+                  "type": "string"
+                },
+                "messageIds": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "phase": {
+                  "enum": [
+                    "initializing",
+                    "thinking",
+                    "streaming",
+                    "finalizing"
+                  ],
+                  "type": "string"
+                },
+                "status": {
+                  "const": "processing",
+                  "type": "string"
+                },
+                "streamingStartedAt": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "status",
+                "messageId",
+                "phase"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "pendingQuestion": {
+                  "properties": {
+                    "askedAt": {
+                      "type": "number"
+                    },
+                    "draftResponses": {
+                      "items": {
+                        "properties": {
+                          "customText": {
+                            "type": "string"
+                          },
+                          "questionIndex": {
+                            "type": "number"
+                          },
+                          "selectedLabels": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "required": [
+                          "questionIndex",
+                          "selectedLabels"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "inputOrigin": {
+                      "anyOf": [
+                        {
+                          "properties": {
+                            "messageId": {
+                              "type": "string"
+                            },
+                            "sessionId": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "sessionId",
+                            "messageId"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "questions": {
+                      "items": {
+                        "properties": {
+                          "header": {
+                            "type": "string"
+                          },
+                          "multiSelect": {
+                            "type": "boolean"
+                          },
+                          "options": {
+                            "items": {
+                              "properties": {
+                                "description": {
+                                  "type": "string"
+                                },
+                                "label": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "label"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          },
+                          "question": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "question",
+                          "multiSelect",
+                          "options"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "toolUseId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "toolUseId",
+                    "questions",
+                    "askedAt"
+                  ],
+                  "type": "object"
+                },
+                "status": {
+                  "const": "waiting_for_input",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "pendingQuestion"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "exhaustedCycles": {
+                  "type": "number"
+                },
+                "manualRetry": {
+                  "type": "boolean"
+                },
+                "maxRetries": {
+                  "type": "number"
+                },
+                "messageId": {
+                  "type": "string"
+                },
+                "reason": {
+                  "const": "network",
+                  "type": "string"
+                },
+                "retryAt": {
+                  "type": "number"
+                },
+                "retryCount": {
+                  "type": "number"
+                },
+                "status": {
+                  "const": "rate_limit_cooldown",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "retryCount",
+                "maxRetries",
+                "retryAt"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "status": {
+                  "const": "interrupted",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "commandsData": {
+          "properties": {
+            "availableCommands": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "availableCommands"
+          ],
+          "type": "object"
+        },
+        "daemonEpoch": {
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "properties": {
+                "details": {},
+                "message": {
+                  "type": "string"
+                },
+                "occurredAt": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "message",
+                "occurredAt"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revision": {
+          "type": "number"
+        },
+        "sessionInfo": {
+          "anyOf": [
+            {
+              "properties": {
+                "config": {
+                  "properties": {
+                    "model": {
+                      "type": "string"
+                    },
+                    "provider": {
+                      "type": "string"
+                    },
+                    "thinkingLevel": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "lastActiveAt": {
+                  "type": "string"
+                },
+                "metadata": {
+                  "properties": {
+                    "pendingModelSwitch": {
+                      "anyOf": [
+                        {
+                          "properties": {
+                            "model": {
+                              "type": "string"
+                            },
+                            "provider": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "model",
+                            "provider"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "type": "object"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "workspacePath": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "workspacePath",
+                "createdAt",
+                "lastActiveAt",
+                "status",
+                "config",
+                "metadata"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "version": {
+          "type": "number"
+        },
+        "worker": {
+          "anyOf": [
+            {
+              "properties": {
+                "adapter": {
+                  "type": "string"
+                },
+                "daemon": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "adapter",
+                "name",
+                "label"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "sessionInfo",
+        "agentState",
+        "commandsData",
+        "error",
+        "timestamp"
+      ],
+      "type": "object"
+    },
+    "state.settings": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "settings": {
+          "properties": {
+            "language": {
+              "enum": [
+                "system",
+                "en",
+                "zh-Hans"
+              ],
+              "type": "string"
+            },
+            "settingSources": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "settingSources"
+          ],
+          "type": "object"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "version": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "settings",
+        "timestamp"
+      ],
+      "type": "object"
+    },
+    "voice.stream.text": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "isFinal": {
+          "type": "boolean"
+        },
+        "streamId": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "streamId",
+        "text",
+        "isFinal"
+      ],
+      "type": "object"
+    }
+  },
   "events": [
     "context.updated",
+    "liveQuery.delta",
+    "liveQuery.error",
+    "liveQuery.snapshot",
     "messages.statusChanged",
     "neo.changed",
     "neo.publications.changed",
     "neo.session.notice",
     "neo.session.notices",
+    "neo.speech",
     "neo.working",
     "providers.changed",
     "session.deleted",
@@ -36,7 +738,8 @@
     "state.sdkMessages.delta",
     "state.session",
     "state.settings",
-    "state.system"
+    "state.system",
+    "voice.stream.text"
   ],
   "operations": [
     {

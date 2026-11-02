@@ -18,17 +18,14 @@ import { voiceDiagnostic } from './diagnostics.ts';
 import { resolveTranscriptionEndpoint, withTimeout } from './transcribe-fetch.ts';
 import { resolveApiKey, type VoiceTranscribeOutcome } from './transcribe-pipeline.ts';
 import { streamProtocol, type StreamProtocol } from './stream-protocols.ts';
+import type { ClientEventData } from '../operations/client-event-schemas.ts';
 
 const STREAM_SAMPLE_RATE = 16_000;
 const CONNECT_TIMEOUT_MS = 5_000;
 const START_TIMEOUT_MS = 8_000;
 const CREDENTIAL_LOOKUP_TIMEOUT_MS = 16_000;
 
-export interface VoiceStreamText {
-  streamId: string;
-  text: string;
-  isFinal: boolean;
-}
+export type VoiceStreamText = ClientEventData<'voice.stream.text'>;
 
 export interface VoiceStreamDeps {
   clientId?: string;

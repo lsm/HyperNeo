@@ -52,5 +52,14 @@
     "voice.stream.text",
     "voice.transcribe"
   ],
+  "events": [
+    "liveQuery.delta",
+    "liveQuery.snapshot",
+    "neo.changed",
+    "neo.speech",
+    "state.session",
+    "state.settings",
+    "voice.stream.text"
+  ],
   "sourceEvidence": "Owner-reported release/archive timing for phone app 0.5.0 (6); no retained upload receipt. The installed binary-to-source association is not proven."
 }
