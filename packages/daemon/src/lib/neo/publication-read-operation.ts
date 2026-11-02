@@ -6,12 +6,12 @@ import type { NeoRepository } from '../../storage/repositories/neo-repository.ts
 import type { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { isLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import { NeoPublicationSchema } from './publication.ts';
+import { NeoPublicationOutputObject, publicationTextRule } from './publication.ts';
 
-export const NeoStoredPublicationSchema = NeoPublicationSchema.extend({
+export const NeoStoredPublicationSchema = NeoPublicationOutputObject.extend({
   sequence: z.number().int().positive(),
   createdAt: z.iso.datetime(),
-});
+}).superRefine(publicationTextRule);
 
 export const NeoConversationPageShape = z
   .object({
@@ -113,7 +113,10 @@ export const readNeoPublicationPage = (superpipe({})('neo-publication-read') as 
   ledger: NeoPublicationRepository
 ) => Result;
 
-export function createNeoPublicationReadOperation(ledger: NeoPublicationRepository) {
+export function createNeoPublicationReadOperation(
+  ledger: NeoPublicationRepository,
+  present: (items: NeoPublication[]) => Promise<NeoPublication[]> = async (items) => items
+) {
   return defineOperation({
     name: 'neo.publication.read',
     description:
@@ -129,6 +132,9 @@ export function createNeoPublicationReadOperation(ledger: NeoPublicationReposito
         nextAfter: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
       }),
     ]),
-    execute: async (page, caller) => ledger.readPageCurrent(page, caller),
+    execute: async (page, caller) => {
+      const result = await ledger.readPageCurrent(page, caller);
+      return result.ok ? { ...result, items: await present(result.items) } : result;
+    },
   });
 }

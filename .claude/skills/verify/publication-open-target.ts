@@ -54,7 +54,8 @@ try{
   const result=await invoke('neo.publication.publish',{...draft,requestId:crypto.randomUUID(),session});assert(result.accepted,JSON.stringify(result));assert.equal(result.publication.sessionSource.adapter,adapter);assert.equal(result.publication.sessionSource.link,link);assert.equal(result.publication.session,session);
  }
  const noSession=await invoke('neo.publication.publish',{requestId:crypto.randomUUID(),shortText:'Ordinary reply',fullText:'No session'});assert(noSession.accepted);assert.equal(noSession.publication.sessionSource,undefined);
- const injected=await invoke('neo.publication.publish',{...draft,requestId:crypto.randomUUID(),sessionSource:{adapter:'codex-desktop',link:'javascript:alert(1)'}});assert.equal(injected.accepted,false);
+ const beforeInjection=app.db.getDatabase().prepare('SELECT COUNT(*) AS n FROM neo_publications').get();
+ const injected=await invoke('neo.publication.publish',{...draft,requestId:crypto.randomUUID(),sessionSource:{adapter:'codex-desktop',link:'javascript:alert(1)'}});assert.notEqual(injected.accepted,true);assert.deepEqual(app.db.getDatabase().prepare('SELECT COUNT(*) AS n FROM neo_publications').get(),beforeInjection);
  const ambiguous=await invoke('neo.session.link',{session:'ambiguous'});assert.equal(ambiguous.ok,false);
  const unavailable=await invoke('neo.publication.publish',{...draft,requestId:crypto.randomUUID(),session:'codex-desktop:unavailable'});assert.equal(unavailable.reason,'session_lookup_failed');
  const edited=await invoke('neo.publication.edit',{requestId:crypto.randomUUID(),publicationId:first.publication.publicationId,fullText:'Edited report'});assert(edited.accepted);assert.equal(edited.publication.sessionSource.adapter,'codex-desktop');
