@@ -288,7 +288,7 @@ describe('todo dependencies', () => {
           state: 'done',
           evidence: 'PR1 merged.',
         });
-        await runner.refresh(() => {});
+        await runner.advance();
         expect(store.getTodo(second.id)?.state).toBe('doing');
         expect(store.getTodo(third.id)?.state).toBe('todo');
         expect(sessions.readRef(second.id)).toEqual(target.ref);

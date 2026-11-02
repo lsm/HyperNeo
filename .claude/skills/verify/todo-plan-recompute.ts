@@ -262,7 +262,6 @@ try {
       assert.equal(advanced.todos.find((t: { id: string }) => t.id === second.id).state, 'doing');
       assert.equal(starts(), 2);
       await refresh(); assert.equal(starts(), 2);
-      evidence.verified = true;
     } else if (mode === 'chain-edges' || mode === 'chain-check') {
       const split = await call('neo.ask.open', { title: 'Split approved plan', request: 'Complete both repositories.', todos: [
         { ...step('split-first'), named: { repository: 'synthetic/first' }, start: true },
@@ -294,7 +293,6 @@ try {
       assert.deepEqual(released.questions.filter((q: { state: string }) => q.state === 'open').map((q: { startTodos: string[] }) => q.startTodos), [[independent.id]]);
       assert.equal(starts(), 3);
       await refresh(); assert.equal(starts(), 3);
-      evidence.verified = true;
     } else {
     const opened = await chain('approved');
     const [first, second, third] = opened.todos;
@@ -332,8 +330,10 @@ try {
       assert.equal(starts(), 4); evidence.unapproved = waiting;
       const legacy = await chain('legacy', 'restart');
       const [a, b] = legacy.todos;
-      store.updateTodo(store.getTodo(b.id)!, { state: 'blocked', blockedBy: 'question', blockedReason: 'Waiting for the human to start it.' }, Date.now());
-      store.askQuestion('legacy-start', a.askId, { kind: 'start', text: 'Start legacy second?', startTodos: [b.id], options: null, multiple: false, noLabel: null, yesLabel: null }, Date.now());
+      const seedLegacy = () => { store.updateTodo(store.getTodo(b.id)!, { state: 'blocked', blockedBy: 'question', blockedReason: 'Waiting for the human to start it.' }, Date.now()); store.askQuestion(crypto.randomUUID(), a.askId, { kind: 'start', text: 'Start legacy second?', startTodos: [b.id], options: null, multiple: false, noLabel: null, yesLabel: null }, Date.now()); };
+      seedLegacy();
+      await call('neo.todo.edit', { todoId: a.id, priority: 'high' });
+      const pruned = await read(a.askId); evidence.legacyPruned = pruned; assert.equal(pruned.todos.find((t: { id: string }) => t.id === b.id).state, 'todo'); seedLegacy();
       await ws!.close(); await app!.cleanup(); app = undefined; ws = undefined;
       await open();
       await complete(a.title);
@@ -343,9 +343,9 @@ try {
       assert.equal(starts(), 6);
       await refresh(); assert.equal(starts(), 6);
       evidence.legacyRecovered = recovered;
-      evidence.verified = true;
     }
     }
+    if (mode !== 'chain-before') evidence.verified = true;
   } else {
   ask('flow');
   add('first', 'flow', 1);
