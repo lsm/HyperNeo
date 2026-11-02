@@ -26,11 +26,11 @@ receipts, SDK messages, built compaction settings and durable input rows. sdk.lo
 contains the run result; the JSON names the isolated run and SDK debug log.
 This is an SDK/RPC user-surface proof, not a browser check or a real-provider test.
 
-Fresh dev uses `@anthropic-ai/claude-agent-sdk` 0.3.302 / Claude Code 2.1.302.
+Fresh dev uses `@anthropic-ai/claude-agent-sdk` 0.3.316 / Claude Code 2.1.316.
 Official references: [automatic compaction](https://code.claude.com/docs/en/agent-sdk/agent-loop#automatic-compaction),
 [environment variables](https://code.claude.com/docs/en/env-vars),
 [window configuration](https://code.claude.com/docs/en/model-config#set-the-auto-compact-window).
-The installed SDK's `sdk.d.ts:9404–9407` documents `precomputeCompactionEnabled`.
+The installed SDK's `sdk.d.ts` documents `precomputeCompactionEnabled`.
 The proof records the existing 153K window and a real 120K auto-compact threshold
 with the 60% override; it does not change the window calculation. SDK percentage
 overrides lower the native trigger only. The web docs do not explicitly promise

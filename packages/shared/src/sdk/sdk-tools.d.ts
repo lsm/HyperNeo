@@ -128,6 +128,7 @@ export type AgentOutput =
         } | null;
         fallback_credit?: unknown;
       };
+      toolsUsed?: string[];
       toolStats?: {
         readCount: number;
         searchCount: number;
@@ -294,6 +295,7 @@ export type ArtifactOutput =
         rel?: "mine" | "shared";
         external?: true;
         role?: "editor" | "commenter" | "reader" | "viewer";
+        outsidersMayHaveWritten?: true;
         pinned?: boolean;
       }[];
       truncated?: boolean;
@@ -510,6 +512,7 @@ export type ProjectsOutput =
   | {
       method: "project_info";
       notice?: string;
+      local_file?: string;
       name: string;
       description: string;
       instructions: string;
@@ -1548,6 +1551,7 @@ export interface BashOutput {
   timedOutAfterMs?: number;
   backgroundCwdHint?: string;
   backgroundEndsWithFinalResponse?: true;
+  backgroundWakesOwner?: true;
   dangerouslyDisableSandbox?: boolean;
   returnCodeInterpretation?: string;
   noOutputExpected?: boolean;
@@ -1820,6 +1824,7 @@ export interface AskUserQuestionOutput {
     [k: string]: {
       preview?: string;
       notes?: string;
+      unanswered?: "skipped" | "replied_in_chat" | "dismissed";
     };
   };
   afkTimeoutMs?: number;
