@@ -35,3 +35,7 @@ second once. It then removes an unstarted prerequisite through MCP; its approved
 dependent must dispatch while an independent unapproved todo keeps its Start
 card. Preserve both public-reader snapshots and native queue counts. Unit
 regressions also cover implicit ordering after removal and explicit human holds.
+
+Run `chain-parent` in another fresh directory. A real parent decision must stop
+its child after the predecessor closes; a public human answer releases it once.
+Scope regressions keep sibling questions and questions linked to other todos local.

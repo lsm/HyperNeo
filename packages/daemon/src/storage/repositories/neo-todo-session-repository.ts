@@ -240,7 +240,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     );
     const waiting = asks.flatMap((ask) => {
       const plan = todos.filter((todo) => todo.askId === ask.id);
-      const asked = store.listQuestions(ask.id);
+      const asked = store.listQuestionsForAsks(ask.parentId ? [ask.parentId, ask.id] : [ask.id]);
       const family = store.listFamilyTodos(ask.id);
       if (
         !family.some(
