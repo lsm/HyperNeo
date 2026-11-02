@@ -11,6 +11,7 @@ import { prepareCodingExecution } from '../../../packages/daemon/src/lib/neo/pac
 import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 import { CodingAssignmentsRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/assignments.ts';
+import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import { createCodingPackTables } from '../../../packages/daemon/src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { QA_SYSTEM_CONTRACT, REVIEWER_SYSTEM_CONTRACT } from '../../../packages/prompts/src/mod.ts';
@@ -130,6 +131,31 @@ try {
         assert(stageRead.ok); const stageTodos = stageRead.entry.todos;
         assert(stageTodos.some(todo => todo.title === `Review PR #8 at ${head}`), 'The ask must show its Review todo before Verify starts');
         evidence.push({ phase, stageTodos });
+        const sessions = new NeoTodoSessionRepository(db), reviewTodoId = stageTodos.find(todo => todo.title === `Review PR #8 at ${head}`)!.id;
+        sessions.recordIdentity(reviewTodoId, review.assignment.ref, { model: null, effort: null });
+        assert.equal(sessions.readCard(reviewTodoId)?.model, null);
+        const attemptsBeforeDegrade = attempts;
+        const degradedAssign = await assign({ ...session, stage: 'review', candidates: [defaultTarget] }).catch(error => ({ fault: String(error) }));
+        const degradedResult = await rpc('neo.coding.result', { todoId: reviewTodoId, ref: review.assignment.ref,
+          fact: { url: session.url, head, stage: 'review', actor: review.assignment.actor, verdict: 'pass', acceptanceContract: session.acceptanceContract, evidence: ['artifact:unknown-model'] },
+        }).catch(error => ({ fault: String(error) }));
+        sessions.recordIdentity(reviewTodoId, review.assignment.ref, { model: preferredTarget.model, effort: preferredTarget.effort });
+        assert((await assign({ ...session, stage: 'review', candidates: [] })).ok); assert.equal(attempts, attemptsBeforeDegrade);
+        const race = await seed('reservation-race', 15, 'synthetic/reservation-race');
+        const planTarget = CodingAssignmentsRepository.prototype.planTargetCurrent;
+        let racedAssign: unknown;
+        try {
+          CodingAssignmentsRepository.prototype.planTargetCurrent = async function(input) {
+            const target = await planTarget.call(this, input);
+            new NeoAskTodoRepository(db).commitState(race.todoId, {}, Date.now(), { state: 'done', evidence: 'artifact:concurrent-completion' });
+            return target;
+          };
+          racedAssign = await assign({ ...race, stage: 'review', candidates: [defaultTarget] }).catch(error => ({ fault: String(error) }));
+        } finally { CodingAssignmentsRepository.prototype.planTargetCurrent = planTarget; }
+        evidence.push({ phase, degradedAssign, degradedResult, racedAssign });
+        assert([degradedAssign, degradedResult, racedAssign].every(reply => reply && typeof reply === 'object' && 'ok' in reply && reply.ok === false && 'reason' in reply && typeof reply.reason === 'string'));
+        assert.equal(attempts, attemptsBeforeDegrade);
+        assert.equal(db.prepare('SELECT COUNT(*) AS n FROM neo_todos WHERE ask_id=?').get('ask-reservation-race').n, 1);
         const verify = await assign({ ...session, stage: 'verify', candidates: [verifyTarget] }); assert(verify.ok); assert.notEqual(verify.assignment.ref.id, review.assignment.ref.id);
         for (const [stage, assigned, verdict] of [
           ['review', review, 'fail'], ['verify', verify, 'pass'],
@@ -181,8 +207,8 @@ try {
         const before = attempts;
         const stored = assignments.read('session', 'https://github.com/synthetic/session/pull/8', head); assert(stored.review?.ref);
         const replay = await assign({ todoId: 'session', url: 'https://github.com/synthetic/session/pull/8', head, acceptanceContract: 'artifact:contract-session', stage: 'review', candidates: [] }); assert(replay.ok); assert.deepEqual(replay.assignment.ref, stored.review.ref); assert.equal(attempts, before);
-        assert.equal(db.prepare('SELECT COUNT(*) AS n FROM neo_todos').get().n, 17);
-        assert.equal(db.prepare("SELECT COUNT(*) AS n FROM neo_todos WHERE state='done'").get().n, 3);
+        assert.equal(db.prepare('SELECT COUNT(*) AS n FROM neo_todos').get().n, 18);
+        assert.equal(db.prepare("SELECT COUNT(*) AS n FROM neo_todos WHERE state='done'").get().n, 4);
         assert.equal(git(source, 'rev-parse', 'HEAD'), baseHead); assert.equal(readFileSync(join(source, 'behavior.txt'), 'utf8'), 'preserve dirty author source');
         evidence.push({ phase, stored, todoStates: db.prepare('SELECT id,state FROM neo_todos').all() });
       }

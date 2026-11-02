@@ -1,6 +1,6 @@
 import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
 import { QA_SYSTEM_CONTRACT, REVIEWER_SYSTEM_CONTRACT } from '@hyperneo/prompts';
-import { afterEach, describe, test, expect } from 'bun:test';
+import { afterEach, describe, test, expect, spyOn } from 'bun:test';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -12,6 +12,7 @@ import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/n
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
 import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
+import { readCodingMergeLocal } from '../../../../src/lib/neo/packs/coding/merge-local-state.ts';
 import { CodingAssignmentsRepository } from '../../../../src/lib/neo/packs/coding/assignments.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { readFreeWorkers } from '../../../../src/storage/work-started-sessions.ts';
@@ -277,6 +278,85 @@ describe('coding actor assignments', () => {
         ['review', failedStage === 'review' ? 'fail' : 'pass'],
       ]);
       expect(store.getTodo('todo')?.state).toBe('doing');
+    }
+  );
+  test.each(['identity', 'rebind'] as const)(
+    'degraded %s metadata refuses assignments and results without faulting reads',
+    async (mode) => {
+      const f = fixture();
+      const review = (await f.assign()).assignment!;
+      await f.assign({ stage: 'verify', candidates: [author] });
+      const id = review.stageTodoId!;
+      if (mode === 'identity')
+        f.sessions.recordIdentity(id, review.ref!, { model: null, effort: null });
+      else f.sessions.bind(id, { ...review.ref!, id: 'replacement' }, Date.now());
+      expect(f.sessions.readCard(id)?.model).toBeNull();
+      expect(f.assignments.read('todo', url, head).review).toBeUndefined();
+      expect(
+        readCodingMergeLocal(f.db, { todoId: 'todo', url, head }).assignments.review
+      ).toBeUndefined();
+      expect(await f.assign({ candidates: [reviewer] })).toMatchObject({
+        ok: false,
+        reason: expect.any(String),
+      });
+      expect(
+        await invokeOperation(
+          f.registry,
+          'neo.coding.result',
+          {
+            todoId: id,
+            ref: review.ref,
+            fact: {
+              url,
+              head,
+              stage: 'review',
+              actor: review.actor,
+              verdict: 'pass',
+              acceptanceContract: 'artifact:contract',
+              evidence: ['artifact:unknown-model'],
+            },
+          },
+          { source: 'internal', role: 'neo' }
+        )
+      ).toMatchObject({
+        kind: 'completed',
+        value: { ok: false, reason: 'stage_assignment_mismatch' },
+      });
+      expect(f.starts).toHaveLength(2);
+      f.sessions.bind(id, review.ref!, Date.now());
+      f.sessions.recordIdentity(id, review.ref!, { model: reviewer.model, effort: null });
+      expect((await f.assign({ candidates: [] })).ok).toBe(true);
+      expect(f.starts).toHaveLength(2);
+    }
+  );
+  test.each(['ask', 'todo'] as const)(
+    'a settled %s before reservation is a typed refusal without dispatch',
+    async (kind) => {
+      const f = fixture();
+      const original = CodingAssignmentsRepository.prototype.planTargetCurrent;
+      const plan = spyOn(
+        CodingAssignmentsRepository.prototype,
+        'planTargetCurrent'
+      ).mockImplementation(async function (this: CodingAssignmentsRepository, input) {
+        const target = await original.call(this, input);
+        if (kind === 'ask') f.db.prepare("UPDATE neo_asks SET status='done' WHERE id='ask'").run();
+        else
+          new NeoAskTodoRepository(f.db).commitState('todo', {}, Date.now(), {
+            state: 'done',
+            evidence: 'artifact:concurrent-completion',
+          });
+        return target;
+      });
+      try {
+        expect(await f.assign({ candidates: [reviewer] })).toMatchObject({
+          ok: false,
+          reason: expect.any(String),
+        });
+        expect(f.starts).toHaveLength(0);
+        expect(new NeoAskTodoRepository(f.db).listTodos('ask')).toHaveLength(1);
+      } finally {
+        plan.mockRestore();
+      }
     }
   );
   test('a started actor needing human input is still bound to its own busy todo', async () => {
