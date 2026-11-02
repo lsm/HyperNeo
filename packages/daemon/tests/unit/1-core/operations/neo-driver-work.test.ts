@@ -52,6 +52,7 @@ test('worker delivery guidance uses a live owning-daemon path instead of requiri
   expect(message).toContain('absolute path on the owning daemon');
   expect(message).toContain('Removing its worktree makes the reference unavailable');
   expect(message).not.toContain('artifact.file.register');
+  expect(message).toContain('owner_unavailable');
 });
 const sendTarget: NeoDriverTarget = {
   verb: 'send',

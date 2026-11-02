@@ -23,6 +23,7 @@ describe('root Neo system prompt', () => {
     expect(prompt).toContain('fixed-head Git');
     expect(prompt).not.toContain('{artifact:registeredArtifactId}');
     expect(prompt).not.toContain('saved registered confirmation');
+    expect(prompt).toContain('owner_unavailable');
   });
   test.each([false, true])('limits worker messages with packs: %s', (enabled) => {
     const prompt = neoPrompt(enabled ? neoSettingsPackBriefs() : []);
