@@ -9,7 +9,7 @@ import type { ReactiveDatabase } from '../../../../storage/reactive-database.ts'
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
-import { WorkRefSchema } from '../../../drivers/types.ts';
+import { WorkRefSchema, type WorkRef } from '../../../drivers/types.ts';
 import { githubUrlKey, parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { CodingActor, CodingStageFact } from './stage-facts.ts';
 import { NeoAskTodoRepository } from '../../../../storage/repositories/neo-ask-todo-repository.ts';
@@ -45,6 +45,33 @@ export const CodingAssignment = z
   );
 export type CodingAssignment = z.infer<typeof CodingAssignment>;
 type Stage = 'review' | 'qa';
+export type CodingStageDispatch = ReturnType<typeof readDriverOutcome> & { notSent?: true };
+export const codingStagePreflightRefusal = (reason?: string) =>
+  [
+    'unsupported_model',
+    'unsupported_effort',
+    'unsupported_preparation',
+    'unknown_adapter',
+  ].includes(reason ?? '');
+
+function stageMayRetry(
+  state: string,
+  ref: WorkRef | null,
+  outcomes: readonly (CodingStageDispatch | null)[]
+) {
+  return (
+    state === 'failed' &&
+    !ref &&
+    outcomes.length > 0 &&
+    outcomes.every(
+      (outcome) =>
+        outcome &&
+        !('ref' in outcome) &&
+        (outcome.notSent || codingStagePreflightRefusal(outcome.reason))
+    )
+  );
+}
+
 const key = (url: string, head: string, stage: Stage) =>
   `assignment:${githubUrlKey(url)}:${head}:${stage}`;
 
@@ -79,8 +106,6 @@ export class CodingAssignmentsRepository {
   }
 
   read(todoId: string, url: string, head: string): Partial<Record<Stage, CodingAssignment>> {
-    const todo = this.todos.getTodo(todoId);
-    if (todo?.check?.kind === 'stage_result') todoId = String(todo.check.params.todoId);
     const rows = this.db
       .prepare(`SELECT key, value_json FROM pack_facts
       WHERE todo_id = ? AND pack = 'coding' AND key IN (?, ?)`)
@@ -94,6 +119,17 @@ export class CodingAssignmentsRepository {
         this.hydrate(JSON.parse(row.value_json)),
       ])
     );
+  }
+
+  readResult(todoId: string, url: string, head: string, stage: Stage) {
+    const todo = this.todos.getTodo(todoId);
+    if (todo?.check?.kind === 'stage_result') {
+      const params = todo.check.params;
+      if (params.url !== githubUrlKey(url) || params.head !== head || params.stage !== stage)
+        return undefined;
+      todoId = String(params.todoId);
+    }
+    return this.read(todoId, url, head)[stage];
   }
 
   private hydrate(value: CodingAssignment): CodingAssignment {
@@ -131,34 +167,44 @@ export class CodingAssignmentsRepository {
         (todo) =>
           todo.check?.kind === 'stage_result' && isDeepStrictEqual(todo.check.params, params)
       );
-    if (existing) return { todo: existing, ask, created: false };
+    if (
+      existing &&
+      !stageMayRetry(
+        existing.state,
+        sessions.readRef(existing.id),
+        sessions.inputs.list(existing.id).map((input) => input.outcome)
+      )
+    )
+      return { todo: existing, ask, dispatch: false };
     const now = Date.now(),
-      id = crypto.randomUUID();
-    todos.addTodo(
-      id,
-      ask.id,
-      {
-        title: `${stage === 'review' ? 'Review' : 'Verify'} PR #${parsePrUrl(assignment.url)!.number} at ${assignment.head}`,
-        doneWhen: 'The assigned actor has returned a verdict for this exact head.',
-        check: { pack: 'coding', kind: 'stage_result', params },
-        instruction: null,
-        named: null,
-      },
-      now,
-      parent.repo
-    );
+      id = existing?.id ?? crypto.randomUUID();
+    if (existing) sessions.recordRetry(id);
+    else
+      todos.addTodo(
+        id,
+        ask.id,
+        {
+          title: `${stage === 'review' ? 'Review' : 'Verify'} PR #${parsePrUrl(assignment.url)!.number} at ${assignment.head}`,
+          doneWhen: 'The assigned actor has returned a verdict for this exact head.',
+          check: { pack: 'coding', kind: 'stage_result', params },
+          instruction: null,
+          named: null,
+        },
+        now,
+        parent.repo
+      );
     sessions.create(id, target);
     return {
-      todo: todos.commitState(id, {}, now, {
+      todo: todos.commitState(id, { finishedAt: null, reason: null }, now, {
         state: 'blocked',
         reason: 'Awaiting the assigned actor dispatch receipt.',
       }).todo!,
       ask,
-      created: true,
+      dispatch: true,
     };
   }
 
-  recordDispatch(id: string, todoId: string, outcome: ReturnType<typeof readDriverOutcome>) {
+  recordDispatch(id: string, todoId: string, outcome: CodingStageDispatch) {
     const sessions = new NeoTodoSessionRepository(this.db);
     const input = sessions.inputs.list(todoId).find((item) => item.id === id)!;
     const askId = this.todos.getTodo(todoId)!.askId;
@@ -187,7 +233,7 @@ export class CodingAssignmentsRepository {
   }
 
   recordResult(todoId: string, fact: CodingStageFact): boolean {
-    const assignment = this.read(todoId, fact.url, fact.head)[fact.stage];
+    const assignment = this.readResult(todoId, fact.url, fact.head, fact.stage);
     if (
       !assignment ||
       assignment.acceptanceContract !== fact.acceptanceContract ||
@@ -232,14 +278,15 @@ export class CodingAssignmentsRepository {
     const assignment = CodingAssignment.parse(input);
     assignment.url = githubUrlKey(assignment.url);
     return this.db.transaction(() => {
-      const parent = this.todos.getTodo(todoId);
-      if (
-        assignment.stageTodoId &&
-        (!parent ||
+      if (assignment.stageTodoId) {
+        const parent = this.todos.getTodo(todoId);
+        if (
+          !parent ||
           !['doing', 'blocked'].includes(parent.state) ||
-          this.todos.getAsk(parent.askId)?.status !== 'open')
-      )
-        return false;
+          this.todos.getAsk(parent.askId)?.status !== 'open'
+        )
+          return false;
+      }
       if (
         this.db
           .prepare(`SELECT 1 FROM pack_facts WHERE todo_id = ? AND pack = 'coding'

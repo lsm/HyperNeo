@@ -41,7 +41,11 @@ Observe `evidence/actor-assignments.json` and `gh.jsonl`:
 - Explicit human Review starts no session; missing provenance refuses while an
   explicit provenance opt-out permits the default.
 - A preflight-unavailable preferred model falls back to the qualifying default
-  with an explanation. An acceptance-contract change refuses.
+  with an explanation. A failed stage can also be corrected in a later request
+  on the same todo after a definite preflight rejection or explicit `notSent`
+  acknowledgement. RPC ask reads show the failed todo return to doing without a
+  duplicate todo. An uncertain submission cannot restart. An acceptance-contract
+  change refuses.
 - A new PR head invalidates old assignment requests, requires new Review before
   Verify and assigns a fresh reviewer. Verify results accept the public `verify`
   stage while retaining historical `qa` storage; inconclusive never becomes pass.

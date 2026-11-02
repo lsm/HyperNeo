@@ -24,7 +24,7 @@ export function createCodingResultOperation(assignments: CodingAssignmentsReposi
     .pipe(
       (input: Input) => {
         const { fact } = input;
-        const assignment = assignments.read(input.todoId, fact.url, fact.head)[fact.stage];
+        const assignment = assignments.readResult(input.todoId, fact.url, fact.head, fact.stage);
         return assignment &&
           assignment.acceptanceContract === fact.acceptanceContract &&
           isDeepStrictEqual(assignment.actor, fact.actor) &&

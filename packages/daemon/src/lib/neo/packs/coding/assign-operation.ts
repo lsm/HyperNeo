@@ -8,14 +8,19 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { WorkRef } from '../../../drivers/types.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { NeoTodoSessionRepository } from '../../../../storage/repositories/neo-todo-session-repository.ts';
-import type { readDriverOutcome, NeoDriverTarget } from '../../driver-work.ts';
+import type { NeoDriverTarget } from '../../driver-work.ts';
 import { StartWorkResultSchema, StopWorkResultSchema } from '../../../drivers/work-operations.ts';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { githubUrlKey, parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { spawnProcess } from '../../../runtime-spawn/index.ts';
 import { defineOperation, type OperationCaller } from '../../../operations/registry.ts';
 import type { OperationOutcome } from '../../../operations/invoke.ts';
-import { CodingAssignment as Assignment, CodingAssignmentsRepository } from './assignments.ts';
+import {
+  CodingAssignment as Assignment,
+  CodingAssignmentsRepository,
+  codingStagePreflightRefusal,
+  type CodingStageDispatch,
+} from './assignments.ts';
 import { sameCodingWorkRef } from './delivery-facts.ts';
 import type { CodingPrLedgerRepository } from './pr-ledger.ts';
 import type { CodingTodoPrRepository } from './todo-prs.ts';
@@ -98,11 +103,15 @@ function admit(input: Input, deps: Deps): Gate<Assignment> {
   };
 }
 
-function readStageOutcome(outcome: OperationOutcome): ReturnType<typeof readDriverOutcome> {
+function readStageOutcome(outcome: OperationOutcome): CodingStageDispatch {
   if (outcome.kind !== 'completed') return { failure: outcome.message };
   const started = StartWorkResultSchema.parse(outcome.value);
   if (!started.ok)
-    return { failure: `${started.reason}: ${started.detail}`, reason: started.reason };
+    return {
+      failure: `${started.reason}: ${started.detail}`,
+      reason: started.reason,
+      ...(started.notSent ? { notSent: true } : {}),
+    };
   const { ref, model, effort, link, receipt, lastActivityAt } = started.value;
   return { ref, model, effort, link, receipt, startedAt: lastActivityAt };
 }
@@ -181,7 +190,7 @@ export function createCodingAssignmentOperation(deps: Deps) {
     );
     const stageTodoId = reserved.todo.id;
     const sessions = new NeoTodoSessionRepository(deps.db);
-    if (!reserved.created)
+    if (!reserved.dispatch)
       return refuse(
         `Stage todo ${stageTodoId} already exists; reconcile its recorded dispatch without replaying it.`
       );
@@ -223,12 +232,7 @@ export function createCodingAssignmentOperation(deps: Deps) {
     let started = await start(plan.target);
     if (
       !('ref' in started) &&
-      [
-        'unsupported_model',
-        'unsupported_effort',
-        'unsupported_preparation',
-        'unknown_adapter',
-      ].includes(started.reason ?? '') &&
+      codingStagePreflightRefusal(started.reason) &&
       !isDeepStrictEqual(plan.target, input.candidates[0])
     ) {
       const fallback = await select([input.candidates[0]]);
