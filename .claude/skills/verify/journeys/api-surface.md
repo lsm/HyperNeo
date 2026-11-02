@@ -18,7 +18,7 @@ bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/api-su
 
 The actual RPC operations.list must match every committed operation and every
 OPERATION_NAMES entry. Compare operations.describe input/result JSON Schemas for
-the discovery, task, messaging and Neo examples against the committed snapshot,
+the discovery, task, messaging, Neo and worker-inspection examples against the committed snapshot,
 and require real system.health success. The event list must be sorted, unique and
 contain the documented state/Neo methods. Event names are statically extracted;
 this proof does not claim to emit every server event.

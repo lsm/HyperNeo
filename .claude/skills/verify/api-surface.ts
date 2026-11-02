@@ -33,7 +33,7 @@ try {
   assert.deepEqual(operations.map(x=>x.name).sort(), surface.operations.map(x=>x.name));
   assert.deepEqual(surface.operations.map(x=>x.name), [...OPERATION_NAMES].sort());
   const checked:string[]=[];
-  for(const name of ['operations.list','task.get','message.send','neo.snapshot']) {
+  for(const name of ['operations.list','task.get','message.send','neo.snapshot','work.read','work.status']) {
     const actual = await hub.request<{found:boolean;inputSchema:unknown;resultSchema:unknown}>('operation.invoke',{name:'operations.describe',input:{name}});
     assert.equal(actual.found,true);
     const expected=surface.operations.find(op=>op.name===name)!;
