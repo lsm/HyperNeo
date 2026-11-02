@@ -146,3 +146,26 @@ test('a check just before the daily deadline does not postpone the next check an
   await monitor.check();
   expect(await monitor.nextCheckAt()).toBe(86_400_001);
 });
+
+test('a simultaneous daily check cannot erase a passed version verification', async () => {
+  const f = fixture();
+  const monitor = createDriverHealthMonitor(f.deps);
+  await monitor.check(true);
+  const probe = f.deps.probe;
+  let release = () => {};
+  let entered = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  let first = true;
+  f.deps.probe = async () => {
+    if (first) { first = false; entered(); await held; }
+    return probe();
+  };
+  const checking = monitor.check(true);
+  await started;
+  const verifying = monitor.verified('codex-desktop', 'codex-state-discovery', { desktop: '1.0.0' });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  release();
+  await Promise.all([checking, verifying]);
+  expect(f.stored['codex-desktop']).toMatchObject({ verifiedVersions: { desktop: '1.0.0' }, unverifiedVersion: false });
+});
