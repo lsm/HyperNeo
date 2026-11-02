@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
-import { runMigration468 } from '../../../../src/storage/schema/m468-worker-matter.ts';
+import { runMigration469 } from '../../../../src/storage/schema/m469-worker-matter.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import {
   markWorkUnusable,
@@ -201,7 +201,7 @@ describe('worker reuse eligibility', () => {
     }[];
     for (const column of columns.filter((column) => column.name.startsWith('ask_')))
       db.exec(`ALTER TABLE work_started_sessions DROP COLUMN ${column.name}`);
-    runMigration468(db);
+    runMigration469(db);
     sessions.recordRef('legacy-first', { adapter: 'claude-desktop', id: 'first-replacement' }, 6);
     sessions.recordRef('legacy-second', { adapter: 'claude-desktop', id: 'second-replacement' }, 6);
     expect([...readFreeWorkers(db, 'claude-desktop')]).not.toContain('legacy-shared');
@@ -255,7 +255,7 @@ describe('worker reuse eligibility', () => {
     store.settleAsk(store.getAsk('ask')!, 'done', 'Completed', 4);
     expect([...readFreeWorkers(db, 'claude-desktop')]).toEqual(['original-author']);
     db.exec('ALTER TABLE work_started_sessions DROP COLUMN reusable');
-    runMigration468(db);
+    runMigration469(db);
     db.exec("DELETE FROM pack_facts WHERE pack='coding'");
     expect([...readFreeWorkers(db, 'claude-desktop')]).toEqual(['original-author']);
   });

@@ -50,7 +50,11 @@ export function readStartedWork(
 ): StartedWork[] {
   return db
     .prepare(
-      `WITH workers AS (
+      freeOn === null
+        ? `SELECT adapter,id FROM work_started_sessions
+           UNION SELECT json_extract(ref,'$.adapter'),json_extract(ref,'$.id') FROM neo_todo_sessions
+           WHERE ref IS NOT NULL AND json_extract(ref,'$.daemon') IS NULL`
+        : `WITH workers AS (
          SELECT adapter, id FROM work_started_sessions
          UNION SELECT json_extract(ref, '$.adapter'), json_extract(ref, '$.id') FROM neo_todo_sessions
          WHERE ref IS NOT NULL AND json_extract(ref, '$.daemon') IS NULL
@@ -87,12 +91,16 @@ export function readStartedWork(
          worker.adapter,worker.id`
     )
     .all(
-      freeOn,
-      Date.now() - UNUSABLE_FOR_MS,
-      todoId,
-      sessionId,
-      includeUnavailable ? 1 : 0,
-      independent ? 1 : 0
+      ...(freeOn === null
+        ? []
+        : [
+            freeOn,
+            Date.now() - UNUSABLE_FOR_MS,
+            todoId,
+            sessionId,
+            includeUnavailable ? 1 : 0,
+            independent ? 1 : 0,
+          ])
     ) as StartedWork[];
 }
 

@@ -15,7 +15,7 @@ import {
   createWorkFeedOffsetsTable,
 } from '../../../../src/storage/schema/m302-work-index-kinds';
 import { runMigration455 } from '../../../../src/storage/schema/m455-work-started-sessions';
-import { runMigration468 } from '../../../../src/storage/schema/m468-worker-matter';
+import { runMigration469 } from '../../../../src/storage/schema/m469-worker-matter';
 import { runMigration465 } from '../../../../src/storage/schema/m465-work-unusable';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { readStartedWork, recordStartedWork } from '../../../../src/storage/work-started-sessions';
@@ -46,7 +46,7 @@ beforeEach(() => {
   runMigration455(db);
   runMigration465(db);
   db.exec('CREATE TABLE pack_facts (pack TEXT, key TEXT, value_json TEXT)');
-  runMigration468(db);
+  runMigration469(db);
 });
 
 afterEach(() => {

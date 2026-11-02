@@ -24,3 +24,9 @@ After the worker-reuse prerequisite, also run `worker-owned-worktrees.md`. Its n
 Codex proof wires the daemon ownership callbacks and checks that excluding the ask
 author still permits reuse of an independent Review worker. `actorRole` identifies
 review/verify requests; those workers remain unavailable to future author requests.
+
+Run `claude-feed-upgrade.test.ts` and `sqlite-contention-observability.test.ts`
+alongside the ownership suite. The feed-recovery migration retains its own marker,
+and the real project-mirror worker must read ownership on a reduced database
+without requiring ask/role-history tables. See `sqlite-contention-owner-evidence.md`
+for the worker contention proof.
