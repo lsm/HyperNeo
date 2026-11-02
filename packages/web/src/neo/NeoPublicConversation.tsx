@@ -1,4 +1,4 @@
-import { previewReferenceCandidates } from '@hyperneo/shared/types/artifact-reference';
+import { previewLinkedReferenceCandidates } from '@hyperneo/shared/types/artifact-reference';
 import type { NeoReplyTo } from '@hyperneo/shared/types/neo-ask';
 import type {
   NeoConversationAskPageItem,
@@ -460,8 +460,8 @@ function PublicEntry({
   const quoteText = publication ? neoPublicationQuoteExcerpt(publication) : text;
   const references = useMemo(
     () => ({
-      text: publication ? previewReferenceCandidates(text).map((item) => item.reference) : [],
-      full: publication ? previewReferenceCandidates(full).map((item) => item.reference) : [],
+      text: publication ? previewLinkedReferenceCandidates(text).map((item) => item.reference) : [],
+      full: publication ? previewLinkedReferenceCandidates(full).map((item) => item.reference) : [],
     }),
     [publication, text, full]
   );

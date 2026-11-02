@@ -1,5 +1,5 @@
 import {
-  previewReferenceCandidates,
+  previewLinkedReferenceCandidates,
   type PreviewReferenceCandidate,
 } from '@hyperneo/shared/types/artifact-reference';
 import { useMemo } from 'preact/hooks';
@@ -14,7 +14,7 @@ import { ownerPathLabel } from '../../lib/owner-path-label.ts';
 
 const fileReferences = (superpipe({})('public-file-reference-cards') as PipelineAPI)
   .input(['text'])
-  .pipe(previewReferenceCandidates, 'text', 'candidates')
+  .pipe(previewLinkedReferenceCandidates, 'text', 'candidates')
   .pipe(
     (candidates: PreviewReferenceCandidate[]) => candidates.filter((item) => item.kind === 'local'),
     'candidates',

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 
@@ -18,8 +19,9 @@ if(phase==='publish'){
     const store=new NeoAskTodoRepository(db);
     const todo=store.getTodo('todo');
     assert(todo);
-    store.updateTodo(todo,{instruction:'The delivered file is `current notes.md`.',report:'Read `current notes.md` twice: `current notes.md`.'},Date.now());
-    store.askQuestion('file-question','ask',{text:'Please read `current notes.md` twice: `current notes.md`.',document:'Full report also links `current notes.md`.',kind:'reply',options:null,multiple:false,noLabel:null,yesLabel:null,startTodos:null,sourceSession:{adapter:'hyperneo',id:'worker',name:'metadata-only.md',label:'metadata-only.md',provider:'synthetic',link:null}},Date.now());
+    const mention='`'+join(run,'workspace/current notes.md')+'`';
+    store.updateTodo(todo,{instruction:`The delivered file is ${mention}.`,report:`Read ${mention} twice: ${mention}.`},Date.now());
+    store.askQuestion('file-question','ask',{text:`Please read ${mention} twice: ${mention}.`,document:`Full report also links ${mention}.`,kind:'reply',options:null,multiple:false,noLabel:null,yesLabel:null,startTodos:null,sourceSession:{adapter:'hyperneo',id:'worker',name:'metadata-only.md',label:'metadata-only.md',provider:'synthetic',link:null}},Date.now());
   }finally{db.close();}
   const data=JSON.parse(readFileSync(join(run,'evidence/live-publication.json'),'utf8'));
   writeFileSync(join(run,'evidence/file-card-sources.json'),JSON.stringify({...data,todoId:'todo',questionId:'file-question'}));

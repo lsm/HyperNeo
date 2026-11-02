@@ -60,7 +60,7 @@ export async function verifyCardSources(page,{run,base,width,bun}) {
     await close();
   }
   assert(calls.length>=4);
-  assert(calls.every(call=>call.name==='file.reference.read'&&call.input.reference==='current notes.md'));
+  assert(calls.every(call=>call.name==='file.reference.read'&&call.input.reference===join(run,'workspace/current notes.md')));
   for(const [kind,id] of [['question',questionId],['todo',todoId]]) assert(calls.filter(call=>call.input.sourceMessageOrCard.kind===kind&&call.input.sourceMessageOrCard.id===id).length>=2);
   assert.equal(counts(),before);
   const observed={width,question:true,todo:true,deduplicated:true,metadataExcluded:true,editedOnReopen:true,savedLabeled:true,sourceBound:true,noRegistryWrites:true};
