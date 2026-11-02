@@ -21,7 +21,7 @@ export type ArtifactPreviewState =
     }
   | { state: 'html_source'; metadata: ArtifactFileMetadata }
   | { state: 'limit' | 'unsupported'; metadata: ArtifactFileMetadata }
-  | { state: 'forbidden' | 'revoked' | 'daemon_unavailable' | 'needs_update' };
+  | { state: 'forbidden' | 'revoked' | 'daemon_unavailable' | 'needs_update' | 'client_update' };
 
 type Refused = { accepted: false; reason: string };
 type MetadataGate = { value: ArtifactFileMetadata } | { reason: ArtifactPreviewState };
@@ -29,6 +29,7 @@ type MetadataGate = { value: ArtifactFileMetadata } | { reason: ArtifactPreviewS
 const forbiddenReasons = new Set(['outside_roots', 'sensitive_path', 'unsafe_path']);
 
 export function previewStateForRefusal(reason: string) {
+  if (reason === 'client_upgrade_required') return 'client_update';
   if (forbiddenReasons.has(reason)) return 'forbidden';
   if (reason === 'size_limit') return 'limit';
   if (reason === 'unsupported_type') return 'unsupported';

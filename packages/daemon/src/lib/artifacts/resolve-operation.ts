@@ -118,14 +118,34 @@ export function createArtifactReferenceResolve(
       'result:resolved'
     )
     .pipe(prepare, ['input', 'resolved'], 'result:resolved')
+    .pipe(
+      (selected: Plan) =>
+        selected.kind === 'worktree'
+          ? {
+              reason: {
+                accepted: false,
+                reason: 'client_upgrade_required',
+                detail:
+                  'This client uses retired local snapshot previews. Update HyperNeo and reopen the file from its message to read the current file.',
+              },
+            }
+          : { value: selected },
+      'resolved',
+      'result:resolved'
+    )
     .pipe(snapshot, ['resolved', 'input', 'caller'], 'resolved')
     .endAsync('resolved') as (input: Input, caller: OperationCaller) => Promise<unknown>;
   return defineOperation({
     name: 'artifact.reference.resolve',
     description:
-      'Paired-human tap: resolve an exact stored message/publication/todo reference to an immutable file snapshot or bound GitHub PR summary. Provide one requestId per tap and reuse it for retries. PR file selection requires its displayed headSha and listed path. Optional context chooses only among authorized source bindings. No raw-path grants, arbitrary URL fetch or agent invocation. File reads use anchored no-follow descriptors.',
+      'Paired-human tap: resolve an exact stored message/publication/todo Git reference to an immutable file snapshot or bound GitHub PR summary. Local worktree targets are retired: client_upgrade_required tells the human to update HyperNeo and reopen the file from its message through file.reference.read; no local snapshot is created. Provide one requestId per tap and reuse it for retries. PR file selection requires its displayed headSha and listed path. Optional context chooses only among authorized source bindings. No raw-path grants, arbitrary URL fetch or agent invocation. File reads use anchored no-follow descriptors.',
     inputSchema,
     resultSchema: z.union([
+      z.strictObject({
+        accepted: z.literal(false),
+        reason: z.literal('client_upgrade_required'),
+        detail: z.string(),
+      }),
       ArtifactRefusalSchema,
       z.strictObject({
         accepted: z.literal(false),
