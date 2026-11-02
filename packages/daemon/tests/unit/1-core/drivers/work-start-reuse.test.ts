@@ -15,6 +15,7 @@ function harness(
   workers: {
     id: string;
     status: WorkStatus;
+    liveStatus?: WorkStatus;
     folder?: string;
     refusal?: 'not_open' | 'uncertain' | 'throws';
   }[],
@@ -94,7 +95,10 @@ function harness(
               ref,
               title: 'fixture',
               place,
-              status: 'done',
+              status:
+                workers.find((worker) => worker.id === ref.id)?.liveStatus ??
+                workers.find((worker) => worker.id === ref.id)?.status ??
+                'done',
               lastActivityAt: 1,
               model: config?.model ?? 'claude-opus-5-5',
               effort: config?.effort ?? 'medium',
@@ -161,6 +165,26 @@ describe('work.start reuses an idle worker', () => {
     const run = harness([{ id: 'provenance-idle', status: 'done' }], ['provenance-idle']);
     expect((await run.start(neo, true)).value?.reused).toBe(true);
     expect(run.messages[0]).toContain('Agent: claude-opus-5-5 (effort: medium) via Claude');
+  });
+
+  test('reuses a just-finished native worker despite a recent running discovery summary', async () => {
+    const run = harness(
+      [{ id: 'recent-native', status: 'running', liveStatus: 'done' }],
+      ['recent-native'],
+      { adapter: 'codex-desktop' }
+    );
+    expect((await run.start()).value?.ref.id).toBe('recent-native');
+    expect(run.sent).toEqual(['recent-native']);
+    expect(run.started).toEqual([]);
+  });
+
+  test('does not reuse a worker that became busy after its idle discovery summary', async () => {
+    const run = harness(
+      [{ id: 'newly-busy', status: 'done', liveStatus: 'running' }],
+      ['newly-busy']
+    );
+    expect((await run.start()).value?.ref.id).toBe('fresh');
+    expect(run.sent).toEqual([]);
   });
 
   test('starts a new worker when the only same-place worker is busy', async () => {
@@ -320,5 +344,53 @@ describe('work.start independent worker reuse', () => {
     });
     expect(result.value?.ref.id).toBe('prior-reviewer');
     expect(run.sent).toEqual(['prior-reviewer']);
+  });
+});
+
+describe('work.start remote actor exclusions', () => {
+  test('qualifies exclusions for the destination before forwarding a start', async () => {
+    const forwarded: unknown[] = [];
+    const registry = createOperationRegistry(
+      createWorkVerbOperations({
+        adapters: () => [],
+        daemonName: 'local',
+        remote: {
+          list: () => [{ daemonId: 'peer' }],
+          invoke: async (_daemon, _name, input) => {
+            forwarded.push(input);
+            return {
+              ok: true,
+              value: {
+                ref: { adapter: 'codex-desktop', id: 'new' },
+                place,
+                title: 'task',
+                status: 'running',
+                lastActivityAt: 1,
+              },
+            };
+          },
+        },
+      })
+    );
+    const result = await invokeOperation(
+      registry,
+      'work.start',
+      {
+        adapter: 'codex-desktop',
+        place: { ...place, daemon: 'peer' },
+        title: 'review',
+        message: 'review',
+        excludeRefs: [
+          { adapter: 'codex-desktop', id: 'author', daemon: 'peer' },
+          { adapter: 'codex-desktop', id: 'local-author' },
+          { adapter: 'codex-desktop', id: 'elsewhere', daemon: 'other' },
+        ],
+      },
+      neo
+    );
+    expect(result).toMatchObject({ kind: 'completed', value: { ok: true } });
+    expect(forwarded[0]).toMatchObject({
+      excludeRefs: [{ adapter: 'codex-desktop', id: 'author' }],
+    });
   });
 });
