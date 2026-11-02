@@ -40,6 +40,7 @@ import { invokeOperation } from '../lib/operations.ts';
 import { restoreNeoImages, useNeoAttachments } from './neo-attachments.ts';
 import { createNeoDraftReloadBuffer } from './neo-draft-reload-buffer.ts';
 import { useNeoPreviewCandidate } from './useNeoPreviewCandidate.ts';
+import { neoFileQuestionText } from './neo-file-question.ts';
 import { useNeo } from './useNeo.ts';
 import { useNeoDraftReloadRecovery } from './useNeoDraftReloadRecovery.ts';
 import { publicationConversationId } from './useNeoPublications.ts';
@@ -1150,6 +1151,19 @@ export function NeoLive() {
       )}
       <ArtifactPreviewPanel
         fileTabs
+        onAskFile={
+          !chat && ready && recoveryReady && draftLoadState === 'ready'
+            ? (path) => {
+                const reference = framedDraft ? previewContext : undefined;
+                setRestoredPreview({ scope: neo.sessionId!, reference, pinned: true });
+                captureDraft(neoFileQuestionText(draft ?? inputDraft.content, path), reference);
+                setScenesOpen(false);
+                setPreviewExpanded(false);
+                if (!previewDesktop) closeArtifactPreview();
+                requestAnimationFrame(() => footer.current?.querySelector('textarea')?.focus());
+              }
+            : undefined
+        }
         expansion={
           expandable ? { expanded, toggle: () => setPreviewExpanded(!expanded) } : undefined
         }

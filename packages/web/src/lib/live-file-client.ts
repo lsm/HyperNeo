@@ -6,6 +6,7 @@ import { invokeOperation } from './operations.ts';
 type Reference = Extract<ArtifactPreviewTarget, { kind: 'reference' }>;
 type Chunk = {
   accepted: true;
+  path?: string;
   kind: 'text' | 'markdown' | 'html' | 'image';
   data: string;
   version: string;
@@ -47,6 +48,7 @@ async function collect(hub: MessageHub, target: Reference, signal: AbortSignal) 
     if (
       (first &&
         (chunk.version !== first.version ||
+          chunk.path !== first.path ||
           chunk.kind !== first.kind ||
           chunk.byteLength !== first.byteLength)) ||
       bytes.length > 262144 ||
@@ -72,6 +74,7 @@ async function collect(hub: MessageHub, target: Reference, signal: AbortSignal) 
 async function present({ first, blob }: Awaited<ReturnType<typeof collect>>) {
   const text = first.kind === 'image' ? '' : await blob.text();
   return {
+    path: first.path,
     kind: first.kind,
     blob,
     text,

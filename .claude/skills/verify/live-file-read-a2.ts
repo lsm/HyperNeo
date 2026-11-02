@@ -88,7 +88,7 @@ try {
   assert.equal((await call({ sourceMessageOrCard: { kind: 'todo', id: 'todo' }, reference: 'report.md' })).reason, 'owner_unavailable');
   for (const ref of [report, `file://${report}`]) assert.equal(Buffer.from((await tap(ref)).data!, 'base64').toString(), original);
   assert.equal(Buffer.from((await tap('~/probe.txt')).data!, 'base64').toString(), 'home text');
-  assert.deepEqual(await tap('empty.txt'), { accepted: true, kind: 'text', version: (await tap('empty.txt')).version, byteLength: 0, nextOffset: 0, complete: true, data: '' });
+  assert.deepEqual(await tap('empty.txt'), { accepted: true, path: join(workspace,'empty.txt'), kind: 'text', version: (await tap('empty.txt')).version, byteLength: 0, nextOffset: 0, complete: true, data: '' });
   const a = await tap('report.md');
   assert.equal(a.accepted, true);
   assert.equal(a.kind, 'markdown');
