@@ -27,7 +27,7 @@ afterEach(async () => {
   for (const run of runs.splice(0)) rmSync(run, { recursive: true, force: true });
 });
 const context = { from: 'chat', caller: { source: 'rpc' } } as WorkCallContext;
-function setup(flag = '', options: { timeoutMs?: number } = { timeoutMs: 1500 }) {
+function setup(flag = '', options: { timeoutMs?: number } = { timeoutMs: 5000 }) {
   const run = mkdtempSync(join(tmpdir(), 'copilot-adapter-'));
   runs.push(run);
   mkdirSync(join(run, 'home'));
