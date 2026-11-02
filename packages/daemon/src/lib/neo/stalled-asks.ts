@@ -17,10 +17,12 @@ export const wakeStalledAsks = (superpipe({})('neo-stalled-ask-wake') as Pipelin
         false
       )) {
         try {
+          const todos = store.listTodos(ask.id);
+          const allDone = todos.length > 0 && todos.every((todo) => todo.state === 'done');
           await tell(
             ask.sessionId,
             ask.wakeKey,
-            `Ask: ${ask.title} (${ask.id})\nThis ask has nothing in progress. Add the next todo, or settle it.`,
+            `Ask: ${ask.title} (${ask.id})\n${allDone ? 'All todos are done and no question is open. Settle this ask.' : 'This ask has nothing in progress. Add the next todo, or settle it.'}`,
             ask.sessionId
           );
           store.recordStalledAskWake(ask.id, now);

@@ -42,31 +42,32 @@ const check = (name: string, count: number) => {
   for (const row of rows) {
     const input = JSON.parse(row.payload);
     assert.equal(input.to.sessionId, 'neo:00000000-0000-4000-8000-000000008419');
-    assert(JSON.stringify(input).includes('This ask has nothing in progress. Add the next todo, or settle it.'));
-    assert(JSON.stringify(input).includes('stalled'));
+    assert(JSON.stringify(input).includes(JSON.stringify(input).includes('Ask: completed')?'All todos are done and no question is open. Settle this ask.':'This ask has nothing in progress. Add the next todo, or settle it.'));
+    assert(JSON.stringify(input).includes('Ask: stalled') || JSON.stringify(input).includes('Ask: completed'));
   }
 };
 try {
   await open();
   const root = 'neo:00000000-0000-4000-8000-000000008419';
   app!.db.getDatabase().prepare('INSERT INTO sessions (id,title,type,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?,?,?,?,?,?,?,?,?)').run(root, 'Synthetic coordinator', 'general', join(run, 'workspace'), new Date(at).toISOString(), new Date(at).toISOString(), 'active', '{}', '{}');
-  for (const id of ['stalled', 'settled', 'question']) {
+  for (const id of ['stalled', 'completed', 'settled', 'question']) {
     const ask = service!.todos.openAsk({ id, sessionId: root, projectId: null, originMessageId: null, title: id, request: 'Synthetic work', createdAt: at });
+    if (id === 'completed') { const todo=service!.todos.addTodo('completed-step',id,{title:'Finished step',doneWhen:'Observed',check:null,instruction:null,named:null},at);service!.todos.updateTodo(todo,{state:'done'},at); }
     if (id === 'settled') service!.todos.settleAsk(ask, 'done', 'Settled', at);
     if (id === 'question') service!.todos.askQuestion('q', id, { text: 'Choose', kind: 'yesno', options: null, multiple: false, noLabel: 'No', yesLabel: 'Yes', startTodos: null, confirm: null, document: null, replyTo: [], todoId: null, artifacts: [] }, at);
   }
   clock = at + 2 * hour - 1;
   await refresh(); check('before threshold', 0);
   clock++;
-  await Promise.all([refresh(), refresh()]); check('one wake at threshold', 1);
+  await Promise.all([refresh(), refresh()]); check('one wake per ask at threshold', 2);
   await close();
   await open();
-  await refresh(); check('restart preserves cooldown', 1);
+  await refresh(); check('restart preserves cooldown', 2);
   clock += 4 * hour - 1;
-  await refresh(); check('no early repeat', 1);
+  await refresh(); check('no early repeat', 2);
   clock++;
-  await refresh(); check('repeat at four hours', 2);
-  assert.equal(new Set(notes().map(row => JSON.parse(row.payload).messageUuid)).size, 2);
+  await refresh(); check('repeat at four hours', 4);
+  assert.equal(new Set(notes().map(row => JSON.parse(row.payload).messageUuid)).size, 4);
   evidence.passed = true;
 } catch (error) {
   evidence.error = String(error);

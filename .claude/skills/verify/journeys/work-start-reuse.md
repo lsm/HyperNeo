@@ -1,8 +1,8 @@
 # Neo's work.start reuses an idle worker in the same place
 
 When Neo calls `work.start`, the daemon first looks for a recorded worker of the same
-adapter, idle (`done`) in the same folder, that holds no open todo and was never marked
-unusable. If one exists, it receives the message and the receipt says `reused: true` with
+adapter, idle (`done`) in the same folder, that belongs to no open ask and is not currently marked unusable. Workers on an
+open ask remain reserved after their todos finish; see `worker-matter.md`. If one exists, it receives the message and the receipt says `reused: true` with
 its ref. Otherwise a new session starts. A human start always creates a new session.
 
 Use the shared isolation setup in `../SKILL.md`, then:

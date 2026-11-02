@@ -42,7 +42,7 @@ const settle = async (ids: string[]) => {
     const found = await invokeOperation(app.sessionManager.getOperationRegistry(), 'work.find', { folder, adapters: ['hyperneo'] }, human);
     const work = ((found as { value: { places?: { work?: { ref: { id: string }; status: string }[] }[] } }).value.places ?? []).flatMap((group) => group.work ?? []);
     if (ids.every((id) => work.find((item) => item.ref.id === id)?.status === 'done')) return work;
-    await Bun.sleep(100);
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error('workers never went idle');
 };

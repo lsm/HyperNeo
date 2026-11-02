@@ -27,6 +27,7 @@ import type { WorkChatKind, WorkChatMatch } from '../../../storage/work-chat-sea
 import {
   markWorkUnusable,
   readFreeWorkers,
+  readAskWorkers,
   recordStartedWork,
   type StartedWork,
 } from '../../../storage/work-started-sessions.ts';
@@ -692,7 +693,18 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       const ask = todo ? store.getAsk(todo.askId) : null;
       return ask?.status === 'open' && ask.sessionId === sessionId;
     },
-    recordStarted: (ref: StartedWork) => recordStartedWork(db(), ref),
+    recordStarted: (
+      ref: StartedWork,
+      input: { todoId?: string; preparation?: unknown },
+      caller: OperationCaller
+    ) =>
+      recordStartedWork(db(), ref, Date.now(), false, {
+        todoId: input.todoId,
+        sessionId: caller.role === 'neo' ? caller.sessionId : undefined,
+        reusable: !input.preparation,
+      }),
+    askWorkers: (adapter: string, todoId?: string, sessionId?: string) =>
+      readAskWorkers(db(), adapter, todoId, sessionId),
     freeWorkers: (adapter: string) => readFreeWorkers(db(), adapter),
     markUnusable: (ref: StartedWork) => markWorkUnusable(db(), ref),
     reportUncertain: async (report: WorkSendUncertainty) => {

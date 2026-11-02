@@ -15,6 +15,7 @@ import {
   createWorkFeedOffsetsTable,
 } from '../../../../src/storage/schema/m302-work-index-kinds';
 import { runMigration455 } from '../../../../src/storage/schema/m455-work-started-sessions';
+import { runMigration468 } from '../../../../src/storage/schema/m468-worker-matter';
 import { runMigration465 } from '../../../../src/storage/schema/m465-work-unusable';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { readStartedWork, recordStartedWork } from '../../../../src/storage/work-started-sessions';
@@ -35,13 +36,17 @@ beforeEach(() => {
     message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER,
     message_type TEXT, title TEXT, body TEXT, timestamp INTEGER, UNIQUE (kind, source_id))`);
   db.exec('CREATE TABLE sessions (id TEXT, sdk_session_id TEXT)');
-  db.exec('CREATE TABLE neo_todo_sessions (todo_id TEXT PRIMARY KEY, target TEXT, ref TEXT)');
-  db.exec('CREATE TABLE neo_todos (id TEXT, ask_id TEXT, state TEXT)');
-  db.exec('CREATE TABLE neo_asks (id TEXT, status TEXT)');
+  db.exec(
+    'CREATE TABLE neo_todo_sessions (todo_id TEXT PRIMARY KEY, target TEXT, ref TEXT, started_at INTEGER)'
+  );
+  db.exec('CREATE TABLE neo_todos (id TEXT, ask_id TEXT, state TEXT, updated_at INTEGER)');
+  db.exec('CREATE TABLE neo_asks (id TEXT, status TEXT, session_id TEXT, settled_at INTEGER)');
   createWorkFeedOffsetsTable(db);
   createFeedTurnIndex(db);
   runMigration455(db);
   runMigration465(db);
+  runMigration468(db);
+  db.exec('CREATE TABLE pack_facts (pack TEXT, key TEXT, value_json TEXT)');
 });
 
 afterEach(() => {
@@ -84,7 +89,7 @@ async function startThroughWorkStart(adapter: string, id: string) {
 }
 
 function startedForTodo(todoId: string, adapter: string, id: string) {
-  db.prepare('INSERT INTO neo_todo_sessions VALUES (?, ?, ?)').run(
+  db.prepare('INSERT INTO neo_todo_sessions (todo_id,target,ref) VALUES (?, ?, ?)').run(
     todoId,
     '{}',
     JSON.stringify({ adapter, id })
