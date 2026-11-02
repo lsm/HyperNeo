@@ -11,7 +11,7 @@ TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /private/tmp/neo-car
 The helper owns an ephemeral daemon and refuses gh access. It creates a synthetic
 choice question, its replacement and a legacy ID-only reply. Sending a real human
 reply answers the replacement. The actual WebSocket history read must include
-Neo's author and the replacement text on that sent bubble, and independently
+Neo's author and the replacement text on that sent bubble, and retain an ask-card reply through the web history parser. Independently
 resolve the retired original's text on the legacy bubble. The legacy payload
 must remain byte-for-byte unchanged. Keep card-quote.json and proof.log; all
 sockets/processors/daemon resources close in finally and the wrapper removes data.
@@ -28,7 +28,7 @@ Build packages/web first to exercise the actual UI too. Set NODE_PATH to an
 existing directory containing playwright and playwright-core, VERIFY_BROWSER to
 an installed Chrome executable, and run the same wrapper with a new evidence
 directory. The helper serves that build and the real socket on a second ephemeral
-listener. Inspect card-quotes-402.png and card-quotes-1280.png: both sent bubbles
+listener. Inspect card-quotes-402.png and card-quotes-1280.png: all three sent bubbles
 must show Neo and the correct distinct question text, never unavailable. web.json
 records the rendered text. The browser, static listener and daemon close even on
 failure. This proves web rendering at touch/desktop widths, not native iOS.
