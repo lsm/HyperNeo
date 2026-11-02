@@ -66,9 +66,15 @@ its disposable run and removes that run immediately. GUI rendering, real externa
 apps and agent triage remain unverified by this journey.
 
 Adapters outside work.read's exact-input schema retain their work.status route;
-never pass an unsupported adapter to the exact lookup. Status asks from the epoch,
-without the local claim clock, and accepts only an exact leading marker in the
+never pass an unsupported adapter to the exact lookup. Status retains its
+persisted dispatch-time anchor and accepts only an exact leading marker in the
 assigned worker's projected user input. Unit fixtures use workInput's actual
 whitespace normalization. A missing or clipped retained status remains uncertain:
 it does not authorize a resend or release the hold. This fallback does not add
 unbounded history lookup to Space or OpenCode.
+
+The Space fallback regression calls the actual readHyperneoInputs reader with
+60 older landed SDK inputs, the accepted answer and 160 later inputs. The answer
+must reconcile once without resending; asking since epoch returns the oldest 50
+inputs and fails. The status-only fallback keeps its existing timestamp/window
+limits; clock-independent exact lookup remains the four named native adapters.

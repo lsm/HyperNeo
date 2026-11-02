@@ -119,7 +119,10 @@ export function createNeoQuestionAnswerDelivery(
           }).success
         ) {
           const marker = `[worker-answer:${key}]`;
-          const result = await invoke(caller, 'work.status', { ref, since: 0 });
+          const result = await invoke(caller, 'work.status', {
+            ref,
+            since: Math.max(0, (route.attemptedAt ?? route.answeredAt ?? 0) - 1),
+          });
           const status = WorkStatusResultSchema.safeParse(
             result.kind === 'completed' ? result.value : null
           );

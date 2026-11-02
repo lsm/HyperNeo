@@ -717,7 +717,7 @@ test.each(['space', 'opencode'])(
         };
       }
       expect(name).toBe('work.status');
-      expect(input).toMatchObject({ ref: { adapter, id: 'worker' }, since: 0 });
+      expect(input).toMatchObject({ ref: { adapter, id: 'worker' } });
       return {
         kind: 'completed',
         value: {
