@@ -9,7 +9,7 @@ const value = (flag: string, fallback: string) => args.includes(flag) ? args[arg
 const previous = value('--previous', 'v0.52.0'), current = value('--current', 'v0.53.0');
 const worktrees = value('--worktree-root', join(run, 'tmp'));
 mkdirSync(join(run, 'evidence'), { recursive: true });
-type Result = { before: { ref: string; commit: string; sha256?: string; collected: boolean; operations: number }; after: { ref: string; commit: string; sha256?: string; collected: boolean; operations: number }; phone: { sourceCommit: string; methods: string[]; sourceEvidence?: string }; changes: { operation: string; path: string; level: string; phoneUsed: boolean; message: string }[]; report: string };
+type Result = { before: { ref: string; commit: string; sha256?: string; collected: boolean; operations: number; eventSchemas?: number }; after: { ref: string; commit: string; sha256?: string; collected: boolean; operations: number; eventSchemas?: number }; phone: { sourceCommit: string; methods: string[]; sourceEvidence?: string }; changes: { operation: string; path: string; level: string; phoneUsed: boolean; message: string }[]; report: string };
 const execute = (...parameters: string[]) => Bun.spawnSync([process.execPath, join(root, 'scripts/api-diff.ts'), ...parameters], { cwd: root, env: process.env, stdout: 'pipe', stderr: 'pipe', timeout: 180000 });
 const invoke = (...parameters: string[]): Result => {
   const result = execute(...parameters, '--json', '--worktree-root', worktrees);
@@ -29,6 +29,10 @@ const actual = invoke(previous, current);
 assert.equal(actual.before.commit, git('rev-parse', `${previous}^{commit}`));
 assert.equal(actual.after.commit, git('rev-parse', `${current}^{commit}`));
 assert.ok(actual.before.operations > 0 && actual.after.operations > 0);
+for (const release of [actual.before, actual.after]) {
+  const ownsContracts = Bun.spawnSync(['git', '-C', root, 'cat-file', '-e', `${release.commit}:packages/daemon/src/lib/operations/client-event-schemas.ts`], { stdout: 'pipe', stderr: 'pipe' }).exitCode === 0;
+  if (!ownsContracts) assert.equal(release.eventSchemas, 0, 'Never apply current payload schemas to an untyped release');
+}
 assert.ok(actual.changes.every(change => ['safe', 'risky', 'breaking'].includes(change.level)));
 assert.ok(actual.changes.every(change => change.phoneUsed === actual.phone.methods.includes(change.operation)));
 assert.match(actual.report, /phone-used operations:/);

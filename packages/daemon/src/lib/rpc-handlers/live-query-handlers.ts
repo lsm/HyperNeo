@@ -5,13 +5,12 @@ import { Logger } from '../logger.ts';
 import type {
   MessageHub,
   LiveQuerySubscribeRequest,
-  LiveQuerySnapshotEvent,
-  LiveQueryDeltaEvent,
   LiveQuerySubscribeResponse,
   LiveQueryUnsubscribeRequest,
   LiveQueryUnsubscribeResponse,
 } from '@hyperneo/shared';
 import type { LiveQueryEngine, LiveQueryHandle, QueryDiff } from '../../storage/live-query.ts';
+import type { ClientEventData } from '../operations/client-event-schemas.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import { NAMED_QUERY_REGISTRY } from '../live-query/registry.ts';
 import {
@@ -307,7 +306,7 @@ export function setupLiveQueryHandlers(
         let message: ReturnType<typeof createEventMessage>;
 
         if (diff.type === 'snapshot') {
-          const eventData: LiveQuerySnapshotEvent = {
+          const eventData: ClientEventData<'liveQuery.snapshot'> = {
             subscriptionId,
             rows: applyMapRows(diff.rows),
             version: diff.version,
@@ -319,7 +318,7 @@ export function setupLiveQueryHandlers(
             sessionId,
           });
         } else {
-          const eventData: LiveQueryDeltaEvent = {
+          const eventData: ClientEventData<'liveQuery.delta'> = {
             subscriptionId,
             added: diff.added ? applyMapRows(diff.added) : undefined,
             removed: diff.removed ? applyMapRows(diff.removed) : undefined,

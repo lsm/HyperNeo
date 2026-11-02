@@ -8,6 +8,7 @@ import { Logger } from '../logger.ts';
 import { voiceDiagnostic } from '../voice/diagnostics.ts';
 import { NeoSpeechAudio } from './speech-audio.ts';
 import { neoDerivedId } from './derived-id.ts';
+import type { ClientEventData } from '../operations/client-event-schemas.ts';
 
 const Result = z.object({
   ok: z.boolean(),
@@ -202,7 +203,7 @@ export class NeoSpeech {
     return result;
   }
 
-  private send(clientId: string, data: unknown): boolean {
+  private send(clientId: string, data: ClientEventData<'neo.speech'>): boolean {
     return (
       this.hub
         .getRouter()

@@ -5,6 +5,7 @@ export type ApiChange = {
   level: ChangeLevel;
   message: string;
   phoneUsed: boolean;
+  coverageOnly?: boolean;
 };
 type Schema = Record<string, unknown>;
 const record = (value: unknown): Schema =>

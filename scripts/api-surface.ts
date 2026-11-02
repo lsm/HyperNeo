@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import ts from 'typescript';
@@ -20,7 +20,8 @@ function canonical(value: unknown): unknown {
 export function serializeApiSurface(
   operations: readonly OperationDefinition[],
   events: readonly string[],
-  names: readonly string[]
+  names: readonly string[],
+  eventSchemas?: Readonly<Record<string, z.ZodType>>
 ): string {
   const actual = new Set(operations.map((operation) => operation.name));
   const missing = names.filter((name) => !actual.has(name));
@@ -52,7 +53,12 @@ export function serializeApiSurface(
         resultSchema: schema(operation.resultSchema, 'output'),
       };
     });
-  return `${JSON.stringify(canonical({ operations: entries, events: [...new Set(events)].sort() }), null, 2)}\n`;
+  const exportedEvents: Record<string, unknown> = {};
+  for (const [method, definition] of Object.entries(eventSchemas ?? {})) {
+    if (!events.includes(method)) throw new Error(`Unadvertised event schema: ${method}`);
+    exportedEvents[method] = z.toJSONSchema(definition, { io: 'input' });
+  }
+  return `${JSON.stringify(canonical({ operations: entries, events: [...new Set(events)].sort(), ...(eventSchemas ? { eventSchemas: exportedEvents } : {}) }), null, 2)}\n`;
 }
 
 export function clientEventMethods(program: ts.Program, files: readonly string[]): string[] {
@@ -68,7 +74,13 @@ export function clientEventMethods(program: ts.Program, files: readonly string[]
         );
       return values;
     }
-    const type = checker.getTypeAtLocation(node);
+    const value =
+      ts.isIdentifier(node) && ts.isShorthandPropertyAssignment(node.parent)
+        ? checker.getShorthandAssignmentValueSymbol(node.parent)
+        : undefined;
+    const type = value
+      ? checker.getTypeOfSymbolAtLocation(value, node)
+      : checker.getTypeAtLocation(node);
     const types = type.isUnion() ? type.types : [type];
     if (types.every((t) => t.isStringLiteral()))
       return types.map((t) => (t as ts.StringLiteralType).value);
@@ -78,6 +90,35 @@ export function clientEventMethods(program: ts.Program, files: readonly string[]
     const source = program.getSourceFile(file);
     if (!source) throw new Error('Missing event source');
     const visit = (node: ts.Node) => {
+      if (
+        ts.isCallExpression(node) &&
+        ((ts.isIdentifier(node.expression) && node.expression.text === 'createEventMessage') ||
+          (ts.isPropertyAccessExpression(node.expression) &&
+            node.expression.name.text === 'createEventMessage'))
+      ) {
+        const argument = node.arguments[0];
+        if (!argument) throw new Error('Unresolved client event method');
+        const property = ts.isObjectLiteralExpression(argument)
+          ? argument.properties.find(
+              (p) =>
+                (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) &&
+                p.name.getText(source).replace(/^['"]|['"]$/g, '') === 'method'
+            )
+          : undefined;
+        if (property && ts.isPropertyAssignment(property))
+          strings(property.initializer).forEach((method) => methods.add(method));
+        else if (property && ts.isShorthandPropertyAssignment(property))
+          strings(property.name).forEach((method) => methods.add(method));
+        else {
+          const member = checker.getTypeAtLocation(argument).getProperty('method');
+          if (!member) throw new Error('Unresolved client event method');
+          const type = checker.getTypeOfSymbolAtLocation(member, argument);
+          const values = type.isUnion() ? type.types : [type];
+          if (!values.every((value) => value.isStringLiteral()))
+            throw new Error('Unresolved client event method');
+          values.forEach((value) => methods.add((value as ts.StringLiteralType).value));
+        }
+      }
       if (ts.isPropertyAssignment(node) && node.name.getText(source) === 'clientEvent')
         strings(node.initializer).forEach((method) => methods.add(method));
       if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
@@ -135,6 +176,10 @@ async function collect(run: string, root: string): Promise<void> {
   const { OPERATION_NAMES } = await import(
     join(root, 'packages/shared/src/types/operation-names.ts')
   );
+  const schemasPath = join(root, 'packages/daemon/src/lib/operations/client-event-schemas.ts');
+  const eventSchemas = existsSync(schemasPath)
+    ? (await import(schemasPath)).CLIENT_EVENT_SCHEMAS
+    : undefined;
   const app = await createDaemonApp({
     config: {
       ...getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }),
@@ -149,7 +194,12 @@ async function collect(run: string, root: string): Promise<void> {
     const operations = app.sessionManager.getOperationRegistry().entries;
     writeFileSync(
       join(run, 'operations.json'),
-      serializeApiSurface(operations, [], OPERATION_NAMES)
+      serializeApiSurface(
+        operations,
+        Object.keys(eventSchemas ?? {}),
+        OPERATION_NAMES,
+        eventSchemas
+      )
     );
   } finally {
     await app.cleanup();
@@ -192,6 +242,15 @@ export async function generateApiSurface(root = resolve(import.meta.dir, '..')):
       (file) => file.startsWith(join(root, 'packages/daemon/src') + '/') && !file.endsWith('.d.ts')
     );
     surface.events = clientEventMethods(program, files);
+    for (const method of Object.keys(surface.eventSchemas ?? {}))
+      if (!surface.events.includes(method)) throw new Error(`Unadvertised event schema: ${method}`);
+    const phonePath = join(root, 'api-phone-methods.json');
+    const required = existsSync(phonePath)
+      ? (JSON.parse(readFileSync(phonePath, 'utf8')).events ?? [])
+      : [];
+    for (const method of required)
+      if (!(method in (surface.eventSchemas ?? {})))
+        throw new Error(`Missing phone event payload schema: ${method}`);
     const generated = `${JSON.stringify(canonical(surface), null, 2)}\n`;
     return generated;
   } finally {
