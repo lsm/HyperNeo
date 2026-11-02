@@ -8,9 +8,17 @@ import { DriverHealthSettings } from '../DriverHealthSettings.tsx';
 afterEach(cleanup);
 
 test('Settings shows the affected client, its version, and the concrete failure', () => {
-  globalSettings.value = { driverHealth: {
-    'codex-desktop': { status: 'unavailable', reason: 'Codex state database is missing.', checkedAt: 1, clientVersions: { desktop: '2.0.0' }, unverifiedVersion: true },
-  } } as never;
+  (globalSettings as { value: unknown }).value = {
+    driverHealth: {
+      'codex-desktop': {
+        status: 'unavailable',
+        reason: 'Codex state database is missing.',
+        checkedAt: 1,
+        clientVersions: { desktop: '2.0.0' },
+        unverifiedVersion: true,
+      },
+    },
+  } as never;
   render(<DriverHealthSettings />);
   expect(screen.getByText('Codex Desktop')).toBeTruthy();
   expect(screen.getByText('Unavailable')).toBeTruthy();

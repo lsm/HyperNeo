@@ -1570,6 +1570,12 @@ export async function setupRPCHandlers(
     }),
     ...collectFamilyOperations({
       ...familyContext,
+      driverHealthNotice: async (id, text) => {
+        const root = neoService.repo.defaultBinding()?.sessionId;
+        if (!root) return false;
+        await neoService.deliverForward(root, id, text, root, 'event');
+        return true;
+      },
       goalMandateChange: (ref, revision) => neoHome.changedRevision(ref, revision),
       executionPreparations: () => neoService.packs(),
     }),

@@ -6,6 +6,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
+import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -44,6 +45,7 @@ const hash = () => createHash('sha256').update(readFileSync(state)).digest('hex'
 const before = hash();
 const config = { ...getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db') }), disableWorktrees: true };
 let app = await createDaemonApp({ config, verbose: false });
+let web: ReturnType<typeof Bun.serve> | undefined;
 const receipts: unknown[] = [];
 async function rpc(name: string, input: unknown = {}) {
   const child = Bun.spawn([process.execPath, join(import.meta.dir, 'rpc.ts'), name, JSON.stringify(input)], { env: { ...process.env, VERIFY_PORT: String(app.server.port) }, stdout: 'pipe', stderr: 'inherit' });
@@ -117,13 +119,29 @@ try {
   if (process.argv.includes('--browser')) {
     const control = resolve(process.argv[process.argv.indexOf('--browser') + 1]);
     mkdirSync(control, { recursive: true });
-    const browser = JSON.stringify({ url: `http://127.0.0.1:${app.server.port}`, doneFile: join(control, 'browser-done') });
+    const dist = resolve('packages/web/dist');
+    web = Bun.serve({ hostname: '127.0.0.1', port: 0,
+      async fetch(request, server) {
+        const url = new URL(request.url);
+        const refused = app.guardRequest(request);
+        if (refused) return refused;
+        if (url.pathname === '/pair' && request.method === 'POST') return app.handlePair(request);
+        if (url.pathname.startsWith('/ws')) {
+          if (server.upgrade(request, { data: { connectionSessionId: 'global', device: await app.authenticateUpgrade(request, '127.0.0.1') } })) return;
+          return new Response('WebSocket upgrade failed', { status: 500 });
+        }
+        const file = Bun.file(join(dist, url.pathname === '/' ? 'index.html' : url.pathname));
+        return new Response(await file.exists() ? file : Bun.file(join(dist, 'index.html')));
+      }, websocket: createWebSocketHandlers(app.transport, app.sessionManager),
+    });
+    const browser = JSON.stringify({ url: `http://127.0.0.1:${web.port}`, doneFile: join(control, 'browser-done') });
     writeFileSync(join(run, 'evidence/browser.json'), browser);
     writeFileSync(join(control, 'browser.json'), browser);
     await until(async () => existsSync(join(control, 'browser-done')), 'Browser confirmation was not supplied within ten minutes', 600_000);
   }
 } finally {
   writeFileSync(join(run, 'evidence/receipts.json'), JSON.stringify(receipts, null, 2));
+  web?.stop(true);
   await app.cleanup();
   writeFileSync(join(run, 'evidence/cleanup.json'), JSON.stringify({ daemonStopped: true, syntheticDataOwnedByWrapper: true }));
 }

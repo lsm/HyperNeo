@@ -52311,6 +52311,60 @@
                       },
                       "type": "array"
                     },
+                    "health": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "checkedAt": {
+                          "type": "number"
+                        },
+                        "clientVersions": {
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "type": "object"
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "ok",
+                            "degraded",
+                            "unavailable"
+                          ],
+                          "type": "string"
+                        },
+                        "unverifiedVersion": {
+                          "type": "boolean"
+                        },
+                        "verifiedAt": {
+                          "type": "number"
+                        },
+                        "verifiedJourney": {
+                          "type": "string"
+                        },
+                        "verifiedVersions": {
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "reason",
+                        "clientVersions",
+                        "checkedAt",
+                        "unverifiedVersion"
+                      ],
+                      "type": "object"
+                    },
                     "id": {
                       "type": "string"
                     },
@@ -53017,6 +53071,139 @@
         "required": [
           "places",
           "unreachable"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "properties": {
+              "action": {
+                "const": "check",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "action": {
+                "const": "verified",
+                "type": "string"
+              },
+              "adapter": {
+                "enum": [
+                  "hyperneo",
+                  "codex-desktop",
+                  "claude-desktop",
+                  "claude-code",
+                  "copilot-cli"
+                ],
+                "type": "string"
+              },
+              "clientVersions": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "propertyNames": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "journey": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "adapter",
+              "journey",
+              "clientVersions"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "name": "work.health",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "health": {
+            "additionalProperties": {
+              "additionalProperties": false,
+              "properties": {
+                "checkedAt": {
+                  "type": "number"
+                },
+                "clientVersions": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "status": {
+                  "enum": [
+                    "ok",
+                    "degraded",
+                    "unavailable"
+                  ],
+                  "type": "string"
+                },
+                "unverifiedVersion": {
+                  "type": "boolean"
+                },
+                "verifiedAt": {
+                  "type": "number"
+                },
+                "verifiedJourney": {
+                  "type": "string"
+                },
+                "verifiedVersions": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                }
+              },
+              "required": [
+                "status",
+                "reason",
+                "clientVersions",
+                "checkedAt",
+                "unverifiedVersion"
+              ],
+              "type": "object"
+            },
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "ok": {
+            "const": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "health"
         ],
         "type": "object"
       }

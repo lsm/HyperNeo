@@ -353,6 +353,15 @@ implements this setup; it never touches another process's occupied mock port.
 
 ## Native SDK and worker sandbox proofs
 
+After an installed local driver's own journey passes, read its saved health via
+work.adapters, then record the exact tested clientVersions with work.health
+`{action: "verified", adapter, journey, clientVersions}`. This records evidence;
+it does not run the journey. Never mark a live client verified from synthetic
+fixture versions, a health self-check alone, or a journey that did not pass.
+For health status and notice coverage, use journeys/driver-health.md. Tests skip
+automatic health startup jobs; that journey explicitly enqueues the real job in
+its isolated daemon before starting its processor.
+
 Native SDK journeys (including `journeys/neo-bash-cap.md`) and CLI sandbox
 journeys use scrubbed child-process environments and disposable homes too. They
 may supply a literal synthetic API key only to the native Claude child connected

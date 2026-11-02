@@ -9,7 +9,9 @@ TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evid
 The helper owns its daemon, synthetic home, Codex database, application-version
 plists and version-only CLI shims. Copilot discovery uses the repository's ACP
 fixture; its recorded methods must contain only initialize and session/list.
-No account, provider, credential or real worker is used. A synthetic Neo uses
+No real account, credential or worker is used. A synthetic provider with a fake
+key supplies admission metadata only; its endpoint is an unused loopback port.
+A synthetic Neo uses
 manual mode: real mailbox admission persists notices into its context without
 starting a model. Observe those notices through public work.read RPC.
 

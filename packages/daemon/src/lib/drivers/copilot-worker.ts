@@ -6,6 +6,7 @@ import { isAbsolute } from 'node:path';
 import { buildAcpSafeEnv } from '../acp/acp-command.ts';
 import type { WorkDelivery } from './types.ts';
 export class CopilotModelUnavailableError extends Error {}
+export const COPILOT_CLI_VERSION = '1.0.105';
 type WorkInputReceipt = NonNullable<WorkDelivery['receipt']>;
 
 type InputState = {

@@ -166,7 +166,21 @@ export type LanguageSetting = 'system' | 'en' | 'zh-Hans';
 export const WORKER_SANDBOX_MODES = ['off', 'always', 'on-demand'] as const;
 export type WorkerSandboxMode = (typeof WORKER_SANDBOX_MODES)[number];
 
+export interface DriverHealth {
+  status: 'ok' | 'degraded' | 'unavailable';
+  reason: string;
+  clientVersions: Record<string, string>;
+  checkedAt: number;
+  unverifiedVersion: boolean;
+  verifiedVersions?: Record<string, string>;
+  verifiedAt?: number;
+  verifiedJourney?: string;
+  notifiedSignature?: string;
+  pendingNotices?: { id: string; signature: string; text: string }[];
+}
+
 export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
+  driverHealth?: Record<string, DriverHealth>;
   workerSandbox?: WorkerSandboxMode;
   toolSelectionDefaults?: SessionToolSelection;
 

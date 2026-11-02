@@ -1,4 +1,5 @@
 import { withWorkerProvenance } from './worker-provenance.ts';
+import type { DriverHealth } from '@hyperneo/shared/types/settings';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -65,6 +66,7 @@ export interface WorkSendUncertainty {
 
 export interface WorkVerbDeps {
   adapters(): readonly WorkAdapter[];
+  health?: () => Record<string, DriverHealth> | Promise<Record<string, DriverHealth>>;
   remote: RemoteDaemons;
   daemonName: string;
   freeWorkers?: (adapter: string) => ReadonlySet<string>;
@@ -179,11 +181,23 @@ const RoutedCapabilitySchema = z.enum([
   'archive',
 ]);
 
+export const WorkDriverHealthSchema = z.object({
+  status: z.enum(['ok', 'degraded', 'unavailable']),
+  reason: z.string(),
+  clientVersions: z.record(z.string(), z.string()),
+  checkedAt: z.number(),
+  unverifiedVersion: z.boolean(),
+  verifiedVersions: z.record(z.string(), z.string()).optional(),
+  verifiedAt: z.number().optional(),
+  verifiedJourney: z.string().optional(),
+});
+
 export const WorkAdaptersResultSchema = workResultSchema(
   z.array(
     z.object({
       id: z.string(),
       capabilities: z.array(RoutedCapabilitySchema),
+      health: WorkDriverHealthSchema.optional(),
       unsupportedCapabilities: z.partialRecord(RoutedCapabilitySchema, z.string()).optional(),
     })
   )
@@ -827,20 +841,28 @@ async function listWorkAdapters(
 ): Promise<z.infer<typeof WorkAdaptersResultSchema>> {
   if (daemon && daemon !== deps.daemonName)
     return forwardWork(daemon, 'work.adapters', {}, WorkAdaptersResultSchema, deps.remote);
+  const health = await deps.health?.();
+  const adapters = deps.adapters();
+  const ids = new Set([...adapters.map((adapter) => adapter.id), ...Object.keys(health ?? {})]);
   return {
     ok: true,
-    value: deps.adapters().map((adapter) => ({
-      id: adapter.id,
-      ...(adapter.unsupportedCapabilities
-        ? { unsupportedCapabilities: adapter.unsupportedCapabilities }
-        : {}),
-      capabilities: adapter.capabilities.flatMap((capability) => {
-        const routed = RoutedCapabilitySchema.safeParse(capability);
-        return routed.success && (routed.data === 'find' || adapter[routed.data])
-          ? [routed.data]
-          : [];
-      }),
-    })),
+    value: [...ids].map((id) => {
+      const adapter = adapters.find((entry) => entry.id === id);
+      return {
+        id,
+        ...(health?.[id] ? { health: health[id] } : {}),
+        ...(adapter?.unsupportedCapabilities
+          ? { unsupportedCapabilities: adapter.unsupportedCapabilities }
+          : {}),
+        capabilities:
+          adapter?.capabilities.flatMap((capability) => {
+            const routed = RoutedCapabilitySchema.safeParse(capability);
+            return routed.success && (routed.data === 'find' || adapter[routed.data])
+              ? [routed.data]
+              : [];
+          }) ?? [],
+      };
+    }),
   };
 }
 
@@ -858,7 +880,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.adapters',
       description:
-        'List work adapters on this daemon, or the attached daemon named by daemon, with their available capabilities: find, start, rename, send, steer, queue, withdraw, status, stop, archive. steer means work.send accepts mode steer on that adapter; it is listed only when declared and implemented. Optional unsupportedCapabilities maps unavailable capabilities to their limitation; explicit unsupported requests return that explanation. Archive uses neo.session.archive and requires a human request in a live turn. Use only capabilities listed for the chosen adapter.',
+        'List work adapters on this daemon, or the attached daemon named by daemon, with their available capabilities: find, start, rename, send, steer, queue, withdraw, status, stop, archive. Local client health includes status, reason, installed and verified versions, and check time; unavailable unregistered clients appear with no capabilities. Avoid assigning degraded or unavailable clients. An unverified version remains usable when health is ok. steer means work.send accepts mode steer on that adapter; it is listed only when declared and implemented. Optional unsupportedCapabilities maps unavailable capabilities to their limitation; explicit unsupported requests return that explanation. Archive uses neo.session.archive and requires a human request in a live turn. Use only capabilities listed for the chosen adapter.',
       inputSchema: z.object({ daemon: z.string().min(1).optional() }),
       resultSchema: WorkAdaptersResultSchema,
       policy: { safetyClass: 'read' },
