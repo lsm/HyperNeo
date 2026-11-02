@@ -62,6 +62,7 @@ describe('Neo publication without runtime input attribution', () => {
         if (failWrite) throw new Error('writer failed');
         return ledger.append(input);
       },
+      speech: async () => ({ listening: 'no', spokenDelivered: false }),
       notify,
       artifact: (id, who) =>
         id === report.artifactId && who.sessionId === root.sessionId ? report : null,

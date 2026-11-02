@@ -6,6 +6,13 @@ Use SKILL.md's metadata-only wrapper and a fresh evidence directory:
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory .claude/skills/verify/driver-health.ts
 ```
 
+Repeat with `--bundled-codex` after the helper path to exercise a ChatGPT-only
+installation with no standalone Codex app. Both layouts must report Codex healthy
+and expose the selected desktop bundle version. Standalone precedence is also
+covered by the synthetic-home probe tests. Those unit tests supply a portable
+version-reader fixture on their isolated PATH so Linux CI needs no macOS tools;
+the daemon journey on macOS still exercises the real installed `plutil`.
+
 The helper owns its daemon, synthetic home, Codex database, application-version
 plists and version-only CLI shims. Copilot discovery uses the repository's ACP
 fixture; its recorded methods must contain only initialize and session/list.

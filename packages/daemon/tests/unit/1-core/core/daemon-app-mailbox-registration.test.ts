@@ -220,7 +220,7 @@ describe('Daemon app mailbox registration', () => {
     const delivered = await modelInput(message.message.content);
     expect(delivered).toContain('[input: text]');
     expect(delivered).toContain('[listening: yes]');
-    expect(delivered).toContain('before any other tool call');
+    expect(delivered).toContain('before time-consuming work');
   });
 
   test('listening case 5: live request then leaving voice has no speak-first instruction', async () => {
@@ -237,7 +237,7 @@ describe('Daemon app mailbox registration', () => {
     const delivered = await modelInput(message.message.content);
     expect(delivered).toContain('[input: live_voice]');
     expect(delivered).toContain('[listening: no]');
-    expect(delivered).not.toContain('before any other tool call');
+    expect(delivered).not.toContain('before time-consuming work');
   });
 
   test.each(['worker report', 'scheduled wake'])(
@@ -247,7 +247,7 @@ describe('Daemon app mailbox registration', () => {
       await listening(true);
       const delivered = await modelInput(content, 'system');
       expect(delivered).toContain('[listening: yes]');
-      expect(delivered).not.toContain('before any other tool call');
+      expect(delivered).not.toContain('before time-consuming work');
       await listening(false);
       expect(await modelInput(content, 'system')).toContain('[listening: no]');
     }

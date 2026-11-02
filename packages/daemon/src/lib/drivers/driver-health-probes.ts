@@ -22,25 +22,21 @@ const execute = promisify(execFile);
 async function clientVersions(id: string, home: string): Promise<Record<string, string>> {
   if (id === 'hyperneo') return { daemon: BUILD_METADATA.version };
   if (id === 'codex-desktop' || id === 'claude-desktop') {
-    const app = id === 'codex-desktop' ? 'Codex.app' : 'Claude.app';
-    for (const applications of [join(home, 'Applications'), '/Applications']) {
+    const apps = id === 'codex-desktop' ? ['Codex.app', 'ChatGPT.app'] : ['Claude.app'];
+    const plists = [join(home, 'Applications'), '/Applications'].flatMap((applications) =>
+      apps.map((app) => join(applications, app, 'Contents', 'Info.plist'))
+    );
+    for (const plist of plists) {
       try {
         const result = await execute(
           'plutil',
-          [
-            '-extract',
-            'CFBundleShortVersionString',
-            'raw',
-            '-o',
-            '-',
-            join(applications, app, 'Contents', 'Info.plist'),
-          ],
+          ['-extract', 'CFBundleShortVersionString', 'raw', '-o', '-', plist],
           { timeout: 3000, maxBuffer: 16384 }
         );
         if (result.stdout.trim()) return { desktop: result.stdout.trim() };
       } catch {}
     }
-    throw new Error(`${app} is not installed or its version cannot be read.`);
+    throw new Error(`${apps.join(' or ')} is not installed or its version cannot be read.`);
   }
   const command = findAcpAgentBinary(id === 'claude-code' ? 'claude' : 'copilot');
   if (!command) throw new Error(`${id} client is not installed on PATH.`);

@@ -104,7 +104,7 @@ try {
     assert.equal(queued.kind, 'enqueued');
     await wait(`${marker} reaches the native SDK`, () => requests.some(r => r.last.includes(marker) && r.fact === 'yes'));
     const delivered = requests.find(r => r.last.includes(marker))!;
-    assert(!delivered.last.includes('before any other tool call'));
+    assert(!delivered.last.includes('before time-consuming work'));
     await wait(`${marker} idle`, idle);
   }
   await listen(false);
