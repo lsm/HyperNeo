@@ -77,6 +77,17 @@ describe('API compatibility report', () => {
     ).toMatchObject({ level: 'risky', path: 'result' });
     expect(diff(surface(values(['a', 'b'])), surface(values(['a'])))[0]?.level).toBe('breaking');
   });
+  test('one-sided enum constraints respect input and result variance', () => {
+    const bounded = { type: 'string', enum: ['ready'] };
+    expect(diff(surface(object({}), string), surface(object({}), bounded)))
+      .toEqual([expect.objectContaining({ level: 'safe', path: 'result' })]);
+    expect(diff(surface(object({}), bounded), surface(object({}), string)))
+      .toEqual([expect.objectContaining({ level: 'risky', path: 'result' })]);
+    expect(diff(surface(string), surface(bounded)))
+      .toEqual([expect.objectContaining({ level: 'breaking', path: 'input' })]);
+    expect(diff(surface(bounded), surface(string)))
+      .toEqual([expect.objectContaining({ level: 'safe', path: 'input' })]);
+  });
   test('union variant additions are risky in results and ignore order', () => {
     const variant = (kind: string, title: unknown = string) =>
       object({ kind: { const: kind }, title });
