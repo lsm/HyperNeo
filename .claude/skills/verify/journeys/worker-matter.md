@@ -11,7 +11,8 @@ on a free ephemeral port, stops its job processor, and uses the production
 `work.start` and `work.find` operations with the HyperNeo adapter. It creates two
 asks in the same synthetic Git folder. Finishing the first ask's todo must not
 let the second ask borrow its worker. A later start for the first ask must reuse
-that worker without creating a session. A human start must still create a new one.
+that worker without creating a session. A human start must still create a new one. If the owned worker is temporarily unavailable,
+another start for its ask must create a fresh worker rather than borrow the free human worker.
 
 Retain `evidence/worker-matter.json` and `proof.log`. The helper closes its daemon
 in finally. No provider turn or live daemon is involved. Unit contracts also cover

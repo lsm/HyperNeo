@@ -69,6 +69,7 @@ export interface WorkVerbDeps {
   daemonName: string;
   freeWorkers?: (adapter: string) => ReadonlySet<string>;
   askWorkers?: (adapter: string, todoId?: string, sessionId?: string) => ReadonlySet<string>;
+  boundWorkers?: (adapter: string, todoId?: string, sessionId?: string) => ReadonlySet<string>;
   markUnusable?: (ref: WorkRef) => void;
   isOpenTodo?: (todoId: string, sessionId: string) => boolean;
   recordStarted?: (ref: WorkRef, input: StartInput, caller: OperationCaller) => void;
@@ -437,32 +438,41 @@ export async function reuseIdleWorker(
   )
     return null;
   const owned = deps.askWorkers?.(adapter.id, input.todoId, caller.sessionId) ?? new Set<string>();
+  const bound = deps.boundWorkers?.(adapter.id, input.todoId, caller.sessionId) ?? owned;
   const free = deps.freeWorkers?.(adapter.id) ?? new Set<string>();
-  if (!owned.size && !free.size) return null;
+  if (!bound.size && !free.size) return null;
   const groups = await adapter.find({ folder, includeClosed: false, limit: 50 });
   const found = groups.flatMap((group) => group.work);
-  let unknownOwned = false;
-  for (const id of owned) {
+  const discover = async (id: string): Promise<WorkSummary | undefined> => {
+    const cached = found.find(
+      (work) => work.ref.id === id && work.ref.adapter === adapter.id && !work.ref.daemon
+    );
+    if (cached) return cached;
+    const observed = await adapter.status?.({ adapter: adapter.id, id }).catch(() => null);
+    if (!observed?.ok) return undefined;
+    found.push(observed.value);
+    return observed.value;
+  };
+  let unknownBound = false;
+  for (const id of bound) if (!(await discover(id))) unknownBound = true;
+  const inPlace = (work: WorkSummary) =>
+    work.place.folder === folder && work.ref.adapter === adapter.id && !work.ref.daemon;
+  const hasBound = found.some((work) => bound.has(work.ref.id) && inPlace(work));
+  if (!hasBound && unknownBound) return null;
+  for (const id of hasBound ? owned : free) {
+    const work = await discover(id);
     if (
-      found.some(
-        (work) => work.ref.id === id && work.ref.adapter === adapter.id && !work.ref.daemon
+      !work ||
+      !inPlace(work) ||
+      (work.status !== 'done' && !(work.status === 'running' && adapter.status)) ||
+      input.excludeRefs?.some(
+        (ref) =>
+          ref.adapter === work.ref.adapter &&
+          ref.id === work.ref.id &&
+          ref.daemon === work.ref.daemon
       )
     )
       continue;
-    const observed = await adapter.status?.({ adapter: adapter.id, id }).catch(() => null);
-    if (observed?.ok) found.push(observed.value);
-    else unknownOwned = true;
-  }
-  const local = found.filter(
-    (work) => work.place.folder === folder && work.ref.adapter === adapter.id && !work.ref.daemon
-  );
-  const hasOwned = local.some((work) => owned.has(work.ref.id));
-  if (!hasOwned && unknownOwned) return null;
-  const priority = new Map([...(hasOwned ? owned : free)].map((id, index) => [id, index]));
-  const idle = local
-    .filter((work) => (work.status === 'done' || (work.status === 'running' && !!adapter.status)) && priority.has(work.ref.id) && !input.excludeRefs?.some(ref=>ref.adapter===work.ref.adapter&&ref.id===work.ref.id&&ref.daemon===work.ref.daemon))
-    .sort((left, right) => priority.get(left.ref.id)! - priority.get(right.ref.id)!);
-  for (const work of idle) {
     const key = `${work.ref.adapter}\u0000${work.ref.id}`;
     if (reuseHolds.has(key)) continue;
     reuseHolds.add(key);

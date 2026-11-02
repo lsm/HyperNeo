@@ -705,6 +705,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       }),
     askWorkers: (adapter: string, todoId?: string, sessionId?: string) =>
       readAskWorkers(db(), adapter, todoId, sessionId),
+    boundWorkers: (adapter: string, todoId?: string, sessionId?: string) =>
+      readAskWorkers(db(), adapter, todoId, sessionId, true),
     freeWorkers: (adapter: string) => readFreeWorkers(db(), adapter),
     markUnusable: (ref: StartedWork) => markWorkUnusable(db(), ref),
     reportUncertain: async (report: WorkSendUncertainty) => {
