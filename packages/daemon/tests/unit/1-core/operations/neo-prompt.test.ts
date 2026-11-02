@@ -11,6 +11,20 @@ import { neoSettingsPackBriefs } from '../../../../src/lib/neo/packs/index.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 
 describe('root Neo system prompt', () => {
+  test.each([
+    { packs: [] },
+    { packs: ['coding'] },
+    { packs: ['life-admin'] },
+    { packs: ['coding', 'life-admin'] },
+  ])('delivered root and pack guidance use paths with $packs', ({ packs }) => {
+    const prompt = neoPrompt(packs.length ? neoSettingsPackBriefs({ packs }) : []);
+    expect(prompt).toContain('core.evidence {path: absolute file path}');
+    expect(prompt).toContain('absolute path on the owning daemon');
+    expect(prompt).toContain('fixed-head Git');
+    expect(prompt).not.toContain('{artifact:registeredArtifactId}');
+    expect(prompt).not.toContain('saved registered confirmation');
+    expect(prompt).toContain('owner_unavailable');
+  });
   test.each([false, true])('limits worker messages with packs: %s', (enabled) => {
     const prompt = neoPrompt(enabled ? neoSettingsPackBriefs() : []);
     expect(prompt).toContain(

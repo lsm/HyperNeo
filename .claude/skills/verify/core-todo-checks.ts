@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
@@ -45,7 +45,7 @@ let ws: WebSocket | undefined;
 async function rpc(name: string, input: unknown) {
   assert(ws);
   const id = crypto.randomUUID();
-  const result = await new Promise<{ ok?: boolean; todo?: NeoTodo; commit?: string }>(
+    const result = await new Promise<{ ok?: boolean; todo?: NeoTodo; commit?: string; accepted?:boolean; data?:string; reason?:string }>(
     (done, fail) => {
       const timeout = setTimeout(() => fail(new Error(`${name} timed out`)), 15000);
       ws!.onmessage = (event) => {
@@ -132,8 +132,17 @@ try {
   await close(fileTodo, 'blocked');
   writeFileSync(path, 'Synthetic result');
   await close(fileTodo, 'done');
-  const artifactTodo = await add('evidence', { artifact: 'synthetic-artifact' });
+  const countBeforeLegacyAdmission=store.listTodos('ask').length;
+  const refusedArtifact=await rpc('neo.todo.add',{askId:'ask',title:'New artifact evidence',check:{pack:'core',kind:'evidence',params:{artifact:'synthetic-artifact'}}});
+  assert.equal(refusedArtifact.ok,false,'new artifact evidence must use an absolute path instead');
+  assert.equal(store.listTodos('ask').length,countBeforeLegacyAdmission);
+  const artifactTodo=store.addTodo('legacy-artifact-todo','ask',{title:'Legacy evidence',doneWhen:'Registered artifact synthetic-artifact exists.',instruction:null,named:null,check:{pack:'core',kind:'evidence',params:{artifact:'synthetic-artifact'}}},Date.now());
   await close(artifactTodo, 'blocked');
+  const unchangedLegacy=await rpc('neo.todo.edit',{todoId:artifactTodo.id,check:artifactTodo.check});
+  assert.equal(unchangedLegacy.ok,true,JSON.stringify(unchangedLegacy));
+  const replacedLegacy=await rpc('neo.todo.edit',{todoId:artifactTodo.id,check:{pack:'core',kind:'evidence',params:{artifact:'different'}}});
+  assert.equal(replacedLegacy.ok,false,JSON.stringify(replacedLegacy));
+  assert.deepEqual(store.getTodo(artifactTodo.id)?.check,artifactTodo.check);
   const artifacts = new ArtifactFileRepository(db);
   artifacts.save(
     { kind: 'ask', id: 'ask' },
@@ -179,6 +188,17 @@ try {
     await add('deployed', { repo: 'lsm/HyperNeo', sha: 'b'.repeat(40) }),
     'blocked'
   );
+  const readCurrent=()=>rpc('file.reference.read',{sourceMessageOrCard:{kind:'todo',id:fileTodo.id},reference:path});
+  const first=await readCurrent();
+  assert.equal(first.accepted,true,JSON.stringify(first));
+  assert.equal(Buffer.from(first.data!,'base64').toString(),'Synthetic result');
+  writeFileSync(path,'Edited current result');
+  const edited=await readCurrent();
+  assert.equal(edited.accepted,true,JSON.stringify(edited));
+  assert.equal(Buffer.from(edited.data!,'base64').toString(),'Edited current result');
+  rmSync(path);
+  assert.equal((await readCurrent()).reason,'missing');
+  assert.equal(store.getTodo(fileTodo.id)?.state,'done');
   receipts.push({
     state: store.listTodos('ask'),
     isolatedPort: app.server.port,
