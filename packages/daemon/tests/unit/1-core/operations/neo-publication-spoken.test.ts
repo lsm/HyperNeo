@@ -117,6 +117,12 @@ describe('publication speech follows the committed version', () => {
 
   test('cases 2/3/8: a live result or quick answer speaks once for several inputs, before text notification', async () => {
     await listen(true);
+    const input = speech.prepareInput(sessionId, {
+      content: 'Quick question',
+      inputKind: 'human',
+      sendStatus: 'enqueued',
+    });
+    expect(input.content).toContain('For a quick answer, publish with spoken');
     expect(await send()).toMatchObject({ accepted: true, listening: 'yes', spokenDelivered: true });
     expect(events.map((e) => e.type)).toEqual(['persisted', 'say', 'publication']);
     expect(events[1]).toMatchObject({ client: 'phone', text: draft.spoken });
@@ -233,7 +239,9 @@ describe('publication speech follows the committed version', () => {
   });
 
   test('overlong speech is refused before saving', async () => {
-    expect(await send({ ...draft, spoken: 'x'.repeat(501) })).toMatchObject({ code: 'invalid_input' });
+    expect(await send({ ...draft, spoken: 'x'.repeat(501) })).toMatchObject({
+      code: 'invalid_input',
+    });
     expect(ledger.list(conversationId)).toHaveLength(0);
   });
 });
