@@ -61,6 +61,11 @@ describe('root Neo system prompt', () => {
       'When you are waiting on something, end the turn; the event wakes you'
     );
     expect(NEO_ROOT_PROMPT.split(/\s+/).length).toBeLessThan(300);
+    expect(neoPrompt([])).toContain(
+      'Approved after dependencies auto-start on their recorded targets'
+    );
+    expect(neoPrompt([])).toContain('false or omission asks first');
+    expect(neoPrompt([])).toContain('neo.todo.hold for an explicit human pause');
     expect(NEO_ROOT_PROMPT).toContain('neo.publication.publish');
     expect(NEO_ROOT_PROMPT).not.toContain('triggerId');
     for (const fact of ['work.find', 'work.send', 'neo.rule.save'])

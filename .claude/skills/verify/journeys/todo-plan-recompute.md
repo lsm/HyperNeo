@@ -25,7 +25,7 @@ contract. This proves delivery to new worker context, not model compliance or
 rewriting existing PRs. Completing the final todo through `neo.todo.close` sends
 no further work.
 
-With a non-start ask question open, the dispatched worker stays doing and its
+With a non-start ask question open, the idle dispatched worker is blocked by that genuine human question and its
 unreceipted reply is not stored as a result; pending work still waits.
 The shared peer now acknowledges thread/queue/add. The original scenario writes
 no input ID and therefore returns no input receipt; chain mode additionally

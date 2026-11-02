@@ -429,6 +429,7 @@ describe('neo.todo operations', () => {
       check: pendingTodoCheck,
       askId: 'ask',
       title: 'Deploy',
+      after: [],
       doneWhen: 'Live',
       instruction: 'Deploy it',
       target,

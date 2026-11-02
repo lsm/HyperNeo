@@ -37,7 +37,13 @@ function setup(
     request: 'Redo the iOS card',
     createdAt: 1,
   });
-  const draft = { doneWhen: 'Merged', check: null, instruction: 'Do it', named: null };
+  const draft = {
+    doneWhen: 'Merged',
+    check: null,
+    instruction: 'Do it',
+    named: null,
+    dependsOn: [],
+  };
   const fix = store.addTodo('t1', 'ask', { ...draft, title: 'List steps' }, 1);
   const rows = store.addTodo('t2', 'ask', { ...draft, title: 'Todo rows' }, 1);
   const told: string[] = [];
@@ -251,6 +257,7 @@ describe('neo.question operations', () => {
         const draft = NeoTodoDraftSchema.parse({
           check: pendingTodoCheck,
           title: 'Additional work',
+          after: [],
           doneWhen: 'Merged',
           instruction: 'Do the additional work',
           target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'worker' } },
@@ -283,7 +290,7 @@ describe('neo.question operations', () => {
           const todo = store.addTodo(
             'moved',
             'other',
-            { ...draft, doneWhen: 'Observed result' },
+            { ...draft, doneWhen: 'Observed result', dependsOn: [] },
             1
           );
           joinedId = store.moveTodo(todo, 'ask', '', 2).id;
@@ -528,6 +535,7 @@ describe('neo.question operations', () => {
 
   test('a step that waits for the one before it names that step when it is held', async () => {
     const { store, call, daemonStart, told, fix, rows } = setup();
+    store.updateTodo(store.getTodo(rows.id)!, { dependsOn: null }, 2);
     for (const todo of [fix, rows])
       store.updateTodo(
         store.getTodo(todo.id)!,

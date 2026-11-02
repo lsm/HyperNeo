@@ -96,8 +96,7 @@ const add = (superpipe({})('neo.todo.commit-add') as PipelineAPI)
       const home = neoTodoHome(store, plan.ask, plan.repo, plan.split);
       let todo = store.addTodo(input.todoId, home.id, draft, input.now, plan.repo);
       if (draft.target) new NeoTodoSessionRepository(db).create(todo.id, draft.target);
-      if (!draft.start && todo.instruction) {
-        store.joinStartQuestion(todo, input.now);
+      if (!draft.start && todo.instruction && store.joinStartQuestion(todo, input.now)) {
         changes.notifyChange('neo_questions');
         const blocked = planNeoTodoAwaitingStart(todo);
         if (blocked) todo = store.updateTodo(todo, blocked, input.now);

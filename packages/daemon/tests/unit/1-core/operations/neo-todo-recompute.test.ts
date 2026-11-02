@@ -226,6 +226,7 @@ describe('ordered ask progression from facts', () => {
       const f = fixture();
       f.add('first');
       f.add('next');
+      f.store.updateTodo(f.store.getTodo('next')!, { dependsOn: [] }, Date.now());
       f.store.askQuestion(
         'start-next',
         'ask',

@@ -384,7 +384,8 @@ try {
       state: store.getTodo('next')?.state,
       report: store.getTodo('next')?.report,
     };
-    assert.equal(store.getTodo('next')?.state, 'doing');
+    assert.equal(store.getTodo('next')?.state, 'blocked');
+    assert.equal(store.getTodo('next')?.blockedBy, 'question');
     assert.equal(sessions.readSent('next')?.receipt, undefined);
     assert.equal(store.getTodo('next')?.report, null);
     assert.equal(starts(), 1);

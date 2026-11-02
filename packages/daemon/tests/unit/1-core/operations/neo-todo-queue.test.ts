@@ -245,7 +245,7 @@ describe('queued todos start themselves', () => {
   test('a todo the human left unticked in the start answer is held, not queued', async () => {
     const w = (current = world());
     const ask = w.approved();
-    const [ticked, unticked] = [w.add(ask), w.add(ask)];
+    const [ticked, unticked] = [w.add(ask, null, []), w.add(ask, null, [])];
     for (const id of [ticked, unticked]) {
       w.store.joinStartQuestion(w.store.getTodo(id)!, 2);
       w.store.updateTodo(
@@ -269,7 +269,7 @@ describe('queued todos start themselves', () => {
   test('a withdrawn start question leaves its todos held, not queued', async () => {
     const w = (current = world());
     const ask = w.approved();
-    const todo = w.add(ask);
+    const todo = w.add(ask, null, []);
     w.store.joinStartQuestion(w.store.getTodo(todo)!, 2);
     w.store.updateTodo(
       w.store.getTodo(todo)!,

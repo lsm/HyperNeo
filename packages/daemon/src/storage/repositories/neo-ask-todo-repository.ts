@@ -1,3 +1,4 @@
+import { neoTodoDependencyNodes } from '../../lib/neo/todo-dependencies.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import { enqueueMailboxEntry } from '../../lib/mailbox/enqueue.ts';
 import { createMailboxEntry } from '../../lib/mailbox/entry.ts';
@@ -945,13 +946,27 @@ export class NeoAskTodoRepository {
     this.touchAsk(question.askId, now);
   }
 
-  joinStartQuestion(todo: NeoTodo, now: number): void {
+  private startQuestionTodos(askId: string): Set<string> {
+    const family = this.listFamilyTodos(askId);
+    const independent = new Set(
+      neoTodoDependencyNodes(family)
+        .filter((node) => !node.dependsOn?.length)
+        .map((node) => node.id)
+    );
+    return new Set(
+      family.filter((todo) => isStartable(todo) && independent.has(todo.id)).map((todo) => todo.id)
+    );
+  }
+
+  joinStartQuestion(todo: NeoTodo, now: number): boolean {
+    const startable = this.startQuestionTodos(todo.askId);
+    if (!startable.has(todo.id)) return false;
     const todos = this.listTodos(todo.askId);
     const open = this.listQuestions(todo.askId).find(
       (question) => question.kind === 'start' && question.state === 'open'
     );
     const listed = (open?.startTodos ?? []).filter((id) =>
-      todos.some((item) => item.id === id && isStartable(item) && item.instruction)
+      todos.some((item) => item.id === id && startable.has(item.id) && item.instruction)
     );
     const startTodos = [...new Set([...listed, todo.id])];
     const text = neoStartQuestionTitle(
@@ -982,6 +997,7 @@ export class NeoAskTodoRepository {
         },
         now
       );
+    return true;
   }
 
   answerQuestion(
@@ -1083,7 +1099,7 @@ export class NeoAskTodoRepository {
 
   private pruneQuestions(askId: string, now: number): void {
     const todos = this.listTodos(askId);
-    const startable = new Set(todos.filter(isStartable).map((todo) => todo.id));
+    const startable = this.startQuestionTodos(askId);
     for (const question of this.listQuestions(askId)) {
       if (question.state !== 'open') continue;
       if (

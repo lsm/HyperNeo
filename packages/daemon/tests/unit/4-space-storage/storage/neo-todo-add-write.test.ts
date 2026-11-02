@@ -24,6 +24,7 @@ describe('Whole todo-add writer', () => {
     target: { verb: 'start', adapter: 'hyperneo' },
     named: null,
     start: false,
+    dependsOn: [],
     priority: 'high',
   });
   beforeEach(() => {

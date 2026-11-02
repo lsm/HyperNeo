@@ -2446,6 +2446,8 @@ describe('current explicit removal behavior before recompute', () => {
     try {
       const removed = h.add(),
         remaining = h.add();
+      for (const todo of [removed, remaining])
+        h.store.updateTodo(todo, { dependsOn: [] }, Date.now());
       h.store.joinStartQuestion(removed, Date.now());
       h.store.joinStartQuestion(remaining, Date.now());
       const question = h.store.listQuestions('ask').find((question) => question.kind === 'start')!;
