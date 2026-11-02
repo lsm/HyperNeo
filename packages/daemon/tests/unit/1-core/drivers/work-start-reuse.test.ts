@@ -17,6 +17,7 @@ function harness(
     status: WorkStatus;
     liveStatus?: WorkStatus;
     folder?: string;
+    hiddenFromFind?: boolean;
     refusal?: 'not_open' | 'uncertain' | 'throws';
   }[],
   free: string[],
@@ -67,7 +68,9 @@ function harness(
         archivedCount: 0,
         adapters: ['claude-desktop'],
         work: workers
-          .filter((worker) => (worker.folder ?? place.folder) === query.folder)
+          .filter(
+            (worker) => !worker.hiddenFromFind && (worker.folder ?? place.folder) === query.folder
+          )
           .map((worker) => ({
             ref: { adapter: config?.adapter ?? 'claude-desktop', id: worker.id },
             title: worker.id,
@@ -90,25 +93,24 @@ function harness(
         },
       };
     },
-    status: async (ref) =>
-      config?.unavailable
+    status: async (ref) => {
+      const worker = workers.find((worker) => worker.id === ref.id);
+      return config?.unavailable
         ? { ok: false, reason: 'unreachable', detail: 'offline' }
         : {
             ok: true,
             value: {
               ref,
               title: 'fixture',
-              place,
-              status:
-                workers.find((worker) => worker.id === ref.id)?.liveStatus ??
-                workers.find((worker) => worker.id === ref.id)?.status ??
-                'done',
+              place: { ...place, folder: worker?.folder ?? place.folder },
+              status: worker?.liveStatus ?? worker?.status ?? 'done',
               lastActivityAt: 1,
               model: config?.model ?? 'claude-opus-5-5',
               effort: config?.effort ?? 'medium',
               ...(config?.provider ? { provider: config.provider } : {}),
             },
-          },
+          };
+    },
     send: async (ref, message) => {
       messages.push(message);
       sent.push(ref.id);
@@ -483,6 +485,53 @@ describe('matter-bound reuse through work.start', () => {
       (await run.start(neo, false, { todoId: 'same-effort-A', effort: 'high' })).value?.ref.id
     ).toBe('same-effort-old');
   });
+  test('finds a long-lived owned worker even outside the recent discovery page', async () => {
+    const run = harness(
+      [
+        { id: 'months-old', status: 'done', hiddenFromFind: true },
+        { id: 'recent-foreign', status: 'done' },
+      ],
+      ['recent-foreign'],
+      undefined,
+      ['months-old']
+    );
+    expect((await run.start(neo, false, { todoId: 'next-month' })).value?.ref.id).toBe(
+      'months-old'
+    );
+    expect(run.sent).toEqual(['months-old']);
+    expect(run.started).toEqual([]);
+  });
+
+  test('a busy owned worker outside recent discovery still requires a new worker', async () => {
+    const run = harness(
+      [
+        { id: 'old-busy', status: 'running', hiddenFromFind: true },
+        { id: 'free-foreign', status: 'done' },
+      ],
+      ['free-foreign'],
+      undefined,
+      ['old-busy']
+    );
+    expect((await run.start(neo, false, { todoId: 'next-busy' })).value?.ref.id).toBe('fresh');
+    expect(run.sent).toEqual([]);
+  });
+
+  test('ownership in another folder does not borrow that worker', async () => {
+    const run = harness(
+      [
+        { id: 'other-folder', status: 'done', folder: '/elsewhere' },
+        { id: 'same-folder-free', status: 'done' },
+      ],
+      ['same-folder-free'],
+      undefined,
+      ['other-folder']
+    );
+    expect((await run.start(neo, false, { todoId: 'folder-step' })).value?.ref.id).toBe(
+      'same-folder-free'
+    );
+    expect(run.sent).toEqual(['same-folder-free']);
+  });
+
   test('reserves a worker for this ask before a delivery with an unknown outcome', async () => {
     const run = harness(
       [{ id: 'uncertain-matter', status: 'done', refusal: 'uncertain' }],

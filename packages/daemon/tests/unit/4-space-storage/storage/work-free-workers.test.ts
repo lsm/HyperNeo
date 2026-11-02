@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
+import { runMigration468 } from '../../../../src/storage/schema/m468-worker-matter.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import {
   markWorkUnusable,
@@ -10,7 +11,7 @@ import {
   recordStartedWork,
 } from '../../../../src/storage/work-started-sessions.ts';
 
-describe('readFreeWorkers', () => {
+describe('worker reuse eligibility', () => {
   let db: Database;
   let store: NeoAskTodoRepository;
   let sessions: NeoTodoSessionRepository;
@@ -164,6 +165,34 @@ describe('readFreeWorkers', () => {
     expect([...readFreeWorkers(db, 'claude-desktop')]).toEqual([]);
     expect(owned('rebound')).toEqual(['replacement-owner', 'first-owner']);
   });
+  test('upgrade preserves every known open-ask binding after todo refs are replaced', () => {
+    bind('legacy-first', 'legacy-shared', 'done');
+    store.openAsk({
+      id: 'legacy-second-ask',
+      projectId: null,
+      sessionId: 'neo',
+      originMessageId: null,
+      title: 'Second',
+      request: 'Work',
+      createdAt: 4,
+    });
+    bind('legacy-second', 'legacy-shared', 'done', 'legacy-second-ask');
+    recordStartedWork(db, { adapter: 'claude-desktop', id: 'legacy-shared' }, 5);
+    const columns = db.prepare('PRAGMA table_info(work_started_sessions)').all() as {
+      name: string;
+    }[];
+    for (const column of columns.filter((column) => column.name.startsWith('ask_')))
+      db.exec(`ALTER TABLE work_started_sessions DROP COLUMN ${column.name}`);
+    runMigration468(db);
+    sessions.recordRef('legacy-first', { adapter: 'claude-desktop', id: 'first-replacement' }, 6);
+    sessions.recordRef('legacy-second', { adapter: 'claude-desktop', id: 'second-replacement' }, 6);
+    expect([...readFreeWorkers(db, 'claude-desktop')]).not.toContain('legacy-shared');
+    store.settleAsk(store.getAsk('ask')!, 'done', 'First settled', 7);
+    expect([...readFreeWorkers(db, 'claude-desktop')]).not.toContain('legacy-shared');
+    store.settleAsk(store.getAsk('legacy-second-ask')!, 'done', 'Second settled', 8);
+    expect([...readFreeWorkers(db, 'claude-desktop')]).toContain('legacy-shared');
+  });
+
   test('same-ask candidates are most recently used first and require the owning Neo', () => {
     bind('step', 'a-old-owner', 'done');
     track('a-old-owner', 'step', 10);
