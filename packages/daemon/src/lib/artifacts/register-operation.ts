@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import { join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import type { ArtifactRef, ArtifactRefusal } from '@hyperneo/shared/types/artifact-file';
+import type { ArtifactRefusal } from '@hyperneo/shared/types/artifact-file';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { artifactIdentityWrites } from '../../storage/repositories/artifact-file-identity-write.ts';
@@ -13,11 +13,10 @@ import { ArtifactFileRepository } from '../../storage/repositories/artifact-file
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { getDataDir } from '../data-dir.ts';
 import { artifactCaptureOwner } from './capture-owner.ts';
+import { storedKind } from './stored-kind.ts';
 import { ArtifactRefSchema, ArtifactRefusalSchema } from './file-contracts.ts';
 import { admitArtifactCapture } from './file-policy.ts';
 import { loadRegistrationBinding } from './registration-binding.ts';
-import { withStoredArtifactDescriptor } from '../runtime-artifact-open.ts';
-import { readSync } from 'node:fs';
 import { ArtifactBundleSchema, artifactBundleLimit, bindArtifactBundle } from './bundle.ts';
 
 export const RegisterArtifactInput = z.strictObject({
@@ -28,48 +27,11 @@ export const RegisterArtifactInput = z.strictObject({
   bundle: ArtifactBundleSchema.optional(),
 });
 type Input = z.infer<typeof RegisterArtifactInput>;
-const textKinds = new Map<string, ArtifactRef['kind']>([
-  ['md', 'markdown'],
-  ['markdown', 'markdown'],
-  ['html', 'html'],
-  ['htm', 'html'],
-  ['json', 'json'],
-  ['log', 'log'],
-  ['txt', 'text'],
-  ['css', 'text'],
-]);
 const instances = new WeakMap<Database, ReturnType<typeof registrationService>>();
 const refused = (reason: ArtifactRefusal['reason']): ArtifactRefusal => ({
   accepted: false,
   reason,
 });
-
-export function storedKind(root: string, hash: string, path: string) {
-  return withStoredArtifactDescriptor(root, hash, (fd) => {
-    const head = Buffer.alloc(1024);
-    const count = readSync(fd, head, 0, head.length, 0);
-    const bytes = head.subarray(0, count);
-    const extension = path.split('.').at(-1)?.toLowerCase();
-    if (['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(extension ?? '')) {
-      const magic = bytes.toString('hex');
-      return (extension === 'png' && magic.startsWith('89504e470d0a1a0a')) ||
-        (['jpg', 'jpeg'].includes(extension!) && magic.startsWith('ffd8ff')) ||
-        (extension === 'gif' && /^GIF8[79]a/.test(bytes.toString())) ||
-        (extension === 'webp' &&
-          bytes.toString('ascii', 0, 4) === 'RIFF' &&
-          bytes.toString('ascii', 8, 12) === 'WEBP')
-        ? ('image' as const)
-        : null;
-    }
-    try {
-      new TextDecoder('utf-8', { fatal: true }).decode(bytes, { stream: true });
-      if (bytes.includes(0)) return null;
-      return textKinds.get(extension ?? '') ?? null;
-    } catch {
-      return null;
-    }
-  });
-}
 
 async function registrationService(db: Database, data: string, home: string) {
   const daemonId = await gatewayFor(db).call(artifactIdentityWrites, 'ensure', randomUUID());
