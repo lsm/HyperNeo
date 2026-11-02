@@ -69,10 +69,15 @@ async function start(fixture: ReturnType<typeof setup>, message = fixture.reques
 }
 
 describe('owned Copilot lifecycle', () => {
-  test.each([true, false])('reports a Copilot turn once with human origin %s', async (human) => {
+  test.each([
+    [true, 'settled'],
+    [true, 'error'],
+    [true, 'abort-queued'],
+    [false, 'settled'],
+  ] as const)('reports a Copilot turn once with human origin %s after %s', async (human, prior) => {
     const fixture = setup();
     const since = Date.now() - 1;
-    const work = await start(fixture, 'settled');
+    const work = await start(fixture, prior);
     const at = Date.now() + 100;
     if (human) {
       const history = join(
@@ -210,6 +215,107 @@ describe('owned Copilot lifecycle', () => {
     } finally {
       db.close();
     }
+  });
+
+  test('retains legacy daemon attribution from history without resuming the owner', async () => {
+    const fixture = setup();
+    const since = Date.now() - 1;
+    const work = await start(fixture, 'settled');
+    await fixture.adapter.close();
+    const recordPath = join(fixture.deps.directory, `${work.ref.id}.json`);
+    const record = JSON.parse(readFileSync(recordPath, 'utf8'));
+    for (const input of Object.values(record.snapshot.inputs) as Array<{
+      at?: number;
+      text?: string;
+      human?: boolean;
+      endedAt?: number;
+    }>) {
+      delete input.at;
+      delete input.text;
+      delete input.human;
+      delete input.endedAt;
+    }
+    writeFileSync(recordPath, JSON.stringify(record));
+    const restarted = createCopilotAdapter(fixture.discovery, fixture.deps);
+    owners.push(restarted);
+    const detail = await restarted.status!(work.ref, since);
+    expect(detail).toMatchObject({
+      ok: true,
+      value: {
+        recentInputs: [
+          expect.objectContaining({
+            inputId: work.receipt!.inputId,
+            text: 'settled',
+            human: false,
+          }),
+        ],
+        turnEnds: [expect.objectContaining({ id: work.receipt!.inputId, message: 'REPLY_1' })],
+      },
+    });
+    expect(readFileSync(join(fixture.run, 'calls.jsonl'), 'utf8')).not.toContain('session.resume');
+  });
+
+  test('does not invent completion from commentary, child replies or a partial tail', async () => {
+    const fixture = setup();
+    const work = await start(fixture, 'settled');
+    const at = Date.now() + 100;
+    const history = join(
+      fixture.deps.directory,
+      work.ref.id,
+      'session-state',
+      work.ref.id,
+      'events.jsonl'
+    );
+    appendFileSync(
+      history,
+      [
+        {
+          type: 'user.message',
+          data: {
+            messageId: 'unfinished-human',
+            interactionId: 'new-human',
+            content: 'Pending direct work',
+          },
+        },
+        {
+          type: 'assistant.message',
+          data: {
+            messageId: 'comment',
+            interactionId: 'new-human',
+            content: 'Commentary',
+            phase: 'commentary',
+          },
+        },
+        {
+          type: 'assistant.message',
+          agentId: 'child',
+          data: {
+            messageId: 'child-reply',
+            interactionId: 'new-human',
+            content: 'Child final',
+            phase: 'final_answer',
+          },
+        },
+      ]
+        .map((event, index) =>
+          JSON.stringify({
+            ...event,
+            id: `incomplete-${index}`,
+            timestamp: new Date(at + index).toISOString(),
+          })
+        )
+        .join('\n') + '\n{"type":"session.idle"'
+    );
+    const detail = await fixture.adapter.status!(work.ref, at - 1);
+    expect(detail).toMatchObject({
+      ok: true,
+      value: {
+        recentInputs: [expect.objectContaining({ inputId: 'unfinished-human', at, human: true })],
+        turnEnds: [],
+      },
+    });
+    const after = await fixture.adapter.status!(work.ref, at + 2);
+    expect(after).toMatchObject({ ok: true, value: { recentInputs: [], turnEnds: [] } });
   });
 
   test('gives the owned runtime work locations and the brief without a sandbox marker', async () => {
