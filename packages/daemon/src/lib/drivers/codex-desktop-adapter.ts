@@ -146,6 +146,8 @@ export interface CodexThreadDetail {
 }
 
 export interface CodexTurnState {
+  model?: string;
+  effort?: string;
   turnEnds?: WorkDetail['turnEnds'];
   marker: string | null;
   outcome?: 'asked' | 'errored';
@@ -548,6 +550,24 @@ export function requireOpenCodexThread(detail: CodexThreadDetail): Gate<CodexThr
     : { value: detail };
 }
 
+function recordedCodexConfiguration(
+  lines: readonly string[]
+): Pick<CodexTurnState, 'model' | 'effort'> {
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const entry = parseLine(lines[index]);
+    if (entry?.type !== 'turn_context') continue;
+    const model = entry.payload?.model;
+    const effort = entry.payload?.effort;
+    return {
+      ...(typeof model === 'string' && model.trim() ? { model: model.trim() } : {}),
+      ...(typeof effort === 'string' && effort.trim()
+        ? { effort: workStartConfiguration.normalize(effort) }
+        : {}),
+    };
+  }
+  return {};
+}
+
 export async function readCodexTurn(
   detail: CodexThreadDetail,
   since?: number,
@@ -590,6 +610,7 @@ export async function readCodexTurn(
     });
     return {
       ...codexTurnState(lines),
+      ...recordedCodexConfiguration(lines),
       ...(turnEnds.length ? { turnEnds } : {}),
       inputs: codexRecentInputs(lines, since),
       ...(since !== undefined ? { exchange: codexExchange(lines, since, truncated) } : {}),
@@ -616,6 +637,8 @@ export async function describeCodexThread(
       place: { machine: deps.machine, folder, name: root?.name || basename(folder) || folder },
       ...workExecutionLocation(thread.folder, deps.machine),
       status: turnStatus(thread, state, deps.now()),
+      ...(state.model ? { model: state.model } : {}),
+      ...(state.effort ? { effort: state.effort } : {}),
       ...(state.turnEnds?.length ? { turnEnds: state.turnEnds } : {}),
       lastActivityAt: thread.updatedAt,
       link: `codex://threads/${thread.id}`,
