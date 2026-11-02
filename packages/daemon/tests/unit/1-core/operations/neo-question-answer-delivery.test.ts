@@ -694,3 +694,57 @@ test('a quoted chat answer selects only its question for inline delivery', async
     f.db.close();
   }
 });
+
+test.each(['space', 'opencode'])(
+  'uncertain %s answers reconcile through supported status evidence without invalid exact lookups',
+  async (adapter) => {
+    const f = await fixture();
+    const peer = { ...f.source, adapter };
+    new NeoTodoSessionRepository(f.db).bind('todo', peer, 3);
+    await f.write(peer, f.report);
+    f.store.answerQuestion(f.question, ['Staging'], 'button', 4);
+    let sends = 0;
+    let message = '';
+    let visible = false;
+    const flush = externalDelivery(f, async (_caller, name, input) => {
+      if (name === 'work.send') {
+        sends++;
+        message = String(input.message);
+        return {
+          kind: 'completed',
+          value: { ok: false, reason: 'not_delivered', detail: 'Reply lost' },
+        };
+      }
+      expect(name).toBe('work.status');
+      expect(input).toEqual({ ref: { adapter, id: 'worker' }, since: 0 });
+      return {
+        kind: 'completed',
+        value: {
+          ok: true,
+          value: {
+            ref: { adapter, id: 'worker' },
+            title: 'Worker',
+            place: { machine: 'synthetic', folder: '/synthetic', name: 'Synthetic' },
+            status: 'running',
+            lastActivityAt: 1,
+            recentInputs: [{ at: 1, text: visible ? message : 'Unrelated input' }],
+          },
+        },
+      };
+    });
+    try {
+      await flush();
+      await flush();
+      expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'pending' }] });
+      expect(f.store.getTodo('todo')?.blockedBy).toBe('needs-human');
+      visible = true;
+      await flush();
+      await flush();
+      expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'accepted' }] });
+      expect(f.store.getTodo('todo')?.blockedBy).toBeNull();
+      expect(sends).toBe(1);
+    } finally {
+      f.db.close();
+    }
+  }
+);

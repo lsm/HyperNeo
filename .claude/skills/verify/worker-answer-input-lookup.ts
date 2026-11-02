@@ -5,8 +5,9 @@ import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { feedCodexFiles } from '../../../packages/daemon/src/lib/drivers/codex-feed.ts';
-import { claudeFeedSource } from '../../../packages/daemon/src/lib/drivers/claude-feed.ts';
+import { claudeFeedSource, runClaudeFeed } from '../../../packages/daemon/src/lib/drivers/claude-feed.ts';
 import { feedWorkFiles } from '../../../packages/daemon/src/lib/drivers/work-feed.ts';
+import { JobQueueRepository } from '../../../packages/daemon/src/storage/repositories/job-queue-repository.ts';
 import { claudeInboxFrame } from '../../../packages/daemon/src/lib/drivers/claude-inbox.ts';
 
 const peerMode = process.argv[2] === 'peer';
@@ -65,9 +66,11 @@ async function seed() {
   const claudePath = join(run, 'worker.jsonl');
   writeFileSync(claudePath, JSON.stringify({ type: 'user', uuid: 'claude-input', cwd: '/synthetic-proof-project', timestamp: '1990-01-01T00:00:00Z', message: { content: `${marker('claude-only')}\nClaude input with the same session ID` } }) + '\n');
   await feedWorkFiles(app.db.getDatabase(), files(claudePath), claudeFeedSource(new Set()));
-  const nativeClaude = join(run, `${claudeOwner}.jsonl`);
+  const nativeRoot = join(run, 'home/.claude/projects');
+  mkdirSync(join(nativeRoot, 'proof'), { recursive: true });
+  const nativeClaude = join(nativeRoot, 'proof', `${claudeOwner}.jsonl`);
   const nativeAt = '1990-01-01T00:00:00Z';
-  const wrapper = JSON.parse(claudeInboxFrame({ sessionId: claudeOwner, pid: 1, socketPath: '/synthetic.sock', version: 'synthetic' }, '/synthetic-reply.sock', { messageId: '22222222-2222-4222-8222-222222222222', inputId: '33333333-3333-4333-8333-333333333333', text: `${marker('native-wrapper')}\nStored answer` }));
+  const wrapper = JSON.parse(claudeInboxFrame({ sessionId: claudeOwner, pid: 1, socketPath: '/synthetic.sock', version: 'synthetic' }, '/synthetic-reply.sock', { messageId: '22222222-2222-4222-8222-222222222222', inputId: '33333333-3333-4333-8333-333333333333', fromMode: 'prompting', text: `${marker('native-wrapper')}\nStored answer` }));
   const nativeRows = [
     wrapper,
     { type: 'user', uuid: 'meta-peer', isMeta: true, origin: { kind: 'peer', body: `${marker('native-meta')}\nStored answer` } },
@@ -75,7 +78,21 @@ async function seed() {
     ...Array.from({ length: 160 }, (_, n) => ({ type: 'user', uuid: `noise-${n}`, message: { content: `Later input ${n}` } })),
   ];
   writeFileSync(nativeClaude, nativeRows.map((row) => JSON.stringify({ ...row, cwd: '/synthetic-proof-project', timestamp: nativeAt })).join('\n') + '\n');
-  await feedWorkFiles(app.db.getDatabase(), files(nativeClaude), claudeFeedSource(new Set()));
+  const nativeSource = claudeFeedSource(new Set());
+  await feedWorkFiles(app.db.getDatabase(), files(nativeClaude), {
+    ...nativeSource,
+    turns: (lines, meta) => nativeSource.turns(lines, meta).filter(turn => !turn.text.startsWith('[worker-answer:')),
+  });
+  const beforeUpgrade = await rpc('work.read', { sessionId: claudeOwner, input: { adapter: 'claude-code', marker: marker('native-wrapper') } });
+  assert.equal(beforeUpgrade.ok, false, 'old parser skipped this accepted answer');
+  app.db.getDatabase().exec("DELETE FROM migration_markers WHERE key = 'migration_468'");
+  await app.cleanup();
+  app = await createDaemonApp({ config, verbose: false });
+  await app.spaceRuntimeService.ready(); await app.jobProcessor.stop();
+  await runClaudeFeed(new JobQueueRepository(app.db.getDatabase()), app.db.getDatabase(), nativeRoot, Date.now());
+  const upgraded = await rpc('work.read', { sessionId: claudeOwner, input: { adapter: 'claude-code', marker: marker('native-wrapper') } });
+  assert.equal(upgraded.ok, true, 'upgrade must recover the already-indexed unchanged transcript');
+  writeFileSync(join(run, 'evidence/upgrade.json'), JSON.stringify({ beforeUpgrade, upgraded, unchangedTranscript: true }, null, 2));
 }
 try {
   await app.spaceRuntimeService.ready(); await app.jobProcessor.stop();
@@ -140,7 +157,7 @@ try {
     for (const name of ['native-wrapper', 'native-meta', 'native-queued']) assert.equal((await lookup(name, { sessionId: 'local_card' }, 'claude-desktop')).ok, true);
     for (const name of ['past', 'future', 'late']) assert.equal((await lookup(name, { sessionId: copilotId }, 'copilot-cli')).value.turns[0].messageId, `user:${name}-copilot`);
     assert(!readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').includes('session.resume'), 'history lookup must not resume the peer');
-    writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ clockSkew: ['past', 'future'], interveningInputs: 160, nativeFeedIngested: true, exactOwningPeer: true, restart: true, desktopAlias: true, nativePeerEnvelopes: true, queuedPeerAttachment: true, copilotBeyondByteWindow: true, copilotMissInvalidatedByAppend: true, copilotOversizedUncertain: true, copilotOversizedLaterInputs: 80, oversizedSendRejected: true }, null, 2));
+    writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ clockSkew: ['past', 'future'], interveningInputs: 160, nativeFeedIngested: true, unchangedTranscriptUpgrade: true, exactOwningPeer: true, restart: true, desktopAlias: true, nativePeerEnvelopes: true, queuedPeerAttachment: true, copilotBeyondByteWindow: true, copilotMissInvalidatedByAppend: true, copilotOversizedUncertain: true, copilotOversizedLaterInputs: 80, oversizedSendRejected: true }, null, 2));
     console.log('PASS: exact native input lookup ignores clock and history windows, preserves scope across peer routing and restart');
   }
 } finally {
