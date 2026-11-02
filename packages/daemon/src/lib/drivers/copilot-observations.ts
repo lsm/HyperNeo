@@ -56,11 +56,22 @@ export function readCopilotObservations(
         message: input.replyReport,
       });
   }
+  recentInputs.sort((a, b) => a.at - b.at);
+  const ends = turnEnds.sort((a, b) => a.at - b.at).slice(-TURN_REPLIES);
+  const ended = new Set(ends.map((turn) => turn.id));
+  const selected = new Set(
+    since === undefined
+      ? recentWorkInputs(recentInputs)
+      : recentWorkInputs(
+          [
+            ...recentInputs.filter((input) => ended.has(input.inputId!)),
+            ...recentInputs.filter((input) => !ended.has(input.inputId!)).reverse(),
+          ],
+          since
+        )
+  );
   return {
-    recentInputs: recentWorkInputs(
-      recentInputs.sort((a, b) => a.at - b.at),
-      since
-    ),
-    turnEnds: turnEnds.sort((a, b) => a.at - b.at).slice(-TURN_REPLIES),
+    recentInputs: recentInputs.filter((input) => selected.has(input)),
+    turnEnds: ends,
   };
 }
