@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { expect, test } from 'bun:test';
 import { testDirectories } from '../../../helpers/temporary-directory.ts';
 import { createDriverHealthProbe } from '../../../../src/lib/drivers/driver-health-probes.ts';
@@ -7,7 +8,7 @@ import { createDriverHealthProbe } from '../../../../src/lib/drivers/driver-heal
 const directories = testDirectories();
 
 test('a missing Codex database reports its reason without running a discovery scan', async () => {
-  const home = directories.make('driver-health-');
+  const home = directories(join(tmpdir(), 'driver-health-'));
   let calls = 0;
   const probe = createDriverHealthProbe({
     home,
@@ -19,7 +20,7 @@ test('a missing Codex database reports its reason without running a discovery sc
 });
 
 test('unreadable transcript contents produce a degraded health result', async () => {
-  const home = directories.make('driver-health-');
+  const home = directories(join(tmpdir(), 'driver-health-'));
   const project = join(home, '.claude', 'projects', 'synthetic');
   mkdirSync(project, { recursive: true });
   writeFileSync(join(project, 'worker.jsonl'), '{invalid}\n');

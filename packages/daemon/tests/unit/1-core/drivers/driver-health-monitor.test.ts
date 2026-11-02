@@ -59,13 +59,21 @@ test('verification records the tested version; a later client upgrade remains us
   const f = fixture();
   const monitor = createDriverHealthMonitor(f.deps);
   await monitor.check(true);
-  await monitor.verified('codex-desktop', 'codex-state-discovery');
+  await monitor.verified('codex-desktop', 'codex-state-discovery', { desktop: '1.0.0' });
   expect(f.stored['codex-desktop']).toMatchObject({ verifiedVersions: { desktop: '1.0.0' }, unverifiedVersion: false });
   f.setVersion('2.0.0');
   await monitor.check(true);
   expect(f.stored['codex-desktop']).toMatchObject({ status: 'ok', unverifiedVersion: true, clientVersions: { desktop: '2.0.0' } });
-  expect([...f.notices.values()].at(-1)).toContain('unverified');
+  expect([...f.notices.values()].at(-1)).toMatch(/unverified/i);
   const count = f.notices.size;
   await monitor.check(true);
   expect(f.notices.size).toBe(count);
+});
+
+test('a proof cannot mark a different installed version as verified', async () => {
+  const f = fixture();
+  const monitor = createDriverHealthMonitor(f.deps);
+  await monitor.check(true);
+  await expect(monitor.verified('codex-desktop', 'codex-state-discovery', { desktop: '0.9.0' })).rejects.toThrow('version');
+  expect(f.stored['codex-desktop'].verifiedVersions).toBeUndefined();
 });
