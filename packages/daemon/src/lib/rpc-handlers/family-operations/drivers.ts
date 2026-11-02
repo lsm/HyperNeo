@@ -1,4 +1,5 @@
 import { resolveNewSessionModel } from '../../session/new-session-model.ts';
+import { workerWorktreeHasSubmodules } from '../../drivers/work-placement.ts';
 import { releaseWorkerSandbox } from '../../drivers/worker-sandbox.ts';
 import { sessionSdkPath } from '../../session/sdk-path.ts';
 import { sdkPendingRemoval } from '../../../storage/repositories/sdk-message-transactions.ts';
@@ -220,9 +221,10 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
       if (session.worktree) {
         const manager = sessionManager.getWorktreeManager();
         const commits = await manager.getCommitsAhead(session.worktree);
-        const git = await simpleGit(
-          session.worktree.worktreePath ?? session.workspacePath!
-        ).status();
+        const directory = session.worktree.worktreePath ?? session.workspacePath!;
+        if (await workerWorktreeHasSubmodules(directory))
+          return reject('unsupported', 'Submodule worktrees require manual verification; kept.');
+        const git = await simpleGit(directory).status(['--ignore-submodules=none']);
         if (commits.hasCommitsAhead || !git.isClean())
           return reject(
             'unsupported',

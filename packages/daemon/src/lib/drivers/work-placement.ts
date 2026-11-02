@@ -65,9 +65,20 @@ export async function prepareWorkerFolder(
 }
 
 type Cleanup = NonNullable<WorkArchived['worktree']>;
-type Facts = { dirty: boolean; unpushed: string };
+type Facts = { dirty: boolean; unpushed: string; submodules: boolean };
+export async function workerWorktreeHasSubmodules(directory: string): Promise<boolean> {
+  return (await simpleGit(directory).raw(['submodule', 'status', '--recursive'])).trim() !== '';
+}
 const cleanupPlan = (superpipe({})('worker-worktree-cleanup') as PipelineAPI)
   .input(['facts'])
+  .pipe(
+    (facts: Facts) =>
+      facts.submodules
+        ? { reason: { reason: 'Submodule worktrees require manual verification; kept.' } }
+        : { value: true },
+    'facts',
+    'result:ready'
+  )
   .pipe(
     (facts: Facts) =>
       facts.dirty
@@ -114,11 +125,12 @@ export async function cleanupOwnedWorktree(
         removed: false,
         reason: 'The folder is not a linked worker worktree; kept.',
       };
-    const [status, unpushed] = await Promise.all([
-      git.status(),
+    const [status, unpushed, submodules] = await Promise.all([
+      git.status(['--ignore-submodules=none']),
       git.raw(['rev-list', '--count', 'HEAD', '--not', '--remotes=origin']),
+      workerWorktreeHasSubmodules(directory),
     ]);
-    const plan = cleanupPlan({ dirty: !status.isClean(), unpushed: unpushed.trim() });
+    const plan = cleanupPlan({ dirty: !status.isClean(), unpushed: unpushed.trim(), submodules });
     if (plan !== true) return { directory, removed: false, reason: plan.reason };
     await simpleGit(dirname(directory)).raw(['--git-dir', common, 'worktree', 'remove', directory]);
     return { directory, removed: true };
