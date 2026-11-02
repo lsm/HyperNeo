@@ -1,7 +1,9 @@
 import { escapeRawHtmlBlocks, hasCodeBlock, renderPlainText } from './markdown-escape.ts';
 export { renderPlainText } from './markdown-escape.ts';
 import { render } from 'preact';
-import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { systemState } from '../../lib/state.ts';
+import { ownerPathLabels } from '../../lib/owner-path-label.ts';
 import { resolvedTheme } from '../../lib/theme.ts';
 import { CopyButton } from '../ui/CopyButton.tsx';
 import { MermaidFigureToolbar, getMermaidForTheme } from './MermaidViewer.tsx';
@@ -20,6 +22,7 @@ interface MarkdownRendererProps {
   bare?: boolean;
   references?: readonly string[];
   onReference?: (reference: string) => void;
+  referenceHome?: string | null;
 }
 
 function demoteAnchorLinks(container: HTMLElement) {
@@ -486,7 +489,10 @@ export default function MarkdownRenderer({
   bare = false,
   references,
   onReference,
+  referenceHome,
 }: MarkdownRendererProps) {
+  const home = referenceHome === undefined ? systemState.value?.homeDirectory : referenceHome;
+  const labels = useMemo(() => ownerPathLabels(content, home), [content, home]);
   const containerRef = useRef<HTMLDivElement>(null);
   const overlayOwner = useRef({});
   const referenceHandler = useRef(onReference);
@@ -551,7 +557,7 @@ export default function MarkdownRenderer({
     container.addEventListener('click', handleImageActivate);
     container.addEventListener('auxclick', handleImageActivate);
 
-    markPreviewReferences(container, JSON.parse(referenceKey));
+    markPreviewReferences(container, JSON.parse(referenceKey), labels);
     const handleReference = (event: Event) => {
       if (event instanceof KeyboardEvent && event.key !== 'Enter') return;
       const target = event.target instanceof Element ? event.target : null;
@@ -607,7 +613,7 @@ export default function MarkdownRenderer({
       });
       mermaidCancelled = true;
     };
-  }, [html, theme, artifactLinks, demoteLinks, bare, referenceKey]);
+  }, [html, theme, artifactLinks, demoteLinks, bare, referenceKey, labels]);
 
   return (
     <div ref={containerRef} class={`prose ${className || ''}`}>

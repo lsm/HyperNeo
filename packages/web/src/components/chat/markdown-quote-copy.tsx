@@ -21,6 +21,8 @@ function quoteText(node: Node): string {
     return /^\s*\n\s*$/.test(text) ? '' : text;
   }
   if (!(node instanceof Element)) return '';
+  if (node.hasAttribute('data-original-reference'))
+    return node.getAttribute('data-original-reference')!;
   if (node.tagName === 'PRE') return `${(node.textContent || '').replace(/\n$/, '')}\n\n`;
   if (node.classList.contains('katex')) {
     return node.querySelector('annotation[encoding="application/x-tex"]')?.textContent || '';

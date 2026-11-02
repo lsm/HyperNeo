@@ -45,6 +45,7 @@ vi.mock('../../hooks/useInterrupt.ts', () => ({
 }));
 vi.mock('../../lib/state.ts', () => ({
   connectionState: { value: 'connected', subscribe: () => () => {} },
+  systemState: { value: null },
 }));
 
 const hubRequest = vi.fn(

@@ -1,3 +1,4 @@
+import { homedir } from 'node:os';
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { StateProjectionService } from '../../../../src/lib/state-projection-service';
@@ -132,6 +133,7 @@ describe('StateProjectionService', () => {
       const result = await service.getGlobalSystemSnapshot();
 
       expect(result).not.toHaveProperty('sessions');
+      expect(result.system).toHaveProperty('homeDirectory', homedir());
       expect(result.system.health.sessions).toEqual({ active: 2, total: 5 });
       expect(result.settings).toHaveProperty('settings');
       expect(result.meta.channel).toBe('global');
