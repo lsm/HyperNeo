@@ -15,6 +15,12 @@ export function runMigration468(db: Database): void {
       GROUP BY json_extract(bound.ref,'$.adapter'),json_extract(bound.ref,'$.id')
       ON CONFLICT(adapter,id) DO UPDATE SET ask_ids=excluded.ask_ids`);
   }
-  if (columns.length && !columns.some((column) => column.name === 'reusable'))
+  if (columns.length && !columns.some((column) => column.name === 'reusable')) {
     db.exec('ALTER TABLE work_started_sessions ADD COLUMN reusable INTEGER NOT NULL DEFAULT 1');
+    db.exec(`UPDATE work_started_sessions AS worker SET reusable=0 WHERE EXISTS (
+      SELECT 1 FROM pack_facts WHERE pack='coding' AND key LIKE 'assignment:%'
+        AND json_extract(value_json,'$.ref.adapter')=worker.adapter
+        AND json_extract(value_json,'$.ref.id')=worker.id
+        AND json_extract(value_json,'$.ref.daemon') IS NULL)`);
+  }
 }

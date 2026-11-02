@@ -45,8 +45,8 @@ beforeEach(() => {
   createFeedTurnIndex(db);
   runMigration455(db);
   runMigration465(db);
-  runMigration468(db);
   db.exec('CREATE TABLE pack_facts (pack TEXT, key TEXT, value_json TEXT)');
+  runMigration468(db);
 });
 
 afterEach(() => {
