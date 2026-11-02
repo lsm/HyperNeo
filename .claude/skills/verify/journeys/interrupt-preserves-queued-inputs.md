@@ -7,7 +7,8 @@ does not connect to a pre-existing proxy or require ports 8000 and 8001.
 
 The helper starts an isolated daemon on an ephemeral port, with a fresh HOME,
 DB and WebSocket client. The installed SDK talks only to local mock HTTP
-servers. The first tool-capable model request is held open to represent an active
+servers; external registry MCP servers are disabled through RPC. The first
+tool-capable model request is held open to represent an active
 turn; auxiliary title requests cannot satisfy this barrier or replay assertions.
 The helper seeds three synthetic enqueued inputs while it runs: two with
 pending delivery jobs and one orphan row. It invokes the same

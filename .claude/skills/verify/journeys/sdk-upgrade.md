@@ -16,7 +16,8 @@ temporary data. Never use the owner's daemon or credentials for these proofs.
 - Follow `interrupt-preserves-queued-inputs.md`: interrupt an active native SDK
   request through the public RPC and require queued inputs in its next turn.
 - Follow `sdk-permission-spawn.md`: observe native initialization and permission
-  control under ordinary, worker-policy and empty-plan settings.
+  control under ordinary and worker-policy settings; builder regressions cover
+  explicit plan mode.
 - Follow `neo-human-direct-worker-turns.md`: a real worker reply reaches Neo,
   whose native SDK/MCP tool call must persist the follow-up todo.
 

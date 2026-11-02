@@ -15,7 +15,9 @@ worker already bound to a completed todo on an open ask, with an adoption anchor
 and no dispatch row. The real worker SDK replies through a loopback scripted
 model. The real driver-refresh job must deliver the human input and final reply
 to Neo. Neo's actual SDK/MCP tool call records new work as a todo on that ask.
-Two repeated observations add no model request or todo. Keep observed.json,
+Wait for Neo's final SDK result after the MCP tool callback before counting
+requests: the tool-result continuation belongs to that same native turn.
+Two repeated observations then add no model request or todo. Keep observed.json,
 model-bodies.json and proof.log; require wrapper exit zero and clean shutdown.
 This proves server/SDK/tools and persistent matter state, not real-model judgment.
 

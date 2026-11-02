@@ -74,6 +74,9 @@ async function until(check: () => boolean, label: string) {
 }
 try {
   await transport.initialize();
+  const { servers } = await hub.request<{ servers: Array<{ id: string }> }>('mcp.registry.list', {});
+  for (const server of servers)
+    await hub.request('mcp.registry.setEnabled', { id: server.id, enabled: false });
   await hub.request('providers.create', {
     params: { providerId: 'anthropic', displayName: 'Isolated mock', kind: 'built_in',
       authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 },
