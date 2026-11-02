@@ -12438,6 +12438,9 @@
                 "minimum": 0,
                 "type": "integer"
               },
+              "path": {
+                "type": "string"
+              },
               "scriptsRemoved": {
                 "type": "boolean"
               },
@@ -12453,6 +12456,7 @@
             },
             "required": [
               "accepted",
+              "path",
               "kind",
               "version",
               "byteLength",
