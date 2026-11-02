@@ -83,3 +83,30 @@ test('unreadable transcript contents produce a degraded health result', async ()
     reason: expect.stringContaining('transcript'),
   });
 });
+
+for (const standalone of [false, true]) {
+  test(`Codex health reads the ${standalone ? 'standalone before bundled' : 'ChatGPT-bundled'} desktop version`, async () => {
+    const home = directories(join(tmpdir(), 'driver-health-'));
+    mkdirSync(join(home, '.codex'), { recursive: true });
+    writeFileSync(join(home, '.codex', 'state_6.sqlite'), 'synthetic discovery fixture');
+    for (const [app, version] of [
+      ['ChatGPT', '26.1027.51404'],
+      ...(standalone ? [['Codex', '1.2.3']] : []),
+    ]) {
+      const contents = join(home, 'Applications', `${app}.app`, 'Contents');
+      mkdirSync(contents, { recursive: true });
+      writeFileSync(
+        join(contents, 'Info.plist'),
+        `<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleShortVersionString</key><string>${version}</string></dict></plist>`
+      );
+    }
+    const probe = createDriverHealthProbe({
+      home,
+      adapters: () => [{ id: 'codex-desktop', find: () => [] }] as never,
+    });
+    expect(await probe('codex-desktop')).toMatchObject({
+      status: 'ok',
+      clientVersions: { desktop: standalone ? '1.2.3' : '26.1027.51404' },
+    });
+  });
+}

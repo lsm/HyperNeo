@@ -16,7 +16,8 @@ assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 const home = join(run, 'home');
 for (const path of ['evidence', 'home/evidence', 'home/.codex', 'home/.claude/projects', 'home/Library/Application Support/Claude/claude-code-sessions', 'project']) mkdirSync(join(run, path), { recursive: true });
 const version = (app: string, value: string) => {
-  const contents = join(home, 'Applications', `${app}.app`, 'Contents');
+  const bundle = app === 'Codex' && process.argv.includes('--bundled-codex') ? 'ChatGPT' : app;
+  const contents = join(home, 'Applications', `${bundle}.app`, 'Contents');
   mkdirSync(contents, { recursive: true });
   writeFileSync(join(contents, 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleShortVersionString</key><string>${value}</string></dict></plist>`);
 };
