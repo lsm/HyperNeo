@@ -158,6 +158,109 @@ function setup(
 }
 
 describe('neo todo runner', () => {
+  test.each(['doing', 'done', 'failed', 'closed_unverified', 'blocked', 'todo'] as const)(
+    'reports direct human work once on an open ask with todo state %s',
+    async (state) => {
+      const h = setup(false);
+      try {
+        const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+        await h.runner.start(todo.id);
+        const at = Date.now() + 100;
+        h.store.updateTodo(h.store.getTodo(todo.id)!, { state, report: 'Prior work' }, at - 50);
+        h.setStatus({
+          ok: true,
+          value: {
+            status: 'done',
+            lastActivityAt: at + 100,
+            recentInputs: [
+              {
+                at,
+                text: 'Please change the heading directly.',
+                human: true,
+                inputId: 'human-input',
+              },
+            ],
+            turnEnds: [
+              { id: 'human-turn', startedAt: at, at: at + 100, message: 'Changed the heading.' },
+            ],
+          },
+        });
+        await h.runner.refresh(() => {});
+        await h.runner.refresh(() => {});
+        const reports = h.told.filter((note) => note.startsWith('The human worked directly'));
+        expect(reports).toHaveLength(1);
+        expect(reports[0]).toContain(`ask iOS card, todo ${todo.id}`);
+        expect(reports[0]).toContain('The human said: Please change the heading directly.');
+        expect(reports[0]).toContain('The worker replied: Changed the heading.');
+        expect(reports[0]).not.toContain('dispatch');
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
+  test('reports tracked human turns only after the follow anchor without a dispatch', async () => {
+    const h = setup(false);
+    try {
+      const todo = h.add(null, null);
+      const at = Date.now() + 100;
+      h.sessions.create(todo.id, { verb: 'adopt', ref });
+      h.sessions.recordRef(todo.id, ref, at);
+      h.sessions.recordFollowAnchor(todo.id, at);
+      h.store.updateTodo(todo, { state: 'done' }, at);
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: at + 100,
+          recentInputs: [
+            { at: at - 100, text: 'Before tracking', human: true },
+            { at: at + 10, text: 'Do the new work', human: true },
+          ],
+          turnEnds: [
+            { id: 'old-tracked', startedAt: at - 100, at: at - 10, message: 'Old answer' },
+            { id: 'new-tracked', startedAt: at + 10, at: at + 100, message: 'New answer' },
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      await h.runner.refresh(() => {});
+      expect(h.told).toHaveLength(1);
+      expect(h.told[0]).toContain('The human said: Do the new work');
+      expect(h.told[0]).toContain('The worker replied: New answer');
+      expect(h.sessions.inputs.list(todo.id)).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('dispatch receipt identity wins over a driver human marker', async () => {
+    const h = setup(false);
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      await h.runner.start(todo.id);
+      const dispatch = h.sessions.inputs.list(todo.id)[0];
+      const at = dispatch.acceptedAt + 100;
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: at + 100,
+          recentInputs: [{ at, text: 'Build the rows.', human: true, inputId: receipt.inputId }],
+          turnEnds: [
+            { id: 'dispatch-turn', startedAt: at, at: at + 100, message: 'Normal report' },
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      await h.runner.refresh(() => {});
+      expect(h.told.filter((note) => note.startsWith('Worker turn report'))).toHaveLength(1);
+      expect(h.told.some((note) => note.startsWith('The human worked directly'))).toBe(false);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('a refused check stamp preserves the prior worker status and needs-you incident', async () => {
     const h = setup();
     try {
