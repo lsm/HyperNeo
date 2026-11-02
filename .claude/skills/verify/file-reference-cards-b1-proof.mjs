@@ -47,6 +47,7 @@ export async function verifyCardSources(page,{run,base,width,bun}) {
     if(kind==='question') assert.equal(calls.length,0);
     assert.equal(await container.getByRole('button',{name:/Open current file:/}).count(),1);
     assert.equal(await page.getByRole('button',{name:/Open current file: metadata-only/}).count(),0);
+    await card.scrollIntoViewIfNeeded();
     await shot(`${kind}-card`);
     await writeFile(files[0],'# Card source A\n');
     await card.click();
