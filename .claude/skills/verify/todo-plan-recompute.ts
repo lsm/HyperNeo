@@ -12,7 +12,7 @@ import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/r
 
 const [mode, directory] = process.argv.slice(2),
   run = resolve(directory);
-assert(['before', 'verify', 'chain-before', 'chain-verify'].includes(mode));
+assert(['before', 'verify', 'chain-before', 'chain-verify', 'chain-edges'].includes(mode));
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -241,6 +241,38 @@ try {
     const chain = async (title: string, id = 'flow') => call('neo.ask.open', { title, request: 'Approved: complete the entire chain.', todos: [{ ...step(`${title}-1`, id), start: true }, { ...step(`${title}-2`, id), after: [0] }, { ...step(`${title}-3`, id), after: [1] }] });
     const read = async (askId: string) => (await rpc('neo.ask.read', { askId })).entry;
     const complete = async (title: string) => { writeFileSync(join(run, title), 'Verified outcome'); await refresh(); };
+    if (mode === 'chain-edges') {
+      const split = await call('neo.ask.open', { title: 'Split approved plan', request: 'Complete both repositories.', todos: [
+        { ...step('split-first'), named: { repository: 'synthetic/first' }, start: true },
+        { ...step('split-second'), named: { repository: 'synthetic/second' }, after: [0] },
+      ] });
+      const [first, second] = split.todos;
+      assert.notEqual(first.askId, second.askId);
+      assert.equal((await read(second.askId)).questions.length, 0);
+      await complete(first.title);
+      const advanced = await read(second.askId);
+      evidence.split = advanced;
+      assert.equal(advanced.todos.find((t: { id: string }) => t.id === second.id).state, 'doing');
+      assert.equal(starts(), 2);
+      await refresh(); assert.equal(starts(), 2);
+      await complete(second.title);
+      const removed = await call('neo.ask.open', { title: 'Removed prerequisite', request: 'Complete the approved dependent.', todos: [
+        { ...step('removed-first'), after: [] },
+        { ...step('removed-second'), after: [0] },
+        { ...step('removed-independent'), after: [] },
+      ] });
+      const [a, b, independent] = removed.todos;
+      await call('neo.todo.remove', { todoId: a.id, reason: 'No longer needed.' });
+      await refresh();
+      const released = await read(b.askId);
+      evidence.removed = released;
+      assert.equal(released.todos.find((t: { id: string }) => t.id === b.id).state, 'doing');
+      assert.equal(released.todos.find((t: { id: string }) => t.id === independent.id).blockedBy, 'question');
+      assert.deepEqual(released.questions.filter((q: { state: string }) => q.state === 'open').map((q: { startTodos: string[] }) => q.startTodos), [[independent.id]]);
+      assert.equal(starts(), 3);
+      await refresh(); assert.equal(starts(), 3);
+      evidence.verified = true;
+    } else {
     const opened = await chain('approved');
     const [first, second, third] = opened.todos;
     evidence.initial = await read(first.askId);
@@ -289,6 +321,7 @@ try {
       await refresh(); assert.equal(starts(), 6);
       evidence.legacyRecovered = recovered;
       evidence.verified = true;
+    }
     }
   } else {
   ask('flow');

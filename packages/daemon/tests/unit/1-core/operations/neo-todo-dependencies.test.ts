@@ -111,6 +111,78 @@ function setup() {
 }
 
 describe('todo dependencies', () => {
+  test('an approved dependency advances across repository cards without a child Start answer', async () => {
+    const { db, store, sessions, invoke, step, runner, sent } = setup();
+    try {
+      const target = { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } };
+      const work = { target, instruction: 'Complete the approved repository step.' };
+      const opened = await invoke('neo.ask.open', {
+        title: 'Cross-repository chain',
+        request: 'Complete both repository steps.',
+        todos: [
+          { ...step('First repo'), ...work, named: { repository: 'synthetic/first' }, start: true },
+          { ...step('Second repo', [0]), ...work, named: { repository: 'synthetic/second' } },
+        ],
+      });
+      expect(opened.ok).toBe(true);
+      const [first, second] = opened.todos;
+      expect(first.askId).not.toBe(second.askId);
+      expect(store.listQuestions(second.askId)).toHaveLength(0);
+      await runner.recompute(store.getTodo(first.id)!, {}, Date.now(), {
+        state: 'done',
+        evidence: 'First repository PR merged.',
+      });
+      await runner.refresh(() => {});
+      expect(store.getTodo(second.id)?.state).toBe('doing');
+      expect(sessions.readRef(second.id)).toEqual(target.ref);
+      expect(store.listQuestions(second.askId)).toHaveLength(0);
+      await runner.refresh(() => {});
+      expect(sent).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  test.each([false, true])(
+    'removing an unstarted predecessor releases its dependent but not independent work; explicit=%s',
+    async (explicit) => {
+      const { db, store, invoke, step, runner, sent } = setup();
+      try {
+        const work = {
+          target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } },
+          instruction: 'Complete this step.',
+        };
+        const opened = await invoke('neo.ask.open', {
+          title: 'Cancelled prerequisite',
+          request: 'Complete the dependent if its prerequisite is closed.',
+          todos: [
+            { ...step('Prerequisite', []), ...work },
+            { ...step('Dependent', explicit ? [0] : undefined), ...work },
+            { ...step('Independent', []), ...work },
+          ],
+        });
+        const [first, second, independent] = opened.todos;
+        expect(sent).toHaveLength(0);
+        expect(
+          await invoke('neo.todo.remove', { todoId: first.id, reason: 'No longer needed.' })
+        ).toMatchObject({ ok: true });
+        await runner.refresh(() => {});
+        expect(store.getTodo(second.id)?.state).toBe('doing');
+        expect(store.getTodo(independent.id)).toMatchObject({
+          state: 'blocked',
+          blockedBy: 'question',
+        });
+        expect(store.listQuestions(first.askId).filter((q) => q.state === 'open')).toEqual([
+          expect.objectContaining({ startTodos: [independent.id] }),
+        ]);
+        await runner.refresh(() => {});
+        expect(sent).toHaveLength(1);
+      } finally {
+        db.close();
+      }
+    }
+  );
+
   test.each([false, true])(
     'approved dependency chain advances without Start cards; legacy=%s',
     async (legacy) => {
