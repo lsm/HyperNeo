@@ -5,7 +5,7 @@ import { copyFile, readFile, writeFile, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export async function verifyLiveFilePage(page, {run, base, width, bun}) {
+export async function verifyLiveFilePage(page, {run, base, width, bun, cards = false}) {
   const {publicationId, files} = JSON.parse(await readFile(join(run, 'evidence/live-publication.json'), 'utf8'));
   assert(files.every(file => file.startsWith(join(run, 'workspace') + '/')));
   const [markdown, html, image, plain, unsupported] = files;
@@ -25,7 +25,9 @@ export async function verifyLiveFilePage(page, {run, base, width, bun}) {
     for (const dialog of await page.getByRole('dialog').all()) await dialog.evaluate(node => Promise.all(node.getAnimations().map(animation => animation.finished.catch(() => {}))));
     return page.screenshot({path: join(run, 'evidence', `live-${name}-${width}.png`)});
   };
-  const tap = path => page.getByRole('link', {name: `Open preview: ${path}`, exact: true}).click();
+  const tap = path => cards
+    ? page.locator('article').filter({hasText:'Live source-bound files:'}).getByRole('button',{name:`Open current file: ${path.split('/').at(-1)}`,exact:true}).click()
+    : page.getByRole('link', {name: `Open preview: ${path}`, exact: true}).click();
   const close = async path => {
     if (width >= 1120) await page.getByRole('button', {name: `Close ${path.split('/').at(-1)}`, exact: true}).click();
     else await page.getByRole('button', {name: 'Back', exact: true}).click();

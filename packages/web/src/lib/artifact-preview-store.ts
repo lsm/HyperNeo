@@ -11,7 +11,7 @@ import {
 export { previewWorkspace } from './artifact-preview-workspace.ts';
 
 export type ArtifactPreviewSource = {
-  kind: 'message' | 'publication' | 'todo';
+  kind: 'message' | 'publication' | 'todo' | 'question';
   id: string;
   revisionId?: string;
 };
@@ -46,7 +46,10 @@ function writePreviewStack(stack: readonly ArtifactPreviewTarget[], title?: stri
     } else if (isLiveReference(top)) {
       workspaceState.value = previewWorkspace.step(workspaceState.value, {
         kind: 'open',
-        file: { reference: top, title: top.reference.split(/[\\/]/).at(-1) || top.reference },
+        file: {
+          reference: top,
+          title: title ?? (top.reference.split(/[\\/]/).at(-1) || top.reference),
+        },
       });
     }
   });

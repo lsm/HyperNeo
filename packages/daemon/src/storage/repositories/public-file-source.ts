@@ -13,7 +13,7 @@ import { isLocalUser } from '../../lib/operations/caller.ts';
 import type { OperationCaller } from '../../lib/operations/registry.ts';
 import type { StoredReferenceSource } from '../../lib/artifacts/reference-plan.ts';
 
-type Key = StoredReferenceSource['key'];
+type Key = StoredReferenceSource['key'] | { kind: 'question'; id: string; revisionId?: string };
 type Source = {
   text: readonly string[];
   owner: WorkRef;
@@ -60,6 +60,24 @@ export function readPublicFileSource(
       : null;
   }
   if (key.revisionId) return null;
+  if (key.kind === 'question') {
+    const work = new NeoAskTodoRepository(db);
+    const question = work.getQuestion(key.id);
+    const ask = question ? work.getAsk(question.askId) : null;
+    const owner = question?.sourceSession;
+    return question && ask
+      ? located(
+          [question.text, question.document ?? ''],
+          owner
+            ? {
+                adapter: owner.adapter,
+                id: owner.id,
+                ...(owner.daemon ? { daemon: owner.daemon } : {}),
+              }
+            : { adapter: 'hyperneo', id: ask.sessionId }
+        )
+      : null;
+  }
   if (key.kind === 'todo') {
     const work = new NeoAskTodoRepository(db);
     const todo = work.getTodo(key.id);

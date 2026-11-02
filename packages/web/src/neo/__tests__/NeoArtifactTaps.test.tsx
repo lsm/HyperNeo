@@ -59,14 +59,18 @@ afterEach(cleanup);
 
 describe('Neo artifact taps', () => {
   describe('current file cards', () => {
-    beforeEach(closeArtifactPreview);
+    beforeEach(() => {
+      closeArtifactPreview();
+      request.mockReset();
+      connectionState.value = 'connected';
+    });
     afterEach(closeArtifactPreview);
 
     it('derives one card per literal file reference without rewriting a publication', async () => {
       const body =
         'Read `report.md` twice: `report.md`.\n\n```sh\nignored.md\n```\n\nhttps://github.com/acme/demo/pull/7';
       const item = publication({
-        shortText: body,
+        shortText: undefined,
         fullText: body,
         revisionId: 'visible-revision',
         verbatim: true,
@@ -147,6 +151,74 @@ describe('Neo artifact taps', () => {
         kind: 'reference',
         source: { kind: 'question', id: question.id },
         reference: 'report.md',
+      });
+    });
+
+    it('includes visible todo title/status and adds detail/action paths only when expanded', async () => {
+      const todo = testTodo('status-file-todo', {
+        title: 'Read `title.md`',
+        status: 'Blocked: read `status.md`',
+        blockedReason: 'read `status.md`',
+        state: 'blocked',
+        instruction: 'Read `title.md` and `detail.md`',
+        nextAction: 'Read `next.md`',
+      });
+      render(
+        <NeoAskTodos entry={testAskEntry('ask', 'Work', { todos: [todo] })} onAnswer={() => {}} />
+      );
+      expect(screen.getAllByRole('button', { name: /^Open current file:/ })).toHaveLength(2);
+      expect(screen.queryByRole('button', { name: 'Open current file: detail.md' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Open current file: next.md' })).toBeNull();
+      fireEvent.click(screen.getByText(todo.title));
+      expect(screen.getAllByRole('button', { name: /^Open current file:/ })).toHaveLength(4);
+      expect(screen.getAllByRole('button', { name: 'Open current file: title.md' })).toHaveLength(
+        1
+      );
+    });
+
+    it('keeps same-name files distinct and preserves an encoded file URL exactly', async () => {
+      const body =
+        'Read `first/report.md`, `second/report.md` and [the report](file:///synthetic/My%20report.md).';
+      render(
+        <NeoPublicConversation
+          conversation={conversation(publication({ shortText: body, fullText: body }))}
+        />
+      );
+      const named = await screen.findAllByRole('button', { name: 'Open current file: report.md' });
+      expect(named.map((card) => card.getAttribute('title'))).toEqual([
+        'first/report.md',
+        'second/report.md',
+      ]);
+      fireEvent.click(named[1]);
+      expect(artifactPreviewStack.value.at(-1)?.kind).toBe('reference');
+      expect(artifactPreviewStack.value.at(-1)).toMatchObject({ reference: 'second/report.md' });
+      fireEvent.click(screen.getByRole('button', { name: 'Open current file: My report.md' }));
+      expect(artifactPreviewStack.value.at(-1)).toMatchObject({
+        reference: 'file:///synthetic/My%20report.md',
+      });
+    });
+
+    it('lets unsupported file cards reach the reader and shows its accurate refusal', async () => {
+      const body = 'Open `unknown.bin`.';
+      request.mockResolvedValue({ accepted: false, reason: 'unsupported_type' });
+      render(
+        <>
+          <NeoPublicConversation
+            conversation={conversation(publication({ shortText: body, fullText: body }))}
+          />
+          <ArtifactPreviewPanel />
+        </>
+      );
+      fireEvent.click(
+        await screen.findByRole('button', { name: 'Open current file: unknown.bin' })
+      );
+      await screen.findByText('This format has no preview yet.');
+      expect(request.mock.calls[0][1]).toMatchObject({
+        name: 'file.reference.read',
+        input: {
+          reference: 'unknown.bin',
+          sourceMessageOrCard: { kind: 'publication', id: publication().publicationId },
+        },
       });
     });
   });
@@ -269,7 +341,7 @@ describe('Neo artifact taps', () => {
       <NeoPublicConversation conversation={conversation(publication({ artifacts: [report] }))} />
     );
     const card = await screen.findByRole('button', { name: 'Open preview: Layout report' });
-    expect(card.textContent).toBe('Layout report · HTML · 84 KB · Open preview');
+    expect(card.textContent).toBe('Saved attachment · Layout report · HTML · 84 KB · Open preview');
     fireEvent.click(card);
     expect(artifactPreviewStack.value).toEqual([{ kind: 'artifact', artifactId: 'a-report' }]);
   });

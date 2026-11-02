@@ -9,6 +9,7 @@ import type { NeoSessionMessage } from '@hyperneo/shared/types/neo-session-messa
 import type { NeoSessionNoticeGroup } from '@hyperneo/shared/types/neo-snapshot';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ArtifactCards } from '../components/artifacts/ArtifactCards.tsx';
+import { FileReferenceCards } from '../components/artifacts/FileReferenceCards.tsx';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { ContentDisclosureControl } from '../components/ui/ContentDisclosureControl.tsx';
 import { CopyButton } from '../components/ui/CopyButton.tsx';
@@ -464,17 +465,16 @@ function PublicEntry({
     }),
     [publication, text, full]
   );
-  const openReference = publication
+  const referenceSource = publication
+    ? {
+        kind: 'publication' as const,
+        id: publication.publicationId,
+        ...(publication.revisionId ? { revisionId: publication.revisionId } : {}),
+      }
+    : undefined;
+  const openReference = referenceSource
     ? (reference: string) =>
-        openArtifactPreview({
-          kind: 'reference',
-          source: {
-            kind: 'publication',
-            id: publication.publicationId,
-            ...(publication.revisionId ? { revisionId: publication.revisionId } : {}),
-          },
-          reference,
-        })
+        openArtifactPreview({ kind: 'reference', source: referenceSource, reference })
     : undefined;
   const photos = ask ? publicAskPhotos(ask.content) : [];
   const time = messageTime((ask ?? publication)!.createdAt);
@@ -660,6 +660,9 @@ function PublicEntry({
                   />
                   {fold}
                 </div>
+              )}
+              {referenceSource && (
+                <FileReferenceCards source={referenceSource} text={[text, full].join('\n')} />
               )}
               {publication && <ArtifactCards artifacts={publication.artifacts} />}
               {publication && links.length > 0 && (
