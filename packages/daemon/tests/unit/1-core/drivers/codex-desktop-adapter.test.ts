@@ -269,7 +269,8 @@ describe('codex-desktop adapter against a Codex state database', () => {
     ]);
     expect(groups[0].work[0]).toMatchObject({
       ref: { adapter: 'codex-desktop', id: 't1' },
-      place: { machine: 'laptop', folder: join(dir, 'worktree') },
+      place: { machine: 'laptop', folder: '/focus/dolmen' },
+      execution: { machine: 'laptop', directory: join(dir, 'worktree') },
       link: 'codex://threads/t1',
     });
   });

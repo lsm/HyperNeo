@@ -1,3 +1,6 @@
+import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { readHyperneoTurnEnds } from '../../../../src/storage/hyperneo-turn-ends-read.ts';
 import {
   chmodSync,
@@ -28,11 +31,19 @@ import type { MailboxHandoffOutcome } from '../../../../src/lib/mailbox/handoff'
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns';
 
-function control(db: Database, events: string[], withdraw?: HyperneoSessionControl['withdraw']) {
+function control(
+  db: Database,
+  events: string[],
+  withdraw?: HyperneoSessionControl['withdraw'],
+  provider?: HyperneoSessionControl['provider'],
+  resolveDefaultModel?: HyperneoSessionControl['resolveDefaultModel']
+) {
   let selectedModel = 'gpt-6-luna';
   return {
     sessions: {
       ...(withdraw ? { withdraw } : {}),
+      ...(provider ? { provider } : {}),
+      ...(resolveDefaultModel ? { resolveDefaultModel } : {}),
       resolveModel: async (model: string) =>
         model === 'GLM 5.3'
           ? { id: 'glm-5.3', provider: 'glm' }
@@ -152,7 +163,9 @@ describe('hyperneo adapter send and status', () => {
 
   function adapter(
     prepareExecution?: WorkExecutionPreparer,
-    withdraw?: HyperneoSessionControl['withdraw']
+    withdraw?: HyperneoSessionControl['withdraw'],
+    provider?: HyperneoSessionControl['provider'],
+    resolveDefaultModel?: HyperneoSessionControl['resolveDefaultModel']
   ) {
     fillSdkMessageFixtureColumns(db);
     return createHyperneoAdapter({
@@ -172,9 +185,66 @@ describe('hyperneo adapter send and status', () => {
         });
         return outcome;
       },
-      ...control(db, events, withdraw),
+      ...control(db, events, withdraw, provider, resolveDefaultModel),
     });
   }
+
+  test('status preserves the session provider through operation result validation', async () => {
+    const driver = adapter(undefined, undefined, () => 'selected-provider');
+    const registry = createOperationRegistry(
+      createWorkVerbOperations({
+        adapters: () => [driver],
+        remote: { list: () => [], invoke: async () => ({}) },
+        daemonName: 'imac',
+      })
+    );
+    const result = await invokeOperation(
+      registry,
+      'work.status',
+      { ref: { adapter: 'hyperneo', id: 'idle' } },
+      { source: 'rpc' }
+    );
+    expect(result).toMatchObject({
+      kind: 'completed',
+      value: { ok: true, value: { provider: 'selected-provider' } },
+    });
+  });
+
+  test('effort-only reuse resolves the same effective default model and provider as a new start', async () => {
+    const driver = adapter(undefined, undefined, undefined, async () => ({
+      id: 'glm-5.3',
+      provider: 'glm',
+    }));
+    const request = {
+      place: { machine: 'imac', folder: '/focus/repo', name: 'repo' },
+      title: 'fixture',
+      message: 'fixture',
+      effort: ' HIGH ',
+    };
+    expect(await driver.resolveStartConfiguration!(request)).toMatchObject({
+      ok: true,
+      value: { model: 'glm-5.3', provider: 'glm', effort: 'high' },
+    });
+    expect(await adapter().resolveStartConfiguration!(request)).toBeNull();
+    expect(events).toEqual([]);
+    expect(handed).toEqual([]);
+  });
+
+  test('reuse resolves model aliases and effort through the start resolver without creating work', async () => {
+    const result = await adapter().resolveStartConfiguration!({
+      place: { machine: 'imac', folder: '/focus/repo', name: 'repo' },
+      title: 'fixture',
+      message: 'fixture',
+      model: 'GLM 5.3',
+      effort: 'high',
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      value: { model: 'glm-5.3', provider: 'glm', effort: 'high' },
+    });
+    expect(events).toEqual([]);
+    expect(handed).toEqual([]);
+  });
 
   test('prefix discovery finds older sessions before history limits', async () => {
     db.exec('CREATE TABLE workspace_history (path TEXT, last_used_at INTEGER)');

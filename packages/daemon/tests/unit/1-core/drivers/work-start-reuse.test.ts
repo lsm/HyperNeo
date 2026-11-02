@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
+import { workStartConfiguration } from '../../../../src/lib/drivers/start-configuration';
 import type { WorkAdapter, WorkRef, WorkStatus } from '../../../../src/lib/drivers/types';
 import {
   createOperationRegistry,
@@ -17,14 +18,41 @@ function harness(
     folder?: string;
     refusal?: 'not_open' | 'uncertain' | 'throws';
   }[],
-  free: string[]
+  free: string[],
+  config?: {
+    adapter: string;
+    model?: string;
+    effort?: string;
+    unavailable?: boolean;
+    provider?: string;
+    requestedProvider?: string;
+    unresolvedDefault?: boolean;
+  }
 ) {
   const sent: string[] = [];
   const messages: string[] = [];
   const started: string[] = [];
   const unusable: WorkRef[] = [];
   const adapter: WorkAdapter = {
-    id: 'claude-desktop',
+    id: config?.adapter ?? 'claude-desktop',
+    supportsStartEffort: true,
+    resolveStartConfiguration: config
+      ? async (request) => {
+          if (config.unresolvedDefault) return null;
+          const selected = workStartConfiguration.select(request, [
+            { id: 'gpt-6.1-sol', aliases: ['Sol 6.1'], efforts: ['high', 'low'], isDefault: true },
+          ]);
+          return 'ok' in selected
+            ? selected
+            : {
+                ok: true,
+                value: {
+                  ...selected,
+                  ...(config.requestedProvider ? { provider: config.requestedProvider } : {}),
+                },
+              };
+        }
+      : undefined,
     capabilities: ['find', 'start', 'send'],
     find: (query) => [
       {
@@ -36,7 +64,7 @@ function harness(
         work: workers
           .filter((worker) => (worker.folder ?? place.folder) === query.folder)
           .map((worker) => ({
-            ref: { adapter: 'claude-desktop', id: worker.id },
+            ref: { adapter: config?.adapter ?? 'claude-desktop', id: worker.id },
             title: worker.id,
             place: { ...place, folder: worker.folder ?? place.folder },
             status: worker.status,
@@ -57,18 +85,22 @@ function harness(
         },
       };
     },
-    status: async (ref) => ({
-      ok: true,
-      value: {
-        ref,
-        title: 'fixture',
-        place,
-        status: 'done',
-        lastActivityAt: 1,
-        model: 'claude-opus-5-5',
-        effort: 'medium',
-      },
-    }),
+    status: async (ref) =>
+      config?.unavailable
+        ? { ok: false, reason: 'unreachable', detail: 'offline' }
+        : {
+            ok: true,
+            value: {
+              ref,
+              title: 'fixture',
+              place,
+              status: 'done',
+              lastActivityAt: 1,
+              model: config?.model ?? 'claude-opus-5-5',
+              effort: config?.effort ?? 'medium',
+              ...(config?.provider ? { provider: config.provider } : {}),
+            },
+          },
     send: async (ref, message) => {
       messages.push(message);
       sent.push(ref.id);
@@ -90,11 +122,22 @@ function harness(
       markUnusable: (ref) => void unusable.push(ref),
     })
   );
-  const start = async (caller: OperationCaller = neo, provenance = false) => {
+  const start = async (
+    caller: OperationCaller = neo,
+    provenance = false,
+    request: { model?: string; effort?: string } = {}
+  ) => {
     const outcome = await invokeOperation(
       registry,
       'work.start',
-      { adapter: 'claude-desktop', place, title: 'loader', message: 'Fix the loader.', provenance },
+      {
+        adapter: config?.adapter ?? 'claude-desktop',
+        place,
+        title: 'loader',
+        message: 'Fix the loader.',
+        provenance,
+        ...request,
+      },
       caller
     );
     if (outcome.kind !== 'completed') throw new Error(outcome.message);
@@ -177,4 +220,88 @@ describe('work.start reuses an idle worker', () => {
     expect((await run.start({ source: 'rpc' })).value?.ref.id).toBe('fresh');
     expect(run.sent).toEqual([]);
   });
+});
+
+describe('work.start configured reuse', () => {
+  test.each(['codex-desktop', 'hyperneo'])(
+    'resolves aliases before reusing %s',
+    async (adapter) => {
+      const id = `configured-${adapter}`;
+      const run = harness([{ id, status: 'done' }], [id], {
+        adapter,
+        model: 'gpt-6.1-sol',
+        effort: 'high',
+      });
+      expect(
+        (await run.start(neo, true, { model: 'Sol 6.1', effort: ' HIGH ' })).value?.reused
+      ).toBe(true);
+      expect(run.sent).toEqual([id]);
+      expect(run.started).toEqual([]);
+      expect(run.messages[0]).toContain('Agent: gpt-6.1-sol (effort: high)');
+    }
+  );
+  test.each([
+    { model: 'gpt-other', effort: 'high' },
+    { model: 'gpt-6.1-sol', effort: 'low' },
+    { model: 'gpt-6.1-sol', effort: 'high', unavailable: true },
+  ])('starts fresh for a mismatched or unknown identity: %j', async (identity) => {
+    const run = harness([{ id: 'mismatch', status: 'done' }], ['mismatch'], {
+      adapter: 'codex-desktop',
+      ...identity,
+    });
+    expect((await run.start(neo, false, { model: 'Sol 6.1', effort: 'high' })).value?.ref.id).toBe(
+      'fresh'
+    );
+    expect(run.sent).toEqual([]);
+  });
+  test('does not bypass unsupported configuration through reuse', async () => {
+    const run = harness([{ id: 'invalid', status: 'done' }], ['invalid'], {
+      adapter: 'codex-desktop',
+    });
+    expect((await run.start(neo, false, { model: 'unknown' })).ok).toBe(false);
+    expect(run.sent).toEqual([]);
+    expect(run.started).toEqual([]);
+  });
+});
+
+describe('work.start provider-aware reuse', () => {
+  test.each(['selected', 'other', undefined])(
+    'requires the resolved provider to be confirmed: %s',
+    async (provider) => {
+      const id = `provider-${provider}`;
+      const run = harness([{ id, status: 'done' }], [id], {
+        adapter: 'hyperneo',
+        model: 'gpt-6.1-sol',
+        effort: 'high',
+        provider,
+        requestedProvider: 'selected',
+      });
+      const result = await run.start(neo, false, { model: 'Sol 6.1', effort: 'high' });
+      expect(result.value?.ref.id).toBe(provider === 'selected' ? id : 'fresh');
+      expect(run.sent).toEqual(provider === 'selected' ? [id] : []);
+    }
+  );
+});
+
+describe('work.start effort-only reuse', () => {
+  test.each([
+    { model: 'gpt-6.1-sol', unresolvedDefault: false, reuse: true },
+    { model: 'other-default', unresolvedDefault: false, reuse: false },
+    { model: 'gpt-6.1-sol', unresolvedDefault: true, reuse: false },
+  ])(
+    'matches the effective model or starts fresh when unconfirmed: %j',
+    async ({ model, unresolvedDefault, reuse }) => {
+      const id = `effort-only-${model}-${unresolvedDefault}`;
+      const run = harness([{ id, status: 'done' }], [id], {
+        adapter: 'hyperneo',
+        model,
+        effort: 'high',
+        unresolvedDefault,
+      });
+      expect((await run.start(neo, false, { effort: 'high' })).value?.ref.id).toBe(
+        reuse ? id : 'fresh'
+      );
+      expect(run.sent).toEqual(reuse ? [id] : []);
+    }
+  );
 });

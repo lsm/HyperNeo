@@ -47,6 +47,7 @@ const DesktopUIEvidenceSchema = z.object({
 });
 
 export const WorkSummarySchema = z.object({
+  execution: z.object({ directory: z.string().min(1), machine: z.string().min(1) }).optional(),
   worker: WorkerIdentitySchema.optional(),
   ref: WorkRefSchema,
   title: z.string(),
@@ -64,6 +65,7 @@ export const WorkSummarySchema = z.object({
     )
     .optional(),
   model: z.string().optional(),
+  provider: z.string().optional(),
   effort: z.string().optional(),
   identityObservation: z
     .object({
@@ -216,7 +218,6 @@ export const WorkDetailSchema = WorkSummarySchema.extend({
   turnEnds: z.array(WorkTurnEndSchema).optional(),
   inputEvidence: WorkInputEvidenceSchema.optional(),
   startReceipt: WorkInputReceiptSchema.optional(),
-  execution: z.object({ directory: z.string().min(1), machine: z.string().min(1) }).optional(),
   lastReply: z.string().optional(),
   lastReplyAt: z.number().optional(),
   waitingFor: z.string().max(200).optional(),
@@ -308,6 +309,11 @@ export interface WorkAdapter {
   readonly id: string;
   readonly capabilities: readonly WorkVerb[];
   readonly unsupportedCapabilities?: Partial<Record<WorkVerb, string>>;
+  readonly resolveStartConfiguration?: (
+    request: StartRequest
+  ) => Promise<Result<
+    z.infer<typeof workStartConfiguration.schema> & { provider?: string }
+  > | null>;
   readonly supportsStartEffort?: boolean;
   readonly supportsStartPreparation?: boolean;
   find(query: FindQuery): PlaceGroup[] | Promise<PlaceGroup[]>;
