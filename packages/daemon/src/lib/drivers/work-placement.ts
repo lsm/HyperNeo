@@ -44,12 +44,15 @@ export async function prepareWorkerFolder(
     return { code, stderr: stderr.trim() };
   };
   const added = await run(['worktree', 'add', '--detach', worktree, 'HEAD']);
-  if (added.code !== 0)
+  if (added.code !== 0) {
+    const head = await run(['rev-parse', '--verify', '--quiet', 'HEAD']);
+    if (head.code === 1) return { ok: true, value: { cwd: folder, release: async () => {} } };
     return {
       ok: false,
       reason: 'not_delivered',
       detail: `Could not create a worktree in ${placement.repo}: ${added.stderr}`,
     };
+  }
   return {
     ok: true,
     value: {
