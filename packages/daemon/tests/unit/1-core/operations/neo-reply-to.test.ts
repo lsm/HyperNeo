@@ -1,3 +1,5 @@
+import { NeoConversationAskRepository } from '../../../../src/storage/repositories/neo-conversation-ask-repository.ts';
+import { createNeoConversationAskReadOperation } from '../../../../src/lib/neo/conversation-ask-read-operation.ts';
 import { runMigration466 } from '../../../../src/storage/schema/m466-neo-question-retire-when.ts';
 import { runMigration453 } from '../../../../src/storage/schema/m453-neo-ask-focused-session.ts';
 import { runMigration452 } from '../../../../src/storage/schema/m452-neo-question-source.ts';
@@ -169,6 +171,104 @@ describe('neo.message.send replyTo', () => {
     expect(await send(id, '在做 / 做完', { kind: 'question', id: 'q1' })).toMatchObject({
       value: { ok: true, created: false },
     });
+  });
+
+  test.each([
+    ['question', 'q1', 'What should the status say?'],
+    ['todo', 't1', 'Todo rows'],
+    ['ask', 'ask', 'iOS card'],
+  ] as const)(
+    'saves the resolved %s quote independently of visible cards',
+    async (kind, id, excerpt) => {
+      const requestId = crypto.randomUUID();
+      expect(await send(requestId, 'A human reply', { kind, id })).toMatchObject({
+        value: { ok: true },
+      });
+      expect(ledger(requestId).replyTo).toEqual({ kind, id, author: 'neo', excerpt });
+    }
+  );
+
+  test('replaced and answered question quotes retain their exact target text on retries', async () => {
+    mailbox.db
+      .prepare("UPDATE neo_questions SET state='retired',replaced_by='q2' WHERE id='q1'")
+      .run();
+    store.askQuestion(
+      'q2',
+      'ask',
+      {
+        text: 'Replacement choice',
+        kind: 'choice',
+        options: ['Keep', 'Change'],
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+      },
+      2
+    );
+    const oldId = crypto.randomUUID(),
+      newId = crypto.randomUUID();
+    await send(oldId, 'About the earlier card', { kind: 'question', id: 'q1' });
+    await send(newId, 'Keep', { kind: 'question', id: 'q2' });
+    expect(ledger(oldId).replyTo).toEqual({
+      kind: 'question',
+      id: 'q1',
+      author: 'neo',
+      excerpt: 'What should the status say?',
+    });
+    expect(ledger(newId).replyTo).toEqual({
+      kind: 'question',
+      id: 'q2',
+      author: 'neo',
+      excerpt: 'Replacement choice',
+    });
+    mailbox.db.prepare("UPDATE neo_questions SET text='Later wording' WHERE id='q2'").run();
+    expect(await send(newId, 'Keep', { kind: 'question', id: 'q2' })).toMatchObject({
+      value: { ok: true, created: false },
+    });
+    expect(ledger(newId).replyTo.excerpt).toBe('Replacement choice');
+  });
+
+  test('public history resolves legacy retired-card references without rewriting stored asks', async () => {
+    mailbox.db.prepare("UPDATE neo_questions SET state='retired' WHERE id='q1'").run();
+    const requestId = crypto.randomUUID(),
+      conversationId = repo.conversationId()!;
+    const asks = new NeoConversationAskRepository(mailbox.db);
+    expect(
+      asks.append({
+        conversationId,
+        requestId,
+        askOrigin: { sessionId: root, messageId: requestId },
+        content: 'Legacy reply',
+        replyTo: { kind: 'question', id: 'q1' },
+      }).accepted
+    ).toBe(true);
+    const before = ledger(requestId);
+    const result = await invokeOperation(
+      createOperationRegistry([
+        createNeoConversationAskReadOperation(repo, asks, undefined, mailbox.db),
+      ]),
+      'neo.conversation.asks.read',
+      { conversationId },
+      human
+    );
+    expect(result).toMatchObject({
+      kind: 'completed',
+      value: {
+        ok: true,
+        items: [
+          {
+            replyTo: {
+              kind: 'question',
+              id: 'q1',
+              author: 'neo',
+              excerpt: 'What should the status say?',
+            },
+          },
+        ],
+      },
+    });
+    expect(ledger(requestId)).toEqual(before);
   });
 
   test('a reply to a start question is a remark: it stays open and starts nothing', async () => {
