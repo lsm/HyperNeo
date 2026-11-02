@@ -27,3 +27,11 @@ and a clean daemon shutdown. This proves daemon state, public cards and worker
 transport; browser rendering, real Codex execution and model reasoning are not
 covered. Shared todo-plan-recompute setup explicitly awaits session persistence
 and sets disableWorktrees on the effective configuration.
+
+Run the same helper with `chain-edges` in a separate fresh evidence directory.
+It opens a real two-repository plan: the dependent is alone in a sibling card
+with no local Start answer. Completing the first repository must dispatch the
+second once. It then removes an unstarted prerequisite through MCP; its approved
+dependent must dispatch while an independent unapproved todo keeps its Start
+card. Preserve both public-reader snapshots and native queue counts. Unit
+regressions also cover implicit ordering after removal and explicit human holds.

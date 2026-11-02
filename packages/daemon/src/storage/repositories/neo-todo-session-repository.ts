@@ -241,15 +241,16 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     const waiting = asks.flatMap((ask) => {
       const plan = todos.filter((todo) => todo.askId === ask.id);
       const asked = store.listQuestions(ask.id);
+      const family = store.listFamilyTodos(ask.id);
       if (
-        !plan.some(
-          (todo) => todo.startedAt !== null || ['done', 'closed_unverified'].includes(todo.state)
+        !family.some(
+          (todo) =>
+            todo.startedAt !== null || ['done', 'closed_unverified', 'removed'].includes(todo.state)
         ) &&
         !asked.some((question) => question.kind === 'start' && question.state === 'answered')
       )
         return [];
       const questions = asked.filter((question) => question.state === 'open');
-      const family = store.listFamilyTodos(ask.id);
       return plan.flatMap((next) =>
         next.state === 'todo' &&
         next.startedAt === null &&
