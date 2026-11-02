@@ -1,3 +1,5 @@
+import { createPushedWorkerRepo } from '../../../helpers/native-worker-worktree';
+import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -398,6 +400,57 @@ describe('codex-desktop adapter status and send', () => {
   });
 
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  test.each(['clean', 'dirty', 'unpushed'])(
+    'archive removes only a clean pushed owned worktree: %s',
+    async (state) => {
+      const { repo, git } = createPushedWorkerRepo(dir);
+      const worktrees = join(dir, 'worktrees'),
+        folder = join(worktrees, 'worker');
+      git('worktree', 'add', '--detach', folder, 'HEAD');
+      if (state === 'dirty') writeFileSync(join(folder, 'keep.txt'), 'uncommitted');
+      if (state === 'unpushed')
+        expect(
+          spawnSync('git', [
+            '-C',
+            folder,
+            '-c',
+            'commit.gpgsign=false',
+            '-c',
+            'core.hooksPath=/dev/null',
+            '-c',
+            'user.name=Synthetic',
+            '-c',
+            'user.email=synthetic@example.invalid',
+            'commit',
+            '--allow-empty',
+            '-m',
+            'keep unpushed',
+          ]).status
+        ).toBe(0);
+      const db = new Database(statePath);
+      db.prepare('UPDATE threads SET cwd=? WHERE id=?').run(folder, 'idle');
+      db.close();
+      const driver = adapter(
+        0,
+        '',
+        async () => ({
+          call: async (method) =>
+            method === 'thread/read' ? { thread: { id: 'idle', status: { type: 'idle' } } } : null,
+          close: () => {},
+        }),
+        worktrees
+      );
+      const result = await driver.archive!(ref('idle'), () => null);
+      expect(result).toMatchObject({
+        ok: true,
+        value: { archived: true, worktree: { directory: folder, removed: state === 'clean' } },
+      });
+      expect(existsSync(folder)).toBe(state !== 'clean');
+      if (state !== 'clean')
+        expect(JSON.stringify(result)).toMatch(state === 'dirty' ? /changes/ : /unpushed/);
+    }
+  );
 
   test.each(
     ['idle', 'active', 'systemError', 'notLoaded'].flatMap((status) =>

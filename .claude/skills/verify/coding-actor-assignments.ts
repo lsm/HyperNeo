@@ -6,6 +6,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createOperationRegistry, defineOperation } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { StartWorkInputSchema, StartWorkResultSchema } from '../../../packages/daemon/src/lib/drivers/work-operations.ts';
+import { configureWorkerSandbox } from '../../../packages/daemon/src/lib/drivers/worker-sandbox.ts';
 import { prepareCodingExecution } from '../../../packages/daemon/src/lib/neo/packs/coding/prepare-execution.ts';
 import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
@@ -61,6 +62,7 @@ try {
     const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
     let ws: WebSocket | undefined;
     try {
+      configureWorkerSandbox(() => 'always');
       await app.jobProcessor.stop(); assert.notEqual(app.server.port, 8399);
       const db = app.db.getDatabase(); createCodingPackTables(db);
       const ledger = new CodingPrLedgerRepository(db), todos = new CodingTodoPrRepository(db), assignments = new CodingAssignmentsRepository(db);
@@ -79,7 +81,7 @@ try {
           const contract = readFileSync(join(prepared.value.directory, '.git/hyperneo-stage-contract.md'), 'utf8');
           assert(contract.startsWith(role === 'review' ? REVIEWER_SYSTEM_CONTRACT : QA_SYSTEM_CONTRACT));
           if (role === 'verify') { assert(contract.includes('## Coding-pack Verify override')); assert(input.message.includes('verify/SKILL.md')); }
-          assert(input.message.includes('hyperneo-stage-contract.md')); assert(input.message.includes(expected)); assert(input.message.length < 20000);
+          assert(input.message.includes(role === 'review' ? REVIEWER_SYSTEM_CONTRACT : QA_SYSTEM_CONTRACT)); assert(input.message.includes(expected)); assert(input.message.length < 100000);
           const ref = { adapter: input.adapter, id: `worker-${attempts}` };
           starts.push({ role, ref, head: expected, model: input.model!, contractBytes: Buffer.byteLength(contract), message: input.message });
           return { ok: true as const, value: { ref, title: input.title, place: input.place, status: 'running' as const, lastActivityAt: Date.now(), model: input.model, effort: input.effort } };

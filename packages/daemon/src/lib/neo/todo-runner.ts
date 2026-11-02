@@ -1,3 +1,4 @@
+import { workerSandboxOn } from '../drivers/worker-sandbox.ts';
 import { withWorkerProvenance } from '../drivers/worker-provenance.ts';
 import { createWorkQueue } from '../work-queue/sweep.ts';
 import { neoTodoAwaitsHuman, neoTodoStalledCard } from './todo-state.ts';
@@ -381,11 +382,16 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       },
       formatGoal
     );
-    if (target.verb === 'start' && prepare?.prepareExecution)
+    if (target.verb === 'start' && prepare?.workerStartBrief)
+      call.input.message = prepare.workerStartBrief(
+        String(call.input.message),
+        target.preparationParameters
+      );
+    if (target.verb === 'start' && prepare?.prepareExecution && workerSandboxOn(target.sandbox))
       call.input.preparation = {
         pack: prepare.id,
         parameters: target.preparationParameters ?? {},
-        ...(target.sandbox ? { sandbox: true } : {}),
+        sandbox: true,
       };
     if (target.verb === 'start') {
       call.input.todoId = todo.id;

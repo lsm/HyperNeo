@@ -98,6 +98,7 @@ export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
     openTodoIds: readonly string[]
   ): Record<string, string | number | null>[];
   workerRules?: string;
+  workerStartBrief?(instruction: string, parameters?: Record<string, unknown>): string;
   workerBrief?(
     instruction: string,
     identity: {

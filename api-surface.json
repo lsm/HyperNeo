@@ -34413,6 +34413,26 @@
                 "properties": {
                   "archived": {
                     "type": "boolean"
+                  },
+                  "worktree": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "directory": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "reason": {
+                        "type": "string"
+                      },
+                      "removed": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "directory",
+                      "removed"
+                    ],
+                    "type": "object"
                   }
                 },
                 "required": [
@@ -54051,12 +54071,38 @@
             "minLength": 1,
             "type": "string"
           },
+          "excludeRefs": {
+            "items": {
+              "properties": {
+                "adapter": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "daemon": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "id": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "adapter",
+                "id"
+              ],
+              "type": "object"
+            },
+            "maxItems": 30,
+            "type": "array"
+          },
           "from": {
             "maxLength": 500,
             "minLength": 1,
             "type": "string"
           },
           "message": {
+            "maxLength": 100000,
             "minLength": 1,
             "type": "string"
           },

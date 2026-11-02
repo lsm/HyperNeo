@@ -71,7 +71,7 @@ import {
   workInput,
 } from './work-messages.ts';
 import { reject } from './work-operations.ts';
-import { type GitCheckout, planWorkPlacement } from './work-placement.ts';
+import { type GitCheckout, prepareWorkerFolder, cleanupOwnedWorktree } from './work-placement.ts';
 
 const THREADS_PER_PLACE = 20;
 const RECENT_MS = 2 * 60_000;
@@ -1176,38 +1176,12 @@ interface CodexWorkFolder {
   release: () => Promise<void>;
 }
 
-async function runGit(args: string[], repo: string, deps: CodexDesktopAdapterDeps) {
-  const proc = deps.spawn(['git', ...args], { cwd: repo, stdout: 'ignore', stderr: 'pipe' });
-  const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
-  return { code, stderr: stderr.trim() };
-}
-
 export async function prepareCodexWorkFolder(
   folder: string,
   deps: CodexDesktopAdapterDeps,
   inPlace = false
 ): Promise<Result<CodexWorkFolder>> {
-  const placement = planWorkPlacement(
-    inPlace ? null : await deps.gitCheckout(folder).catch(() => null)
-  );
-  if (placement.kind === 'in_place') {
-    return { ok: true, value: { cwd: folder, release: async () => {} } };
-  }
-  const { repo } = placement;
-  const worktree = join(deps.worktreesDir, deps.newId().slice(0, 8), basename(repo));
-  const added = await runGit(['worktree', 'add', '--detach', worktree, 'HEAD'], repo, deps);
-  if (added.code !== 0) {
-    return reject('not_delivered', `Could not create a worktree in ${repo}: ${added.stderr}`);
-  }
-  return {
-    ok: true,
-    value: {
-      cwd: worktree,
-      release: async () => {
-        await runGit(['worktree', 'remove', '--force', worktree], repo, deps).catch(() => {});
-      },
-    },
-  };
+  return prepareWorkerFolder(folder, deps, inPlace);
 }
 
 export async function withCodexAppServer<Value>(
@@ -1471,7 +1445,8 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
         const refused = admit();
         if (refused) return refused;
         await releaseWorkerSandbox(found.value.thread.folder);
-        return { ok: true, value: { archived: false } };
+        const worktree = await cleanupOwnedWorktree(found.value.thread.folder, [deps.worktreesDir]);
+        return { ok: true, value: { archived: false, ...(worktree ? { worktree } : {}) } };
       }
       return withCodexAppServer(deps, async (server) => {
         const read = z
@@ -1490,7 +1465,8 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
         if (refused) return refused;
         await releaseWorkerSandbox(found.value.thread.folder);
         await server.call('thread/archive', { threadId: ref.id });
-        return { ok: true, value: { archived: true } };
+        const worktree = await cleanupOwnedWorktree(found.value.thread.folder, [deps.worktreesDir]);
+        return { ok: true, value: { archived: true, ...(worktree ? { worktree } : {}) } };
       });
     },
   };

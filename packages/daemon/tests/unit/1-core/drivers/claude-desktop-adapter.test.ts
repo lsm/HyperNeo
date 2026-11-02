@@ -1,3 +1,4 @@
+import { createPushedWorkerRepo } from '../../../helpers/native-worker-worktree';
 import { vi } from 'vitest';
 import * as sandbox from '../../../../src/lib/drivers/worker-sandbox';
 import { prepareWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
@@ -591,6 +592,34 @@ describe('claude-desktop adapter against the app session records', () => {
         .map((work) => work.ref.id)
     ).not.toContain(ref.id);
   });
+
+  test.each(['clean', 'dirty', 'unpushed'])(
+    'archives Claude while removing only a clean pushed native worktree: %s',
+    async (state) => {
+      const { repo, git } = createPushedWorkerRepo(dir);
+      const folder = join(repo, '.claude', 'worktrees', 'worker');
+      git('worktree', 'add', '--detach', folder, 'HEAD');
+      if (state === 'dirty') writeFileSync(join(folder, 'keep.txt'), 'changes');
+      if (state === 'unpushed') git('-C', folder, 'commit', '--allow-empty', '-m', 'keep unpushed');
+      const path = join(dir, 'acct-a/scope-1/local_a1.json');
+      writeFileSync(
+        path,
+        JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), cwd: folder, originCwd: repo })
+      );
+      const result = await adapter([]).archive!(
+        { adapter: 'claude-desktop', id: 'local_a1' },
+        () => null
+      );
+      expect(result).toMatchObject({
+        ok: true,
+        value: { archived: true, worktree: { directory: folder, removed: state === 'clean' } },
+      });
+      expect(existsSync(folder)).toBe(state !== 'clean');
+      expect(JSON.parse(readFileSync(path, 'utf8')).isArchived).toBe(true);
+      if (state !== 'clean')
+        expect(JSON.stringify(result)).toMatch(state === 'dirty' ? /changes/ : /unpushed/);
+    }
+  );
 
   test('keeps the Claude record unarchived when runtime removal fails', async () => {
     const path = join(dir, 'acct-a/scope-1/local_a1.json');
