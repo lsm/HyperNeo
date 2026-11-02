@@ -350,38 +350,15 @@ describe('prepareCodingExecution', () => {
     expect(existsSync(f.destination)).toBe(false);
   });
 
-  test('a base without a verify skill refuses the start, unless the todo is the one that creates it', async () => {
+  test('leaves the verify-skill gate to the worker brief instead of rejecting sandbox checkout', async () => {
     const f = fixture();
     git(f.remote, 'rm', '-r', '-q', '.claude');
     git(f.remote, 'commit', '-m', 'drop the verify skill');
-    const refused = await prepareCodingExecution(f.request, f.effects);
-    expect(refused).toMatchObject({
-      ok: false,
-      reason: expect.stringMatching(/^verify_skill_missing: .*verifySkill "create"/),
-    });
-    expect(existsSync(f.destination)).toBe(false);
-    const created = await prepareCodingExecution(
-      { ...f.request, parameters: { ...f.request.parameters, verifySkill: 'create' } },
-      f.effects
-    );
-    expect(created.ok).toBe(true);
-    if (created.ok) await created.value.release();
-    expect(
-      await prepareCodingExecution(
-        { ...f.request, parameters: { ...f.request.parameters, verifySkill: 'skip' } },
-        f.effects
-      )
-    ).toMatchObject({ ok: false, reason: expect.stringMatching(/^verify_skill_missing/) });
-    writeFileSync(join(f.remote, 'AGENTS.md'), '# Repo\n\n```md\n## Verify\n```\n');
-    git(f.remote, 'add', 'AGENTS.md');
-    git(f.remote, 'commit', '-m', 'example only');
-    expect(await prepareCodingExecution(f.request, f.effects)).toMatchObject({ ok: false });
-    writeFileSync(join(f.remote, 'AGENTS.md'), '# Repo\n\n## Verify\n\nRun `make dev`.\n');
-    git(f.remote, 'add', 'AGENTS.md');
-    git(f.remote, 'commit', '-m', 'verify section');
-    const sectioned = await prepareCodingExecution(f.request, f.effects);
-    expect(sectioned.ok).toBe(true);
-    if (sectioned.ok) await sectioned.value.release();
+    const prepared = await prepareCodingExecution(f.request, f.effects);
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) throw new Error(prepared.reason);
+    expect(existsSync(prepared.value.directory)).toBe(true);
+    await prepared.value.release();
   });
 
   test('an omitted target uses the advertised remote default, never local HEAD', async () => {

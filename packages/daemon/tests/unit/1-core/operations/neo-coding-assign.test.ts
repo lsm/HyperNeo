@@ -1,3 +1,5 @@
+import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
+import { QA_SYSTEM_CONTRACT, REVIEWER_SYSTEM_CONTRACT } from '@hyperneo/prompts';
 import { afterEach, describe, test, expect } from 'bun:test';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -22,6 +24,7 @@ const cleanups: (() => void)[] = [];
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
   process.env.PATH = initialPath;
+  configureWorkerSandbox(() => 'off');
 });
 const url = 'https://github.com/synthetic/actors/pull/7';
 const head = 'a'.repeat(40),
@@ -183,24 +186,47 @@ describe('coding actor assignments', () => {
     });
     expect(f.starts[0].title).toContain('Verify');
     expect(f.starts[0].message).toContain("repository's .claude/skills/verify/SKILL.md");
-    expect(f.starts[0].preparation).toEqual({
-      pack: 'coding',
-      parameters: { pullRequest: 7, head, role: 'verify' },
-    });
+    expect(f.starts[0].preparation).toBeUndefined();
+    expect(f.starts[0].message).toContain(QA_SYSTEM_CONTRACT);
+    expect(f.starts[0].message).toContain(head);
+    expect(f.starts[0]).toMatchObject({ excludeRefs: [write], provenance: true });
   });
-  test.each([true, false])(
-    'a PR from a fork (%s) asks for the worker sandbox on its Review and Verify starts',
-    async (fork) => {
+  test.each([
+    { mode: 'off', fork: true, sandbox: false },
+    { mode: 'on-demand', fork: false, sandbox: false },
+    { mode: 'on-demand', fork: true, sandbox: true },
+    { mode: 'always', fork: false, sandbox: true },
+  ] as const)(
+    'stage actors prepare only the preference-requested sandbox: %j',
+    async ({ mode, fork, sandbox }) => {
+      configureWorkerSandbox(() => mode);
       const f = fixture();
       Object.assign(f.pr, { isCrossRepository: fork });
       f.publish();
       await f.assign();
       await f.assign({ stage: 'verify', candidates: [author] });
       expect(f.starts.map((start) => start.preparation?.sandbox)).toEqual(
-        fork ? [true, true] : [undefined, undefined]
+        sandbox ? [true, true] : [undefined, undefined]
       );
     }
   );
+  test('delivers the full role contract and pinned checkout brief to a reusable independent actor', async () => {
+    const f = fixture();
+    expect((await f.assign()).ok).toBe(true);
+    expect(f.starts[0].preparation).toBeUndefined();
+    expect(f.starts[0]).toMatchObject({ excludeRefs: [write], provenance: true });
+    expect(f.starts[0].message).toContain(REVIEWER_SYSTEM_CONTRACT);
+    expect(f.starts[0].message).toContain('PR number: 7');
+    expect(f.starts[0].message).toContain(head);
+    expect(f.starts[0].message).toContain('verdict');
+    expect(f.starts[0].message).toContain(
+      "Your folder is your own worktree and stays yours across tasks. For each new task: fetch origin, then switch to a new branch from the latest target, or check out the PR head you were given. Don't create other worktrees or clones."
+    );
+    await f.assign({ stage: 'verify', candidates: [author] });
+    expect(f.starts[1]).toMatchObject({
+      excludeRefs: [write, { adapter: reviewer.adapter, id: 'fresh-1' }],
+    });
+  });
   test('one todo keeps its author and linked fresh reviewer/Verify; repeated calls reuse exact-head assignments', async () => {
     const f = fixture();
     const review = await f.assign();
@@ -338,7 +364,7 @@ describe('coding actor assignments', () => {
     let f: ReturnType<typeof fixture>;
     let reuse = write;
     f = fixture((input, count) =>
-      input.preparation?.parameters.role === 'verify'
+      input.title.startsWith('Verify')
         ? {
             kind: 'completed',
             value: {

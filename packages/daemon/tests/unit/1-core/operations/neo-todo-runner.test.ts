@@ -1,3 +1,5 @@
+import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
+import { NEO_PACK_CODING_WORKER_RULES } from '@hyperneo/prompts';
 import { createNeoQuestionAnswerDelivery } from '../../../../src/lib/neo/question-answer-delivery.ts';
 import { driverExchangeReport, readDriverLanded } from '../../../../src/lib/neo/driver-work.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
@@ -430,13 +432,21 @@ describe('neo todo runner', () => {
     }
   });
 
-  test.each([true, undefined])(
-    'a start target asking for the sandbox (%s) carries the request into its preparation',
-    async (sandbox) => {
+  test.each([
+    { mode: 'off', sandbox: true, prepared: false },
+    { mode: 'off', sandbox: undefined, prepared: false },
+    { mode: 'on-demand', sandbox: undefined, prepared: false },
+    { mode: 'on-demand', sandbox: true, prepared: true },
+    { mode: 'always', sandbox: undefined, prepared: true },
+  ] as const)(
+    'only a requested sandbox prepares a coding checkout: %j',
+    async ({ mode, sandbox, prepared }) => {
+      configureWorkerSandbox(() => mode);
       const h = setup();
       try {
         h.packs[0] = {
           ...h.packs[0],
+          workerRules: NEO_PACK_CODING_WORKER_RULES,
           prepareExecution: async () => ({ ok: false, reason: 'unused' }),
         };
         const todo = h.store.addTodo(
@@ -455,16 +465,22 @@ describe('neo todo runner', () => {
           verb: 'start',
           adapter: 'hyperneo',
           place: { machine: 'laptop', name: 'repo', folder: '/repo' },
+          preparationParameters: { target: 'dev' },
           ...(sandbox ? { sandbox } : {}),
         });
         await h.runner.start(todo.id);
         const start = h.calls.find((call) => call.name === 'work.start')!.input;
-        expect(start.preparation).toEqual({
-          pack: 'coding',
-          parameters: {},
-          ...(sandbox ? { sandbox: true } : {}),
-        });
+        expect(start.preparation).toEqual(
+          prepared ? { pack: 'coding', parameters: { target: 'dev' }, sandbox: true } : undefined
+        );
+        expect(start.message).toContain(
+          "Your folder is your own worktree and stays yours across tasks. For each new task: fetch origin, then switch to a new branch from the latest target, or check out the PR head you were given. Don't create other worktrees or clones."
+        );
+        expect(start.message).toContain('Before changing application code, locate');
+        expect(start.message).toContain('Checkout parameters');
+        expect(start.message).toContain('"target":"dev"');
       } finally {
+        configureWorkerSandbox(() => 'off');
         h.db.close();
       }
     }

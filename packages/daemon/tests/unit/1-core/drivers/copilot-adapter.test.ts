@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process';
+import { spawnProcess } from '../../../../src/lib/runtime-spawn/index';
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
   existsSync,
@@ -61,6 +63,59 @@ async function start(fixture: ReturnType<typeof setup>, message = fixture.reques
 }
 
 describe('owned Copilot lifecycle', () => {
+  test('starts a coding worker in its own native worktree and reports the project separately', async () => {
+    const f = setup();
+    const repo = join(f.run, 'repo');
+    mkdirSync(repo);
+    const git = (...args: string[]) => {
+      const result = spawnSync(
+        'git',
+        ['-C', repo, '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', ...args],
+        { encoding: 'utf8' }
+      );
+      expect(result.status).toBe(0);
+      return result.stdout.trim();
+    };
+    git('init', '-b', 'dev');
+    git(
+      '-c',
+      'user.name=Synthetic',
+      '-c',
+      'user.email=synthetic@example.invalid',
+      'commit',
+      '--allow-empty',
+      '-m',
+      'initial'
+    );
+    const adapter = createCopilotAdapter(f.discovery, {
+      ...f.deps,
+      worktreesDir: join(f.run, 'worktrees'),
+      gitCheckout: async () => ({ repo, linked: false }),
+      spawn: spawnProcess,
+    });
+    owners.push(adapter);
+    const result = await adapter.start!(
+      { ...f.request, place: { machine: 'test', folder: repo, name: 'repo' } },
+      context
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        place: { folder: repo },
+        execution: { machine: 'test', directory: expect.stringContaining('/worktrees/') },
+      },
+    });
+    if (!result.ok) throw new Error(JSON.stringify(result));
+    const folder = result.value.execution!.directory;
+    expect(folder).not.toBe(repo);
+    expect(existsSync(join(folder, '.git'))).toBe(true);
+    expect(
+      spawnSync('git', ['-C', folder, 'rev-parse', '--git-common-dir'], {
+        encoding: 'utf8',
+      }).stdout.trim()
+    ).toBe(join(repo, '.git'));
+  });
+
   test('gives the owned runtime work locations and the brief without a sandbox marker', async () => {
     const fixture = setup();
     await start(fixture);

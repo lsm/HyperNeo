@@ -125,7 +125,7 @@ function harness(
   const start = async (
     caller: OperationCaller = neo,
     provenance = false,
-    request: { model?: string; effort?: string } = {}
+    request: { model?: string; effort?: string; excludeRefs?: WorkRef[] } = {}
   ) => {
     const outcome = await invokeOperation(
       registry,
@@ -304,4 +304,21 @@ describe('work.start effort-only reuse', () => {
       expect(run.sent).toEqual(reuse ? [id] : []);
     }
   );
+});
+
+describe('work.start independent worker reuse', () => {
+  test('excludes the author before delivery and reuses another idle worker', async () => {
+    const run = harness(
+      [
+        { id: 'pr-author', status: 'done' },
+        { id: 'prior-reviewer', status: 'done' },
+      ],
+      ['pr-author', 'prior-reviewer']
+    );
+    const result = await run.start(neo, false, {
+      excludeRefs: [{ adapter: 'claude-desktop', id: 'pr-author' }],
+    });
+    expect(result.value?.ref.id).toBe('prior-reviewer');
+    expect(run.sent).toEqual(['prior-reviewer']);
+  });
 });
