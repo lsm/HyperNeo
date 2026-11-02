@@ -12,9 +12,9 @@ const PendingQuestion = z.object({
   questions: z.array(
     z.object({
       question: z.string(),
-      header: z.string().optional(),
+      header: z.string(),
       multiSelect: z.boolean(),
-      options: z.array(z.object({ label: z.string(), description: z.string().optional() })),
+      options: z.array(z.object({ label: z.string(), description: z.string() })),
     })
   ),
   askedAt: z.number(),
@@ -51,9 +51,9 @@ const SessionInfo = z.object({
   workspacePath: z.string().nullable(),
   createdAt: z.string(),
   lastActiveAt: z.string(),
-  status: z.string(),
+  status: z.enum(['active', 'pending_worktree_choice', 'paused', 'ended', 'archived']),
   config: z.object({
-    model: z.string().optional(),
+    model: z.string(),
     provider: z.string().optional(),
     thinkingLevel: z.enum(THINKING_LEVELS).optional(),
   }),

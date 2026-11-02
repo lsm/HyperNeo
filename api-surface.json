@@ -367,7 +367,8 @@
                                 }
                               },
                               "required": [
-                                "label"
+                                "label",
+                                "description"
                               ],
                               "type": "object"
                             },
@@ -379,6 +380,7 @@
                         },
                         "required": [
                           "question",
+                          "header",
                           "multiSelect",
                           "options"
                         ],
@@ -527,6 +529,9 @@
                       "type": "string"
                     }
                   },
+                  "required": [
+                    "model"
+                  ],
                   "type": "object"
                 },
                 "createdAt": {
@@ -566,6 +571,13 @@
                   "type": "object"
                 },
                 "status": {
+                  "enum": [
+                    "active",
+                    "pending_worktree_choice",
+                    "paused",
+                    "ended",
+                    "archived"
+                  ],
                   "type": "string"
                 },
                 "title": {
