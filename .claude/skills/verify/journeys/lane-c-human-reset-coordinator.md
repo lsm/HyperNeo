@@ -13,9 +13,11 @@ notifications and closures stay on main after an exact committed receipt. Preser
 the caller's original unknown-outcome error. Never repeat its reset command.
 
 The dependency manifest pins exact source hashes for the unchanged 142-line
-reset/receipt subtree and separately audited 282-line core append subtree. Neo
+reset/receipt subtree and separately audited 283-line core append subtree. Neo
 authorized this audited-dependency split. The append manifest includes the later
-authorized optional publication session field and its revision retention; the
+authorized optional publication session field and its revision retention, plus
+the transient versionCreated receipt flag for a newly appended card revision
+(publication speech). SQL and stored payloads are unchanged; the
 142-line reset/receipt subtree and its hash remain unchanged. Original measurement
 files retain the historical 277-line construction baseline. Keep both interfaces and all hashes in
 the contract test and each PR body. Do not change app.ts, service/publication,
@@ -37,7 +39,9 @@ recovery stays single-flight and eventually processes both distinct requests.
 Also pin listener-failure recovery, admission refusal, and closing while a receipt
 is in flight. Close must stop retries and suppress late notifications and new
 writes. Native proof closes the gateway during a persistent reader outage and
-waits beyond a poll tick to observe no further reads or notifications.
+waits beyond a poll tick to observe no further reads or notifications. Stop the
+space runtime before this deliberate gateway close, so its unrelated background
+tick cannot access the closed gateway; shutdown warnings are not a passing proof.
 
 Run focused strict types, pairing/gateway tests, repository checks and the measured
 local graph/diff cap. Save flags, byte/timing/RSS/WAL metrics and hashes only;

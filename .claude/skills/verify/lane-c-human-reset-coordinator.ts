@@ -221,6 +221,8 @@ try {
   const recoveredNotice=coordinatorNotices[1]; assert.deepEqual(recoveredNotice.devices.map(d=>d.id),[recoveryHuman.device.id]); assert.deepEqual(await read(recoveredNotice.id),recoveredNotice); assert.equal(commandPosts,beforeRecovery+1); evidence.outageRecoveryNotifiesWithoutWriteReplay = true;
   const pageAfterRecovery = await connectedRelay.hub.request<{ok:boolean;items:{producerInput?:{messageId:string}}[]}>('operation.invoke',{name:'neo.publication.read',input:{conversationId:recoveredNotice.conversationId,after:0,limit:100}}); assert(pageAfterRecovery.ok); assert(pageAfterRecovery.items.some(p=>p.producerInput?.messageId===recoveredNotice.id)); evidence.coordinatedRecoveryNoticePubliclyVisible=true;
   await Promise.all(transports.map(t=>t.close()));
+  await app.spaceRuntimeService.ready();
+  await app.spaceRuntimeService.stop();
   seed(); loseNextReceipt=true; receiptReaderUnavailableUntil=Infinity;
   await assert.rejects(coordinate(Date.now()), /outcome unknown/); await new Promise(done=>setTimeout(done,20)); await app.db.gateway.close(); const readsAtClose=readPosts; const writesAtClose=commandPosts;
   await new Promise(done=>setTimeout(done,1100)); assert.equal(readPosts,readsAtClose); assert.equal(commandPosts,writesAtClose); assert.equal(coordinatorNotices.length,2); await assert.rejects(coordinate(Date.now()),/closed/); assert.equal(commandPosts,writesAtClose); evidence.gatewayCloseStopsRecoveryWithoutNotification=true;
