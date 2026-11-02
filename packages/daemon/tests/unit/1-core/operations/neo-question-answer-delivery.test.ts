@@ -25,6 +25,8 @@ import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts'
 import type { NeoTodoRunnerDeps } from '../../../../src/lib/neo/todo-runner.ts';
 import { createSendMessageOperation } from '../../../../src/lib/messaging/message-send.ts';
 import { workInput, recentWorkInputs } from '../../../../src/lib/drivers/work-messages.ts';
+import { readHyperneoInputs } from '../../../../src/lib/drivers/hyperneo-adapter.ts';
+import { readWorkInputTurn } from '../../../../src/storage/work-turns.ts';
 
 async function fixture(path = ':memory:', title = 'Choose a destination') {
   const db = new Database(path);
@@ -364,9 +366,13 @@ test.each([
   }
 });
 
-test.each(['lost-reply', 'not_delivered', 'unconfirmed'] as const)(
-  'an uncertain external %s reconciles after restart without resending',
-  async (mode) => {
+test.each(
+  ['lost-reply', 'not_delivered', 'unconfirmed'].flatMap((mode) =>
+    [1000, 100000].map((peerAt) => ({ mode, peerAt }))
+  )
+)(
+  'an uncertain external answer reconciles across restart and skew without resending: %j',
+  async ({ mode, peerAt }) => {
     const run = mkdtempSync(join(tmpdir(), 'external-answer-restart-'));
     const path = join(run, 'daemon.db');
     const f = await externalFixture(
@@ -376,11 +382,12 @@ test.each(['lost-reply', 'not_delivered', 'unconfirmed'] as const)(
         '?'
       )
     );
-    const clock = vi.spyOn(Date, 'now').mockReturnValue(100);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(10000);
     let sends = 0;
     let message = '';
     let visible = false;
     const warnings: unknown[] = [];
+    let reopened: Database | undefined;
     const invoke: NeoTodoRunnerDeps['invoke'] = async (_caller, name, input) => {
       if (name === 'work.send') {
         sends++;
@@ -401,6 +408,27 @@ test.each(['lost-reply', 'not_delivered', 'unconfirmed'] as const)(
               : { ok: false, reason: 'not_delivered', detail: 'Reply lost' },
         };
       }
+      if (name === 'work.read') {
+        const db = reopened ?? f.db;
+        if (visible)
+          db.prepare(`INSERT OR IGNORE INTO message_search_content
+          (kind,source_id,message_id,session_id,message_type,title,body,timestamp)
+          VALUES ('codex','accepted','accepted','worker','user','Synthetic',?,?)`).run(
+            message,
+            peerAt
+          );
+        const identity = input.input as { adapter: string; marker: string };
+        const turn = readWorkInputTurn(db, String(input.sessionId), 'codex', identity.marker);
+        return {
+          kind: 'completed',
+          value: turn
+            ? {
+                ok: true,
+                value: { sessionId: input.sessionId, matchedInput: identity, turns: [turn] },
+              }
+            : { ok: false, reason: 'not_found', detail: 'No retained match' },
+        };
+      }
       expect(name).toBe('work.status');
       return {
         kind: 'completed',
@@ -413,12 +441,12 @@ test.each(['lost-reply', 'not_delivered', 'unconfirmed'] as const)(
               [
                 ...Array.from(
                   { length: 60 },
-                  (_, index) => workInput(5 + index, `Before dispatch ${index}`)!
+                  (_, index) => workInput(peerAt - 60 + index, `Before dispatch ${index}`)!
                 ),
-                workInput(101, visible ? message : 'unrelated answer [worker-answer:other]')!,
+                workInput(peerAt, visible ? message : 'unrelated answer [worker-answer:other]')!,
                 ...Array.from(
-                  { length: 60 },
-                  (_, index) => workInput(102 + index, `Later input ${index}`)!
+                  { length: 160 },
+                  (_, index) => workInput(peerAt + 1 + index, `Later input ${index}`)!
                 ),
               ],
               input.since as number | undefined
@@ -427,7 +455,6 @@ test.each(['lost-reply', 'not_delivered', 'unconfirmed'] as const)(
         },
       };
     };
-    let reopened: Database | undefined;
     try {
       await externalDelivery(f, invoke, (error) => warnings.push(error))();
       expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'pending' }] });
@@ -466,6 +493,66 @@ test.each(['lost-reply', 'not_delivered', 'unconfirmed'] as const)(
       if (reopened) reopened.close();
       else f.db.close();
       rmSync(run, { recursive: true, force: true });
+    }
+  }
+);
+
+test.each(['session', 'adapter', 'marker', 'agent', 'partial', 'missing-echo'])(
+  'uncertain delivery retains its hold until exact owned user evidence replaces %s',
+  async (bad) => {
+    const f = await externalFixture();
+    let sends = 0;
+    let message = '';
+    let valid = false;
+    const flush = externalDelivery(f, async (_caller, name, input) => {
+      if (name === 'work.send') {
+        sends++;
+        message = String(input.message);
+        return {
+          kind: 'completed',
+          value: { ok: false, reason: 'not_delivered', detail: 'Acknowledgement lost' },
+        };
+      }
+      const marker = message.split('\n')[0];
+      return {
+        kind: 'completed',
+        value: {
+          ok: true,
+          value: {
+            sessionId: !valid && bad === 'session' ? 'another-worker' : 'worker',
+            matchedInput:
+              !valid && bad === 'missing-echo'
+                ? undefined
+                : {
+                    adapter: !valid && bad === 'adapter' ? 'claude-code' : 'codex-desktop',
+                    marker: !valid && bad === 'marker' ? '[worker-answer:other]' : marker,
+                  },
+            turns: [
+              {
+                messageId: 'accepted',
+                role: !valid && bad === 'agent' ? 'assistant' : 'user',
+                at: 1,
+                text: !valid && bad === 'partial' ? `${marker}suffix\nOther input` : message,
+              },
+            ],
+          },
+        },
+      };
+    });
+    try {
+      await flush();
+      await flush();
+      expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'pending' }] });
+      expect(f.store.getTodo('todo')?.blockedBy).toBe('needs-human');
+      expect(sends).toBe(1);
+      valid = true;
+      await flush();
+      await flush();
+      expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'accepted' }] });
+      expect(f.store.getTodo('todo')).toMatchObject({ state: 'doing', blockedBy: null });
+      expect(sends).toBe(1);
+    } finally {
+      f.db.close();
     }
   }
 );
@@ -605,6 +692,139 @@ test('a quoted chat answer selects only its question for inline delivery', async
       answeredBy: 'chat',
     });
   } finally {
+    f.db.close();
+  }
+});
+
+test.each(['space', 'opencode'])(
+  'uncertain %s answers reconcile through supported status evidence without invalid exact lookups',
+  async (adapter) => {
+    const f = await fixture();
+    const peer = { ...f.source, adapter };
+    new NeoTodoSessionRepository(f.db).bind('todo', peer, 3);
+    await f.write(peer, f.report);
+    f.store.answerQuestion(f.question, ['Staging'], 'button', 4);
+    let sends = 0;
+    let message = '';
+    let visible = false;
+    const flush = externalDelivery(f, async (_caller, name, input) => {
+      if (name === 'work.send') {
+        sends++;
+        message = String(input.message);
+        return {
+          kind: 'completed',
+          value: { ok: false, reason: 'not_delivered', detail: 'Reply lost' },
+        };
+      }
+      expect(name).toBe('work.status');
+      expect(input).toMatchObject({ ref: { adapter, id: 'worker' } });
+      return {
+        kind: 'completed',
+        value: {
+          ok: true,
+          value: {
+            ref: { adapter, id: 'worker' },
+            title: 'Worker',
+            place: { machine: 'synthetic', folder: '/synthetic', name: 'Synthetic' },
+            status: 'running',
+            lastActivityAt: 1,
+            recentInputs: [workInput(1, visible ? message : 'Unrelated input')!],
+          },
+        },
+      };
+    });
+    try {
+      await flush();
+      await flush();
+      expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'pending' }] });
+      expect(f.store.getTodo('todo')?.blockedBy).toBe('needs-human');
+      visible = true;
+      await flush();
+      await flush();
+      expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'accepted' }] });
+      expect(f.store.getTodo('todo')?.blockedBy).toBeNull();
+      expect(sends).toBe(1);
+    } finally {
+      f.db.close();
+    }
+  }
+);
+
+test('a lost Space answer reconciles after fifty older and 160 later landed inputs', async () => {
+  const f = await fixture();
+  const peer = { ...f.source, adapter: 'space' };
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(10000);
+  let sends = 0;
+  try {
+    new SessionRepository(f.db).createSession({
+      id: 'space-worker',
+      title: 'Space agent',
+      workspacePath: '/synthetic',
+      createdAt: new Date(1).toISOString(),
+      lastActiveAt: new Date(1).toISOString(),
+      status: 'active',
+      config: {},
+      metadata: {},
+    } as Session);
+    const put = (id: string, text: string, at: number) =>
+      f.db
+        .prepare(`INSERT INTO sdk_messages
+      (id,session_id,message_type,sdk_uuid,sdk_message,timestamp,send_status,first_block_type)
+      VALUES (?,'space-worker','user',?,?,?,'consumed','text')`)
+        .run(
+          id,
+          id,
+          JSON.stringify({ type: 'user', message: { role: 'user', content: text } }),
+          new Date(at).toISOString()
+        );
+    for (let n = 0; n < 60; n++) put(`old-${n}`, `Older input ${n}`, 1000 + n);
+    new NeoTodoSessionRepository(f.db).bind('todo', peer, 3);
+    await f.write(peer, f.report);
+    f.store.answerQuestion(f.question, ['Staging'], 'button', 4);
+    const flush = externalDelivery(f, async (_caller, name, input) => {
+      if (name === 'work.send') {
+        sends++;
+        put('accepted-answer', String(input.message), 11000);
+        for (let n = 0; n < 160; n++) put(`later-${n}`, `Later input ${n}`, 12000 + n);
+        return {
+          kind: 'completed',
+          value: { ok: false, reason: 'not_delivered', detail: 'Acknowledgement lost' },
+        };
+      }
+      expect(name).toBe('work.status');
+      return {
+        kind: 'completed',
+        value: {
+          ok: true,
+          value: {
+            ref: { adapter: 'space', id: 'worker' },
+            title: 'Space agent',
+            place: { machine: 'synthetic', folder: '/synthetic', name: 'Synthetic' },
+            status: 'running',
+            lastActivityAt: 12159,
+            recentInputs: readHyperneoInputs(
+              f.db,
+              'space-worker',
+              input.since as number | undefined
+            ),
+          },
+        },
+      };
+    });
+    await flush();
+    expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'pending' }] });
+    expect(
+      readHyperneoInputs(f.db, 'space-worker', 0).every((input) =>
+        input.text.startsWith('Older input')
+      )
+    ).toBe(true);
+    await flush();
+    await flush();
+    expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'accepted' }] });
+    expect(f.store.getTodo('todo')?.blockedBy).toBeNull();
+    expect(sends).toBe(1);
+  } finally {
+    clock.mockRestore();
     f.db.close();
   }
 });

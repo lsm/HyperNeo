@@ -989,6 +989,9 @@ export function runMigrations(
   run(migrationMarkerKey(465), () => runMigration465(db));
   run(migrationMarkerKey(466), () => runMigration466(db));
   run(migrationMarkerKey(467), () => runMigration467(db));
+  run(migrationMarkerKey(468), () => {
+    db.exec('UPDATE work_feed_offsets SET offset = 0, size = -1');
+  });
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

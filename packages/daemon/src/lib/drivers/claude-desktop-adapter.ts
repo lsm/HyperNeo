@@ -146,6 +146,7 @@ export interface ClaudeLiveSession {
 }
 
 export interface ClaudeDesktopAdapterDeps {
+  readInput?: WorkAdapter['readInput'];
   mods?: NonNullable<ReturnType<typeof createClaudeDesktopModsDriver>>['ready'];
   admitInbox?: (context: WorkCallContext) => Gate<string>;
   sendInbox?: (
@@ -1725,6 +1726,14 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
   const reused = { ...deps, liveSessions: reuseLiveSessions(deps.liveSessions, Date.now) };
   return {
     id: 'claude-desktop',
+    readInput: async (id, marker) => {
+      const record = (await loadClaudeDesktopRecords(deps, cache)).find(
+        (row) => row.sessionId === id
+      );
+      return record?.cliSessionId && deps.readInput
+        ? deps.readInput(record.cliSessionId, marker)
+        : null;
+    },
     supportsStartPreparation: !!deps.prepareExecution,
     capabilities: [
       'find',
