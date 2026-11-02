@@ -16,3 +16,7 @@ shutdown assertions must still pass. No provider or live daemon is involved.
 The smoke keeps its intentional short-lived lock-holder check for the gateway.
 
 For a stress run, repeat this command sequentially; never overlap smoke runs.
+
+The complete native proof set and its temporary-data cleanup share a 15-minute
+CI job budget. A final smoke PASS followed by job cancellation is a failed run,
+not release evidence; require the wrapper and job to finish successfully.
