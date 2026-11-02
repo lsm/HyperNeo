@@ -25,6 +25,14 @@ becomes unverified, and produces only one new warning. External database hashes
 must remain unchanged. Daily scheduling and a lost notice acknowledgement are
 also covered by the focused monitor tests.
 
+The review regression first records a passed Codex version while no Neo binding
+exists. Creating the binding must not deliver its obsolete unverified warning.
+A generic settings RPC then attempts to forge the health records, verified
+versions and notice text; all daemon-owned values must remain unchanged while
+an ordinary setting still updates. Finally, the helper holds a scheduled
+non-forced read while a real forced health RPC arrives. Its reply must show
+the new fixture client version, rather than the scheduled run's cached value.
+
 For the Settings check, build the web app under the resource guard first. Run
 the helper with `--browser /absolute/fresh/control-directory`, read that
 directory's browser.json while it is running, open its loopback URL, then Settings > Neo
@@ -32,6 +40,10 @@ and inspect Worker client health. It must show client versions, concrete health
 reasons, and Codex's Unverified version warning. Save a screenshot and create
 browser.json's doneFile after observing the actual page. The helper then exits;
 the wrapper preserves evidence and deletes all temporary daemon data.
+Add `--slow-check` to delay the actual health RPC response by twelve seconds.
+Check now must stay pending beyond the default ten-second deadline, then show
+the successful status with no timeout alert. Retain slow-check.json and a
+screenshot of that result.
 
 Retain observed.json, receipts.json, proof.log and cleanup.json. Synthetic client
 versions prove the health contract, not native-client compatibility. Only after

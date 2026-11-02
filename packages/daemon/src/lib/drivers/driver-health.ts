@@ -3,6 +3,8 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { DriverHealth } from '@hyperneo/shared/types/settings';
 
 type Observation = Pick<DriverHealth, 'status' | 'reason' | 'clientVersions'>;
+const UNVERIFIED_GUIDANCE =
+  ' Unverified client version; still usable if health is ok. Schedule its verify journey.';
 type Dependencies = {
   ids: readonly string[];
   now(): number;
@@ -27,6 +29,7 @@ function newer(installed: string, verified?: string): boolean {
 
 export function createDriverHealthMonitor(deps: Dependencies) {
   let checking: Promise<void> | undefined;
+  let checkingForced = false;
   let mutation: Promise<void> = Promise.resolve();
   const exclusive = <T>(task: () => Promise<T>) => {
     const next = mutation.then(task);
@@ -82,8 +85,9 @@ export function createDriverHealthMonitor(deps: Dependencies) {
         ...(health.pendingNotices ?? []),
         {
           id: randomUUID(),
+          kind: health.status === 'ok' && state !== 'recovered' ? 'version' : 'health',
           signature,
-          text: `Driver health: ${id} ${state}. ${health.reason} Client versions: ${JSON.stringify(health.clientVersions)}. Checked ${new Date(health.checkedAt).toISOString()}.${health.unverifiedVersion ? ' Unverified client version; still usable if health is ok. Schedule its verify journey.' : ''}`,
+          text: `Driver health: ${id} ${state}. ${health.reason} Client versions: ${JSON.stringify(health.clientVersions)}. Checked ${new Date(health.checkedAt).toISOString()}.${health.unverifiedVersion ? UNVERIFIED_GUIDANCE : ''}`,
         },
       ];
     }
@@ -112,8 +116,14 @@ export function createDriverHealthMonitor(deps: Dependencies) {
         : deps.now() + 60_000;
     },
     check(force = false): Promise<void> {
-      return (checking ??= exclusive(() => run(force)).finally(() => {
+      if (checking) {
+        const requested = () => this.check(true);
+        return force && !checkingForced ? checking.then(requested, requested) : checking;
+      }
+      checkingForced = force;
+      return (checking = exclusive(() => run(force)).finally(() => {
         checking = undefined;
+        checkingForced = false;
       }));
     },
     verified(id: string, journey: string, versions: Record<string, string>): Promise<DriverHealth> {
@@ -140,6 +150,9 @@ export function createDriverHealthMonitor(deps: Dependencies) {
           verifiedAt: deps.now(),
           verifiedJourney: journey,
           unverifiedVersion: false,
+          pendingNotices: health.pendingNotices
+            ?.filter((notice) => notice.kind !== 'version')
+            .map((notice) => ({ ...notice, text: notice.text.replace(UNVERIFIED_GUIDANCE, '') })),
           notifiedSignature: JSON.stringify([observed.status, observed.reason, null]),
         };
         await deps.save(id, verified);

@@ -176,7 +176,7 @@ export interface DriverHealth {
   verifiedAt?: number;
   verifiedJourney?: string;
   notifiedSignature?: string;
-  pendingNotices?: { id: string; signature: string; text: string }[];
+  pendingNotices?: { id: string; kind: 'health' | 'version'; signature: string; text: string }[];
 }
 
 export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {

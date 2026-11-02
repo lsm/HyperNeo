@@ -28,7 +28,8 @@ export function DriverHealthSettings() {
       const result = await invokeOperation<{ ok: true; health: Record<string, DriverHealth> }>(
         hub,
         'work.health',
-        { action: 'check' }
+        { action: 'check' },
+        { timeout: 60_000 }
       );
       setLatest(result.health);
     } catch (cause) {

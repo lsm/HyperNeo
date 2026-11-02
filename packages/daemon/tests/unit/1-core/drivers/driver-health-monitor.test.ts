@@ -114,11 +114,19 @@ test('Check now probes again when a scheduled check is already reading recent re
   const read = f.deps.read;
   let release = () => {};
   let entered = () => {};
-  const held = new Promise<void>((resolve) => { release = resolve; });
-  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
   let first = true;
   f.deps.read = async () => {
-    if (first) { first = false; entered(); await held; }
+    if (first) {
+      first = false;
+      entered();
+      await held;
+    }
     return read();
   };
   const scheduled = monitor.check();

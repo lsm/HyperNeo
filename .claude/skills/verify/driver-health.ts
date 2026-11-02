@@ -77,16 +77,49 @@ try {
   await app.spaceRuntimeService.ready();
   await app.jobProcessor.stop();
   await rpc('rpc:providers.create', { params: { providerId: 'anthropic', displayName: 'Synthetic admission only', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
+  const beforeBinding = await rpc('work.health', { action: 'check' });
+  assert.equal(beforeBinding.health['codex-desktop'].unverifiedVersion, true);
+  await rpc('work.health', { action: 'verified', adapter: 'codex-desktop', journey: 'codex-state-discovery', clientVersions: { desktop: '1.0.0' } });
   await app.db.createSession({ id: 'synthetic-neo', title: 'Synthetic Neo', workspacePath: join(run, 'project'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { model: 'synthetic', queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
   new NeoRepository(app.db.getDatabase()).reserveBinding({ sessionId: 'synthetic-neo', projectId: null, kind: 'neo' });
   await startup();
   const initial = await health();
   assert(initial.every((adapter: { health: { status: string } }) => adapter.health.status === 'ok'), JSON.stringify(initial));
+  await until(async () => { const read = await rpc('work.read', { sessionId: 'synthetic-neo', before: 10, after: 10 }); return read.ok && read.value.turns.filter((turn: { text: string }) => turn.text.includes('Driver health:')).length >= 4; }, 'Other clients must notify Neo after its binding exists');
+  assert.equal((await notices()).length, 0, 'Verification must retire the pending version warning before Neo binds');
   const originalHealth = structuredClone(app.db.getGlobalSettings().driverHealth!);
   await rpc('rpc:settings.global.update', { updates: { autoScroll: false, driverHealth: { 'codex-desktop': { ...originalHealth['codex-desktop'], verifiedVersions: { desktop: 'forged' }, notifiedSignature: 'forged', pendingNotices: [{ id: 'forged-notice', signature: 'forged', text: 'Forged health event' }] } } } });
   assert.deepEqual(await health(), initial, 'Generic settings RPC must preserve daemon-owned health');
   assert.deepEqual(app.db.getGlobalSettings().driverHealth, originalHealth);
   assert.equal(app.db.getGlobalSettings().autoScroll, false);
+  version('Codex', '1.0.1');
+  const gateway = app.db.gateway;
+  const call = gateway.call;
+  const registry = app.sessionManager.getOperationRegistry();
+  const get = registry.get.bind(registry);
+  let release = () => {};
+  let scheduledStarted = () => {};
+  let requestedStarted = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const scheduledEntered = new Promise<void>((resolve) => { scheduledStarted = resolve; });
+  const requestedEntered = new Promise<void>((resolve) => { requestedStarted = resolve; });
+  let firstRead = true;
+  gateway.call = async (...args) => {
+    if (firstRead && args[0].name === 'settings.global.write' && args[1] === 'readDriverHealth') { firstRead = false; scheduledStarted(); await held; }
+    return Reflect.apply(call, gateway, args);
+  };
+  const operation = get('work.health')!;
+  registry.get = (name) => name !== 'work.health' ? get(name) : { ...operation, execute: (input, caller) => { const result = operation.execute(input, caller); requestedStarted(); return result; } };
+  try {
+    app.jobQueue.enqueue({ queue: 'work.driver.health', payload: { scope: 'local' }, runAt: Date.now() });
+    await scheduledEntered;
+    const requested = rpc('work.health', { action: 'check' });
+    await requestedEntered;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    release();
+    const fresh = await requested;
+    assert.equal(fresh.health['codex-desktop'].clientVersions.desktop, '1.0.1', 'Forced RPC must not return the scheduled run\'s cached version');
+  } finally { release(); gateway.call = call; registry.get = get; }
   await until(async () => (await notices()).length === 1, 'Neo must receive the initial unverified-version notice');
   renameSync(state, `${state}.backup`);
   const missing = await rpc('work.health', { action: 'check' });
@@ -119,9 +152,21 @@ try {
   assert.equal(hash(), before, 'Health checks must leave external state untouched');
   const calls = readFileSync(join(home, 'evidence/calls.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line).method);
   assert(calls.every((name) => ['initialize', 'session/list'].includes(name)), JSON.stringify(calls));
-  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ initial, missing, recovered, upgraded, neoNotices: await notices(), repeatedUnavailableCount: unavailableCount, unchangedExternalDatabase: true, readOnlyAcpCalls: calls }, null, 2));
+  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ initial, missing, recovered, upgraded, neoNotices: await notices(), repeatedUnavailableCount: unavailableCount, unchangedExternalDatabase: true, readOnlyAcpCalls: calls, protectedSettings: true, verifiedBeforeNeoBinding: true, forcedCheckAfterScheduledRead: true }, null, 2));
   console.log('PASS: public RPC health, missing-state reason, one Neo event across repeats/restart, recovery and usable unverified upgrade');
   if (process.argv.includes('--browser')) {
+    if (process.argv.includes('--slow-check')) {
+      const registry = app.sessionManager.getOperationRegistry();
+      const get = registry.get.bind(registry);
+      const operation = get('work.health')!;
+      registry.get = (name) => name !== 'work.health' ? get(name) : { ...operation, execute: async (input, caller) => {
+        const startedAt = Date.now();
+        await Bun.sleep(12_000);
+        const result = await operation.execute(input, caller);
+        writeFileSync(join(run, 'evidence/slow-check.json'), JSON.stringify({ startedAt, completedAt: Date.now(), elapsedMs: Date.now() - startedAt }));
+        return result;
+      } };
+    }
     const control = resolve(process.argv[process.argv.indexOf('--browser') + 1]);
     mkdirSync(control, { recursive: true });
     const dist = resolve('packages/web/dist');
