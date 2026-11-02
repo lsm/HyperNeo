@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
@@ -10,7 +11,8 @@ import { QueryOptionsBuilder } from '../../../packages/daemon/src/lib/agent/quer
 
 const [mode, directory] = process.argv.slice(2);
 const run = resolve(directory);
-assert(['verify', 'before'].includes(mode));
+assert(['verify', 'before', 'copilot', 'copilot-before', 'copilot-busy', 'copilot-busy-before'].includes(mode));
+const copilot = mode.startsWith('copilot');
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -19,6 +21,11 @@ mkdirSync(join(run, 'evidence'), { recursive: true });
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 2\n', { mode: 0o700 });
 const human = 'Please prepare the blue summary for this matter.';
 const reply = 'Prepared the blue summary directly for the human.';
+if (copilot) {
+  const fixture = new URL('../../../packages/daemon/tests/fixtures/copilot-sdk.ts', import.meta.url).pathname;
+  writeFileSync(join(run, 'bin/copilot'), `#!/usr/bin/env bun\nprocess.argv.push('--production-version', '--durable-inputs'); await import(${JSON.stringify(fixture)});\n`, { mode: 0o700 });
+  process.chdir(run);
+}
 const askId = 'human-direct-matter';
 const newTitle = 'Record direct human blue-summary work';
 const bodies: unknown[] = [];
@@ -78,23 +85,36 @@ try {
   await hub.request('providers.create', { params: { providerId: 'anthropic', displayName: 'Loopback', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
   const root = await hub.request<{ ok: boolean; sessionId: string }>('operation.invoke', { name: 'neo.open', input: {} });
   assert(root.ok);
-  const worker = await hub.request<{ sessionId: string }>('session.create', { workspacePath: run, title: 'Human direct-work tester', worktreeMode: 'direct' });
+  const started = copilot ? await hub.request<{ ok: boolean; value: { ref: { adapter: string; id: string } } }>('operation.invoke', { name: 'work.start', input: { adapter: 'copilot-cli', place: { machine: hostname(), folder: run, name: 'Synthetic project' }, title: 'Human direct-work tester', model: 'synthetic-model', message: 'human-watch' } }) : null;
+  if (started) assert(started.ok, JSON.stringify(started));
+  const worker = started ? { sessionId: started.value.ref.id } : await hub.request<{ sessionId: string }>('session.create', { workspacePath: run, title: 'Human direct-work tester', worktreeMode: 'direct' });
+  const workerRef = { adapter: copilot ? 'copilot-cli' : 'hyperneo', id: worker.sessionId };
   const at = Date.now();
   todos.openAsk({ id: askId, title: 'Blue summary', request: 'Keep this matter current', projectId: null, sessionId: root.sessionId, originMessageId: null, createdAt: at });
   const todo = todos.addTodo('completed-worker-todo', askId, { title: 'Prior completed work', doneWhen: 'Recorded', instruction: null, named: null, check: null }, at);
-  sessions.create(todo.id, { verb: 'adopt', ref: { adapter: 'hyperneo', id: worker.sessionId } });
-  sessions.recordRef(todo.id, { adapter: 'hyperneo', id: worker.sessionId }, at);
+  sessions.create(todo.id, { verb: 'adopt', ref: workerRef });
+  sessions.recordRef(todo.id, workerRef, at);
   sessions.recordFollowAnchor(todo.id, at);
   todos.updateTodo(todo, { state: 'done', finishedAt: at }, at);
   await Bun.sleep(20);
-  observed.humanSend = await hub.request('message.send', { sessionId: worker.sessionId, content: human });
-  await wait('real worker turn completed', () => app.db.getDatabase().prepare("SELECT 1 FROM sdk_messages WHERE session_id=? AND message_type='result'").get(worker.sessionId) != null);
-  observed.workerStatus = await hub.request('operation.invoke', { name: 'work.status', input: { ref: { adapter: 'hyperneo', id: worker.sessionId }, since: at } });
+  if (copilot) {
+    writeFileSync(join(run, 'human-request.json'), JSON.stringify({ text: human, earlierInputs: mode.includes('busy') ? 60 : 0 }));
+    observed.humanSend = { boundary: 'synthetic native CLI human input; no daemon work.send', text: human };
+    await wait('Copilot fixture emitted the human turn', () => existsSync(join(run, 'human-emitted')));
+  } else {
+    observed.humanSend = await hub.request('message.send', { sessionId: worker.sessionId, content: human });
+    await wait('real worker turn completed', () => app.db.getDatabase().prepare("SELECT 1 FROM sdk_messages WHERE session_id=? AND message_type='result'").get(worker.sessionId) != null);
+  }
+  observed.workerStatus = await hub.request('operation.invoke', { name: 'work.status', input: { ref: workerRef, since: at } });
   await refresh();
-  if (mode === 'before') {
+  if (mode.endsWith('before')) {
     await Bun.sleep(500);
     assert.equal(toolCalls, 0);
-    observed.reproduced = 'Human turn in completed tracked worker reached no Neo model request';
+    if (mode.includes('busy')) {
+      assert(bodies.some((body) => text(body).includes('The human worked directly')));
+      assert(!bodies.some((body) => text(body).includes('The human said: ' + human)));
+      observed.reproduced = 'Newest human input lost attribution after 60 earlier inputs; no correct same-ask todo';
+    } else observed.reproduced = 'Human turn in completed tracked worker reached no Neo model request';
   } else {
     await wait('Neo records direct human work as a todo', () => todos.listTodos(askId).some((item) => item.title === newTitle));
     assert.equal(toolCalls, 1);
@@ -114,5 +134,12 @@ try {
   await app.cleanup();
   model.stop(true);
   QueryOptionsBuilder.prototype.build = build;
+  if (copilot && existsSync(join(run, 'calls.jsonl'))) {
+    const calls = readFileSync(join(run, 'calls.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    assert(calls.every((call) => !call.secretPresent), 'provider credentials must not reach the Copilot peer');
+    const pids = [...new Set(calls.map((call) => call.pid))];
+    for (const pid of pids) assert.throws(() => process.kill(pid, 0), /ESRCH/);
+    writeFileSync(join(run, 'evidence/copilot-calls.json'), JSON.stringify(calls, null, 2));
+  }
 }
 console.log(JSON.stringify(observed));

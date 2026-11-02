@@ -1,3 +1,4 @@
+import { workInput } from './work-messages.ts';
 import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
 import { CopilotClient, RuntimeConnection, type SessionEvent } from '@github/copilot-sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -8,6 +9,10 @@ export class CopilotModelUnavailableError extends Error {}
 type WorkInputReceipt = NonNullable<WorkDelivery['receipt']>;
 
 type InputState = {
+  at?: number;
+  text?: string;
+  human?: boolean;
+  endedAt?: number;
   state: 'pending' | 'observed';
   interactionId?: string;
   replyReport: string;
@@ -39,9 +44,20 @@ function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
     case 'user.message': {
       const { messageId, interactionId } = event.data;
       if (!messageId) break;
-      const input = next.inputs[messageId];
-      if (input.state === 'observed') break;
-      next.inputs = { ...next.inputs, [messageId]: { ...input, state: 'observed', interactionId } };
+      const input = Object.hasOwn(next.inputs, messageId) ? next.inputs[messageId] : undefined;
+      if (input?.state === 'observed') break;
+      const at = Date.parse(event.timestamp);
+      next.inputs = {
+        ...next.inputs,
+        [messageId]: {
+          ...(input ?? { replyReport: '', replyAvailability: 'incomplete' }),
+          state: 'observed',
+          interactionId,
+          at,
+          text: workInput(at, event.data.content)?.text ?? '',
+          human: input?.human ?? true,
+        },
+      };
       if (!['failed', 'needs_you', 'stopped'].includes(next.status)) next.status = 'running';
       break;
     }
@@ -72,6 +88,7 @@ function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
           if (input.state === 'observed' && input.replyReport && !input.outcome) {
             input.replyAvailability = 'complete';
             input.outcome = 'done';
+            input.endedAt = Date.parse(event.timestamp);
           }
         next.status = Object.values(next.inputs).every((input) => input.outcome)
           ? 'done'
@@ -86,11 +103,15 @@ function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
       break;
   }
   if (next.status === 'stopped' || next.status === 'failed')
-    for (const input of Object.values(next.inputs)) if (!input.outcome) input.outcome = next.status;
+    for (const input of Object.values(next.inputs))
+      if (!input.outcome) {
+        input.outcome = next.status;
+        input.endedAt = Date.parse(event.timestamp);
+      }
   return next;
 }
 
-const applyEvent = (superpipe({})('copilot-worker-event') as PipelineAPI)
+export const projectCopilotEvent = (superpipe({})('copilot-worker-event') as PipelineAPI)
   .input(['state', 'event'])
   .pipe(projectEvent, ['state', 'event'], 'state')
   .end('state') as (state: WorkerState, event: SessionEvent) => WorkerState;
@@ -234,7 +255,7 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
             : undefined;
       seen.set(event.id, inputId);
       seen.set(messageKey, inputId);
-      state = applyEvent(state, event);
+      state = projectCopilotEvent(state, event);
       prune();
       if (['done', 'failed', 'stopped'].includes(state.status)) terminal.resolve();
     };
@@ -286,6 +307,7 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
             ...state.inputs,
             [inputId]: {
               state: 'pending',
+              human: false,
               replyReport: '',
               replyAvailability: 'incomplete',
             },

@@ -41,11 +41,17 @@ export function createCopilotInputReader() {
 }
 
 const Event = z.object({
+  id: z.string().optional(),
   type: z.string(),
   timestamp: z.string(),
   agentId: z.string().optional(),
   data: z.object({
     messageId: z.string().optional(),
+    interactionId: z.string().optional(),
+    phase: z.string().optional(),
+    parentToolCallId: z.string().optional(),
+    toolRequests: z.array(z.unknown()).optional(),
+    aborted: z.boolean().optional(),
     toolCallId: z.string().optional(),
     content: z.string().optional(),
     toolName: z.string().optional(),
@@ -61,7 +67,8 @@ export function readCopilotHistory(
   before: number,
   after: number,
   cursor?: WorkTurnPage['nextCursor'],
-  onUnparsed?: () => void
+  onUnparsed?: () => void,
+  onEvent?: (event: z.infer<typeof Event>) => void
 ): WorkTurnPage {
   const unavailable: WorkTurnPage = { turns: [], availability: 'reply_unavailable' };
   let fd: number | undefined;
@@ -128,9 +135,14 @@ export function readCopilotHistory(
           : data.content;
       const messageId = `${role}:${role === 'tool' ? type + ':' : ''}${id}`;
       const at = Date.parse(event.timestamp);
-      if (!role || !id || typeof text !== 'string' || !Number.isFinite(at) || seen.has(messageId))
+      if (!Number.isFinite(at)) continue;
+      if (!role) {
+        onEvent?.(event);
         continue;
+      }
+      if (!id || typeof text !== 'string' || seen.has(messageId)) continue;
       seen.add(messageId);
+      onEvent?.(event);
       const clip = text.length > 4000 && /[\uD800-\uDBFF]/.test(text[3999]) ? 3999 : 4000;
       turns.push({
         messageId,
