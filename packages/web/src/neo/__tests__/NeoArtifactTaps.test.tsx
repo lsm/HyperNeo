@@ -9,6 +9,7 @@ import { artifactPreviewStack } from '../../lib/artifact-preview-store.ts';
 import { NeoAskTodos } from '../NeoAskTodos.tsx';
 import { NeoPublicConversation } from '../NeoPublicConversation.tsx';
 import { projectNeoPublicConversation } from '../public-conversation.ts';
+import { testAskEntry, testTodo } from './neo-test-views.ts';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const request = vi.hoisted(() => vi.fn());
@@ -57,6 +58,98 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Neo artifact taps', () => {
+  describe('current file cards', () => {
+    beforeEach(closeArtifactPreview);
+    afterEach(closeArtifactPreview);
+
+    it('derives one card per literal file reference without rewriting a publication', async () => {
+      const body =
+        'Read `report.md` twice: `report.md`.\n\n```sh\nignored.md\n```\n\nhttps://github.com/acme/demo/pull/7';
+      const item = publication({
+        shortText: body,
+        fullText: body,
+        revisionId: 'visible-revision',
+        verbatim: true,
+      });
+      render(<NeoPublicConversation conversation={conversation(item)} />);
+      const card = await screen.findByRole('button', { name: 'Open current file: report.md' });
+      expect(screen.getAllByRole('button', { name: /^Open current file:/ })).toHaveLength(1);
+      fireEvent.click(card);
+      expect(artifactPreviewStack.value).toEqual([
+        {
+          kind: 'reference',
+          source: { kind: 'publication', id: item.publicationId, revisionId: 'visible-revision' },
+          reference: 'report.md',
+        },
+      ]);
+      expect(item.fullText).toBe(body);
+      expect(request).not.toHaveBeenCalled();
+    });
+
+    it('deduplicates paths in expanded todo details and retains the todo source', async () => {
+      const todo = testTodo('file-todo', {
+        title: 'File result',
+        instruction: 'Read `report.md`.',
+        report: 'Updated `report.md`.',
+      });
+      render(
+        <NeoAskTodos entry={testAskEntry('ask', 'Work', { todos: [todo] })} onAnswer={() => {}} />
+      );
+      fireEvent.click(screen.getByText('File result'));
+      const card = await screen.findByRole('button', { name: 'Open current file: report.md' });
+      expect(screen.getAllByRole('button', { name: /^Open current file:/ })).toHaveLength(1);
+      fireEvent.click(card);
+      expect(artifactPreviewStack.value.at(-1)).toEqual({
+        kind: 'reference',
+        source: { kind: 'todo', id: todo.id },
+        reference: 'report.md',
+      });
+    });
+
+    it('derives question cards from public body/document text, not worker metadata', async () => {
+      const question: NeoQuestionEntry = {
+        id: 'file-question',
+        askId: 'ask',
+        text: 'Read `report.md`.',
+        document: 'Full report: `report.md`',
+        kind: 'reply',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+        state: 'open',
+        answer: null,
+        answeredBy: null,
+        answeredAt: null,
+        retiredReason: null,
+        replacedBy: null,
+        createdAt: 1,
+        sourceSession: {
+          id: 'worker',
+          adapter: 'hyperneo',
+          name: 'metadata-only.md',
+          label: 'metadata-only.md',
+          provider: 'synthetic',
+          link: null,
+        },
+      };
+      render(
+        <NeoAskTodos
+          entry={testAskEntry('ask', 'Work', { questions: [question] })}
+          onAnswer={() => {}}
+        />
+      );
+      const card = await screen.findByRole('button', { name: 'Open current file: report.md' });
+      expect(screen.getAllByRole('button', { name: /^Open current file:/ })).toHaveLength(1);
+      fireEvent.click(card);
+      expect(artifactPreviewStack.value.at(-1)).toEqual({
+        kind: 'reference',
+        source: { kind: 'question', id: question.id },
+        reference: 'report.md',
+      });
+    });
+  });
   describe('publication paths without registered artifacts', () => {
     beforeEach(() => {
       closeArtifactPreview();

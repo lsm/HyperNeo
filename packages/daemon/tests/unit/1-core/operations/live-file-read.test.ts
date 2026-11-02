@@ -11,6 +11,15 @@ const noStorage = () => {
   throw new Error('No storage access authorized');
 };
 
+test('live reader accepts the identity of a public question card', () => {
+  expect(
+    createLiveFileRead(noStorage).inputSchema.safeParse({
+      ...target,
+      sourceMessageOrCard: { kind: 'question', id: 'public-question' },
+    }).success
+  ).toBe(true);
+});
+
 test('live reference input requires stored-source provenance and bounded continuation', () => {
   const operation = createLiveFileRead(noStorage);
   expect(operation.inputSchema.safeParse(target).success).toBe(true);
