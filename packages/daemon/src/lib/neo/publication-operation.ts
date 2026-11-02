@@ -1,15 +1,12 @@
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
-import type {
-  NeoPublicationAppendResult,
-  NeoPublicationInput,
-  NeoPublication,
-} from '@hyperneo/shared/types/neo-publication';
+import type { NeoPublicationInput, NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { unregisteredArtifact } from '../artifacts/file-contracts.ts';
 import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { voiceDiagnostic } from '../voice/diagnostics.ts';
+import type { NeoPublicationWriteResult } from '../../storage/repositories/neo-publication-repository.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
 import { neoDerivedId } from './derived-id.ts';
 import {
@@ -34,6 +31,7 @@ const Draft = NeoPublicationObject.omit({
 })
   .extend({
     requestId: z.string().min(1).max(160),
+    spoken: z.string().trim().min(1).max(500).optional(),
     links: z
       .array(
         NeoPublicationObject.shape.links.unwrap().element.extend({ kind: z.literal('project') })
@@ -43,8 +41,15 @@ const Draft = NeoPublicationObject.omit({
   })
   .superRefine(publicationTextRule);
 type Draft = z.infer<typeof Draft>;
+const Result = NeoPublicationResultSchema.and(
+  z.object({
+    guidance: z.string().optional(),
+    listening: z.enum(['yes', 'no']).optional(),
+    spokenDelivered: z.boolean().optional(),
+  })
+);
 type Rejection = { accepted: false; reason: string; detail?: string };
-type Receipt = NeoPublicationAppendResult | Rejection;
+type Receipt = NeoPublicationWriteResult | Rejection;
 type Producer = {
   binding: NeoBinding;
   root: NeoBinding;
@@ -65,6 +70,14 @@ interface NeoPublicationRuntime {
   ): Pick<NeoPublicationInput, 'session'> | null;
   sourceSession(sessionId: string): string | undefined;
   append(input: NeoPublicationInput): Receipt | Promise<Receipt>;
+  speech(
+    sessionId: string,
+    version: string,
+    text?: string
+  ): Promise<{
+    listening: 'yes' | 'no';
+    spokenDelivered: boolean;
+  }>;
   notify(): void;
   artifact: ArtifactRefReader;
 }
@@ -213,7 +226,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     )
     .pipe(
       (draft: Draft, proof: Proof) => {
-        const { requestId, ...message } = draft;
+        const { requestId, spoken: _spoken, ...message } = draft;
         return runtime.append({
           ...message,
           publicationId: neoDerivedId(
@@ -226,7 +239,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
       'publication'
     )
     .pipe(
-      (receipt: Receipt, draft: Draft, caller: OperationCaller) => {
+      async (receipt: Receipt, draft: Draft, caller: OperationCaller) => {
         if (receipt.accepted && receipt.created)
           voiceDiagnostic('voice.publication.persisted', {
             sessionId: caller.sessionId,
@@ -234,14 +247,24 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
             publicationId: receipt.publication.publicationId,
             atMs: Date.now(),
           });
-        if (receipt.accepted) runtime.notify();
-        return receipt.accepted
-          ? {
-              ...receipt,
-              guidance:
-                'Already shown to the user; no assistant text this turn except a requested transcript/record or required scheduled-wake summary.',
-            }
-          : receipt;
+        if (!receipt.accepted) return receipt;
+        const { versionCreated, ...saved } = receipt;
+        const fresh = receipt.created || versionCreated === true;
+        const version = receipt.publication.revisionId ?? receipt.publication.publicationId;
+        const speech = await runtime.speech(
+          caller.sessionId!,
+          version,
+          fresh ? draft.spoken : undefined
+        );
+        runtime.notify();
+        return {
+          ...saved,
+          ...speech,
+          guidance:
+            fresh && !draft.spoken && speech.listening === 'yes'
+              ? `Already shown to the user. The human is now listening: call neo.speech.say once with a short spoken version and requestId "publication:${version}"; never re-publish the text.`
+              : 'Already shown to the user; no assistant text this turn except a requested transcript/record or required scheduled-wake summary.',
+        };
       },
       ['publication', 'draft', 'caller'],
       'publication'
@@ -256,15 +279,17 @@ export function createNeoPublicationOperation(
   return defineOperation({
     name: 'neo.publication.publish',
     description:
-      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. Pass verbatim: true to send the message as one field: the full content in fullText with no shortText; a request with both verbatim and shortText is rejected. Optional replyTo lists the received human message ids this publication answers; when omitted, the human inputs whose turn produced this publication are recorded as answered when they are known. Unknown, foreign, queued and non-human reply ids are omitted. When a reply is about one session the human may want to open, pass session: its exact session id rather than promising a link in text. Unknown session ids reject the publication without saving; correct the id and retry the same requestId. session_lookup_failed means the lookup is unavailable: retry the same requestId and session id. If session is omitted, the daemon fills it only for an unambiguous recorded sender of the current inputs. Only project links are accepted; an unknown project id rejects the entire publication without saving. Correct the link and retry with the same requestId. Unavailable artifact references are omitted. For a working document or evidence file, put its absolute path on the owning daemon in the text and say in one sentence what it is. Preview only files on this daemon. Remote files return owner_unavailable; identify their owner rather than re-publishing their paths as local. Existing saved attachments and fixed-head Git references remain supported in artifacts.',
+      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. When the latest listening fact is yes, include optional spoken: one or two natural lines consistent with the text, at most 500 characters. Publication is saved first, speech is delivered to the current listener, then clients are notified of the text. No listener silently drops spoken; speech is not stored in publication history. Retries never replay speech. The receipt reports listening and spokenDelivered. If a fresh receipt says listening yes but you supplied no spoken, follow its guidance to call neo.speech.say once; never re-publish the text. Pass verbatim: true to send the message as one field: the full content in fullText with no shortText; a request with both verbatim and shortText is rejected. Optional replyTo lists the received human message ids this publication answers; when omitted, the human inputs whose turn produced this publication are recorded as answered when they are known. Unknown, foreign, queued and non-human reply ids are omitted. When a reply is about one session the human may want to open, pass session: its exact session id rather than promising a link in text. Unknown session ids reject the publication without saving; correct the id and retry the same requestId. session_lookup_failed means the lookup is unavailable: retry the same requestId and session id. If session is omitted, the daemon fills it only for an unambiguous recorded sender of the current inputs. Only project links are accepted; an unknown project id rejects the entire publication without saving. Correct the link and retry with the same requestId. Unavailable artifact references are omitted. For a working document or evidence file, put its absolute path on the owning daemon in the text and say in one sentence what it is. Preview only files on this daemon. Remote files return owner_unavailable; identify their owner rather than re-publishing their paths as local. Existing saved attachments and fixed-head Git references remain supported in artifacts.',
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
-    resultSchema: NeoPublicationResultSchema.and(z.object({ guidance: z.string().optional() })),
+    resultSchema: Result,
     execute: async (input, caller) => {
       const result = await publish(input, caller);
-      return result.accepted && present
-        ? { ...result, publication: (await present([result.publication]))[0] }
-        : result;
+      return Result.parse(
+        result.accepted && present
+          ? { ...result, publication: (await present([result.publication]))[0] }
+          : result
+      );
     },
   });
 }

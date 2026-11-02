@@ -285,6 +285,7 @@ export class NeoService {
       publication: (conversation, id) => this.publications.get(conversation, id),
       lookupSession: async (id) => (await this.resolveSessionSource(id)).status,
       append: (input) => this.db.gateway.call(neoPublicationWrites, 'append', input),
+      speech: (sessionId, version, text) => this.speech.publish(sessionId, version, text),
       notify: notifyPublication,
       artifact: createArtifactRefReader(() => this.db.getDatabase()),
     });

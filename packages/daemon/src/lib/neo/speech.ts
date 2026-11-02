@@ -61,7 +61,7 @@ const listeningInput = (superpipe({})('neo.input.listening') as PipelineAPI)
     (loaded: DeliveryLoadResult, listening: boolean) =>
       `[listening: ${listening ? 'yes' : 'no'}]${
         listening && loaded.inputKind === 'human'
-          ? "\nHuman input while listening: before any other tool call or work, call neo.speech.say with one short spoken reply to what the human just said (acknowledge it, say what you'll do, or answer it if it's quick). Then continue."
+          ? '\nHuman input while listening: before time-consuming work, call neo.speech.say with one short natural acknowledgment. For a quick answer, publish with spoken instead of a separate say. Then continue.'
           : ''
       }`,
     ['loaded', 'listening'],
@@ -211,6 +211,25 @@ export class NeoSpeech {
 
   prepareInput(sessionId: string, loaded: DeliveryLoadResult): DeliveryLoadResult {
     return this.isNeo(sessionId) ? listeningInput(loaded, this.listeners.has(sessionId)) : loaded;
+  }
+
+  async publish(sessionId: string, version: string, text?: string) {
+    await this.serial;
+    const receipt = text
+      ? await this.enqueue(
+          'say',
+          sessionId,
+          { requestId: `publication:${version}`, text },
+          { source: 'mcp', role: 'neo', sessionId }
+        ).catch(() => {
+          new Logger('NeoSpeech').warn('Publication speech delivery failed');
+          return { ok: false, created: false };
+        })
+      : undefined;
+    return {
+      listening: this.listeners.has(sessionId) ? ('yes' as const) : ('no' as const),
+      spokenDelivered: receipt?.ok === true && receipt.created === true,
+    };
   }
 
   private async notifyListening(sessionId: string, before: boolean): Promise<void> {

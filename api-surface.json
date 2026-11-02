@@ -31155,6 +31155,11 @@
             "maxLength": 2000,
             "type": "string"
           },
+          "spoken": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
           "verbatim": {
             "const": true,
             "description": "Send the reply as one field: the full content in fullText with no shortText; a request with both is rejected.",
@@ -31184,8 +31189,18 @@
               "guidance": {
                 "type": "string"
               },
+              "listening": {
+                "enum": [
+                  "yes",
+                  "no"
+                ],
+                "type": "string"
+              },
               "reason": {
                 "type": "string"
+              },
+              "spokenDelivered": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -31205,6 +31220,13 @@
                 "type": "boolean"
               },
               "guidance": {
+                "type": "string"
+              },
+              "listening": {
+                "enum": [
+                  "yes",
+                  "no"
+                ],
                 "type": "string"
               },
               "publication": {
@@ -31658,6 +31680,9 @@
                   "createdAt"
                 ],
                 "type": "object"
+              },
+              "spokenDelivered": {
+                "type": "boolean"
               }
             },
             "required": [

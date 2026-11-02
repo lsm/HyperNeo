@@ -37,6 +37,7 @@ describe('publication speech follows the committed version', () => {
   let events: { type: string; client?: string; id?: string; text?: string }[];
   let hold: Promise<void> | undefined;
   let failWrite: boolean;
+  let failSpeech: boolean;
   beforeEach(() => {
     mailbox = createMailboxTestDb();
     createNeoTables(mailbox.db);
@@ -56,6 +57,7 @@ describe('publication speech follows the committed version', () => {
     events = [];
     hold = undefined;
     failWrite = false;
+    failSpeech = false;
     for (const client of ['phone', 'web'])
       router.registerConnection({
         id: client,
@@ -68,7 +70,14 @@ describe('publication speech follows the committed version', () => {
           }
         },
       });
-    speech = new NeoSpeech(hub, runDbOpOn(mailbox.db), (id) => id === sessionId);
+    speech = new NeoSpeech(
+      hub,
+      async (op, args) => {
+        if (failSpeech) throw Error('speech audit write failed');
+        return runDbOpOn(mailbox.db)(op, args);
+      },
+      (id) => id === sessionId
+    );
     const runtime = {
       receivedHumanInput: () => true,
       currentHumanInputs: () => [conversationId, '20000000-0000-4000-8000-000000000001'],
@@ -148,6 +157,14 @@ describe('publication speech follows the committed version', () => {
     await listen(false);
     await listen(true);
     expect(await send()).toMatchObject({ accepted: true, created: false, spokenDelivered: false });
+    expect(events.filter((e) => e.type === 'say')).toHaveLength(1);
+  });
+
+  test('case 11: concurrent publication retries speak only the committed first version', async () => {
+    await listen(true);
+    const receipts = await Promise.all([send(), send()]);
+    expect(receipts.map((r) => r.spokenDelivered).sort()).toEqual([false, true]);
+    expect(ledger.list(conversationId)).toHaveLength(1);
     expect(events.filter((e) => e.type === 'say')).toHaveLength(1);
   });
 
@@ -236,6 +253,16 @@ describe('publication speech follows the committed version', () => {
     const spoken = events.filter((e) => e.type === 'say');
     expect(spoken.map((e) => e.text)).toEqual([draft.spoken, 'The updated result.']);
     expect(spoken[0].id).not.toBe(spoken[1].id);
+  });
+
+  test('speech infrastructure failure still notifies the saved text and cannot cause retry replay', async () => {
+    await listen(true);
+    failSpeech = true;
+    expect(await send()).toMatchObject({ accepted: true, spokenDelivered: false });
+    expect(events.map((e) => e.type)).toEqual(['persisted', 'publication']);
+    failSpeech = false;
+    expect(await send()).toMatchObject({ accepted: true, created: false, spokenDelivered: false });
+    expect(events.filter((e) => e.type === 'say')).toHaveLength(0);
   });
 
   test('overlong speech is refused before saving', async () => {
