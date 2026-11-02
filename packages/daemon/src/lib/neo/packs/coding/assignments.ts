@@ -114,10 +114,10 @@ export class CodingAssignmentsRepository {
       value_json: string;
     }[];
     return Object.fromEntries(
-      rows.map((row) => [
-        row.key.endsWith(':review') ? 'review' : 'qa',
-        this.hydrate(JSON.parse(row.value_json)),
-      ])
+      rows.flatMap((row) => {
+        const assignment = this.hydrate(JSON.parse(row.value_json));
+        return assignment ? [[row.key.endsWith(':review') ? 'review' : 'qa', assignment]] : [];
+      })
     );
   }
 
@@ -132,10 +132,10 @@ export class CodingAssignmentsRepository {
     return this.read(todoId, url, head)[stage];
   }
 
-  private hydrate(value: CodingAssignment): CodingAssignment {
+  private hydrate(value: CodingAssignment): CodingAssignment | undefined {
     if (!value.stageTodoId) return CodingAssignment.parse(value);
     const card = new NeoTodoSessionRepository(this.db).readCard(value.stageTodoId);
-    return CodingAssignment.parse({
+    const assignment = CodingAssignment.safeParse({
       ...value,
       ref: card?.ref,
       effort: card?.effort ?? undefined,
@@ -146,6 +146,7 @@ export class CodingAssignmentsRepository {
         model: card.model,
       },
     });
+    return assignment.success ? assignment.data : undefined;
   }
 
   reserveStage(
@@ -156,10 +157,10 @@ export class CodingAssignmentsRepository {
   ) {
     const todos = this.todos,
       sessions = new NeoTodoSessionRepository(this.db);
-    const parent = todos.getTodo(todoId)!;
-    const ask = todos.getAsk(parent.askId)!;
-    if (ask.status !== 'open' || !['doing', 'blocked'].includes(parent.state))
-      throw new Error('The author todo is no longer live.');
+    const parent = todos.getTodo(todoId);
+    const ask = parent && todos.getAsk(parent.askId);
+    if (!parent || !ask || ask.status !== 'open' || !['doing', 'blocked'].includes(parent.state))
+      return { ok: false as const, reason: 'The author todo is no longer live.' };
     const params = { todoId, url: assignment.url, head: assignment.head, stage };
     const existing = todos
       .listTodos(ask.id)
@@ -175,7 +176,7 @@ export class CodingAssignmentsRepository {
         sessions.inputs.list(existing.id).map((input) => input.outcome)
       )
     )
-      return { todo: existing, ask, dispatch: false };
+      return { ok: true as const, todo: existing, ask, dispatch: false };
     const now = Date.now(),
       id = existing?.id ?? crypto.randomUUID();
     if (existing) sessions.recordRetry(id);
@@ -195,6 +196,7 @@ export class CodingAssignmentsRepository {
       );
     sessions.create(id, target);
     return {
+      ok: true as const,
       todo: todos.commitState(id, { finishedAt: null, reason: null }, now, {
         state: 'blocked',
         reason: 'Awaiting the assigned actor dispatch receipt.',

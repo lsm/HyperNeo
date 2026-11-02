@@ -21,6 +21,9 @@ repositories. Only the external `work.start` harness boundary is replaced by a
 synthetic harness using the real start schemas and production coding checkout
 preparation with the isolated worker-sandbox preference set to always. Ordinary
 reusable worktrees are covered separately by the worker-owned-worktrees journey.
+For the reservation race, a test hook records a synthetic parent completion
+immediately after the real target planner returns. The normal admission and
+reservation decisions still run; the hook is restored before other assignments.
 Its fake adapter names cannot launch native apps if that fixture
 replacement fails. The fixture really fetches/pins the PR head, reads the complete
 trusted role contract both from the brief and the private clone and observes clean Git status before acknowledging a start.
@@ -41,6 +44,10 @@ Observe `evidence/actor-assignments.json` and `gh.jsonl`:
   A failing Review verdict followed by a passing Verify verdict closes both stage
   todos, preserves the Review failure and leaves the author doing. Unit coverage
   also pins the reverse result order and refusal to erase a same-stage failure.
+- Clearing recorded model identity produces typed refusals for assignment and
+  result RPC calls. Restoring confirmed identity reuses the recorded assignment
+  without launching another worker. A parent completed between planning and
+  reservation refuses without adding a stage todo or dispatching.
 - Explicit human Review starts no session; missing provenance refuses while an
   explicit provenance opt-out permits the default.
 - A preflight-unavailable preferred model falls back to the qualifying default

@@ -188,6 +188,7 @@ export function createCodingAssignmentOperation(deps: Deps) {
       base,
       target
     );
+    if (!reserved.ok) return refuse(reserved.reason);
     const stageTodoId = reserved.todo.id;
     const sessions = new NeoTodoSessionRepository(deps.db);
     if (!reserved.dispatch)
