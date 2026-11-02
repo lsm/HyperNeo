@@ -241,9 +241,9 @@ describe('todo dependencies', () => {
     }
   );
 
-  test.each([false, true])(
-    'approved dependency chain advances without Start cards; legacy=%s',
-    async (legacy) => {
+  test.each(['approved', 'legacy', 'unstarted'])(
+    'authorized dependency chain advances without extra Start cards; root=%s',
+    async (mode) => {
       const { db, store, sessions, invoke, step, runner, sent } = setup();
       try {
         const target = { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } };
@@ -252,14 +252,14 @@ describe('todo dependencies', () => {
           title: 'Approved chain',
           request: 'Complete all three steps.',
           todos: [
-            { ...step('PR1'), ...work, start: true },
+            { ...step('PR1'), ...work, start: mode !== 'unstarted' },
             { ...step('PR2', [0]), ...work },
             { ...step('PR3', [1]), ...work },
           ],
         });
         expect(opened.ok).toBe(true);
         const [first, second, third] = opened.todos;
-        if (legacy) {
+        if (mode === 'legacy') {
           store.updateTodo(
             second,
             {
@@ -283,7 +283,7 @@ describe('todo dependencies', () => {
             },
             Date.now()
           );
-        } else expect(store.listQuestions(first.askId)).toHaveLength(0);
+        } else expect(store.listQuestions(first.askId)).toHaveLength(mode === 'unstarted' ? 1 : 0);
         await runner.recompute(store.getTodo(first.id)!, {}, Date.now(), {
           state: 'done',
           evidence: 'PR1 merged.',
@@ -292,7 +292,7 @@ describe('todo dependencies', () => {
         expect(store.getTodo(second.id)?.state).toBe('doing');
         expect(store.getTodo(third.id)?.state).toBe('todo');
         expect(sessions.readRef(second.id)).toEqual(target.ref);
-        expect(store.listQuestions(first.askId).filter((q) => q.state === 'open')).toHaveLength(0);
+        expect(store.listQuestions(first.askId).every((q) => q.state === 'retired')).toBe(true);
         await runner.recompute(store.getTodo(second.id)!, {}, Date.now(), {
           state: 'done',
           evidence: 'PR2 merged.',
@@ -300,9 +300,9 @@ describe('todo dependencies', () => {
         await runner.refresh(() => {});
         expect(store.getTodo(third.id)?.state).toBe('doing');
         expect(sessions.readRef(third.id)).toEqual(target.ref);
-        expect(sent).toHaveLength(3);
+        expect(sent).toHaveLength(mode === 'unstarted' ? 2 : 3);
         await runner.refresh(() => {});
-        expect(sent).toHaveLength(3);
+        expect(sent).toHaveLength(mode === 'unstarted' ? 2 : 3);
       } finally {
         db.close();
       }

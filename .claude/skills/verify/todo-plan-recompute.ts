@@ -12,7 +12,7 @@ import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/r
 
 const [mode, directory] = process.argv.slice(2),
   run = resolve(directory);
-assert(['before', 'verify', 'chain-before', 'chain-verify', 'chain-edges', 'chain-parent'].includes(mode));
+assert(['before', 'verify', 'chain-before', 'chain-verify', 'chain-edges', 'chain-parent', 'chain-check'].includes(mode));
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -263,7 +263,7 @@ try {
       assert.equal(starts(), 2);
       await refresh(); assert.equal(starts(), 2);
       evidence.verified = true;
-    } else if (mode === 'chain-edges') {
+    } else if (mode === 'chain-edges' || mode === 'chain-check') {
       const split = await call('neo.ask.open', { title: 'Split approved plan', request: 'Complete both repositories.', todos: [
         { ...step('split-first'), named: { repository: 'synthetic/first' }, start: true },
         { ...step('split-second'), named: { repository: 'synthetic/second' }, after: [0] },
@@ -284,10 +284,11 @@ try {
         { ...step('removed-independent'), after: [] },
       ] });
       const [a, b, independent] = removed.todos;
-      await call('neo.todo.remove', { todoId: a.id, reason: 'No longer needed.' });
+      await (mode === 'chain-check' ? complete(a.title) : call('neo.todo.remove', { todoId: a.id, reason: 'No longer needed.' }));
       await refresh();
       const released = await read(b.askId);
       evidence.removed = released;
+      assert.deepEqual(released.todos.filter((t: { id: string }) => t.id === a.id).map((t: { state: string; startedAt: number | null }) => [t.state, t.startedAt]), [[mode === 'chain-check' ? 'done' : 'removed', null]]);
       assert.equal(released.todos.find((t: { id: string }) => t.id === b.id).state, 'doing');
       assert.equal(released.todos.find((t: { id: string }) => t.id === independent.id).blockedBy, 'question');
       assert.deepEqual(released.questions.filter((q: { state: string }) => q.state === 'open').map((q: { startTodos: string[] }) => q.startTodos), [[independent.id]]);
