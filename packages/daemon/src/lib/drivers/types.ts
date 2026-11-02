@@ -308,6 +308,9 @@ export interface WorkAdapter {
   readonly id: string;
   readonly capabilities: readonly WorkVerb[];
   readonly unsupportedCapabilities?: Partial<Record<WorkVerb, string>>;
+  readonly resolveStartConfiguration?: (
+    request: StartRequest
+  ) => Promise<Result<z.infer<typeof workStartConfiguration.schema>>>;
   readonly supportsStartEffort?: boolean;
   readonly supportsStartPreparation?: boolean;
   find(query: FindQuery): PlaceGroup[] | Promise<PlaceGroup[]>;

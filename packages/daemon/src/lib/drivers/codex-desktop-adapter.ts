@@ -260,7 +260,8 @@ export function buildCodexGroups(
             {
               ref: { adapter: 'codex-desktop', id: thread.id },
               title: thread.title,
-              place: { ...linked, folder: thread.folder },
+              place: linked,
+              ...workExecutionLocation(thread.folder, deps.machine),
               status: codexStatus(thread, now),
               lastActivityAt: thread.updatedAt,
               link: `codex://threads/${thread.id}`,
@@ -1409,6 +1410,10 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
         query,
         deps,
         query.text && !query.spaceId && deps.searchChats ? await deps.searchChats(query.text) : []
+      ),
+    resolveStartConfiguration: (request) =>
+      withCodexAppServer({ appServer: deps.bootstrapServer }, (server) =>
+        selectCodexConfiguration({ model: request.model, effort: request.effort }, server)
       ),
     start: (request) => runCodexStart(request, deps),
     rename: (ref, title) => runCodexRename(ref, title, deps),

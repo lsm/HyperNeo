@@ -418,14 +418,17 @@ export async function reuseIdleWorker(
     caller.role !== 'neo' ||
     !folder ||
     !adapter?.send ||
-    input.model ||
-    input.effort ||
+    ((input.model || input.effort) && !adapter.resolveStartConfiguration) ||
     input.preparation ||
     input.createFolder
   )
     return null;
   const free = deps.freeWorkers?.(adapter.id);
   if (!free?.size) return null;
+  const configured =
+    input.model || input.effort ? await adapter.resolveStartConfiguration!(input) : null;
+  if (configured && !configured.ok) return configured;
+  const requested = configured?.ok ? configured.value : null;
   const groups = await adapter.find({ folder, includeClosed: false, limit: 50 });
   const idle = groups
     .flatMap((group) => group.work)
@@ -440,8 +443,26 @@ export async function reuseIdleWorker(
     const key = `${work.ref.adapter}\u0000${work.ref.id}`;
     if (reuseHolds.has(key)) continue;
     reuseHolds.add(key);
-    const status = input.provenance ? await adapter.status?.(work.ref).catch(() => null) : null;
+    let status;
+    try {
+      status =
+        input.provenance || requested ? await adapter.status?.(work.ref).catch(() => null) : null;
+    } catch (error) {
+      reuseHolds.delete(key);
+      throw error;
+    }
     const identity = status?.ok ? status.value : null;
+    if (
+      requested &&
+      (!identity ||
+        !workStartConfiguration.confirm(requested, {
+          ...(identity.model ? { model: identity.model } : {}),
+          ...(identity.effort ? { effort: identity.effort } : {}),
+        }).ok)
+    ) {
+      reuseHolds.delete(key);
+      continue;
+    }
     const message = input.provenance
       ? withWorkerProvenance(input.message, {
           model: identity?.model ?? null,
@@ -459,7 +480,9 @@ export async function reuseIdleWorker(
         ok: true,
         value: {
           ...work,
-          ...(input.provenance ? { model: identity?.model, effort: identity?.effort } : {}),
+          ...(input.provenance || requested
+            ? { model: identity?.model, effort: identity?.effort }
+            : {}),
           ...(sent.value.receipt ? { receipt: sent.value.receipt } : {}),
           reused: true,
         },

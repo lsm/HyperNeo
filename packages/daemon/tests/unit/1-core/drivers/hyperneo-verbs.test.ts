@@ -176,6 +176,19 @@ describe('hyperneo adapter send and status', () => {
     });
   }
 
+  test('reuse resolves model aliases and effort through the start resolver without creating work', async () => {
+    const result = await adapter().resolveStartConfiguration!({
+      place: { machine: 'imac', folder: '/focus/repo' },
+      title: 'fixture',
+      message: 'fixture',
+      model: 'GLM 5.3',
+      effort: 'high',
+    });
+    expect(result).toMatchObject({ ok: true, value: { model: 'glm-5.3', effort: 'high' } });
+    expect(events).toEqual([]);
+    expect(handed).toEqual([]);
+  });
+
   test('prefix discovery finds older sessions before history limits', async () => {
     db.exec('CREATE TABLE workspace_history (path TEXT, last_used_at INTEGER)');
     const insert = db.prepare(

@@ -835,6 +835,10 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
     rename: deps.sessions.rename
       ? (ref, title, context) => runHyperneoRename(ref, title, context, deps)
       : undefined,
+    resolveStartConfiguration: async (request) => {
+      const result = await requireHyperneoStartConfiguration(request, deps);
+      return 'reason' in result ? result.reason : { ok: true, value: result.value };
+    },
     start: (request, context) => runHyperneoStart(request, context, deps),
     send: (ref, message, context) => runHyperneoSend(ref, message, context, deps),
     queue: (ref, message, context) => runHyperneoSend(ref, message, context, deps, 'defer'),
