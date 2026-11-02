@@ -47,6 +47,7 @@ const DesktopUIEvidenceSchema = z.object({
 });
 
 export const WorkSummarySchema = z.object({
+  execution: z.object({ directory: z.string().min(1), machine: z.string().min(1) }).optional(),
   worker: WorkerIdentitySchema.optional(),
   ref: WorkRefSchema,
   title: z.string(),
@@ -216,7 +217,6 @@ export const WorkDetailSchema = WorkSummarySchema.extend({
   turnEnds: z.array(WorkTurnEndSchema).optional(),
   inputEvidence: WorkInputEvidenceSchema.optional(),
   startReceipt: WorkInputReceiptSchema.optional(),
-  execution: z.object({ directory: z.string().min(1), machine: z.string().min(1) }).optional(),
   lastReply: z.string().optional(),
   lastReplyAt: z.number().optional(),
   waitingFor: z.string().max(200).optional(),
