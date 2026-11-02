@@ -43,6 +43,16 @@ import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 const place = { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen', daemon: 'laptop' };
 const startTarget: NeoDriverTarget = { verb: 'start', adapter: 'codex-desktop', place };
+
+test('worker delivery guidance uses a live owning-daemon path instead of requiring registration', () => {
+  const message = withWorkGoal('Write the report.', {
+    goal: 'Prepare a report',
+    doneWhen: 'File exists',
+  });
+  expect(message).toContain('absolute path on the owning daemon');
+  expect(message).toContain('Removing its worktree makes the reference unavailable');
+  expect(message).not.toContain('artifact.file.register');
+});
 const sendTarget: NeoDriverTarget = {
   verb: 'send',
   ref: { adapter: 'hyperneo', id: 's1' },

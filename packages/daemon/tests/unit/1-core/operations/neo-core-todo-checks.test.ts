@@ -148,3 +148,14 @@ test('core checks reject malformed inputs and derive their completion sentence',
   expect(pack.todos!.refuse!(todo)).toBeNull();
   expect(pack.todos!.doneWhen!(todo.check)).toBe('The human answers card card.');
 });
+
+test('new evidence guidance names absolute paths while stored artifact checks still project', () => {
+  const { pack, checked } = fixture();
+  const invalid = pack.todos!.refuse!(checked('evidence', { path: 'relative' }));
+  expect(invalid).toContain('evidence {path: absolute file path}');
+  expect(invalid).not.toContain('evidence {artifact}');
+  expect(pack.todos!.refuse!(checked('evidence', { path: '/synthetic/result.md' }))).toBeNull();
+  expect(pack.todos!.doneWhen!(checked('evidence', { artifact: 'legacy' }).check)).toBe(
+    'Registered artifact legacy exists.'
+  );
+});

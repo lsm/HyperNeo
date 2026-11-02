@@ -63,6 +63,17 @@ function setup(packs: NeoPack[] = []) {
 }
 
 describe('neo.todo operations', () => {
+  test('the model is offered path evidence for new work', () => {
+    const add = createNeoTodoOperations(
+      {} as NeoAskTodoRepository,
+      {} as NeoTodoSessionRepository,
+      {} as NeoTodoControls,
+      () => [],
+      () => null
+    ).find((op) => op.name === 'neo.todo.add')!;
+    expect(add.description).toContain('core.evidence {path: absolute file path}');
+    expect(add.description).not.toContain('core.evidence {artifact:');
+  });
   test('adds todos in order and marks the ones added after work started', async () => {
     const { repo, call, changes } = setup();
     const first = await call('neo.todo.add', {
