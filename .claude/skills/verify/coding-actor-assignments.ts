@@ -120,6 +120,9 @@ try {
         const session = await seed('session', 8, 'synthetic/session');
         for (const [field, value] of Object.entries({ harness: preferredTarget.adapter, model: preferredTarget.model, effort: preferredTarget.effort })) await setting('synthetic/session', `review.${field}`, value);
         const review = await assign({ ...session, stage: 'review', candidates: [authorModel, defaultTarget, preferredTarget] }); assert(review.ok); assert.equal(review.assignment.actor.harness, preferredTarget.adapter); assert.equal(review.assignment.effort, preferredTarget.effort);
+        const stageTodos = db.prepare('SELECT id,title FROM neo_todos WHERE ask_id=? ORDER BY position').all('ask-session') as {id:string;title:string}[];
+        assert(stageTodos.some(todo => todo.title === `Review PR #8 at ${head}`), 'The ask must show its Review todo before Verify starts');
+        evidence.push({ phase, stageTodos });
         const verify = await assign({ ...session, stage: 'verify', candidates: [verifyTarget] }); assert(verify.ok); assert.notEqual(verify.assignment.ref.id, review.assignment.ref.id);
         const beforeRetry = attempts;
         assert((await assign({ ...session, stage: 'review', candidates: [] })).ok); assert((await assign({ ...session, stage: 'verify', candidates: [] })).ok); assert.equal(attempts, beforeRetry);

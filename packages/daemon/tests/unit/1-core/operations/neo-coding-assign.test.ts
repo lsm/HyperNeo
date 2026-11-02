@@ -13,6 +13,9 @@ import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/sch
 import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
 import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import { CodingAssignmentsRepository } from '../../../../src/lib/neo/packs/coding/assignments.ts';
+import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import { readFreeWorkers } from '../../../../src/storage/work-started-sessions.ts';
+import { createCodingResultOperation } from '../../../../src/lib/neo/packs/coding/result-operation.ts';
 import { createCodingAssignmentOperation } from '../../../../src/lib/neo/packs/coding/assign-operation.ts';
 import { runCodingReview } from '../../../../src/lib/neo/packs/coding/review.ts';
 import { StartWorkInputSchema } from '../../../../src/lib/drivers/work-operations.ts';
@@ -87,6 +90,7 @@ function fixture(
     },
   });
   const registry = createOperationRegistry([
+    createCodingResultOperation(assignments, ledger),
     createCodingAssignmentOperation({
       db,
       ledger,
@@ -133,10 +137,78 @@ function fixture(
     (pack,scope_kind,scope_key,key,value_json,set_by,set_at) VALUES ('coding','repo','synthetic/actors',?,?,'human',1)
     ON CONFLICT DO UPDATE SET value_json=excluded.value_json`)
       .run(key, JSON.stringify(value));
-  return { db, ledger, assignments, sessions, assign, starts, stops, pr, publish, set, success };
+  return {
+    db,
+    ledger,
+    assignments,
+    sessions,
+    assign,
+    starts,
+    stops,
+    pr,
+    publish,
+    set,
+    success,
+    registry,
+  };
 }
 
 describe('coding actor assignments', () => {
+  test('Review and Verify appear in the ask with their own busy workers; verdict closes only its stage', async () => {
+    const f = fixture();
+    const review = await f.assign();
+    const verify = await f.assign({ stage: 'verify', candidates: [author] });
+    expect(review.ok && verify.ok).toBe(true);
+    const store = new NeoAskTodoRepository(f.db);
+    expect(store.listTodos('ask').map((todo) => todo.title)).toEqual([
+      'Actors',
+      `Review PR #7 at ${head}`,
+      `Verify PR #7 at ${head}`,
+    ]);
+    for (const [index, assignment] of [review.assignment!, verify.assignment!].entries()) {
+      const stageId = f.starts[index].todoId!;
+      expect(stageId).not.toBe('todo');
+      expect(f.sessions.readRef(stageId)).toEqual(assignment.ref);
+      expect(store.getTodo(stageId)?.state).toBe('doing');
+      expect(readFreeWorkers(f.db, assignment.ref!.adapter).has(assignment.ref!.id)).toBe(false);
+      const inputs = f.sessions.inputs.list(stageId);
+      expect(inputs).toHaveLength(1);
+      expect(inputs[0].outcome).toMatchObject({ ref: assignment.ref });
+    }
+    const assignment = review.assignment!;
+    const outcome = await invokeOperation(
+      f.registry,
+      'neo.coding.result',
+      {
+        todoId: 'todo',
+        ref: assignment.ref,
+        fact: {
+          url,
+          head,
+          stage: 'review',
+          actor: assignment.actor,
+          verdict: 'fail',
+          acceptanceContract: 'artifact:contract',
+          evidence: ['artifact:review-finding'],
+        },
+      },
+      { source: 'internal', role: 'neo' }
+    );
+    expect(outcome).toMatchObject({ kind: 'completed', value: { ok: true } });
+    expect(store.getTodo(f.starts[0].todoId!)?.state).toBe('done');
+    expect(readFreeWorkers(f.db, assignment.ref!.adapter).has(assignment.ref!.id)).toBe(true);
+    expect(store.getTodo(f.starts[1].todoId!)?.state).toBe('doing');
+    expect(store.getTodo('todo')?.state).toBe('doing');
+    await f.assign();
+    expect(f.starts).toHaveLength(2);
+    f.pr.headRefOid = next;
+    f.publish();
+    f.ledger.stageFacts.observeHead(url, next, 2);
+    expect((await f.assign({ head: next })).ok).toBe(true);
+    expect(store.listTodos('ask')).toHaveLength(4);
+    expect(f.starts[2].todoId).not.toBe(f.starts[0].todoId);
+  });
+
   test.each([
     'unsupported_model',
     'unsupported_effort',
