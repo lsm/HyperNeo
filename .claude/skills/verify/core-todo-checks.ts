@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
@@ -45,7 +45,7 @@ let ws: WebSocket | undefined;
 async function rpc(name: string, input: unknown) {
   assert(ws);
   const id = crypto.randomUUID();
-  const result = await new Promise<{ ok?: boolean; todo?: NeoTodo; commit?: string }>(
+    const result = await new Promise<{ ok?: boolean; todo?: NeoTodo; commit?: string; accepted?:boolean; data?:string; reason?:string }>(
     (done, fail) => {
       const timeout = setTimeout(() => fail(new Error(`${name} timed out`)), 15000);
       ws!.onmessage = (event) => {
@@ -188,6 +188,17 @@ try {
     await add('deployed', { repo: 'lsm/HyperNeo', sha: 'b'.repeat(40) }),
     'blocked'
   );
+  const readCurrent=()=>rpc('file.reference.read',{sourceMessageOrCard:{kind:'todo',id:fileTodo.id},reference:path});
+  const first=await readCurrent();
+  assert.equal(first.accepted,true,JSON.stringify(first));
+  assert.equal(Buffer.from(first.data!,'base64').toString(),'Synthetic result');
+  writeFileSync(path,'Edited current result');
+  const edited=await readCurrent();
+  assert.equal(edited.accepted,true,JSON.stringify(edited));
+  assert.equal(Buffer.from(edited.data!,'base64').toString(),'Edited current result');
+  rmSync(path);
+  assert.equal((await readCurrent()).reason,'missing');
+  assert.equal(store.getTodo(fileTodo.id)?.state,'done');
   receipts.push({
     state: store.listTodos('ask'),
     isolatedPort: app.server.port,

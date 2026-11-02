@@ -9,6 +9,8 @@ it still projects and completes in its original context. No stored check, old
 completion or attachment is migrated. An unchanged old check round-trips through
 edit; switching to another artifact ID is refused. The helper stops its daemon and removes
 temporary data; keep its receipts and run-status outside that directory.
+The same real operation door reads the todo's path, edits and rereads current
+bytes, then deletes it and reports missing. Its already-completed todo stays done.
 
 Run the focused daemon suites `neo-core-todo-checks`, `neo-driver-work`,
 `neo-prompt`, `neo-todos` and `neo-publication-operation`. The committed failing
