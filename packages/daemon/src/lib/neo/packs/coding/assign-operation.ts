@@ -1,3 +1,6 @@
+import { withCodingWorkerStartBrief } from './worker-worktree-brief.ts';
+import { QA_SYSTEM_CONTRACT, REVIEWER_SYSTEM_CONTRACT } from '@hyperneo/prompts';
+import { workerSandboxOn } from '../../../drivers/worker-sandbox.ts';
 import { isDeepStrictEqual } from 'node:util';
 import { homedir } from 'node:os';
 import { z } from 'zod';
@@ -123,7 +126,10 @@ export function createCodingAssignmentOperation(deps: Deps) {
       });
     const plan = await select(input.candidates);
     if (!plan.ok) return refuse(plan.reason);
-    const message = `Coding-pack ${input.stage === 'verify' ? 'Verify' : 'Review'} run. Before inspecting code, resolve git rev-parse --git-common-dir and read hyperneo-stage-contract.md there; it is your full role contract and its coding-only override. Todo: ${input.todoId}. PR: ${input.url}. Exact head: ${input.head}. Acceptance contract: ${input.acceptanceContract}. Read that acceptance contract and cover every criterion and allowed scope. ${input.stage === 'verify' ? "Use the repository's .claude/skills/verify/SKILL.md (list and read relevant journeys) or Verify section in AGENTS.md. Return durable evidence per criterion; stop owned test resources." : 'Return a soundness verdict across every review-contract dimension, with separate bug/integration and goal/scope passes.'} Do not merge, close or complete the todo. Report facts through Neo with this exact head and contract.`;
+    const stage = input.stage === 'verify' ? 'Verify' : 'Review';
+    const contract = input.stage === 'verify' ? QA_SYSTEM_CONTRACT : REVIEWER_SYSTEM_CONTRACT;
+    const message = `${contract}\n\nCoding-pack ${stage} override for this run:\nThis worker may be reused from prior tasks; independence means it is not this PR's author or another stage actor for this head; reuse from earlier tasks or review rounds is allowed. The shared contract's workflow-specific Bash allowlist and direct GitHub posting procedure are replaced here by checkout in your own folder and reporting through Neo; respect actual permission denials. Before switching, preserve uncommitted or unpushed work: stop and report if the checkout would discard it, and never reset --hard or clean the folder to switch tasks.\n${withCodingWorkerStartBrief('', { pullRequest: Number(parsePrUrl(input.url)!.number), head: input.head, role: input.stage })}\nTodo: ${input.todoId}. PR: ${input.url}. PR number: ${parsePrUrl(input.url)!.number}. Exact head: ${input.head}. Acceptance contract: ${input.acceptanceContract}. Fetch origin, fetch +refs/pull/${parsePrUrl(input.url)!.number}/head:refs/remotes/origin/pull/${parsePrUrl(input.url)!.number}/head, check out exactly ${input.head} in your existing folder, and verify git rev-parse HEAD equals that SHA before inspecting code. Do not switch to a moving branch or alter the author's folder. Read the acceptance contract and cover every criterion and allowed scope. CI covers base integration; skip the shared contract's separate base-integration checkout and base-OID revalidation requirements. A new PR head requires a new assignment and verdict. ${input.stage === 'verify' ? "Use the repository's .claude/skills/verify/SKILL.md (list and read relevant journeys) or Verify section in AGENTS.md. Before changing application code, locate that skill or section; if missing, report that evidence is blocked. Return durable evidence per criterion; stop owned test resources." : 'Return a soundness verdict across every review-contract dimension, with separate bug/integration and goal/scope passes.'} Do not merge, close or complete the todo. Your verdict must name the exact reviewed head ${input.head}; report facts through Neo with this head and contract.`;
+    const excludeRefs = [base.write, ...(review?.ref ? [review.ref] : [])];
     const start = (target: z.infer<typeof CodingStageTarget>) =>
       deps.invoke(
         'work.start',
@@ -132,15 +138,21 @@ export function createCodingAssignmentOperation(deps: Deps) {
           todoId: input.todoId,
           title: `${input.stage === 'verify' ? 'Verify' : 'Review'}: ${input.todoId}`,
           message,
-          preparation: {
-            pack: 'coding',
-            parameters: {
-              pullRequest: Number(parsePrUrl(input.url)!.number),
-              head: input.head,
-              role: input.stage,
-            },
-            ...(pr.isCrossRepository ? { sandbox: true } : {}),
-          },
+          provenance: true,
+          excludeRefs,
+          ...(workerSandboxOn(pr.isCrossRepository)
+            ? {
+                preparation: {
+                  pack: 'coding',
+                  parameters: {
+                    pullRequest: Number(parsePrUrl(input.url)!.number),
+                    head: input.head,
+                    role: input.stage,
+                  },
+                  sandbox: true,
+                },
+              }
+            : {}),
         },
         caller
       );
@@ -170,7 +182,7 @@ export function createCodingAssignmentOperation(deps: Deps) {
     if (!started.ok) return refuse(`${started.reason}: ${started.detail}`);
     const { ref, model, effort } = started.value;
     if (sameCodingWorkRef(ref, base.write) || (review?.ref && sameCodingWorkRef(ref, review.ref)))
-      return refuse('The actor must be a fresh session distinct from author and reviewer.');
+      return refuse('The actor must be independent of the author and earlier reviewer.');
     const actor = { kind: 'agent' as const, id: ref.id, harness: ref.adapter, model: model ?? '' };
     if (
       !model ||

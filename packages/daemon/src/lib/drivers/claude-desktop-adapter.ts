@@ -1,3 +1,4 @@
+import { cleanupOwnedWorktree } from './work-placement.ts';
 import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
 import { releaseWorkerSandbox, workerSandboxOn } from './worker-sandbox.ts';
 import { createHash } from 'node:crypto';
@@ -24,7 +25,7 @@ import {
 } from '@hyperneo/prompts';
 import { open, readdir, readFile, stat } from 'node:fs/promises';
 import { readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -41,6 +42,7 @@ import type {
   WorkAdapter,
   WorkCallContext,
   WorkDelivery,
+  WorkArchived,
   WorkDetail,
   WorkStarted,
   WorkExchangeEntry,
@@ -1788,7 +1790,7 @@ async function archiveClaudeSession(
   ref: WorkRef,
   admit: ArchiveAdmission,
   deps: ClaudeDesktopAdapterDeps
-): Promise<Result<{ archived: boolean }>> {
+): Promise<Result<WorkArchived>> {
   const records: ClaudeRecordCache = new Map();
   await readClaudeDesktopRecords(deps.sessionsDir, records);
   const paths = [...records].filter(([, entry]) =>
@@ -1812,7 +1814,20 @@ async function archiveClaudeSession(
   const refused = admit();
   if (refused) return refused;
   await releaseWorkerSandbox(record.cwd);
-  if (record.isArchived) return { ok: true, value: { archived: false } };
+  const cwd = record.cwd;
+  const cleanup = () =>
+    cwd
+      ? cleanupOwnedWorktree(
+          cwd,
+          basename(dirname(cwd)) === 'worktrees' && basename(dirname(dirname(cwd))) === '.claude'
+            ? [dirname(cwd)]
+            : []
+        )
+      : Promise.resolve(undefined);
+  if (record.isArchived) {
+    const worktree = await cleanup();
+    return { ok: true, value: { archived: false, ...(worktree ? { worktree } : {}) } };
+  }
   const temporary = `${path}.${crypto.randomUUID()}.tmp`;
   try {
     writeFileSync(temporary, JSON.stringify({ ...original, isArchived: true }), {
@@ -1823,5 +1838,6 @@ async function archiveClaudeSession(
   } finally {
     rmSync(temporary, { force: true });
   }
-  return { ok: true, value: { archived: true } };
+  const worktree = await cleanup();
+  return { ok: true, value: { archived: true, ...(worktree ? { worktree } : {}) } };
 }

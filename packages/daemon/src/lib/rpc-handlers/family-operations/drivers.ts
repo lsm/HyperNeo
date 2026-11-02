@@ -226,7 +226,7 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
         if (commits.hasCommitsAhead || !git.isClean())
           return reject(
             'unsupported',
-            'The worktree has changes or cannot be verified; archive it in the session UI.'
+            'The worktree has changes, unpushed commits or cannot be verified; kept. Manage its archive in the session UI.'
           );
       }
       const refused = admit();
@@ -411,6 +411,9 @@ function acpAgentAdapters(
       cliPath: command,
       directory,
       projectFolder: gitWorktreeProject,
+      gitCheckout: readGitCheckout,
+      spawn: spawnProcess,
+      worktreesDir: join(directory, 'worktrees'),
       machine: hostname(),
       env: process.env,
       homeDir: homedir(),

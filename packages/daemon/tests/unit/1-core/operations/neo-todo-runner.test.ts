@@ -1,3 +1,4 @@
+import { withCodingWorkerStartBrief } from '../../../../src/lib/neo/packs/coding/worker-worktree-brief';
 import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
 import { NEO_PACK_CODING_WORKER_RULES } from '@hyperneo/prompts';
 import { createNeoQuestionAnswerDelivery } from '../../../../src/lib/neo/question-answer-delivery.ts';
@@ -447,6 +448,7 @@ describe('neo todo runner', () => {
         h.packs[0] = {
           ...h.packs[0],
           workerRules: NEO_PACK_CODING_WORKER_RULES,
+          workerStartBrief: withCodingWorkerStartBrief,
           prepareExecution: async () => ({ ok: false, reason: 'unused' }),
         };
         const todo = h.store.addTodo(
@@ -485,6 +487,24 @@ describe('neo todo runner', () => {
       }
     }
   );
+
+  test('keeps the worktree and verify gate brief even when a long task is truncated', async () => {
+    const h = setup();
+    try {
+      h.packs[0] = {
+        ...h.packs[0],
+        workerRules: NEO_PACK_CODING_WORKER_RULES,
+        workerStartBrief: withCodingWorkerStartBrief,
+      };
+      const todo = h.add({ pack: 'coding', kind: 'pr', params: {} }, 'x'.repeat(19_900));
+      await h.runner.start(todo.id);
+      const message = h.calls.find((call) => call.name === 'work.start')!.input.message;
+      expect(message).toContain('Your folder is your own worktree and stays yours across tasks.');
+      expect(message).toContain('Before changing application code, locate');
+    } finally {
+      h.db.close();
+    }
+  });
 
   test('supplies recorded identity to follow-ups without guessing missing start metadata', async () => {
     const h = setup();

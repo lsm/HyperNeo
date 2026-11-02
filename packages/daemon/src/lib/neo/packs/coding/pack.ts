@@ -1,3 +1,4 @@
+import { withCodingWorkerStartBrief } from './worker-worktree-brief.ts';
 import { createCodingHumanMergeOperation } from './human-merge-operation.ts';
 import { createCodingDaemonMergeSweep } from './daemon-merge-sweep.ts';
 import { checkCodingPrApproved } from './pr-approved.ts';
@@ -219,6 +220,7 @@ export function createCodingPack(deps: {
       ),
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
     workerRules: NEO_PACK_CODING_WORKER_RULES,
+    workerStartBrief: withCodingWorkerStartBrief,
     workerBrief: (instruction, identity) =>
       withCodingWorkerProvenance(workerContext(instruction), identity),
     workGoal: (instruction, goal) => workerContext(withCodingWorkGoal(instruction, goal)),

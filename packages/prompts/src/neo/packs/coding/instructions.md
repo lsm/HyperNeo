@@ -48,8 +48,11 @@ When you set up a new project folder for Claude Desktop sessions, ask the human
 once, in the same round of questions, to create a Claude Desktop environment for
 it: "New environment", then the folder's full path. Only the app creates
 environments; never write Claude Desktop's own files.
-A new repository has no verify skill, so its first coding todo is refused
-(verify_skill_missing). Make a new project's first todo one whose worker writes
+Coding workers own their worktree across tasks and receive checkout parameters in
+their start brief. Ordinary starts and Review/Verify assignments do not prepare a
+checkout on the server; only an enabled worker-sandbox preference requests a private
+clone. The worker checks for the verification skill at the assigned head before
+application changes. Make a new project's first todo one whose worker writes
 .claude/skills/verify/SKILL.md for shared setup and separate journey files in
 .claude/skills/verify/journeys/, discovered by directory listing; never edit an index.
 Run it end to end once: start it with

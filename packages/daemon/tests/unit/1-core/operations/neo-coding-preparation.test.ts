@@ -15,10 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { QA_SYSTEM_CONTRACT, REVIEWER_SYSTEM_CONTRACT } from '@hyperneo/prompts';
-import {
-  prepareCodingExecution,
-  requireVerifySkill,
-} from '../../../../src/lib/neo/packs/coding/prepare-execution';
+import { prepareCodingExecution } from '../../../../src/lib/neo/packs/coding/prepare-execution';
 
 const roots: string[] = [];
 const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
@@ -530,53 +527,5 @@ describe('prepareCodingExecution', () => {
     const result = await prepareCodingExecution(f.request, f.effects);
     expect(result.ok).toBe(false);
     expect(readFileSync(f.destination, 'utf8')).toBe('existing content');
-  });
-});
-
-describe('requireVerifySkill', () => {
-  test.each([
-    ['a column-0 fence', '```md\n## Verify\n```\n', false],
-    ['an indented fence', '   ~~~\n## Verify\n   ~~~\n', false],
-    ['an unclosed fence', '```\n## Verify\nrun it\n', false],
-    ['a heading after a closed fence', '```\nx\n```\n\n## Verify\n', true],
-    ['a 4-backtick fence around a 3-backtick line', '````\n```\n## Verify\n````\n', false],
-    ['a heading after a 4-backtick fence with an inner line', '````\n```\n````\n## Verify\n', true],
-    ['a closer with trailing text', '```\n``` not a closer\n## Verify\n```\n', false],
-    ['a bare hash before a Verify paragraph', '#\n\nVerify changes with make check.\n', false],
-    ['a hash with no space', '#Verify\n', false],
-    ['an indented heading', '  ## Verify\n', true],
-    ['a CRLF fence', '```md\r\n## Verify\r\n```\r\n', false],
-    ['a CRLF heading', '## Verify\r\nRun it.\r\n', true],
-  ])('a Verify heading in %s counts only outside code', (_case, doc, passes) => {
-    const listed = { code: 0, stdout: 'AGENTS.md\n', stderr: '' };
-    const agents = { code: 0, stdout: `# Repo\n\n${doc}`, stderr: '' };
-    expect('value' in requireVerifySkill(undefined, listed, agents)).toBe(passes);
-  });
-});
-
-test.each([
-  ['.claude/skills/verify/SKILL.md', true],
-  ['.claude/skills/verify-ui/SKILL.md', true],
-  ['.claude/skills/verify/nested/SKILL.md', false],
-  ['docs/.claude/skills/verify/SKILL.md', false],
-  ['.claude/skills/Verify/SKILL.md', false],
-])('verify preflight recognizes tracked path %s: %s', (path, accepted) => {
-  const result = requireVerifySkill(undefined, { code: 0, stdout: `${path}\n`, stderr: '' }, null);
-  expect('value' in result).toBe(accepted);
-});
-
-test('verify create bypasses read failures, but every other mode requires a readable listing', () => {
-  const failed = { code: 1, stdout: '', stderr: '  unavailable \n' };
-  const agents = { code: 0, stdout: '## Verify\n', stderr: '' };
-  expect(requireVerifySkill('create', failed, null)).toEqual({ value: true });
-  for (const mode of [undefined, 'Create', 'skip', true]) {
-    expect(requireVerifySkill(mode, failed, agents)).toEqual({
-      reason: { ok: false, reason: 'verify_skill_unreadable: unavailable' },
-    });
-  }
-  expect(
-    requireVerifySkill(undefined, { ...failed, code: 0 }, { ...agents, code: 1 })
-  ).toMatchObject({
-    reason: { ok: false, reason: expect.stringContaining('verify_skill_missing:') },
   });
 });

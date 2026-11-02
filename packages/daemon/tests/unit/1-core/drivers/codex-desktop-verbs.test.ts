@@ -1,3 +1,4 @@
+import { createPushedWorkerRepo } from '../../../helpers/native-worker-worktree';
 import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -403,34 +404,9 @@ describe('codex-desktop adapter status and send', () => {
   test.each(['clean', 'dirty', 'unpushed'])(
     'archive removes only a clean pushed owned worktree: %s',
     async (state) => {
-      const repo = join(dir, 'repo'),
-        origin = join(dir, 'origin.git'),
-        worktrees = join(dir, 'worktrees'),
+      const { repo, git } = createPushedWorkerRepo(dir);
+      const worktrees = join(dir, 'worktrees'),
         folder = join(worktrees, 'worker');
-      mkdirSync(repo);
-      const git = (...args: string[]) => {
-        const result = spawnSync(
-          'git',
-          ['-C', repo, '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', ...args],
-          { encoding: 'utf8' }
-        );
-        expect(result.status).toBe(0);
-        return result.stdout.trim();
-      };
-      git('init', '-b', 'dev');
-      git('init', '--bare', origin);
-      git(
-        '-c',
-        'user.name=Synthetic',
-        '-c',
-        'user.email=synthetic@example.invalid',
-        'commit',
-        '--allow-empty',
-        '-m',
-        'initial'
-      );
-      git('remote', 'add', 'origin', origin);
-      git('push', '-u', 'origin', 'dev');
       git('worktree', 'add', '--detach', folder, 'HEAD');
       if (state === 'dirty') writeFileSync(join(folder, 'keep.txt'), 'uncommitted');
       if (state === 'unpushed')
