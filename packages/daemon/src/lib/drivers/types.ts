@@ -140,6 +140,7 @@ export function workResultSchema<Value extends z.ZodType>(value: Value) {
 }
 
 export const WorkInputSchema = z.object({
+  inputId: z.string().optional(),
   at: z.number(),
   text: z.string(),
   human: z.boolean().optional(),

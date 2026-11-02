@@ -27,11 +27,20 @@ export class NeoTurnReportReceipts {
     dispatchId: string,
     ref: WorkRef,
     live: Live,
-    turn: { id: string; at: number; startedAt?: number; senderMachine?: string; message: string },
+    turn: {
+      id: string;
+      at: number;
+      startedAt?: number;
+      senderMachine?: string;
+      message: string;
+      humanInput?: string;
+    },
     recipient: string
   ) {
     const scope = [todoId, dispatchId, ref.adapter, ref.id, ref.daemon ?? null];
-    const hash = neoDerivedId(turn.message);
+    const hash = neoDerivedId(
+      turn.humanInput === undefined ? turn.message : JSON.stringify([turn.humanInput, turn.message])
+    );
     const key = neoDerivedId(JSON.stringify(['neo-turn-observed-v2', ...scope, turn.id]));
     const observation =
       this.receipts.submissionReceipt<Observation>(key, 'v2') ??
@@ -63,6 +72,7 @@ export class NeoTurnReportReceipts {
         )
       : localSender;
     if (
+      turn.humanInput === undefined &&
       turn.startedAt !== undefined &&
       (await gatewayFor(this.db).call(sentDuringTurn, 'sentDuringTurn', {
         sender,

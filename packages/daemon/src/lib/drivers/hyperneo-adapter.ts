@@ -410,24 +410,25 @@ export function readHyperneoInputs(db: BunDatabase, id: string, since?: number):
     since === undefined
       ? db
           .prepare(
-            `SELECT timestamp, ${sdkMessageBodyAt('sdk_messages.rowid')} AS message FROM sdk_messages
+            `SELECT sdk_uuid AS inputId, timestamp, ${sdkMessageBodyAt('sdk_messages.rowid')} AS message FROM sdk_messages
               WHERE session_id = ? AND ${LANDED_INPUT} ORDER BY timestamp DESC LIMIT ${TAIL_INPUTS}`
           )
           .all(id)
           .reverse()
       : db
           .prepare(
-            `SELECT timestamp, ${sdkMessageBodyAt('sdk_messages.rowid')} AS message FROM sdk_messages
+            `SELECT sdk_uuid AS inputId, timestamp, ${sdkMessageBodyAt('sdk_messages.rowid')} AS message FROM sdk_messages
               WHERE session_id = ? AND timestamp > ? AND ${LANDED_INPUT}
               ORDER BY timestamp ASC LIMIT ${INPUTS_AFTER}`
           )
           .all(id, new Date(since).toISOString())
-  ) as { timestamp: string; message: string }[];
+  ) as { inputId: string; timestamp: string; message: string }[];
   const inputs = rows.flatMap((row) => {
     const input = workInput(
       workEntryTime(row.timestamp),
       hyperneoInputText(row.message),
-      JSON.parse(row.message).inputKind === 'human'
+      JSON.parse(row.message).inputKind === 'human',
+      row.inputId
     );
     return input ? [input] : [];
   });
@@ -452,7 +453,7 @@ function projectHyperneoExchange(rows: HyperneoExchangeRow[], since: number) {
 export function readHyperneoExchange(db: BunDatabase, id: string, since: number) {
   const rows = db
     .prepare(
-      `SELECT timestamp, ${sdkMessageBodyAt('sdk_messages.rowid')} AS message, message_type FROM sdk_messages
+      `SELECT sdk_uuid AS inputId, timestamp, ${sdkMessageBodyAt('sdk_messages.rowid')} AS message, message_type FROM sdk_messages
       WHERE session_id = ? AND timestamp > ? AND parent_tool_use_id IS NULL
         AND COALESCE(internal_compaction_turn, 0) = 0
         AND (message_type = 'result' OR (message_type = 'user'

@@ -1320,7 +1320,7 @@ describe('claudeTranscriptState', () => {
     const user = (timestamp: string, fields: Record<string, unknown>) =>
       JSON.stringify({ type: 'user', timestamp, ...fields });
     const state = claudeTranscriptState([
-      user('2026-10-08T10:00:00.000Z', { message: { content: 'typed' } }),
+      user('2026-10-08T10:00:00.000Z', { uuid: 'typed-input', message: { content: 'typed' } }),
       user('2026-10-08T10:01:00.000Z', {
         isMeta: true,
         turnOrigin: 'system',
@@ -1336,7 +1336,12 @@ describe('claudeTranscriptState', () => {
     expect(state).toEqual({
       reply: null,
       inputs: [
-        { at: Date.parse('2026-10-08T10:00:00.000Z'), text: 'typed', human: true },
+        {
+          at: Date.parse('2026-10-08T10:00:00.000Z'),
+          text: 'typed',
+          human: true,
+          inputId: 'typed-input',
+        },
         { at: Date.parse('2026-10-08T10:01:00.000Z'), text: 'notice', human: false },
       ],
       lastAt: Date.parse('2026-10-08T10:03:00.000Z'),

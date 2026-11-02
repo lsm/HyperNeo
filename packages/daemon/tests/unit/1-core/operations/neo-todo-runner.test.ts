@@ -261,6 +261,81 @@ describe('neo todo runner', () => {
     }
   });
 
+  test.each([
+    'before-start',
+    'shared-dispatch',
+    'closed-ask',
+    'explicit-send',
+    'sent-receipt',
+    'agent-fallback',
+  ])('classifies the initiating input without losing receipt protection: %s', async (scenario) => {
+    const h = setup(false);
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      await h.runner.start(todo.id);
+      const at = Date.now() + 100;
+      const neo = ['shared-dispatch', 'sent-receipt'].includes(scenario);
+      const inputId = neo ? 'other-neo-input' : 'human-input';
+      if (scenario === 'shared-dispatch') {
+        const other = h.add(null, null);
+        const dispatch = await h.sessions.inputs.accept(
+          other.id,
+          'neo',
+          { verb: 'send', ref },
+          'Neo request',
+          at
+        );
+        await h.sessions.inputs.recordOutcome(
+          dispatch,
+          { ref, receipt: { executionId: ref.id, inputId } },
+          at
+        );
+      }
+      if (scenario === 'sent-receipt')
+        h.sessions.recordSent(todo.id, {
+          inputBefore: at,
+          opening: 'Neo request',
+          receipt: { executionId: ref.id, inputId },
+        });
+      if (scenario === 'closed-ask')
+        h.db.prepare("UPDATE neo_asks SET status='done' WHERE id='ask'").run();
+      if (scenario === 'explicit-send')
+        h.db
+          .prepare(`INSERT INTO neo_session_messages
+          (conversation_id,message_id,from_session,to_session,text,created_at)
+          VALUES ('conversation','human-turn-milestone','worker-1','neo','Worker says done',?)`)
+          .run(new Date(at + 10).toISOString());
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: at + 100,
+          recentInputs: [
+            { at, text: 'Direct user instruction', human: scenario !== 'agent-fallback', inputId },
+          ],
+          turnEnds: [
+            {
+              id: 'origin-case',
+              startedAt: at + (scenario === 'before-start' ? 1 : 0),
+              at: at + 100,
+              message: 'Done with direct work',
+            },
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      await h.runner.refresh(() => {});
+      const humanReports = h.told.filter((note) => note.startsWith('The human worked directly'));
+      expect(humanReports).toHaveLength(
+        neo || ['closed-ask', 'agent-fallback'].includes(scenario) ? 0 : 1
+      );
+      if (neo)
+        expect(h.told.filter((note) => note.startsWith('Worker turn report'))).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('a refused check stamp preserves the prior worker status and needs-you incident', async () => {
     const h = setup();
     try {

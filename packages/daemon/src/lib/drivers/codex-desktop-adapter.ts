@@ -456,7 +456,8 @@ export function codexRecentInputs(lines: readonly string[], since?: number): Wor
         text,
         !text.includes(WORK_AGENT_INPUT) &&
           !text.includes('Neo routed this to you:') &&
-          !text.startsWith('# AGENTS.md instructions')
+          !text.startsWith('# AGENTS.md instructions'),
+        codexUserInput(entry)?.id
       );
       return input ? [input] : [];
     }),

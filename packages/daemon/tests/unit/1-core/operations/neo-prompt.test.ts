@@ -48,9 +48,10 @@ describe('root Neo system prompt', () => {
   });
 
   test('assembles core guidance with the short root, replacing the Claude Code preset', () => {
-    expect(neoPrompt([])).toBe(
-      `${NEO_ROOT_PROMPT}\n\n${NEO_FOCUSED_DISCUSSION}\n\n${NEO_ROOT_TURN_END}`
+    expect(neoPrompt([]).startsWith(`${NEO_ROOT_PROMPT}\n\n${NEO_FOCUSED_DISCUSSION}\n\n`)).toBe(
+      true
     );
+    expect(neoPrompt([]).endsWith(NEO_ROOT_TURN_END)).toBe(true);
     expect(neoPrompt([])).not.toContain(NEO_GOAL_CYCLE);
     expect(neoPrompt([])).toContain('Your Bash commands are capped at 2 minutes');
     expect(NEO_ROOT_TURN_END).toContain('On a scheduled goal wake');
@@ -127,6 +128,20 @@ describe('root Neo system prompt', () => {
       expect(prompt).toMatch(/human.{0,35}(?:named path|own message)/u);
     }
   );
+
+  test('handles direct human work as matter news without repeating the assignment', () => {
+    const prompt = neoPrompt([]);
+    for (const rule of [
+      'the human worked directly in a worker',
+      'record new work the human started as a todo on that ask',
+      'Do not assign again',
+      'stay quiet',
+      'tools and access this instance actually has',
+      'password-manager tools',
+      'concrete next step',
+    ])
+      expect(prompt).toContain(rule);
+  });
 
   test('gives questions and publications the same concise Markdown guidance', () => {
     const prompt = neoPrompt([]);

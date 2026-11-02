@@ -96,11 +96,18 @@ export class WorkDeliveryInputRepository {
     return gatewayFor(this.db).run(recordWorkDeliveryOutcome, { id, outcome, now });
   }
 
-  list(todoId: string) {
+  list(scope: string | { adapter: string; id: string; daemon?: string }) {
+    const where =
+      typeof scope === 'string'
+        ? 'todo_id = ?'
+        : `json_extract(outcome, '$.ref.adapter') = ? AND json_extract(outcome, '$.ref.id') = ?
+        AND json_extract(outcome, '$.ref.daemon') IS ?`;
+    const params =
+      typeof scope === 'string' ? [scope] : [scope.adapter, scope.id, scope.daemon ?? null];
     return (
       this.db
-        .prepare(`${SELECT} WHERE todo_id = ? ORDER BY accepted_at, rowid`)
-        .all(todoId) as InputRow[]
+        .prepare(`${SELECT} WHERE ${where} ORDER BY accepted_at, rowid`)
+        .all(...params) as InputRow[]
     ).map(readInput);
   }
 
