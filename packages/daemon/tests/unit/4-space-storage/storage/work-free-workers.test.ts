@@ -7,6 +7,7 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import {
   markWorkUnusable,
   readFreeWorkers,
+  readAskWorkers,
   readStartedWork,
   recordStartedWork,
 } from '../../../../src/storage/work-started-sessions.ts';
@@ -203,6 +204,22 @@ describe('worker reuse eligibility', () => {
     markWorkUnusable(db, { adapter: 'claude-desktop', id: 'z-latest-owner' });
     expect(owned('step')).toEqual(['a-old-owner']);
   });
+  test('unavailable owned workers still count as bound to their matter', () => {
+    bind('unavailable-step', 'unavailable-owner', 'done');
+    track('unavailable-owner', 'unavailable-step', 3);
+    markWorkUnusable(db, { adapter: 'claude-desktop', id: 'unavailable-owner' });
+    expect(readAskWorkers(db, 'claude-desktop', 'unavailable-step', 'neo').size).toBe(0);
+    expect([
+      ...Reflect.apply(readAskWorkers, undefined, [
+        db,
+        'claude-desktop',
+        'unavailable-step',
+        'neo',
+        true,
+      ]),
+    ]).toEqual(['unavailable-owner']);
+  });
+
   test('prepared review and QA actors never become reusable authors', () => {
     bind('prepared', 'prepared-reviewer', 'done');
     track('prepared-reviewer', 'prepared', 3, false);

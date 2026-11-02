@@ -30,7 +30,8 @@ function harness(
     requestedProvider?: string;
     unresolvedDefault?: boolean;
   },
-  owned: string[] = []
+  owned: string[] = [],
+  bound: string[] = owned
 ) {
   const sent: string[] = [];
   const messages: string[] = [];
@@ -129,7 +130,7 @@ function harness(
       remote: { list: () => [], invoke: async () => ({}) },
       daemonName: 'imac',
       freeWorkers: () => new Set(free),
-      ...{ askWorkers: () => new Set(owned) },
+      ...{ askWorkers: () => new Set(owned), boundWorkers: () => new Set(bound) },
       recordStarted: (ref: WorkRef, input?: { todoId?: string }) =>
         void recorded.push({ ref, todoId: input?.todoId }),
       markUnusable: (ref) => void unusable.push(ref),
@@ -530,6 +531,23 @@ describe('matter-bound reuse through work.start', () => {
       'same-folder-free'
     );
     expect(run.sent).toEqual(['same-folder-free']);
+  });
+
+  test('starts fresh when its bound worker is unavailable rather than borrowing another matter', async () => {
+    const run = harness(
+      [
+        { id: 'unavailable-owned', status: 'done' },
+        { id: 'free-other-matter', status: 'done' },
+      ],
+      ['free-other-matter'],
+      undefined,
+      [],
+      ['unavailable-owned']
+    );
+    expect((await run.start(neo, false, { todoId: 'unavailable-next' })).value?.ref.id).toBe(
+      'fresh'
+    );
+    expect(run.sent).toEqual([]);
   });
 
   test('reserves a worker for this ask before a delivery with an unknown outcome', async () => {

@@ -8,6 +8,7 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import type { Result, WorkStarted } from '../../../packages/daemon/src/lib/drivers/types.ts';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
+import { markWorkUnusable } from '../../../packages/daemon/src/storage/work-started-sessions.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 
 const run = resolve(process.argv[2]);
@@ -67,7 +68,12 @@ try {
   const before=sessions();const same=await start('same matter next step',neo);await settle([same.id]);
   assert.equal(same.id,first.id,'reuse the idle worker already owned by this ask');assert(same.reused);assert.equal(sessions(),before);
   const humanStart=await start('human',human);assert.notEqual(humanStart.id,first.id);assert(!humanStart.reused);
-  writeFileSync(join(run,'evidence/worker-matter.json'),JSON.stringify({...observed,same,humanStart,sessionsBeforeReuse:before,sessionsAfterReuse:before,pass:true},null,2));
+  await settle([humanStart.id]);
+  markWorkUnusable(db,{adapter:'hyperneo',id:first.id});
+  const beforeUnavailable=sessions();const afterUnavailable=await start('unavailable own worker',neo);
+  assert.notEqual(afterUnavailable.id,humanStart.id,'an unavailable owned worker requires a fresh worker rather than borrowing a free worker');
+  assert(!afterUnavailable.reused);assert.equal(sessions(),beforeUnavailable+1);
+  writeFileSync(join(run,'evidence/worker-matter.json'),JSON.stringify({...observed,same,humanStart,afterUnavailable,sessionsBeforeReuse:before,sessionsAfterReuse:before,pass:true},null,2));
   console.log('PASS real work.start keeps completed-todo workers on their open ask, reuses the same matter, and keeps human starts fresh');
 
 } finally {
