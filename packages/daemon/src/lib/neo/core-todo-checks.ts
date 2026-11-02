@@ -45,12 +45,45 @@ function doneWhen(rule: NeoTodoCheck) {
   return parsed?.success ? sentence(parsed.data) : null;
 }
 
+type CheckDraft = Pick<NeoTodo, 'check'> & { id?: string };
+const invalid =
+  'invalid_core_check: use human_confirmed {questionId}, evidence {path: absolute file path}, or deployed {repo: lsm/HyperNeo, sha: full commit}.';
+const admit = (superpipe({})('neo.todo.core-admission') as PipelineAPI)
+  .input(['draft', 'peers'])
+  .pipe(
+    (draft: CheckDraft) => {
+      const parsed = draft.check?.pack === 'core' ? Check.safeParse(draft.check) : null;
+      return parsed?.success ? { value: parsed.data } : { reason: { refusal: invalid } };
+    },
+    'draft',
+    'result:refusal'
+  )
+  .pipe(
+    (check: CoreCheck, draft: CheckDraft, peers: readonly NeoTodo[]) => {
+      const artifact =
+        check.kind === 'evidence' && 'artifact' in check.params ? check.params.artifact : null;
+      return {
+        refusal:
+          artifact &&
+          !peers.some(
+            (peer) =>
+              peer.id === draft.id &&
+              peer.check?.pack === 'core' &&
+              peer.check.kind === 'evidence' &&
+              peer.check.params.artifact === artifact
+          )
+            ? invalid
+            : null,
+      };
+    },
+    ['refusal', 'draft', 'peers'],
+    'refusal'
+  )
+  .end('refusal') as (draft: CheckDraft, peers: readonly NeoTodo[]) => { refusal: string | null };
+
 export const coreTodoPolicy = {
   doneWhen,
-  refuse: (draft: Pick<NeoTodo, 'check'>) =>
-    doneWhen(draft.check!)
-      ? null
-      : 'invalid_core_check: use human_confirmed {questionId}, evidence {path: absolute file path}, or deployed {repo: lsm/HyperNeo, sha: full commit}.',
+  refuse: (draft: CheckDraft, peers: readonly NeoTodo[] = []) => admit(draft, peers).refusal,
 };
 
 export function createCoreTodoPack(db: Database, contains: Contains): NeoPack {

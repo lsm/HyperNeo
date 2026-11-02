@@ -138,6 +138,11 @@ try {
   assert.equal(store.listTodos('ask').length,countBeforeLegacyAdmission);
   const artifactTodo=store.addTodo('legacy-artifact-todo','ask',{title:'Legacy evidence',doneWhen:'Registered artifact synthetic-artifact exists.',instruction:null,named:null,check:{pack:'core',kind:'evidence',params:{artifact:'synthetic-artifact'}}},Date.now());
   await close(artifactTodo, 'blocked');
+  const unchangedLegacy=await rpc('neo.todo.edit',{todoId:artifactTodo.id,check:artifactTodo.check});
+  assert.equal(unchangedLegacy.ok,true,JSON.stringify(unchangedLegacy));
+  const replacedLegacy=await rpc('neo.todo.edit',{todoId:artifactTodo.id,check:{pack:'core',kind:'evidence',params:{artifact:'different'}}});
+  assert.equal(replacedLegacy.ok,false,JSON.stringify(replacedLegacy));
+  assert.deepEqual(store.getTodo(artifactTodo.id)?.check,artifactTodo.check);
   const artifacts = new ArtifactFileRepository(db);
   artifacts.save(
     { kind: 'ask', id: 'ask' },
