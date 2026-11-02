@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { fstatSync, read, type BigIntStats } from 'node:fs';
 import { homedir } from 'node:os';
 import { promisify } from 'node:util';
@@ -11,6 +11,7 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import { isLocalUser } from '../operations/caller.ts';
 import { withArtifactDescriptor } from '../runtime-artifact-open.ts';
 import { resolveArtifactSource } from './file-policy.ts';
+import { liveFileByteLimit, prepareLiveFileContent } from './live-file-content.ts';
 
 const inputSchema = z
   .strictObject({
@@ -33,9 +34,12 @@ const inputSchema = z
   );
 type Input = z.infer<typeof inputSchema>;
 const refusal = (reason = 'forbidden') => ({ accepted: false as const, reason });
+const readEpoch = randomUUID();
 const fileVersion = (stat: BigIntStats) => {
   return createHash('sha256')
-    .update([stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs, stat.nlink].join(':'))
+    .update(
+      [readEpoch, stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs, stat.nlink].join(':')
+    )
     .digest('hex');
 };
 
@@ -70,8 +74,8 @@ export function createLiveFileRead(
     caller: OperationCaller
   ) {
     const extension = plan.relativePath.split('.').at(-1)?.toLowerCase() ?? '';
-    if (!['md', 'markdown', 'txt', 'json', 'jsonl', 'log', 'csv', 'css'].includes(extension))
-      return refusal('unsupported_type');
+    const limit = liveFileByteLimit(extension);
+    if (limit === null) return refusal('unsupported_type');
     let missing = false;
     const result = await withArtifactDescriptor(
       plan.root,
@@ -82,8 +86,7 @@ export function createLiveFileRead(
         const size = Number(initial.size);
         const version = fileVersion(initial);
         if (input.version && input.version !== version) return refusal('file_changed');
-        if (size > 2097152) return refusal('size_limit');
-        if (input.offset > size) return refusal('invalid_offset');
+        if (size > limit) return refusal('size_limit');
         const content = Buffer.alloc(size);
         for (let position = 0; position < content.length; ) {
           const { bytesRead } = await readBytes(
@@ -98,20 +101,18 @@ export function createLiveFileRead(
         }
         if (fileVersion(fstatSync(fd, { bigint: true })) !== version)
           return refusal('file_changed');
-        try {
-          new TextDecoder('utf-8', { fatal: true }).decode(content);
-        } catch {
-          return refusal('unsupported_type');
-        }
-        if (content.includes(0)) return refusal('unsupported_type');
-        const chunk = content.subarray(input.offset, input.offset + input.maxBytes);
+        const prepared = prepareLiveFileContent(content, extension);
+        if ('reason' in prepared) return refusal(prepared.reason);
+        const { bytes: document, ...metadata } = prepared.value;
+        if (input.offset > document.length) return refusal('invalid_offset');
+        const chunk = document.subarray(input.offset, input.offset + input.maxBytes);
         return {
           accepted: true as const,
-          kind: ['md', 'markdown'].includes(extension) ? 'markdown' : 'text',
+          ...metadata,
           version,
-          byteLength: content.length,
+          byteLength: document.length,
           nextOffset: input.offset + chunk.length,
-          complete: input.offset + chunk.length === content.length,
+          complete: input.offset + chunk.length === document.length,
           data: chunk.toString('base64'),
         };
       },
@@ -146,7 +147,7 @@ export function createLiveFileRead(
   return defineOperation({
     name: 'file.reference.read',
     description:
-      'Paired-human current text/Markdown read from an exact reference in a readable stored source. No registration or copy. Returns at most 256 KiB decoded bytes from a file of at most 2 MiB; continue with nextOffset and version. Reopen without version for current content. A changed version requires discarding partial bytes and reopening.',
+      'Paired-human current text/Markdown, sanitized HTML or raster image read from an exact reference in a readable stored source. No registration or copy. Returns at most 256 KiB decoded bytes from text/HTML of at most 2 MiB or raster images of at most 32 MiB/16 million pixels; HTML is sanitized before chunking and must render in an opaque-origin sandbox, without scripts or automatic external assets; continue with nextOffset and version. Reopen without version for current content. A changed version requires discarding partial bytes and reopening.',
     inputSchema,
     resultSchema: z.union([
       z.strictObject({
@@ -164,7 +165,15 @@ export function createLiveFileRead(
       }),
       z.strictObject({
         accepted: z.literal(true),
-        kind: z.enum(['text', 'markdown']),
+        kind: z.enum(['text', 'markdown', 'html', 'image']),
+        mediaType: z.enum(['image/png', 'image/jpeg', 'image/gif', 'image/webp']).optional(),
+        width: z.number().int().positive().optional(),
+        height: z.number().int().positive().optional(),
+        scriptsRemoved: z.boolean().optional(),
+        links: z
+          .array(z.strictObject({ text: z.string().max(200), href: z.string() }))
+          .max(200)
+          .optional(),
         version: z.string().regex(/^[a-f0-9]{64}$/),
         byteLength: z.number().int().nonnegative(),
         nextOffset: z.number().int().nonnegative(),
