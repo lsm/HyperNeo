@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import MarkdownRenderer from '../../chat/MarkdownRenderer.tsx';
+import { ownerPathLabel } from '../../../lib/owner-path-label.ts';
 import { FileReferenceCards } from '../FileReferenceCards.tsx';
 import { systemState } from '../../../lib/state.ts';
 import type { Signal } from '@preact/signals';
@@ -82,4 +83,30 @@ it('shortens file-card tooltips but preserves their exact encoded reference targ
     reference,
     source: { kind: 'publication', id: 'p' },
   });
+});
+
+it('leaves a known remote owner untouched and never adds an interaction to display-only text', async () => {
+  const view = render(<MarkdownRenderer content={`\`${path}\``} />);
+  expect(await screen.findByText('~/reports/current.md')).toBeTruthy();
+  expect(screen.queryByRole('link')).toBeNull();
+  view.rerender(<MarkdownRenderer content={`\`${path}\``} referenceHome={null} />);
+  expect(await screen.findByText(path)).toBeTruthy();
+  view.unmount();
+  render(
+    <FileReferenceCards
+      text={path}
+      source={{ kind: 'publication', id: 'remote' }}
+      ownerHome={null}
+    />
+  );
+  expect(screen.getByTitle(path)).toBeTruthy();
+});
+
+it.each([
+  ['/home/owner/report.md', '/home/owner/', '~/report.md'],
+  ['/home/owner-other/report.md', '/home/owner', '/home/owner-other/report.md'],
+  ['/home/owner', '/home/owner', '~'],
+  ['/report.md', '/', '~/report.md'],
+])('uses the exact owner boundary for %s', (path, home, expected) => {
+  expect(ownerPathLabel(path, home)).toBe(expected);
 });

@@ -4,6 +4,7 @@ import { useEffect } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { applyLanguage } from '../lib/i18n/index.ts';
 import { connectionState } from '../lib/state.ts';
+import { globalStore } from '../lib/global-store.ts';
 
 export function useNeoLanguageSetting(): void {
   const connected = connectionState.value === 'connected';
@@ -19,6 +20,7 @@ export function useNeoLanguageSetting(): void {
     void hub
       .request<GlobalSystemSnapshot>(STATE_CHANNELS.GLOBAL_SNAPSHOT, GLOBAL_SYSTEM_SNAPSHOT_REQUEST)
       .then((snapshot) => {
+        if (active) globalStore.systemState.value = snapshot.system ?? null;
         if (active && !updated) applyLanguage(snapshot.settings?.settings?.language);
       })
       .catch(() => {});

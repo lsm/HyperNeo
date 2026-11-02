@@ -216,6 +216,7 @@ function TodoRow({
         )}
         <FileReferenceCards
           source={{ kind: 'todo', id: todo.id }}
+          ownerHome={todo.worker?.daemon ? null : undefined}
           text={[
             todo.title,
             number === undefined ? neoTodoStatus(todo) : todo.doneWhen,
@@ -252,6 +253,7 @@ function SettledQuestionBody({ question }: { question: NeoQuestionEntry }) {
   return (
     <>
       <MarkdownRenderer
+        referenceHome={question.sourceSession?.daemon ? null : undefined}
         content={clipped ? `${preview.trimEnd()} …` : text}
         class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
       />
@@ -269,6 +271,7 @@ function SettledQuestionBody({ question }: { question: NeoQuestionEntry }) {
       {open && (
         <Modal isOpen onClose={close} title={t('question.readAll')} size="xl">
           <MarkdownRenderer
+            referenceHome={question.sourceSession?.daemon ? null : undefined}
             content={text}
             class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
           />
@@ -277,6 +280,7 @@ function SettledQuestionBody({ question }: { question: NeoQuestionEntry }) {
       <QuestionDocument question={question} />
       <FileReferenceCards
         source={{ kind: 'question', id: question.id }}
+        ownerHome={question.sourceSession?.daemon ? null : undefined}
         text={[neoQuestionText(question), question.document ?? ''].join('\n')}
       />
       <ArtifactCards artifacts={question.artifacts} />
@@ -361,12 +365,14 @@ function QuestionBox({
         </div>
       )}
       <MarkdownRenderer
+        referenceHome={question.sourceSession?.daemon ? null : undefined}
         content={neoQuestionText(question)}
         class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
       />
       <QuestionDocument question={question} />
       <FileReferenceCards
         source={{ kind: 'question', id: question.id }}
+        ownerHome={question.sourceSession?.daemon ? null : undefined}
         text={[neoQuestionText(question), question.document ?? ''].join('\n')}
       />
       <ArtifactCards artifacts={question.artifacts} />

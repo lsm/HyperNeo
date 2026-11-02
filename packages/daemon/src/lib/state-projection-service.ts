@@ -1,4 +1,5 @@
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
+import { homedir } from 'node:os';
 import type { MessageHub, AgentProcessingState, IClientEventGateway } from '@hyperneo/shared';
 import type { SessionManager } from './session-manager.ts';
 import type { AuthManager } from './auth-manager.ts';
@@ -296,6 +297,7 @@ export class StateProjectionService {
       maxSessions: this.config.maxSessions,
       storageLocation: this.config.dbPath,
       workspaceRoot: this.config.workspaceRoot,
+      homeDirectory: homedir(),
 
       auth: authStatus,
 

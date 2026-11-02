@@ -9,6 +9,8 @@ import {
   openArtifactPreview,
 } from '../../lib/artifact-preview-store.ts';
 import { t } from '../../lib/i18n/index.ts';
+import { systemState } from '../../lib/state.ts';
+import { ownerPathLabel } from '../../lib/owner-path-label.ts';
 
 const fileReferences = (superpipe({})('public-file-reference-cards') as PipelineAPI)
   .input(['text'])
@@ -23,21 +25,25 @@ const fileReferences = (superpipe({})('public-file-reference-cards') as Pipeline
 export function FileReferenceCards({
   text,
   source,
+  ownerHome,
 }: {
   text: string;
   source: ArtifactPreviewSource;
+  ownerHome?: string | null;
 }) {
+  const home = ownerHome === undefined ? systemState.value?.homeDirectory : ownerHome;
   const files = useMemo(() => fileReferences(text), [text]);
   if (!files.length) return null;
   return (
     <ul aria-label={t('artifact.fileReferences')} class="mt-3 flex flex-col items-start gap-1.5">
       {files.map(({ reference, path }) => {
         const title = path.split('/').at(-1) || reference;
+        const label = ownerPathLabel(path, home);
         return (
           <li key={reference} class="max-w-full">
             <button
               type="button"
-              title={reference}
+              title={label === path ? reference : label}
               aria-label={t('artifact.openCurrentNamed', { name: title })}
               onClick={() => openArtifactPreview({ kind: 'reference', source, reference }, title)}
               class="max-w-full break-words rounded-lg border border-line px-3 py-1.5 text-left text-sm hover:bg-fill-soft"

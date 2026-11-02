@@ -30,6 +30,7 @@ export interface SystemState {
   maxSessions: number;
   storageLocation: string;
   workspaceRoot?: string;
+  homeDirectory?: string;
 
   auth: AuthStatus;
 
