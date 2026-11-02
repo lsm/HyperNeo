@@ -19,7 +19,14 @@ function harness(
     refusal?: 'not_open' | 'uncertain' | 'throws';
   }[],
   free: string[],
-  config?: { adapter: string; model?: string; effort?: string; unavailable?: boolean }
+  config?: {
+    adapter: string;
+    model?: string;
+    effort?: string;
+    unavailable?: boolean;
+    provider?: string;
+    requestedProvider?: string;
+  }
 ) {
   const sent: string[] = [];
   const messages: string[] = [];
