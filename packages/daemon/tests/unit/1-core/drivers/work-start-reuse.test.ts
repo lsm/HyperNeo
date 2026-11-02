@@ -28,20 +28,24 @@ function harness(
     provider?: string;
     requestedProvider?: string;
     unresolvedDefault?: boolean;
-  }
+  },
+  owned: string[] = []
 ) {
   const sent: string[] = [];
   const messages: string[] = [];
   const started: string[] = [];
   const unusable: WorkRef[] = [];
+  const recorded: { ref: WorkRef; todoId?: string }[] = [];
   const adapter: WorkAdapter = {
     id: config?.adapter ?? 'claude-desktop',
     supportsStartEffort: true,
+    supportsStartPreparation: true,
     resolveStartConfiguration: config
       ? async (request) => {
-          if (config.unresolvedDefault) return null;
+          if (config.unresolvedDefault && !request.model) return null;
           const selected = workStartConfiguration.select(request, [
             { id: 'gpt-6.1-sol', aliases: ['Sol 6.1'], efforts: ['high', 'low'], isDefault: true },
+            { id: 'older-model', efforts: ['high', 'low'] },
           ]);
           return 'ok' in selected
             ? selected
@@ -123,13 +127,22 @@ function harness(
       remote: { list: () => [], invoke: async () => ({}) },
       daemonName: 'imac',
       freeWorkers: () => new Set(free),
+      ...{ askWorkers: () => new Set(owned) },
+      recordStarted: (ref: WorkRef, input?: { todoId?: string }) =>
+        void recorded.push({ ref, todoId: input?.todoId }),
       markUnusable: (ref) => void unusable.push(ref),
     })
   );
   const start = async (
     caller: OperationCaller = neo,
     provenance = false,
-    request: { model?: string; effort?: string; excludeRefs?: WorkRef[] } = {}
+    request: {
+      model?: string;
+      effort?: string;
+      excludeRefs?: WorkRef[];
+      todoId?: string;
+      preparation?: { pack: string; parameters: Record<string, unknown> };
+    } = {}
   ) => {
     const outcome = await invokeOperation(
       registry,
@@ -147,7 +160,7 @@ function harness(
     if (outcome.kind !== 'completed') throw new Error(outcome.message);
     return outcome.value as { ok: boolean; value?: { ref: WorkRef; reused?: true } };
   };
-  return { start, sent, started, unusable, messages };
+  return { start, sent, started, unusable, messages, recorded };
 }
 
 describe('work.start reuses an idle worker', () => {
@@ -392,5 +405,107 @@ describe('work.start remote actor exclusions', () => {
     expect(forwarded[0]).toMatchObject({
       excludeRefs: [{ adapter: 'codex-desktop', id: 'author' }],
     });
+  });
+});
+
+describe('matter-bound reuse through work.start', () => {
+  test('uses its own idle worker before a free worker from another matter', async () => {
+    const run = harness(
+      [
+        { id: 'spare-matter', status: 'done' },
+        { id: 'own-idle', status: 'done' },
+      ],
+      ['spare-matter'],
+      undefined,
+      ['own-idle']
+    );
+    expect((await run.start(neo, false, { todoId: 'next-in-A' })).value?.ref.id).toBe('own-idle');
+    expect(run.recorded).toEqual([
+      { ref: { adapter: 'claude-desktop', id: 'own-idle' }, todoId: 'next-in-A' },
+    ]);
+  });
+  test('uses the most recently used same-ask worker in the supplied ownership order', async () => {
+    const run = harness(
+      [
+        { id: 'old-own', status: 'done' },
+        { id: 'latest-own', status: 'done' },
+      ],
+      [],
+      undefined,
+      ['latest-own', 'old-own']
+    );
+    expect((await run.start(neo, false, { todoId: 'next-A' })).value?.ref.id).toBe('latest-own');
+  });
+  test('starts a new worker when all its own workers are busy, even if another matter has a spare', async () => {
+    const run = harness(
+      [
+        { id: 'own-busy', status: 'running' },
+        { id: 'other-spare', status: 'done' },
+      ],
+      ['other-spare'],
+      undefined,
+      ['own-busy']
+    );
+    expect((await run.start(neo, false, { todoId: 'busy-A-next' })).value?.ref.id).toBe('fresh');
+    expect(run.recorded).toEqual([
+      { ref: { adapter: 'claude-desktop', id: 'fresh' }, todoId: 'busy-A-next' },
+    ]);
+  });
+  test('different-matter reuse follows longest-settled order instead of discovery order', async () => {
+    const run = harness(
+      [
+        { id: 'recent-free', status: 'done' },
+        { id: 'long-free', status: 'done' },
+      ],
+      ['long-free', 'recent-free']
+    );
+    expect((await run.start()).value?.ref.id).toBe('long-free');
+  });
+  test('keeps the same-ask model when none was explicitly requested', async () => {
+    const run = harness(
+      [{ id: 'same-old-model', status: 'done' }],
+      [],
+      { adapter: 'hyperneo', model: 'older-model', effort: 'high' },
+      ['same-old-model']
+    );
+    expect((await run.start(neo, false, { todoId: 'same-model-A' })).value?.ref.id).toBe(
+      'same-old-model'
+    );
+  });
+  test('effort-only same-ask reuse resolves against that workers model, not the current default', async () => {
+    const run = harness(
+      [{ id: 'same-effort-old', status: 'done' }],
+      [],
+      { adapter: 'hyperneo', model: 'older-model', effort: 'high', unresolvedDefault: true },
+      ['same-effort-old']
+    );
+    expect(
+      (await run.start(neo, false, { todoId: 'same-effort-A', effort: 'high' })).value?.ref.id
+    ).toBe('same-effort-old');
+  });
+  test('an explicit model still refuses an unequal same-ask identity', async () => {
+    const run = harness(
+      [{ id: 'explicit-same-old', status: 'done' }],
+      [],
+      { adapter: 'hyperneo', model: 'older-model', effort: 'high' },
+      ['explicit-same-old']
+    );
+    expect(
+      (await run.start(neo, false, { todoId: 'explicit-A', model: 'Sol 6.1' })).value?.ref.id
+    ).toBe('fresh');
+  });
+  test.each(['review', 'verify'])('%s preparation always starts a distinct actor', async (role) => {
+    const run = harness([{ id: 'author-' + role, status: 'done' }], [], undefined, [
+      'author-' + role,
+    ]);
+    expect(
+      (
+        await run.start(neo, false, {
+          todoId: 'role-A',
+          preparation: { pack: 'coding', parameters: { role } },
+        })
+      ).value?.ref.id
+    ).toBe('fresh');
+    expect(run.sent).toEqual([]);
   });
 });

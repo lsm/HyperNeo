@@ -6,6 +6,7 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import {
   markWorkUnusable,
   readFreeWorkers,
+  readStartedWork,
   recordStartedWork,
 } from '../../../../src/storage/work-started-sessions.ts';
 
@@ -30,7 +31,7 @@ describe('readFreeWorkers', () => {
       adapter: 'claude-desktop',
       place: { machine: 'synthetic', name: 'Fixture', folder: '/synthetic' },
     });
-    sessions.recordRef(todoId, { adapter: 'claude-desktop', id });
+    sessions.recordRef(todoId, { adapter: 'claude-desktop', id }, 2);
     store.updateTodo(store.getTodo(todoId)!, { state }, 2);
   };
 
@@ -126,6 +127,70 @@ describe('readFreeWorkers', () => {
       'z-longest-idle',
       'a-recently-idle',
     ]);
+  });
+
+  const track = (id: string, todoId: string, at: number, reusable = true) =>
+    Reflect.apply(recordStartedWork, undefined, [
+      db,
+      { adapter: 'claude-desktop', id },
+      at,
+      false,
+      { todoId, sessionId: 'neo', reusable },
+    ]);
+  const owned = (todoId: string, sessionId = 'neo') =>
+    Reflect.apply(readStartedWork, undefined, [db, 'claude-desktop', todoId, sessionId]).map(
+      (ref: { id: string }) => ref.id
+    );
+
+  test('a new worker belongs to the ask before any todo ref is attached', () => {
+    store.addTodo(
+      'unbound',
+      'ask',
+      { title: 'Next step', doneWhen: 'Observed', check: null, instruction: null, named: null },
+      2
+    );
+    track('new-owner', 'unbound', 3);
+    expect([...readFreeWorkers(db, 'claude-desktop')]).toEqual([]);
+    expect(owned('unbound')).toEqual(['new-owner']);
+    store.settleAsk(store.getAsk('ask')!, 'done', 'Settled', 4);
+    expect([...readFreeWorkers(db, 'claude-desktop')]).toEqual(['new-owner']);
+    expect(owned('unbound')).toEqual([]);
+  });
+  test('ownership survives a todo being rebound to another worker', () => {
+    bind('rebound', 'first-owner', 'done');
+    track('first-owner', 'rebound', 3);
+    sessions.recordRef('rebound', { adapter: 'claude-desktop', id: 'replacement-owner' });
+    track('replacement-owner', 'rebound', 4);
+    expect([...readFreeWorkers(db, 'claude-desktop')]).toEqual([]);
+    expect(owned('rebound')).toEqual(['replacement-owner', 'first-owner']);
+  });
+  test('same-ask candidates are most recently used first and require the owning Neo', () => {
+    bind('step', 'a-old-owner', 'done');
+    track('a-old-owner', 'step', 10);
+    track('z-latest-owner', 'step', 20);
+    expect(owned('step')).toEqual(['z-latest-owner', 'a-old-owner']);
+    expect(owned('step', 'another-neo')).toEqual([]);
+    expect(owned('unknown-todo')).toEqual([]);
+    markWorkUnusable(db, { adapter: 'claude-desktop', id: 'z-latest-owner' });
+    expect(owned('step')).toEqual(['a-old-owner']);
+  });
+  test('prepared review and QA actors never become reusable authors', () => {
+    bind('prepared', 'prepared-reviewer', 'done');
+    track('prepared-reviewer', 'prepared', 3, false);
+    store.settleAsk(store.getAsk('ask')!, 'done', 'Review finished', 4);
+    expect([...readFreeWorkers(db, 'claude-desktop')]).toEqual([]);
+  });
+  test('a legacy coding assignment keeps its independent actor out of the author pool', () => {
+    bind('author-step', 'original-author', 'done');
+    recordStartedWork(db, { adapter: 'claude-desktop', id: 'legacy-reviewer' });
+    db.prepare(
+      "INSERT INTO pack_facts(todo_id,pack,key,value_json)VALUES(?,'coding','assignment:synthetic:review',?)"
+    ).run(
+      'author-step',
+      JSON.stringify({ ref: { adapter: 'claude-desktop', id: 'legacy-reviewer' } })
+    );
+    store.settleAsk(store.getAsk('ask')!, 'done', 'Completed', 4);
+    expect([...readFreeWorkers(db, 'claude-desktop')]).toEqual(['original-author']);
   });
 
   test('an unusable mark expires after an hour', () => {
