@@ -112,7 +112,8 @@ test('phone inventory extracts literal calls/events, not UI labels, and is stabl
     hub.onEvent("neo.changed") { _ in }
     other.call("work.status")
     hub.invoke("artifact.file.get")
+    referenceRequest("artifact.reference.resolve", payload)
     hub.invoke("neo.snapshot")
     Text("neo.log.1")
-  `)).toEqual(['artifact.file.get', 'message.send', 'neo.changed', 'neo.snapshot', 'work.status']);
+  `)).toEqual(['artifact.file.get', 'artifact.reference.resolve', 'message.send', 'neo.changed', 'neo.snapshot', 'work.status']);
 });
