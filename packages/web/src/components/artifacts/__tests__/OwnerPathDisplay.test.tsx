@@ -110,3 +110,25 @@ it.each([
 ])('uses the exact owner boundary for %s', (path, home, expected) => {
   expect(ownerPathLabel(path, home)).toBe(expected);
 });
+
+it('preserves inline code and emphasis inside path links', async () => {
+  const clicked = vi.fn();
+  const url = `file://${path}`;
+  const { container } = render(
+    <MarkdownRenderer
+      content={`> [\`${path}\`](${url}) and [**${path}**](${url})\n\n[**/home/owner**/reports/current.md](${url})`}
+      references={[url]}
+      onReference={clicked}
+    />
+  );
+  const links = await screen.findAllByRole('link', { name: '~/reports/current.md', exact: true });
+  expect(links).toHaveLength(2);
+  expect(container.querySelector('a code')?.textContent).toBe('~/reports/current.md');
+  expect(container.querySelector('a strong')?.textContent).toBe('~/reports/current.md');
+  const mixed = screen.getByRole('link', { name: path, exact: true });
+  expect(mixed.querySelector('strong')?.textContent).toBe('/home/owner');
+  fireEvent.click(links[0]);
+  expect(clicked).toHaveBeenCalledWith(url);
+  fireEvent.click(screen.getByRole('button', { name: 'Copy quote', exact: true }));
+  expect(copyToClipboard).toHaveBeenLastCalledWith(`${path} and ${path}`);
+});
