@@ -1,5 +1,13 @@
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { Database } from '../../../../src/storage/sqlite-compat';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index';
+import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository';
+import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository';
+import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner';
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway';
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -61,6 +69,149 @@ async function start(fixture: ReturnType<typeof setup>, message = fixture.reques
 }
 
 describe('owned Copilot lifecycle', () => {
+  test.each([true, false])('reports a Copilot turn once with human origin %s', async (human) => {
+    const fixture = setup();
+    const since = Date.now() - 1;
+    const work = await start(fixture, 'settled');
+    const at = Date.now() + 100;
+    if (human) {
+      const history = join(
+        fixture.deps.directory,
+        work.ref.id,
+        'session-state',
+        work.ref.id,
+        'events.jsonl'
+      );
+      const events = [
+        {
+          type: 'user.message',
+          data: {
+            messageId: 'human-direct',
+            interactionId: 'human-turn',
+            content: 'Change the summary directly.',
+          },
+        },
+        {
+          type: 'assistant.message',
+          data: {
+            messageId: 'human-reply',
+            interactionId: 'human-turn',
+            content: 'Changed the summary.',
+            phase: 'final_answer',
+          },
+        },
+        { type: 'session.idle', data: {} },
+      ];
+      appendFileSync(
+        history,
+        events
+          .map((event, index) =>
+            JSON.stringify({
+              ...event,
+              id: `human-${index}`,
+              timestamp: new Date(at + index).toISOString(),
+            })
+          )
+          .join('\n') + '\n'
+      );
+    }
+    const detail = await fixture.adapter.status!(work.ref, since, work.receipt);
+    expect(detail.ok).toBe(true);
+    if (!detail.ok) throw new Error(detail.reason);
+    expect(detail.value.recentInputs).toContainEqual(
+      expect.objectContaining(
+        human
+          ? { inputId: 'human-direct', at, text: 'Change the summary directly.', human: true }
+          : { inputId: work.receipt!.inputId, text: 'settled', human: false }
+      )
+    );
+    const db = new Database(':memory:');
+    try {
+      runMigrations(db, () => {});
+      createTables(db);
+      new JobQueueRepository(db).commitSubmissionReceipt(
+        'neo-turn-report:v2:cutoff',
+        'v2',
+        () => 0
+      );
+      const store = new NeoAskTodoRepository(db);
+      const sessions = new NeoTodoSessionRepository(db);
+      store.openAsk({
+        id: 'copilot-matter',
+        sessionId: 'neo',
+        title: 'Summary matter',
+        request: 'Observe direct work',
+        projectId: null,
+        originMessageId: null,
+        createdAt: since,
+      });
+      const todo = store.addTodo(
+        'copilot-todo',
+        'copilot-matter',
+        { title: 'Summary', doneWhen: 'Recorded', instruction: null, check: null, named: null },
+        since
+      );
+      sessions.create(todo.id, { verb: 'adopt', ref: work.ref });
+      sessions.recordRef(todo.id, work.ref, since);
+      sessions.recordFollowAnchor(todo.id, since);
+      store.updateTodo(todo, { state: human ? 'done' : 'doing', startedAt: since }, since);
+      if (!human) {
+        const dispatch = await sessions.inputs.accept(
+          todo.id,
+          'neo',
+          { verb: 'send', ref: work.ref },
+          'settled',
+          since
+        );
+        await sessions.inputs.recordOutcome(
+          dispatch,
+          { ref: work.ref, receipt: work.receipt },
+          since
+        );
+      }
+      const told: string[] = [];
+      const runner = createNeoTodoRunner({
+        store,
+        sessions,
+        write: gatewayFor(db).run.bind(gatewayFor(db)),
+        packs: () => [],
+        limits: () => ({ running: 99, perGroup: 99 }),
+        changed: () => {},
+        invoke: async (_caller, name, input) => {
+          expect(name).toBe('work.status');
+          return {
+            kind: 'completed',
+            value: await fixture.adapter.status!(
+              work.ref,
+              input.since as number | undefined,
+              work.receipt
+            ),
+          };
+        },
+        tell: async (_ask, _todo, note) => {
+          told.push(note);
+        },
+      });
+      await runner.refresh(() => {});
+      await runner.refresh(() => {});
+      const reports = told.filter((note) =>
+        note.startsWith(human ? 'The human worked directly' : 'Worker turn report')
+      );
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).toContain(
+        human ? 'The human said: Change the summary directly.' : 'dispatch'
+      );
+      expect(reports[0]).toContain(human ? 'The worker replied: Changed the summary.' : 'REPLY_1');
+      expect(
+        told.filter((note) =>
+          note.startsWith(human ? 'Worker turn report' : 'The human worked directly')
+        )
+      ).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+
   test('gives the owned runtime work locations and the brief without a sandbox marker', async () => {
     const fixture = setup();
     await start(fixture);
