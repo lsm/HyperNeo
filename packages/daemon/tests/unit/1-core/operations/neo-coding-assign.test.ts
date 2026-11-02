@@ -189,7 +189,11 @@ describe('coding actor assignments', () => {
     expect(f.starts[0].preparation).toBeUndefined();
     expect(f.starts[0].message).toContain(QA_SYSTEM_CONTRACT);
     expect(f.starts[0].message).toContain(head);
-    expect(f.starts[0]).toMatchObject({ excludeRefs: [write], provenance: true });
+    expect(f.starts[0]).toMatchObject({
+      excludeRefs: [write],
+      provenance: true,
+      actorRole: 'review',
+    });
   });
   test.each([
     { mode: 'off', fork: true, sandbox: false },
@@ -214,7 +218,11 @@ describe('coding actor assignments', () => {
     const f = fixture();
     expect((await f.assign()).ok).toBe(true);
     expect(f.starts[0].preparation).toBeUndefined();
-    expect(f.starts[0]).toMatchObject({ excludeRefs: [write], provenance: true });
+    expect(f.starts[0]).toMatchObject({
+      excludeRefs: [write],
+      provenance: true,
+      actorRole: 'review',
+    });
     expect(f.starts[0].message).toContain(REVIEWER_SYSTEM_CONTRACT);
     expect(f.starts[0].message).toContain('PR number: 7');
     expect(f.starts[0].message).toContain(head);
@@ -225,6 +233,7 @@ describe('coding actor assignments', () => {
     await f.assign({ stage: 'verify', candidates: [author] });
     expect(f.starts[1]).toMatchObject({
       excludeRefs: [write, { adapter: reviewer.adapter, id: 'fresh-1' }],
+      actorRole: 'verify',
     });
   });
   test('one todo keeps its author and linked fresh reviewer/Verify; repeated calls reuse exact-head assignments', async () => {

@@ -239,6 +239,27 @@ describe('worker reuse eligibility', () => {
     expect([...readFreeWorkers(db, 'claude-desktop')]).toEqual(['original-author']);
   });
 
+  test('a prior review actor can serve the same matter in an independent role, never as author', () => {
+    bind('review-role', 'prior-reviewer', 'done');
+    track('prior-reviewer', 'review-role', 3, false);
+    expect(readAskWorkers(db, 'claude-desktop', 'review-role', 'neo').size).toBe(0);
+    expect([
+      ...Reflect.apply(readAskWorkers, undefined, [
+        db,
+        'claude-desktop',
+        'review-role',
+        'neo',
+        false,
+        true,
+      ]),
+    ]).toEqual(['prior-reviewer']);
+    store.settleAsk(store.getAsk('ask')!, 'done', 'Settled', 4);
+    expect([...readFreeWorkers(db, 'claude-desktop')]).toEqual([]);
+    expect([...Reflect.apply(readFreeWorkers, undefined, [db, 'claude-desktop', true])]).toEqual([
+      'prior-reviewer',
+    ]);
+  });
+
   test('an unusable mark expires after an hour', () => {
     recordStartedWork(db, { adapter: 'claude-desktop', id: 'w-old' });
     recordStartedWork(

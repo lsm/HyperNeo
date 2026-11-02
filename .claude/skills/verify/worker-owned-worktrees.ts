@@ -8,7 +8,7 @@ import { createTables, runMigrations } from '../../../packages/daemon/src/storag
 import { gatewayFor } from '../../../packages/daemon/src/storage/db-gateway/db-gateway.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
-import { recordStartedWork, readFreeWorkers } from '../../../packages/daemon/src/storage/work-started-sessions.ts';
+import { recordStartedWork, readFreeWorkers, readAskWorkers } from '../../../packages/daemon/src/storage/work-started-sessions.ts';
 import { createNeoTodoRunner } from '../../../packages/daemon/src/lib/neo/todo-runner.ts';
 import { createCodingPackTables } from '../../../packages/daemon/src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
@@ -139,7 +139,7 @@ try {
     review: runCodingReview,
   });
   registry = createOperationRegistry([
-    ...createWorkVerbOperations({ adapters: () => [adapter], remote, daemonName: 'synthetic', freeWorkers: id => readFreeWorkers(db, id), recordStarted: ref => recordStartedWork(db, ref) }),
+    ...createWorkVerbOperations({ adapters: () => [adapter], remote, daemonName: 'synthetic', freeWorkers: (id, independent) => readFreeWorkers(db, id, independent), askWorkers: (id,todoId,sessionId,independent)=>readAskWorkers(db,id,todoId,sessionId,false,independent), boundWorkers:(id,todoId,sessionId,independent)=>readAskWorkers(db,id,todoId,sessionId,true,independent), recordStarted: (ref,input,actor)=>recordStartedWork(db,ref,Date.now(),false,{todoId:input.todoId,sessionId:actor.sessionId,reusable:!input.preparation&&!input.actorRole}) }),
     createFindWorkOperation({ adapters: () => [adapter], remote }), assignment,
   ]);
   const pack: NeoPack = {

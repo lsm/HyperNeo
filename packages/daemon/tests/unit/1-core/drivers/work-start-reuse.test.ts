@@ -143,6 +143,7 @@ function harness(
       model?: string;
       effort?: string;
       excludeRefs?: WorkRef[];
+      actorRole?: 'review' | 'verify';
       todoId?: string;
       preparation?: { pack: string; parameters: Record<string, unknown> };
     } = {}
@@ -545,6 +546,28 @@ describe('matter-bound reuse through work.start', () => {
       'oldest-free'
     );
     expect(run.sent).toEqual(['oldest-free']);
+  });
+
+  test('an excluded author does not prevent reusing an independent worker for its ask', async () => {
+    const run = harness(
+      [
+        { id: 'excluded-own-author', status: 'done' },
+        { id: 'free-independent', status: 'done' },
+      ],
+      ['free-independent'],
+      undefined,
+      ['excluded-own-author']
+    );
+    expect(
+      (
+        await run.start(neo, false, {
+          todoId: 'review-next',
+          actorRole: 'review',
+          excludeRefs: [{ adapter: 'claude-desktop', id: 'excluded-own-author' }],
+        })
+      ).value?.ref.id
+    ).toBe('free-independent');
+    expect(run.sent).toEqual(['free-independent']);
   });
 
   test('starts fresh when its bound worker is unavailable rather than borrowing another matter', async () => {
