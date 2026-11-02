@@ -336,6 +336,45 @@ describe('neo todo runner', () => {
     }
   });
 
+  test('caps settled-worker observations per sweep without losing older workers', async () => {
+    const h = setup(false);
+    try {
+      const at = Date.now() + 100;
+      for (let index = 0; index < 21; index++) {
+        const todo = h.add(null, null);
+        const worker = { adapter: 'hyperneo', id: `settled-${index}` };
+        h.sessions.create(todo.id, { verb: 'adopt', ref: worker });
+        h.sessions.recordRef(todo.id, worker, at);
+        h.sessions.recordFollowAnchor(todo.id, at);
+        h.store.updateTodo(todo, { state: 'done' }, at);
+      }
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: at + 100,
+          recentInputs: [{ at: at + 10, text: 'New human work', human: true }],
+          turnEnds: [
+            {
+              id: 'fresh-human-turn',
+              startedAt: at + 10,
+              at: at + 100,
+              message: 'Completed direct work',
+            },
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      expect(h.calls.filter((call) => call.name === 'work.status')).toHaveLength(20);
+      await h.runner.refresh(() => {});
+      expect(h.told.filter((note) => note.startsWith('The human worked directly'))).toHaveLength(
+        21
+      );
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('a refused check stamp preserves the prior worker status and needs-you incident', async () => {
     const h = setup();
     try {
