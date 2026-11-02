@@ -22,7 +22,7 @@ try{
  const conversationId=crypto.randomUUID(),root=`neo:${conversationId}`;
  for(const id of [root,'local','space-session']) await app.db.createSession({id,title:'Synthetic session',type:id==='space-session'?'space_task_agent':'general',workspacePath:run,createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{}} as never);
  new NeoRepository(app.db.getDatabase()).reserveBinding({sessionId:root,kind:'neo',projectId:null});
- const reads:string[]=[];
+ const reads:string[]=[];let nativeUnavailable=false;
  const place={machine:'synthetic',name:'Synthetic'};
  const summary=(ref:WorkRef)=>({ref,title:'Synthetic native',place,status:'running',lastActivityAt:1,...(ref.id==='linkless'?{}:{link:ref.id==='unsafe'?'javascript:alert(1)':ref.adapter==='codex-desktop'?`codex://threads/${ref.id}`:`claude://claude.ai/epitaxy/${ref.id}`})});
  const original=app.sessionManager.getOperationRegistry();
@@ -35,7 +35,7 @@ try{
   const ref=(input as {ref:WorkRef}).ref;
   if(['codex-desktop','claude-desktop'].includes(ref.adapter)){
    reads.push(ref.id);
-   return ['missing','unavailable'].includes(ref.id)?{ok:false,reason:ref.id==='missing'?'not_found':'unreachable'}:{ok:true,value:summary(ref)};
+   return ['missing','unavailable'].includes(ref.id)||(nativeUnavailable&&ref.id==='native-thread')?{ok:false,reason:ref.id==='missing'?'not_found':'unreachable'}:{ok:true,value:summary(ref)};
   }
   return entry.execute(input as never,caller);
  }}):entry));
@@ -74,6 +74,11 @@ try{
   const current=publications.find(item=>item.publicationId===first.publication.publicationId)!;assert.equal(current.sessionSource.adapter,'codex-desktop');assert.equal(current.revisions[0].sessionSource.adapter,'codex-desktop');
   assert(reads.filter(id=>id==='native-thread').length<=2,'repeated sessions share one resolution per page');
  }
+ nativeUnavailable=true;
+ const unavailablePage=await rpc('neo.publication.read',{conversationId,limit:100});
+ assert.equal(unavailablePage.ok,true);
+ const retained=(unavailablePage.items as typeof first.publication[]).find(item=>item.publicationId===first.publication.publicationId)!;
+ assert.equal(retained.fullText,'Edited report');assert.equal(retained.sessionSource,null);
  assert.deepEqual(app.db.getDatabase().prepare('SELECT payload_json FROM neo_publications ORDER BY sequence').all(),before);
  assert(before.every(row=>!String((row as {payload_json:string}).payload_json).includes('sessionSource')));
  Object.assign(observed,{passed:true,wireField:'sessionSource',qualifiedAndBare:true,localNeoAndSpace:true,safeLinks:true,producerCannotInject:true,retryAndRevision:true,bothReadDoors:true,batchDedup:true,storedPayloadUnchanged:true});
