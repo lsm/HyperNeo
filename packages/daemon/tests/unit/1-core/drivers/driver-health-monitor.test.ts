@@ -50,7 +50,9 @@ function fixture() {
     failNotice: (v: boolean) => {
       failNotice = v;
     },
-    setNeoAvailable: (v: boolean) => { available = v; },
+    setNeoAvailable: (v: boolean) => {
+      available = v;
+    },
   };
 }
 
@@ -134,4 +136,13 @@ test('a proof cannot mark a different installed version as verified', async () =
     monitor.verified('codex-desktop', 'codex-state-discovery', { desktop: '0.9.0' })
   ).rejects.toThrow('version');
   expect(f.stored['codex-desktop'].verifiedVersions).toBeUndefined();
+});
+
+test('a check just before the daily deadline does not postpone the next check another day', async () => {
+  const f = fixture();
+  const monitor = createDriverHealthMonitor(f.deps);
+  await monitor.check(true);
+  f.setNow(86_400_000);
+  await monitor.check();
+  expect(await monitor.nextCheckAt()).toBe(86_400_001);
 });
