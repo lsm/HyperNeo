@@ -280,6 +280,52 @@ describe('coding actor assignments', () => {
     expect(new NeoAskTodoRepository(f.db).getTodo(f.starts[0].todoId!)?.state).toBe('doing');
     expect(readFreeWorkers(f.db, reviewer.adapter).has('fresh-1')).toBe(false);
   });
+  test.each([
+    { reason: 'unsupported_model' },
+    { reason: 'unsupported_effort' },
+    { reason: 'unsupported_preparation' },
+    { reason: 'unknown_adapter' },
+    { reason: 'not_delivered', notSent: true },
+  ] as const)(
+    'a proven preflight rejection can be corrected on the same stage todo: %j',
+    async (rejection) => {
+      let rejected = true;
+      const f = fixture((input, count) =>
+        rejected
+          ? { kind: 'completed', value: { ok: false, ...rejection, detail: 'No input accepted' } }
+          : f.success(input, count)
+      );
+      expect((await f.assign({ candidates: [reviewer] })).ok).toBe(false);
+      const stageId = f.starts[0].todoId!;
+      expect(new NeoAskTodoRepository(f.db).getTodo(stageId)?.state).toBe('failed');
+      rejected = false;
+      expect((await f.assign({ candidates: [reviewer] })).ok).toBe(true);
+      expect(f.starts.map((start) => start.todoId)).toEqual([stageId, stageId]);
+      expect(new NeoAskTodoRepository(f.db).listTodos('ask')).toHaveLength(2);
+      expect(f.sessions.inputs.list(stageId)).toHaveLength(2);
+      expect(f.sessions.readRef(stageId)).toEqual({ adapter: reviewer.adapter, id: 'fresh-2' });
+      expect(readFreeWorkers(f.db, reviewer.adapter).has('fresh-2')).toBe(false);
+    }
+  );
+  test('a failed stage with a bound worker is never redispatched', async () => {
+    const f = fixture((input, count) => ({
+      kind: 'completed',
+      value: {
+        ok: true,
+        value: {
+          ref: { adapter: input.adapter, id: `unqualified-${count}` },
+          title: input.title,
+          place: input.place,
+          status: 'running',
+          lastActivityAt: 1,
+        },
+      },
+    }));
+    expect((await f.assign({ candidates: [reviewer] })).ok).toBe(false);
+    expect((await f.assign({ candidates: [reviewer] })).ok).toBe(false);
+    expect(f.starts).toHaveLength(1);
+    expect(f.sessions.readRef(f.starts[0].todoId!)).not.toBeNull();
+  });
   test('a binding failure rolls back the dispatch acknowledgement and never replays the start', async () => {
     const f = fixture();
     f.db.exec(`CREATE TRIGGER fail_stage_binding BEFORE UPDATE OF ref ON neo_todo_sessions

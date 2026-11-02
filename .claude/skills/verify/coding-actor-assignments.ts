@@ -55,6 +55,7 @@ const verifyTarget = { adapter: 'fixture-verifier', place, model: 'gpt-6', effor
 const authorModel = { adapter: 'fixture-author', place, model: 'gpt-6' };
 const releases: (() => Promise<void>)[] = [];
 let attempts = 0, rejectPreferred = false;
+let rejectStart: { reason: 'unsupported_model' | 'not_delivered'; detail: string; notSent?: true } | null = null;
 const network = globalThis.fetch;
 globalThis.fetch = (() => { throw new Error('No HTTP in actor assignment proof'); }) as typeof fetch;
 try {
@@ -71,6 +72,7 @@ try {
         name: 'work.start', description: 'Synthetic harness boundary: real preparation, no native app or model.', inputSchema: StartWorkInputSchema, resultSchema: StartWorkResultSchema,
         execute: async input => {
           attempts++;
+          if (rejectStart) return { ok: false as const, ...rejectStart };
           if (rejectPreferred && input.model === preferredTarget.model) return { ok: false as const, reason: 'unsupported_model' as const, detail: 'Synthetic preferred model unavailable' };
           assert(input.adapter.startsWith('fixture-')); assert(input.preparation?.pack === 'coding');
           const prepared = await prepareCodingExecution({ directory: source, destination: join(run, 'workers', `worker-${attempts}`), parameters: input.preparation.parameters }, { run: async (args, cwd) => command(args, cwd) });
@@ -139,6 +141,24 @@ try {
         assert((await assign({ ...missing, stage: 'review', candidates: [authorModel] })).ok);
         const fallback = await seed('fallback', 11, 'synthetic/fallback'); await setting('synthetic/fallback', 'review.model', preferredTarget.model); rejectPreferred = true;
         const fallbackResult = await assign({ ...fallback, stage: 'review', candidates: [defaultTarget, preferredTarget] }); assert(fallbackResult.ok); assert.equal(fallbackResult.assignment.actor.model, defaultTarget.model); assert(fallbackResult.assignment.fallback.some(text => text.includes('qualifying default'))); rejectPreferred = false;
+        for (const [index, rejection] of [
+          { reason: 'unsupported_model' as const, detail: 'Synthetic preflight rejection' },
+          { reason: 'not_delivered' as const, detail: 'Synthetic explicit non-delivery', notSent: true as const },
+          { reason: 'not_delivered' as const, detail: 'Synthetic unknown submission' },
+        ].entries()) {
+          const retry = await seed(`retry-${index}`, 12 + index, `synthetic/retry-${index}`);
+          rejectStart = rejection;
+          assert.equal((await assign({ ...retry, stage: 'review', candidates: [defaultTarget] })).ok, false);
+          const before = await rpc('neo.ask.read', { askId: `ask-retry-${index}` }) as { ok: boolean; entry: { todos: {id:string;title:string;state:string}[] } };
+          assert(before.ok); const failed = before.entry.todos.find(todo => todo.id !== retry.todoId)!; assert.equal(failed.state, 'failed');
+          rejectStart = null; const beforeRetry = attempts;
+          const retried = await assign({ ...retry, stage: 'review', candidates: [defaultTarget] });
+          assert.equal(retried.ok, index !== 2); assert.equal(attempts, beforeRetry + (index !== 2 ? 1 : 0));
+          const after = await rpc('neo.ask.read', { askId: `ask-retry-${index}` }) as typeof before;
+          assert(after.ok); assert.equal(after.entry.todos.length, 2);
+          assert.equal(after.entry.todos.find(todo => todo.id === failed.id)?.state, index !== 2 ? 'doing' : 'failed');
+          evidence.push({ phase, rejection, before, after, retried });
+        }
         assert.equal((await assign({ ...session, acceptanceContract: 'changed', stage: 'review', candidates: [] })).ok, false);
         git(origin, 'checkout', 'candidate'); writeFileSync(join(origin, 'behavior.txt'), 'new-head'); git(origin, 'commit', '-am', 'new head'); head = git(origin, 'rev-parse', 'HEAD'); git(origin, 'update-ref', 'refs/pull/8/head', head); git(origin, 'checkout', 'dev');
         metadata[session.url].headRefOid = head; publish();
@@ -151,7 +171,7 @@ try {
         const before = attempts;
         const stored = assignments.read('session', 'https://github.com/synthetic/session/pull/8', head); assert(stored.review?.ref);
         const replay = await assign({ todoId: 'session', url: 'https://github.com/synthetic/session/pull/8', head, acceptanceContract: 'artifact:contract-session', stage: 'review', candidates: [] }); assert(replay.ok); assert.deepEqual(replay.assignment.ref, stored.review.ref); assert.equal(attempts, before);
-        assert.equal(db.prepare('SELECT COUNT(*) AS n FROM neo_todos').get().n, 11);
+        assert.equal(db.prepare('SELECT COUNT(*) AS n FROM neo_todos').get().n, 17);
         assert.equal(db.prepare("SELECT COUNT(*) AS n FROM neo_todos WHERE state='done'").get().n, 1);
         assert.equal(git(source, 'rev-parse', 'HEAD'), baseHead); assert.equal(readFileSync(join(source, 'behavior.txt'), 'utf8'), 'preserve dirty author source');
         evidence.push({ phase, stored, todoStates: db.prepare('SELECT id,state FROM neo_todos').all() });
