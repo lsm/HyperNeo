@@ -1,7 +1,11 @@
 import { expect, test } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import ts from 'typescript';
 import { z } from '../packages/daemon/node_modules/zod/index.js';
 import { CLIENT_EVENT_SCHEMAS } from '../packages/daemon/src/lib/operations/client-event-schemas.ts';
-import { serializeApiSurface } from './api-surface.ts';
+import { clientEventMethods, serializeApiSurface } from './api-surface.ts';
 import { diffApiSurfaces, formatApiDiff, type ApiSurface } from './api-diff.ts';
 import { extractPhoneEventMethods } from './api-phone-methods.ts';
 
@@ -15,6 +19,21 @@ const payloads = {
   'state.settings': { settings: { language: 'zh-Hans', settingSources: ['user'] }, timestamp: 123, version: 1 },
   'voice.stream.text': { streamId: 'stream', text: 'Hello', isFinal: false },
 };
+test('direct event-message constructors and typed parameter objects are discovered', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'event-methods-'));
+  try {
+    const file = join(dir, 'events.ts');
+    writeFileSync(file, `declare function createEventMessage(value: {method: string; data: unknown; sessionId: string}): void;
+      createEventMessage({method:'neo.speech',data:{},sessionId:'global'});
+      const method = 'voice.stream.text';
+      createEventMessage({method,data:{},sessionId:'global'});
+      const parameters = {method:'liveQuery.snapshot' as const,data:{},sessionId:'global'};
+      createEventMessage(parameters);`);
+    expect(clientEventMethods(ts.createProgram([file], {}), [file])).toEqual(['liveQuery.snapshot', 'neo.speech', 'voice.stream.text']);
+    writeFileSync(file, `declare function createEventMessage(value: {method: string}): void; declare const method: string; createEventMessage({method});`);
+    expect(() => clientEventMethods(ts.createProgram([file], {}), [file])).toThrow('Unresolved');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
 test('every configured phone event has a payload contract, including direct message producers', () => {
   expect(Object.keys(CLIENT_EVENT_SCHEMAS).sort()).toEqual(events);
   for (const method of events) {
