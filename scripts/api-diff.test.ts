@@ -37,6 +37,9 @@ describe('API compatibility report', () => {
     expect(diff(before, surface(object({}), object({ note: string })))[0]?.level).toBe('risky');
     expect(diff(before, surface(object({}), object({ note: { type: ['string', 'null'] } }, ['note']))))
       .toEqual([expect.objectContaining({ level: 'risky', path: 'result.note' })]);
+    const enumField = { type: 'string', enum: ['a'] };
+    expect(diff(surface(object({}), enumField), surface(object({}), { anyOf: [enumField, { type: 'null' }] })))
+      .toEqual([expect.objectContaining({ level: 'risky', path: 'result' })]);
   });
   test('field removal/rename and type changes are breaking at the field path', () => {
     const before = surface(object({ a: string }));
@@ -69,6 +72,12 @@ describe('API compatibility report', () => {
       ...object({ value: { $ref: '#/$defs/value' }, next: { $ref: '#/$defs/recursive' } }),
     });
     expect(diff(surface(object({}), schema(['a'])), surface(object({}), schema(['a', 'b']))))
+      .toEqual([expect.objectContaining({ level: 'risky', path: 'result.value' })]);
+    const union = (names: string[]) => ({
+      $defs: { value: { type: 'string', enum: names } },
+      anyOf: [object({ value: { $ref: '#/$defs/value' } }), { type: 'null' }],
+    });
+    expect(diff(surface(object({}), union(['a'])), surface(object({}), union(['a', 'b']))))
       .toEqual([expect.objectContaining({ level: 'risky', path: 'result.value' })]);
   });
   test('constraint and opaque-transform changes cannot silently appear unchanged', () => {
