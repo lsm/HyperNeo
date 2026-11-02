@@ -324,7 +324,9 @@ temporary daemon data and run directory you created.
 ## Metadata-only daemon proofs
 
 For in-process helpers, `disableWorktrees` belongs inside the `config` supplied
-to `createDaemonApp`, not among the app options. Verify it through session.create
+to `createDaemonApp`, not among the app options. Build it as
+`{ ...getConfig(overrides), disableWorktrees: true }`; `getConfig` does not accept
+that field as an override. Verify it through session.create
 in a disposable Git repository when worktree isolation matters. The parsed
 `disableGoalProcessing` field currently has no runtime consumer; it is not an
 isolation control. Metadata-only helpers that do not exercise jobs must await

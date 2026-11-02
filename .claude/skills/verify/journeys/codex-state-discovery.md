@@ -1,12 +1,18 @@
 # Discover the newest Codex state database
 
 Use SKILL.md's metadata-only wrapper; no model, native application or fixed HTTP
-port is needed. Run both modes sequentially with distinct evidence directories:
+port is needed. Run the modes sequentially with distinct evidence directories:
 
 ```bash
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory .claude/skills/verify/codex-state-discovery.ts six-only
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/another-evidence-directory .claude/skills/verify/codex-state-discovery.ts
 ```
+
+Add `unavailable-home` after the helper path to seed a regular file where the
+Codex directory would be. Startup must succeed and work.find must return an
+ordinary empty result. Unit coverage also injects an EACCES directory read.
+The helper asserts that worktrees are disabled in its effective config before
+starting the daemon.
 
 The helper owns a fresh daemon and synthetic HOME/data/DB. In six-only mode,
 only state_6.sqlite exists. In the default mode, state_5, state_6 and state_10
