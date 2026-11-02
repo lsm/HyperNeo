@@ -1178,6 +1178,9 @@ export const neoTodoReads = defineRepositoryOp(
     }
   },
   [
+    'getQuestion',
+    'getTodo',
+    'getAsk',
     'openQuestionChecks',
     'snapshot',
     'doneTodoFacts',

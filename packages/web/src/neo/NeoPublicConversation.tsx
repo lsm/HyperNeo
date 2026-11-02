@@ -390,7 +390,7 @@ function ReplyQuote({
 }) {
   const label = labels?.get(`${replyTo.kind}:${replyTo.id}`);
   if (replyTo.kind !== 'message') {
-    const excerpt = label?.label ?? replyTo.excerpt;
+    const excerpt = replyTo.excerpt ?? label?.label;
     return (
       <NeoQuoteBar
         author={excerpt === undefined ? undefined : 'Neo'}

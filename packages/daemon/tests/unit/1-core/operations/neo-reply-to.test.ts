@@ -222,10 +222,10 @@ describe('neo.message.send replyTo', () => {
       author: 'neo',
       excerpt: 'Replacement choice',
     });
-    mailbox.db.prepare("UPDATE neo_questions SET text='Later wording' WHERE id='q2'").run();
     expect(await send(newId, 'Keep', { kind: 'question', id: 'q2' })).toMatchObject({
       value: { ok: true, created: false },
     });
+    mailbox.db.prepare("UPDATE neo_questions SET text='Later wording' WHERE id='q2'").run();
     expect(ledger(newId).replyTo.excerpt).toBe('Replacement choice');
   });
 
@@ -269,6 +269,33 @@ describe('neo.message.send replyTo', () => {
       },
     });
     expect(ledger(requestId)).toEqual(before);
+  });
+
+  test('unknown card references stay unavailable on public history reads', async () => {
+    const requestId = crypto.randomUUID(),
+      conversationId = repo.conversationId()!;
+    const asks = new NeoConversationAskRepository(mailbox.db),
+      replyTo = { kind: 'question' as const, id: 'missing-card' };
+    expect(
+      asks.append({
+        conversationId,
+        requestId,
+        askOrigin: { sessionId: root, messageId: requestId },
+        content: 'Missing original',
+        replyTo,
+      }).accepted
+    ).toBe(true);
+    expect(
+      await invokeOperation(
+        createOperationRegistry([
+          createNeoConversationAskReadOperation(repo, asks, undefined, mailbox.db),
+        ]),
+        'neo.conversation.asks.read',
+        { conversationId },
+        human
+      )
+    ).toMatchObject({ kind: 'completed', value: { ok: true, items: [{ replyTo }] } });
+    expect(ledger(requestId).replyTo).toEqual(replyTo);
   });
 
   test('a reply to a start question is a remark: it stays open and starts nothing', async () => {

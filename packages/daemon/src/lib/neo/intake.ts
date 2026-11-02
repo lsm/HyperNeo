@@ -1,3 +1,4 @@
+import { snapshotNeoCardQuote } from './card-quote.ts';
 import type { UUID } from 'node:crypto';
 import type { Session } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
@@ -215,10 +216,18 @@ export function neoReplySnapshot(
   replyTo: NeoReplyTo | undefined,
   publication: NeoPublication | null,
   quoted: NeoConversationAsk | null,
-  stored: NeoConversationAsk | null
+  stored: NeoConversationAsk | null,
+  reply: NeoReply | null = null
 ): NeoReplyTo | undefined {
-  if (replyTo?.kind !== 'message') return replyTo;
   if (stored) return stored.replyTo;
+  if (replyTo?.kind !== 'message')
+    return (
+      replyTo &&
+      snapshotNeoCardQuote(
+        replyTo,
+        reply?.question?.text ?? reply?.todo?.title ?? reply?.ask?.title
+      )
+    );
   const text = publication
     ? publication.shortText?.trim() || publication.fullText.trim()
     : quoted
@@ -449,12 +458,13 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
     (
       input: IntakeInput,
       publication: NeoPublication | null,
-      asks: { quoted: NeoConversationAsk | null; stored: NeoConversationAsk | null }
+      asks: { quoted: NeoConversationAsk | null; stored: NeoConversationAsk | null },
+      reply: NeoReply | null
     ): IntakeInput => {
-      const replyTo = neoReplySnapshot(input.replyTo, publication, asks.quoted, asks.stored);
+      const replyTo = neoReplySnapshot(input.replyTo, publication, asks.quoted, asks.stored, reply);
       return replyTo ? { ...input, replyTo } : input;
     },
-    ['input', 'publication', 'asks'],
+    ['input', 'publication', 'asks', 'reply'],
     'input'
   )
   .pipe(
