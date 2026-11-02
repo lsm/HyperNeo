@@ -30,6 +30,7 @@ for (const name of ['gh', 'ps', 'open', 'claude', 'copilot']) {
   writeFileSync(join(run, 'bin', name), `#!/bin/sh\n${body}`, { mode: 0o700 });
 }
 process.env.PATH = `${join(run, 'bin')}:${process.env.PATH}`;
+process.env.ANTHROPIC_BASE_URL = 'http://127.0.0.1:9';
 const state = join(home, '.codex/state_6.sqlite');
 const external = new Database(state);
 external.exec(`CREATE TABLE projects(id TEXT, name TEXT, updated_at_ms INTEGER);
@@ -63,13 +64,17 @@ async function notices() {
   return result.ok ? result.value.turns.filter((turn: { text: string }) => turn.text.includes('Driver health: codex-desktop')) : [];
 }
 async function startup() {
-  app.db.getJobQueueRepo().enqueue({ queue: 'work.driver.health', payload: { scope: 'local', startup: true }, runAt: Date.now() });
+  const queue = app.db.getJobQueueRepo();
+  const job = queue.enqueue({ queue: 'work.driver.health', payload: { scope: 'local', startup: true }, runAt: Date.now() });
   app.jobProcessor.start();
   await until(async () => (await health()).length === 5, 'Startup job must check all five local clients');
+  await until(async () => queue.getJob(job.id)?.status === 'completed', 'Startup check must complete');
+  assert.equal(queue.listActiveByPayload('work.driver.health', { scope: 'local' }).filter((job) => job.status === 'pending').length, 1, 'Exactly one daily check must remain scheduled');
 }
 try {
   await app.spaceRuntimeService.ready();
   await app.jobProcessor.stop();
+  await rpc('rpc:providers.create', { params: { providerId: 'anthropic', displayName: 'Synthetic admission only', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
   await app.db.createSession({ id: 'synthetic-neo', title: 'Synthetic Neo', workspacePath: join(run, 'project'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { model: 'synthetic', queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
   new NeoRepository(app.db.getDatabase()).reserveBinding({ sessionId: 'synthetic-neo', projectId: null, kind: 'neo' });
   await startup();
