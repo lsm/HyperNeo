@@ -39,7 +39,8 @@ export const readNeoSessionSource = (superpipe({})('neo.session.open-source') as
       const found = FindWorkResultSchema.safeParse(
         result.kind === 'completed' ? result.value : null
       );
-      if (!found.success || found.data.unreachable.length) return failed('unavailable');
+      if (!found.success || found.data.more || found.data.unreachable.length)
+        return failed('unavailable');
       const refs = [
         ...new Map(
           found.data.places
