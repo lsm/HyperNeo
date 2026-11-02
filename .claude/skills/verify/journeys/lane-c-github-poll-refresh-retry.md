@@ -22,3 +22,16 @@ path. Baseline records one swallowed attempt, no warning and the pending job aft
 the second update. Fixed proofs record exactly two attempts, one warning and no
 pending poll job. Save evidence/github-poll-refresh-retry.json before deleting the
 owned run. Real GitHub, worker death, UI and contention remain unverified.
+
+Run the cleanup regression through the shared metadata-only wrapper:
+
+```bash
+TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory .claude/skills/verify/lane-c-github-poll-refresh-cleanup.ts
+```
+
+It exercises the same real settings RPCs, then injects ENOTEMPTY if the still
+running helper tries to delete its data, home or workspace. The helper must save
+its evidence and exit; the parent wrapper removes temporary data after process
+exit. Deno smoke follows the same ownership rule. cleanup-ownership.json must
+record helperAttemptedDataDeletion false. This fault-injection regression runs
+under Bun; repeat the original helper under Deno for native-runtime coverage.

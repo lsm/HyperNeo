@@ -17,8 +17,14 @@ test('CLI health works without Bun using the same executable lookup as its adapt
   vi.stubGlobal('Bun', undefined);
   vi.stubEnv('PATH', bin);
   try {
-    const probe = createDriverHealthProbe({ home, adapters: () => [{ id: 'claude-code', find: () => [] }] as never });
-    expect(await probe('claude-code')).toMatchObject({ status: 'ok', clientVersions: { cli: '2.1.0' } });
+    const probe = createDriverHealthProbe({
+      home,
+      adapters: () => [{ id: 'claude-code', find: () => [] }] as never,
+    });
+    expect(await probe('claude-code')).toMatchObject({
+      status: 'ok',
+      clientVersions: { cli: '2.1.0' },
+    });
   } finally {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
