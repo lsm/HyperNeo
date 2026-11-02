@@ -116,6 +116,7 @@ it('preserves inline code and emphasis inside path links', async () => {
   const url = `file://${path}`;
   const { container } = render(
     <MarkdownRenderer
+      class="neo-markdown"
       content={`> [\`${path}\`](${url}) and [**${path}**](${url})\n\n[**/home/owner**/reports/current.md](${url})`}
       references={[url]}
       onReference={clicked}
@@ -125,10 +126,11 @@ it('preserves inline code and emphasis inside path links', async () => {
   expect(links).toHaveLength(2);
   expect(container.querySelector('a code')?.textContent).toBe('~/reports/current.md');
   expect(container.querySelector('a strong')?.textContent).toBe('~/reports/current.md');
-  const mixed = screen.getByRole('link', { name: path, exact: true });
+  const mixed = container.querySelectorAll('a')[2];
+  expect(mixed.textContent).toBe(path);
   expect(mixed.querySelector('strong')?.textContent).toBe('/home/owner');
   fireEvent.click(links[0]);
   expect(clicked).toHaveBeenCalledWith(url);
-  fireEvent.click(screen.getByRole('button', { name: 'Copy quote', exact: true }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Copy quote', exact: true }));
   expect(copyToClipboard).toHaveBeenLastCalledWith(`${path} and ${path}`);
 });

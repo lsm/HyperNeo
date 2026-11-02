@@ -38,6 +38,8 @@ export async function verifyOwnerHomeLabels(page, { run, base, width }) {
   assert(frames.some(f => f.data?.system?.homeDirectory === home), 'real snapshot must supply the owning daemon home');
   assert.equal(await article.locator('pre').textContent(), `${path}\n`);
   assert.equal(await article.getByRole('link', { name: 'Named report', exact: true }).getAttribute('href'), url);
+  assert.equal(await article.locator('a code').textContent(), '~/reports/space report.md');
+  assert.equal(await article.locator('a strong').textContent(), '~/reports/space report.md');
   assert.equal(await article.getByTitle(outside, { exact: true }).count(), 1, 'a prefix sibling is not the owner home');
   const card = article.getByRole('button', { name: 'Open current file: current.md', exact: true });
   assert.equal(await card.getAttribute('title'), '~/reports/current.md');

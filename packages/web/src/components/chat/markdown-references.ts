@@ -21,8 +21,12 @@ export function markPreviewReferences(
   const apply = (element: Element, reference: string) => {
     const display = labels.get(reference);
     if (display && (element.textContent === reference || element.textContent === display.path)) {
-      element.setAttribute('data-original-reference', element.textContent);
-      element.textContent = display.label;
+      let text: Node = element;
+      while (text.childNodes.length === 1) text = text.firstChild!;
+      if (text.nodeType === Node.TEXT_NODE) {
+        element.setAttribute('data-original-reference', element.textContent);
+        text.textContent = display.label;
+      }
     }
     if (clickable.has(reference)) mark(element, reference, display?.label);
   };

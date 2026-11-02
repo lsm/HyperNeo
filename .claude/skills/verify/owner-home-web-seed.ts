@@ -23,7 +23,9 @@ if (phase === 'publish') {
   writeFileSync(path, '# Owner file A\n');
   writeFileSync(urlPath, '# Encoded current file\n');
   writeFileSync(outside, '# Outside home\n');
-  const text = ['Owner-home display proof.', `\`${path}\``, `> \`${path}\``, `[Named report](${url})`, `\`${url}\``, `\`${outside}\``, '```text\n' + path + '\n```'].join('\n\n');
+  const text = ['Owner-home display proof.', `\`${path}\``, `> \`${path}\``, `[Named report](${url})`,
+    `[\`${urlPath}\`](${url})`,
+    `[**${urlPath}**](${url})`, `\`${url}\``, `\`${outside}\``, '```text\n' + path + '\n```'].join('\n\n');
   const publicationId = crypto.randomUUID();
   const db = new Database(join(run, 'data/daemon.db'));
   try {
