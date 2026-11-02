@@ -112,8 +112,10 @@ export interface HyperneoSessionControl {
     prepared?: { sessionId: string; projectPath: string }
   ): Promise<string>;
   resolveModel(model: string): Promise<{ id: string; provider: string } | null>;
+  resolveDefaultModel?(): Promise<{ id: string; provider: string } | null>;
   effort?(sessionId: string): string | null;
   model(sessionId: string): string | null;
+  provider?(sessionId: string): string | null;
   chooseWorktree(sessionId: string): Promise<void>;
   announce(sessionId: string): void;
   interrupt(sessionId: string): boolean | Promise<boolean>;
@@ -492,6 +494,7 @@ export async function describeHyperneoWork(
 ): Promise<Result<WorkDetail>> {
   const work = toWork(row, deps.machine);
   const model = deps.sessions.model(row.id);
+  const provider = deps.sessions.provider?.(row.id);
   const effort = deps.sessions.effort?.(row.id);
   const turnEnds = since === undefined ? [] : await deps.readTurnEnds(row.id, since);
   const last = row.queryFailureId
@@ -502,6 +505,7 @@ export async function describeHyperneoWork(
     value: {
       ...work,
       ...(model ? { model } : {}),
+      ...(provider ? { provider } : {}),
       ...(effort ? { effort } : {}),
       ...(turnEnds.length ? { turnEnds } : {}),
       status: work.status === 'done' && last?.failed ? 'failed' : work.status,
@@ -835,6 +839,17 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
     rename: deps.sessions.rename
       ? (ref, title, context) => runHyperneoRename(ref, title, context, deps)
       : undefined,
+    resolveStartConfiguration: async (request) => {
+      const result = await requireHyperneoStartConfiguration(request, deps);
+      if ('reason' in result) return result.reason;
+      if (request.model === undefined && request.effort !== undefined) {
+        const model = await deps.sessions.resolveDefaultModel?.();
+        return model
+          ? { ok: true, value: { ...result.value, model: model.id, provider: model.provider } }
+          : null;
+      }
+      return { ok: true, value: result.value };
+    },
     start: (request, context) => runHyperneoStart(request, context, deps),
     send: (ref, message, context) => runHyperneoSend(ref, message, context, deps),
     queue: (ref, message, context) => runHyperneoSend(ref, message, context, deps, 'defer'),

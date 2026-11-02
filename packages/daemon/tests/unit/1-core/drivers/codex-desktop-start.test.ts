@@ -841,3 +841,19 @@ describe('codex-desktop start', () => {
     expect(halfway.closed()).toBe(true);
   });
 });
+
+describe('Codex reuse configuration resolution', () => {
+  test('uses the start catalog without creating a thread or turn', async () => {
+    const run = adapter({ call: async () => catalog });
+    expect(
+      await run.instance.resolveStartConfiguration!({
+        ...request,
+        model: 'sol 6.1',
+        effort: ' Medium ',
+      })
+    ).toEqual({ ok: true, value: { model: 'gpt-6.1-sol', effort: 'medium' } });
+    expect(run.calls.map(([method]) => method)).toEqual(['model/list']);
+    expect(run.closed()).toBe(true);
+    expect(run.spawned).toEqual([]);
+  });
+});

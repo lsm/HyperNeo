@@ -797,3 +797,32 @@ describe('Claude history identity refresh', () => {
     expect(reads).toBe(2);
   });
 });
+
+describe('work.find execution location', () => {
+  test('preserves the worker cwd alongside the project folder through result validation', async () => {
+    const project = group('laptop', '/focus/dolmen', 'codex-desktop', 1);
+    const execution = { machine: 'laptop', directory: '/codex/worktrees/abc/dolmen' };
+    const registry = createOperationRegistry([
+      createFindWorkOperation({
+        adapters: () => [
+          {
+            id: 'codex-desktop',
+            capabilities: ['find'],
+            find: () => [{ ...project, work: [{ ...project.work[0], execution }] }],
+          },
+        ],
+        remote: { list: () => [], invoke: async () => ({}) },
+      }),
+    ]);
+    const outcome = await invokeOperation(
+      registry,
+      'work.find',
+      { localOnly: true },
+      { source: 'rpc' }
+    );
+    expect(outcome).toMatchObject({
+      kind: 'completed',
+      value: { places: [{ work: [{ place: { folder: '/focus/dolmen' }, execution }] }] },
+    });
+  });
+});
