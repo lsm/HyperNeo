@@ -140,6 +140,9 @@ jobs:
       - name: Test npm packaging script
         run: bun run test:package-npm
 
+      - name: Test API surface snapshot tooling
+        run: bun run test:api-surface
+
       - name: Test CI gate script
         run: bun run test:ci-gate
 
