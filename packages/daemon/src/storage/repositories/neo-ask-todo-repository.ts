@@ -1132,6 +1132,10 @@ export class NeoAskTodoRepository {
             ),
             question.id
           );
+      for (const id of question.startTodos.filter((id) => !kept.includes(id))) {
+        const todo = this.getTodo(id);
+        if (todo?.blockedBy === 'question') this.updateTodo(todo, {}, now);
+      }
       this.questionsPruned?.();
     }
   }

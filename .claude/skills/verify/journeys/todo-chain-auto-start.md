@@ -16,11 +16,11 @@ Require no Start question rows, exactly one native turn per step and no duplicat
 on repeated refresh. neo.todo.add must follow the same rule. Independent start:false
 work still gets its Start card. Contracts also preserve an explicit human hold.
 
-The helper then seeds an old erroneous Start card only in its synthetic database,
-restarts the isolated daemon, completes the predecessor and checks automatic
-recovery with the card retired and the next worker dispatched once. No live todo
-is edited. Mode chain-before on the pre-fix production source reproduces the
-blocked successor through those same MCP/RPC doors; keep the helper from this PR.
+The helper seeds an old Start card only in its synthetic database. A real todo edit
+must prune it and release the dependent immediately, without a full refresh.
+It reseeds the card, restarts the daemon, then completes the predecessor; dispatch
+must happen once. No live todo is edited. Mode chain-before reproduces the old
+blocked successor through the same MCP/RPC doors; keep this helper from the PR.
 
 Preserve observed.json and proof.log outside the worktree. Require wrapper exit 0
 and a clean daemon shutdown. This proves daemon state, public cards and worker
