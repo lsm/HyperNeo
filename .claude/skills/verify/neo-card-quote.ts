@@ -28,6 +28,7 @@ try{
  const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();
  const invoke=<T>(name:string,input:unknown)=>hub.request<T>('operation.invoke',{name,input});
  const requestId=crypto.randomUUID();const sent=await invoke<{ok:boolean}>('neo.message.send',{sessionId:root,requestId,content:'Keep',replyTo:{kind:'question',id:'new-card'}});assert(sent.ok);
+ const askReplyId=crypto.randomUUID();assert((await invoke<{ok:boolean}>('neo.message.send',{sessionId:root,requestId:askReplyId,content:'About this matter',replyTo:{kind:'ask',id:'synthetic-ask'}})).ok);
  const page=await invoke<{ok:boolean;items:{requestId:string;replyTo?:{kind:string;id:string;author?:string;excerpt?:string}}[]}>('neo.conversation.asks.read',{conversationId,imageRefs:true});evidence.page=page;assert(page.ok);
  assert.deepEqual(page.items.find(item=>item.requestId===requestId)?.replyTo,{kind:'question',id:'new-card',author:'neo',excerpt:'Replacement choice'});
  assert.deepEqual(page.items.find(item=>item.requestId===legacyId)?.replyTo,{kind:'question',id:'old-card',author:'neo',excerpt:'Earlier choice'});
@@ -37,6 +38,7 @@ try{
   const front=Bun.serve({hostname:'127.0.0.1',port:0,async fetch(request,server){const path=new URL(request.url).pathname;if(path==='/ws'){if(server.upgrade(request,{data:{connectionSessionId:'global',device:await app.authenticateUpgrade(request,'127.0.0.1')}}))return;return new Response('Upgrade failed',{status:500});}const file=Bun.file(join(dist,path==='/neo'?'neo/index.html':path));return await file.exists()?new Response(file):new Response('Not found',{status:404});},websocket:createWebSocketHandlers(app.transport,app.sessionManager)});
   try{const child=Bun.spawn(['node','.claude/skills/verify/neo-card-quote-web.mjs',String(front.port),run],{stdout:'inherit',stderr:'inherit'});assert.equal(await child.exited,0);evidence.webVerified=true;}finally{front.stop(true);}
  }
+ assert.deepEqual(page.items.find(item=>item.requestId===askReplyId)?.replyTo,{kind:'ask',id:'synthetic-ask',author:'neo',excerpt:'Synthetic work card'});
  evidence.pass=true;evidence.newReplyId=requestId;evidence.legacyReplyId=legacyId;evidence.legacyPayloadUnchanged=true;
  console.log('PASS actual sent and historical card quotes survive replacement/answer without the original card loaded');
 }finally{await transport?.close();await app.cleanup();writeFileSync(join(run,'evidence/card-quote.json'),JSON.stringify(evidence,null,2));}
