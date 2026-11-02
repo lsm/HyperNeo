@@ -12,7 +12,15 @@ export interface ArtifactHtml {
 export type ArtifactHtmlState =
   | { state: 'ready'; metadata: ArtifactFileMetadata; html: ArtifactHtml; text: string }
   | { state: 'html_source'; metadata: ArtifactFileMetadata }
-  | { state: 'revoked' | 'daemon_unavailable' | 'needs_update' | 'forbidden' | 'unsupported' };
+  | {
+      state:
+        | 'revoked'
+        | 'daemon_unavailable'
+        | 'needs_update'
+        | 'forbidden'
+        | 'unsupported'
+        | 'client_update';
+    };
 
 async function requestHtml(hub: MessageHub, metadata: ArtifactFileMetadata) {
   try {

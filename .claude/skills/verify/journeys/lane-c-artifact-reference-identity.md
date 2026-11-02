@@ -13,12 +13,11 @@ the identity. Hold a competing writer lock, keep health responsive, then remove 
 stored source immediately before delivering the committed receipt on main. Planning
 must load current source after its await and refuse without capturing a row.
 
-On Bun restore the source, concurrently resolve one tap, retain one receipt and read
-original snapshot bytes publicly. Remove stored source after capture but before the
-resolver receives its revalidation identity receipt: withhold the reply while
-retaining committed bytes/row; a later explicit retry recovers the same receipt.
-Preserve absent/missing/sensitive source refusals. Deno keeps its existing native
-safe_open_unavailable refusal; successful Deno capture/bytes are unverified.
+Restore the source and concurrently resolve one local tap. On both runtimes,
+require client_upgrade_required with upgrade guidance and zero snapshot rows or
+blobs; explicit retries retain the identity but cannot capture. Preserve
+absent/missing/sensitive source refusals. Registered-ID reads and immutable Git
+captures are exercised by their separate retained journeys.
 
 This journey originally moved only resolver identity initialization. Current
 registration/Git identity and row publication are covered by their later journeys;
@@ -34,3 +33,9 @@ root checks. Update the prior extraction helper's historical main-trace expectat
 now that real reference RPC identity is worker-backed. Append only the owned smoke
 line. Browser, native pinned Bun when unavailable and Neo-owned deployment remain
 unverified. Always close owned sockets/processors/app before data cleanup.
+
+C2 update: valid local worktree taps now refuse with client_upgrade_required on
+Bun and Deno before descriptor capture. The identity proof retains its admission,
+lost-reply, writer-contention, source and sensitive-path fences, but requires zero
+snapshot rows/blobs even for concurrent retries. It makes no successful-capture
+claim. Retained registered-ID bytes and Git versions have their separate proofs.

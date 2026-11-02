@@ -4997,6 +4997,28 @@
                 "const": false,
                 "type": "boolean"
               },
+              "detail": {
+                "type": "string"
+              },
+              "reason": {
+                "const": "client_upgrade_required",
+                "type": "string"
+              }
+            },
+            "required": [
+              "accepted",
+              "reason",
+              "detail"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "accepted": {
+                "const": false,
+                "type": "boolean"
+              },
               "reason": {
                 "enum": [
                   "outside_roots",

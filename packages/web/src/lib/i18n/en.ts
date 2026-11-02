@@ -331,6 +331,8 @@ export const en = {
   'artifact.downloadSafeHtml': 'Download safe HTML',
   'artifact.daemonUnavailable': 'The daemon that owns this file is not reachable.',
   'artifact.needsUpdate': 'Preview needs an updated daemon.',
+  'artifact.clientUpdate':
+    'Update HyperNeo and reopen the file from its message to preview the current file.',
   'artifact.revoked': 'This file is no longer available to you.',
   'artifact.forbidden': 'This reference points outside what the preview may open.',
   'artifact.unsupported': 'This format has no preview yet.',

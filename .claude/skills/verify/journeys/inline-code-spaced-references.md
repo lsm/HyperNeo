@@ -1,8 +1,8 @@
 # Chat and todo inline paths may contain spaces (#8940)
 
 Use shared metadata-only isolation and resource setup in SKILL.md. The helper
-seeds only a fresh synthetic database/workspace and exercises the real resolver,
-immutable registration and byte reads; no provider or credential is needed.
+seeds only a fresh synthetic database/workspace and exercises the real current-file reader
+and byte reads; no provider or credential is needed.
 
 ```sh
 bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
@@ -10,7 +10,8 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
 ```
 
 Both stored chat and todo text name `notes.md` and `My notes.md`. Each exact
-reference must register and read all synthetic bytes, with stable retries.
+reference must read all current synthetic bytes, with stable same-version retries
+and no registration.
 Symlinks, traversal, missing files, unmentioned existing files and shell syntax
 must be refused. A command-looking span is a single literal filename, never an
 instruction or a source of argument paths. Inspect inline-spaces.json/proof.log.
@@ -24,5 +25,5 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/rpc-evidence-directory \
 
 That mode uses the actual operation.invoke door on an ephemeral loopback daemon,
 refuses ports 8399/8499 and stops owned resources in finally. If the listener
-cannot start, report the RPC mode blocked even if native operation capture
+cannot start, report the RPC mode blocked even if native operation reads
 passed. Never restart the live daemon or weaken its worker policy to run this.
