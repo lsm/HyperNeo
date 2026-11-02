@@ -427,6 +427,7 @@ export async function reuseIdleWorker(
   if (!free?.size) return null;
   const configured =
     input.model || input.effort ? await adapter.resolveStartConfiguration!(input) : null;
+  if ((input.model || input.effort) && !configured) return null;
   if (configured && !configured.ok) return configured;
   const requested = configured?.ok ? configured.value : null;
   const groups = await adapter.find({ folder, includeClosed: false, limit: 50 });

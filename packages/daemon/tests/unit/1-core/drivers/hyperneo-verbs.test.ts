@@ -35,13 +35,15 @@ function control(
   db: Database,
   events: string[],
   withdraw?: HyperneoSessionControl['withdraw'],
-  provider?: HyperneoSessionControl['provider']
+  provider?: HyperneoSessionControl['provider'],
+  resolveDefaultModel?: HyperneoSessionControl['resolveDefaultModel']
 ) {
   let selectedModel = 'gpt-6-luna';
   return {
     sessions: {
       ...(withdraw ? { withdraw } : {}),
       ...(provider ? { provider } : {}),
+      ...(resolveDefaultModel ? { resolveDefaultModel } : {}),
       resolveModel: async (model: string) =>
         model === 'GLM 5.3'
           ? { id: 'glm-5.3', provider: 'glm' }
@@ -162,7 +164,8 @@ describe('hyperneo adapter send and status', () => {
   function adapter(
     prepareExecution?: WorkExecutionPreparer,
     withdraw?: HyperneoSessionControl['withdraw'],
-    provider?: HyperneoSessionControl['provider']
+    provider?: HyperneoSessionControl['provider'],
+    resolveDefaultModel?: HyperneoSessionControl['resolveDefaultModel']
   ) {
     fillSdkMessageFixtureColumns(db);
     return createHyperneoAdapter({
@@ -182,7 +185,7 @@ describe('hyperneo adapter send and status', () => {
         });
         return outcome;
       },
-      ...control(db, events, withdraw, provider),
+      ...control(db, events, withdraw, provider, resolveDefaultModel),
     });
   }
 
@@ -205,6 +208,26 @@ describe('hyperneo adapter send and status', () => {
       kind: 'completed',
       value: { ok: true, value: { provider: 'selected-provider' } },
     });
+  });
+
+  test('effort-only reuse resolves the same effective default model and provider as a new start', async () => {
+    const driver = adapter(undefined, undefined, undefined, async () => ({
+      id: 'glm-5.3',
+      provider: 'glm',
+    }));
+    const request = {
+      place: { machine: 'imac', folder: '/focus/repo', name: 'repo' },
+      title: 'fixture',
+      message: 'fixture',
+      effort: ' HIGH ',
+    };
+    expect(await driver.resolveStartConfiguration!(request)).toMatchObject({
+      ok: true,
+      value: { model: 'glm-5.3', provider: 'glm', effort: 'high' },
+    });
+    expect(await adapter().resolveStartConfiguration!(request)).toBeNull();
+    expect(events).toEqual([]);
+    expect(handed).toEqual([]);
   });
 
   test('reuse resolves model aliases and effort through the start resolver without creating work', async () => {

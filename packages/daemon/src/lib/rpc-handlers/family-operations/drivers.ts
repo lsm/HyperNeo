@@ -1,3 +1,4 @@
+import { resolveNewSessionModel } from '../../session/new-session-model.ts';
 import { releaseWorkerSandbox } from '../../drivers/worker-sandbox.ts';
 import { sessionSdkPath } from '../../session/sdk-path.ts';
 import { sdkPendingRemoval } from '../../../storage/repositories/sdk-message-transactions.ts';
@@ -253,6 +254,19 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
         prepared
       ),
     resolveModel: async (model) => resolveDriverModel(await readAvailableModels(), model),
+    resolveDefaultModel: async () => {
+      const { decision } = await resolveNewSessionModel(
+        undefined,
+        undefined,
+        db.getGlobalSettings(),
+        context.deps.config.defaultModel
+      );
+      return decision.kind === 'model' && decision.provider
+        ? { id: decision.id, provider: decision.provider }
+        : decision.kind === 'unavailable'
+          ? newestAvailableModel(await readAvailableModels())
+          : null;
+    },
     effort: (sessionId) =>
       THINKING_OPTIONS.find(
         (entry) => entry.value === sessionManager.getSessionFromDB(sessionId)?.config?.thinkingLevel

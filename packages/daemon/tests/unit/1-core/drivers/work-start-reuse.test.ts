@@ -26,6 +26,7 @@ function harness(
     unavailable?: boolean;
     provider?: string;
     requestedProvider?: string;
+    unresolvedDefault?: boolean;
   }
 ) {
   const sent: string[] = [];
@@ -37,6 +38,7 @@ function harness(
     supportsStartEffort: true,
     resolveStartConfiguration: config
       ? async (request) => {
+          if (config.unresolvedDefault) return null;
           const selected = workStartConfiguration.select(request, [
             { id: 'gpt-6.1-sol', aliases: ['Sol 6.1'], efforts: ['high', 'low'], isDefault: true },
           ]);
@@ -277,6 +279,29 @@ describe('work.start provider-aware reuse', () => {
       const result = await run.start(neo, false, { model: 'Sol 6.1', effort: 'high' });
       expect(result.value?.ref.id).toBe(provider === 'selected' ? id : 'fresh');
       expect(run.sent).toEqual(provider === 'selected' ? [id] : []);
+    }
+  );
+});
+
+describe('work.start effort-only reuse', () => {
+  test.each([
+    { model: 'gpt-6.1-sol', unresolvedDefault: false, reuse: true },
+    { model: 'other-default', unresolvedDefault: false, reuse: false },
+    { model: 'gpt-6.1-sol', unresolvedDefault: true, reuse: false },
+  ])(
+    'matches the effective model or starts fresh when unconfirmed: %j',
+    async ({ model, unresolvedDefault, reuse }) => {
+      const id = `effort-only-${model}-${unresolvedDefault}`;
+      const run = harness([{ id, status: 'done' }], [id], {
+        adapter: 'hyperneo',
+        model,
+        effort: 'high',
+        unresolvedDefault,
+      });
+      expect((await run.start(neo, false, { effort: 'high' })).value?.ref.id).toBe(
+        reuse ? id : 'fresh'
+      );
+      expect(run.sent).toEqual(reuse ? [id] : []);
     }
   );
 });
