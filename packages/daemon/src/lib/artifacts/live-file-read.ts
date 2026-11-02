@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { fstatSync, read, type BigIntStats } from 'node:fs';
 import { homedir } from 'node:os';
+import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -108,6 +109,7 @@ export function createLiveFileRead(
         const chunk = document.subarray(input.offset, input.offset + input.maxBytes);
         return {
           accepted: true as const,
+          path: resolve(plan.root, plan.relativePath),
           ...metadata,
           version,
           byteLength: document.length,
@@ -147,7 +149,7 @@ export function createLiveFileRead(
   return defineOperation({
     name: 'file.reference.read',
     description:
-      'Paired-human current text/Markdown, sanitized HTML or raster image read from an exact reference in a readable stored source. No registration or copy. Returns at most 256 KiB decoded bytes from text/HTML of at most 2 MiB or raster images of at most 32 MiB/16 million pixels; HTML is sanitized before chunking and must render in an opaque-origin sandbox, without scripts or automatic external assets; continue with nextOffset and version. Reopen without version for current content. A changed version requires discarding partial bytes and reopening.',
+      'Paired-human current text/Markdown, sanitized HTML or raster image read from an exact reference in a readable stored source. No registration or copy. Successful reads include the owning daemon’s absolute path for ordinary question text. Returns at most 256 KiB decoded bytes from text/HTML of at most 2 MiB or raster images of at most 32 MiB/16 million pixels; HTML is sanitized before chunking and must render in an opaque-origin sandbox, without scripts or automatic external assets; continue with nextOffset and version. Reopen without version for current content. A changed version requires discarding partial bytes and reopening.',
     inputSchema,
     resultSchema: z.union([
       z.strictObject({
@@ -165,6 +167,7 @@ export function createLiveFileRead(
       }),
       z.strictObject({
         accepted: z.literal(true),
+        path: z.string(),
         kind: z.enum(['text', 'markdown', 'html', 'image']),
         mediaType: z.enum(['image/png', 'image/jpeg', 'image/gif', 'image/webp']).optional(),
         width: z.number().int().positive().optional(),

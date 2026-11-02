@@ -343,6 +343,7 @@ export const en = {
   'artifact.downloadFailed': 'Download failed. Your preview is still open.',
   'artifact.retryDownload': 'Retry download',
   'artifact.download': 'Download complete file',
+  'artifact.askNeo': 'Ask Neo about this file',
   'artifact.copyVisible': 'Copy visible',
   'artifact.zoom': 'Original size',
   'artifact.omitted': '{count} bytes omitted. Showing head and tail. Download the complete file.',

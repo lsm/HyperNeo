@@ -340,6 +340,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'artifact.downloadFailed': '下载失败。预览仍然打开。',
   'artifact.retryDownload': '重试下载',
   'artifact.download': '下载完整文件',
+  'artifact.askNeo': '向 Neo 询问此文件',
   'artifact.copyVisible': '复制可见文本',
   'artifact.zoom': '原始尺寸',
   'artifact.omitted': '已省略 {count} 字节。显示开头和结尾。可下载完整文件。',

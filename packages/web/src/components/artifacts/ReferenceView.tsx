@@ -33,6 +33,7 @@ function StoredReferenceView({
   promoteFiles?: boolean;
   suspended?: boolean;
   tabbed?: boolean;
+  onAskFile?: (path: string) => void;
 }) {
   const key = JSON.stringify(target);
   const [settled, setSettled] = useState(() => ({ key, value: resolved.get(key) }));
@@ -125,6 +126,7 @@ export function ReferenceView(props: Parameters<typeof StoredReferenceView>[0]) 
         target={props.target}
         markdownClass={props.markdownClass}
         tabbed={props.tabbed}
+        onAskFile={props.onAskFile}
       />
     )
   ) : (
