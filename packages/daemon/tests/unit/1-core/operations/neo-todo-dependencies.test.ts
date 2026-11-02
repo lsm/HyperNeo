@@ -111,6 +111,64 @@ function setup() {
 }
 
 describe('todo dependencies', () => {
+  test.each(['parent', 'sibling', 'linked-parent'] as const)(
+    'a split dependent respects the scope of a %s question',
+    async (scope) => {
+      const { db, store, invoke, step, runner, sent } = setup();
+      try {
+        const target = { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } };
+        const work = { target, instruction: 'Complete the approved repository step.' };
+        const opened = await invoke('neo.ask.open', {
+          title: 'Parent decision scope',
+          request: 'Complete both repositories after any applicable decision.',
+          todos: [
+            step('Root evidence', []),
+            {
+              ...step('First repo', []),
+              ...work,
+              named: { repository: 'synthetic/first' },
+              start: true,
+            },
+            { ...step('Second repo', [1]), ...work, named: { repository: 'synthetic/second' } },
+          ],
+        });
+        expect(opened.ok).toBe(true);
+        const [root, first, second] = opened.todos;
+        const question = store.askQuestion(
+          'scope-question',
+          scope === 'sibling' ? first.askId : root.askId,
+          {
+            text: 'Review before continuing?',
+            kind: 'reply',
+            options: null,
+            multiple: false,
+            noLabel: null,
+            yesLabel: null,
+            startTodos: null,
+            ...(scope === 'linked-parent' ? { todoId: root.id } : {}),
+          },
+          Date.now()
+        );
+        await runner.recompute(store.getTodo(first.id)!, {}, Date.now(), {
+          state: 'done',
+          evidence: 'First repository PR merged.',
+        });
+        await runner.refresh(() => {});
+        if (scope === 'parent') {
+          expect(store.getTodo(second.id)?.state).not.toBe('doing');
+          expect(sent).toHaveLength(1);
+          store.answerQuestion(question, 'Continue.', 'chat', Date.now());
+          await runner.refresh(() => {});
+        }
+        expect(store.getTodo(second.id)?.state).toBe('doing');
+        await runner.refresh(() => {});
+        expect(sent).toHaveLength(2);
+      } finally {
+        db.close();
+      }
+    }
+  );
+
   test('an approved dependency advances across repository cards without a child Start answer', async () => {
     const { db, store, sessions, invoke, step, runner, sent } = setup();
     try {

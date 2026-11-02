@@ -12,7 +12,7 @@ import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/r
 
 const [mode, directory] = process.argv.slice(2),
   run = resolve(directory);
-assert(['before', 'verify', 'chain-before', 'chain-verify', 'chain-edges'].includes(mode));
+assert(['before', 'verify', 'chain-before', 'chain-verify', 'chain-edges', 'chain-parent'].includes(mode));
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -241,7 +241,29 @@ try {
     const chain = async (title: string, id = 'flow') => call('neo.ask.open', { title, request: 'Approved: complete the entire chain.', todos: [{ ...step(`${title}-1`, id), start: true }, { ...step(`${title}-2`, id), after: [0] }, { ...step(`${title}-3`, id), after: [1] }] });
     const read = async (askId: string) => (await rpc('neo.ask.read', { askId })).entry;
     const complete = async (title: string) => { writeFileSync(join(run, title), 'Verified outcome'); await refresh(); };
-    if (mode === 'chain-edges') {
+    if (mode === 'chain-parent') {
+      const plan = await call('neo.ask.open', { title: 'Parent decision plan', request: 'Complete both repositories after any applicable decision.', todos: [
+        { title: 'parent-root-evidence', after: [], check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'parent-root-evidence') } } },
+        { ...step('parent-first'), named: { repository: 'synthetic/first' }, after: [], start: true },
+        { ...step('parent-second'), named: { repository: 'synthetic/second' }, after: [1] },
+      ] });
+      const rootTodo = plan.todos.find((t: { title: string }) => t.title === 'parent-root-evidence');
+      const first = plan.todos.find((t: { title: string }) => t.title === 'parent-first');
+      const second = plan.todos.find((t: { title: string }) => t.title === 'parent-second');
+      const asked = await call('neo.question.ask', { askId: rootTodo.askId, kind: 'reply', text: 'Review before continuing?', retireWhen: { pack: 'core', kind: 'evidence', params: { path: join(run, 'parent-question-retired') } } });
+      await complete(first.title);
+      evidence.waitingOnParent = await read(second.askId);
+      evidence.parentQuestion = await read(rootTodo.askId);
+      assert.equal(starts(), 1);
+      assert.notEqual((evidence.waitingOnParent as { todos: { id: string; state: string }[] }).todos.find(t => t.id === second.id)?.state, 'doing');
+      assert.equal((await rpc('neo.question.answer', { questionId: asked.question.id, answer: 'Continue.' })).ok, true);
+      await refresh();
+      const advanced = await read(second.askId); evidence.parentAnswered = advanced;
+      assert.equal(advanced.todos.find((t: { id: string }) => t.id === second.id).state, 'doing');
+      assert.equal(starts(), 2);
+      await refresh(); assert.equal(starts(), 2);
+      evidence.verified = true;
+    } else if (mode === 'chain-edges') {
       const split = await call('neo.ask.open', { title: 'Split approved plan', request: 'Complete both repositories.', todos: [
         { ...step('split-first'), named: { repository: 'synthetic/first' }, start: true },
         { ...step('split-second'), named: { repository: 'synthetic/second' }, after: [0] },
