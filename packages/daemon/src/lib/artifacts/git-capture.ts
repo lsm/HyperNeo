@@ -10,7 +10,7 @@ import { ArtifactFileRepository } from '../../storage/repositories/artifact-file
 import type { ArtifactContext } from './file-policy.ts';
 import { loadRegistrationBinding } from './registration-binding.ts';
 import { artifactCaptureOwner } from './capture-owner.ts';
-import { storedKind } from './register-operation.ts';
+import { storedKind } from './stored-kind.ts';
 import { readBoundGitBlob } from './git-blob.ts';
 
 type Plan = { repository: string; sha: string; path: string; context: ArtifactContext };
