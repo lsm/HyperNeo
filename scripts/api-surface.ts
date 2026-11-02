@@ -5,7 +5,6 @@ import ts from 'typescript';
 import { createHash } from 'node:crypto';
 import { z } from '../packages/daemon/node_modules/zod/index.js';
 import type { OperationDefinition } from '../packages/daemon/src/lib/operations/registry.ts';
-import { OPERATION_NAMES } from '../packages/shared/src/types/operation-names.ts';
 
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
@@ -121,7 +120,7 @@ export function saveApiSurface(path: string, generated: string, check: boolean):
     throw new Error('API surface changed. Run bun run api:surface and commit api-surface.json.');
 }
 
-async function collect(run: string): Promise<void> {
+async function collect(run: string, root: string): Promise<void> {
   if (
     process.env.HOME !== join(run, 'home') ||
     process.env.HYPERNEO_DATA_DIR !== join(run, 'data') ||
@@ -131,8 +130,11 @@ async function collect(run: string): Promise<void> {
   globalThis.fetch = (() => {
     throw new Error('External HTTP disabled for API collection');
   }) as typeof fetch;
-  const { createDaemonApp } = await import('../packages/daemon/src/app.ts');
-  const { getConfig } = await import('../packages/daemon/src/config.ts');
+  const { createDaemonApp } = await import(join(root, 'packages/daemon/src/app.ts'));
+  const { getConfig } = await import(join(root, 'packages/daemon/src/config.ts'));
+  const { OPERATION_NAMES } = await import(
+    join(root, 'packages/shared/src/types/operation-names.ts')
+  );
   const app = await createDaemonApp({
     config: {
       ...getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }),
@@ -154,17 +156,12 @@ async function collect(run: string): Promise<void> {
   }
 }
 
-async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-  if (args[0] === '--collect' && args.length === 2) return collect(resolve(args[1]));
-  if (args.length && !(args.length === 1 && args[0] === '--check'))
-    throw new Error('Usage: bun run api:surface [--check]');
-  const root = resolve(import.meta.dir, '..');
+export async function generateApiSurface(root = resolve(import.meta.dir, '..')): Promise<string> {
   const run = mkdtempSync(join(tmpdir(), 'hyperneo-api-surface-'));
   try {
     for (const dir of ['home', 'data', 'tmp', 'bin']) mkdirSync(join(run, dir));
     writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
-    const child = Bun.spawnSync([process.execPath, import.meta.path, '--collect', run], {
+    const child = Bun.spawnSync([process.execPath, import.meta.path, '--collect', run, root], {
       cwd: root,
       env: {
         HOME: join(run, 'home'),
@@ -196,13 +193,25 @@ async function main(): Promise<void> {
     );
     surface.events = clientEventMethods(program, files);
     const generated = `${JSON.stringify(canonical(surface), null, 2)}\n`;
-    saveApiSurface(join(root, 'api-surface.json'), generated, args[0] === '--check');
-    console.log(
-      `API surface ${args[0] === '--check' ? 'matches' : 'written'}: ${surface.operations.length} operations, ${surface.events.length} client events.`
-    );
+    return generated;
   } finally {
     rmSync(run, { recursive: true, force: true });
   }
+}
+
+async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+  const root = resolve(import.meta.dir, '..');
+  if (args[0] === '--collect' && args.length >= 2 && args.length <= 3)
+    return collect(resolve(args[1]!), args[2] ? resolve(args[2]) : root);
+  if (args.length && !(args.length === 1 && args[0] === '--check'))
+    throw new Error('Usage: bun run api:surface [--check]');
+  const generated = await generateApiSurface(root);
+  const surface = JSON.parse(generated);
+  saveApiSurface(join(root, 'api-surface.json'), generated, args[0] === '--check');
+  console.log(
+    `API surface ${args[0] === '--check' ? 'matches' : 'written'}: ${surface.operations.length} operations, ${surface.events.length} client events.`
+  );
 }
 
 if (import.meta.main) await main();

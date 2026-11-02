@@ -120,12 +120,23 @@ describe('API compatibility report', () => {
   });
   test('nullable references preserve their value constraints', () => {
     const reference = { $defs: { value: { type: 'string', enum: ['a'] } }, $ref: '#/$defs/value' };
-    expect(diff(surface(object({}), reference), surface(object({}), { $defs: reference.$defs, anyOf: [{ $ref: '#/$defs/value' }, { type: 'null' }] })))
-      .toEqual([expect.objectContaining({ level: 'risky', path: 'result' })]);
+    expect(
+      diff(
+        surface(object({}), reference),
+        surface(object({}), {
+          $defs: reference.$defs,
+          anyOf: [{ $ref: '#/$defs/value' }, { type: 'null' }],
+        })
+      )
+    ).toEqual([expect.objectContaining({ level: 'risky', path: 'result' })]);
   });
   test('a new result field inside an intersection remains safe', () => {
-    expect(diff(surface(object({}), { allOf: [object({ a: string })] }), surface(object({}), { allOf: [object({ a: string, b: string })] })))
-      .toEqual([expect.objectContaining({ level: 'safe', path: 'result.b' })]);
+    expect(
+      diff(
+        surface(object({}), { allOf: [object({ a: string })] }),
+        surface(object({}), { allOf: [object({ a: string, b: string })] })
+      )
+    ).toEqual([expect.objectContaining({ level: 'safe', path: 'result.b' })]);
   });
   test('constraint and opaque-transform changes cannot silently appear unchanged', () => {
     expect(
