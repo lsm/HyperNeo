@@ -102,9 +102,9 @@ test('only stale open asks without active, waiting or questioned work receive th
     'recipient-empty',
   ]);
   expect(
-    tell.mock.calls.every(
-      (call) => String(call[2]).includes(note) && String(call[2]).includes('Ask:')
-    )
+    tell.mock.calls
+      .filter((call) => call[0] !== 'recipient-done')
+      .every((call) => String(call[2]).includes(note) && String(call[2]).includes('Ask:'))
   ).toBe(true);
   await service.refreshDriverWork();
   expect(tell).toHaveBeenCalledTimes(3);
@@ -209,4 +209,17 @@ test('a watcher failure never suppresses the stalled-ask wake', async () => {
   const tell = spyOn(service, 'deliverForward').mockResolvedValue(undefined);
   await service.refreshDriverWork();
   expect(tell.mock.calls.map((call) => call[0])).toEqual(['recipient-live']);
+});
+
+test('all-done asks get a distinct settlement wake without deciding settlement for Neo', async () => {
+  ask('complete');
+  todo('complete', 'done');
+  const tell = spyOn(service, 'deliverForward').mockResolvedValue(undefined);
+  await service.refreshDriverWork();
+  expect(tell).toHaveBeenCalledTimes(1);
+  expect(tell.mock.calls[0][2]).toContain(
+    'All todos are done and no question is open. Settle this ask.'
+  );
+  expect(tell.mock.calls[0][2]).not.toContain('Add the next todo');
+  expect(service.todos.getAsk('complete')?.status).toBe('open');
 });
