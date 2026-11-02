@@ -453,7 +453,7 @@ function projectHyperneoExchange(rows: HyperneoExchangeRow[], since: number) {
 export function readHyperneoExchange(db: BunDatabase, id: string, since: number) {
   const rows = db
     .prepare(
-      `SELECT sdk_uuid AS inputId, timestamp, ${sdkMessageBodyAt('sdk_messages.rowid')} AS message, message_type FROM sdk_messages
+      `SELECT timestamp, ${sdkMessageBodyAt('sdk_messages.rowid')} AS message, message_type FROM sdk_messages
       WHERE session_id = ? AND timestamp > ? AND parent_tool_use_id IS NULL
         AND COALESCE(internal_compaction_turn, 0) = 0
         AND (message_type = 'result' OR (message_type = 'user'

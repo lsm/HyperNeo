@@ -37,6 +37,7 @@ import type { NeoPack, NeoTodoCheckResult, NeoTodoJudgement } from './pack-contr
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
 import { sameNeoTodoCheck } from './todo-completion.ts';
 import { neoMoveTodo, neoTodoRepo } from './todo-repo.ts';
+import { planNeoTurnReportSweep } from './turn-report-sweep.ts';
 import { neoTurnOrigin } from './turn-origin.ts';
 import { deliverNeoTurnReport } from './turn-report.ts';
 
@@ -308,6 +309,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
     .endAsync('status') as (todoId: string, ref: WorkRef, ask: NeoAsk) => Promise<OperationOutcome>;
   const starting = new Set<string>();
+  let reportCursor = 0;
   const caller = (ask: NeoAsk) => driverWorkCaller({ originSessionId: ask.sessionId });
   const recompute = (superpipe({})('neo.todo.recompute-committed') as PipelineAPI)
     .input(['todo', 'patch', 'now', 'judgement'])
@@ -1360,18 +1362,21 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         if (starting.has(todoId)) continue;
         await recoverStart(todoId).catch((error) => warn('Todo start recovery pending', error));
       }
+      const candidates = [];
       for (const { todoId, ref } of await sessions.read('awaitingReports')) {
         const todo = store.getTodo(todoId);
         if (todo?.state === 'doing')
           await settle(todoId, ref).catch((error) => warn('Todo session refresh pending', error));
-        else if (todo) {
-          const ask = store.getAsk(todo.askId)!;
-          const since = sessions.readFollowAnchor(todoId) ?? todo.startedAt ?? todo.createdAt;
-          await deps
-            .invoke(caller(ask), 'work.status', { ref, since })
-            .then((outcome) => observe(todoId, outcome, ref))
-            .catch((error) => warn('Worker human turn report pending', error));
-        }
+        else if (todo) candidates.push({ todo, ref, ask: store.getAsk(todo.askId)! });
+      }
+      const plan = planNeoTurnReportSweep(candidates, reportCursor);
+      reportCursor = plan.next;
+      for (const { todo, ref, ask } of plan.selected) {
+        const since = sessions.readFollowAnchor(todo.id) ?? todo.startedAt ?? todo.createdAt;
+        await deps
+          .invoke(caller(ask), 'work.status', { ref, since })
+          .then((outcome) => observe(todo.id, outcome, ref))
+          .catch((error) => warn('Worker human turn report pending', error));
       }
       for (const todo of await store.read('listCheckable')) {
         if (todo.blockedBy === 'needs-human')

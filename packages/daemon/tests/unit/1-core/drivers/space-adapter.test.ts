@@ -243,7 +243,7 @@ describe('space adapter against the space tables', () => {
         'Fix parser'
       );
     beforeEach(() => {
-      db.exec(`CREATE TABLE sdk_messages (session_id TEXT, message_type TEXT, sdk_message TEXT,
+      db.exec(`CREATE TABLE sdk_messages (session_id TEXT, sdk_uuid TEXT, message_type TEXT, sdk_message TEXT,
         timestamp TEXT, parent_tool_use_id TEXT, send_status TEXT);
         INSERT INTO sessions VALUES ('s1', '{"status":"idle"}', '2026-10-14T10:00:00.020Z'),
           ('s2', '{"status":"idle"}', '2026-10-14T10:00:00.030Z');

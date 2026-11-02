@@ -347,6 +347,13 @@ describe('neo todo runner', () => {
         h.sessions.recordRef(todo.id, worker, at);
         h.sessions.recordFollowAnchor(todo.id, at);
         h.store.updateTodo(todo, { state: 'done' }, at);
+        if (index === 0) {
+          const sibling = h.add(null, null);
+          h.sessions.create(sibling.id, { verb: 'adopt', ref: worker });
+          h.sessions.recordRef(sibling.id, worker, at);
+          h.sessions.recordFollowAnchor(sibling.id, at);
+          h.store.updateTodo(sibling, { state: 'done' }, at);
+        }
       }
       h.setStatus({
         ok: true,

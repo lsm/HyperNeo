@@ -26,3 +26,9 @@ before writing the final task result. A production restart is not part of this
 journey. Unit contracts separately cover dispatch receipts, all todo states,
 tracked history anchors and repeat observation. Retain both baseline and fixed
 proofs; they are separate runs, not independent uses of a live human worker.
+
+Settled-worker observations are deduplicated per worker/recipient and bounded to
+20 per sweep, with round-robin continuation. The runner contract creates 21
+completed workers, verifies 20 status reads in the first sweep and all 21 human
+turns delivered after the next. There is no age cutoff: an older completed
+worker can become active again while its ask remains open.
