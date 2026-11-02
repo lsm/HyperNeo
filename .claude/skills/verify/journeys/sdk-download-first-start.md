@@ -27,5 +27,5 @@ one clear session error is covered by the resolver unit tests, not this journey.
 The downloaded SDK must match the daemon package's exact dependency pin, even
 when the compiled server has no readable package manifests. The message evidence
 is read through `message.sdkMessages` into `session-messages.json`, including the
-real native SDK initialization. Set `VERIFY_EXPECTED_CLI_VERSION` to also require
-a specific `claude_code_version` in that initialization.
+real native SDK initialization. Its `claude_code_version` must equal the
+installed SDK package's `claudeCodeVersion` metadata.

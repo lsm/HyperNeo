@@ -105,6 +105,21 @@ bash .claude/skills/verify/resource-check.sh && bun run check
 Portable wrappers invoke this macOS-only check on Darwin; Linux must not require
 `memory_pressure` or `/System/Volumes/Data` to enter a journey.
 
+For full daemon unit runs used by an SDK upgrade, also isolate HOME and TMPDIR:
+startup fixtures can otherwise scan the owner's native-session directories.
+Run the existing suite under `with-run.sh`, retaining its output outside RUN:
+
+```bash
+bash .claude/skills/verify/resource-check.sh && \
+bash .claude/skills/verify/with-run.sh bash -c '
+  mkdir -p "$RUN/home" "$RUN/tmp" "$RUN/bin"
+  cp .claude/skills/verify/gh-stub.sh "$RUN/bin/gh"
+  env -i HOME="$RUN/home" TMPDIR="$RUN/tmp" PATH="$RUN/bin:$PATH" \
+    BUN_INSTALL="$(dirname "$(dirname "$(command -v bun)")")" \
+    TERM=dumb NODE_ENV=test ./scripts/test-daemon.sh
+' > /absolute/persistent-evidence/daemon-unit.log 2>&1
+```
+
 In a standalone clone beneath a directory named `tmp`, Biome can ignore its `.`
 target because the repository excludes `**/tmp`. If `format:check` reports zero
 files, run the same check chain with that one command replaced by

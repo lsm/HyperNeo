@@ -4,9 +4,8 @@ Use SKILL.md's resource guard and synthetic HOME/data rules. Run the following
 journeys sequentially, preserving their evidence before removing each run's
 temporary data. Never use the owner's daemon or credentials for these proofs.
 
-- Run the full daemon unit suite with `./scripts/test-daemon.sh`.
-- Build the compiled server and follow `sdk-download-first-start.md`, setting
-  `VERIFY_EXPECTED_CLI_VERSION=2.1.316` for SDK 0.3.316. Require the download
+- Run the full daemon unit suite with SKILL.md's isolated-unit setup.
+- Build the compiled server and follow `sdk-download-first-start.md`. Require the download
   version to match the exact dependency pin and the actual native initialization
   to match that CLI version. Receiving a reply alone cannot detect a stale
   compiled downloader fallback.
@@ -18,6 +17,8 @@ temporary data. Never use the owner's daemon or credentials for these proofs.
   request through the public RPC and require queued inputs in its next turn.
 - Follow `sdk-permission-spawn.md`: observe native initialization and permission
   control under ordinary, worker-policy and empty-plan settings.
+- Follow `neo-human-direct-worker-turns.md`: a real worker reply reaches Neo,
+  whose native SDK/MCP tool call must persist the follow-up todo.
 
 The loopback model scripts exercise the real SDK/CLI transport, daemon RPCs and
 persisted conversations. They do not prove real provider authentication or model
