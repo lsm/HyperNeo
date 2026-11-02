@@ -31,6 +31,11 @@ union growth, optionality, nullability and changed referenced alternatives.
 Regenerate the default inventory with `api:phone-methods` using its configured
 source checkout and pinned released commit, and compare it with the committed
 file. Never use a dirty working tree or current main as released-phone evidence.
+The report records payload-schema coverage for each source ref; refs without
+the event-contract module must stay at zero typed payloads, even when the current
+checkout owns schemas. Never interpret newly recorded coverage as historical
+compatibility.
+
 The default 0.5.0 (6) source association is owner-reported timing, without a retained
 upload receipt. Keep that caveat in the report. The simple literal-call scan does
 not infer computed method names; verify that all canonical operation-name
