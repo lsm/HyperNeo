@@ -29,8 +29,8 @@ try{
  const registry=createOperationRegistry(original.entries.map(entry=>['work.status','work.find'].includes(entry.name)?defineOperation({name:entry.name,description:'Synthetic native source',inputSchema:z.unknown(),resultSchema:z.unknown(),execute:(input:unknown,caller)=>{
   if(entry.name==='work.find'){
    const id=(input as {idPrefix?:string}).idPrefix;
-   const refs=id==='native-thread'?[{adapter:'codex-desktop',id}]:id==='ambiguous'?[{adapter:'codex-desktop',id},{adapter:'claude-desktop',id}]:[];
-   return {places:refs.length?[{place,lastActivityAt:1,openCount:refs.length,archivedCount:0,adapters:refs.map(ref=>ref.adapter),work:refs.map(summary)}]:[],unreachable:[]};
+   const refs=['native-thread','truncated'].includes(id??'')?[{adapter:'codex-desktop',id}]:id==='ambiguous'?[{adapter:'codex-desktop',id},{adapter:'claude-desktop',id}]:[];
+   return {places:refs.length?[{place,lastActivityAt:1,openCount:refs.length,archivedCount:0,adapters:refs.map(ref=>ref.adapter),work:refs.map(summary)}]:[],unreachable:[],more:id==='truncated'};
   }
   const ref=(input as {ref:WorkRef}).ref;
   if(['codex-desktop','claude-desktop'].includes(ref.adapter)){
@@ -57,6 +57,9 @@ try{
  const beforeInjection=app.db.getDatabase().prepare('SELECT COUNT(*) AS n FROM neo_publications').get();
  const injected=await invoke('neo.publication.publish',{...draft,requestId:crypto.randomUUID(),sessionSource:{adapter:'codex-desktop',link:'javascript:alert(1)'}});assert.notEqual(injected.accepted,true);assert.deepEqual(app.db.getDatabase().prepare('SELECT COUNT(*) AS n FROM neo_publications').get(),beforeInjection);
  const ambiguous=await invoke('neo.session.link',{session:'ambiguous'});assert.equal(ambiguous.ok,false);
+ const beforeTruncated=app.db.getDatabase().prepare('SELECT COUNT(*) AS n FROM neo_publications').get();
+ const truncatedLink=await invoke('neo.session.link',{session:'truncated'});assert.equal(truncatedLink.ok,false,'a truncated lookup must not guess an Open target');
+ const truncatedPublish=await invoke('neo.publication.publish',{...draft,requestId:crypto.randomUUID(),session:'truncated'});assert.equal(truncatedPublish.reason,'session_lookup_failed');assert.deepEqual(app.db.getDatabase().prepare('SELECT COUNT(*) AS n FROM neo_publications').get(),beforeTruncated);
  const unavailable=await invoke('neo.publication.publish',{...draft,requestId:crypto.randomUUID(),session:'codex-desktop:unavailable'});assert.equal(unavailable.reason,'session_lookup_failed');
  const edited=await invoke('neo.publication.edit',{requestId:crypto.randomUUID(),publicationId:first.publication.publicationId,fullText:'Edited report'});assert(edited.accepted);assert.equal(edited.publication.sessionSource.adapter,'codex-desktop');
  ws=new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);await new Promise((resolve,reject)=>{ws!.onopen=resolve;ws!.onerror=reject;});
