@@ -1,3 +1,4 @@
+import { runMigration470 } from './m470-neo-peers.ts';
 import { runMigration467 } from './m467-google-connections.ts';
 import { runMigration456 } from './m456-neo-todo-query-indexes.ts';
 import { runMigration447 } from './m447-neo-todo-removed-index.ts';
@@ -879,5 +880,6 @@ function createIndexes(db: BunDatabase): void {
   runMigration429(db);
   runMigration432(db);
   runMigration467(db);
+  runMigration470(db);
   createExtensionIndexes(db);
 }
