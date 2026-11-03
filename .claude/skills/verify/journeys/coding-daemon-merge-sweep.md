@@ -102,3 +102,7 @@ hold; missing pages, malformed data and a failed files read must also hold.
 No policy changes or manual merge are used to complete the scope.
 Ordinary waiting_human rows remain signaling-only. This exception requires a
 truncated file summary plus complete current scope and passing fresh gates.
+
+The file read pins both head and base SHA before/after pagination. A moving base
+with an unchanged head, or repeated pages whose count looks complete, must hold.
+The accepted final-read-to-merge race in #9458 remains unchanged.

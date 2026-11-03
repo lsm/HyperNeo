@@ -65,7 +65,7 @@ try{
  assert.deepEqual(mergeCalls(),[['pr','merge',url,'--squash','--match-head-commit',head]]);
  assert.equal(notices.filter(text=>text.includes('Merge confirmed:')).length,1);
  assert.deepEqual(await rpc('pack.preferences.list',{}),preferences);
- evidence.completeFileScope=171;evidence.incompleteMalformedAndFailedReadsHeld=true;evidence.protectedLastPageHeld=true;evidence.savedPreferencesUnchanged=true;evidence.mergeCommands=mergeCalls();evidence.executorActivated=true;evidence.verified=true;
+ evidence.completeFileScope=171;evidence.movedBaseAndDuplicatePagesHeld=true;evidence.incompleteMalformedAndFailedReadsHeld=true;evidence.protectedLastPageHeld=true;evidence.savedPreferencesUnchanged=true;evidence.mergeCommands=mergeCalls();evidence.executorActivated=true;evidence.verified=true;
  }else if(zeroRequired){
  publish({labels:[[]],zeroRequired:true});rejectSignoff=false;
  await runSweep();await runSweep();

@@ -17,7 +17,10 @@ import type { CodingDaemonMergeFacts } from './daemon-merge-gates.ts';
 
 const failed = (reason: string) => ({ reason: { ok: false as const, reason } });
 const Response = z.tuple([
-  schema.Pr.extend({ mergeCommit: z.object({ oid: schema.Head.shape.headRefOid }).nullable() }),
+  schema.Pr.extend({
+    baseRefOid: schema.Head.shape.headRefOid,
+    mergeCommit: z.object({ oid: schema.Head.shape.headRefOid }).nullable(),
+  }),
   schema.Reviews.min(1),
   schema.Checks,
   schema.Threads,
@@ -72,7 +75,7 @@ const collect = async (db: Database, url: string, spawn: SpawnFn) => {
     'view',
     url,
     '--json',
-    'url,body,state,headRefOid,isDraft,mergeable,mergeStateStatus,author,changedFiles,files,labels,mergeCommit',
+    'url,body,state,headRefOid,baseRefOid,isDraft,mergeable,mergeStateStatus,author,changedFiles,files,labels,mergeCommit',
   ]);
   const responses = await Promise.all([
     pull,
@@ -138,24 +141,28 @@ const project = ([
 ]: Observed): CodingDaemonMergeFacts & {
   mergeCommit?: string | null;
   fileScopePaginated: boolean;
-} => ({
-  ok: true,
-  head: pr.headRefOid,
-  state: pr.state,
-  draft: pr.isDraft,
-  mergeable: pr.mergeable,
-  requiredCi: { head: pr.headRefOid, green: checks.every((check) => check.bucket === 'pass') },
-  threads: { head: threads.headOid, unresolved: threads.unresolvedThreadUrls.length },
-  reviews: reviews
-    .flat()
-    .flatMap((review) =>
-      review.user ? [{ ...review.user, head: review.commit_id, state: review.state }] : []
-    ),
-  files: pr.changedFiles === files.flat().length ? files.flat().map((file) => file.filename) : null,
-  fileScopePaginated: pr.changedFiles > pr.files.length && pr.changedFiles === files.flat().length,
-  labels: labels.flat().map((label) => label.name),
-  mergeCommit: pr.mergeCommit?.oid ?? null,
-});
+} => {
+  const paths = files.flat().map((file) => file.filename);
+  const complete = paths.length === pr.changedFiles && new Set(paths).size === paths.length;
+  return {
+    ok: true,
+    head: pr.headRefOid,
+    state: pr.state,
+    draft: pr.isDraft,
+    mergeable: pr.mergeable,
+    requiredCi: { head: pr.headRefOid, green: checks.every((check) => check.bucket === 'pass') },
+    threads: { head: threads.headOid, unresolved: threads.unresolvedThreadUrls.length },
+    reviews: reviews
+      .flat()
+      .flatMap((review) =>
+        review.user ? [{ ...review.user, head: review.commit_id, state: review.state }] : []
+      ),
+    files: complete ? paths : null,
+    fileScopePaginated: complete && pr.changedFiles > pr.files.length,
+    labels: labels.flat().map((label) => label.name),
+    mergeCommit: pr.mergeCommit?.oid ?? null,
+  };
+};
 const read = (superpipe({})('coding.read-daemon-merge-facts') as PipelineAPI)
   .input(['db', 'url', 'spawn'])
   .pipe(
@@ -176,7 +183,7 @@ const read = (superpipe({})('coding.read-daemon-merge-facts') as PipelineAPI)
   .pipe(
     async (observed: Observed, url: string, spawn: SpawnFn) => {
       const result = await runGhJson(
-        ['gh', 'pr', 'view', url, '--json', 'headRefOid,state'],
+        ['gh', 'pr', 'view', url, '--json', 'headRefOid,state,baseRefOid'],
         homedir(),
         spawn
       );
@@ -184,13 +191,16 @@ const read = (superpipe({})('coding.read-daemon-merge-facts') as PipelineAPI)
         return failed(
           `final_head_read_failed: ${result.error}. Leave this PR unchanged until its current head can be read.`
         );
-      const head = schema.Head.safeParse(result.data);
+      const head = schema.Head.extend({ baseRefOid: schema.Head.shape.headRefOid }).safeParse(
+        result.data
+      );
       return head.success &&
         head.data.headRefOid === observed[0].headRefOid &&
+        head.data.baseRefOid === observed[0].baseRefOid &&
         head.data.state === observed[0].state
         ? { value: observed }
         : failed(
-            'head_or_state_changed_during_read: The PR head or state changed during collection. Read the current PR again before merging.'
+            'head_base_or_state_changed_during_read: The PR head, base or state changed during collection. Read the current PR again before merging.'
           );
     },
     ['observed', 'url', 'spawn'],

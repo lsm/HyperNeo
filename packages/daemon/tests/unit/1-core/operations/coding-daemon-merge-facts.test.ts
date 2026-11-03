@@ -141,7 +141,7 @@ describe('readCodingDaemonMergeFacts', () => {
       requiredCi: { head, green: true },
       threads: { head, unresolved: 0 },
     });
-    expect(calls.at(-1)).toContain('headRefOid,state');
+    expect(calls.at(-1)).toContain('headRefOid,state,baseRefOid');
   });
   test('accepts a mixed-case GitHub hostname without GH_HOST', async () => {
     const configured = process.env.GH_HOST;
