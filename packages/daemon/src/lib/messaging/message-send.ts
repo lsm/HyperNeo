@@ -20,7 +20,7 @@ import { createMailboxEntry, toMailboxMessage } from '../mailbox/entry.ts';
 import { WORKER_REPORT_KINDS } from '@hyperneo/shared/types/worker-report';
 import { handoffPromptToMailbox, type MailboxHandoffOutcome } from '../mailbox/handoff.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import { AgentReferenceSchema } from '../agents/agent-reference.ts';
+import { AgentReferenceSchema } from './agent-reference-schema.ts';
 import { sessionUnavailable } from '../session-resolution/session-lookup.ts';
 import { wrapSessionContent } from './session-envelope.ts';
 
