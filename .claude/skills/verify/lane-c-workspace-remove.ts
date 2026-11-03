@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -55,7 +56,7 @@ try{
  JobQueueProcessor.prototype.start=function(){processors.add(this);return start.call(this);};
  try{app=await createDaemonApp({config:{...getConfig({host:'127.0.0.1',port:0,dbPath:join(run,'data/daemon.db'),workspaceRoot:join(run,'workspace')}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});}finally{JobQueueProcessor.prototype.start=start;}
  assert.notEqual(app.server.port,8399);await Promise.all([...processors].map(p=>p.stop()));main=app.db.getDatabase();await waitForSdkBodyCopy(main);
- const repo=new WorkspaceHistoryRepository(main);const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();
+ const repo=new WorkspaceHistoryRepository(main);const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({ createSocket: createLocalSocket,url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();
  type Entry={path:string;project?:{id:string;folders:string[]}};
  const history=()=>hub.request<{entries:Entry[]}>('workspace.history',{});
  const remove=(path:string)=>hub.request<{success:boolean}>('workspace.remove',{path});

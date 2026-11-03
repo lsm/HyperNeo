@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -31,7 +32,7 @@ try {
   neo = createNeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
   for (const id of ['synthetic-signoff-neo', worker]) await app.db.createSession({ id, title: id, workspacePath: join(run, 'home'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
   neo.repo.reserveBinding({ sessionId: 'synthetic-signoff-neo', projectId: null, kind: 'neo' });
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = new createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connect')); });
   const rpc = (name: string, input: unknown) => new Promise<any>((done, fail) => {
     const id = crypto.randomUUID(), timer = setTimeout(() => fail(new Error('RPC timeout')), 10000);

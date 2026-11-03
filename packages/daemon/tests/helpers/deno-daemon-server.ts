@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
+import { readLocalCredential } from '../../src/lib/pairing/local-credential.ts';
 import { createMockApiServer } from './mock-api-server.ts';
 import type { DaemonServerContext } from './daemon-server.ts';
 
@@ -104,6 +105,7 @@ export async function createDenoDaemonServer(): Promise<DaemonServerContext> {
     HOST: '127.0.0.1',
     HYPERNEO_PORT: '0',
     DB_PATH: dbPath,
+    HYPERNEO_DATA_DIR: join(workDir, 'data'),
     TEST_WORKTREE_BASE_DIR: join(workDir, 'worktrees'),
     ANTHROPIC_API_KEY: 'sk-deno-test-key',
     ANTHROPIC_AUTH_TOKEN: '',
@@ -210,7 +212,10 @@ export async function createDenoDaemonServer(): Promise<DaemonServerContext> {
       });
     });
 
+    const credential = await readLocalCredential(join(workDir, 'data/local-rpc.credential'));
     transport = new WebSocketClientTransport({
+      createSocket: (url) =>
+        new WebSocket(url, { headers: { authorization: `Bearer ${credential}` } }),
       url: `${baseUrl}/ws`,
       autoReconnect: false,
     });

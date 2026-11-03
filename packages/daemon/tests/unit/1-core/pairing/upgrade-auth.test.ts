@@ -42,7 +42,7 @@ function setup() {
   return { db, repo, authenticate, pairDevice, upgrade, unpaired, tick: () => (now += 1_000) };
 }
 
-describe('upgrade authentication (report only)', () => {
+describe('upgrade authentication', () => {
   test('a paired device is recognised by its Bearer header or cookie and its last sighting is kept', async () => {
     const { db, authenticate, pairDevice, upgrade, unpaired } = setup();
     const phone = pairDevice('human', 'Phone');
@@ -73,7 +73,7 @@ describe('upgrade authentication (report only)', () => {
     db.close();
   });
 
-  test('an unpaired connection is accepted as unknown and recorded once per client, without any secret', async () => {
+  test('an unpaired connection has no identity and is recorded once per client, without any secret', async () => {
     const { db, authenticate, upgrade, unpaired, tick } = setup();
     expect(await authenticate(upgrade({}), '192.168.1.20')).toBeNull();
     tick();
@@ -188,7 +188,7 @@ describe('upgrade authentication (report only)', () => {
     db.close();
   });
 
-  test('a storage failure never refuses the connection', async () => {
+  test('a storage failure never authenticates the connection', async () => {
     const failing = (run: () => Promise<never>) =>
       createUpgradeAuthenticator({ db: () => ({ run }) as unknown as DbGateway, now: () => 1 });
     const locked = () => Promise.reject(new Error('database is locked'));

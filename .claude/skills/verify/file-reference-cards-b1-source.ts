@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -34,7 +35,7 @@ try {
   store.askQuestion('native-question','ask',{...draft,sourceSession:{...owner,adapter:'claude-code',id:'native'}},1);
   const counts=()=>['artifact_files','artifact_file_identity'].map(table=>db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get());
   const before=counts();
-  ws=new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws=createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise((resolve,reject)=>{ws!.onopen=resolve;ws!.onerror=reject;});
   const read=(id:string,reference='report.md',extra={})=>new Promise<{accepted:boolean;reason?:string;data?:string;path?:string}>((resolve,reject)=>{
     const requestId=crypto.randomUUID();

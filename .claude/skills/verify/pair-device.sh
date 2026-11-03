@@ -23,7 +23,7 @@ field() { python3 -c "import json,sys;print(json.load(sys.stdin)$1)"; }
 pair() { curl -s -o "$RUN/pair.json" -w '%{http_code}' -X POST "http://127.0.0.1:$PORT/pair" \
   -H 'content-type: application/json' -d "{\"code\":\"$1\",\"name\":\"$2\"}"; }
 show() { python3 -c "import json;b=json.load(open('$RUN/pair.json'));print(b.get('kind') or b.get('error'), 'credential '+str(len(b['credential']))+' chars' if 'credential' in b else '')"; }
-rpc() { VERIFY_PORT=$PORT bun .claude/skills/verify/rpc.ts "$@"; }
+rpc() { HYPERNEO_DATA_DIR="$RUN/data" VERIFY_PORT=$PORT bun .claude/skills/verify/rpc.ts "$@"; }
 
 FIRST=$(cli pair --name Laptop)
 echo "1 first CLI code: $(echo "$FIRST" | field "['approval']")"
@@ -43,5 +43,5 @@ echo "  CLI reset-lockout -> $(cli pair --reset-lockout | field "['ok']")"
 echo "4 devices: $(sqlite3 -readonly "$RUN/data/daemon.db" "SELECT group_concat(name || ':' || kind, ', ') FROM paired_devices")"
 echo "  raw credential in the database: $(sqlite3 -readonly "$RUN/data/daemon.db" .dump | grep -c -e "$CRED" -e "$LAPTOP" || true)"
 echo "  pairing code in daemon log: $(grep -c "$CODE" "$RUN/daemon.log" || true)"
-echo "5 unpaired WebSocket still served: $(rpc rpc:hello '{}' >/dev/null 2>&1 && echo yes || rpc device.pair.pending '{}' | field "['reply']['ok']")"
+echo "5 unpaired WebSocket served: $(VERIFY_CREDENTIAL=not-a-device rpc rpc:hello '{}' >/dev/null 2>&1 && echo yes || echo no)"
 echo "run dir: $RUN"

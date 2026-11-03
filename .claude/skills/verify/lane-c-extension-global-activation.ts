@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -66,7 +67,7 @@ try {
   const store = new ExternalEventExtensionConfigStore(main); await store.setGlobalConfig(source, config); const initial = main.prepare('SELECT * FROM external_event_extension_configs WHERE source=?').get(source)!;
   assert(manager); manager.register({ sourceId: source, async start(ctx) { callbacks.push({ kind: 'start', enabled: (await ctx.config.getGlobalConfig(source)).globallyEnabled }); if (failStart) { failStart = false; throw new Error('synthetic extension start failure'); } }, async stop() { callbacks.push({ kind: 'stop', enabled: (await store.getGlobalConfig(source)).globallyEnabled }); } });
   commandPosts = 0; metrics.length = 0; capturedTimes.length = 0;
-  const hub = new MessageHub({ defaultSessionId: 'global' }); transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false }); hub.registerTransport(transport); await transport.initialize();
+  const hub = new MessageHub({ defaultSessionId: 'global' }); transport = new WebSocketClientTransport({createSocket: createLocalSocket,  url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false }); hub.registerTransport(transport); await transport.initialize();
   const enable = (enabled: boolean) => hub.request('externalEvents.extensions.setGlobalEnabled', { source, enabled });
   const listed = async () => (await hub.request<{ extensions: { source: string; status: string; config: typeof config }[] }>('externalEvents.extensions.list', {})).extensions.find(e => e.source === source)!;
   const row = () => main!.prepare('SELECT * FROM external_event_extension_configs WHERE source=?').get(source)!;

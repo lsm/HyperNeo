@@ -25,6 +25,25 @@ export const UNPAIRED_ROW_CAP = 500;
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 
+function insertDevice(db: Database, device: PairedDevice, credential: string, reuse = false): void {
+  db.prepare(
+    `INSERT ${reuse ? 'OR IGNORE ' : ''}INTO paired_devices (id, name, kind, secret_hash, created_at) VALUES (?, ?, ?, ?, ?)`
+  ).run(device.id, device.name, device.kind, hash(credential), device.createdAt);
+}
+
+export const enrollLocalDevice = defineDbOp({
+  name: 'pairing.enrollLocalDevice',
+  mode: 'write',
+  run: (db: Database, { credential, now }: { credential: string; now: number }): void => {
+    insertDevice(
+      db,
+      { id: `local-rpc:${randomUUID()}`, name: 'Local tools', kind: 'human', createdAt: now },
+      credential,
+      true
+    );
+  },
+});
+
 export function normalizePairingCode(code: string): string {
   return code.replace(/[\s-]/g, '').toUpperCase();
 }
@@ -224,7 +243,7 @@ export class DevicePairingRepository {
   countDevices(): { all: number; humans: number } {
     return this.db
       .prepare(
-        'SELECT COUNT(*) AS "all", COUNT(*) FILTER (WHERE kind = \'human\' AND revoked_at IS NULL) AS humans FROM paired_devices'
+        "SELECT COUNT(*) AS \"all\", COUNT(*) FILTER (WHERE kind = 'human' AND revoked_at IS NULL) AS humans FROM paired_devices WHERE id NOT LIKE 'local-rpc:%'"
       )
       .get() as { all: number; humans: number };
   }
@@ -325,11 +344,7 @@ export class DevicePairingRepository {
           )
           .run();
       }
-      this.db
-        .prepare(
-          'INSERT INTO paired_devices (id, name, kind, secret_hash, created_at) VALUES (?, ?, ?, ?, ?)'
-        )
-        .run(device.id, name, claimed.kind, hash(credential), now);
+      insertDevice(this.db, { ...device, kind: claimed.kind }, credential);
       return { device: { ...device, kind: claimed.kind }, credential };
     })();
   }

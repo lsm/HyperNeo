@@ -15,7 +15,10 @@ if (!root) {
 }
 
 function renderApp() {
-  render(location.pathname === '/pair' ? <PairPage /> : <App />, root!);
+  if (location.pathname === '/pair') return render(<PairPage />, root!);
+  void fetch('/ws', { credentials: 'same-origin', cache: 'no-store' })
+    .then((response) => render(response.status === 401 ? <PairPage /> : <App />, root!))
+    .catch(() => render(<App />, root!));
 }
 
 renderApp();

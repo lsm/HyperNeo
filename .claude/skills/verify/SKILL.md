@@ -37,6 +37,7 @@ commit intentionally reloads on connection and can invalidate browser setup.
 ```bash
 cd packages/web && bun run build && cd ../..
 .claude/skills/verify/launch.sh 9311 "$RUN"
+export HYPERNEO_DATA_DIR="$RUN/data"
 ```
 
 - Pick any free port except 8399. `launch.sh` refuses a busy port, and refuses
@@ -81,6 +82,11 @@ dependency paths, alongside VERIFY_CLAUDE. Other parent environment values stay
 scrubbed; set the browser paths on the wrapper invocation when using --web.
 
 Give it a model, once per run (stored in the run's DB only):
+
+The RPC helper reads the isolated daemon's owner-only `local-rpc.credential`,
+unless VERIFY_CREDENTIAL selects a paired synthetic client. Set HYPERNEO_DATA_DIR
+to the fresh run's data directory; anonymous WebSockets are refused. Never point
+a verification command at the real credential file.
 
 ```bash
 VERIFY_PORT=9311 bun .claude/skills/verify/rpc.ts rpc:providers.create \

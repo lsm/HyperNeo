@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../src/lib/pairing/local-credential.ts';
 import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -208,6 +209,7 @@ export async function verifySpentAdmission(
       daemon.settingsManager.updateGlobalSettings({ sandbox: { enabled: false } });
       hub = new MessageHub({ defaultSessionId: 'global' });
       transport = new WebSocketClientTransport({
+        createSocket: createLocalSocket,
         url: `ws://127.0.0.1:${daemon.server.port}/ws`,
         autoReconnect: false,
       });

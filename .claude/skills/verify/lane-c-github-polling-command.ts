@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -62,7 +63,7 @@ try {
   assert.notEqual(app.server.port,8399);await Promise.all([...processors].map(p=>p.stop()));main=app.db.getDatabase();await waitForSdkBodyCopy(main);assert(manager);
   const at=Date.now();for(const[id,slug]of [[spaceId,'synthetic-github-polling-command'],['synthetic-other-space','synthetic-other-space']]){mkdirSync(join(run,'workspace',slug),{recursive:true});main.prepare('INSERT INTO spaces(id,slug,workspace_path,name,created_at,updated_at)VALUES(?,?,?,?,?,?)').run(id,slug,join(run,'workspace',slug),slug,at,at);}
   const store=new ExternalEventExtensionConfigStore(main);await store.setGlobalConfig(source,{source,globallyEnabled:false,capabilities:{rpcConfig:true,polling:false,webhooks:false}});
-  const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();assert.deepEqual(await hub.request('externalEvents.extensions.setGlobalEnabled',{source,enabled:true}),{source,globallyEnabled:true});
+  const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({createSocket: createLocalSocket, url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();assert.deepEqual(await hub.request('externalEvents.extensions.setGlobalEnabled',{source,enabled:true}),{source,globallyEnabled:true});
   for(const repo of ['repo-one','repo-two','repo-disabled'])await hub.request('space.github.watchRepo',{spaceId,owner:'synthetic-owner',repo,enabled:true,pollingEnabled:false,webhookEnabled:false});
   main.prepare('INSERT INTO space_github_source_settings(space_id,enabled,created_at,updated_at,polling_intent,filter_current_user)VALUES(?,0,11,12,0,0)ON CONFLICT(space_id)DO UPDATE SET enabled=0,created_at=11,updated_at=12,polling_intent=0,filter_current_user=0').run(spaceId);
   main.prepare('INSERT INTO space_github_source_settings(space_id,enabled,created_at,updated_at,polling_intent,filter_current_user)VALUES(?,1,21,22,0,1)').run('synthetic-other-space');

@@ -29,7 +29,7 @@ Server.prototype.listen=function(...args:unknown[]){
  return Reflect.apply(listen,this,args);
 } as typeof listen;
 try{
- phase('socket-bind');door=await startSessionDoor(()=>{throw Error('No RPC call belongs to this fixture');},socketPath);
+ phase('socket-bind');door=await startSessionDoor(()=>{throw Error('No RPC call belongs to this fixture');},async()=>null,socketPath);
  let error='', backup:Awaited<ReturnType<typeof channel.verify>>|undefined;try{backup=await pending;}catch(cause){error=String(cause);}
  phase('backup-receipt');
  const evidence={initialDirectoryMode,backupVerifiedDuringBind,observedMask:observedMask?.toString(8),directoryMode:directoryMode?.toString(8),backupMode:existsSync(join(directory,'owned.db'))?(statSync(join(directory,'owned.db')).mode&0o777).toString(8):null,socketMode:(statSync(socketPath).mode&0o777).toString(8),backup,error,ambientMaskAfter:process.umask().toString(8)};

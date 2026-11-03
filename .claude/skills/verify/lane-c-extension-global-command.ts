@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -62,7 +63,7 @@ try {
   finally { JobQueueProcessor.prototype.start = original.start; ExternalEventExtensionManager.prototype.register = original.register; }
   assert.notEqual(app.server.port, 8399); await Promise.all([...processors].map(p => p.stop())); main = app.db.getDatabase(); await waitForSdkBodyCopy(main);
   assert(manager); manager.register({ sourceId: source, async start() { lifecycleCalls++; }, async stop() { lifecycleCalls++; } });
-  const hub = new MessageHub({ defaultSessionId: 'global' }); transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false }); hub.registerTransport(transport); await transport.initialize();
+  const hub = new MessageHub({ defaultSessionId: 'global' }); transport = new WebSocketClientTransport({createSocket: createLocalSocket,  url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false }); hub.registerTransport(transport); await transport.initialize();
   const op = DB_OPS.get(name) ?? { name, mode: 'write' as const, run() { throw new Error('Native command must never run on main'); } };
   const persist = (value = config, now = 41) => app!.db.gateway.run(op, { method: 'persist', args: [value.source, value, now] } as never);
   const listed = async () => (await hub.request<{ extensions: { source: string; status: string; config: typeof config }[] }>('externalEvents.extensions.list', {})).extensions.find(e => e.source === source)!;
