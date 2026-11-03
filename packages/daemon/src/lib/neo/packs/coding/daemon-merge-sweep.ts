@@ -12,7 +12,7 @@ import type { CodingPrLedgerRepository, CodingMergePolicy } from './pr-ledger.ts
 import type { CodingPrEventRepository } from './pr-events.ts';
 import type { CodingSweepDeps } from './pr-sweep.ts';
 import { readCodingDaemonMergeFacts } from './daemon-merge-facts.ts';
-import { decideCodingDaemonMerge } from './daemon-merge-gates.ts';
+import { decideCodingHumanHandoff, decideCodingDaemonMerge } from './daemon-merge-gates.ts';
 
 const log = new Logger('CodingDaemonMerge');
 
@@ -158,7 +158,11 @@ export function createCodingDaemonMergeSweep(
         policy: (await ledger.pollContextCurrent(repo)).policy,
       }))
     );
-    const candidates = observed.filter((row) => row.policy.mergeBy === 'daemon');
+    const candidates = observed.filter(
+      (row) =>
+        row.policy.mergeBy === 'daemon' ||
+        !(row.policy.mergePolicy === 'review_bot' && row.policy.reviewBot)
+    );
     const receipts = await record({ kind: 'list' });
     const pending = [...new Set([...candidates, ...receipts].map(({ url }) => url))];
     const facts = new Map(
@@ -171,7 +175,25 @@ export function createCodingDaemonMergeSweep(
     }
     for (const candidate of candidates) {
       if (!facts.get(candidate.url)!.ok) continue;
-      const outcome = await merge({ ...candidate, facts: facts.get(candidate.url)! }, now);
+      const current = facts.get(candidate.url)!;
+      if (decideCodingHumanHandoff(current, candidate.policy, candidate.head) === true) {
+        const pr = parsePrUrl(candidate.url)!;
+        await ledger.write(
+          'holdForHuman',
+          `${pr.owner}/${pr.repo}`,
+          +pr.number,
+          candidate.head,
+          now
+        );
+        await delivery
+          .human?.(
+            `coding-no-checks:${candidate.url}:${candidate.head}`,
+            `${candidate.url} — work finished, awaiting your manual merge. There are no required checks or review-bot gate, and this repository has not explicitly allowed zero-check merging. The daemon and workers will not merge it. Review the work and merge it on GitHub when you are ready. Head: ${candidate.head}.`
+          )
+          .catch(() => false);
+        continue;
+      }
+      const outcome = await merge({ ...candidate, facts: current }, now);
       if (
         typeof outcome === 'string' &&
         !['attempted', 'read_failure', 'already_attempted'].includes(outcome)

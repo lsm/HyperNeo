@@ -1,3 +1,6 @@
+import { publishCodingHumanMerge } from '../../../packages/daemon/src/lib/neo/packs/coding/human-merge-notice.ts';
+import { neoPublicationWrites } from '../../../packages/daemon/src/storage/repositories/neo-publication-repository.ts';
+import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { configureLogger, LogLevel, subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
@@ -11,9 +14,11 @@ import { CodingPrSweepRepository } from '../../../packages/daemon/src/lib/neo/pa
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 
+const humanOwner=process.argv.includes('human-owner');
+const humanUnconfigured=process.argv.includes('human-unconfigured');
+const humanDefault=process.argv.includes('human-default')||humanOwner||humanUnconfigured;
 const noChecks=process.argv.includes('no-checks');
 const zeroRequired=process.argv.includes('zero-required')||noChecks;
-const humanDefault=process.argv.includes('human-default');
 const limitGone=process.argv.includes('limit-gone'),external=process.argv.includes('external-owned');
 const uncertain=process.argv.includes('uncertain-error');
 const legacy=process.argv.includes('legacy-open');
@@ -42,12 +47,24 @@ try{
  for(const[key,value]of Object.entries({mergeBy:'daemon',mergePolicy:'review_bot',reviewBot:'fixture-bot',humanSignoff:['label:human-merge']}))assert((await rpc('pack.preferences.set',{pack:'coding',scope:{kind:'repo',key:'synthetic/merge'},key,value})).ok);
  assert((await rpc('pack.preferences.set',{pack:'coding',scope:{kind:'global',key:''},key:'watchedRepos',value:['synthetic/merge']})).ok);
  const db=app.db.getDatabase(),ledger=new CodingPrLedgerRepository(db);
+ const conversation='20000000-0000-4000-8000-000000009601',root=`neo:${conversation}`;
+ if(humanDefault){
+ db.prepare("INSERT INTO sessions(id,title,workspace_path,created_at,last_active_at,status,type,config,metadata) VALUES (?,'Synthetic Neo',?,'2026-11-03','2026-11-03','active','worker','{}','{}')").run(root,run);
+ new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
+ }
+ let humanDelivery=false;
+ if(humanDefault){
+ const prepare=db.prepare.bind(db),runSql=db.run.bind(db);
+ db.run=((sql:string,...args:unknown[])=>{if(/UPDATE pack_coding_pr_ledger SET state='waiting_human'/.test(sql))throw new Error('Handoff writes must not run on daemon main');return runSql(sql,...args);}) as typeof db.run;
+ db.prepare=((sql:string)=>{if(/UPDATE pack_coding_pr_ledger SET state='waiting_human'|INSERT INTO neo_publications/.test(sql))throw new Error('Handoff writes must not run on daemon main');return prepare(sql);}) as typeof db.prepare;
+ }
+
 
  configureLogger({level:LogLevel.WARN});unsubscribe=subscribeToStructuredLogs(event=>{if(event.module?.endsWith(':codingdaemonmerge'))holds.push(event.message);});
  const humanNotices:string[]=[];
  const notices:string[]=[];let deliver=true,rejectSignoff=true;
  const snapshot=()=>JSON.parse(readFileSync(join(run,'fixture.json'),'utf8'));
- const makePack=()=>createCodingPack({database:()=>db,readPrs:async()=>[],readClaudeOwners:async()=>[],todoPrs:new CodingTodoPrRepository(db),prLedger:ledger,prEvents:new CodingPrEventRepository(db),prSweep:new CodingPrSweepRepository(db),projectRepos:()=>['synthetic/merge'],prSweepDeps:{...{human:async(_key:string,text:string)=>{humanNotices.push(text);return true;}},tell:async(_owner,_key,text)=>{if(external&&deliver){notices.push(text);return true;}return false;},wake:async(_key,text)=>{if(rejectSignoff&&text.includes('requires human sign-off')){rejectSignoff=false;throw new Error('Synthetic mailbox unavailable');}if(deliver)notices.push(text);return deliver;}},readLedgerRepo:async()=>{
+ const makePack=()=>createCodingPack({database:()=>db,readPrs:async()=>[],readClaudeOwners:async()=>[],todoPrs:new CodingTodoPrRepository(db),prLedger:ledger,prEvents:new CodingPrEventRepository(db),prSweep:new CodingPrSweepRepository(db),projectRepos:()=>['synthetic/merge'],prSweepDeps:{human:async(key:string,text:string)=>humanDelivery&&publishCodingHumanMerge({conversation:()=>new NeoRepository(db).conversationId(),append:input=>app!.db.gateway.call(neoPublicationWrites,'append',input),notify:()=>{humanNotices.push(text);}},key,text),tell:async(_owner,_key,text)=>{if(external&&deliver){notices.push(text);return true;}return false;},wake:async(_key,text)=>{if(rejectSignoff&&text.includes('requires human sign-off')){rejectSignoff=false;throw new Error('Synthetic mailbox unavailable');}if(deliver)notices.push(text);return deliver;}},readLedgerRepo:async()=>{
  const node={number:7,title:'Synthetic daemon merge',headRefName:'fixture',headRefOid:head,state:terminal?(external?'MERGED':'CLOSED'):'OPEN',closedAt:terminal?new Date().toISOString():null,isDraft:false,mergeable:'MERGEABLE',reviewDecision:'APPROVED',files:{nodes:[{path:'src/app.ts'}],pageInfo:{hasNextPage:false}},labels:{nodes:[],pageInfo:{hasNextPage:false}},reviews:{nodes:[{state:'APPROVED',commit:{oid:head},author:{login:'fixture-bot'}}]},commits:{nodes:[{commit:{statusCheckRollup:{state:'SUCCESS'}}}]}};
  return {data:{rateLimit:{remaining:5000},repository:{nameWithOwner:'synthetic/merge',open:{pageInfo:{hasNextPage:false},nodes:terminal?[]:isolated?[node,{...node,number:8}]:[node]},done:{nodes:terminal?[node]:[]}}}};
  }});
@@ -57,10 +74,30 @@ try{
  if(humanDefault){
  publish({labels:[[]],emptyChecks:true});rejectSignoff=false;
  assert((await rpc('pack.preferences.set',{pack:'coding',scope:{kind:'repo',key:'synthetic/merge'},key:'mergePolicy',value:'ci_only'})).ok);
+ if(humanOwner){
+ assert((await rpc('pack.preferences.set',{pack:'coding',scope:{kind:'repo',key:'synthetic/merge'},key:'mergeBy',value:'owner'})).ok);
+ await pack.observeSessions!([{ref:{adapter:'hyperneo',id:'fixture-owner'},status:{state:'running'},lastActivityAt:tick,remotes:['git@github.com:synthetic/merge.git'],branches:['fixture'],openedPrs:[url]}] as never,tick);
+ }
+ if(humanUnconfigured)db.prepare("DELETE FROM neo_pack_preferences WHERE pack='coding' AND scope_kind='repo' AND scope_key='synthetic/merge' AND key IN ('mergeBy','mergePolicy','reviewBot')").run();
+ preferences=await rpc('pack.preferences.list',{});
+ const page=()=>hub.request<{ok:boolean;items:{fullText:string}[]}>('operation.invoke',{name:'neo.publication.read',input:{conversationId:conversation}});
  await runSweep();
  assert.equal(mergeCalls().length,0,'No checks and no bot must not daemon-merge');
- assert.equal(humanNotices.length,1,'First discovery without an owner must reach the human');
- evidence.verified=true;
+ assert.equal((await page()).items.length,0,'Failed delivery must remain retryable');
+ humanDelivery=true;await makePack().sweep!(tick+=61_000);
+ const visible=await page();assert(visible.ok);assert.equal(visible.items.length,1);
+ assert(visible.items[0].fullText.includes(url)&&visible.items[0].fullText.includes('manual merge'));
+ assert.equal(ledger.list()[0].state,'waiting_human');
+ await runSweep();assert.equal((await page()).items.length,1);assert.equal(humanNotices.length,1);
+ assert.deepEqual(await rpc('pack.preferences.list',{}),preferences);
+ assert((await rpc('pack.preferences.set',{pack:'coding',scope:{kind:'global',key:''},key:'allowNoChecksMerge',value:true})).ok);
+ await runSweep();assert.equal(mergeCalls().length,0,'A global opt-in must not authorize this repo');
+ assert.equal(ledger.policy('synthetic/merge').allowNoChecksMerge,false);
+ for(const[key,value]of Object.entries({mergeBy:'daemon',mergePolicy:'ci_only',allowNoChecksMerge:true}))assert((await rpc('pack.preferences.set',{pack:'coding',scope:{kind:'repo',key:'synthetic/merge'},key,value})).ok);
+ await runSweep();await runSweep();
+ assert.equal(mergeCalls().length,1,'An explicit repo opt-in restores one daemon merge');
+ assert.equal((await page()).items.length,1);
+ evidence.publicHumanNotice=visible.items[0];evidence.failedDeliveryRecovered=true;evidence.noOwner=!humanOwner;evidence.ownerExecution=humanOwner;evidence.unconfigured=humanUnconfigured;evidence.noDuplicateNotice=true;evidence.globalOptInIgnored=true;evidence.repoOptInMerged=true;evidence.mergeCommands=mergeCalls();evidence.verified=true;
  }else if(zeroRequired){
  rejectSignoff=false;
  if(noChecks){

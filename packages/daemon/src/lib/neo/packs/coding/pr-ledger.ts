@@ -1,4 +1,5 @@
 import { CODING_DAEMON_MERGE_MAX_ATTEMPTS } from './daemon-merge-attempt.ts';
+import { codingNoChecksNeedsHuman } from './daemon-merge-gates.ts';
 import { codingReviewOnHead } from './review.ts';
 import { codingLedgerPollReads } from './ledger-poll-db.ts';
 import { isRateLimitError } from '../../../session/rate-limit-detector.ts';
@@ -156,6 +157,7 @@ export function codingPrReplyAt(pr: Node): number | null {
 
 export interface CodingMergePolicy {
   provenance?: boolean;
+  allowNoChecksMerge?: boolean;
   mergeBy?: 'owner' | 'daemon';
   mergePolicy?: 'review_bot' | 'ci_only' | 'human';
   reviewBot?: string;
@@ -201,7 +203,11 @@ export function codingPrState(
     if (humanSignoff) return 'waiting_human';
     return readyCi ? 'approved_green' : 'approved_pending';
   }
-  return readyCi ? (humanSignoff ? 'waiting_human' : 'approved_green') : 'waiting_ci';
+  return readyCi
+    ? humanSignoff || (noCi && codingNoChecksNeedsHuman(policy, 0))
+      ? 'waiting_human'
+      : 'approved_green'
+    : 'waiting_ci';
 }
 
 export type CodingPrTransition = CodingLedgerRow & { from: CodingPrState };
@@ -554,8 +560,18 @@ export class CodingPrLedgerRepository {
     }));
   }
 
+  holdForHuman(repo: string, number: number, head: string, at: number) {
+    this.db.run(
+      "UPDATE pack_coding_pr_ledger SET state='waiting_human', state_since=?, terminal_event_json=NULL WHERE repo=? AND number=? AND head=? AND state='approved_green' AND closed_at IS NULL",
+      at,
+      repo,
+      number,
+      head
+    );
+  }
+
   policy(repo: string): CodingMergePolicy {
-    const read = (key: string) => {
+    const preference = (key: string) => {
       const scope = this.db
         .prepare(`SELECT scope_key FROM neo_pack_preferences
         WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?`)
@@ -565,9 +581,12 @@ export class CodingPrLedgerRepository {
         'coding',
         { kind: 'repo', key: scope?.scope_key ?? repo },
         key
-      )?.value;
+      );
     };
+    const read = (key: string) => preference(key)?.value;
+    const noChecks = preference('allowNoChecksMerge');
     return {
+      allowNoChecksMerge: noChecks?.scope.kind === 'repo' && noChecks.value === true,
       mergeBy: (read('mergeBy') ?? 'owner') as CodingMergePolicy['mergeBy'],
       provenance: read('provenance') as boolean | undefined,
       mergePolicy: read('mergePolicy') as CodingMergePolicy['mergePolicy'],
@@ -1018,6 +1037,7 @@ export async function reconcileCodingPrLedger(
 }
 
 type CodingLedgerWrite =
+  | 'holdForHuman'
   | 'daemonMerge'
   | 'acceptTerminalEvent'
   | 'acceptHealthNotice'
@@ -1038,6 +1058,7 @@ export const codingLedgerWrites = defineRepositoryOp<CodingPrLedgerRepository, C
   'write',
   CodingPrLedgerRepository,
   [
+    'holdForHuman',
     'daemonMerge',
     'acceptTerminalEvent',
     'acceptHealthNotice',

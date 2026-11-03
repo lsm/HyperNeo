@@ -24,7 +24,10 @@ const Response = z.tuple([
   z.array(z.array(z.object({ name: z.string() }))).min(1),
 ]);
 type Observed = z.infer<typeof Response>;
-async function readRequiredChecks(url: string, spawn: SpawnFn): Promise<ConnectorOutcome> {
+export async function readCodingRequiredChecks(
+  url: string,
+  spawn: SpawnFn
+): Promise<ConnectorOutcome> {
   const proc = spawn(['gh', 'pr', 'checks', url, '--required', '--json', 'bucket,name,link'], {
     cwd: homedir(),
     env: buildGitHubLookupEnv(),
@@ -83,7 +86,7 @@ const collect = async (db: Database, url: string, spawn: SpawnFn) => {
       '--slurp',
       `repos/${meta.owner}/${meta.repo}/pulls/${meta.number}/reviews`,
     ]),
-    readRequiredChecks(url, spawn),
+    readCodingRequiredChecks(url, spawn),
     createCodingReviewThreadReader(() => db, spawn)(url, homedir()),
     gh([
       'api',
@@ -127,7 +130,11 @@ const project = ([pr, reviews, checks, threads, labels]: Observed): CodingDaemon
   state: pr.state,
   draft: pr.isDraft,
   mergeable: pr.mergeable,
-  requiredCi: { head: pr.headRefOid, green: checks.every((check) => check.bucket === 'pass') },
+  requiredCi: {
+    head: pr.headRefOid,
+    green: checks.every((check) => check.bucket === 'pass'),
+    count: checks.length,
+  },
   threads: { head: threads.headOid, unresolved: threads.unresolvedThreadUrls.length },
   reviews: reviews
     .flat()

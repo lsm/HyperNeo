@@ -103,3 +103,20 @@ restoring the exact no-checks response, it must merge once with the full pinned
 head and persist the daemon receipt, without changing saved preferences.
 Both no-checks diagnostics still require exit 1 and empty stdout; extra error
 lines, wrong exit codes, invalid JSON, auth errors and timeouts remain unreadable.
+
+
+Add `human-default`, `human-owner` and `human-unconfigured` for the zero-required-check
+human handoff. Each boots an isolated daemon, uses a synthetic public conversation
+and reads the actual notice through `neo.publication.read`. First discovery with
+no owner, an owned PR with owner execution, and an unconfigured repository must
+all remain unmerged and visibly wait for the human. A failed delivery is retried
+through a recreated pack; the persisted publication appears once, survives repeated
+sweeps and does not change preferences. A global allowNoChecksMerge value must not
+authorize any repository. Only a subsequent explicit synthetic repo opt-in (with
+ci_only and daemon execution) restores exactly one SHA-pinned merge. No actual
+GitHub call, live database, provider or browser is used. Human notification is a
+persisted conversation message with the PR URL and manual next step, not an
+approval card or permission for an agent to merge. Existing required-check and
+same-head bot gates remain in the build and sweep journeys. Handoff-state and
+publication writes are forbidden on the main-thread DB facade during the proof;
+they must run through the existing writer gateway.

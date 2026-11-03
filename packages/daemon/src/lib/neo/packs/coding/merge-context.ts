@@ -17,7 +17,7 @@ export function codingMergeContextRepos(text: string, known: readonly string[]):
 }
 
 const policyLine = ({ repo, policy }: CodingMergeContext) =>
-  `${repo} merge policy: ${policy.mergePolicy ?? 'not configured'}; review bot: ${policy.reviewBot ?? 'not configured'}; human sign-off: ${policy.humanSignoff?.join(', ') || 'none'}; merge by: ${policy.mergeBy ?? 'owner'}; provenance: ${policy.provenance ?? true}`;
+  `${repo} merge policy: ${policy.mergePolicy ?? 'not configured'}; review bot: ${policy.reviewBot ?? 'not configured'}; human sign-off: ${policy.humanSignoff?.join(', ') || 'none'}; merge by: ${policy.mergeBy ?? 'owner'}; provenance: ${policy.provenance ?? true}; allowNoChecksMerge: ${policy.allowNoChecksMerge === true}`;
 
 export const withCodingMergeContext = (superpipe({})('coding.merge-policy-context') as PipelineAPI)
   .input(['text', 'facts'])

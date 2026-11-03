@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { decideCodingDaemonMerge } from '../../../../src/lib/neo/packs/coding/daemon-merge-gates.ts';
+import {
+  decideCodingHumanHandoff,
+  decideCodingDaemonMerge,
+} from '../../../../src/lib/neo/packs/coding/daemon-merge-gates.ts';
 import {
   CodingPrLedgerRepository,
   codingPrState,
@@ -43,6 +46,16 @@ describe('zero-check merge policy', () => {
     expect(decideCodingDaemonMerge(facts, policy).kind).toBe('needs_human_signoff');
     expect(codingPrState(pr, false, policy)).toBe('waiting_human');
   });
+  test('unknown check counts stay unreadable even with an opt-in', () => {
+    for (const count of [NaN, -1, undefined]) {
+      expect(
+        decideCodingDaemonMerge(
+          { ...facts, requiredCi: { ...facts.requiredCi, count: count as number } },
+          { ...policy, allowNoChecksMerge: true }
+        ).kind
+      ).toBe('read_failure');
+    }
+  });
   test('allows an explicit opt-in without overriding other gates', () => {
     const opted = { ...policy, allowNoChecksMerge: true };
     expect(decideCodingDaemonMerge(facts, opted).kind).toBe('merge');
@@ -61,6 +74,13 @@ describe('zero-check merge policy', () => {
     expect(decideCodingDaemonMerge(facts, { ...opted, mergePolicy: 'review_bot' }).kind).not.toBe(
       'merge'
     );
+  });
+  test('an opt-in cannot replace a missing policy or human policy', () => {
+    for (const mergePolicy of [undefined, 'human', 'review_bot'] as const) {
+      expect(decideCodingHumanHandoff(facts, { mergePolicy, allowNoChecksMerge: true }, head)).toBe(
+        true
+      );
+    }
   });
   test('a configured bot must actually approve the current head', () => {
     const bot = { ...policy, mergePolicy: 'review_bot' as const, reviewBot: 'bot' };
