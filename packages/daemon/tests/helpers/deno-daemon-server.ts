@@ -1,3 +1,4 @@
+import { registerDaemonCredential } from './websocket-helpers.ts';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -213,6 +214,7 @@ export async function createDenoDaemonServer(): Promise<DaemonServerContext> {
     });
 
     const credential = await readLocalCredential(join(workDir, 'data/local-rpc.credential'));
+    registerDaemonCredential(baseUrl, credential);
     transport = new WebSocketClientTransport({
       createSocket: (url) =>
         new WebSocket(url, { headers: { authorization: `Bearer ${credential}` } }),

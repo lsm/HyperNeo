@@ -1,4 +1,4 @@
-import { constants, openSync, fstatSync, readFileSync, closeSync } from 'node:fs';
+import { constants, openSync, fstatSync, readFileSync, closeSync, lstatSync } from 'node:fs';
 import NodeWebSocket from 'ws';
 import { mkdir, open } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
@@ -6,20 +6,23 @@ import { join } from 'node:path';
 import { getDataDir } from '../data-dir.ts';
 import type { DbGateway } from '../../storage/db-gateway/db-gateway.ts';
 import { enrollLocalDevice } from '../../storage/repositories/device-pairing-repository.ts';
+import { checkWindowsCredential } from './local-credential-permissions.ts';
 
 export const localCredentialPath = () => join(getDataDir(), 'local-rpc.credential');
 
 export function readLocalCredential(path = localCredentialPath()): string {
+  if (lstatSync(path).isSymbolicLink()) throw new Error('Local credential cannot be a symlink.');
   const file = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const stat = fstatSync(file);
     if (
       !stat.isFile() ||
       stat.size > 64 ||
-      (stat.mode & 0o077) !== 0 ||
-      (process.getuid && stat.uid !== process.getuid())
+      (process.platform !== 'win32' && (stat.mode & 0o077) !== 0) ||
+      (process.platform !== 'win32' && process.getuid && stat.uid !== process.getuid())
     )
       throw new Error('Local RPC credential must be an owner-only regular file.');
+    if (process.platform === 'win32') checkWindowsCredential(path);
     const credential = readFileSync(file, 'utf8').trim();
     if (!/^[A-Za-z0-9_-]{43}$/.test(credential)) throw new Error('Invalid local RPC credential.');
     return credential;
@@ -39,6 +42,7 @@ export async function ensureLocalCredential(db: DbGateway): Promise<void> {
   try {
     const file = await open(localCredentialPath(), 'wx', 0o600);
     try {
+      if (process.platform === 'win32') checkWindowsCredential(localCredentialPath(), true);
       await file.writeFile(randomBytes(32).toString('base64url'));
     } finally {
       await file.close();

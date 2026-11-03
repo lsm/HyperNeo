@@ -8,6 +8,7 @@ GET of `/ws` returns 204; the web app uses it to show pairing when necessary.
 - Browsers use the HttpOnly `hyperneo_device` cookie issued by `/pair`. A browser
   without a valid cookie shows the pairing form. Run `hyperneo pair` on the daemon
   machine and open its pairing URL. Already paired browsers keep their cookie.
+  Reload an already-open unpaired tab to load the pairing form.
 - Native apps keep using their saved device credential as `Authorization: Bearer`.
 - Remote daemons use the credential saved when attaching with `daemon.attach`
   and its `code`. An old attachment made without pairing must pair once; its
@@ -24,6 +25,8 @@ URLs or repository files. Symlinks, another user's files and group/world-readabl
 credential files are refused. Restart reuses the credential and does not undo
 revocation. If explicitly revoked, an OS owner can remove the file and restart
 to create a replacement; revoke the old device before replacing a lost file.
+Windows uses native file ACLs through built-in Windows PowerShell, rather than
+POSIX permission bits, to require the current OS owner and exclude other readers.
 
 Local tools appear in Devices. They do not count as paired human devices for
 pairing bootstrap or lost-phone recovery, and resetting human devices keeps the

@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../src/lib/pairing/local-credential.ts';
 import { testDirectories } from '../../helpers/temporary-directory';
 import { expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -223,6 +224,7 @@ test.each(['ordinary', 'neo', 'opus1m', 'opus-native'] as const)(
       app.settingsManager.updateGlobalSettings({ sandbox: { enabled: false } });
       const hub = new MessageHub({ defaultSessionId: 'global' });
       transport = new WebSocketClientTransport({
+        createSocket: createLocalSocket,
         url: `ws://127.0.0.1:${app.server.port}/ws`,
         autoReconnect: false,
       });

@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../src/lib/pairing/local-credential.ts';
 import { pendingTodoCheck } from '../../unit/helpers/todo-check-packs.ts';
 import { expect, test } from 'bun:test';
 import { execFileSync, spawn } from 'node:child_process';
@@ -414,6 +415,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
     });
     daemon.settingsManager.updateGlobalSettings({ sandbox: { enabled: false } });
     transport = new WebSocketClientTransport({
+      createSocket: createLocalSocket,
       url: `ws://127.0.0.1:${daemon.server.port}/ws`,
       autoReconnect: false,
     });

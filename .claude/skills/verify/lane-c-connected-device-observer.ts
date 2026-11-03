@@ -122,8 +122,8 @@ try {
     let closed = false; transport.onConnectionChange((state) => { if (state === 'disconnected') closed = true; });
     transports.push(transport); hub.registerTransport(transport); await transport.initialize(); return { hub, transport, closed: () => closed };
   };
-  const human = await connect(actor.credential); const first = await connect(victim.credential); const second = await connect(victim.credential); const unknown = await connect();
-  const departed = await connect(ghost.credential); await departed.transport.close(); assert(await wait(() => app!.transport.getClientCount() === 4));
+  const human = await connect(actor.credential); const first = await connect(victim.credential); const second = await connect(victim.credential); await assert.rejects(connect());
+  const departed = await connect(ghost.credential); await departed.transport.close(); assert(await wait(() => app!.transport.getClientCount() === 3));
   const cached = raw.prepare('SELECT 1 FROM paired_devices WHERE id = ? AND revoked_at IS NULL'); measuring = true;
   assert.throws(() => cached.get(actor.device.id), /revocation SQL reached main/);
   assert.throws(() => raw.prepare('UPDATE paired_devices SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL').run(Date.now(), victim.device.id), /revocation SQL reached main/);
@@ -145,7 +145,7 @@ try {
   assert.equal(first.closed(), false); assert.equal(second.closed(), false); evidence.unconfirmedDevicesRemainOpen = true;
   readOutage = false; const recoveryAt = performance.now(); const closed = await wait(() => first.closed() && second.closed(), 4000);
   evidence.connectionsClosedAfterReadRecovery = closed; assert.equal(closed, true, 'persisted inactive devices must disconnect after the reader recovers'); evidence.recoveryMs = performance.now() - recoveryAt;
-  assert(detected); assert.equal(human.closed(), false); assert.equal(unknown.closed(), false); evidence.activeAndUnpairedRemainOpen = true; assert.equal(commandPosts, 1); evidence.noMutationReplay = true;
+  assert(detected); assert.equal(human.closed(), false); evidence.activeRemainsOpenAndUnpairedRefused = true; assert.equal(commandPosts, 1); evidence.noMutationReplay = true;
   const root = fileURLToPath(new URL('../../../', import.meta.url));
   const child = spawn('bun', [join(root, 'packages/cli/main.ts'), 'devices'], { cwd: root, env: { ...process.env, HYPERNEO_SESSION_DOOR: join(run, 'data/session-door.sock') }, stdio: ['ignore','pipe','pipe'] });
   let output = ''; child.stdout!.on('data', (chunk) => { output += String(chunk); }); child.stderr!.resume();
