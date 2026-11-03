@@ -167,13 +167,13 @@ export function createPeerOperations(service: NeoService) {
     }),
     defineOperation({
       name: 'neo.peer.remove',
-      description: 'On the current human request, remove a contact and revoke its incoming token.',
+      description: 'On the current human request, remove a contact and its message credentials.',
       policy,
       inputSchema: z.object({ id: z.string().min(1) }).strict(),
       resultSchema: z.union([Accepted, Refused]),
       execute: run('neo.peer.remove', async ({ id }: { id: string }) => {
-        await db.call(peerWrites, 'remove', id);
         await createCredentialStore(service.db.getDatabase()).delete(...(await secretAddress(id)));
+        await db.call(peerWrites, 'remove', id);
         return { accepted: true as const };
       }),
     }),
