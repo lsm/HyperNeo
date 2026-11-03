@@ -2,7 +2,13 @@ import { homedir } from 'node:os';
 import { z } from 'zod';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
-import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
+import {
+  buildGitHubLookupEnv,
+  DEFAULT_GH_LOOKUP_TIMEOUT_MS,
+  runGhJson,
+} from '../../../github/gh-lookup-helpers.ts';
+import type { ConnectorOutcome } from '../../../github/connectors/connector.ts';
+import { collectWithMaxBuffer, MAX_BUFFER_BYTES } from '../../../utils/script-utils.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 import { createCodingReviewThreadReader } from './connector-review-thread-reader.ts';
@@ -18,6 +24,45 @@ const Response = z.tuple([
   z.array(z.array(z.object({ name: z.string() }))).min(1),
 ]);
 type Observed = z.infer<typeof Response>;
+async function readRequiredChecks(url: string, spawn: SpawnFn): Promise<ConnectorOutcome> {
+  const proc = spawn(['gh', 'pr', 'checks', url, '--required', '--json', 'bucket,name,link'], {
+    cwd: homedir(),
+    env: buildGitHubLookupEnv(),
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    try {
+      proc.kill('SIGKILL');
+    } catch {}
+  }, DEFAULT_GH_LOOKUP_TIMEOUT_MS);
+  try {
+    const [stdout, stderr, code] = await Promise.all([
+      collectWithMaxBuffer(proc.stdout, MAX_BUFFER_BYTES),
+      collectWithMaxBuffer(proc.stderr, 16 * 1024),
+      proc.exited,
+    ]);
+    if (timedOut || stdout.truncated || stderr.truncated)
+      return { ok: false, error: 'Required checks lookup timed out or exceeded its output limit.' };
+    if (
+      code === 1 &&
+      stdout.text === '' &&
+      /^no required checks reported on the '[^\r\n]+' branch$/.test(stderr.text.trim())
+    )
+      return { ok: true, data: [] };
+    if (code !== 0)
+      return { ok: false, error: stderr.text.trim() || `gh checks exited with code ${code}` };
+    try {
+      return { ok: true, data: JSON.parse(stdout.text) };
+    } catch {
+      return { ok: false, error: 'Required checks lookup returned invalid JSON.' };
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
 const collect = async (db: Database, url: string, spawn: SpawnFn) => {
   const meta = parsePrUrl(url.toLowerCase())!;
   const gh = (args: string[]) => runGhJson(['gh', ...args], homedir(), spawn);
@@ -38,7 +83,7 @@ const collect = async (db: Database, url: string, spawn: SpawnFn) => {
       '--slurp',
       `repos/${meta.owner}/${meta.repo}/pulls/${meta.number}/reviews`,
     ]),
-    gh(['pr', 'checks', url, '--required', '--json', 'bucket,name,link']),
+    readRequiredChecks(url, spawn),
     createCodingReviewThreadReader(() => db, spawn)(url, homedir()),
     gh([
       'api',

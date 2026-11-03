@@ -41,6 +41,14 @@ The helper saves coding-daemon-merge-sweep.json and the exact CLI invocation log
 stops its daemon and preserves evidence before the wrapper removes synthetic data.
 No GUI, live GitHub merge or installed daemon deployment is exercised.
 
+Add `zero-required` to reproduce repositories whose reported CI is not required.
+The fake CLI must return exit 1, empty stdout, and the exact
+`no required checks reported on the 'fixture' branch` stderr. The real facts
+reader and pack sweep must issue one SHA-pinned squash and one confirmation,
+preserve preferences, and never repeat the command on the next sweep. Unit
+regressions cover both owned and unowned PRs, failed/pending required CI, and
+refuse empty/ambiguous output, auth/network errors, wrong exit codes and bad JSON.
+
 Add `policy-revoke` after the helper path to change mergeBy to owner through the
 real preference RPC during GitHub checks; final admission must issue no merge.
 The final-read/API-call interval and in-flight writers remain an explicitly
