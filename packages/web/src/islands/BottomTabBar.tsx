@@ -17,7 +17,7 @@ import {
   navigateToSpaceAgent,
   navigateToSpaceConfigure,
 } from '../lib/router.ts';
-import { webExtension } from '../lib/web-extensions';
+import { webExtension, webExtensionDeclined } from '../lib/web-extensions';
 import { isActionRequired, isActiveTask } from '../lib/task-filters';
 
 interface TabItem {
@@ -163,7 +163,9 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
   const actionCount = tasks.filter(isActionRequired).length;
   const activeCount = tasks.filter(isActiveTask).length;
 
-  const tabs = isInSpaceContext ? SPACE_BOTTOM_TABS : GLOBAL_BOTTOM_TABS;
+  const tabs = isInSpaceContext
+    ? SPACE_BOTTOM_TABS
+    : GLOBAL_BOTTOM_TABS.filter((tab) => tab.id !== 'spaces' || !webExtensionDeclined('space'));
 
   const handleTabClick = (id: TabItem['id']) => {
     switch (id) {

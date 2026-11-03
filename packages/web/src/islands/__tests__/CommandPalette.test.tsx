@@ -6,6 +6,7 @@ import { CommandPalette } from '../CommandPalette.tsx';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { commandRegistry } from '../../lib/command-registry.ts';
 import { commandPaletteModeSignal, commandPaletteOpenSignal } from '../../lib/signals.ts';
+import { registerWebExtension } from '../../lib/web-extensions.ts';
 
 describe('CommandPalette', () => {
   beforeEach(() => {
@@ -20,6 +21,33 @@ describe('CommandPalette', () => {
     commandPaletteOpenSignal.value = false;
     commandPaletteModeSignal.value = 'commands';
     vi.restoreAllMocks();
+  });
+
+  it('omits Space commands when the daemon does not provide Space', async () => {
+    registerWebExtension('space', null);
+    commandRegistry.register({
+      id: 'nav.chats',
+      label: 'Go to chats',
+      category: 'navigation',
+      run: () => {},
+    });
+    commandRegistry.register({
+      id: 'nav.spaces',
+      label: 'Go to spaces',
+      category: 'navigation',
+      run: () => {},
+    });
+    commandRegistry.register({
+      id: 'space.overview',
+      label: 'Space: Overview',
+      category: 'space',
+      run: () => {},
+    });
+    commandPaletteOpenSignal.value = true;
+    render(<CommandPalette />);
+    expect(await screen.findByText('Go to chats')).toBeTruthy();
+    expect(screen.queryByText('Go to spaces')).toBeNull();
+    expect(screen.queryByText('Space: Overview')).toBeNull();
   });
 
   it('renders nothing visible when closed', () => {

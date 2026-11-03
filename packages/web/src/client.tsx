@@ -3,10 +3,12 @@ import './lib/theme.ts';
 import { render } from 'preact';
 import { App } from './App.tsx';
 import { PairPage } from './components/pairing/PairPage.tsx';
-import { spaceWebExtension } from './lib/space-web-extension.ts';
-import { registerWebExtension } from './lib/web-extensions.ts';
+import { connectionManager } from './lib/connection-manager.ts';
+import { loadWebExtensions } from './lib/web-extensions.ts';
 
-registerWebExtension('space', spaceWebExtension);
+void loadWebExtensions(() => connectionManager.getHub(), {
+  space: () => import('./lib/space-web-extension.ts').then((m) => m.spaceWebExtension),
+});
 
 if ('scrollRestoration' in history) {
   history.scrollRestoration = 'manual';
