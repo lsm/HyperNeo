@@ -22,7 +22,12 @@ export function readLocalCredential(path = localCredentialPath()): string {
       (process.platform !== 'win32' && process.getuid && stat.uid !== process.getuid())
     )
       throw new Error('Local RPC credential must be an owner-only regular file.');
-    if (process.platform === 'win32') checkWindowsCredential(path);
+    if (process.platform === 'win32')
+      checkWindowsCredential(
+        path,
+        false,
+        `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`
+      );
     const credential = readFileSync(file, 'utf8').trim();
     if (!/^[A-Za-z0-9_-]{43}$/.test(credential)) throw new Error('Invalid local RPC credential.');
     return credential;

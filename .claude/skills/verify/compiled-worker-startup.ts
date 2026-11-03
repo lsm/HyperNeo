@@ -1,5 +1,6 @@
+import { checkWindowsCredential } from '../../../packages/daemon/src/lib/pairing/local-credential-permissions.ts';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, writeFileSync, copyFileSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createLocalSocket, readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { join, resolve } from 'node:path';
@@ -38,11 +39,12 @@ try {
   }
   assert(ready, `Compiled binary failed to start; exit=${child.exitCode}`);
   if (process.platform === 'win32') {
-    const unsafe = join(run, 'data/public-test.credential');
-    copyFileSync(join(run, 'data/local-rpc.credential'), unsafe);
+    const unsafe = join(run, 'data/local-rpc.credential');
+    readLocalCredential(unsafe);
+    readLocalCredential(unsafe);
     execFileSync(join(process.env.SystemRoot!, 'System32', 'icacls.exe'), [unsafe, '/grant', '*S-1-1-0:(R)'], { stdio: 'pipe' });
     assert.throws(() => readLocalCredential(unsafe));
-    unlinkSync(unsafe);
+    checkWindowsCredential(unsafe, true);
   }
   ws = createLocalSocket(`ws://127.0.0.1:${port}/ws`, join(run, 'data/local-rpc.credential'));
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('WS unavailable')); });

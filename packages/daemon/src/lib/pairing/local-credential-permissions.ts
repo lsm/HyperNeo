@@ -2,7 +2,11 @@ import { execFileSync } from 'node:child_process';
 import { Buffer } from 'node:buffer';
 import { join } from 'node:path';
 
-export function checkWindowsCredential(path: string, create = false): void {
+const checkedFiles = new Map<string, string>();
+
+export function checkWindowsCredential(path: string, create = false, identity?: string): void {
+  if (create) checkedFiles.delete(path);
+  else if (identity !== undefined && checkedFiles.get(path) === identity) return;
   const systemRoot = process.env.SystemRoot;
   if (!systemRoot)
     throw new Error('SystemRoot is required to verify local credential permissions.');
@@ -44,4 +48,5 @@ foreach ($credentialRule in $credentialAcl.GetAccessRules($true, $true, [System.
       timeout: 10_000,
     }
   );
+  if (!create && identity !== undefined) checkedFiles.set(path, identity);
 }
