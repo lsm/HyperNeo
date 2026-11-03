@@ -32,7 +32,10 @@ const admit = (observed: Observed) => {
         : decision.kind;
   return decision.kind === 'merge' &&
     decision.head === observed.head &&
-    (observed.approvedGreen || (observed.facts.ok && observed.facts.fileScopePaginated))
+    (observed.approvedGreen ||
+      (observed.facts.ok &&
+        observed.facts.fileScopePaginated &&
+        observed.facts.passingCommitStatus))
     ? { value: observed }
     : { reason: decision.kind === 'merge' ? 'ledger_head_or_approval_changed' : reason };
 };

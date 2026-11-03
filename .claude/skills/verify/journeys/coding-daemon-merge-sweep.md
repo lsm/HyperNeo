@@ -106,3 +106,5 @@ truncated file summary plus complete current scope and passing fresh gates.
 The file read pins both head and base SHA before/after pagination. A moving base
 with an unchanged head, or repeated pages whose count looks complete, must hold.
 The accepted final-read-to-merge race in #9458 remains unchanged.
+A completed scope also needs GitHub's passing commit status (CLEAN/HAS_HOOKS),
+not only passing required checks. UNSTABLE, BLOCKED and UNKNOWN must hold.

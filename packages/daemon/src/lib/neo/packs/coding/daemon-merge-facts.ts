@@ -141,6 +141,7 @@ const project = ([
 ]: Observed): CodingDaemonMergeFacts & {
   mergeCommit?: string | null;
   fileScopePaginated: boolean;
+  passingCommitStatus: boolean;
 } => {
   const paths = files.flat().map((file) => file.filename);
   const complete = paths.length === pr.changedFiles && new Set(paths).size === paths.length;
@@ -159,6 +160,7 @@ const project = ([
       ),
     files: complete ? paths : null,
     fileScopePaginated: complete && pr.changedFiles > pr.files.length,
+    passingCommitStatus: ['CLEAN', 'HAS_HOOKS'].includes(pr.mergeStateStatus),
     labels: labels.flat().map((label) => label.name),
     mergeCommit: pr.mergeCommit?.oid ?? null,
   };
