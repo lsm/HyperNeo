@@ -169,3 +169,10 @@ Fresh facts still evaluate whether human handoff is needed, then owner execution
 must stop before the daemon merge-attempt pipeline. Repeated sweeps must issue no
 merge, reserve no receipt and produce no merge_by_owner warning. Existing human-owner
 proofs continue to require the visible zero-check handoff.
+The owner-ci proof also checks the actual CLI log: each sweep must run only its
+required-check probe, not reviews, labels, files, threads or head reads. An owner
+with explicit zero-check opt-in has neither a handoff nor a daemon merge to do
+and makes no merge-facts calls. A known empty required set still triggers full
+fresh validation before publishing the human handoff; an unreadable probe stays
+held with a human-handoff diagnostic, not a daemon-merge warning. Existing durable
+merge receipts retain their full recovery reads even if the executor changes.

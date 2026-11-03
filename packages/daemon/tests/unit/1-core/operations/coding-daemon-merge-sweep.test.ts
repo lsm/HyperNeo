@@ -353,7 +353,9 @@ describe('daemon merge sweep behavior', () => {
   test('owner execution evaluates handoff without entering daemon merge attempts or warnings', async () => {
     policy('mergeBy', 'owner');
     policy('mergePolicy', 'ci_only');
-    await sweep()(10);
+    const run = sweep();
+    await run(10);
+    await run(11);
     expect(calls.some((args) => args[2] === 'checks')).toBe(true);
     expect(merges()).toEqual([]);
     expect(await ledger.write('daemonMerge', { kind: 'list' })).toEqual([]);
@@ -371,6 +373,35 @@ describe('daemon merge sweep behavior', () => {
     expect(calls).toEqual([]);
     expect(await ledger.write('daemonMerge', { kind: 'list' })).toEqual([]);
   });
+  test.each(['unreadable', 'malformed'])(
+    'owner handoff holds on a %s required-check probe without reading merge facts',
+    async (reason) => {
+      policy('mergeBy', 'owner');
+      policy('mergePolicy', 'ci_only');
+      const human: string[] = [];
+      const probe: SpawnFn = (args, options) => {
+        if (reason === 'unreadable') {
+          fail = 'checks';
+          return spawn(args, options);
+        }
+        calls.push(args);
+        return {
+          stdout: new Response('{}').body,
+          stderr: new Response('').body,
+          exited: Promise.resolve(0),
+          exitCode: 0,
+          kill() {},
+        };
+      };
+      await sweep(probe, { human: async (_key, text) => !!human.push(text) })(10);
+      expect(calls).toEqual([
+        ['gh', 'pr', 'checks', url, '--required', '--json', 'bucket,name,link'],
+      ]);
+      expect(human).toEqual([]);
+      expect(warnings.some((args) => args[0] === 'Human merge handoff held')).toBe(true);
+      expect(warnings.some((args) => args[0] === 'Daemon merge held')).toBe(false);
+    }
+  );
   test('pins a single unowned merge and records executor/head/time across overlapping sweeps', async () => {
     const run = sweep();
     await Promise.all([run(10), run(11)]);

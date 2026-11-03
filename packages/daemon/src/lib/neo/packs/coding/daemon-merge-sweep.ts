@@ -11,8 +11,13 @@ import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import type { CodingPrLedgerRepository, CodingMergePolicy, CodingPrState } from './pr-ledger.ts';
 import type { CodingPrEventRepository } from './pr-events.ts';
 import type { CodingSweepDeps } from './pr-sweep.ts';
-import { readCodingDaemonMergeFacts } from './daemon-merge-facts.ts';
-import { decideCodingHumanHandoff, decideCodingDaemonMerge } from './daemon-merge-gates.ts';
+import { readCodingDaemonMergeFacts, readCodingRequiredChecks } from './daemon-merge-facts.ts';
+import {
+  codingNoChecksNeedsHuman,
+  decideCodingHumanHandoff,
+  decideCodingDaemonMerge,
+} from './daemon-merge-gates.ts';
+import { codingMergeGithubSchemas } from './merge-operation.ts';
 
 const log = new Logger('CodingDaemonMerge');
 
@@ -56,9 +61,13 @@ export function createCodingDaemonMergeSweep(
   const actor = 'daemon:coding-sweep';
   const record = (change: Parameters<CodingPrLedgerRepository['daemonMerge']>[0]) =>
     ledger.write('daemonMerge', change);
-  const read = async (url: string) => {
+  const read = async (url: string, human = false) => {
     const facts = await readCodingDaemonMergeFacts(database(), url, spawn);
-    if (!facts.ok) log.warn('Daemon merge held', { url, reason: facts.reason });
+    if (!facts.ok)
+      log.warn(human ? 'Human merge handoff held' : 'Daemon merge held', {
+        url,
+        reason: facts.reason,
+      });
     return facts;
   };
   const notify = async (receipt: Receipt, now: number) => {
@@ -172,12 +181,16 @@ export function createCodingDaemonMergeSweep(
       }))
     );
     const candidates = observed.filter(
-      (row) =>
-        row.policy.mergeBy === 'daemon' ||
-        !(row.policy.mergePolicy === 'review_bot' && row.policy.reviewBot)
+      (row) => row.policy.mergeBy === 'daemon' || codingNoChecksNeedsHuman(row.policy, 0)
     );
     const receipts = await record({ kind: 'list' });
-    const pending = [...new Set([...candidates, ...receipts].map(({ url }) => url))];
+    const pending = [
+      ...new Set(
+        [...candidates.filter((row) => row.policy.mergeBy === 'daemon'), ...receipts].map(
+          ({ url }) => url
+        )
+      ),
+    ];
     const facts = new Map(
       await Promise.all(pending.map(async (url) => [url, await read(url)] as const))
     );
@@ -187,6 +200,19 @@ export function createCodingDaemonMergeSweep(
       else await finish(receipt, facts.get(receipt.url)!, now);
     }
     for (const candidate of candidates) {
+      if (candidate.policy.mergeBy !== 'daemon' && !facts.has(candidate.url)) {
+        const outcome = await readCodingRequiredChecks(candidate.url, spawn);
+        const checks = codingMergeGithubSchemas.Checks.safeParse(outcome.ok ? outcome.data : null);
+        if (!checks.success) {
+          log.warn('Human merge handoff held', {
+            url: candidate.url,
+            reason: outcome.ok ? 'required_checks_unreadable' : outcome.error,
+          });
+          continue;
+        }
+        if (checks.data.length) continue;
+        facts.set(candidate.url, await read(candidate.url, true));
+      }
       if (!facts.get(candidate.url)!.ok) continue;
       const current = facts.get(candidate.url)!;
       if (decideCodingHumanHandoff(current, candidate.policy, candidate.head) === true) {
