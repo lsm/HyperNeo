@@ -205,6 +205,7 @@ export function createCodingDaemonMergeSweep(
           .catch(() => false);
         continue;
       }
+      if (candidate.policy.mergeBy !== 'daemon') continue;
       const outcome = await merge({ ...candidate, facts: current }, now);
       if (
         typeof outcome === 'string' &&

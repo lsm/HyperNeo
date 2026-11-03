@@ -138,3 +138,10 @@ facts, show waiting_human and the durable public notice, then merge once only af
 explicit repo opt-in. The fresh zero-count exception does not admit nonempty CI
 from a waiting ledger. It keeps missing/old bot approval, pending checks, read
 failures, human sign-off labels and unresolved threads blocked.
+
+
+Add `owner-ci` for an owner-execution PR with a nonempty passing required set.
+Fresh facts still evaluate whether human handoff is needed, then owner execution
+must stop before the daemon merge-attempt pipeline. Repeated sweeps must issue no
+merge, reserve no receipt and produce no merge_by_owner warning. Existing human-owner
+proofs continue to require the visible zero-check handoff.
