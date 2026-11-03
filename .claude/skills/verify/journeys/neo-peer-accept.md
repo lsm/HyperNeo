@@ -18,6 +18,9 @@ children. No model or external network call is made.
   cannot open owner WebSocket RPC. No device is added by pairing.
 - Replayed, expired, oversized and foreign-field claims are refused. Remove
   clears the local outgoing secret and incoming credential hash.
+- Inject a synthetic vault deletion failure: MCP removal fails while list still
+  contains the contact and vault entry; restore the vault and retry successfully.
+  This models the failure without locking the human’s Keychain.
 - Both daemon processes must exit cleanly before wrapper cleanup.
 
 neo-peer-accept.test.ts additionally covers invalid origins, malformed/oversized

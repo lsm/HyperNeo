@@ -8,6 +8,7 @@ import { Client } from '../../../packages/daemon/node_modules/@modelcontextproto
 import { InMemoryTransport } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.js';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
+import { DatabaseCredentialStore } from '../../../packages/daemon/src/lib/credentials/credential-store.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoConversationAskRepository } from '../../../packages/daemon/src/storage/repositories/neo-conversation-ask-repository.ts';
@@ -39,6 +40,7 @@ if (worker) {
   hub.registerTransport(transport); await transport.connect();
   const deviceCount = db.prepare('SELECT count(*) AS n FROM paired_devices').get() as { n: number };
   let current: string | undefined;
+  const deleteCredential = DatabaseCredentialStore.prototype.delete;
   const server = createOperationMcpServer(() => app.sessionManager.getOperationRegistry(), () => ({ role: 'neo', sessionId: root, consumedInputId: current }), undefined, 'neo');
   const client = new Client({ name: 'peer-proof', version: '1' });
   const [a, b] = InMemoryTransport.createLinkedPair();
@@ -77,6 +79,9 @@ if (worker) {
         const response = await fetch(String(input.address) + '/neo-peer/pair', { method: 'POST',
           headers: { 'content-type': 'application/json' }, body: input.raw ? String(input.raw) : JSON.stringify(input.body) });
         value = { status: response.status, body: await response.json() };
+      } else if (request.action === 'vault-failure') {
+        DatabaseCredentialStore.prototype.delete = input.enabled ? async () => { throw new Error('Synthetic vault unavailable'); } : deleteCredential;
+        value = { enabled: input.enabled };
       } else if (request.action === 'expire') {
         db.prepare('UPDATE neo_peers SET expires_at=0 WHERE id=?').run(input.id);
         value = { expired: true };
@@ -166,6 +171,12 @@ if (worker) {
       assert.equal(reverse.id, localId);
       const back = await act(b, 'Add Contact A using the provided address and invitation.', 'neo.peer.accept', { name: 'Contact A', address: a.address, code: reverse.code });
       assert.equal(back.accepted, true); assert.equal(back.id, invitation.id);
+      await a.call('vault-failure', { enabled: true });
+      await assert.rejects(act(a, 'Remove Contact B.', 'neo.peer.remove', { id: localId }));
+      assert.equal((await a.call('operation', { name: 'neo.peer.list', input: {} })).peers[0].id, localId);
+      assert.equal((await a.call('facts')).vaultEntries.n, 1);
+      await a.call('vault-failure', { enabled: false });
+      evidence.failedVaultDeletionPreservesContactForRetry = true;
       evidence.outgoingAcceptAndVault = true;
     } else {
       const claimed = await a.call('http', { address: b.address, body: { code: invitation.code } });

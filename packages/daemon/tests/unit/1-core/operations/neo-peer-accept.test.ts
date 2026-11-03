@@ -16,6 +16,7 @@ import {
 } from '../../../../src/lib/internal-event-bus.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { DatabaseCredentialStore } from '../../../../src/lib/credentials/credential-store.ts';
 import { runMigration471 } from '../../../../src/storage/schema/m471-neo-peer-address.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
@@ -260,4 +261,41 @@ test('deployed receiving contacts keep their identity and hash when outgoing add
   } finally {
     legacy.close();
   }
+});
+
+test('failed credential deletion leaves the contact and secret available for a removal retry', async () => {
+  spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ credential: 'a'.repeat(64) }));
+  const accepted = await call('neo.peer.accept', {
+    name: 'Contact B',
+    address: 'https://peer.invalid',
+    code: 'synthetic',
+  });
+  const deletion = spyOn(DatabaseCredentialStore.prototype, 'delete').mockRejectedValue(
+    new Error('Credential vault unavailable')
+  );
+  await expect(call('neo.peer.remove', { id: accepted.id })).rejects.toThrow(
+    'Credential vault unavailable'
+  );
+  expect(await call('neo.peer.list', {})).toMatchObject({
+    peers: [{ id: accepted.id, address: 'https://peer.invalid' }],
+  });
+  expect(
+    db
+      .getDatabase()
+      .prepare(
+        "SELECT count(*) AS n FROM provider_credentials WHERE provider_id LIKE 'hyperneo.peer.%'"
+      )
+      .get()
+  ).toEqual({ n: 1 });
+  deletion.mockRestore();
+  expect(await call('neo.peer.remove', { id: accepted.id })).toMatchObject({ accepted: true });
+  expect(await call('neo.peer.list', {})).toMatchObject({ peers: [] });
+  expect(
+    db
+      .getDatabase()
+      .prepare(
+        "SELECT count(*) AS n FROM provider_credentials WHERE provider_id LIKE 'hyperneo.peer.%'"
+      )
+      .get()
+  ).toEqual({ n: 0 });
 });
