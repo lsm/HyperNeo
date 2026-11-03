@@ -190,6 +190,9 @@ the Deno/Node adapter seam; Node remains unsupported as a daemon runtime.
 The Deno boot smoke also honors `TMPDIR`. Its fixture-isolation journey is
 `journeys/deno-smoke-fixture-isolation.md`; it runs the real smoke with a
 competing writer when fixtures overlap the booted daemon.
+For the full macOS smoke, pass `TMPDIR=/private/tmp` directly to the smoke child,
+not a wrapper's nested temporary directory: the nested connected-device fixture's
+Unix socket can otherwise exceed macOS's 104-byte socket-path limit.
 
 If a metadata helper cannot bind its own listener (for example EPERM or an
 ephemeral port 0 reported as EADDRINUSE), preserve its log and mark daemon proof

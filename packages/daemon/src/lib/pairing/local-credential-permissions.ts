@@ -20,9 +20,9 @@ if ($env:HYPERNEO_CREDENTIAL_CREATE -eq '1') {
   $credentialAcl.SetAccessRuleProtection($true, $false)
   $credentialRule = [System.Security.AccessControl.FileSystemAccessRule]::new($ownerSid, [System.Security.AccessControl.FileSystemRights]::FullControl, [System.Security.AccessControl.AccessControlType]::Allow)
   $credentialAcl.AddAccessRule($credentialRule)
-  Set-Acl -LiteralPath $credentialPath -AclObject $credentialAcl
+  [System.IO.File]::SetAccessControl($credentialPath, $credentialAcl)
 }
-$credentialAcl = Get-Acl -LiteralPath $credentialPath
+$credentialAcl = [System.IO.File]::GetAccessControl($credentialPath)
 if ($credentialAcl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $ownerSid.Value) { throw 'Local credential has another owner.' }
 foreach ($credentialRule in $credentialAcl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
   if ($credentialRule.AccessControlType -eq 'Allow' -and ($credentialRule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::ReadData) -ne 0 -and $credentialRule.IdentityReference.Value -ne $ownerSid.Value) { throw 'Local credential is readable by another principal.' }

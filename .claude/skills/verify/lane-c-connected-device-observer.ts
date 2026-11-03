@@ -148,8 +148,8 @@ try {
   assert(detected); assert.equal(human.closed(), false); evidence.activeRemainsOpenAndUnpairedRefused = true; assert.equal(commandPosts, 1); evidence.noMutationReplay = true;
   const root = fileURLToPath(new URL('../../../', import.meta.url));
   const child = spawn('bun', [join(root, 'packages/cli/main.ts'), 'devices'], { cwd: root, env: { ...process.env, HYPERNEO_SESSION_DOOR: join(run, 'data/session-door.sock') }, stdio: ['ignore','pipe','pipe'] });
-  let output = ''; child.stdout!.on('data', (chunk) => { output += String(chunk); }); child.stderr!.resume();
-  const exit = await new Promise<number>((done, fail) => { child.once('error', fail); child.once('close', (code) => done(code ?? -1)); }); assert.equal(exit, 0);
+  let output = '', error = ''; child.stdout!.on('data', (chunk) => { output += String(chunk); }); child.stderr!.on('data', (chunk) => { error += String(chunk); });
+  const exit = await new Promise<number>((done, fail) => { child.once('error', fail); child.once('close', (code) => done(code ?? -1)); }); assert.equal(exit, 0, error);
   const listed = JSON.parse(output) as { ok: boolean; devices: { id: string; revokedAt: number | null }[] }; assert(listed.ok); assert.equal(typeof listed.devices.find((d) => d.id === victim.device.id)?.revokedAt, 'number'); evidence.realCliConfirmsPersistedRevocation = true;
   const late = seed(); const lateClient = await connect(late.credential); holdInactiveId = late.device.id; assert.deepEqual(await revoke(late.device.id), { ok: true });
   assert(await wait(() => heldReply !== undefined)); assert(heldResult.includes(late.device.id)); assert.equal(lateClient.closed(), false); assert(!notified.includes(late.device.id));

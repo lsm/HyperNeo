@@ -23,3 +23,9 @@ credentials are used. It preserves only statuses and boolean outcomes:
 The web entry checks GET /ws using its existing cookie and renders PairPage on
 401. Device pairing's browser journey covers the real PairPage interaction.
 This proof does not claim an attended phone or browser visual acceptance.
+
+Credential startup regressions are in
+`packages/daemon/tests/unit/1-core/pairing/local-credential-creation.test.ts`:
+interrupted writes must not expose the final path, retry must succeed, and
+concurrent starts must enroll the same completed credential. Run with Vitest;
+the real daemon proof above also verifies the created credential reaches RPC.
