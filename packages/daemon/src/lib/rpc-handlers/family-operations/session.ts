@@ -6,44 +6,34 @@ import { createReturnSessionCloneOperation } from '../../session/clone-return-op
 import { createSessionOperations } from '../../session/operations.ts';
 import { createSetSessionParentOperation } from '../../session/parent-operation.ts';
 import { createSessionRuntimeSettingsOperations } from '../../session/runtime-settings-operations.ts';
-import { resolveSpaceMcpSessionPolicy } from '../../space/runtime/space-mcp-session-policy.ts';
-import { resolveSessionSpaceId } from '../../space/runtime/space-caller-scope.ts';
+import type { Session } from '@hyperneo/shared';
 import type { FamilyOperationContext } from './context.ts';
 
 const log = new Logger('session-operations');
 
 export function registerSessionOperations(context: FamilyOperationContext): OperationDefinition[] {
-  const scopeDeps = {
-    getSession: (sessionId: string) => context.deps.db.getSession(sessionId),
-    taskRepo: context.spaceTaskRepo,
-    nodeExecutionRepo: context.nodeExecutionRepo,
-    longHorizonAgentRepo: context.longHorizonAgentRepo,
-    hasDirectWorkerProvenance: context.hasDirectWorkerProvenance,
-    resolveDirectWorker: context.resolveDirectWorker,
-  };
+  const space = context.sessionSpace;
+  const getSession = (sessionId: string) => context.deps.db.getSession(sessionId);
+  const sessionSpaceId = (session: Session) => space?.sessionSpaceId(session);
+  const getLiveSession = (sessionId: string) =>
+    space?.liveSession(sessionId) ?? context.deps.sessionManager.getCachedSession(sessionId);
   const spawn = createSpawnSessionCloneOperation({
-    getSession: scopeDeps.getSession,
-    getSpace: (spaceId) => context.deps.spaceManager.getSpace(spaceId),
-    resolveRole: (session) => resolveSpaceMcpSessionPolicy(session, scopeDeps).role,
+    getSession,
+    getSpace: async (spaceId) => (await space?.getSpace(spaceId)) ?? null,
+    resolveRole: (session) => space?.resolveRole(session) ?? 'universal_read',
     isGitRepo: async (workspacePath) =>
       (await context.deps.sessionManager.getWorktreeManager().detectGitSupport(workspacePath))
         .isGitRepo,
     createSession: (params) => context.deps.sessionManager.createSession(params),
-    addSpaceSession: (spaceId, sessionId) =>
-      context.deps.spaceManager.addSession(spaceId, sessionId),
-    attachSpaceTools: (sessionId) =>
-      context.spaceRuntimeService.reattachMemberSpaceTools(sessionId),
+    addSpaceSession: async (spaceId, sessionId) => space?.addSession(spaceId, sessionId),
+    attachSpaceTools: async (sessionId) => space?.attachTools(sessionId),
     jobQueue: context.deps.jobQueue,
   });
   const returnToParent = createReturnSessionCloneOperation({
-    getSession: scopeDeps.getSession,
-    getSpace: (spaceId) => context.deps.spaceManager.getSpace(spaceId),
-    sessionSpaceId: (session) => resolveSessionSpaceId(session, scopeDeps),
-    getSessionStatus: (sessionId) =>
-      (
-        context.taskAgentManager?.getCachedAgentSessionById(sessionId) ??
-        context.deps.sessionManager.getCachedSession(sessionId)
-      )?.getProcessingState().status ?? '',
+    getSession,
+    getSpace: async (spaceId) => (await space?.getSpace(spaceId)) ?? null,
+    sessionSpaceId,
+    getSessionStatus: (sessionId) => getLiveSession(sessionId)?.getProcessingState().status ?? '',
     markReturned: async (sessionId, returnedAt) => {
       const current = context.deps.db.getSession(sessionId);
       if (!current) return;
@@ -56,10 +46,9 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
     jobQueue: context.deps.jobQueue,
   });
   const moveSession = createSetSessionParentOperation({
-    getSession: scopeDeps.getSession,
+    getSession,
     listChildren: (sessionId) => context.deps.db.listChildSessions(sessionId),
-    sessionSpaceId: (session) =>
-      resolveSessionSpaceId(session, scopeDeps) ?? session.context?.spaceId,
+    sessionSpaceId: (session) => sessionSpaceId(session) ?? session.context?.spaceId,
     setParent: async (sessionId, parentId) => {
       const current = context.deps.db.getSession(sessionId);
       if (current)
@@ -74,18 +63,14 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
     returnToParent,
     moveSession,
     ...createSessionRuntimeSettingsOperations({
-      getLiveSession: (sessionId) =>
-        context.taskAgentManager?.getCachedAgentSessionById(sessionId) ??
-        context.deps.sessionManager.getCachedSession(sessionId) ??
-        null,
-      getSession: scopeDeps.getSession,
-      sessionSpaceId: (session) =>
-        resolveSessionSpaceId(session, scopeDeps) ?? session.context?.spaceId,
+      getLiveSession: (sessionId) => getLiveSession(sessionId) ?? null,
+      getSession,
+      sessionSpaceId: (session) => sessionSpaceId(session) ?? session.context?.spaceId,
       capture: (id) => context.deps.db.captureSessionRuntimeSettings(id),
       commit: (snapshot, patch) => context.deps.db.casSessionRuntimeSettings(snapshot, patch),
       isPreparing: (id) =>
         context.deps.sessionManager.isRuntimeSettingsPreparing(id) ||
-        context.taskAgentManager.isRuntimeSettingsPreparing(id),
+        !!space?.isRuntimeSettingsPreparing(id),
       hasPendingWork: (id) =>
         context.deps.db.getJobQueueRepo().activeDeliveryMessageUuids(id).size > 0 ||
         context.deps.db.getJobQueueRepo().activeMailboxMessageUuids(id).size > 0,
@@ -101,13 +86,10 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
     }),
     ...createSessionOperations({
       getDatabase: () => context.deps.db.getDatabase(),
-      getLiveSession: (sessionId) =>
-        context.taskAgentManager?.getCachedAgentSessionById(sessionId) ??
-        context.deps.sessionManager.getCachedSession(sessionId) ??
-        null,
-      getSession: scopeDeps.getSession,
+      getLiveSession: (sessionId) => getLiveSession(sessionId) ?? null,
+      getSession,
       updateSession: (sessionId, updates) => context.deps.db.updateSession(sessionId, updates),
-      sessionSpaceId: (session) => resolveSessionSpaceId(session, scopeDeps),
+      sessionSpaceId,
       audit: (entry) => {
         try {
           new McpAuditLogRepository(context.deps.db.getDatabase()).createEntry({

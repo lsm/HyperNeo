@@ -11,7 +11,7 @@ export type CodingDaemonMergeFacts =
       state: string;
       draft: boolean;
       mergeable: string;
-      requiredCi: { head: string; green: boolean };
+      requiredCi: { head: string; green: boolean; count: number };
       threads: { head: string; unresolved: number };
       reviews: readonly { login: string; type?: string; head: string; state: string }[];
       files: readonly string[] | null;
@@ -28,7 +28,9 @@ const skip = (reason: string): Gate => ({ reason: { kind: 'skip', reason } });
 const readFacts = (facts: CodingDaemonMergeFacts): Gate =>
   !facts.ok
     ? { reason: { kind: 'read_failure', reason: facts.reason } }
-    : !/^[a-f\d]{40}$/i.test(facts.head)
+    : !/^[a-f\d]{40}$/i.test(facts.head) ||
+        !Number.isSafeInteger(facts.requiredCi.count) ||
+        facts.requiredCi.count < 0
       ? { reason: { kind: 'read_failure', reason: 'head_unreadable' } }
       : { value: facts };
 const requireDaemon = (facts: Facts, policy: CodingMergePolicy): Gate =>
@@ -62,9 +64,16 @@ const requireResolved = (facts: Facts): Gate =>
   facts.threads.head === facts.head && facts.threads.unresolved === 0
     ? { value: facts }
     : skip('review_threads_unresolved_or_stale');
+export const codingNoChecksNeedsHuman = (policy: CodingMergePolicy, count: number) =>
+  count === 0 &&
+  !(policy.mergePolicy === 'review_bot' && policy.reviewBot) &&
+  !(policy.mergePolicy === 'ci_only' && policy.allowNoChecksMerge === true);
+
 const requireNoSignoff = (facts: Facts, policy: CodingMergePolicy): Gate => {
   const signoff = codingHumanSignoff(policy.humanSignoff ?? [], facts.files, facts.labels);
-  return policy.mergePolicy === 'human' || signoff === true
+  return policy.mergePolicy === 'human' ||
+    signoff === true ||
+    codingNoChecksNeedsHuman(policy, facts.requiredCi.count)
     ? { reason: { kind: 'needs_human_signoff' } }
     : signoff === null
       ? { reason: { kind: 'read_failure', reason: 'signoff_scope_incomplete' } }
@@ -82,3 +91,26 @@ export const decideCodingDaemonMerge = (superpipe({})('coding.decide-daemon-merg
   .pipe(requireNoSignoff, ['decision', 'policy'], 'result:decision')
   .pipe((facts: Facts): Decision => ({ kind: 'merge', head: facts.head }), 'decision', 'decision')
   .end('decision') as (facts: CodingDaemonMergeFacts, policy: CodingMergePolicy) => Decision;
+
+export const decideCodingHumanHandoff = (
+  superpipe({})('coding.decide-human-handoff') as PipelineAPI
+)
+  .input(['facts', 'policy', 'head'])
+  .pipe(readFacts, 'facts', 'result:decision')
+  .pipe(requireOpen, 'decision', 'result:decision')
+  .pipe(requireCi, 'decision', 'result:decision')
+  .pipe(requireResolved, 'decision', 'result:decision')
+  .pipe(
+    (facts: Facts, policy: CodingMergePolicy, head: string): Gate =>
+      facts.head === head && codingNoChecksNeedsHuman(policy, facts.requiredCi.count)
+        ? { value: facts }
+        : skip('no_human_handoff'),
+    ['decision', 'policy', 'head'],
+    'result:decision'
+  )
+  .pipe(() => true, 'decision', 'decision')
+  .end('decision') as (
+  facts: CodingDaemonMergeFacts,
+  policy: CodingMergePolicy,
+  head: string
+) => true | Decision;

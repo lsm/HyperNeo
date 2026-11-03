@@ -1,3 +1,4 @@
+import { createPeerPairRoute } from './routes/neo-peer.ts';
 import { collectDaemonScratch } from './lib/drivers/daemon-scratch.ts';
 import {
   GitHubWatchInventory,
@@ -1218,6 +1219,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     const wsHandlers = createWebSocketHandlers(transport, sessionManager);
     const pairing = new DevicePairingRepository(db.getDatabase());
+    const handlePeerPair = createPeerPairRoute(db.gateway);
     const handlePair = createPairRoute({
       repo: pairing,
       limiter: daemonPairingLimiter,
@@ -1346,6 +1348,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         }
 
         if (url.pathname === '/pair' && req.method === 'POST') return handlePair(req);
+        if (url.pathname === '/neo-peer/pair' && req.method === 'POST') return handlePeerPair(req);
 
         const extensionRoute = extensionManager
           .getRegisteredRoutes()

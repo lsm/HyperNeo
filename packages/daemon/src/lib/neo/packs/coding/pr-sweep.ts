@@ -28,6 +28,7 @@ export type CodingSweepRow = {
 };
 
 export type CodingSweepDeps = {
+  human?(key: string, text: string): Promise<boolean>;
   tell(ref: WorkRef, key: string, text: string): Promise<boolean>;
   wake(key: string, text: string): Promise<boolean>;
 };

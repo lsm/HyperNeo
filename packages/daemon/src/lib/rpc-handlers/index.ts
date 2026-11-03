@@ -21,7 +21,9 @@ import { join, resolve } from 'node:path';
 import { createWorkflowTaskRecoveryExecutor } from '../tasks/recovery-executor.ts';
 import { recoverTaskExecution } from '../tasks/recover-task-execution.ts';
 import { createSpaceOperationRegistryProvider } from '../tasks/operations.ts';
-import { collectFamilyOperations, type FamilyOperationContext } from './family-operations/index.ts';
+import { collectFamilyOperations } from './family-operations/index.ts';
+import { collectSpaceFamilyOperations, createSessionSpacePort } from './family-operations/space.ts';
+import type { SpaceFamilyContext } from './family-operations/space-context.ts';
 import { createNeoService, neoPacksExtension } from '../neo/packs/runtime.ts';
 import { setupSpaceServices } from './space-setup.ts';
 import { createDaemonExtensionsOperation, type DaemonExtensions } from '../extensions/contract.ts';
@@ -651,7 +653,7 @@ export async function setupRPCHandlers(
   });
   const sessionScheduler = new SessionScheduler(deps.db.getDatabase(), deps.jobQueue);
   const driverCleanup: (() => Promise<void>)[] = [];
-  const familyContext: FamilyOperationContext = {
+  const familyContext: SpaceFamilyContext = {
     driverCleanup,
     sessionScheduler,
     neoPacks: () => neoService.packs(),
@@ -713,6 +715,18 @@ export async function setupRPCHandlers(
     })
   );
   const neoHome = new NeoHomeRepository(neoFolderPath(), neoService.repo);
+  const boundFamilyContext: SpaceFamilyContext = {
+    ...familyContext,
+    sessionSpace: createSessionSpacePort(familyContext),
+    driverHealthNotice: async (id, text) => {
+      const root = neoService.repo.defaultBinding()?.sessionId;
+      if (!root) return false;
+      await neoService.deliverForward(root, id, text, root, 'event');
+      return true;
+    },
+    goalMandateChange: (ref, revision) => neoHome.changedRevision(ref, revision),
+    executionPreparations: () => neoService.packs(),
+  };
   const familyOperations = [
     createSessionToolActivationOperation({
       write: persistToolPreferences,
@@ -720,17 +734,8 @@ export async function setupRPCHandlers(
       getLiveSession: (id) =>
         taskAgentManager?.getCachedAgentSessionById(id) ?? deps.sessionManager.getCachedSession(id),
     }),
-    ...collectFamilyOperations({
-      ...familyContext,
-      driverHealthNotice: async (id, text) => {
-        const root = neoService.repo.defaultBinding()?.sessionId;
-        if (!root) return false;
-        await neoService.deliverForward(root, id, text, root, 'event');
-        return true;
-      },
-      goalMandateChange: (ref, revision) => neoHome.changedRevision(ref, revision),
-      executionPreparations: () => neoService.packs(),
-    }),
+    ...collectFamilyOperations(boundFamilyContext),
+    ...collectSpaceFamilyOperations(boundFamilyContext),
     ...deps.extensions.operations(),
     createDaemonExtensionsOperation(deps.extensions),
     ...createNeoOperations(neoService),

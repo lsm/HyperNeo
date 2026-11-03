@@ -173,7 +173,7 @@ describe('root Neo system prompt', () => {
     expect(coding.startsWith(`${NEO_ROOT_PROMPT}\n\nDomain packs carry the field`)).toBe(true);
     expect(coding).toContain(NEO_PACK_CODING_INSTRUCTIONS);
     expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('never sleep or poll gh');
-    expect(coding.trim().split('\n').at(-1)).toBe(NEO_ROOT_TURN_END.trim());
+    expect(coding.trim().endsWith(NEO_ROOT_TURN_END.trim())).toBe(true);
     expect(neoPrompt([])).not.toContain('Domain packs');
     expect(coding.replace(NEO_FOCUSED_DISCUSSION, '')).not.toMatch(
       /holder|consult|forward|dispatch/i

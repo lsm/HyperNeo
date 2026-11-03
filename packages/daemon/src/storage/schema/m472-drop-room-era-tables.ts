@@ -1,7 +1,7 @@
 import { Logger } from '../../lib/logger.ts';
 import type { Database } from '../sqlite-compat.ts';
 
-const log = new Logger('migration-471');
+const log = new Logger('migration-472');
 
 const CHILDREN_FIRST: [table: string, children: string[]][] = [
   ['mission_executions', []],
@@ -26,7 +26,7 @@ function detachInboxItemsFromRooms(db: Database): void {
     .prepare(`SELECT 1 FROM pragma_foreign_key_list('inbox_items') WHERE "table" = 'rooms'`)
     .get();
   if (!linked) return;
-  db.exec(`ALTER TABLE inbox_items RENAME TO inbox_items_m471`);
+  db.exec(`ALTER TABLE inbox_items RENAME TO inbox_items_m472`);
   db.exec(`CREATE TABLE inbox_items (
         id TEXT PRIMARY KEY,
         source TEXT NOT NULL CHECK(source IN ('github_issue', 'github_comment', 'github_pr')),
@@ -46,8 +46,8 @@ function detachInboxItemsFromRooms(db: Database): void {
         received_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       )`);
-  db.exec(`INSERT INTO inbox_items SELECT * FROM inbox_items_m471`);
-  db.exec(`DROP TABLE inbox_items_m471`);
+  db.exec(`INSERT INTO inbox_items SELECT * FROM inbox_items_m472`);
+  db.exec(`DROP TABLE inbox_items_m472`);
   db.exec(`CREATE INDEX idx_inbox_items_status ON inbox_items(status)`);
   db.exec(`CREATE INDEX idx_inbox_items_repository ON inbox_items(repository, issue_number)`);
 }
@@ -66,7 +66,7 @@ function dropEmptyTables(db: Database): void {
   }
 }
 
-export function runMigration471(db: Database): void {
+export function runMigration472(db: Database): void {
   db.transaction(() => {
     detachInboxItemsFromRooms(db);
     dropEmptyTables(db);

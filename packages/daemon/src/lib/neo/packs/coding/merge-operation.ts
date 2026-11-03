@@ -1,3 +1,4 @@
+import { codingNoChecksNeedsHuman } from './daemon-merge-gates.ts';
 import { homedir } from 'node:os';
 import { codingHumanSignoff } from './human-signoff.ts';
 import { isDeepStrictEqual } from 'node:util';
@@ -177,6 +178,7 @@ export function createCodingMergeOperation(deps: Deps) {
         const signoff = state.policy.humanSignoff ?? [];
         const needsHuman =
           state.policy.mergePolicy === 'human' ||
+          codingNoChecksNeedsHuman(state.policy, checks.length) ||
           codingHumanSignoff(
             signoff,
             pr.changedFiles === pr.files.length ? pr.files.map((file) => file.path) : null,

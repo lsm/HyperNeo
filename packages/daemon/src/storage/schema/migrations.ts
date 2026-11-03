@@ -1,4 +1,6 @@
-import { runMigration471 } from './m471-drop-room-era-tables.ts';
+import { runMigration472 } from './m472-drop-room-era-tables.ts';
+import { runMigration471 } from './m471-neo-peer-address.ts';
+import { runMigration470 } from './m470-neo-peers.ts';
 import { runMigration469 } from './m469-work-delivery-ref-index.ts';
 import { runMigration467 } from './m467-google-connections.ts';
 import { runMigration466 } from './m466-neo-question-retire-when.ts';
@@ -971,7 +973,9 @@ export function runMigrations(
     db.exec('UPDATE work_feed_offsets SET offset = 0, size = -1');
   });
   run(migrationMarkerKey(469), () => runMigration469(db));
+  run(migrationMarkerKey(470), () => runMigration470(db));
   run(migrationMarkerKey(471), () => runMigration471(db));
+  run(migrationMarkerKey(472), () => runMigration472(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

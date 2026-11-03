@@ -27,7 +27,11 @@ import {
   type DirectTaskStartInput,
   type DirectTaskStartResult,
 } from './start-direct-task.ts';
-import { DIRECT_TASK_PARK_BUDGET, decideParkAdmission, parkAdmissionInput } from './park-budget.ts';
+import {
+  DIRECT_TASK_PARK_BUDGET,
+  decideParkAdmission,
+  parkAdmissionInput,
+} from '../job-handlers/park-budget.ts';
 import {
   DIRECT_TASK_START,
   readDirectStartRequest,

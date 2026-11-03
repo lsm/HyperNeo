@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { Database } from '../../../../../src/storage/sqlite-compat.ts';
-import { runMigration471 } from '../../../../../src/storage/schema/m471-drop-room-era-tables.ts';
+import { runMigration472 } from '../../../../../src/storage/schema/m472-drop-room-era-tables.ts';
 
 const DEAD_TABLES = [
   'goals',
@@ -44,7 +44,7 @@ function insertInboxItem(db: Database, id: string, roomId: string | null): void 
   ).run(id, roomId);
 }
 
-describe('migration 471: drop room-era tables', () => {
+describe('migration 472: drop room-era tables', () => {
   let db: Database;
 
   beforeEach(() => {
@@ -60,7 +60,7 @@ describe('migration 471: drop room-era tables', () => {
   });
 
   test('drops every empty table with its indexes', () => {
-    runMigration471(db);
+    runMigration472(db);
 
     expect(remaining(db)).toEqual([]);
     expect(
@@ -80,7 +80,7 @@ describe('migration 471: drop room-era tables', () => {
     insertInboxItem(db, 'routed', 'old-room');
     db.exec('PRAGMA foreign_keys = ON');
 
-    runMigration471(db);
+    runMigration472(db);
 
     insertInboxItem(db, 'new', 'room-that-no-longer-exists');
     expect(remaining(db)).toEqual([]);
@@ -112,7 +112,7 @@ describe('migration 471: drop room-era tables', () => {
        VALUES ('metric', 'goal', 'count', 1, 1)`
     );
 
-    runMigration471(db);
+    runMigration472(db);
 
     expect(remaining(db)).toEqual(['goals', 'mission_metric_history', 'rooms']);
     expect(db.prepare(`SELECT id FROM mission_metric_history`).all()).toEqual([{ id: 'metric' }]);
@@ -122,7 +122,7 @@ describe('migration 471: drop room-era tables', () => {
   test('keeps rooms alone when only rooms has rows', () => {
     insertRoom(db);
 
-    runMigration471(db);
+    runMigration472(db);
 
     expect(remaining(db)).toEqual(['rooms']);
   });
@@ -135,16 +135,16 @@ describe('migration 471: drop room-era tables', () => {
     );
     db.exec('PRAGMA foreign_keys = ON');
 
-    runMigration471(db);
+    runMigration472(db);
 
     expect(remaining(db)).toEqual(['rooms', 'tasks']);
   });
 
   test('a second run changes nothing', () => {
-    runMigration471(db);
+    runMigration472(db);
     const schema = db.prepare(`SELECT name, sql FROM sqlite_schema ORDER BY name`).all();
 
-    runMigration471(db);
+    runMigration472(db);
 
     expect(db.prepare(`SELECT name, sql FROM sqlite_schema ORDER BY name`).all()).toEqual(schema);
   });

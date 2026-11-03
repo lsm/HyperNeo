@@ -8,16 +8,31 @@ import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { Logger } from '../../../logger.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
-import type { CodingPrLedgerRepository, CodingMergePolicy } from './pr-ledger.ts';
+import {
+  CODING_LEDGER_MIN_RATE,
+  type CodingPrLedgerRepository,
+  type CodingMergePolicy,
+  type CodingPrState,
+} from './pr-ledger.ts';
 import type { CodingPrEventRepository } from './pr-events.ts';
 import type { CodingSweepDeps } from './pr-sweep.ts';
-import { readCodingDaemonMergeFacts } from './daemon-merge-facts.ts';
-import { decideCodingDaemonMerge } from './daemon-merge-gates.ts';
+import { readCodingDaemonMergeFacts, readCodingRequiredChecks } from './daemon-merge-facts.ts';
+import {
+  codingNoChecksNeedsHuman,
+  decideCodingHumanHandoff,
+  decideCodingDaemonMerge,
+} from './daemon-merge-gates.ts';
+import { codingMergeGithubSchemas } from './merge-operation.ts';
 
 const log = new Logger('CodingDaemonMerge');
 
 type Receipt = ReturnType<CodingPrLedgerRepository['daemonMerge']>[number];
-type Candidate = { url: string; head: string; policy: CodingMergePolicy; approvedGreen: boolean };
+type Candidate = {
+  url: string;
+  head: string;
+  policy: CodingMergePolicy;
+  ledgerState: CodingPrState;
+};
 type Observed = Candidate & { facts: Awaited<ReturnType<typeof readCodingDaemonMergeFacts>> };
 const admit = (observed: Observed) => {
   const decision = decideCodingDaemonMerge(observed.facts, observed.policy);
@@ -30,12 +45,13 @@ const admit = (observed: Observed) => {
       : decision.kind === 'skip' || decision.kind === 'read_failure'
         ? decision.reason
         : decision.kind;
-  return decision.kind === 'merge' &&
-    decision.head === observed.head &&
-    (observed.approvedGreen ||
-      (observed.facts.ok &&
-        observed.facts.fileScopePaginated &&
-        observed.facts.passingCommitStatus))
+  const ledgerReady =
+    observed.ledgerState === 'approved_green' ||
+    (['approved_pending', 'waiting_ci'].includes(observed.ledgerState) &&
+      observed.facts.ok &&
+      observed.facts.requiredCi.count === 0) ||
+    (observed.facts.ok && observed.facts.fileScopePaginated && observed.facts.passingCommitStatus);
+  return decision.kind === 'merge' && decision.head === observed.head && ledgerReady
     ? { value: observed }
     : { reason: decision.kind === 'merge' ? 'ledger_head_or_approval_changed' : reason };
 };
@@ -50,9 +66,13 @@ export function createCodingDaemonMergeSweep(
   const actor = 'daemon:coding-sweep';
   const record = (change: Parameters<CodingPrLedgerRepository['daemonMerge']>[0]) =>
     ledger.write('daemonMerge', change);
-  const read = async (url: string) => {
+  const read = async (url: string, human = false) => {
     const facts = await readCodingDaemonMergeFacts(database(), url, spawn);
-    if (!facts.ok) log.warn('Daemon merge held', { url, reason: facts.reason });
+    if (!facts.ok)
+      log.warn(human ? 'Human merge handoff held' : 'Daemon merge held', {
+        url,
+        reason: facts.reason,
+      });
     return facts;
   };
   const notify = async (receipt: Receipt, now: number) => {
@@ -153,19 +173,47 @@ export function createCodingDaemonMergeSweep(
     for (const failure of await record({ kind: 'limits' }))
       await retryLimit(failure.url, failure.head);
     const rows = (await ledger.read('list')).filter(
-      (row) => row.closedAt === null && ['approved_green', 'waiting_human'].includes(row.state)
+      (row) =>
+        row.closedAt === null &&
+        ['approved_green', 'approved_pending', 'waiting_ci', 'waiting_human'].includes(row.state)
     );
+    const handedOff = await ledger.read('humanHandoffs');
     const observed = await Promise.all(
-      rows.map(async ({ repo, number, head, state }) => ({
-        url: `https://${process.env.GH_HOST ?? 'github.com'}/${repo}/pull/${number}`.toLowerCase(),
-        head,
-        approvedGreen: state === 'approved_green',
-        policy: (await ledger.pollContextCurrent(repo)).policy,
-      }))
+      rows.map(async ({ repo, number, head, state }) => {
+        const { policy, health } = await ledger.pollContextCurrent(repo);
+        return {
+          url: `https://${process.env.GH_HOST ?? 'github.com'}/${repo}/pull/${number}`.toLowerCase(),
+          head,
+          ledgerState: state,
+          policy,
+          settled:
+            codingNoChecksNeedsHuman(policy, 0) &&
+            handedOff.some(
+              (prior) => prior.repo === repo && prior.number === number && prior.head === head
+            ),
+          readable:
+            !health ||
+            (health.reason === 'complete' &&
+              (health.quota?.remaining == null ||
+                health.quota.remaining >=
+                  (health.quota.resource === 'graphql' ? CODING_LEDGER_MIN_RATE : 1))),
+        };
+      })
     );
-    const candidates = observed.filter((row) => row.policy.mergeBy === 'daemon');
+    const candidates = observed.filter(
+      (row) =>
+        !row.settled &&
+        row.readable &&
+        (row.policy.mergeBy === 'daemon' || codingNoChecksNeedsHuman(row.policy, 0))
+    );
     const receipts = await record({ kind: 'list' });
-    const pending = [...new Set([...candidates, ...receipts].map(({ url }) => url))];
+    const pending = [
+      ...new Set(
+        [...candidates.filter((row) => row.policy.mergeBy === 'daemon'), ...receipts].map(
+          ({ url }) => url
+        )
+      ),
+    ];
     const facts = new Map(
       await Promise.all(pending.map(async (url) => [url, await read(url)] as const))
     );
@@ -175,8 +223,40 @@ export function createCodingDaemonMergeSweep(
       else await finish(receipt, facts.get(receipt.url)!, now);
     }
     for (const candidate of candidates) {
+      if (candidate.policy.mergeBy !== 'daemon' && !facts.has(candidate.url)) {
+        const outcome = await readCodingRequiredChecks(candidate.url, spawn);
+        const checks = codingMergeGithubSchemas.Checks.safeParse(outcome.ok ? outcome.data : null);
+        if (!checks.success) {
+          log.warn('Human merge handoff held', {
+            url: candidate.url,
+            reason: outcome.ok ? 'required_checks_unreadable' : outcome.error,
+          });
+          continue;
+        }
+        if (checks.data.length) continue;
+        facts.set(candidate.url, await read(candidate.url, true));
+      }
       if (!facts.get(candidate.url)!.ok) continue;
-      const outcome = await merge({ ...candidate, facts: facts.get(candidate.url)! }, now);
+      const current = facts.get(candidate.url)!;
+      if (decideCodingHumanHandoff(current, candidate.policy, candidate.head) === true) {
+        const pr = parsePrUrl(candidate.url)!;
+        await ledger.write(
+          'holdForHuman',
+          `${pr.owner}/${pr.repo}`,
+          +pr.number,
+          candidate.head,
+          now
+        );
+        await delivery
+          .human?.(
+            `coding-no-checks:${candidate.url}:${candidate.head}`,
+            `${candidate.url} — work finished, awaiting your manual merge. There are no required checks or review-bot gate, and this repository has not explicitly allowed zero-check merging. The daemon and workers will not merge it. Review the work and merge it on GitHub when you are ready. Head: ${candidate.head}.`
+          )
+          .catch(() => false);
+        continue;
+      }
+      if (candidate.policy.mergeBy !== 'daemon') continue;
+      const outcome = await merge({ ...candidate, facts: current }, now);
       if (
         typeof outcome === 'string' &&
         !['attempted', 'read_failure', 'already_attempted'].includes(outcome)

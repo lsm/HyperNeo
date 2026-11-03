@@ -126,6 +126,10 @@ bash .claude/skills/verify/with-run.sh bash -c '
 ' > /absolute/persistent-evidence/daemon-unit.log 2>&1
 ```
 
+For this isolated unit setup, leave `HYPERNEO_DATA_DIR` unset. The synthetic
+HOME already isolates `.hyperneo`; SDK resolver fixtures exercise that default
+cache path. Metadata-only daemon proofs still use their explicit `RUN/data`.
+
 In a standalone clone beneath a directory named `tmp`, Biome can ignore its `.`
 target because the repository excludes `**/tmp`. If `format:check` reports zero
 files, run the same check chain with that one command replaced by
