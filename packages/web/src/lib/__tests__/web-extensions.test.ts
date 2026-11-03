@@ -52,6 +52,13 @@ describe('loadWebExtensions', () => {
     expect(webExtensionDeclined('space')).toBe(false);
   });
 
+  it('keeps Space when the daemon answers without an extension list', async () => {
+    const load = vi.fn(async () => space);
+    await loadWebExtensions(connected(hubAnswering(async () => ({}))), { space: load }, 0);
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(webExtension('space')).toBe(space);
+  });
+
   it('retries until the daemon connects and the Space chunk loads', async () => {
     const hub = hubAnswering(async () => ({ extensions: [{ id: 'space', webRoutes: [] }] }));
     const getHub = vi

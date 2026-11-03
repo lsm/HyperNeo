@@ -83,10 +83,9 @@ export async function loadWebExtensions(
       const listed = await invokeOperation<{ extensions: { id: string }[] }>(
         await getHub(),
         'daemon.extensions'
-      ).then(
-        (result) => new Set(result.extensions.map((extension) => extension.id)),
-        () => null
-      );
+      )
+        .then((result) => new Set(result.extensions.map((extension) => extension.id)))
+        .catch(() => null);
       for (const id of Object.keys(loaders) as (keyof WebExtensions)[]) {
         registerWebExtension(id, !listed || listed.has(id) ? await loaders[id]() : null);
       }
