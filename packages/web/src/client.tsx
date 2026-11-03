@@ -3,6 +3,10 @@ import './lib/theme.ts';
 import { render } from 'preact';
 import { App } from './App.tsx';
 import { PairPage } from './components/pairing/PairPage.tsx';
+import { spaceWebExtension } from './lib/space-web-extension.ts';
+import { registerWebExtension } from './lib/web-extensions.ts';
+
+registerWebExtension('space', spaceWebExtension);
 
 if ('scrollRestoration' in history) {
   history.scrollRestoration = 'manual';

@@ -17,7 +17,7 @@ import {
   navigateToSpaceAgent,
   navigateToSpaceConfigure,
 } from '../lib/router.ts';
-import { spaceStore } from '../lib/space-store';
+import { webExtension } from '../lib/web-extensions';
 import { isActionRequired, isActiveTask } from '../lib/task-filters';
 
 interface TabItem {
@@ -159,7 +159,7 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
   const spaceTaskId = currentSpaceTaskIdSignal.value;
   const spaceSessionId = currentSpaceSessionIdSignal.value;
 
-  const tasks = spaceStore.tasks.value;
+  const tasks = webExtension('space')?.store.tasks.value ?? [];
   const actionCount = tasks.filter(isActionRequired).length;
   const activeCount = tasks.filter(isActiveTask).length;
 

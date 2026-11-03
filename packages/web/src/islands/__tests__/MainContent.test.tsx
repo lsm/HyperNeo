@@ -50,6 +50,7 @@ import {
   currentSpaceIdSignal,
   navSectionSignal,
 } from '../../lib/signals';
+import { registerWebExtension } from '../../lib/web-extensions';
 
 function makeTask(id: string, status: SpaceTask['status'], title = `Task ${id}`): SpaceTask {
   return {
@@ -83,12 +84,16 @@ function makeSpace(tasks: SpaceTask[]) {
 }
 
 describe('SpacesHome running list', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     navSectionSignal.value = 'spaces';
     currentSessionIdSignal.value = null;
     currentSpaceIdSignal.value = null;
     currentSpaceCanonicalIdSignal.value = null;
     mockSpacesWithTasks.value = [];
+
+    const { spaceWebExtension } = await import('../../lib/space-web-extension');
+    const { spaceStore } = await import('../../lib/space-store');
+    registerWebExtension('space', { ...spaceWebExtension, store: spaceStore });
   });
 
   afterEach(() => {

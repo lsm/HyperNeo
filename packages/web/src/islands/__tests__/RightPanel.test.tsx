@@ -42,6 +42,10 @@ import {
 import { sessionStore } from '../../lib/session-store';
 import type { Session } from '@hyperneo/shared';
 import { RightPanel, RightPanelToggle } from '../RightPanel';
+import { spaceWebExtension } from '../../lib/space-web-extension';
+import { registerWebExtension } from '../../lib/web-extensions';
+
+registerWebExtension('space', spaceWebExtension);
 
 describe('RightPanelToggle', () => {
   beforeEach(() => {

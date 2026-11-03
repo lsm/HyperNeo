@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import type { JSX } from 'preact';
 import { globalStore } from '../lib/global-store';
-import { spaceStore } from '../lib/space-store';
+import { webExtension } from '../lib/web-extensions';
 import { applyOptimisticSessionInfo } from '../lib/session-store';
 import { updateSession } from '../lib/api-helpers';
 import { toast } from '../lib/toast';
@@ -50,13 +50,13 @@ export function useSessionRename(sessionId: string, currentTitle: string): UseSe
     if (!trimmed || trimmed === currentTitle) return;
 
     globalStore.updateSession(sessionId, { title: trimmed });
-    spaceStore.updateSession(sessionId, { title: trimmed });
+    webExtension('space')?.store.updateSession(sessionId, { title: trimmed });
     applyOptimisticSessionInfo(sessionId, { title: trimmed });
     try {
       await updateSession(sessionId, { title: trimmed, metadata: { titleSetBy: 'user' } });
     } catch {
       globalStore.updateSession(sessionId, { title: currentTitle });
-      spaceStore.updateSession(sessionId, { title: currentTitle });
+      webExtension('space')?.store.updateSession(sessionId, { title: currentTitle });
       applyOptimisticSessionInfo(sessionId, { title: currentTitle }, trimmed);
       toast.error('Failed to rename');
     }

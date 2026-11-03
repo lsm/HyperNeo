@@ -1,14 +1,14 @@
-import { CheckGlyph } from '../../icons/common-glyphs.tsx';
+import { CheckGlyph } from '../icons/common-glyphs.tsx';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { useEffect, useState } from 'preact/hooks';
-import { copyToClipboard } from '../../../lib/utils';
-import { Dropdown } from '../../ui/Dropdown';
-import { IconButton } from '../../ui/IconButton';
-import { Tooltip } from '../../ui/Tooltip';
-import { MessageInfoButton } from '../../sdk/MessageInfoButton';
-import { MessageInfoDropdown } from '../../sdk/MessageInfoDropdown';
-import { ResultInfoButton } from '../../sdk/ResultInfoButton';
-import { ResultInfoDropdown } from '../../sdk/ResultInfoDropdown';
+import { copyToClipboard } from '../../lib/utils';
+import { Dropdown } from '../ui/Dropdown';
+import { IconButton } from '../ui/IconButton';
+import { Tooltip } from '../ui/Tooltip';
+import { MessageInfoButton } from './MessageInfoButton';
+import { MessageInfoDropdown } from './MessageInfoDropdown';
+import { ResultInfoButton } from './ResultInfoButton';
+import { ResultInfoDropdown } from './ResultInfoDropdown';
 
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
 type ResultMessage = Extract<SDKMessage, { type: 'result' }>;
