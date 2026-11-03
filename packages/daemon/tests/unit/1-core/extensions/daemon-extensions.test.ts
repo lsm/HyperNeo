@@ -43,7 +43,7 @@ describe('DaemonExtensions', () => {
       'stop a',
     ]);
     expect(extensions.operations()).toEqual([operation]);
-    expect(extensions.adapters()).toEqual([adapter]);
+    expect(extensions.adapters({ searchChats: async () => [] })).toEqual([adapter]);
     expect(extensions.manifest()).toEqual({
       extensions: [
         { id: 'a', webRoutes: [] },
@@ -68,6 +68,44 @@ describe('DaemonExtensions.stop', () => {
     extensions.register({ id: 'c', stop: () => void stopped.push('c') });
     expect(await extensions.stop()).toEqual([{ id: 'b', error: failure }]);
     expect(stopped).toEqual(['c', 'a']);
+  });
+});
+
+describe('DaemonExtensions.stop timing', () => {
+  it('runs the last extension stop hook up to its first await before stop returns', async () => {
+    let flagged = false;
+    const extensions = new DaemonExtensions(db, hub);
+    extensions.register({ id: 'core' });
+    extensions.register({
+      id: 'space',
+      stop: async () => {
+        flagged = true;
+        await Promise.resolve();
+      },
+    });
+    const stopping = extensions.stop();
+    expect(flagged).toBe(true);
+    expect(await stopping).toEqual([]);
+  });
+});
+
+describe('DaemonExtensions.adapters', () => {
+  it('builds each extension adapter once with the host search and reuses it', () => {
+    const searchChats = async () => [];
+    const hosts: unknown[] = [];
+    const extensions = new DaemonExtensions(db, hub);
+    extensions.register({
+      id: 'space',
+      adapters: (host) => {
+        hosts.push(host.searchChats);
+        return [{ id: 'space' } as unknown as WorkAdapter];
+      },
+    });
+    const first = extensions.adapters({ searchChats });
+    const second = extensions.adapters({ searchChats });
+    expect(first.map((adapter) => adapter.id)).toEqual(['space']);
+    expect(second[0]).toBe(first[0]);
+    expect(hosts).toEqual([searchChats]);
   });
 });
 

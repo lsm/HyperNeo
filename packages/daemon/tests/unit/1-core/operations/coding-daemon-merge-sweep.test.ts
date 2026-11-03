@@ -231,9 +231,14 @@ describe('daemon merge sweep behavior', () => {
       expect(merges()).toHaveLength(0);
     }
   );
-  test.each([false, true])(
-    'daemon merges a zero-required-checks PR once with owner=%s',
-    async (owned) => {
+  test.each([
+    [false, 'no required checks'],
+    [true, 'no required checks'],
+    [false, 'no checks'],
+    [true, 'no checks'],
+  ] as const)(
+    'daemon merges a zero-required-checks PR once with owner=%s and %s',
+    async (owned, diagnostic) => {
       if (owned)
         db.prepare('UPDATE pack_coding_pr_ledger SET owner=?').run(
           JSON.stringify({ adapter: 'hyperneo', id: 'fixture-owner' })
@@ -243,7 +248,7 @@ describe('daemon merge sweep behavior', () => {
         calls.push(args);
         return {
           stdout: new Response('').body,
-          stderr: new Response("no required checks reported on the 'fixture' branch\n").body,
+          stderr: new Response(`${diagnostic} reported on the 'fixture' branch\n`).body,
           exited: Promise.resolve(1),
           exitCode: 1,
           kill() {},

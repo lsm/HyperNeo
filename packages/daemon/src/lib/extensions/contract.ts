@@ -2,11 +2,16 @@ import { z } from 'zod';
 import type { MessageHub } from '@hyperneo/shared';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import type { WorkAdapter } from '../drivers/types.ts';
+import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import { defineOperation, type OperationDefinition } from '../operations/registry.ts';
 
 export interface DaemonWebRoute {
   path: string;
   label: string;
+}
+
+export interface DaemonAdapterHost {
+  searchChats(text: string): Promise<readonly WorkChatMatch[]>;
 }
 
 export interface DaemonExtension {
@@ -16,7 +21,7 @@ export interface DaemonExtension {
   rpc?(hub: MessageHub): void;
   start?(): void | Promise<void>;
   stop?(): void | Promise<void>;
-  adapters?(): readonly WorkAdapter[];
+  adapters?(host: DaemonAdapterHost): readonly WorkAdapter[];
   webRoutes?: readonly DaemonWebRoute[];
 }
 
@@ -38,8 +43,14 @@ export class DaemonExtensions {
     return this.loaded.flatMap((extension) => extension.operations?.() ?? []);
   }
 
-  adapters(): WorkAdapter[] {
-    return this.loaded.flatMap((extension) => extension.adapters?.() ?? []);
+  private readonly built = new Map<DaemonExtension, readonly WorkAdapter[]>();
+
+  adapters(host: DaemonAdapterHost): WorkAdapter[] {
+    return this.loaded.flatMap((extension) => {
+      const built = this.built.get(extension) ?? extension.adapters?.(host) ?? [];
+      this.built.set(extension, built);
+      return built;
+    });
   }
 
   manifest(): { extensions: { id: string; webRoutes: DaemonWebRoute[] }[] } {

@@ -111,3 +111,12 @@ not only passing required checks. UNSTABLE, BLOCKED and UNKNOWN must hold.
 
 File pages contain paths and snapshot metadata, never patches. The 1 MiB output
 bound remains; oversized patch fixtures must not be downloaded by this reader.
+
+Add `no-checks` to cover repositories with no CI at all. The fake CLI returns
+exit 1, empty stdout and exactly `no checks reported on the 'fixture' branch`
+on stderr. Before admitting that empty required set, the real daemon sweep must
+hold HTTP 502 and 504 failures with no attempt receipt or merge command. After
+restoring the exact no-checks response, it must merge once with the full pinned
+head and persist the daemon receipt, without changing saved preferences.
+Both no-checks diagnostics still require exit 1 and empty stdout; extra error
+lines, wrong exit codes, invalid JSON, auth errors and timeouts remain unreadable.

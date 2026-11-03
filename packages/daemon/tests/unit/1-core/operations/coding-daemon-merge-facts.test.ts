@@ -122,24 +122,31 @@ beforeEach(() => {
 afterEach(() => db.close());
 
 describe('readCodingDaemonMergeFacts', () => {
-  test('reads gh explicit no-required-checks exit 1 as a known empty set', async () => {
-    checksReply = {
-      stdout: '',
-      stderr: "no required checks reported on the 'fixture' branch\n",
-      exit: 1,
-    };
-    expect(await readCodingDaemonMergeFacts(db, url, spawn)).toMatchObject({
-      ok: true,
-      head,
-      requiredCi: { head, green: true },
-    });
-  });
+  test.each(['no required checks', 'no checks'])(
+    'reads gh explicit %s exit 1 as a known empty set',
+    async (diagnostic) => {
+      checksReply = {
+        stdout: '',
+        stderr: `${diagnostic} reported on the 'fixture' branch\n`,
+        exit: 1,
+      };
+      expect(await readCodingDaemonMergeFacts(db, url, spawn)).toMatchObject({
+        ok: true,
+        head,
+        requiredCi: { head, green: true },
+      });
+    }
+  );
   test.each([
     { stdout: '', stderr: '', exit: 1 },
-    { stdout: '', stderr: "no checks reported on the 'fixture' branch\n", exit: 1 },
     { stdout: '', stderr: 'gh: HTTP 401', exit: 1 },
     { stdout: '', stderr: 'gh: HTTP 403', exit: 1 },
+    { stdout: '', stderr: 'gh: HTTP 502', exit: 1 },
     { stdout: '', stderr: 'gh: HTTP 504', exit: 1 },
+    { stdout: '[]', stderr: "no checks reported on the 'fixture' branch\n", exit: 1 },
+    { stdout: '', stderr: "no checks reported on the 'fixture' branch\n", exit: 2 },
+    { stdout: '', stderr: "gh: HTTP 502\nno checks reported on the 'fixture' branch\n", exit: 1 },
+    { stdout: '', stderr: "no checks reported on the 'fixture' branch\ngh: HTTP 504", exit: 1 },
     { stdout: 'not json', stderr: '', exit: 0 },
     { stdout: '', stderr: '', exit: 0 },
     {
