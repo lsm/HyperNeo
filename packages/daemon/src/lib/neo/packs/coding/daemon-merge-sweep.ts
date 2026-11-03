@@ -39,7 +39,8 @@ const admit = (observed: Observed) => {
     observed.ledgerState === 'approved_green' ||
     (['approved_pending', 'waiting_ci'].includes(observed.ledgerState) &&
       observed.facts.ok &&
-      observed.facts.requiredCi.count === 0);
+      observed.facts.requiredCi.count === 0) ||
+    (observed.facts.ok && observed.facts.fileScopePaginated && observed.facts.passingCommitStatus);
   return decision.kind === 'merge' && decision.head === observed.head && ledgerReady
     ? { value: observed }
     : { reason: decision.kind === 'merge' ? 'ledger_head_or_approval_changed' : reason };

@@ -7,15 +7,37 @@ import { readCodingDaemonMergeFacts } from '../../../../src/lib/neo/packs/coding
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn/types.ts';
 
 const url = 'https://github.com/synthetic/merge/pull/1',
-  head = 'a'.repeat(40);
+  head = 'a'.repeat(40),
+  base = 'd'.repeat(40);
 let db: Database, fail: string, finalHead: string, labels: unknown, reviews: unknown;
 let files: { path: string }[], changedFiles: number;
+let completeFiles: string[] | undefined;
+let finalBase: string;
+let pageBase: string;
 let calls: string[][], state: string, mergeCommit: { oid: string } | null;
 let checksReply: { stdout: string; stderr: string; exit: number } | undefined;
 const spawn: SpawnFn = (args) => {
   calls.push(args);
   let value: unknown;
-  if (args.includes('graphql'))
+  if (args.some((arg) => arg.includes('CodingMergeFiles'))) {
+    const pages = completeFiles
+      ? [completeFiles.slice(0, 100), completeFiles.slice(100)]
+      : [files.map((file) => file.path)];
+    value = pages.map((paths, i) => ({
+      data: {
+        repository: {
+          pullRequest: {
+            headRefOid: head,
+            baseRefOid: pageBase,
+            files: {
+              nodes: paths.map((path) => ({ path })),
+              pageInfo: { hasNextPage: i < pages.length - 1, endCursor: String(i) },
+            },
+          },
+        },
+      },
+    }));
+  } else if (args.includes('graphql'))
     value = {
       data: {
         repository: {
@@ -36,7 +58,8 @@ const spawn: SpawnFn = (args) => {
       url,
       body: '',
       state,
-      headRefOid: args.at(-1) === 'headRefOid,state' ? finalHead : head,
+      headRefOid: args.at(-1)!.startsWith('headRefOid,state') ? finalHead : head,
+      baseRefOid: args.at(-1)!.startsWith('headRefOid,state') ? finalBase : base,
       isDraft: false,
       mergeable: 'MERGEABLE',
       mergeStateStatus: 'CLEAN',
@@ -66,8 +89,11 @@ beforeEach(() => {
   state = 'OPEN';
   mergeCommit = null;
   finalHead = head;
+  finalBase = base;
+  pageBase = base;
   files = [{ path: 'src/app.ts' }];
   changedFiles = 1;
+  completeFiles = undefined;
   calls = [];
   labels = [[{ name: 'bug' }], [{ name: 'human-merge' }]];
   reviews = [
@@ -136,7 +162,7 @@ describe('readCodingDaemonMergeFacts', () => {
       requiredCi: { head, green: true },
       threads: { head, unresolved: 0 },
     });
-    expect(calls.at(-1)).toContain('headRefOid,state');
+    expect(calls.at(-1)).toContain('headRefOid,state,baseRefOid');
   });
   test('accepts a mixed-case GitHub hostname without GH_HOST', async () => {
     const configured = process.env.GH_HOST;
@@ -152,7 +178,7 @@ describe('readCodingDaemonMergeFacts', () => {
       else process.env.GH_HOST = configured;
     }
   });
-  test.each(['/labels', '/reviews', 'checks', 'graphql'])(
+  test.each(['/labels', '/reviews', 'CodingMergeFiles', 'checks', 'graphql'])(
     'fails closed on an unreadable %s',
     async (part) => {
       fail = part;
@@ -187,12 +213,67 @@ describe('readCodingDaemonMergeFacts', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toMatch(/: .+/);
   });
+  test('fails closed if the filenames-only reply exceeds the output cap', async () => {
+    completeFiles = ['x'.repeat(1_100_000)];
+    expect(await readCodingDaemonMergeFacts(db, url, spawn)).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('files:'),
+    });
+  });
+  test('refuses file pages bound to another base', async () => {
+    pageBase = 'e'.repeat(40);
+    expect((await readCodingDaemonMergeFacts(db, url, spawn)).ok).toBe(false);
+  });
+  test('refuses a changed base even when the head and state stay unchanged', async () => {
+    finalBase = 'e'.repeat(40);
+    expect((await readCodingDaemonMergeFacts(db, url, spawn)).ok).toBe(false);
+  });
+  test('duplicate pages cannot complete a truncated file scope', async () => {
+    completeFiles = Array.from({ length: 171 }, (_, i) => `src/file-${i}.ts`);
+    completeFiles[170] = completeFiles[0];
+    files = completeFiles.slice(0, 100).map((path) => ({ path }));
+    changedFiles = completeFiles.length;
+    expect(await readCodingDaemonMergeFacts(db, url, spawn)).toMatchObject({
+      ok: true,
+      files: null,
+      fileScopePaginated: false,
+    });
+  });
   test('keeps truncated file scope unknown instead of declaring it complete', async () => {
     changedFiles = 101;
     expect(await readCodingDaemonMergeFacts(db, url, spawn)).toMatchObject({
       ok: true,
       files: null,
+      fileScopePaginated: false,
     });
+  });
+  test('reads every changed path when pr view truncates at 100 files', async () => {
+    completeFiles = Array.from({ length: 171 }, (_, i) => `src/file-${i}.ts`);
+    files = completeFiles.slice(0, 100).map((path) => ({ path }));
+    changedFiles = completeFiles.length;
+    expect(await readCodingDaemonMergeFacts(db, url, spawn)).toMatchObject({
+      ok: true,
+      files: completeFiles,
+      fileScopePaginated: true,
+    });
+    const fileCall = calls.find((args) => args.some((arg) => arg.includes('CodingMergeFiles')))!;
+    const query = fileCall.find((arg) => arg.startsWith('query='))!;
+    expect(query).toMatch(/nodes\s*{\s*path\s*}/);
+    expect(query).not.toContain('patch');
+    expect(fileCall).toEqual(
+      expect.arrayContaining([
+        'gh',
+        'api',
+        'graphql',
+        '--hostname',
+        'github.com',
+        '--paginate',
+        '--slurp',
+        'owner=synthetic',
+        'name=merge',
+        'number=1',
+      ])
+    );
   });
 });
 
