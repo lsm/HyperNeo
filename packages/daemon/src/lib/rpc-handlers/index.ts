@@ -655,7 +655,7 @@ export async function setupRPCHandlers(
     driverCleanup,
     sessionScheduler,
     neoPacks: () => neoService.packs(),
-    extensionAdapters: () => deps.extensions.adapters(),
+    extensionAdapters: (host) => deps.extensions.adapters(host),
     claudeDesktopMods,
     claudeInbox,
     deps,
