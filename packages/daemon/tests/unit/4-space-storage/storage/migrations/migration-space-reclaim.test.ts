@@ -136,6 +136,7 @@ describe('migration space reclaim', () => {
       mark.run(`migration_${String(version).padStart(3, '0')}`, version);
     }
     mark.run('migration_room_cleanup', 0);
+    mark.run('schema_baseline_space', 0);
     db.exec(`
       INSERT INTO migration_space_reclaims (migration_key, reclaimed_at)
       SELECT key, 1 FROM migration_markers
