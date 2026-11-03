@@ -36,3 +36,12 @@ Git capture or legacy reader format may be deleted. After daemon merge, use
 the authorized idle-deploy procedure and owner build RPC readback, then rerun
 these native proofs from the merged commit. Keep build readback separate from
 isolated byte proofs; do not claim a production paired-human click without one.
+
+Deno Boot Smoke runs retire-local-register.ts instead of the removed registration
+proofs. Run the real scripts/deno-smoke.sh through deno-smoke-fixture-isolation.py
+under a fresh outer HOME/TMPDIR and an unused DENO_SMOKE_PORT. Keep its log and
+exit status; a missing helper or an early shutdown failure is not a pass.
+The compatibility-pins journey uses the surviving authorization/path primitives;
+its handoff capture/restart/read assertions stay separate from local registration.
+Historical measurement script names now inventory current Git/legacy boundaries;
+they never read the deleted service or claim old hashes are unchanged.
