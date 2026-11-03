@@ -1,3 +1,4 @@
+import '../../../packages/daemon/tests/unit/helpers/register-space-schema.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';

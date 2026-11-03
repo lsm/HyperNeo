@@ -1,3 +1,4 @@
+import '../../../packages/daemon/tests/unit/helpers/register-space-schema.ts';
 import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';

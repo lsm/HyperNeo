@@ -4,6 +4,8 @@ export interface SchemaExtension {
   id: string;
   tables(db: BunDatabase): void;
   indexes?(db: BunDatabase): void;
+  baseline?: { statements: readonly string[]; presentWhenTable: string };
+  migrations?: Readonly<Record<string, (db: BunDatabase) => void>>;
 }
 
 const schemaExtensions = new Map<string, SchemaExtension>();
@@ -18,4 +20,30 @@ export function createExtensionTables(db: BunDatabase): void {
 
 export function createExtensionIndexes(db: BunDatabase): void {
   for (const extension of schemaExtensions.values()) extension.indexes?.(db);
+}
+
+export function extensionMigration(key: string): ((db: BunDatabase) => void) | undefined {
+  for (const extension of schemaExtensions.values()) {
+    const migration = extension.migrations?.[key];
+    if (migration) return migration;
+  }
+  return undefined;
+}
+
+export function applyExtensionBaselines(
+  db: BunDatabase,
+  markers: { baselineDone: boolean; applied(key: string): boolean; mark(key: string): void }
+): void {
+  if (!markers.baselineDone) return;
+  for (const { id, baseline } of schemaExtensions.values()) {
+    const key = `schema_baseline_${id}`;
+    if (!baseline || markers.applied(key)) continue;
+    const present = db
+      .prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?")
+      .get(baseline.presentWhenTable);
+    db.transaction(() => {
+      if (!present) for (const sql of baseline.statements) db.exec(sql);
+      markers.mark(key);
+    })();
+  }
 }

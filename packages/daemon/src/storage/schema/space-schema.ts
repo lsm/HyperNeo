@@ -1,5 +1,35 @@
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SchemaExtension } from './extensions.ts';
+import { runMigration239 } from './m239-rename-worker-coder-template-key.ts';
+import { runMigration240 } from './m240-space-manager-handle.ts';
+import { runMigration242 } from './m242-task-list-indexes.ts';
+import { runMigration243 } from './m243-space-agent-template-space-key.ts';
+import { runMigration244 } from './m244-backfill-template-ownership.ts';
+import { runMigration245 } from './m245-reminder-space-index.ts';
+import { runMigration246 } from './m246-template-version-seq-space-key.ts';
+import { runMigration247 } from './m247-pending-completion-generation.ts';
+import { runMigration249 } from './m249-resolve-template-sentinel-rows.ts';
+import { runMigration261 } from './m261-task-list-updated-indexes.ts';
+import { runMigration265 } from './m265-workflow-run-blocked-retries.ts';
+import { runMigration267 } from './m267-restamp-contracts-task-approve.ts';
+import { runMigration268 } from './m268-rename-agent-forge-scopes.ts';
+import { runMigration269 } from './m269-restamp-goal-task-trigger.ts';
+import { runMigration270 } from './m270-restamp-contracts-task-transition-review.ts';
+import { runMigration271 } from './m271-relocate-built-in-key-templates.ts';
+import { runMigration273 } from './m273-backfill-agent-session-ids.ts';
+import { runMigration274 } from './m274-convert-ad-hoc-space-sessions.ts';
+import { runMigration275 } from './m275-link-agent-owned-sessions.ts';
+import { runMigration276 } from './m276-relocate-space-manager-template.ts';
+import { runMigration277 } from './m277-archive-orphaned-agent-sessions.ts';
+import { runMigration303 } from './m303-external-delivery-task-index.ts';
+import { runMigration312 } from './m312-drop-artifact-cache.ts';
+import { runMigration406 } from './m406-goal-owner-session.ts';
+import { runMigration420 } from './m420-neo-ask-goal.ts';
+import { runMigration444 } from './m444-neo-goals.ts';
+import { migrateStandaloneTaskOwnership } from '../tasks/ownership-migration.ts';
+import { runMigration272 } from './m272-space-session-event-subscriptions.ts';
+import { runMigration281 } from './m281-space-agent-template-hides.ts';
+import spaceBaseline from './baseline-space-v041.json' with { type: 'json' };
 import { createEvolutionTables } from './evolution.ts';
 import { createLongHorizonAgentTables } from './long-horizon-agents.ts';
 import { createSpaceSessionEventSubscriptionTables } from './space-session-event-subscriptions.ts';
@@ -17,7 +47,90 @@ import { runMigration257 } from './m257-direct-outcome-job.ts';
 import { runMigration258 } from './m258-direct-process-ownership.ts';
 import { runMigration260 } from './m260-direct-start-requests.ts';
 
+function createAgentMemoryTables(db: BunDatabase): void {
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS space_agent_memory (
+			id INTEGER PRIMARY KEY,
+			key TEXT NOT NULL,
+			space_id TEXT NOT NULL,
+			content TEXT NOT NULL,
+			tags TEXT NOT NULL DEFAULT '',
+			created_by_session TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			access_count INTEGER NOT NULL DEFAULT 0,
+			last_accessed_at INTEGER,
+			embedding_status TEXT NOT NULL DEFAULT 'pending'
+				CHECK(embedding_status IN ('pending', 'ready', 'failed')),
+			embedding_model TEXT,
+			embedding_updated_at INTEGER,
+			embedding_error TEXT,
+			embedding_revision INTEGER NOT NULL DEFAULT 0,
+			embedding_token TEXT NOT NULL DEFAULT '',
+			UNIQUE(space_id, key),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(`
+		CREATE VIRTUAL TABLE IF NOT EXISTS space_agent_memory_fts USING fts5(
+			key,
+			content,
+			tags,
+			content='space_agent_memory',
+			content_rowid='id',
+			tokenize='trigram'
+		)
+	`);
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS memory_vectors (
+			memory_id INTEGER PRIMARY KEY,
+			embedding BLOB NOT NULL,
+			dimensions INTEGER NOT NULL,
+			model TEXT NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (memory_id) REFERENCES space_agent_memory(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS space_agent_core_memory (
+			space_id TEXT NOT NULL,
+			memory_id INTEGER NOT NULL,
+			score REAL NOT NULL,
+			rank INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY (space_id, memory_id),
+			UNIQUE(space_id, rank),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (memory_id) REFERENCES space_agent_memory(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(`
+		CREATE TRIGGER IF NOT EXISTS space_agent_memory_ai
+		AFTER INSERT ON space_agent_memory BEGIN
+			INSERT INTO space_agent_memory_fts(rowid, key, content, tags)
+			VALUES (new.id, new.key, new.content, new.tags);
+		END
+	`);
+  db.exec(`
+		CREATE TRIGGER IF NOT EXISTS space_agent_memory_ad
+		AFTER DELETE ON space_agent_memory BEGIN
+			INSERT INTO space_agent_memory_fts(space_agent_memory_fts, rowid, key, content, tags)
+			VALUES ('delete', old.id, old.key, old.content, old.tags);
+		END
+	`);
+  db.exec(`
+		CREATE TRIGGER IF NOT EXISTS space_agent_memory_au
+		AFTER UPDATE OF key, content, tags ON space_agent_memory BEGIN
+			INSERT INTO space_agent_memory_fts(space_agent_memory_fts, rowid, key, content, tags)
+			VALUES ('delete', old.id, old.key, old.content, old.tags);
+			INSERT INTO space_agent_memory_fts(rowid, key, content, tags)
+			VALUES (new.id, new.key, new.content, new.tags);
+		END
+	`);
+}
+
 function createSpaceTables(db: BunDatabase): void {
+  createAgentMemoryTables(db);
   db.exec(`
       CREATE TABLE IF NOT EXISTS space_goals (
         id TEXT PRIMARY KEY,
@@ -152,6 +265,21 @@ function createSpaceTables(db: BunDatabase): void {
 }
 
 function createSpaceIndexes(db: BunDatabase): void {
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_space ON space_agent_memory(space_id)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_updated ON space_agent_memory(space_id, updated_at DESC)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_access ON space_agent_memory(space_id, last_accessed_at DESC)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_embedding_status ON space_agent_memory(space_id, embedding_status)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_core_memory_rank ON space_agent_core_memory(space_id, rank)`
+  );
   db.exec(`
       CREATE INDEX IF NOT EXISTS idx_space_agent_inactivity_claims_space
       ON space_agent_inactivity_claims(space_id, agent_id)
@@ -193,4 +321,47 @@ export const SPACE_SCHEMA: SchemaExtension = {
   id: 'space',
   tables: createSpaceTables,
   indexes: createSpaceIndexes,
+  baseline: { statements: spaceBaseline, presentWhenTable: 'spaces' },
+  migrations: {
+    migration_239: runMigration239,
+    migration_240: runMigration240,
+    migration_241: migrateStandaloneTaskOwnership,
+    migration_242: runMigration242,
+    migration_243: runMigration243,
+    migration_244: runMigration244,
+    migration_245: runMigration245,
+    migration_246: runMigration246,
+    migration_247: runMigration247,
+    migration_248: runMigration248,
+    migration_249: runMigration249,
+    migration_250: runMigration250,
+    migration_251: runMigration251,
+    migration_252: runMigration252,
+    migration_253: runMigration253,
+    migration_254: runMigration254,
+    migration_255: runMigration255,
+    migration_256: runMigration256,
+    migration_257: runMigration257,
+    migration_258: runMigration258,
+    migration_260: runMigration260,
+    migration_261: runMigration261,
+    migration_265: runMigration265,
+    migration_267: runMigration267,
+    migration_268: runMigration268,
+    migration_269: runMigration269,
+    migration_270: runMigration270,
+    migration_271: runMigration271,
+    migration_272: runMigration272,
+    migration_273: runMigration273,
+    migration_274: runMigration274,
+    migration_275: runMigration275,
+    migration_276: runMigration276,
+    migration_277: runMigration277,
+    migration_281: runMigration281,
+    migration_303: runMigration303,
+    migration_312: runMigration312,
+    migration_406: runMigration406,
+    space_migration_420: runMigration420,
+    space_migration_444: runMigration444,
+  },
 };

@@ -1,3 +1,4 @@
+import '../../tests/unit/helpers/register-space-schema.ts';
 import { execFileSync } from 'node:child_process';
 import { cpus } from 'node:os';
 
