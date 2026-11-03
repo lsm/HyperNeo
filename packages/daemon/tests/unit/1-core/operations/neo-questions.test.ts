@@ -715,13 +715,14 @@ describe('NeoAskTodoRepository start question pruning', () => {
     expect(store.getQuestion('q-start')).toMatchObject({ state: 'open', startTodos: ['t2'] });
   });
 
-  test('a todo started elsewhere or moved to another ask leaves it, and a moved one is asked there', () => {
+  test.each([null, 'ask'])('moved todos leave the origin card; parent=%s', (parentId) => {
     const { store, fix, rows } = setup();
     startQuestion(store, [fix.id, rows.id]);
     store.claimStart(fix, 2);
     expect(store.getQuestion('q-start')?.startTodos).toEqual(['t2']);
     store.openAsk({
       id: 'other',
+      parentId,
       projectId: null,
       sessionId: 'neo-a',
       originMessageId: 'm2',
