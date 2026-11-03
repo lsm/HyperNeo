@@ -1,3 +1,5 @@
+import { createLocalSocket } from '../../src/lib/pairing/local-credential.ts';
+import { legacyAttachmentFixture } from '../../../../.claude/skills/verify/legacy-attachment-fixture.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -64,6 +66,7 @@ async function start() {
   assert.notEqual(app.server.port, 8399);
   hub = new MessageHub({ defaultSessionId: 'global' });
   transport = new WebSocketClientTransport({
+    createSocket: createLocalSocket,
     url: `ws://127.0.0.1:${app.server.port}/ws`,
     autoReconnect: false,
   });
@@ -131,15 +134,16 @@ try {
     place: { machine: 'synthetic', name: 'Synthetic', folder: join(run, 'workspace') },
   });
   owners.recordRef('preview-todo', { adapter: 'hyperneo', id: 'worker' });
-  const registration = await rpc<{ accepted: boolean; artifact: { artifactId: string } }>(
-    'artifact.file.register',
-    {
-      requestId: 'context-register',
-      context: { kind: 'todo', id: 'preview-todo' },
-      path: 'report.md',
-      title: 'Synthetic Preview report',
-    }
-  );
+  const registration = legacyAttachmentFixture(
+    () => database().getDatabase(),
+    join(run, 'data'),
+    join(run, 'home')
+  ).execute({
+    requestId: 'context-register',
+    context: { kind: 'todo', id: 'preview-todo' },
+    path: 'report.md',
+    title: 'Synthetic Preview report',
+  });
   assert.equal(registration.accepted, true);
   const artifactId = registration.artifact.artifactId;
   const metadata = await rpc<{ accepted: boolean; metadata: { sha256: string } }>(

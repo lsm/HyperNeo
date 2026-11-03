@@ -30,8 +30,10 @@ const publication = (fields: Partial<NeoPublication> = {}): NeoPublication => ({
   publicationId: '20000000-0000-4000-8000-000000000001',
   askOrigin: origin,
   producerInput: { sessionId: root, messageId: 'turn' },
-  shortText: 'The design is in `docs/design/layout.md`; see https://github.com/acme/demo/pull/7.',
-  fullText: 'The design is in `docs/design/layout.md`; see https://github.com/acme/demo/pull/7.',
+  shortText:
+    'The design is in `/synthetic/docs/design/layout.md`; see https://github.com/acme/demo/pull/7.',
+  fullText:
+    'The design is in `/synthetic/docs/design/layout.md`; see https://github.com/acme/demo/pull/7.',
   links: [],
   sequence: 1,
   createdAt: '2026-10-21T12:00:01Z',
@@ -68,7 +70,7 @@ describe('Neo artifact taps', () => {
 
     it('derives one card per literal file reference without rewriting a publication', async () => {
       const body =
-        'Read `report.md` twice: `report.md`.\n\n```sh\nignored.md\n```\n\nhttps://github.com/acme/demo/pull/7';
+        'Read `/synthetic/report.md` twice: `/synthetic/report.md`.\n\n```sh\nignored.md\n```\n\nhttps://github.com/acme/demo/pull/7';
       const item = publication({
         shortText: undefined,
         fullText: body,
@@ -83,7 +85,7 @@ describe('Neo artifact taps', () => {
         {
           kind: 'reference',
           source: { kind: 'publication', id: item.publicationId, revisionId: 'visible-revision' },
-          reference: 'report.md',
+          reference: '/synthetic/report.md',
         },
       ]);
       expect(item.fullText).toBe(body);
@@ -93,8 +95,8 @@ describe('Neo artifact taps', () => {
     it('deduplicates paths in expanded todo details and retains the todo source', async () => {
       const todo = testTodo('file-todo', {
         title: 'File result',
-        instruction: 'Read `report.md`.',
-        report: 'Updated `report.md`.',
+        instruction: 'Read `/synthetic/report.md`.',
+        report: 'Updated `/synthetic/report.md`.',
       });
       render(
         <NeoAskTodos entry={testAskEntry('ask', 'Work', { todos: [todo] })} onAnswer={() => {}} />
@@ -106,7 +108,7 @@ describe('Neo artifact taps', () => {
       expect(artifactPreviewStack.value.at(-1)).toEqual({
         kind: 'reference',
         source: { kind: 'todo', id: todo.id },
-        reference: 'report.md',
+        reference: '/synthetic/report.md',
       });
     });
 
@@ -114,8 +116,8 @@ describe('Neo artifact taps', () => {
       const question: NeoQuestionEntry = {
         id: 'file-question',
         askId: 'ask',
-        text: 'Read `report.md`.',
-        document: 'Full report: `report.md`',
+        text: 'Read `/synthetic/report.md`.',
+        document: 'Full report: `/synthetic/report.md`',
         kind: 'reply',
         options: null,
         multiple: false,
@@ -150,18 +152,18 @@ describe('Neo artifact taps', () => {
       expect(artifactPreviewStack.value.at(-1)).toEqual({
         kind: 'reference',
         source: { kind: 'question', id: question.id },
-        reference: 'report.md',
+        reference: '/synthetic/report.md',
       });
     });
 
     it('includes visible todo title/status and adds detail/action paths only when expanded', async () => {
       const todo = testTodo('status-file-todo', {
-        title: 'Read `title.md`',
-        status: 'Blocked: read `status.md`',
-        blockedReason: 'read `status.md`',
+        title: 'Read `/synthetic/title.md`',
+        status: 'Blocked: read `/synthetic/status.md`',
+        blockedReason: 'read `/synthetic/status.md`',
         state: 'blocked',
-        instruction: 'Read `title.md` and `detail.md`',
-        nextAction: 'Read `next.md`',
+        instruction: 'Read `/synthetic/title.md` and `/synthetic/detail.md`',
+        nextAction: 'Read `/synthetic/next.md`',
       });
       render(
         <NeoAskTodos entry={testAskEntry('ask', 'Work', { todos: [todo] })} onAnswer={() => {}} />
@@ -178,7 +180,7 @@ describe('Neo artifact taps', () => {
 
     it('keeps same-name files distinct and preserves an encoded file URL exactly', async () => {
       const body =
-        'Read `first/report.md`, `second/report.md` and [the report](file:///synthetic/My%20report.md).';
+        'Read `/synthetic/first/report.md`, `/synthetic/second/report.md` and [the report](file:///synthetic/My%20report.md).';
       render(
         <NeoPublicConversation
           conversation={conversation(publication({ shortText: body, fullText: body }))}
@@ -186,12 +188,14 @@ describe('Neo artifact taps', () => {
       );
       const named = await screen.findAllByRole('button', { name: 'Open current file: report.md' });
       expect(named.map((card) => card.getAttribute('title'))).toEqual([
-        'first/report.md',
-        'second/report.md',
+        '/synthetic/first/report.md',
+        '/synthetic/second/report.md',
       ]);
       fireEvent.click(named[1]);
       expect(artifactPreviewStack.value.at(-1)?.kind).toBe('reference');
-      expect(artifactPreviewStack.value.at(-1)).toMatchObject({ reference: 'second/report.md' });
+      expect(artifactPreviewStack.value.at(-1)).toMatchObject({
+        reference: '/synthetic/second/report.md',
+      });
       fireEvent.click(screen.getByRole('button', { name: 'Open current file: My report.md' }));
       expect(artifactPreviewStack.value.at(-1)).toMatchObject({
         reference: 'file:///synthetic/My%20report.md',
@@ -199,7 +203,7 @@ describe('Neo artifact taps', () => {
     });
 
     it('lets unsupported file cards reach the reader and shows its accurate refusal', async () => {
-      const body = 'Open `unknown.bin`.';
+      const body = 'Open `/synthetic/unknown.bin`.';
       request.mockResolvedValue({ accepted: false, reason: 'unsupported_type' });
       render(
         <>
@@ -216,7 +220,7 @@ describe('Neo artifact taps', () => {
       expect(request.mock.calls[0][1]).toMatchObject({
         name: 'file.reference.read',
         input: {
-          reference: 'unknown.bin',
+          reference: '/synthetic/unknown.bin',
           sourceMessageOrCard: { kind: 'publication', id: publication().publicationId },
         },
       });
@@ -350,13 +354,13 @@ describe('Neo artifact taps', () => {
     render(
       <NeoPublicConversation conversation={conversation(publication({ revisionId: 'rev-2' }))} />
     );
-    await waitFor(() => expect(screen.getByText('docs/design/layout.md')).toBeTruthy());
-    fireEvent.click(screen.getByText('docs/design/layout.md'));
+    await waitFor(() => expect(screen.getByText('/synthetic/docs/design/layout.md')).toBeTruthy());
+    fireEvent.click(screen.getByText('/synthetic/docs/design/layout.md'));
     expect(artifactPreviewStack.value).toEqual([
       {
         kind: 'reference',
         source: { kind: 'publication', id: publication().publicationId, revisionId: 'rev-2' },
-        reference: 'docs/design/layout.md',
+        reference: '/synthetic/docs/design/layout.md',
       },
     ]);
     fireEvent.click(screen.getByText('https://github.com/acme/demo/pull/7'));

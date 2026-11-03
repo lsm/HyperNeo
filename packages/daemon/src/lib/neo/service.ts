@@ -126,7 +126,7 @@ export class NeoService {
   private watching: Promise<unknown> | null = null;
   private disposed = false;
   filePacks: readonly NeoPack[] = [];
-  private readonly builtinPacks: NeoPack[];
+  readonly builtinPacks: NeoPack[];
   private readonly defaultPacks: readonly string[];
   readonly packOperations: NeoPackRuntime['operations'];
   readonly notifyChanged: () => void;
@@ -243,7 +243,6 @@ export class NeoService {
     this.builtinPacks = runtime.packs;
     this.defaultPacks = runtime.defaults;
     this.packOperations = runtime.operations;
-    for (const pack of this.builtinPacks) pack.todos?.schema(db.getDatabase());
     const notifyPublication = () => {
       try {
         void hub.event('neo.changed', {});

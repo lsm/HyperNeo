@@ -1,10 +1,10 @@
+import '../../../packages/daemon/tests/unit/helpers/register-space-schema.ts';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
 import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
-import { createArtifactReferenceResolve } from '../../../packages/daemon/src/lib/artifacts/resolve-operation.ts';
+import { createLiveFileRead } from '../../../packages/daemon/src/lib/artifacts/live-file-read.ts';
 import { createArtifactReadOperations } from '../../../packages/daemon/src/lib/artifacts/read-operations.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
@@ -27,7 +27,7 @@ db.prepare("UPDATE neo_todos SET evidence = ? WHERE id='todo'").run(text);
 for (const name of ['notes.md', 'My notes.md', 'unmentioned notes.md']) writeFileSync(join(workspace, name), `# Synthetic ${name}\nComplete reviewable bytes.\n`);
 writeFileSync(join(run, 'outside.md'), '# Outside the authorized workspace\n');
 symlinkSync(join(run, 'outside.md'), join(workspace, 'Linked notes.md'));
-const registry = createOperationRegistry([createArtifactReferenceResolve(() => db, data, join(run, 'home')), ...createArtifactReadOperations(() => db, data)]);
+const registry = createOperationRegistry([createLiveFileRead(() => db, join(run, 'home')), ...createArtifactReadOperations(() => db, data)]);
 type Reply = { accepted?: boolean; artifact?: { artifactId: string }; data?: string };
 let remote: ((name: string, input: unknown) => Promise<Reply>) | undefined;
 let stop = async () => {};
@@ -56,16 +56,16 @@ try {
   for (const [kind, id] of [['message', 'source'], ['todo', 'todo']] as const) {
     const sourceMessageOrCard = { kind, id };
     for (const reference of ['notes.md', 'My notes.md']) {
-      const input = { sourceMessageOrCard, reference, requestId: randomUUID() };
-      const receipt = await call('artifact.reference.resolve', input);
+      const input = { sourceMessageOrCard, reference };
+      const receipt = await call('file.reference.read', input);
       evidence[`${kind}:${reference}`] = receipt.accepted;
       assert.equal(receipt.accepted, true, `${kind} must resolve the entire literal ${reference}`);
-      assert.deepEqual(await call('artifact.reference.resolve', input), receipt);
-      const read = await call('artifact.file.read', { artifactId: receipt.artifact!.artifactId });
+      assert.deepEqual(await call('file.reference.read', input), receipt);
+      const read = receipt;
       assert.equal(Buffer.from(read.data!, 'base64').toString(), `# Synthetic ${reference}\nComplete reviewable bytes.\n`);
     }
     for (const reference of ['Linked notes.md', 'missing notes.md', '../outside.md', 'unmentioned notes.md', '$(pwd)/notes.md', 'cat notes.md']) {
-      const refused = await call('artifact.reference.resolve', { sourceMessageOrCard, reference, requestId: randomUUID() });
+      const refused = await call('file.reference.read', { sourceMessageOrCard, reference });
       assert.equal(refused.accepted, false, `${kind} must refuse ${reference}`);
     }
     evidence[kind === 'message' ? 'chatSpaced' : 'todoSpaced'] = true;

@@ -32,17 +32,14 @@ native descriptor backend cannot verify that existing blob. Assert both fail-clo
 outcomes explicitly, zero immutable rows and retained identity. Successful Deno
 registration/bytes remain unverified. No fallback or backend change is added. Foreign/non-source references refuse before lookup.
 
-Count the complete local Git module/closures/constants to <=200 lines. Pin exact
-merged writer, reference resolver, stored-kind and source/policy/capture/descriptor/
-Git-reader boundary hashes/contracts, with explicit transitive repository/runtime/
-OS/library audit limits. Current row publication is separately worker-backed;
-assert zero main row saves. Source reads and read-only identity authorization
-remain on main. Use lane-c-artifact-git-row-measure.cjs for the current topology;
-the identity-only measurement remains a historical slice record. Only the explicit public read verification
-phase permits/counts existing read-only identity SELECTs. Run strict/focused tests,
-native proofs and repository checks; append only the owned smoke line. Stop all
-owned sockets/processors/app and delete daemon data after saving evidence. Native
-pinned Bun when unavailable, browser and Neo-owned deployment remain unverified.
+For a current source/dependency inventory, run
+`node .claude/skills/verify/lane-c-artifact-git-row-measure.cjs` from the repo root.
+It reports current executable units, hashes, imports and the branch diff, not an
+unchanged-boundary claim against historical registration snapshots. Local
+registration and its old measurement scripts were removed by C3. The wrappers
+for historical identity/reference measurement names now report this same current
+inventory. Immutable Git, row/identity command and legacy reader proofs remain
+the behavioral gates; a source inventory cannot replace them.
 
 The first fixed proof held the lock too early, immediately after the reference
 identity receipt. Source binding construction then reached the existing core

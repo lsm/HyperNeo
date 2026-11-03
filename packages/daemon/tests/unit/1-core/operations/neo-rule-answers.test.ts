@@ -1,8 +1,8 @@
 import { createNeoIntakeOperation } from '../../../../src/lib/neo/intake.ts';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { GlobalSettings, MessageHub } from '@hyperneo/shared';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
+import { createNeoOperations } from '../../helpers/neo-service.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,

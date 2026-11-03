@@ -4701,204 +4701,6 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
-          "bundle": {
-            "items": {
-              "additionalProperties": false,
-              "properties": {
-                "artifactId": {
-                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                  "type": "string"
-                },
-                "path": {
-                  "maxLength": 4096,
-                  "minLength": 1,
-                  "type": "string"
-                }
-              },
-              "required": [
-                "path",
-                "artifactId"
-              ],
-              "type": "object"
-            },
-            "maxItems": 63,
-            "minItems": 1,
-            "type": "array"
-          },
-          "context": {
-            "additionalProperties": false,
-            "properties": {
-              "id": {
-                "maxLength": 200,
-                "minLength": 1,
-                "type": "string"
-              },
-              "kind": {
-                "enum": [
-                  "todo",
-                  "ask"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind",
-              "id"
-            ],
-            "type": "object"
-          },
-          "path": {
-            "maxLength": 4096,
-            "minLength": 1,
-            "type": "string"
-          },
-          "requestId": {
-            "maxLength": 200,
-            "minLength": 1,
-            "type": "string"
-          },
-          "title": {
-            "maxLength": 200,
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": [
-          "requestId",
-          "context",
-          "path",
-          "title"
-        ],
-        "type": "object"
-      },
-      "name": "artifact.file.register",
-      "resultSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "anyOf": [
-          {
-            "additionalProperties": false,
-            "properties": {
-              "accepted": {
-                "const": false,
-                "type": "boolean"
-              },
-              "reason": {
-                "enum": [
-                  "outside_roots",
-                  "sensitive_path",
-                  "unsafe_path",
-                  "source_changed",
-                  "size_limit",
-                  "quota_full",
-                  "unsupported_type",
-                  "ambiguous_context",
-                  "safe_open_unavailable",
-                  "unavailable"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "accepted",
-              "reason"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "accepted": {
-                "const": false,
-                "type": "boolean"
-              },
-              "actualBytes": {
-                "maximum": 9007199254740991,
-                "minimum": 0,
-                "type": "integer"
-              },
-              "limitBytes": {
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "reason": {
-                "const": "size_limit",
-                "type": "string"
-              }
-            },
-            "required": [
-              "accepted",
-              "reason",
-              "actualBytes",
-              "limitBytes"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "accepted": {
-                "const": true,
-                "type": "boolean"
-              },
-              "artifact": {
-                "additionalProperties": false,
-                "properties": {
-                  "artifactId": {
-                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                    "type": "string"
-                  },
-                  "byteLength": {
-                    "maximum": 9007199254740991,
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "daemonId": {
-                    "format": "uuid",
-                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                    "type": "string"
-                  },
-                  "kind": {
-                    "enum": [
-                      "markdown",
-                      "html",
-                      "image",
-                      "json",
-                      "log",
-                      "text"
-                    ],
-                    "type": "string"
-                  },
-                  "title": {
-                    "maxLength": 200,
-                    "minLength": 1,
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "daemonId",
-                  "artifactId",
-                  "title",
-                  "kind",
-                  "byteLength"
-                ],
-                "type": "object"
-              }
-            },
-            "required": [
-              "accepted",
-              "artifact"
-            ],
-            "type": "object"
-          }
-        ]
-      }
-    },
-    {
-      "inputSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
           "context": {
             "additionalProperties": false,
             "properties": {
@@ -4990,6 +4792,28 @@
       "resultSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "accepted": {
+                "const": false,
+                "type": "boolean"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "reason": {
+                "const": "client_upgrade_required",
+                "type": "string"
+              }
+            },
+            "required": [
+              "accepted",
+              "reason",
+              "detail"
+            ],
+            "type": "object"
+          },
           {
             "additionalProperties": false,
             "properties": {
@@ -6166,6 +5990,60 @@
             "type": "object"
           }
         ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "default": {},
+        "properties": {},
+        "type": "object"
+      },
+      "name": "daemon.extensions",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "extensions": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "webRoutes": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "label": {
+                        "type": "string"
+                      },
+                      "path": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "label"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "id",
+                "webRoutes"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "extensions"
+        ],
+        "type": "object"
       }
     },
     {
@@ -29842,6 +29720,187 @@
               "ok",
               "pack",
               "instructions"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 80,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "neo.peer.invite",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "accepted": {
+                "const": true,
+                "type": "boolean"
+              },
+              "code": {
+                "type": "string"
+              },
+              "expiresAt": {
+                "type": "number"
+              },
+              "id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "accepted",
+              "id",
+              "code",
+              "expiresAt"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "accepted": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "accepted",
+              "reason"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "name": "neo.peer.list",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "accepted": {
+                "const": true,
+                "type": "boolean"
+              },
+              "peers": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "accepted",
+              "peers"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "accepted": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "accepted",
+              "reason"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "neo.peer.remove",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "accepted": {
+                "const": true,
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "accepted"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "accepted": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "accepted",
+              "reason"
             ],
             "type": "object"
           }

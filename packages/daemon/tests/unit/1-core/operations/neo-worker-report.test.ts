@@ -3,7 +3,7 @@ import { expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import { z } from 'zod';
 import { createTestDb } from '../../../helpers/database.ts';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
 import {
   createSendMessageOperation,
   type SessionSent,

@@ -1,3 +1,4 @@
+import { peerReads, peerWrites } from '../repositories/neo-peer-repository.ts';
 import { neoStallReminderWrite } from '../repositories/neo-stall-reminder-write.ts';
 import { historySnapshotReads } from '../repositories/sdk-history-snapshot-read.ts';
 import { toolRecoveryWrites } from '../repositories/tool-continuation-recovery-repository.ts';
@@ -66,6 +67,7 @@ import { codingSweepReads, codingSweepWrites } from '../../lib/neo/packs/coding/
 import { codingTodoPrWrites } from '../../lib/neo/packs/coding/todo-prs.ts';
 import { codingDeliveryWrites } from '../../lib/neo/packs/coding/delivery-facts.ts';
 import {
+  enrollLocalDevice,
   recordUnpaired,
   recordWouldRefuse,
   touchDevice,
@@ -217,6 +219,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     neoWakeQueueWrite,
     ...SDK_MESSAGE_TRANSACTIONS,
     recordWouldRefuse,
+    enrollLocalDevice,
     touchDevice,
     recordUnpaired,
     jobQueueWrites,
@@ -265,6 +268,8 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     releaseRateLimitDeliveries,
     providerRpcWrites,
     credentialStoreWrites,
+    peerReads,
+    peerWrites,
     googleConnectionReads,
     googleConnectionWrites,
     enqueueSessionDelivery,

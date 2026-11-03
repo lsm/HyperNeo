@@ -62,8 +62,10 @@ async function startRemoteDaemon(knownSessionId: string): Promise<RemoteDaemon> 
     port: 0,
     fetch: (request, upgrade) =>
       new URL(request.url).pathname === '/ws'
-        ? (upgrade(request, { connectionSessionId: 'global' }) ??
-          new Response('upgrade failed', { status: 500 }))
+        ? (upgrade(request, {
+            connectionSessionId: 'global',
+            device: { deviceId: 'synthetic-daemon', kind: 'daemon' },
+          }) ?? new Response('upgrade failed', { status: 500 }))
         : new Response('not found', { status: 404 }),
     websocket: handlers,
   });

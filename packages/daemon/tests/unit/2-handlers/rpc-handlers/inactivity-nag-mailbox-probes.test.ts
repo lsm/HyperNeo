@@ -15,6 +15,7 @@ import {
 } from '../../../../src/storage/repositories/space-agent-inactivity-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { DaemonExtensions } from '../../../../src/lib/extensions/contract.ts';
 
 const THRESHOLD_MS = 60_000;
 const IDLE_SINCE_MS = 2 * 60 * 60 * 1000;
@@ -82,8 +83,10 @@ describe('inactivity nag probes reconciled with mailbox admissions', () => {
       getSpace: async () => ({ id: 'space', status: 'active', paused: false, stopped: false }),
       onSpaceResumedRegister: () => {},
     });
+    const messageHub = noopProxy();
     const deps = {
-      messageHub: noopProxy(),
+      extensions: new DaemonExtensions(db.getDatabase(), messageHub as never),
+      messageHub,
       sessionManager: noopProxy({ getCachedSession: () => null }),
       authManager: noopProxy(),
       settingsManager: noopProxy(),

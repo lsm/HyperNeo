@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
@@ -131,7 +132,7 @@ try {
   const actor = seed('human'); const target = seed();
   const connect = async (credential?: string) => {
     const hub = new MessageHub({ defaultSessionId: 'global' });
-    const transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app!.server.port}/ws`, autoReconnect: false, createSocket: (url) => credential ? new WebSocket(url, { headers: { authorization: `Bearer ${credential}` } }) : new WebSocket(url) });
+    const transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app!.server.port}/ws`, autoReconnect: false, createSocket: (url) => credential ? new WebSocket(url, { headers: { authorization: `Bearer ${credential}` } }) : createLocalSocket(url) });
     let closed = false; transport.onConnectionChange((state) => { if (state === 'disconnected') closed = true; });
     transports.push(transport); hub.registerTransport(transport); await transport.initialize();
     return { hub, closed: () => closed };
@@ -160,7 +161,7 @@ try {
   assert.match((await revoke(target.device.id)).reason!, /^not_found:/);
   const cliTarget = seed(); const cliVictim = await connect(cliTarget.credential); assert.deepEqual(await cli(['devices','revoke',cliTarget.device.id]), { ok: true }); await wait(cliVictim.closed); assert.equal(active(cliTarget.device.id), false); evidence.realCliRevokesAndCloses = true;
   const protectedTarget = seed();
-  assert.match((await revoke(protectedTarget.device.id, local)).reason!, /^not_paired:/); assert.equal(active(protectedTarget.device.id), true); assert(!notifications.includes(protectedTarget.device.id)); evidence.unpairedRefused = true;
+  assert.equal((await nativeFetch(`http://127.0.0.1:${app!.server.port}/ws`)).status, 401); assert.equal(active(protectedTarget.device.id), true); assert(!notifications.includes(protectedTarget.device.id)); evidence.unpairedRefused = true;
   const warmTargets = Array.from({ length: 5 }, () => seed()); const warmAt = performance.now();
   const receipts = await Promise.all(warmTargets.map((d) => revoke(d.device.id))); receipts.forEach((r) => assert.deepEqual(r, { ok: true })); warmTargets.forEach((d) => assert.equal(active(d.device.id), false)); evidence.concurrentMs = performance.now() - warmAt;
   raw.exec('CREATE TABLE synthetic_revoke_lock(value INTEGER); INSERT INTO synthetic_revoke_lock VALUES(0)');

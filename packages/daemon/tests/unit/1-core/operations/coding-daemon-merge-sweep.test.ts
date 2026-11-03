@@ -25,6 +25,7 @@ let db: Database,
   calls: string[][],
   notices: string[],
   fail: string;
+let mergeStateStatus: string;
 let state: string,
   actualHead: string,
   labels: string[],
@@ -48,7 +49,23 @@ const spawn: SpawnFn = (args) => {
     expect(args.slice(-3)).toEqual(['--squash', '--match-head-commit', actualHead]);
     if (!mergeFailed) state = 'MERGED';
   } else if (args[2] === 'edit') labels = args.includes('--add-label') ? ['human-merge'] : [];
-  else if (args.includes('graphql'))
+  else if (args.some((arg) => arg.includes('CodingMergeFiles'))) {
+    const pages = files.length > 100 ? [files.slice(0, 100), files.slice(100)] : [files];
+    data = pages.map((paths, i) => ({
+      data: {
+        repository: {
+          pullRequest: {
+            headRefOid: actualHead,
+            baseRefOid: 'd'.repeat(40),
+            files: {
+              nodes: paths.map((path) => ({ path })),
+              pageInfo: { hasNextPage: i < pages.length - 1, endCursor: String(i) },
+            },
+          },
+        },
+      },
+    }));
+  } else if (args.includes('graphql'))
     data = {
       data: {
         repository: {
@@ -82,12 +99,13 @@ const spawn: SpawnFn = (args) => {
       body: '',
       state,
       headRefOid: actualHead,
+      baseRefOid: 'd'.repeat(40),
       isDraft: false,
       mergeable: 'MERGEABLE',
-      mergeStateStatus: 'CLEAN',
+      mergeStateStatus,
       author: { login: 'author' },
       changedFiles: files.length,
-      files: files.map((path) => ({ path })),
+      files: files.slice(0, 100).map((path) => ({ path })),
       labels: [],
       mergeCommit: state === 'MERGED' ? { oid: 'c'.repeat(40) } : null,
     };
@@ -139,6 +157,7 @@ beforeEach(async () => {
   notices = [];
   fail = '';
   state = 'OPEN';
+  mergeStateStatus = 'CLEAN';
   actualHead = head;
   labels = [];
   files = ['src/app.ts'];
@@ -174,6 +193,84 @@ afterEach(() => {
   db.close();
 });
 describe('daemon merge sweep behavior', () => {
+  test.each([false, true])(
+    'complete 171-file scope holds only for a protected tail path=%s',
+    async (protectedTail) => {
+      db.prepare("UPDATE pack_coding_pr_ledger SET state='waiting_human'").run();
+      files = Array.from({ length: 171 }, (_, i) => `src/file-${i}.ts`);
+      if (protectedTail) files[170] = 'docs/design/requires-signoff.md';
+      const run = sweep();
+      await run(10);
+      await run(11);
+      expect(merges()).toEqual(
+        protectedTail ? [] : [['gh', 'pr', 'merge', url, '--squash', '--match-head-commit', head]]
+      );
+      expect(calls.some((args) => args.some((arg) => arg.includes('CodingMergeFiles')))).toBe(true);
+    }
+  );
+  test.each(['UNSTABLE', 'BLOCKED', 'UNKNOWN'])(
+    'a completed scope cannot bypass unsettled commit status %s',
+    async (status) => {
+      db.prepare("UPDATE pack_coding_pr_ledger SET state='waiting_human'").run();
+      files = Array.from({ length: 171 }, (_, i) => `src/file-${i}.ts`);
+      mergeStateStatus = status;
+      await sweep()(10);
+      expect(merges()).toHaveLength(0);
+    }
+  );
+  test.each(['ci', 'review', 'thread', 'read'])(
+    'a truncated-scope ledger never bypasses fresh %s gates',
+    async (condition) => {
+      db.prepare("UPDATE pack_coding_pr_ledger SET state='waiting_human'").run();
+      files = Array.from({ length: 171 }, (_, i) => `src/file-${i}.ts`);
+      if (condition === 'ci') ci = 'pending';
+      if (condition === 'review') reviewHead = 'b'.repeat(40);
+      if (condition === 'thread') unresolved = true;
+      if (condition === 'read') fail = 'CodingMergeFiles';
+      await sweep()(10);
+      expect(merges()).toHaveLength(0);
+    }
+  );
+  test.each([
+    [false, 'no required checks'],
+    [true, 'no required checks'],
+    [false, 'no checks'],
+    [true, 'no checks'],
+  ] as const)(
+    'daemon merges a zero-required-checks PR once with owner=%s and %s',
+    async (owned, diagnostic) => {
+      if (owned)
+        db.prepare('UPDATE pack_coding_pr_ledger SET owner=?').run(
+          JSON.stringify({ adapter: 'hyperneo', id: 'fixture-owner' })
+        );
+      const noRequired: SpawnFn = (args, options) => {
+        if (args[2] !== 'checks') return spawn(args, options);
+        calls.push(args);
+        return {
+          stdout: new Response('').body,
+          stderr: new Response(`${diagnostic} reported on the 'fixture' branch\n`).body,
+          exited: Promise.resolve(1),
+          exitCode: 1,
+          kill() {},
+        };
+      };
+      const run = sweep(noRequired, {
+        tell: async (_owner, _key, text) => {
+          notices.push(text);
+          return true;
+        },
+      });
+      await run(10);
+      await run(11);
+      expect(merges()).toEqual([
+        ['gh', 'pr', 'merge', url, '--squash', '--match-head-commit', head],
+      ]);
+      expect(notices).toEqual([expect.stringContaining('Merge confirmed:')]);
+      expect(
+        db.prepare('SELECT head,actor,merge_commit FROM pack_coding_daemon_merges').all()
+      ).toEqual([{ head, actor: 'daemon:coding-sweep', merge_commit: 'c'.repeat(40) }]);
+    }
+  );
   test('pins a single unowned merge and records executor/head/time across overlapping sweeps', async () => {
     const run = sweep();
     await Promise.all([run(10), run(11)]);
@@ -185,38 +282,47 @@ describe('daemon merge sweep behavior', () => {
       { head, actor: 'daemon:coding-sweep', merge_commit: 'c'.repeat(40) },
     ]);
   });
-  test.each(['owner', 'human', 'path', 'ci', 'review', 'thread', 'head', 'closed', 'late'])(
-    'holds %s',
-    async (condition) => {
-      if (condition === 'owner') policy('mergeBy', 'owner');
-      if (condition === 'human') policy('mergePolicy', 'human');
-      if (condition === 'path') files = ['docs/design/merge.md'];
-      if (condition === 'ci') ci = 'pending';
-      if (condition === 'review') reviewHead = 'b'.repeat(40);
-      if (condition === 'thread') unresolved = true;
-      if (condition === 'head') actualHead = 'b'.repeat(40);
-      if (condition === 'closed') state = 'CLOSED';
-      const delayed: SpawnFn = (args) => {
-        if (
-          condition === 'late' &&
-          args[2] === 'view' &&
-          calls.filter((a) => a[2] === 'view').length === 1
-        )
-          labels = ['human-merge'];
-        return spawn(args);
-      };
-      await sweep(delayed)(10);
-      expect(merges()).toHaveLength(0);
-      if (['path', 'late'].includes(condition))
-        expect(notices.some((text) => text.includes('sign-off'))).toBe(true);
-      if (condition === 'late') {
-        labels = [];
-        await sweep(delayed)(11);
-        expect(merges()).toHaveLength(1);
-      }
+  test.each([
+    'owner',
+    'human',
+    'path',
+    'ci',
+    'failed-ci',
+    'review',
+    'thread',
+    'head',
+    'closed',
+    'late',
+  ])('holds %s', async (condition) => {
+    if (condition === 'owner') policy('mergeBy', 'owner');
+    if (condition === 'human') policy('mergePolicy', 'human');
+    if (condition === 'path') files = ['docs/design/merge.md'];
+    if (condition === 'ci') ci = 'pending';
+    if (condition === 'failed-ci') ci = 'fail';
+    if (condition === 'review') reviewHead = 'b'.repeat(40);
+    if (condition === 'thread') unresolved = true;
+    if (condition === 'head') actualHead = 'b'.repeat(40);
+    if (condition === 'closed') state = 'CLOSED';
+    const delayed: SpawnFn = (args) => {
+      if (
+        condition === 'late' &&
+        args[2] === 'view' &&
+        calls.filter((a) => a[2] === 'view').length === 1
+      )
+        labels = ['human-merge'];
+      return spawn(args);
+    };
+    await sweep(delayed)(10);
+    expect(merges()).toHaveLength(0);
+    if (['path', 'late'].includes(condition))
+      expect(notices.some((text) => text.includes('sign-off'))).toBe(true);
+    if (condition === 'late') {
+      labels = [];
+      await sweep(delayed)(11);
+      expect(merges()).toHaveLength(1);
     }
-  );
-  test.each(['/labels', '/reviews', 'checks', 'graphql', 'view', 'final'])(
+  });
+  test.each(['/labels', '/reviews', 'CodingMergeFiles', 'checks', 'graphql', 'view', 'final'])(
     'does nothing when %s cannot be read',
     async (part) => {
       fail = part;

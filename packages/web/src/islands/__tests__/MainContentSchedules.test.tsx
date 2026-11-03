@@ -9,6 +9,10 @@ import {
   currentSpaceIdSignal,
   navSectionSignal,
 } from '../../lib/signals.ts';
+import { spaceWebExtension } from '../../lib/space-web-extension';
+import { registerWebExtension } from '../../lib/web-extensions';
+
+registerWebExtension('space', spaceWebExtension);
 
 const request = vi.hoisted(() => vi.fn());
 vi.mock('../../lib/connection-manager.ts', () => ({

@@ -7,6 +7,9 @@ import {
   runMigrations,
 } from '../../../../../src/storage/schema/index.ts';
 import { humanSessionColumnsPredicate } from '../../../../../src/storage/schema/session-counters.ts';
+import spaceBaselineSchema from '../../../../../src/storage/schema/baseline-space-v041.json' with {
+  type: 'json',
+};
 import baselineSchema from '../../../../../src/storage/schema/baseline-v041.json' with {
   type: 'json',
 };
@@ -99,7 +102,7 @@ describe('database schema equivalence', () => {
       )
         .filter(({ tbl_name }) => !shadows.has(tbl_name))
         .map(({ sql }) => sql);
-      expect(baselineSchema).toEqual(statements);
+      expect([...baselineSchema, ...spaceBaselineSchema].sort()).toEqual([...statements].sort());
       fresh.exec('PRAGMA foreign_keys = ON');
       let backups = 0;
       runMigrations(fresh, () => {

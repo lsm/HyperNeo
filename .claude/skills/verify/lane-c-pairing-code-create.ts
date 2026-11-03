@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -114,7 +115,7 @@ try {
   const base = `http://127.0.0.1:${app.server.port}`;
   const connect = async (credential?: string) => {
     const hub = new MessageHub({ defaultSessionId: 'global' });
-    const transport = new WebSocketClientTransport({ url: base.replace('http','ws') + '/ws', autoReconnect: false, createSocket: (url) => credential ? new WebSocket(url, { headers: { authorization: `Bearer ${credential}` } }) : new WebSocket(url) });
+    const transport = new WebSocketClientTransport({ url: base.replace('http','ws') + '/ws', autoReconnect: false, createSocket: (url) => credential ? new WebSocket(url, { headers: { authorization: `Bearer ${credential}` } }) : createLocalSocket(url) });
     transports.push(transport); hub.registerTransport(transport); await transport.initialize(); return hub;
   };
   const local = await connect();
@@ -139,14 +140,14 @@ try {
   try { first = await create('Synthetic bootstrap'); } catch (error) { evidence.coldError = String(error); throw error; }
   evidence.coldMs = performance.now() - coldAt; assert.equal(first.approval, 'approved'); check(first); evidence.bootstrapApprovedAndCommitted = true;
   const firstDevice = await pair(first); const human = await connect(firstDevice.credential);
-  const pending = await create('Synthetic pending'); assert.equal(pending.approval, 'pending'); check(pending); evidence.unpairedBecomesPending = true;
+  const pending = await cli(); assert.equal(pending.approval, 'pending'); check(pending); evidence.cliBecomesPending = true;
   const trusted = await create('Synthetic approved', human); assert.equal(trusted.approval, 'approved'); check(trusted); evidence.activeHumanApproves = true;
   const warmAt = performance.now(); const beforeConcurrent = count();
   const warm = await Promise.all(Array.from({ length: 5 }, (_, i) => create(`Synthetic concurrent ${i}`)));
-  warm.forEach((r) => { assert.equal(r.approval, 'pending'); check(r); }); assert.equal(new Set(warm.map((r) => r.codeId)).size, 5); assert.equal(count(), beforeConcurrent + 5); evidence.concurrentMs = performance.now() - warmAt; evidence.concurrentReceipts = 5;
+  warm.forEach((r) => { assert.equal(r.approval, 'approved'); check(r); }); assert.equal(new Set(warm.map((r) => r.codeId)).size, 5); assert.equal(count(), beforeConcurrent + 5); evidence.concurrentMs = performance.now() - warmAt; evidence.concurrentReceipts = 5;
   const cliAt = performance.now(); const cliPending = await cli(); assert.equal(cliPending.approval, 'pending'); check(cliPending); evidence.cliRoundTripMs = performance.now() - cliAt; evidence.realSessionDoorPending = true;
   inspect(() => repo.revokeDevice(firstDevice.deviceId, Date.now())); const beforeRefusal = count();
-  assert.match((await create('Synthetic stale approver', human)).reason!, /^no_human_device/); assert.match((await create('Synthetic missing human')).reason!, /^no_human_device/); assert.match((await cli()).reason!, /^no_human_device/); assert.equal(count(), beforeRefusal); evidence.currentRevokedAndMissingHumanRefused = true;
+  assert.match((await create('Synthetic stale approver', human)).reason!, /^no_human_device/); assert.match((await cli()).reason!, /^no_human_device/); assert.equal(count(), beforeRefusal); evidence.currentRevokedAndMissingHumanRefused = true;
   inspect(() => raw.prepare('INSERT INTO human_device_resets(id, reset_at, devices_json) VALUES (?, ?, ?)').run('synthetic-reset', Date.now(), '[]'));
   const recovery = await cli(); assert.equal(recovery.approval, 'approved'); check(recovery); assert.match((await cli('relay')).reason!, /^no_human_device/); evidence.realSessionDoorRecoveryHumanOnly = true;
   const replacement = await pair(recovery); const replacementHub = await connect(replacement.credential);

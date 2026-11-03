@@ -13,7 +13,7 @@ import { sessionStore } from '../lib/session-store.ts';
 import { conversationTitle } from '../lib/session-sidebar-status.ts';
 import type { InspectorSection } from '../lib/signals.ts';
 import { rightPanelTargetSignal } from '../lib/signals.ts';
-import { spaceStore } from '../lib/space-store.ts';
+import { webExtension } from '../lib/web-extensions.ts';
 import { connectionState } from '../lib/state.ts';
 import { cn } from '../lib/utils.ts';
 
@@ -164,10 +164,11 @@ function Section({ title, children }: { title: string; children: preact.Componen
 }
 
 function SessionSection({ session, readonly }: { session: Session; readonly: boolean }) {
-  const agent = spaceStore.agents.value.find((candidate) => candidate.sessionId === session.id);
+  const spaceStore = webExtension('space')?.store;
+  const agent = spaceStore?.agents.value.find((candidate) => candidate.sessionId === session.id);
   const { isEditing, startEditing, inputProps } = useSessionRename(session.id, session.title ?? '');
   const isConnected = connectionState.value === 'connected';
-  const spaceSlug = spaceStore.space.value?.slug ?? null;
+  const spaceSlug = spaceStore?.space.value?.slug ?? null;
 
   if (agent) {
     return (

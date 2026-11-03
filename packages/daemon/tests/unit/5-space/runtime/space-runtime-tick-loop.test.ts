@@ -18,8 +18,8 @@ import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts
 import {
   PermanentSpawnError,
   SpawnSupersededError,
-  TransientSpawnError,
 } from '../../../../src/lib/workflows/node-execution-validation.ts';
+import { TransientSpawnError } from '../../../../src/lib/session/transient-spawn-error.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { SpaceGoalOutcomeNotificationRepository } from '../../../../src/storage/repositories/space-goal-outcome-notification-repository.ts';

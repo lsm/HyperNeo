@@ -47,6 +47,7 @@ export function artifactStateMessage(state: Exclude<Shown['state'], 'ready'>) {
         loading: 'artifact.loading',
         daemon_unavailable: 'artifact.daemonUnavailable',
         needs_update: 'artifact.needsUpdate',
+        client_update: 'artifact.clientUpdate',
         revoked: 'artifact.revoked',
         forbidden: 'artifact.forbidden',
         unsupported: 'artifact.unsupported',

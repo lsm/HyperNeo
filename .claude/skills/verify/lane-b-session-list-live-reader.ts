@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -101,7 +102,7 @@ try {
   const expectedActive = JSON.parse(JSON.stringify(reference(0)));
   assert.equal(expectedAll.rows.length, 3); assert.equal(expectedActive.rows.length, 2);
   const hub = new MessageHub({ defaultSessionId: 'global' });
-  transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
+  transport = new WebSocketClientTransport({ createSocket: createLocalSocket, url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
   hub.registerTransport(transport); await transport.initialize();
   const snapshots: LiveQuerySnapshotEvent[] = [];
   const deltas: LiveQueryDeltaEvent[] = [];

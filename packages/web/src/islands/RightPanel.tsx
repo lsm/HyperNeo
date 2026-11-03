@@ -1,6 +1,4 @@
 import { useEffect, useState } from 'preact/hooks';
-import { GoalDetailPanel } from '../components/space/GoalDetailPanel.tsx';
-import { ScopeDetailPanel } from '../components/space/ScopeDetailPanel.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
 import { SessionInspector } from './SessionInspector.tsx';
 import { sessionStore } from '../lib/session-store.ts';
@@ -15,6 +13,7 @@ import {
   rightPanelTargetSignal,
 } from '../lib/signals.ts';
 import { cn } from '../lib/utils.ts';
+import { webExtension } from '../lib/web-extensions.ts';
 
 const TRANSITION_MS = 200;
 const DEFAULT_PANEL_WIDTH = 440;
@@ -160,6 +159,7 @@ export function RightPanel() {
   const [panelWidth, setPanelWidth] = useState(readStoredPanelWidth);
   const [resizing, setResizing] = useState(false);
   const isDesktop = useIsDesktopPanel();
+  const space = webExtension('space');
 
   useEffect(() => {
     let frame = 0;
@@ -288,15 +288,18 @@ export function RightPanel() {
               section={renderedTarget.section}
             />
           )}
-          {renderedTarget?.type === 'goal' && (
-            <GoalDetailPanel
+          {space && renderedTarget?.type === 'goal' && (
+            <space.GoalDetailPanel
               spaceId={renderedTarget.spaceId}
               navigationSpaceId={currentSpaceIdSignal.value ?? renderedTarget.spaceId}
               goalId={renderedTarget.goalId}
             />
           )}
-          {renderedTarget?.type === 'scope' && (
-            <ScopeDetailPanel spaceId={renderedTarget.spaceId} scopeId={renderedTarget.scopeId} />
+          {space && renderedTarget?.type === 'scope' && (
+            <space.ScopeDetailPanel
+              spaceId={renderedTarget.spaceId}
+              scopeId={renderedTarget.scopeId}
+            />
           )}
         </div>
       </div>

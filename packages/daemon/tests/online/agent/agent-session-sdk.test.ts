@@ -1,3 +1,4 @@
+import { createAuthenticatedTestSocket } from '../../helpers/websocket-helpers.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { WebSocket } from 'undici';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
@@ -12,7 +13,7 @@ const TEST_TIMEOUT = IS_MOCK ? 60000 : 150000;
 
 function createWebSocket(baseUrl: string): WebSocket {
   const wsUrl = baseUrl.replace('http://', 'ws://');
-  return new WebSocket(`${wsUrl}/ws`);
+  return createAuthenticatedTestSocket(`${wsUrl}/ws`);
 }
 
 async function waitForWebSocketState(ws: WebSocket, state: number): Promise<void> {

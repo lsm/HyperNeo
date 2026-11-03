@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { cn } from '../../lib/utils.ts';
+import { cn } from '../lib/utils.ts';
 
 export interface MentionAutocompleteProps {
   agents: Array<{ id: string; name: string }>;

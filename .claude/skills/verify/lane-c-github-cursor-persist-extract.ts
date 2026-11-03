@@ -1,3 +1,5 @@
+import '../../../packages/daemon/tests/unit/helpers/register-space-schema.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -39,7 +41,7 @@ try{
   assert.notEqual(app.server.port,8399);await Promise.all([...processors].map(p=>p.stop()));main=app.db.getDatabase();await waitForSdkBodyCopy(main);assert(manager);
   const at=Date.now();for(const id of [spaceId,'synthetic-cursor-persist-peer'])main.prepare('INSERT INTO spaces(id,slug,workspace_path,name,created_at,updated_at)VALUES(?,?,?,?,?,?)').run(id,id,join(run,'workspace',id),'Synthetic cursor persistence',at,at);
   const store=new ExternalEventExtensionConfigStore(main);await store.setGlobalConfig(source,{source,globallyEnabled:false,capabilities:{rpcConfig:true,polling:false,webhooks:false}});
-  const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();await hub.request('externalEvents.extensions.setGlobalEnabled',{source,enabled:true});
+  const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({createSocket: createLocalSocket, url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();await hub.request('externalEvents.extensions.setGlobalEnabled',{source,enabled:true});
   const targetId='synthetic-cursor-target';const initialCursor={lastSeenAt:15,etags:{issues:'synthetic-etag'},checkRunPollingEnabledAt:1,checkRunHeadLastSeenAt:{'7':21},checkRunHeadPendingLastSeenAt:{'7':22},endpointLastSeenAt:{check_runs:23,issues:24},endpointPendingLastSeenAt:{check_runs:25,pulls:26}};
   insertWatchedRow(main,{id:targetId,space_id:spaceId,polling_enabled:0,webhook_enabled:0,webhook_secret:null,webhook_auto_registered:0,webhook_remote_id:null,webhook_url:null,poll_cursor:JSON.stringify(initialCursor)});insertWatchedRow(main,{id:'synthetic-cursor-peer',space_id:'synthetic-cursor-persist-peer',polling_enabled:0,webhook_enabled:0,webhook_secret:null,webhook_auto_registered:0});const peerBefore={...main.prepare('SELECT * FROM space_github_watched_repos WHERE id=?').get('synthetic-cursor-peer')!};
   Database.prototype.prepare=function(sql,...rest){const db=this,statement=Reflect.apply(original.prepare,this,[sql,...rest]);if(!sql.startsWith('UPDATE space_github_watched_repos SET poll_cursor = ?'))return statement;return new Proxy(statement,{get(target,key){const value=Reflect.get(target,key);if(typeof value!=='function')return value;return(...args:unknown[])=>{if(measuring&&db===main&&key==='run')bindings.push(args);return Reflect.apply(value,target,args);};}});};

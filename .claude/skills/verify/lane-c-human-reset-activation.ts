@@ -83,6 +83,7 @@ globalThis.Worker = function (url: string | URL, options?: WorkerOptions) {
       receive?.call(worker, event);
     });
     worker.postMessage = ((message: { id: number; op?: string; lane?: string; args?: unknown }) => {
+      if(message.op==='pairing.touchDevice')authPosts++;
       if (message.op === 'pairing.humanReset.write') {
         assert.equal(message.lane, 'write'); commandPosts++;
         assert.deepEqual(message.args && Object.keys(message.args).sort(), ['args', 'method']);
@@ -112,6 +113,7 @@ globalThis.fetch = (() => { throw new Error('External HTTP refused by pairing fi
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let lock: InstanceType<typeof SQLite> | undefined;
 let timer: ReturnType<typeof setInterval> | undefined;
+let authPosts=0;
 const evidence: Record<string, unknown> = {};
 type Receipt = { id: string; resetAt: number; conversationId: string; devices: { id: string; name: string }[] };
 
@@ -161,13 +163,13 @@ try {
   assert.equal(receipt.devices.length,21);assert.equal(commandPosts,1);assert.deepEqual(new Set(receipt.devices.map(d=>d.id)),new Set(humans.map(d=>d.device.id)));
   await wait(()=>events.length===1&&phone.closed());assert.equal(publications.length,1);assert.equal(revoked.length,21);assert.equal(relayClient.closed(),false);
   for(const human of humans)assert.equal(active(human.device.id),false);assert.equal(active(relay.device.id),true);assert.equal(count('human_device_resets'),1);assert.equal(count('neo_publications'),2);
-  const list=await cli('devices');assert.equal(list.exit,0);assert.equal(list.value?.devices.length,22);for(const human of humans)assert.equal(list.value?.devices.find(d=>d.id===human.device.id)?.revokedAt,receipt.resetAt);assert.equal(list.value?.devices.find(d=>d.id===relay.device.id)?.revokedAt,null);evidence.realCliRetainsPublicReplyAndHistory=true;
+  const list=await cli('devices');assert.equal(list.exit,0);assert.equal(list.value?.devices.length,23);assert.equal(list.value?.devices.find(d=>d.id.startsWith('local-rpc:'))?.revokedAt,null);for(const human of humans)assert.equal(list.value?.devices.find(d=>d.id===human.device.id)?.revokedAt,receipt.resetAt);assert.equal(list.value?.devices.find(d=>d.id===relay.device.id)?.revokedAt,null);evidence.realCliRetainsPublicReplyAndHistory=true;
   const page=await relayClient.hub.request<{ok:boolean;items:{fullText:string}[]}>('operation.invoke',{name:'neo.publication.read',input:{conversationId:events[0],after:0,limit:100}});assert(page.ok);const text=JSON.stringify(page.items);for(const human of humans){assert(text.includes(human.device.id));assert(!text.includes(human.credential));}assert(!text.includes(relay.credential));evidence.committedNoticeEventAndPublicReadback=true;
   assert.deepEqual(await repo.redeemAsync(oldCode.code,'Expired synthetic code',Date.now()),{paired:null,awaitingApproval:false});
   const replacementCode=inspect(()=>repo.createCode('human',null,true,Date.now()));const extraCode=inspect(()=>repo.createCode('human',null,true,Date.now()));assert((await repo.redeemAsync(replacementCode.code,'Synthetic replacement',Date.now())).paired);assert.deepEqual(await repo.redeemAsync(extraCode.code,'Synthetic extra',Date.now()),{paired:null,awaitingApproval:true});evidence.oldCodeInvalidationAndSingleRecoveryPreserved=true;
   const heldRemoved=seed();const heldRetained=seed();const heldPhone=await connect(heldRetained.credential);
   raw.exec('CREATE TABLE synthetic_reset_lock(value INTEGER);INSERT INTO synthetic_reset_lock VALUES(0)');lock=new SQLite(app.db.getDbPath());lock.exec('BEGIN IMMEDIATE');lock.prepare('UPDATE synthetic_reset_lock SET value=1').run();lock.prepare('UPDATE paired_devices SET revoked_at=? WHERE id=?').run(Date.now(),heldRemoved.device.id);
-  const writesBeforeHold=commandPosts;const notificationsBeforeHold=publications.length;let settled=false;const pending=reset().finally(()=>{settled=true;});await wait(()=>commandPosts>writesBeforeHold);assert.equal(settled,false);assert.equal(publications.length,notificationsBeforeHold);assert.equal(heldPhone.closed(),false);
+  const writesBeforeHold=commandPosts;const authBeforeHold=authPosts;const notificationsBeforeHold=publications.length;let settled=false;const pending=reset().finally(()=>{settled=true;});await wait(()=>authPosts>authBeforeHold);assert.equal(commandPosts,writesBeforeHold);assert.equal(settled,false);assert.equal(publications.length,notificationsBeforeHold);assert.equal(heldPhone.closed(),false);
   const healthAt=performance.now();assert.equal((await relayClient.hub.request<{status:string}>('system.health',{})).status,'ok');evidence.healthWhileWriterHeldMs=performance.now()-healthAt;
   lock.exec('COMMIT');lock.close();lock=undefined;const held=await pending;assert.equal(held.exit,0);assert(held.value?.devices.some(d=>d.id===heldRetained.device.id));assert(!held.value?.devices.some(d=>d.id===heldRemoved.device.id));await wait(()=>publications.length===notificationsBeforeHold+1&&heldPhone.closed());evidence.currentHumansSelectedAtWriterCommitWithoutEarlyNotification=true;
   const rollbackHumans=Array.from({length:21},()=>seed());const rollbackCode=inspect(()=>repo.createCode('human',null,true,Date.now()));const rowsBeforeRollback=count('human_device_resets');const noticesBeforeRollback=count('neo_publications');const eventsBeforeRollback=publications.length;const revocationsBeforeRollback=revoked.length;
@@ -180,7 +182,7 @@ try {
   const next=await reset();assert.equal(next.exit,0);await wait(()=>publications.length===eventsBeforeRefusal+1);await new Promise(done=>setTimeout(done,1100));assert.equal(publications.length,eventsBeforeRefusal+1);assert.equal(await app.db.gateway.call(humanDeviceResetReads,'receipt',refusedRequestId),null);evidence.refusedRequestCannotBorrowLaterReceipt=true;
   const beforeEmpty=publications.length;const empty=await Promise.all([reset(),reset()]);assert(empty.every(r=>r.exit===0&&r.value?.devices.length===0));await wait(()=>publications.length===beforeEmpty+2);const emptyRequestIds=commandIds.slice(-2);assert.equal(new Set(emptyRequestIds).size,2);const emptyReceipts=await Promise.all(emptyRequestIds.map(id=>app!.db.gateway.call(humanDeviceResetReads,'receipt',id)));assert(emptyReceipts.every(r=>r?.devices.length===0));assert.deepEqual(emptyReceipts.map(r=>r?.id),emptyRequestIds);evidence.concurrentEmptyPublicResetsRetainDistinctNotices=true;
   await Promise.all(transports.map(t=>t.close()));seed();loseNextReceipt=true;receiptReaderUnavailableUntil=Infinity;const beforeClose=publications.length;
-  const closing=await reset();assert.notEqual(closing.exit,0);assert.match(closing.error,/outcome unknown/);await app.db.gateway.close();const readsAtClose=readPosts;const writesAtClose=commandPosts;await new Promise(done=>setTimeout(done,1100));assert.equal(readPosts,readsAtClose);assert.equal(commandPosts,writesAtClose);assert.equal(publications.length,beforeClose);evidence.gatewayCloseStopsPublicRecovery=true;
+  const closing=await reset();assert.notEqual(closing.exit,0);assert.match(closing.error,/outcome unknown/);await app.spaceRuntimeService.stop();await app.db.gateway.close();const readsAtClose=readPosts;const writesAtClose=commandPosts;await new Promise(done=>setTimeout(done,1100));assert.equal(readPosts,readsAtClose);assert.equal(commandPosts,writesAtClose);assert.equal(publications.length,beforeClose);evidence.gatewayCloseStopsPublicRecovery=true;
   assert.equal(mainSqlAttempts,0);assert(maxLoopLagMs<1000);evidence.maxLoopLagMs=maxLoopLagMs;evidence.rssBytes=process.memoryUsage().rss;evidence.walBytes=statSync(`${app.db.getDbPath()}-wal`).size;evidence.commandPosts=commandPosts;evidence.readPosts=readPosts;evidence.directDeviceNotifications=revoked.length;evidence.publicNoticeEvents=events.length;
 } finally {
   await Promise.all([...children].map(child=>new Promise<void>(done=>{child.once('close',()=>done());child.kill();})));for(const off of subscriptions)off();

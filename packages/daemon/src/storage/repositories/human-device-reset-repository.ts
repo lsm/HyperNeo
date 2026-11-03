@@ -9,7 +9,7 @@ export function resetHumanDevices(db: Database, now: number, requestId?: string)
     const id = requestId ?? randomUUID();
     const devices = db
       .prepare(
-        "UPDATE paired_devices SET revoked_at = ? WHERE kind = 'human' AND revoked_at IS NULL RETURNING id, name"
+        "UPDATE paired_devices SET revoked_at = ? WHERE kind = 'human' AND id NOT LIKE 'local-rpc:%' AND revoked_at IS NULL RETURNING id, name"
       )
       .all(now) as { id: string; name: string }[];
     db.prepare(

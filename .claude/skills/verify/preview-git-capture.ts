@@ -7,7 +7,7 @@ import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts'
 import { readBoundGitBlob } from '../../../packages/daemon/src/lib/artifacts/git-blob.ts';
 import { artifactCaptureOwner } from '../../../packages/daemon/src/lib/artifacts/capture-owner.ts';
 import { createArtifactCaptureStore } from '../../../packages/daemon/src/lib/artifacts/capture-store.ts';
-import { createArtifactRegistration } from '../../../packages/daemon/src/lib/artifacts/register-operation.ts';
+import { legacyAttachmentFixture } from './legacy-attachment-fixture.ts';
 import { createArtifactReferenceResolve } from '../../../packages/daemon/src/lib/artifacts/resolve-operation.ts';
 const root = realpathSync(process.argv[2]); const phase = process.argv[3] ?? 'native';
 assert.equal(process.env.NODE_ENV, 'test'); assert.equal(process.env.HOME, join(root, 'home'));
@@ -65,14 +65,14 @@ fixture({ ...original, [directoryKey]: { ...original[directoryKey], tree: [{ ...
 const empty = await readBoundGitBlob(target); assert(empty.accepted); assert.equal(empty.bytes.length, 0);
 fixture(original);
 const data = join(root, 'data'); let db = new Database(join(data, 'daemon.db'));
+const context = { kind: 'todo' as const, id: 'todo' };
+const local = await legacyAttachmentFixture(() => db, data, join(root, 'home')).execute({ requestId: 'local', context, path: 'report.md', title: 'Local' }, { source: 'rpc', principal: 'local' }) as { accepted: boolean };
+assert(local.accepted);
 const owner = await artifactCaptureOwner(db, data);
 const input = Buffer.from(first.bytes); const pending = owner.capture(input); input.fill(0);
 const saved = await pending; assert(saved.accepted); assert.equal(saved.sha256, expected); assert(readFileSync(join(data, 'artifacts', 'blobs', saved.sha256)).equals(bytes));
-assert((await owner.capture(bytes)).accepted); assert.equal((await owner.inspect()).retainedBytes, bytes.length);
-assert.equal((db.prepare('SELECT COUNT(*) AS n FROM artifact_files').get() as { n: number }).n, 0);
-const context = { kind: 'todo' as const, id: 'todo' };
-const local = await createArtifactRegistration(() => db, data, join(root, 'home')).execute({ requestId: 'local', context, path: 'report.md', title: 'Local' }, { source: 'rpc', principal: 'local' }) as { accepted: boolean };
-assert(local.accepted); assert.equal((await owner.inspect()).retainedBytes, bytes.length + readFileSync(join(root, 'workspace', 'report.md')).length);
+assert((await owner.capture(bytes)).accepted); assert.equal((await owner.inspect()).retainedBytes, bytes.length + readFileSync(join(root, 'workspace', 'report.md')).length);
+assert.equal((db.prepare('SELECT COUNT(*) AS n FROM artifact_files').get() as { n: number }).n, 1);
 const small = await createArtifactCaptureStore(join(root, 'small-store'), { retainedBytes: 24 });
 const outcomes = await Promise.all([small.capture(Buffer.alloc(16)), small.capture(Buffer.alloc(16))]); assert.equal(outcomes.filter((result) => result.accepted).length, 1); assert(outcomes.some((result) => !result.accepted && result.reason === 'quota_full')); assert.equal((await small.inspect()).reservedBytes, 0);
 db.prepare(`UPDATE sdk_message_bodies SET sdk_message = ? WHERE seq=(SELECT rowid FROM sdk_messages WHERE id='source')`).run(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: `https://github.com/lsm/HyperNeo/blob/${sha}/docs/report.md` }] } }));

@@ -6,8 +6,9 @@ Run `proof-run.sh` with a new absolute evidence directory and
 stops the job processor, uses only synthetic sessions/files, and closes its
 WebSocket and daemon in `finally`.
 
-Require the existing `artifact.reference.resolve` and `artifact.file.read` RPCs
-to return the ordinary worker report bytes. A raw Neo SDK prompt, runtime text
+Require `file.reference.read` to return the ordinary worker report bytes.
+C2 retires local capture: separately require `artifact.reference.resolve` to
+return client_upgrade_required for that same authorized reference. A raw Neo SDK prompt, runtime text
 added to a human intake, non-renderable SDK messages and publications outside the
 public conversation must not supply file references. The saved human intake's
 original text and the current conversation's publication must remain usable.
@@ -20,6 +21,7 @@ refused before any storage read. Source preparation must not create artifact
 rows. Existing historical publication, native workspace and file safety checks
 remain covered by the existing preview tests.
 
-A1 keeps the current snapshot protocol. Live read/edit/delete is not applicable
-here and is covered by A2. Before marking A1 done, record the merged and deployed
+The original A1 acceptance kept the snapshot protocol, which C2 has now retired.
+This source-authorization proof uses current reads; read/edit/delete remains
+covered separately by A2 and the retirement proof. Before marking A1 done, record the merged and deployed
 build plus the isolated proof evidence; do not claim a live-read endpoint exists.

@@ -194,12 +194,17 @@ vi.mock('../../lib/toast.ts', () => ({
 }));
 
 import { ContextPanel } from '../ContextPanel';
+import { registerWebExtension } from '../../lib/web-extensions';
 
 describe('ContextPanel', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     cleanup();
     vi.clearAllMocks();
     initSignals();
+
+    const { spaceWebExtension } = await import('../../lib/space-web-extension');
+    const { spaceStore } = await import('../../lib/space-store');
+    registerWebExtension('space', { ...spaceWebExtension, store: spaceStore });
   });
 
   afterEach(() => {

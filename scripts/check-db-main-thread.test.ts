@@ -51,6 +51,7 @@ test('unchanged source passes; schema and actual worker entrypoints are excluded
   const f = fixture();
   f.put('packages/daemon/src/storage/schema/m999.ts', 'db.prepare(); db.transaction();');
   f.put('packages/daemon/src/storage/db-gateway/db-gateway-worker.ts', 'db.prepare();');
+  f.put('packages/daemon/src/storage/repositories/neo-peer-repository.ts', 'db.prepare();');
   expect(f.run().code).toBe(0);
 });
 

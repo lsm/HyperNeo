@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { createServer } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
@@ -83,6 +83,7 @@ describe('hyperneo send, question and build', () => {
 
   test('build prints bounded failed health and exits unsuccessfully', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'build-cli-'));
+    await writeFile(join(dir, 'local-rpc.credential'), 'a'.repeat(43), { mode: 0o600 });
     const socketPath = join(dir, 'door.sock');
     const value = {
       commit: 'a'.repeat(40),

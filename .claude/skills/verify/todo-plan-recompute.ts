@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -135,7 +136,7 @@ const open = async () => {
     app.db.updateGlobalSettings({ neo: { packs: ['inbox-triage'] } });
   store = new NeoAskTodoRepository(app.db.getDatabase());
   sessions = new NeoTodoSessionRepository(app.db.getDatabase());
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => {
     ws!.onopen = () => done();
     ws!.onerror = () => fail(new Error('RPC unavailable'));
@@ -248,13 +249,10 @@ try {
         { ...step('parent-first'), named: { repository: 'synthetic/first' }, after: [], start: true },
         { ...step('parent-second'), named: { repository: 'synthetic/second' }, after: [1] },
       ] });
-      const rootTodo = plan.todos.find((t: { title: string }) => t.title === 'parent-root-evidence');
-      const first = plan.todos.find((t: { title: string }) => t.title === 'parent-first');
-      const second = plan.todos.find((t: { title: string }) => t.title === 'parent-second');
+      const [rootTodo, first, second] = ['parent-root-evidence', 'parent-first', 'parent-second'].map(title => plan.todos.find((t: { title: string }) => t.title === title));
       const asked = await call('neo.question.ask', { askId: rootTodo.askId, kind: 'reply', text: 'Review before continuing?', retireWhen: { pack: 'core', kind: 'evidence', params: { path: join(run, 'parent-question-retired') } } });
       await complete(first.title);
-      evidence.waitingOnParent = await read(second.askId);
-      evidence.parentQuestion = await read(rootTodo.askId);
+      Object.assign(evidence, { waitingOnParent: await read(second.askId), parentQuestion: await read(rootTodo.askId) });
       assert.equal(starts(), 1);
       assert.notEqual((evidence.waitingOnParent as { todos: { id: string; state: string }[] }).todos.find(t => t.id === second.id)?.state, 'doing');
       assert.equal((await rpc('neo.question.answer', { questionId: asked.question.id, answer: 'Continue.' })).ok, true);

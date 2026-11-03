@@ -1,3 +1,4 @@
+import { createPeerOperations } from './peer-operations.ts';
 import { neoSessionTrackRootRead } from '../../storage/repositories/neo-session-track-write.ts';
 import { createNeoCardSearchOperation } from './card-search-operation.ts';
 import { readNeoReply } from './intake.ts';
@@ -654,7 +655,7 @@ export function createNeoOperations(service: NeoService) {
     stop: (todo) => service.todoRunner.stop(todo),
   };
   return [
-    ...service.packOperations,
+    ...createPeerOperations(service),
     ...service.speech.operations,
     createNeoProjectForgetOperation(service.repo, (repos) => {
       for (const pack of service.installedPacks()) pack.forgetRepositories?.(repos);

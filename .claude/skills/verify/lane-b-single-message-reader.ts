@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -93,7 +94,7 @@ try {
   evidence.storedBodyHashBefore = hash();
   raw.exec('CREATE TABLE synthetic_single_writer(value INTEGER); INSERT INTO synthetic_single_writer VALUES(0)');
   const hub = new MessageHub({ defaultSessionId: 'global' });
-  transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false }); hub.registerTransport(transport); await transport.initialize();
+  transport = new WebSocketClientTransport({ createSocket: createLocalSocket, url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false }); hub.registerTransport(transport); await transport.initialize();
   const read = (extra: Record<string, unknown> = {}) => hub.request<{ sdkMessage: SDKMessage }>('message.sdkMessage', { sessionId: 'single-history', messageUuid: 'single-full-output', ...extra });
   releaseBodyCopy?.(); evidence.startupCopyDeferred = Boolean(releaseBodyCopy);
   await waitForSdkBodyCopy(raw);

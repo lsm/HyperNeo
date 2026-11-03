@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -58,7 +59,7 @@ try {
   assert(publications.append({ conversationId, publicationId, shortText: 'Read report', fullText: 'Read `report.md`.', links: [{ kind: 'work', id: 'todo', label: 'Report' }] }).accepted);
   const foreignPublication = crypto.randomUUID();
   assert(publications.append({ conversationId: crypto.randomUUID(), publicationId: foreignPublication, shortText: 'Hidden', fullText: 'Read `report.md`.', links: [{ kind: 'work', id: 'todo', label: 'Report' }] }).accepted);
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise((resolve, reject) => { ws!.onopen = resolve; ws!.onerror = reject; });
   type Reply = { accepted?: boolean; reason?: string; data?: string; artifact?: { artifactId: string } };
   const call = (name: string, input: unknown) => new Promise<Reply>((resolve, reject) => {
@@ -67,11 +68,14 @@ try {
     ws!.onmessage = event => { const reply = JSON.parse(String(event.data)); if ((reply.requestId ?? reply.id) !== id) return; clearTimeout(timer); if (reply.error) reject(new Error(JSON.stringify(reply.error))); else resolve(reply.data); };
     ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
-  const resolve = (kind: string, id: string, reference: string, extra = {}) => call('artifact.reference.resolve', { sourceMessageOrCard: { kind, id }, reference, requestId: crypto.randomUUID(), ...extra });
+  const resolve = (kind: string, id: string, reference: string, extra = {}) => call('file.reference.read', { sourceMessageOrCard: { kind, id }, reference, ...extra });
   const ordinaryRead = await resolve('message', ordinary, 'report.md');
   assert.equal(ordinaryRead.accepted, true);
-  const content = await call('artifact.file.read', { artifactId: ordinaryRead.artifact!.artifactId });
+  const content = ordinaryRead;
   assert.equal(Buffer.from(content.data!, 'base64').toString(), '# Worker report\n');
+  const retired = await call('artifact.reference.resolve', { sourceMessageOrCard: { kind: 'message', id: ordinary }, reference: 'report.md', requestId: crypto.randomUUID() });
+  assert.equal(retired.accepted, false);
+  assert.equal(retired.reason, 'client_upgrade_required');
   evidence.compatibility = true;
   evidence.hidden = await resolve('message', hidden, 'internal-only.md');
   assert.equal((evidence.hidden as Reply).accepted, false, 'A hidden Neo SDK prompt must not grant a file reference');
@@ -95,7 +99,7 @@ try {
   const remote = readPublicFileSource(db, { kind: 'todo', id: 'todo' }, human);
   assert.equal(remote?.owner.daemon, 'remote');
   assert.equal(remote?.workspacePath, null);
-  assert.equal((await resolve('todo', 'todo', 'report.md')).reason, 'owning_daemon_unavailable');
+  assert.equal((await resolve('todo', 'todo', 'report.md')).reason, 'owner_unavailable');
   assert.deepEqual(db.prepare('SELECT COUNT(*) AS n FROM artifact_files').get(), before);
   links.recordRef('todo', { adapter: 'hyperneo', id: 'worker' });
   db.prepare('UPDATE sessions SET workspace_path = NULL WHERE id = ?').run('worker');

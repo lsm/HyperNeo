@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../src/lib/pairing/local-credential.ts';
 import { pendingTodoCheck } from '../../unit/helpers/todo-check-packs.ts';
 import { testDirectories } from '../../helpers/temporary-directory';
 import { expect, test } from 'bun:test';
@@ -190,6 +191,7 @@ test('Costco human input survives a consumed teammate prompt when question.ask o
     expect(daemon.server.port).not.toBe(8399);
     daemon.db.updateGlobalSettings({ language: 'zh-Hans' });
     transport = new WebSocketClientTransport({
+      createSocket: createLocalSocket,
       url: `ws://127.0.0.1:${daemon.server.port}/ws`,
       autoReconnect: false,
     });

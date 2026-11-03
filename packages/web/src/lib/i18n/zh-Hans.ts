@@ -328,6 +328,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'artifact.downloadSafeHtml': '下载安全 HTML',
   'artifact.daemonUnavailable': '连不上保存这个文件的 daemon。',
   'artifact.needsUpdate': '预览需要更新 daemon。',
+  'artifact.clientUpdate': '请更新 HyperNeo，再从消息中重新打开文件，以预览当前内容。',
   'artifact.revoked': '你已经无法查看这个文件。',
   'artifact.forbidden': '这个引用指向预览不能打开的位置。',
   'artifact.unsupported': '这种格式还不能预览。',

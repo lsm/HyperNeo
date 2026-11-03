@@ -1,7 +1,7 @@
 import { readHyperneoTurnEnds } from '../../../../src/storage/hyperneo-turn-ends-read.ts';
 import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
-import { spaceTaskControl } from '../../../../src/lib/rpc-handlers/family-operations/drivers';
+import { spaceTaskControl } from '../../../../src/lib/drivers/space-adapter';
 import { readDriverFollowUp, readDriverSettlement } from '../../../../src/lib/neo/driver-work';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {

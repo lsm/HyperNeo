@@ -12,6 +12,20 @@ import { copyToClipboard } from '../../../lib/utils.ts';
 
 vi.mock('../../../lib/utils.ts', () => ({ copyToClipboard: vi.fn() }));
 const previous = ownerState.value;
+it('keeps bare PR filenames and relative paths as prose instead of current-file cards', () => {
+  render(
+    <FileReferenceCards
+      source={{ kind: 'publication', id: 'p' }}
+      text={
+        'CLAUDE.md `docs/guide.md` [Relative](guide.md) file:relative.md `/home/owner/reports/current.md` `~/reports/home.md`'
+      }
+    />
+  );
+  expect(screen.queryByRole('button', { name: 'Open current file: CLAUDE.md' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Open current file: guide.md' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Open current file: relative.md' })).toBeNull();
+  expect(screen.getAllByRole('button')).toHaveLength(2);
+});
 const home = '/home/owner';
 const path = `${home}/reports/current.md`;
 beforeEach(() => {

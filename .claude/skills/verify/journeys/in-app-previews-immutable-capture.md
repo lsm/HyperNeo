@@ -1,46 +1,34 @@
-# In-app previews: immutable capture storage (slice 5)
+# Immutable Git byte storage after local capture retirement
 
-Run `preview-capture.test.ts` with the daemon Vitest runner. Its native proof runs
-in a separate Bun process, while the Node runner asserts unavailable native opens
-cannot stage bytes. Size/quota gates run directly and in their pipeline.
+Use the daemon Vitest runner for preview-capture.test.ts. Its native helper
+accepts byte buffers, matching the only production caller in git-capture.ts.
+C4 removed the unused hashSource and path/segments capture overload, not the
+shared descriptor backend used by current reads or stored-blob verification.
 
-For retained evidence, run from the worktree root:
+From the worktree root, use the shared resource check and isolated wrapper:
 
-```bash
-RUN=$(mktemp -d /private/tmp/hn-preview-capture-XXXXXX)
-mkdir -p "$RUN/home"
-env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin" \
-  NODE_ENV=test bun .claude/skills/verify/preview-capture.ts "$RUN"
+```sh
+TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/new/evidence .claude/skills/verify/preview-capture.ts
 ```
 
-`capture-evidence.json` records full binary/Unicode bytes and SHA-256, read-only
-write-once blobs, sequential/concurrent dedup, size limits and quota reservations.
-The deliberate delayed-finalization dedup regression fails before serialization
-of commits. Source mutation returns source_changed and retains partial bytes;
-injected disk-full errors retain earlier blobs and unfinished staging. A child
-process pauses after syncing a partial capture; the helper kills only that owned
-child and reopens its store. Inventory must retain all prior blobs and partial
-bytes and charge those partials to quota. No expiry or recovery sweep is allowed.
-Tampered existing blobs must not be overwritten or accepted as a valid capture.
-Inject staging-unlink failure after blob linking, restart, then recapture identical
-content three times: each must succeed without additional retained bytes or stages.
-Keep the original interrupted staging link and bytes. Internal blob verification
-uses its own anchored/no-follow opener allowing one or two stable links, checks
-size/timestamps/identity and the full hash; three links still refuse. Source opens
-remain strictly single-link. This regression fails with artifact_blob_conflict
-before the fix, despite the original inventory-only crash-window test passing.
+Require exit 0 and evidence/capture-evidence.json (copied to the persistent
+wrapper evidence directory). The proof checks exact binary/Unicode bytes and
+SHA-256, empty input, read-only blobs, serial/concurrent dedup, size/quota gates,
+caller-buffer mutation isolation, directory-sync/disk-full faults and crash
+recovery. An owned child deliberately syncs only 256 KiB then is killed; restart
+must retain and charge those partial bytes, plus existing complete blobs.
 
-Only successful transactions remove their own staging filename after a durable
-blob link exists. This transfers ownership of the complete bytes; it never deletes
-an existing artifact or its source. Every failure preserves its staging. Inventory
-counts shared inodes once, including crash windows with staging and blob links.
-Instantiate one store per owning daemon data directory under its existing PID
-lock; concurrent captures share that owner's reservations and commit lane.
+Interrupted links remain intact and three repeated identical byte captures must
+not add retained bytes. Corrupt existing blobs or excessive links fail closed.
+The stored-descriptor verifier still checks size, identity, timestamps, link
+count and full hash. A live source's mutation/path/symlink checks belong to the
+unchanged live-reader/descriptor journeys, not this byte-only writer.
 
-Repeat the isolated daemon capture/restart and headless Markdown component journeys
-for compatibility. The new store is internal, not a transport or raw-path reader.
-It consumes only the no-follow descriptor seam; no source path is reopened. Registry
-and idempotent receipt wiring remain slice 6, authorized registered-ID reads slice 7.
-Unsupported native backends fail closed. This proves process interruption/recovery,
-not host power-loss behavior on every filesystem. Keep synthetic evidence/fixtures;
-use no live DB, credentials, provider/model or unattended GUI.
+Only success removes its own staging file after durable linking. Failures retain
+staging and release reservations; inventory counts shared inodes once. No stored
+data is swept or deleted. Native directory-sync refusal must never fall back to
+an unsafe write. This proves process interruption, not every host power-loss case.
+
+Run retained Git capture/resolve and Git row/identity proofs through the real
+isolated daemon, then existing live-reader and legacy-reader controls. Keep
+synthetic HOME/data, no credentials/provider, free ports and cleanup from SKILL.md.

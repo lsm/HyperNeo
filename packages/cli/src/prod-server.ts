@@ -161,13 +161,21 @@ export async function startProdServer(config: Config) {
       if (url.pathname === '/pair' && req.method === 'POST') return daemonContext.handlePair(req);
 
       if (isWebSocketPath(url.pathname)) {
+        const device = await daemonContext.authenticateUpgrade(
+          req,
+          server.requestIP(req)?.address ?? null
+        );
+        if (!device)
+          return new Response('Device pairing required', {
+            status: 401,
+            headers: { 'Cache-Control': 'no-store' },
+          });
+        if (req.headers.get('upgrade')?.toLowerCase() !== 'websocket')
+          return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
         const upgraded = server.upgrade(req, {
           data: {
             connectionSessionId: 'global',
-            device: await daemonContext.authenticateUpgrade(
-              req,
-              server.requestIP(req)?.address ?? null
-            ),
+            device,
           },
         });
 

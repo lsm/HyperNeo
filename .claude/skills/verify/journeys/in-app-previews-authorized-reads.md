@@ -1,5 +1,11 @@
 # In-app previews: authorized registered reads (slice 7)
 
+C3 update: local registration is retired. These helpers seed synthetic historical
+attachment rows/blobs directly via legacy-attachment-fixture.ts; any registration
+wording below describes the historical data, not a currently available API.
+New working files use source-bound live reads. No production snapshots are created.
+
+
 Run daemon `preview-reads.test.ts` plus registration/capture/descriptor/policy,
 contract and operation-name-family tests. The native helper uses actual Bun,
 synthetic SQLite and files, and a test-file-anchored path independent of cwd.

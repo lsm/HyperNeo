@@ -6,8 +6,8 @@ import { InMemoryTransport } from '../../../packages/daemon/node_modules/@modelc
 import { Database } from '../../../packages/daemon/src/storage/database.ts';
 import { createReactiveDatabase } from '../../../packages/daemon/src/storage/reactive-database.ts';
 import { InternalEventBus } from '../../../packages/daemon/src/lib/internal-event-bus.ts';
-import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/runtime.ts';
-import { createNeoOperations } from '../../../packages/daemon/src/lib/neo/operations.ts';
+import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
+import { createNeoOperations } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
 import { createFindWorkOperation } from '../../../packages/daemon/src/lib/drivers/find-operation.ts';
 import { createWorkVerbOperations } from '../../../packages/daemon/src/lib/drivers/work-operations.ts';
 import { operationSignature } from '../../../packages/daemon/src/lib/operations/discovery.ts';

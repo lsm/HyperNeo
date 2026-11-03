@@ -12,8 +12,8 @@ import {
   InternalEventBus,
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
+import { createNeoOperations } from '../../helpers/neo-service.ts';
 import { neoCoordinatorBinding } from '../../../../src/lib/neo/session-policy.ts';
 import { neoFolderPath } from '../../../../src/lib/neo/folder.ts';
 import {
@@ -387,6 +387,9 @@ describe('Neo MVP', () => {
     ).toEqual([
       'neo.project.move',
       'neo.project.section',
+      'neo.peer.invite',
+      'neo.peer.list',
+      'neo.peer.remove',
       'neo.speech.say',
       'neo.project.forget',
       'neo.message.send',

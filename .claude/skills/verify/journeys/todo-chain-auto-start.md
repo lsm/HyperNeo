@@ -1,7 +1,7 @@
 # Approved dependency chains do not ask Start again
 
-Use pinned Bun 1.4.2 and the isolated setup in SKILL.md. This journey adds a synthetic
-Codex app-server socket and refusing GitHub stub; no provider or model is used.
+Use pinned Bun 1.4.2 and SKILL.md isolation; createLocalSocket authenticates the fresh daemon.
+A synthetic Codex socket and refusing GitHub stub replace external services; no model is used.
 
 ```sh
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence .claude/skills/verify/todo-plan-recompute.ts chain-verify

@@ -92,3 +92,12 @@ export function previewReferenceCandidates(text: string): PreviewReferenceCandid
   walk(tree);
   return result.size <= 256 ? [...result.values()] : [];
 }
+
+export function previewLinkedReferenceCandidates(text: string): PreviewReferenceCandidate[] {
+  return previewReferenceCandidates(text).filter(
+    (item) =>
+      item.kind !== 'local' ||
+      ((item.path.startsWith('/') || item.path.startsWith('~/')) &&
+        (!item.reference.startsWith('file:') || item.reference.startsWith('file:/')))
+  );
+}

@@ -98,8 +98,10 @@ if [ "$READY" != "1" ]; then
 fi
 echo "[deno-smoke] HTTP GET / -> 200"
 
-if ! SMOKE_WS_URL="ws://localhost:$PORT/ws" deno eval '
-	const ws = new WebSocket(Deno.env.get("SMOKE_WS_URL"));
+if ! SMOKE_CREDENTIAL_FILE="$WORK_DIR/data/local-rpc.credential" SMOKE_WS_URL="ws://localhost:$PORT/ws" deno eval --config "$REPO_ROOT/packages/daemon/deno.json" '
+	const { default: WebSocket } = await import("npm:ws@8.21.3");
+	const credential = (await Deno.readTextFile(Deno.env.get("SMOKE_CREDENTIAL_FILE"))).trim();
+	const ws = new WebSocket(Deno.env.get("SMOKE_WS_URL"), { headers: { authorization: `Bearer ${credential}` } });
 	const timer = setTimeout(() => {
 		console.error("[deno-smoke] FAIL: /ws handshake timed out");
 		Deno.exit(1);
@@ -154,8 +156,10 @@ if ! SMOKE_WS_URL="ws://localhost:$PORT/ws" deno eval '
 	exit 1
 fi
 
-if ! SMOKE_WS_URL="ws://localhost:$PORT/ws" SMOKE_WORKSPACE_PATH="$WORK_DIR" deno eval '
-	const ws = new WebSocket(Deno.env.get("SMOKE_WS_URL"));
+if ! SMOKE_CREDENTIAL_FILE="$WORK_DIR/data/local-rpc.credential" SMOKE_WS_URL="ws://localhost:$PORT/ws" SMOKE_WORKSPACE_PATH="$WORK_DIR" deno eval --config "$REPO_ROOT/packages/daemon/deno.json" '
+	const { default: WebSocket } = await import("npm:ws@8.21.3");
+	const credential = (await Deno.readTextFile(Deno.env.get("SMOKE_CREDENTIAL_FILE"))).trim();
+	const ws = new WebSocket(Deno.env.get("SMOKE_WS_URL"), { headers: { authorization: `Bearer ${credential}` } });
 	const timer = setTimeout(() => { console.error("SDK status reader RPC timed out"); Deno.exit(1); }, 15000);
 	let sessionId, liveSnapshot = false;
 	const send = (id, method, data) => ws.send(JSON.stringify({ id, method, data, type:"REQ", sessionId:"global", version:"1.0.0", timestamp:new Date().toISOString() }));
@@ -238,7 +242,7 @@ DAEMON_PID=""
 # Repository fixtures own the migrated DB only after the daemon writer has exited.
 echo "[deno-smoke] daemon stopped; running isolated database fixtures"
 
-if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_READER_PATH="$REPO_ROOT/packages/daemon/src/storage/sdk-status-reader.ts" deno eval --config "$REPO_ROOT/packages/daemon/deno.json" '
+if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_READER_PATH="$REPO_ROOT/packages/daemon/src/storage/sdk-status-reader.ts" deno eval '
   const { SDKStatusReader } = await import("file://" + Deno.env.get("SMOKE_READER_PATH"));
   const { DatabaseSync } = await import("node:sqlite");
   const db = new DatabaseSync(Deno.env.get("SMOKE_DB_PATH"));
@@ -268,7 +272,7 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_READER_PATH="$REPO_ROOT/packages/daemon/src/
   } finally { await reader.close(); }
 '; then dump_log; exit 1; fi
 
-if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno eval --config "$REPO_ROOT/packages/daemon/deno.json" '
+if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno eval '
   const src = "file://" + Deno.env.get("SMOKE_SRC");
   const { DbGateway } = await import(src + "/storage/db-gateway/db-gateway.ts");
   const { recordWouldRefuse } = await import(src + "/storage/repositories/device-pairing-repository.ts");
@@ -290,7 +294,7 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
   exit 1
 fi
 
-if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno eval --config "$REPO_ROOT/packages/daemon/deno.json" '
+if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno eval '
   const src = "file://" + Deno.env.get("SMOKE_SRC");
   const { DbGateway } = await import(src + "/storage/db-gateway/db-gateway.ts");
   const { ingestSessionEvent } = await import(src + "/lib/external-events/session-external-event-store.ts");
@@ -385,7 +389,7 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
   exit 1
 fi
 
-if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno eval --config "$REPO_ROOT/packages/daemon/deno.json" '
+if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno eval '
   const src = Deno.env.get("SMOKE_SRC"), path = Deno.env.get("SMOKE_DB_PATH");
   const { Database } = await import(src + "/storage/sqlite-compat.ts");
   const { DbGateway } = await import(src + "/storage/db-gateway/db-gateway.ts");
@@ -681,7 +685,7 @@ env -i HOME="$CODING_DAEMON_BUILD_RUN/home" PATH="$PATH" TMPDIR="$CODING_DAEMON_
 	HYPERNEO_DATA_DIR="$CODING_DAEMON_BUILD_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/coding-daemon-merge-build.ts" "$CODING_DAEMON_BUILD_RUN"
 
-for CODING_DAEMON_SWEEP_VARIANT in enterprise policy-revoke merge-fails late-label per-pr retry-once legacy-open uncertain-error limit-gone external-owned; do
+for CODING_DAEMON_SWEEP_VARIANT in enterprise policy-revoke merge-fails late-label per-pr retry-once legacy-open uncertain-error limit-gone external-owned zero-required no-checks; do
 	CODING_DAEMON_SWEEP_RUN="$WORK_DIR/coding-daemon-merge-sweep-$CODING_DAEMON_SWEEP_VARIANT"
 	mkdir -p "$CODING_DAEMON_SWEEP_RUN/home" "$CODING_DAEMON_SWEEP_RUN/tmp"
 	env -i HOME="$CODING_DAEMON_SWEEP_RUN/home" PATH="$PATH" TMPDIR="$CODING_DAEMON_SWEEP_RUN/tmp" NODE_ENV=test \
@@ -818,12 +822,11 @@ env -i HOME="$WORK_DIR/inbox-create/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_E
 env -i HOME="$WORK_DIR/inbox-event/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/inbox-event/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-inbox-event.ts" "$WORK_DIR/inbox-event"
 env -i HOME="$WORK_DIR/artifact-identity-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-identity-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-identity-extract.ts" "$WORK_DIR/artifact-identity-extract"
 env -i HOME="$WORK_DIR/artifact-identity-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-identity-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-identity-command.ts" "$WORK_DIR/artifact-identity-command"
-env -i HOME="$WORK_DIR/artifact-registration-identity/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-registration-identity/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-registration-identity.ts" "$WORK_DIR/artifact-registration-identity"
+mkdir -p "$WORK_DIR/retire-local-register/home"
+env -i HOME="$WORK_DIR/retire-local-register/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/retire-local-register/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/retire-local-register.ts" verify "$WORK_DIR/retire-local-register"
 env -i HOME="$WORK_DIR/artifact-reference-identity/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-reference-identity/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-reference-identity.ts" "$WORK_DIR/artifact-reference-identity"
 env -i HOME="$WORK_DIR/artifact-git-identity/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-git-identity/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-git-identity.ts" "$WORK_DIR/artifact-git-identity"
-env -i HOME="$WORK_DIR/artifact-receipt-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-receipt-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-receipt-extract.ts" "$WORK_DIR/artifact-receipt-extract"
 env -i HOME="$WORK_DIR/artifact-row-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-row-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-row-command.ts" "$WORK_DIR/artifact-row-command"
-env -i HOME="$WORK_DIR/artifact-registration-row/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-registration-row/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-registration-row.ts" "$WORK_DIR/artifact-registration-row"
 env -i HOME="$WORK_DIR/artifact-git-row/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-git-row/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-git-row.ts" "$WORK_DIR/artifact-git-row"
 env -i HOME="$WORK_DIR/extension-global-sql-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-global-sql-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-global-sql-extract.ts" "$WORK_DIR/extension-global-sql-extract"
 env -i HOME="$WORK_DIR/extension-global-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-global-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-global-command.ts" "$WORK_DIR/extension-global-command"

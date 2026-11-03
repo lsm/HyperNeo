@@ -3,12 +3,12 @@ import {
   isWorkflowSubSessionIdentity,
 } from '../session/sub-session-identity.ts';
 import type { SessionManager } from '../session-manager.ts';
-import type { TaskAgentManager } from '../space/runtime/task-agent-manager.ts';
+import type { AgentSession } from '../agent/agent-session.ts';
 
 export async function resolveMailboxSession(
   sessionId: string,
   sessionManager: Pick<SessionManager, 'getCachedSession' | 'getSessionAsync'> | null,
-  taskAgentManager: Pick<TaskAgentManager, 'getSubSession'> | null
+  taskAgentManager: { getSubSession(sessionId: string): AgentSession | undefined } | null
 ) {
   const indexed = taskAgentManager?.getSubSession(sessionId);
   if (indexed && sessionManager?.getCachedSession(sessionId) === indexed) {

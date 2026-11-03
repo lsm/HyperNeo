@@ -1,6 +1,10 @@
+import { registerDaemonCredential } from './websocket-helpers.ts';
 import { spawn, spawnSync } from 'child_process';
 import path from 'path';
-import { mkdirSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { readLocalCredential } from '../../src/lib/pairing/local-credential.ts';
+import { DevicePairingRepository } from '../../src/storage/repositories/device-pairing-repository.ts';
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 import { createDaemonApp, type DaemonAppContext } from '../../src/app';
 import { getConfig } from '../../src/config';
@@ -243,6 +247,7 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
   const devProxy = devProxyLease.controller;
 
   const serverPath = path.join(__dirname, 'standalone-server.ts');
+  const dataDir = mkdtempSync(path.join(tmpdir(), 'daemon-auth-'));
 
   const daemonEnv: Record<string, string> = {
     ...process.env,
@@ -252,6 +257,7 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
     ANTHROPIC_API_KEY: shouldUseDevProxy ? 'sk-devproxy-test-key' : process.env.ANTHROPIC_API_KEY,
     ANTHROPIC_AUTH_TOKEN: shouldUseDevProxy ? '' : process.env.ANTHROPIC_AUTH_TOKEN,
     CLAUDE_CODE_OAUTH_TOKEN: shouldUseDevProxy ? '' : process.env.CLAUDE_CODE_OAUTH_TOKEN,
+    HYPERNEO_DATA_DIR: dataDir,
     PORT: userPort.toString(),
     NODE_ENV: 'test',
   };
@@ -311,7 +317,11 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
   });
 
   const wsUrl = `ws://127.0.0.1:${actualPort}/ws`;
+  const credential = await readLocalCredential(path.join(dataDir, 'local-rpc.credential'));
+  const forgetCredential = registerDaemonCredential(`http://127.0.0.1:${actualPort}`, credential);
   const transport = new WebSocketClientTransport({
+    createSocket: (url) =>
+      new WebSocket(url, { headers: { authorization: `Bearer ${credential}` } }),
     url: wsUrl,
     autoReconnect: false,
   });
@@ -342,6 +352,7 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
     getCapturedOutput: () => stdoutOutput,
     kill: (signal: NodeJS.Signals = 'SIGTERM') => daemonProcess.kill(signal),
     waitForExit: async () => {
+      forgetCredential();
       await cleanup();
       await new Promise<void>((resolve) => {
         if (hasExited) {
@@ -351,6 +362,7 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
         daemonProcess.once('exit', () => resolve());
       });
       await devProxyLease.release();
+      rmSync(dataDir, { recursive: true, force: true });
     },
     trackSession: (sessionId: string) => {
       trackedSessions.push(sessionId);
@@ -433,7 +445,13 @@ async function createInProcessDaemonServer(
   const actualPort = daemonContext.server.port;
 
   const wsUrl = `ws://127.0.0.1:${actualPort}/ws`;
+  const devices = new DevicePairingRepository(daemonContext.db.getDatabase());
+  const code = devices.createCode('human', 'Synthetic test client', true, Date.now());
+  const { credential } = devices.redeem(code.code, 'Synthetic test client', Date.now())!;
+  const forgetCredential = registerDaemonCredential(`http://127.0.0.1:${actualPort}`, credential);
   const transport = new WebSocketClientTransport({
+    createSocket: (url) =>
+      new WebSocket(url, { headers: { authorization: `Bearer ${credential}` } }),
     url: wsUrl,
     autoReconnect: false,
   });
@@ -473,6 +491,7 @@ async function createInProcessDaemonServer(
       return true;
     },
     waitForExit: async () => {
+      forgetCredential();
       const cleanupWithTimeout = async () => {
         await cleanup();
         try {
