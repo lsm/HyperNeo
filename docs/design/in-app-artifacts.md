@@ -1,5 +1,9 @@
 # In-app artifact previews
 
+Historical design snapshot: local file registration described below has been
+retired. Working files use source-bound live reads; Git and historical attachments
+retain their versioned readers. See the [current compatibility verification](../../.claude/skills/verify/journeys/retire-local-register.md).
+
 Status: proposal for human approval. Tracks [#7934](https://github.com/lsm/HyperNeo/issues/7934).
 This PR changes this page only. Build nothing until Neo relays the human's approval.
 Merge this design only after that approval, hyperneo-ai-test approval of the exact

@@ -73,7 +73,7 @@ leaf only when appropriate, never overwrite it.
    Never feed a transcript success back as Desktop rendering success.
 
 Keep the request, stdout/error, PNG/JSON when successful, comparison record and
-transcript reference in evidence. Register evidence with artifact.file.register
+transcript reference in evidence. Deliver evidence as its owner absolute path in the visible report
 when available and reference it with one sentence. No background process or test
 daemon is started by this helper. Remove its worktree only after merge/close;
 preserve evidence elsewhere. No automated GUI interaction is part of this journey.

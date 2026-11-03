@@ -1,5 +1,4 @@
 import { homedir } from 'node:os';
-import { join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../storage/sqlite-compat.ts';
@@ -11,7 +10,6 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import { isLocalUser } from '../operations/caller.ts';
 import { getDataDir } from '../data-dir.ts';
 import { ArtifactRefSchema, ArtifactRefusalSchema } from './file-contracts.ts';
-import { createArtifactRegistration } from './register-operation.ts';
 import { planStoredReference } from './reference-plan.ts';
 import { ArtifactPrSummarySchema, readBoundPrSummary } from './pr-summary.ts';
 import { readBoundGitBlob } from './git-blob.ts';
@@ -41,7 +39,6 @@ export function createArtifactReferenceResolve(
   database: () => Database,
   data = getDataDir(),
   home = homedir(),
-  capture = createArtifactRegistration(database, data, home).execute,
   readPr = readBoundPrSummary,
   readGit = readBoundGitBlob
 ) {
@@ -94,15 +91,7 @@ export function createArtifactReferenceResolve(
           )) as { accepted: boolean; reason?: string })
         : selected.kind === 'github-pr'
           ? await readPr(selected).then((pr) => (pr ? { accepted: true, pr } : unavailable()))
-          : ((await capture(
-              {
-                requestId: input.requestId,
-                context: selected.context,
-                path: join(selected.root, selected.relativePath),
-                title: selected.relativePath.split('/').at(-1)!.slice(0, 200),
-              },
-              caller
-            )) as { accepted: boolean; reason?: string });
+          : unavailable();
     const current = await plan(input, caller);
     if (JSON.stringify(current) !== JSON.stringify(selected)) return unavailable();
     return !result.accepted && 'reason' in result && result.reason === 'unsafe_path'

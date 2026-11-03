@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { prepareArtifactHtml } from '../../../../src/lib/artifacts/html-preview.ts';
-import { RegisterArtifactInput } from '../../../../src/lib/artifacts/register-operation.ts';
+import { ArtifactBundleSchema } from '../../../../src/lib/artifacts/bundle.ts';
 import { artifactBundleLimit } from '../../../../src/lib/artifacts/bundle.ts';
 
 const pixel =
@@ -24,14 +24,8 @@ describe('registered relative CSS and raster bundles', () => {
     expect(artifactBundleLimit(2, assets)).toEqual({ accepted: false, reason: 'size_limit' });
   });
   test('accepts explicit registered IDs and rejects unsafe, duplicate or excessive aliases', () => {
-    const input = {
-      requestId: 'bundle',
-      context: { kind: 'todo', id: 't' },
-      path: 'report.html',
-      title: 'Report',
-    };
     const entry = { path: 'styles/theme.css', artifactId: 'css' };
-    expect(RegisterArtifactInput.safeParse({ ...input, bundle: [entry] }).success).toBe(true);
+    expect(ArtifactBundleSchema.safeParse([entry]).success).toBe(true);
     for (const path of [
       '../a.css',
       '/a.css',
@@ -43,23 +37,15 @@ describe('registered relative CSS and raster bundles', () => {
       './a.css',
       'a//b.css',
     ])
-      expect(
-        RegisterArtifactInput.safeParse({ ...input, bundle: [{ ...entry, path }] }).success
-      ).toBe(false);
-    expect(RegisterArtifactInput.safeParse({ ...input, bundle: [entry, entry] }).success).toBe(
-      false
-    );
+      expect(ArtifactBundleSchema.safeParse([{ ...entry, path }]).success).toBe(false);
+    expect(ArtifactBundleSchema.safeParse([entry, entry]).success).toBe(false);
     expect(
-      RegisterArtifactInput.safeParse({
-        ...input,
-        bundle: Array.from({ length: 64 }, (_, i) => ({ ...entry, path: `${i}.css` })),
-      }).success
+      ArtifactBundleSchema.safeParse(
+        Array.from({ length: 64 }, (_, i) => ({ ...entry, path: `${i}.css` }))
+      ).success
     ).toBe(false);
     expect(
-      RegisterArtifactInput.safeParse({
-        ...input,
-        bundle: [{ ...entry, sourcePath: '/unregistered' }],
-      }).success
+      ArtifactBundleSchema.safeParse([{ ...entry, sourcePath: '/unregistered' }]).success
     ).toBe(false);
   });
 
@@ -114,7 +100,7 @@ describe('registered relative CSS and raster bundles', () => {
     expect(prepared.document).toContain('Kept');
   });
 
-  test('registers and reopens an authorized immutable bundle through real native operations', () => {
+  test('reopens an authorized historical bundle through real native operations', () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'preview-bundle-')));
     mkdirSync(join(root, 'home'));
     try {
@@ -135,7 +121,6 @@ describe('registered relative CSS and raster bundles', () => {
       expect(JSON.parse(output)).toMatchObject({
         immutableAssets: true,
         exactSource: true,
-        idempotent: true,
         foreignRefused: true,
         restarted: true,
         revoked: true,

@@ -17,7 +17,7 @@ The seed reuses `preview-register.ts seed` (synthetic todo, worker session and
 workspace) and writes `report.md` with a fragment link, a web link, a relative
 link, remote/relative/embedded images, a raw `<script>` block and an inline
 `<img onerror>`; a 2.3 MB `large.md`; and `page.html`. The web phase registers
-them through real `artifact.file.register` RPC and drives headless Chromium at
+them as synthetic historical attachment rows/blobs and drives headless Chromium at
 1280px and 390px on `/neo?artifact=<id>`, aborting every request that leaves the
 daemon origin.
 
