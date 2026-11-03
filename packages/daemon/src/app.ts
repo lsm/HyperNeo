@@ -54,6 +54,8 @@ import {
 import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus.ts';
 import { setupRPCHandlers } from './lib/rpc-handlers/index.ts';
 import { DaemonExtensions } from './lib/extensions/contract.ts';
+import { contributeDefaultOperations } from './lib/operations/database-catalog.ts';
+import { createSpaceDefaultOperations } from './lib/tasks/catalog-operations.ts';
 import { connectedDeviceReads } from './storage/repositories/connected-device-read.ts';
 import { applyProviderModelAllowlistsToEnv } from './lib/rpc-handlers/settings-handlers.ts';
 import { WebSocketServerTransport } from './lib/websocket-server-transport.ts';
@@ -176,6 +178,7 @@ import {
 } from './lib/job-queue-constants.ts';
 import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler.ts';
 import { registerMailboxJobs } from './lib/mailbox/registration.ts';
+import { captureDirectMailboxAdmission } from './lib/tasks/direct-mailbox-admission.ts';
 import { boundDeliveryContent } from './lib/handoffs/bound-delivery.ts';
 import { resolveMailboxSession } from './lib/mailbox/session-lookup.ts';
 import { MAILBOX_LANE } from './lib/mailbox/enqueue.ts';
@@ -697,6 +700,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     messageHub.registerRouter(router);
     const extensions = new DaemonExtensions(db.getDatabase(), messageHub);
     extensions.register({ id: 'space' });
+    contributeDefaultOperations('space', createSpaceDefaultOperations);
     const logExtensionStopFailures = (failures: { id: string; error: unknown }[]) => {
       for (const { id, error } of failures)
         logError(`[Daemon] Extension ${id} failed to stop:`, error);
@@ -1415,6 +1419,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       isSessionHeldByTaskLimit: (sessionId) =>
         taskAgentManager?.isSessionHeldByTaskRateLimit(sessionId) ?? false,
       getSession: (sessionId) => resolveMailboxSession(sessionId, sessionManager, taskAgentManager),
+      captureAdmission: (entry) => captureDirectMailboxAdmission(db.getDatabase(), entry),
       isSessionArchived: (sessionId: string) =>
         reactiveDb?.db.getSession(sessionId)?.status === 'archived',
       logError: (message) => mailboxLog.error(message),

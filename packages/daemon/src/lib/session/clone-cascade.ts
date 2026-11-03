@@ -1,6 +1,5 @@
 import type { Session, SessionMetadata, SpaceLongHorizonAgent } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { displayNameTaken, uniqueAgentHandle } from '../agents/agent-identity.ts';
 
 export type CloneChoice = 'cascade' | 'flatten';
 export type CloneParentAction = 'archive' | 'delete';
@@ -21,6 +20,10 @@ export interface CloneCascadeDependencies {
   readonly detach: (sessionId: string) => Promise<void>;
   readonly agentOwning: (sessionId: string) => SpaceLongHorizonAgent | null;
   readonly listAgents: (spaceId: string) => SpaceLongHorizonAgent[];
+  readonly nameAgent: (
+    agents: readonly SpaceLongHorizonAgent[],
+    title: string
+  ) => { handle: string; displayName: string };
   readonly createAgent: (
     params: Pick<
       SpaceLongHorizonAgent,
@@ -43,12 +46,6 @@ export interface CloneCascadeDependencies {
   ) => Promise<void>;
   readonly archiveChild: (sessionId: string) => Promise<void>;
   readonly deleteChild: (sessionId: string) => Promise<void>;
-}
-
-function uniqueDisplayName(agents: readonly SpaceLongHorizonAgent[], base: string): string {
-  let name = base;
-  for (let n = 2; displayNameTaken(agents, name); n++) name = `${base} (${n})`;
-  return name;
 }
 
 export function isCloneChoice(value: unknown): value is CloneChoice {
@@ -88,12 +85,11 @@ export async function applyCloneChoice(
   const owner = deps.agentOwning(parentId);
   for (const child of children) {
     if (owner) {
-      const agents = deps.listAgents(owner.spaceId);
-      const handle = uniqueAgentHandle(agents, child.title);
+      const { handle, displayName } = deps.nameAgent(deps.listAgents(owner.spaceId), child.title);
       const agent = deps.createAgent({
         spaceId: owner.spaceId,
         handle,
-        displayName: uniqueDisplayName(agents, child.title.trim() || handle),
+        displayName,
         sessionId: child.id,
         instructions: owner.instructions,
         autonomyLevel: owner.autonomyLevel,

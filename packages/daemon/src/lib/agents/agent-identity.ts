@@ -24,6 +24,17 @@ export function uniqueAgentHandle(agents: readonly SpaceLongHorizonAgent[], name
   ]);
 }
 
+export function nameClonedAgent(
+  agents: readonly SpaceLongHorizonAgent[],
+  title: string
+): { handle: string; displayName: string } {
+  const handle = uniqueAgentHandle(agents, title);
+  const base = title.trim() || handle;
+  let displayName = base;
+  for (let n = 2; displayNameTaken(agents, displayName); n++) displayName = `${base} (${n})`;
+  return { handle, displayName };
+}
+
 export function callerAutonomyLevel(
   caller: OperationCaller,
   spaceId: string,

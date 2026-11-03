@@ -13,14 +13,8 @@ import { createHumanDeviceResetOperation } from '../pairing/human-device-reset.t
 import { announceDeviceRevoked } from '../pairing/upgrade-auth.ts';
 import { DevicePairingRepository } from '../../storage/repositories/device-pairing-repository.ts';
 import type { Database } from '../../storage/database.ts';
-import { transitionStandaloneTask } from '../../storage/tasks/transition-task.ts';
-import { listTaskCores } from '../../storage/tasks/list-tasks.ts';
-import { createStandaloneTask } from '../../storage/tasks/create-task.ts';
-import { readTaskCore } from '../../storage/tasks/task-reader.ts';
-import { createStandaloneTaskMetadataEditor } from '../tasks/metadata-standalone.ts';
-import { listScopedTasks, readScopedTask } from '../tasks/scoped-task-reads.ts';
-import { FAIL_CLOSED_LONG_HORIZON_AGENT_REPO } from '../space/runtime/space-mcp-session-policy.ts';
-import { createDaemonOperationCatalog, type TaskOperationDependencies } from './catalog.ts';
+import { createDaemonOperationCatalog, type MessagingOperationDependencies } from './catalog.ts';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { OperationDefinition } from './registry.ts';
 import { listOperationSummaries } from './discovery.ts';
 import { createDaemonSnapshotOperation } from '../inventory/snapshot-operation.ts';
@@ -30,20 +24,17 @@ import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoSessionMessageRepository } from '../../storage/repositories/neo-session-message-repository.ts';
 import { planNeoSessionMessage } from '../neo/session-messages.ts';
 import { listSessionMessages } from '../session/space-session-reads.ts';
-import {
-  createAgentReferenceLookups,
-  createAgentSessionResolver,
-  createResolveAgentOperation,
-  type EnsureReferencedAgentSession,
-} from '../agents/agent-reference.ts';
 import { createMessageStatusOperation } from '../messaging/message-status.ts';
 import { MAILBOX_LANE } from '../mailbox/enqueue.ts';
 import { MESSAGE_DELIVERY } from '../job-queue-constants.ts';
 
-const FALLBACK_TASK_READ_ADMISSION = {
-  getSession: () => null,
-  longHorizonAgentRepo: FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
-};
+type DefaultOperations = (db: Database) => readonly OperationDefinition[];
+
+const defaultOperations = new Map<string, DefaultOperations>();
+
+export function contributeDefaultOperations(id: string, build: DefaultOperations): void {
+  defaultOperations.set(id, build);
+}
 
 function readSessionField(
   db: Database,
@@ -59,35 +50,17 @@ function readSessionField(
 
 export function createDatabaseOperationCatalog(
   db: Database,
-  jobQueue = db.getJobQueueRepo(),
-  overrides: Partial<TaskOperationDependencies> = {},
-  extra: readonly OperationDefinition[] = [],
-  ensureAgentSession?: EnsureReferencedAgentSession
+  jobQueue: JobQueueRepository = db.getJobQueueRepo(),
+  overrides: Partial<MessagingOperationDependencies> = {},
+  extra: readonly OperationDefinition[] = []
 ) {
-  const agentLookups = createAgentReferenceLookups(() => db.getDatabase());
+  const explicit = new Set(extra.map((operation) => operation.name));
+  const contributed = [...defaultOperations.values()]
+    .flatMap((build) => build(db))
+    .filter((operation) => !explicit.has(operation.name));
   const registry = createDaemonOperationCatalog(
     jobQueue,
     {
-      readTask: (taskId, caller) =>
-        readScopedTask(
-          db.getDatabase(),
-          caller,
-          FALLBACK_TASK_READ_ADMISSION,
-          (id) => readTaskCore(db.getDatabase(), id),
-          taskId
-        ),
-      createTask: (input, creatorSessionId) =>
-        db.runSpaceTaskOp(createStandaloneTask, { input, creatorSessionId }),
-      listTasks: (input, caller) =>
-        listScopedTasks(
-          caller,
-          FALLBACK_TASK_READ_ADMISSION,
-          (listInput) => listTaskCores(db.getDatabase(), listInput),
-          input
-        ),
-      editTask: (input, caller) =>
-        createStandaloneTaskMetadataEditor(db.getDatabase(), db.runSpaceTaskOp)(input, caller),
-      transitionTask: (input) => db.runSpaceTaskOp(transitionStandaloneTask, input),
       sessionStatus: (sessionId) => readSessionField(db, 'status', sessionId),
       isNeo: (sessionId) =>
         new NeoRepository(db.getDatabase()).getBindingBySession(sessionId)?.kind === 'neo',
@@ -112,12 +85,10 @@ export function createDatabaseOperationCatalog(
         );
         if (message) await new NeoSessionMessageRepository(db.getDatabase()).record(message);
       },
-      ...(ensureAgentSession
-        ? { resolveMessageAgent: createAgentSessionResolver(agentLookups, ensureAgentSession) }
-        : {}),
       ...overrides,
     },
     [
+      ...contributed,
       ...extra,
       ...createArtifactReadOperations(() => db.getDatabase()),
       createLiveFileRead(() => db.getDatabase()),
@@ -137,7 +108,6 @@ export function createDatabaseOperationCatalog(
         readCapabilities: (caller) =>
           listOperationSummaries(registry, caller).map(({ name }) => name),
       }),
-      createResolveAgentOperation(agentLookups),
       createMessageStatusOperation({
         readSendStatus: (sessionId, messageId) => {
           const note = jobQueue.getLatestByPayload('neo_notes', {

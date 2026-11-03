@@ -23,6 +23,10 @@ import {
   createTestSession,
 } from '../../../helpers/database';
 import { operationInvoke, operationInvokeTool } from '../../../helpers/operation-mcp';
+import { contributeDefaultOperations } from '../../../../src/lib/operations/database-catalog';
+import { createSpaceDefaultOperations } from '../../../../src/lib/tasks/catalog-operations';
+
+contributeDefaultOperations('space', createSpaceDefaultOperations);
 
 describe('session operation MCP attachment', () => {
   let db: Database;

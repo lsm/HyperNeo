@@ -4,6 +4,7 @@ import {
   createResolveClones,
   type CloneCascadeDependencies,
 } from '../../../../src/lib/session/clone-cascade';
+import { nameClonedAgent } from '../../../../src/lib/agents/agent-identity.ts';
 
 function child(id: string, title = id): Session {
   const now = new Date().toISOString();
@@ -75,6 +76,7 @@ function makeHarness(overrides: Partial<Harness> = {}): Harness {
     },
     agentOwning: () => h.owner,
     listAgents: () => h.agents,
+    nameAgent: nameClonedAgent,
     createAgent: (params) => {
       h.created.push(params);
       const agent = { ...OWNER, ...params, id: `agent-${h.created.length}` };

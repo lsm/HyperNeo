@@ -115,6 +115,7 @@ import { setupSpaceHandlers } from './space-handlers.ts';
 import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers.ts';
 import { publishUnifiedAgentCreated } from '../agents/unified-agent-events.ts';
 import { createResolveClones } from '../session/clone-cascade.ts';
+import { nameClonedAgent } from '../agents/agent-identity.ts';
 import { nodeWorkspaceValidationIo } from '../workspaces/validation-pipeline.ts';
 import { createCloneLifecycleEffects } from './session-handlers.ts';
 import { createDefaultSessionResolutionDeps } from '../session-resolution/default-deps.ts';
@@ -1268,6 +1269,7 @@ export async function setupRPCHandlers(
       return id ? longHorizonAgentRepo.getById(id) : null;
     },
     listAgents: (spaceId) => longHorizonAgentRepo.listBySpaceId(spaceId),
+    nameAgent: nameClonedAgent,
     createAgent: (params) => {
       const agent = longHorizonAgentRepo.create(params);
       const created = spaceAgentRepo.getById(agent.id);
