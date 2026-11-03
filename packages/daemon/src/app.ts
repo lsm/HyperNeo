@@ -54,6 +54,8 @@ import {
 import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus.ts';
 import { setupRPCHandlers } from './lib/rpc-handlers/index.ts';
 import { DaemonExtensions } from './lib/extensions/contract.ts';
+import { registerSchemaExtension } from './storage/schema/extensions.ts';
+import { SPACE_SCHEMA } from './storage/schema/space-schema.ts';
 import { createSpaceDaemonExtension } from './lib/space/daemon-extension.ts';
 import { contributeDefaultOperations } from './lib/operations/database-catalog.ts';
 import { createSpaceDefaultOperations } from './lib/tasks/catalog-operations.ts';
@@ -473,6 +475,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       }
     }
 
+    registerSchemaExtension(SPACE_SCHEMA);
     const db = new Database(
       config.dbPath,
       config.sqlQueryObservability

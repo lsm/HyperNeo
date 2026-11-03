@@ -58,6 +58,10 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => {
 
 import { configureLogger, LogLevel } from '@hyperneo/shared';
 import { resetProviderRegistry } from '../../src/lib/providers/registry';
+import { registerSchemaExtension } from '../../src/storage/schema/extensions';
+import { SPACE_SCHEMA } from '../../src/storage/schema/space-schema';
+
+registerSchemaExtension(SPACE_SCHEMA);
 
 process.env.NODE_ENV = 'test';
 
