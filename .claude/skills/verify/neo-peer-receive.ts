@@ -16,6 +16,7 @@ import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/s
 
 const run = resolve(process.argv.at(-1)!);
 const worker = process.argv.includes('--worker');
+const accepting = process.argv.includes('--accept');
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -83,6 +84,7 @@ if (worker) {
         value = { peers: db.prepare('SELECT count(*) AS n FROM neo_peers').get(),
           devices: db.prepare('SELECT count(*)-? AS n FROM paired_devices').get(deviceCount.n),
           secretFound: JSON.stringify(db.prepare('SELECT * FROM neo_peers').all()).includes(String(input.secret)),
+          vaultEntries: db.prepare("SELECT count(*) AS n FROM provider_credentials WHERE provider_id LIKE 'hyperneo.peer.%'").get(),
           credentialPresent: !!db.prepare('SELECT id FROM neo_peers WHERE credential_hash=?').get(createHash('sha256').update(String(input.credential)).digest('hex')),
  };
       } else if (request.action === 'probe-device') {
@@ -150,18 +152,35 @@ if (worker) {
     const invitation = await act(b, 'Allow Contact A to send me messages.', 'neo.peer.invite', { name: 'Contact A' });
     assert.equal(invitation.accepted, true);
     const list = await b.call('operation', { name: 'neo.peer.list', input: {} });
-    assert.deepEqual(list.peers, [{ id: invitation.id, name: 'Contact A' }]);
+    assert.deepEqual(list.peers, [{ id: invitation.id, name: 'Contact A', address: null }]);
     assert.equal((await b.call('facts', { secret: invitation.code })).secretFound, false);
-    const claimed = await a.call('http', { address: b.address, body: { code: invitation.code } });
-    assert.equal(claimed.status, 200);
-    assert.equal((await b.call('facts', { credential: claimed.body.credential })).credentialPresent, true);
-    assert.equal((await a.call('http', { address: b.address, body: { code: invitation.code } })).status, 401);
-    const reverse = await act(a, 'Allow Contact B to send me messages.', 'neo.peer.invite', { name: 'Contact B' });
-    assert.equal((await b.call('http', { address: a.address, body: { code: reverse.code } })).status, 200);
+    let localId: string;
+    if (accepting) {
+      const accepted = await act(a, 'Add Contact B using the provided address and invitation.', 'neo.peer.accept', { name: 'Contact B', address: b.address, code: invitation.code });
+      assert.equal(accepted.accepted, true); localId = accepted.id;
+      const outgoing = await a.call('operation', { name: 'neo.peer.list', input: {} });
+      assert.deepEqual(outgoing.peers, [{ id: localId, name: 'Contact B', address: b.address }]);
+      assert.equal((await a.call('facts')).vaultEntries.n, 1);
+      assert.equal((await a.call('http', { address: b.address, body: { code: invitation.code } })).status, 401);
+      const reverse = await act(a, 'Allow Contact B to send me messages.', 'neo.peer.invite', { name: 'Contact B' });
+      assert.equal(reverse.id, localId);
+      const back = await act(b, 'Add Contact A using the provided address and invitation.', 'neo.peer.accept', { name: 'Contact A', address: a.address, code: reverse.code });
+      assert.equal(back.accepted, true); assert.equal(back.id, invitation.id);
+      evidence.outgoingAcceptAndVault = true;
+    } else {
+      const claimed = await a.call('http', { address: b.address, body: { code: invitation.code } });
+      assert.equal(claimed.status, 200);
+      assert.equal((await b.call('facts', { credential: claimed.body.credential })).credentialPresent, true);
+      assert.equal((await a.call('http', { address: b.address, body: { code: invitation.code } })).status, 401);
+      const reverse = await act(a, 'Allow Contact B to send me messages.', 'neo.peer.invite', { name: 'Contact B' });
+      localId = reverse.id;
+      assert.equal((await b.call('http', { address: a.address, body: { code: reverse.code } })).status, 200);
+    }
     evidence.independentHumanConsentOnBothReceivers = true;
     await a.call('external');
-    for (const [name, input] of [['neo.peer.invite', { name: 'External' }], ['neo.peer.remove', { id: reverse.id }]] as const)
+    for (const [name, input] of [['neo.peer.invite', { name: 'External' }], ['neo.peer.remove', { id: localId }]] as const)
       assert.match((await a.call('operation', { name, input })).reason, /^human_ask_required: .+/);
+    if (accepting) assert.match((await a.call('operation', { name: 'neo.peer.accept', input: { name: 'External', address: b.address, code: 'invalid' } })).reason, /^human_ask_required: .+/);
     evidence.externalInputNeverAuthorizesManagement = true;
     const raced = await act(b, 'Allow Contact C.', 'neo.peer.invite', { name: 'Contact C' });
     const claims = await Promise.all([a.call('http', { address: b.address, body: { code: raced.code } }), a.call('http', { address: b.address, body: { code: raced.code } })]);
@@ -183,8 +202,9 @@ if (worker) {
     assert.equal((await a.call('http', { address: b.address, body: { code: strict.code, kind: 'human' } })).status, 400);
     assert.equal((await a.call('http', { address: b.address, raw: 'x'.repeat(2048) })).status, 400);
     evidence.expiredAndOversizedOrForeignFieldsRefused = true;
-    await act(a, 'Remove Contact B.', 'neo.peer.remove', { id: reverse.id });
+    await act(a, 'Remove Contact B.', 'neo.peer.remove', { id: localId });
     assert.equal((await a.call('facts')).peers.n, 0);
+    assert.equal((await a.call('facts')).vaultEntries.n, 0);
     assert.equal((await a.call('facts')).devices.n, 0);
     assert.equal((await b.call('facts')).devices.n, 0);
     evidence.twoIndependentHomesAndDbs = true;

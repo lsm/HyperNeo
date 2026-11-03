@@ -15,6 +15,8 @@ import {
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
+import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { runMigration471 } from '../../../../src/storage/schema/m471-neo-peer-address.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 let db: Awaited<ReturnType<typeof createTestDb>>;
@@ -58,7 +60,11 @@ beforeEach(async () => {
   const messageId = crypto.randomUUID();
   await call(
     'neo.message.send',
-    { sessionId: root, requestId: messageId, content: 'Add Contact B using the provided address and invitation.' },
+    {
+      sessionId: root,
+      requestId: messageId,
+      content: 'Add Contact B using the provided address and invitation.',
+    },
     { source: 'rpc', principal: 'local' }
   );
   db.getSDKMessageRepo().markDeliveryConsumedByUuid(root, messageId);
@@ -207,22 +213,51 @@ test('accept leaves no secret when the local contact name changes during the rem
 });
 
 test.each([
-  'http://peer.invalid', 'https://user:secret@peer.invalid',
-  'https://peer.invalid/path', 'https://peer.invalid/?query=value', 'https://peer.invalid/#fragment',
+  'http://peer.invalid',
+  'https://user:secret@peer.invalid',
+  'https://peer.invalid/path',
+  'https://peer.invalid/?query=value',
+  'https://peer.invalid/#fragment',
 ])('accept refuses unsupported address %s before contacting it', async (address) => {
   const network = spyOn(globalThis, 'fetch').mockImplementation(async () => {
     throw new Error('Unsupported address must not be contacted');
   });
-  await expect(call('neo.peer.accept', { name: 'Contact B', address, code: 'synthetic' })).rejects.toThrow();
+  await expect(
+    call('neo.peer.accept', { name: 'Contact B', address, code: 'synthetic' })
+  ).rejects.toThrow();
   expect(network).not.toHaveBeenCalled();
   expect(await call('neo.peer.list', {})).toMatchObject({ accepted: true, peers: [] });
 });
 
 test('an oversized pairing response cannot create a contact or leak its secret', async () => {
   spyOn(globalThis, 'fetch').mockResolvedValue(new Response('x'.repeat(2048)));
-  expect(await call('neo.peer.accept', {
-    name: 'Contact B', address: 'https://peer.invalid', code: 'synthetic',
-  })).toMatchObject({ accepted: false, reason: expect.stringMatching(/^pairing_refused:/) });
+  expect(
+    await call('neo.peer.accept', {
+      name: 'Contact B',
+      address: 'https://peer.invalid',
+      code: 'synthetic',
+    })
+  ).toMatchObject({ accepted: false, reason: expect.stringMatching(/^pairing_refused:/) });
   expect(await call('neo.peer.list', {})).toMatchObject({ accepted: true, peers: [] });
 });
 
+test('deployed receiving contacts keep their identity and hash when outgoing addresses are added', () => {
+  const legacy = new Database(':memory:');
+  try {
+    legacy.exec(
+      'CREATE TABLE neo_peers(id TEXT PRIMARY KEY,name TEXT UNIQUE,credential_hash TEXT,invite_hash TEXT,expires_at INTEGER)'
+    );
+    legacy
+      .prepare('INSERT INTO neo_peers(id,name,credential_hash) VALUES(?,?,?)')
+      .run('kept', 'Contact', 'hash');
+    runMigration471(legacy);
+    runMigration471(legacy);
+    expect(legacy.prepare('SELECT id,credential_hash,address FROM neo_peers').get()).toEqual({
+      id: 'kept',
+      credential_hash: 'hash',
+      address: null,
+    });
+  } finally {
+    legacy.close();
+  }
+});

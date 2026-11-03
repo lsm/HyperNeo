@@ -2,12 +2,27 @@ import { createHash } from 'node:crypto';
 import type { Database } from '../sqlite-compat.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 
-type Peer = { id: string; name: string };
+type Peer = { id: string; name: string; address: string | null };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 class Peers {
   constructor(private readonly db: Database) {}
   list() {
-    return this.db.prepare('SELECT id,name FROM neo_peers ORDER BY name').all() as Peer[];
+    return this.db.prepare('SELECT id,name,address FROM neo_peers ORDER BY name').all() as Peer[];
+  }
+  named(name: string) {
+    return this.db
+      .prepare('SELECT id,name,address FROM neo_peers WHERE name=?')
+      .get(name) as Peer | null;
+  }
+  connect(id: string, name: string, address: string, existing: boolean) {
+    return existing
+      ? !!this.db
+          .prepare('UPDATE neo_peers SET address=? WHERE id=? AND name=? RETURNING id')
+          .get(address, id, name)
+      : !!this.db
+          .prepare(`INSERT INTO neo_peers(id,name,address) VALUES(?,?,?)
+          ON CONFLICT(name) DO NOTHING RETURNING id`)
+          .get(id, name, address);
   }
   invite(id: string, name: string, code: string, expiresAt: number) {
     return this.db
@@ -27,9 +42,10 @@ class Peers {
     this.db.prepare('DELETE FROM neo_peers WHERE id=?').run(id);
   }
 }
-export const peerReads = defineRepositoryOp('neo.peer.read', 'read', Peers, ['list']);
+export const peerReads = defineRepositoryOp('neo.peer.read', 'read', Peers, ['list', 'named']);
 export const peerWrites = defineRepositoryOp('neo.peer.write', 'write', Peers, [
   'invite',
   'claim',
   'remove',
+  'connect',
 ]);
