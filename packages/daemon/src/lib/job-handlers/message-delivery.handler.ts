@@ -17,7 +17,7 @@ import {
   decideParkAdmission,
   MESSAGE_DELIVERY_PARK_BUDGET,
   parkAdmissionInput,
-} from '../tasks/park-budget.ts';
+} from './park-budget.ts';
 
 export interface MessageDeliveryHandlerDeps {
   jobQueue: JobQueueRepository;
