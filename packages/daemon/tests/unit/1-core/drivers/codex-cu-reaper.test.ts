@@ -72,7 +72,7 @@ describe('decideCuReap', () => {
 });
 
 describe('createCuChecker', () => {
-  test('default alert offers the exact single-PID action without sending a signal', async () => {
+  test('explicit alert mode offers the exact single-PID action without sending a signal', async () => {
     const notices: string[] = [],
       signals: number[] = [];
     const checker = createCuChecker({
@@ -92,7 +92,7 @@ describe('createCuChecker', () => {
     }
   });
 
-  test('opt-in signals once, never retries a failed signal, and rereads before acting', async () => {
+  test('automatic mode signals once, never retries a failed signal, and rereads before acting', async () => {
     let reads = 0;
     const signals: number[] = [];
     const checker = createCuChecker({

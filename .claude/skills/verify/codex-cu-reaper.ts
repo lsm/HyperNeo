@@ -111,13 +111,35 @@ try {
   assert.equal(commands.length - beforeHeld, 1, 'Only one check may be in flight');
   release(); await settle(); await end();
   hold = undefined;
+  const { collectFamilyOperations } = await import('../../../packages/daemon/src/lib/rpc-handlers/family-operations/index.ts');
+  const { registerDriverOperations } = await import('../../../packages/daemon/src/lib/rpc-handlers/family-operations/drivers.ts');
+  type Context = Parameters<typeof collectFamilyOperations>[0];
+  let settings: { codexCuAutoReap?: boolean } = {};
+  const context = {
+    deps: { db: { getSession: () => null, getDatabase: () => ({}), getGlobalSettings: () => settings },
+      externalEventStore: {}, config: { dbPath: join(run, 'synthetic.db') },
+      jobProcessor: { register: () => {} } },
+    spaceGoalService: {}, longHorizonAgentRepo: {}, nodeExecutionRepo: {}, spaceTaskRepo: {},
+    sessionScheduler: { registerSource: () => {} }, neoPacks: () => [], driverCleanup: closeAll,
+  } as unknown as Context;
+  for (const value of [undefined, false, true]) {
+    settings = value === undefined ? {} : { codexCuAutoReap: value };
+    registerDriverOperations(context);
+    const registered = timers.at(-1)!;
+    const beforeSignals = signals.length, beforeNotices = notices.length;
+    registered.callback(); await settle();
+    assert.equal(signals.length - beforeSignals, value === false ? 0 : 1,
+      'Omitted setting must auto-reap; only explicit false opts out');
+    assert.equal(notices.length - beforeNotices, value === false ? 1 : 0);
+    await closeAll.at(-1)!();
+  }
   Object.defineProperty(process, 'platform', { value: 'linux' });
   const beforeNonMac = timers.length;
   await startCuChecker(() => true)();
   assert.equal(timers.length, beforeNonMac);
-  assert(events.length > 0, 'Default alerts and refusals must be logged');
+  assert(events.length > 0, 'Automatic actions, opt-out alerts and refusals must be logged');
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ pass: true, notices, signals, commands, timers: timers.map(({ callback: _callback, ...timer }) => timer), events, realMachineProof: 'not run; separate human approval required' }, null, 2));
-  process.stdout.write('PASS: synthetic macOS command adapter, alert, opt-in, reread, failures, cadence, overlap and cleanup\n');
+  process.stdout.write('PASS: synthetic macOS command adapter, automatic default, opt-out alert, reread, failures, cadence, overlap and cleanup\n');
 } finally {
   for (const close of closeAll) await close();
   unsubscribe(); kill.mockRestore(); interval.mockRestore(); clear.mockRestore();
