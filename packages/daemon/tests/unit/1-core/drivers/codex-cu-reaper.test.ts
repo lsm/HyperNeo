@@ -13,7 +13,6 @@ const observation = () => ({
   now,
   path,
   uid: 501,
-  idle: true,
   assertions: `Listed by owning process:\n${assertion()}\nKernel Assertions: 0`,
   log: created(),
   processes: `123 501 Mon Nov  2 08:00:00 2026 ${path}`,
@@ -49,14 +48,13 @@ describe('decideCuReap', () => {
     expect(decideCuReap({ ...observation(), log })).toEqual([]);
   });
 
-  test('fails closed on missing or malformed power records and uncertain turn scans', () => {
+  test('fails closed on missing or malformed power records', () => {
     for (const change of [
       { assertions: '' },
       { assertions: assertion('11:00:00') },
       { assertions: `Listed by owning process:\n${assertion('broken')}` },
       { log: '' },
       { log: created('bad-date') },
-      { idle: false },
       { processes: '' },
     ])
       expect(decideCuReap({ ...observation(), ...change })).toEqual([]);
