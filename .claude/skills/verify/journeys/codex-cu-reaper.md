@@ -1,9 +1,10 @@
 # Codex Computer Use display-sleep assertion fallback
 
-This macOS-only driver checker defaults to an OS notification and log with the
-single-PID action `kill -TERM <pid>`. Set `codexCuAutoReap: true` through the
-existing settings.global.update RPC only after human approval to opt into one
-automatic SIGTERM per observed PID/birth. Omitted or false means alert only.
+This macOS-only driver checker automatically attempts one SIGTERM per observed
+PID/birth after the conservative leak predicate and final recheck pass. No
+setting is needed to enable it. Explicit `codexCuAutoReap: false` through the
+existing settings.global.update RPC opts out into an OS notification and log
+with the single-PID action `kill -TERM <pid>`. Omitted or true means automatic.
 It checks every 60 seconds, without keeping the process alive, and closes with
 the driver's cleanup. No live-daemon restart is part of this journey.
 
@@ -18,9 +19,11 @@ The helper replaces child_process.execFile, process.kill and timer effects
 before importing the real module. Every unexpected command is refused; it
 cannot call the host pmset, ps, osascript or send a real signal. It drives the
 real 60-second callback, parses pmset and ps fixtures, and captures the actual
-notification arguments a human would receive. Default alerts contain the
-exact one-line action with zero signals; repeated ticks deduplicate it. Opt-in
-requires a fresh second observation and issues only SIGTERM to the exact
+notification arguments a human would receive. Register the actual driver
+operations with omitted, false and true settings: the default must send one
+SIGTERM; only false must alert with the exact action and zero signals. Repeat
+ticks must deduplicate both. Automatic mode requires a fresh second observation
+and issues only SIGTERM to the exact
 synthetic service PID. Young assertions, recent Created records and command
 failures must issue no signal; a failed signal is attempted once, without
 escalation. Concurrent ticks share one check, close clears the timer, and
@@ -35,8 +38,8 @@ This verifies synthetic driver effects, not macOS notification visibility,
 actual assertion release, natural display sleep or service relaunch. Those
 remain unverified and require separate human approval on a disposable test
 Mac: retain assertion/log/PID-birth evidence, induce a leak in a sacrificial
-session, wait for five minutes without a new same-name Created, observe alert
-mode first, then approve opt-in. Confirm only the verified helper receives
+session, explicitly opt out to observe alert mode first, then remove the opt-out
+and wait for five minutes without a new same-name Created. Confirm only the verified helper receives
 SIGTERM, assertions disappear, the display sleeps under its existing settings,
 and a later real Computer Use action succeeds with an on-demand service
 relaunch. Do not change power settings, kill the main app, escalate signals or

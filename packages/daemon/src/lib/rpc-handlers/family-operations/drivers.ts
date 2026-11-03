@@ -626,7 +626,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       })
   );
   context.driverCleanup?.push(
-    startCuChecker(() => context.deps.db.getGlobalSettings().codexCuAutoReap === true)
+    startCuChecker(() => context.deps.db.getGlobalSettings().codexCuAutoReap !== false)
   );
   const codex = () =>
     codexDesktopAdapters(
