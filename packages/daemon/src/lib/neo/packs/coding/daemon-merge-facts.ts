@@ -16,12 +16,30 @@ import { codingMergeGithubSchemas as schema } from './merge-operation.ts';
 import type { CodingDaemonMergeFacts } from './daemon-merge-gates.ts';
 
 const failed = (reason: string) => ({ reason: { ok: false as const, reason } });
+const FilePage = z.object({
+  data: z.object({
+    repository: z.object({
+      pullRequest: schema.Head.pick({ headRefOid: true }).extend({
+        baseRefOid: schema.Head.shape.headRefOid,
+        files: z.object({
+          nodes: z.array(z.object({ path: z.string() })),
+          pageInfo: z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() }),
+        }),
+      }),
+    }),
+  }),
+  errors: z.array(z.unknown()).optional(),
+});
 const Response = z.tuple([
-  schema.Pr.extend({ mergeCommit: z.object({ oid: schema.Head.shape.headRefOid }).nullable() }),
+  schema.Pr.extend({
+    baseRefOid: schema.Head.shape.headRefOid,
+    mergeCommit: z.object({ oid: schema.Head.shape.headRefOid }).nullable(),
+  }),
   schema.Reviews.min(1),
   schema.Checks,
   schema.Threads,
   z.array(z.array(z.object({ name: z.string() }))).min(1),
+  z.array(FilePage).min(1),
 ]);
 type Observed = z.infer<typeof Response>;
 async function readRequiredChecks(url: string, spawn: SpawnFn): Promise<ConnectorOutcome> {
@@ -71,7 +89,7 @@ const collect = async (db: Database, url: string, spawn: SpawnFn) => {
     'view',
     url,
     '--json',
-    'url,body,state,headRefOid,isDraft,mergeable,mergeStateStatus,author,changedFiles,files,labels,mergeCommit',
+    'url,body,state,headRefOid,baseRefOid,isDraft,mergeable,mergeStateStatus,author,changedFiles,files,labels,mergeCommit',
   ]);
   const responses = await Promise.all([
     pull,
@@ -93,6 +111,22 @@ const collect = async (db: Database, url: string, spawn: SpawnFn) => {
       '--slurp',
       `repos/${meta.owner}/${meta.repo}/issues/${meta.number}/labels`,
     ]),
+    gh([
+      'api',
+      'graphql',
+      '--hostname',
+      meta.host,
+      '--paginate',
+      '--slurp',
+      '-f',
+      `owner=${meta.owner}`,
+      '-f',
+      `name=${meta.repo}`,
+      '-F',
+      `number=${meta.number}`,
+      '-f',
+      'query=query CodingMergeFiles($owner:String!,$name:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid baseRefOid files(first:100,after:$endCursor){nodes{path} pageInfo{hasNextPage endCursor}}}}}',
+    ]),
   ]);
   return {
     responses: responses.map((response) => (response.ok ? response.data : null)),
@@ -100,7 +134,7 @@ const collect = async (db: Database, url: string, spawn: SpawnFn) => {
       response.ok
         ? []
         : [
-            `${['pull', 'reviews', 'required_checks', 'review_threads', 'labels'][index]}: ${response.error}`,
+            `${['pull', 'reviews', 'required_checks', 'review_threads', 'labels', 'files'][index]}: ${response.error}`,
           ]
     ),
   };
@@ -113,31 +147,58 @@ const parse = ({ responses, failures }: Awaited<ReturnType<typeof collect>>, url
   const parsed = Response.safeParse(responses);
   return parsed.success &&
     parsed.data[0].url.toLowerCase() === url.toLowerCase() &&
-    parsed.data[3].headOid === parsed.data[0].headRefOid
+    parsed.data[3].headOid === parsed.data[0].headRefOid &&
+    parsed.data[5].every((page, index, pages) => {
+      const snapshot = page.data.repository.pullRequest;
+      return (
+        !page.errors?.length &&
+        snapshot.headRefOid === parsed.data[0].headRefOid &&
+        snapshot.baseRefOid === parsed.data[0].baseRefOid &&
+        snapshot.files.pageInfo.hasNextPage === index < pages.length - 1 &&
+        (!snapshot.files.pageInfo.hasNextPage || !!snapshot.files.pageInfo.endCursor)
+      );
+    })
     ? { value: parsed.data }
     : failed(
         'fresh_complete_merge_facts_required: Fresh, complete GitHub merge facts are required. Leave the PR unchanged until every required read succeeds.'
       );
 };
-const project = ([pr, reviews, checks, threads, labels]: Observed): CodingDaemonMergeFacts & {
+const project = ([
+  pr,
+  reviews,
+  checks,
+  threads,
+  labels,
+  files,
+]: Observed): CodingDaemonMergeFacts & {
   mergeCommit?: string | null;
-} => ({
-  ok: true,
-  head: pr.headRefOid,
-  state: pr.state,
-  draft: pr.isDraft,
-  mergeable: pr.mergeable,
-  requiredCi: { head: pr.headRefOid, green: checks.every((check) => check.bucket === 'pass') },
-  threads: { head: threads.headOid, unresolved: threads.unresolvedThreadUrls.length },
-  reviews: reviews
-    .flat()
-    .flatMap((review) =>
-      review.user ? [{ ...review.user, head: review.commit_id, state: review.state }] : []
-    ),
-  files: pr.changedFiles === pr.files.length ? pr.files.map((file) => file.path) : null,
-  labels: labels.flat().map((label) => label.name),
-  mergeCommit: pr.mergeCommit?.oid ?? null,
-});
+  fileScopePaginated: boolean;
+  passingCommitStatus: boolean;
+} => {
+  const paths = files.flatMap((page) =>
+    page.data.repository.pullRequest.files.nodes.map((file) => file.path)
+  );
+  const complete = paths.length === pr.changedFiles && new Set(paths).size === paths.length;
+  return {
+    ok: true,
+    head: pr.headRefOid,
+    state: pr.state,
+    draft: pr.isDraft,
+    mergeable: pr.mergeable,
+    requiredCi: { head: pr.headRefOid, green: checks.every((check) => check.bucket === 'pass') },
+    threads: { head: threads.headOid, unresolved: threads.unresolvedThreadUrls.length },
+    reviews: reviews
+      .flat()
+      .flatMap((review) =>
+        review.user ? [{ ...review.user, head: review.commit_id, state: review.state }] : []
+      ),
+    files: complete ? paths : null,
+    fileScopePaginated: complete && pr.changedFiles > pr.files.length,
+    passingCommitStatus: ['CLEAN', 'HAS_HOOKS'].includes(pr.mergeStateStatus),
+    labels: labels.flat().map((label) => label.name),
+    mergeCommit: pr.mergeCommit?.oid ?? null,
+  };
+};
 const read = (superpipe({})('coding.read-daemon-merge-facts') as PipelineAPI)
   .input(['db', 'url', 'spawn'])
   .pipe(
@@ -158,7 +219,7 @@ const read = (superpipe({})('coding.read-daemon-merge-facts') as PipelineAPI)
   .pipe(
     async (observed: Observed, url: string, spawn: SpawnFn) => {
       const result = await runGhJson(
-        ['gh', 'pr', 'view', url, '--json', 'headRefOid,state'],
+        ['gh', 'pr', 'view', url, '--json', 'headRefOid,state,baseRefOid'],
         homedir(),
         spawn
       );
@@ -166,13 +227,16 @@ const read = (superpipe({})('coding.read-daemon-merge-facts') as PipelineAPI)
         return failed(
           `final_head_read_failed: ${result.error}. Leave this PR unchanged until its current head can be read.`
         );
-      const head = schema.Head.safeParse(result.data);
+      const head = schema.Head.extend({ baseRefOid: schema.Head.shape.headRefOid }).safeParse(
+        result.data
+      );
       return head.success &&
         head.data.headRefOid === observed[0].headRefOid &&
+        head.data.baseRefOid === observed[0].baseRefOid &&
         head.data.state === observed[0].state
         ? { value: observed }
         : failed(
-            'head_or_state_changed_during_read: The PR head or state changed during collection. Read the current PR again before merging.'
+            'head_base_or_state_changed_during_read: The PR head, base or state changed during collection. Read the current PR again before merging.'
           );
     },
     ['observed', 'url', 'spawn'],
