@@ -562,7 +562,7 @@ export class CodingPrLedgerRepository {
 
   holdForHuman(repo: string, number: number, head: string, at: number) {
     this.db.run(
-      "UPDATE pack_coding_pr_ledger SET state='waiting_human', state_since=?, terminal_event_json=NULL WHERE repo=? AND number=? AND head=? AND state='approved_green' AND closed_at IS NULL",
+      "UPDATE pack_coding_pr_ledger SET state='waiting_human', state_since=?, terminal_event_json=NULL WHERE repo=? AND number=? AND head=? AND state IN ('approved_green','approved_pending','waiting_ci') AND closed_at IS NULL",
       at,
       repo,
       number,

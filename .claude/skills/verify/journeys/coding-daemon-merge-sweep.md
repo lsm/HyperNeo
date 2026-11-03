@@ -120,3 +120,21 @@ approval card or permission for an agent to merge. Existing required-check and
 same-head bot gates remain in the build and sweep journeys. Handoff-state and
 publication writes are forbidden on the main-thread DB facade during the proof;
 they must run through the existing writer gateway.
+
+
+Add `approved-no-checks` for a bot-approved PR whose ledger still says
+approved_pending because a check suite exists but no status rollup does. It must
+reach the fresh required-check reader; a known empty set plus current-head bot
+approval must execute one pinned squash, persist the daemon receipt and never
+repeat the command. Pending required CI, unreadable checks and an old-head bot
+review remain held. The pending-ledger exception admits only a known zero required
+count; it does not substitute cached review/CI or promote pending nonempty CI.
+
+
+Add `human-waiting-ci` and `human-sibling-ci` to repeat the human-visible handoff
+with an initially waiting_ci ledger: the PR has a non-required check suite, or
+another open PR has CI while this one has none. Both must reach fresh zero-required
+facts, show waiting_human and the durable public notice, then merge once only after
+explicit repo opt-in. The fresh zero-count exception does not admit nonempty CI
+from a waiting ledger. It keeps missing/old bot approval, pending checks, read
+failures, human sign-off labels and unresolved threads blocked.

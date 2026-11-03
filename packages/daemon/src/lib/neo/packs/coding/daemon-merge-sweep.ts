@@ -8,7 +8,7 @@ import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { Logger } from '../../../logger.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
-import type { CodingPrLedgerRepository, CodingMergePolicy } from './pr-ledger.ts';
+import type { CodingPrLedgerRepository, CodingMergePolicy, CodingPrState } from './pr-ledger.ts';
 import type { CodingPrEventRepository } from './pr-events.ts';
 import type { CodingSweepDeps } from './pr-sweep.ts';
 import { readCodingDaemonMergeFacts } from './daemon-merge-facts.ts';
@@ -17,7 +17,12 @@ import { decideCodingHumanHandoff, decideCodingDaemonMerge } from './daemon-merg
 const log = new Logger('CodingDaemonMerge');
 
 type Receipt = ReturnType<CodingPrLedgerRepository['daemonMerge']>[number];
-type Candidate = { url: string; head: string; policy: CodingMergePolicy; approvedGreen: boolean };
+type Candidate = {
+  url: string;
+  head: string;
+  policy: CodingMergePolicy;
+  ledgerState: CodingPrState;
+};
 type Observed = Candidate & { facts: Awaited<ReturnType<typeof readCodingDaemonMergeFacts>> };
 const admit = (observed: Observed) => {
   const decision = decideCodingDaemonMerge(observed.facts, observed.policy);
@@ -30,7 +35,12 @@ const admit = (observed: Observed) => {
       : decision.kind === 'skip' || decision.kind === 'read_failure'
         ? decision.reason
         : decision.kind;
-  return decision.kind === 'merge' && decision.head === observed.head && observed.approvedGreen
+  const ledgerReady =
+    observed.ledgerState === 'approved_green' ||
+    (['approved_pending', 'waiting_ci'].includes(observed.ledgerState) &&
+      observed.facts.ok &&
+      observed.facts.requiredCi.count === 0);
+  return decision.kind === 'merge' && decision.head === observed.head && ledgerReady
     ? { value: observed }
     : { reason: decision.kind === 'merge' ? 'ledger_head_or_approval_changed' : reason };
 };
@@ -148,13 +158,15 @@ export function createCodingDaemonMergeSweep(
     for (const failure of await record({ kind: 'limits' }))
       await retryLimit(failure.url, failure.head);
     const rows = (await ledger.read('list')).filter(
-      (row) => row.closedAt === null && ['approved_green', 'waiting_human'].includes(row.state)
+      (row) =>
+        row.closedAt === null &&
+        ['approved_green', 'approved_pending', 'waiting_ci', 'waiting_human'].includes(row.state)
     );
     const observed = await Promise.all(
       rows.map(async ({ repo, number, head, state }) => ({
         url: `https://${process.env.GH_HOST ?? 'github.com'}/${repo}/pull/${number}`.toLowerCase(),
         head,
-        approvedGreen: state === 'approved_green',
+        ledgerState: state,
         policy: (await ledger.pollContextCurrent(repo)).policy,
       }))
     );
