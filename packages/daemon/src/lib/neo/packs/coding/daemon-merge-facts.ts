@@ -16,6 +16,20 @@ import { codingMergeGithubSchemas as schema } from './merge-operation.ts';
 import type { CodingDaemonMergeFacts } from './daemon-merge-gates.ts';
 
 const failed = (reason: string) => ({ reason: { ok: false as const, reason } });
+const FilePage = z.object({
+  data: z.object({
+    repository: z.object({
+      pullRequest: schema.Head.pick({ headRefOid: true }).extend({
+        baseRefOid: schema.Head.shape.headRefOid,
+        files: z.object({
+          nodes: z.array(z.object({ path: z.string() })),
+          pageInfo: z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() }),
+        }),
+      }),
+    }),
+  }),
+  errors: z.array(z.unknown()).optional(),
+});
 const Response = z.tuple([
   schema.Pr.extend({
     baseRefOid: schema.Head.shape.headRefOid,
@@ -25,7 +39,7 @@ const Response = z.tuple([
   schema.Checks,
   schema.Threads,
   z.array(z.array(z.object({ name: z.string() }))).min(1),
-  z.array(z.array(z.object({ filename: z.string() }))).min(1),
+  z.array(FilePage).min(1),
 ]);
 type Observed = z.infer<typeof Response>;
 async function readRequiredChecks(url: string, spawn: SpawnFn): Promise<ConnectorOutcome> {
@@ -99,11 +113,19 @@ const collect = async (db: Database, url: string, spawn: SpawnFn) => {
     ]),
     gh([
       'api',
+      'graphql',
       '--hostname',
       meta.host,
       '--paginate',
       '--slurp',
-      `repos/${meta.owner}/${meta.repo}/pulls/${meta.number}/files?per_page=100`,
+      '-f',
+      `owner=${meta.owner}`,
+      '-f',
+      `name=${meta.repo}`,
+      '-F',
+      `number=${meta.number}`,
+      '-f',
+      'query=query CodingMergeFiles($owner:String!,$name:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid baseRefOid files(first:100,after:$endCursor){nodes{path} pageInfo{hasNextPage endCursor}}}}}',
     ]),
   ]);
   return {
@@ -125,7 +147,17 @@ const parse = ({ responses, failures }: Awaited<ReturnType<typeof collect>>, url
   const parsed = Response.safeParse(responses);
   return parsed.success &&
     parsed.data[0].url.toLowerCase() === url.toLowerCase() &&
-    parsed.data[3].headOid === parsed.data[0].headRefOid
+    parsed.data[3].headOid === parsed.data[0].headRefOid &&
+    parsed.data[5].every((page, index, pages) => {
+      const snapshot = page.data.repository.pullRequest;
+      return (
+        !page.errors?.length &&
+        snapshot.headRefOid === parsed.data[0].headRefOid &&
+        snapshot.baseRefOid === parsed.data[0].baseRefOid &&
+        snapshot.files.pageInfo.hasNextPage === index < pages.length - 1 &&
+        (!snapshot.files.pageInfo.hasNextPage || !!snapshot.files.pageInfo.endCursor)
+      );
+    })
     ? { value: parsed.data }
     : failed(
         'fresh_complete_merge_facts_required: Fresh, complete GitHub merge facts are required. Leave the PR unchanged until every required read succeeds.'
@@ -143,7 +175,9 @@ const project = ([
   fileScopePaginated: boolean;
   passingCommitStatus: boolean;
 } => {
-  const paths = files.flat().map((file) => file.filename);
+  const paths = files.flatMap((page) =>
+    page.data.repository.pullRequest.files.nodes.map((file) => file.path)
+  );
   const complete = paths.length === pr.changedFiles && new Set(paths).size === paths.length;
   return {
     ok: true,

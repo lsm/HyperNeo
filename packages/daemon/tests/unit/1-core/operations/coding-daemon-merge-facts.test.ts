@@ -13,13 +13,32 @@ let db: Database, fail: string, finalHead: string, labels: unknown, reviews: unk
 let files: { path: string }[], changedFiles: number;
 let completeFiles: string[] | undefined;
 let finalBase: string;
+let pageBase: string;
 let largePatch: boolean;
 let calls: string[][], state: string, mergeCommit: { oid: string } | null;
 let checksReply: { stdout: string; stderr: string; exit: number } | undefined;
 const spawn: SpawnFn = (args) => {
   calls.push(args);
   let value: unknown;
-  if (args.includes('graphql'))
+  if (args.some((arg) => arg.includes('CodingMergeFiles'))) {
+    const pages = completeFiles
+      ? [completeFiles.slice(0, 100), completeFiles.slice(100)]
+      : [files.map((file) => file.path)];
+    value = pages.map((paths, i) => ({
+      data: {
+        repository: {
+          pullRequest: {
+            headRefOid: head,
+            baseRefOid: pageBase,
+            files: {
+              nodes: paths.map((path) => ({ path })),
+              pageInfo: { hasNextPage: i < pages.length - 1, endCursor: String(i) },
+            },
+          },
+        },
+      },
+    }));
+  } else if (args.includes('graphql'))
     value = {
       data: {
         repository: {
@@ -82,6 +101,7 @@ beforeEach(() => {
   mergeCommit = null;
   finalHead = head;
   finalBase = base;
+  pageBase = base;
   files = [{ path: 'src/app.ts' }];
   changedFiles = 1;
   completeFiles = undefined;
@@ -163,7 +183,7 @@ describe('readCodingDaemonMergeFacts', () => {
       else process.env.GH_HOST = configured;
     }
   });
-  test.each(['/labels', '/reviews', '/files?', 'checks', 'graphql'])(
+  test.each(['/labels', '/reviews', 'CodingMergeFiles', 'checks', 'graphql'])(
     'fails closed on an unreadable %s',
     async (part) => {
       fail = part;
@@ -205,6 +225,10 @@ describe('readCodingDaemonMergeFacts', () => {
       files: ['src/app.ts'],
     });
   });
+  test('refuses file pages bound to another base', async () => {
+    pageBase = 'e'.repeat(40);
+    expect((await readCodingDaemonMergeFacts(db, url, spawn)).ok).toBe(false);
+  });
   test('refuses a changed base even when the head and state stay unchanged', async () => {
     finalBase = 'e'.repeat(40);
     expect((await readCodingDaemonMergeFacts(db, url, spawn)).ok).toBe(false);
@@ -237,15 +261,20 @@ describe('readCodingDaemonMergeFacts', () => {
       files: completeFiles,
       fileScopePaginated: true,
     });
-    expect(calls.find((args) => args.some((arg) => arg.includes('/files?')))).toEqual([
-      'gh',
-      'api',
-      '--hostname',
-      'github.com',
-      '--paginate',
-      '--slurp',
-      'repos/synthetic/merge/pulls/1/files?per_page=100',
-    ]);
+    expect(calls.find((args) => args.some((arg) => arg.includes('CodingMergeFiles')))).toEqual(
+      expect.arrayContaining([
+        'gh',
+        'api',
+        'graphql',
+        '--hostname',
+        'github.com',
+        '--paginate',
+        '--slurp',
+        'owner=synthetic',
+        'name=merge',
+        'number=1',
+      ])
+    );
   });
 });
 

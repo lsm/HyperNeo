@@ -96,7 +96,7 @@ are suppressed for daemon execution. Terminal fixtures must contain the PR
 only in the done connection with a real closedAt value.
 
 Add `large-files` for a 171-file PR whose ledger and `gh pr view` expose only
-100 paths. The actual facts reader must paginate the REST files endpoint and
+100 paths. The actual facts reader must paginate filenames-only GraphQL pages and
 merge once with the full head. A protected design path on the last page must
 hold; missing pages, malformed data and a failed files read must also hold.
 No policy changes or manual merge are used to complete the scope.
@@ -108,3 +108,6 @@ with an unchanged head, or repeated pages whose count looks complete, must hold.
 The accepted final-read-to-merge race in #9458 remains unchanged.
 A completed scope also needs GitHub's passing commit status (CLEAN/HAS_HOOKS),
 not only passing required checks. UNSTABLE, BLOCKED and UNKNOWN must hold.
+
+File pages contain paths and snapshot metadata, never patches. The 1 MiB output
+bound remains; oversized patch fixtures must not be downloaded by this reader.

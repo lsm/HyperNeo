@@ -49,7 +49,23 @@ const spawn: SpawnFn = (args) => {
     expect(args.slice(-3)).toEqual(['--squash', '--match-head-commit', actualHead]);
     if (!mergeFailed) state = 'MERGED';
   } else if (args[2] === 'edit') labels = args.includes('--add-label') ? ['human-merge'] : [];
-  else if (args.includes('graphql'))
+  else if (args.some((arg) => arg.includes('CodingMergeFiles'))) {
+    const pages = files.length > 100 ? [files.slice(0, 100), files.slice(100)] : [files];
+    data = pages.map((paths, i) => ({
+      data: {
+        repository: {
+          pullRequest: {
+            headRefOid: actualHead,
+            baseRefOid: 'd'.repeat(40),
+            files: {
+              nodes: paths.map((path) => ({ path })),
+              pageInfo: { hasNextPage: i < pages.length - 1, endCursor: String(i) },
+            },
+          },
+        },
+      },
+    }));
+  } else if (args.includes('graphql'))
     data = {
       data: {
         repository: {
@@ -65,10 +81,6 @@ const spawn: SpawnFn = (args) => {
       },
     };
   else if (args.some((a) => a.endsWith('/labels'))) data = [labels.map((name) => ({ name }))];
-  else if (args.some((a) => a.includes('/files?')))
-    data = [files.slice(0, 100), files.slice(100)].map((page) =>
-      page.map((filename) => ({ filename }))
-    );
   else if (args.some((a) => a.endsWith('/reviews')))
     data = [
       [
@@ -193,9 +205,7 @@ describe('daemon merge sweep behavior', () => {
       expect(merges()).toEqual(
         protectedTail ? [] : [['gh', 'pr', 'merge', url, '--squash', '--match-head-commit', head]]
       );
-      expect(
-        calls.some((args) => args.includes('repos/synthetic/merge/pulls/1/files?per_page=100'))
-      ).toBe(true);
+      expect(calls.some((args) => args.some((arg) => arg.includes('CodingMergeFiles')))).toBe(true);
     }
   );
   test.each(['UNSTABLE', 'BLOCKED', 'UNKNOWN'])(
@@ -216,7 +226,7 @@ describe('daemon merge sweep behavior', () => {
       if (condition === 'ci') ci = 'pending';
       if (condition === 'review') reviewHead = 'b'.repeat(40);
       if (condition === 'thread') unresolved = true;
-      if (condition === 'read') fail = '/files?';
+      if (condition === 'read') fail = 'CodingMergeFiles';
       await sweep()(10);
       expect(merges()).toHaveLength(0);
     }
@@ -307,7 +317,7 @@ describe('daemon merge sweep behavior', () => {
       expect(merges()).toHaveLength(1);
     }
   });
-  test.each(['/labels', '/reviews', '/files?', 'checks', 'graphql', 'view', 'final'])(
+  test.each(['/labels', '/reviews', 'CodingMergeFiles', 'checks', 'graphql', 'view', 'final'])(
     'does nothing when %s cannot be read',
     async (part) => {
       fail = part;
