@@ -25,6 +25,7 @@ let db: Database,
   calls: string[][],
   notices: string[],
   fail: string;
+let mergeStateStatus: string;
 let state: string,
   actualHead: string,
   labels: string[],
@@ -89,7 +90,7 @@ const spawn: SpawnFn = (args) => {
       baseRefOid: 'd'.repeat(40),
       isDraft: false,
       mergeable: 'MERGEABLE',
-      mergeStateStatus: 'CLEAN',
+      mergeStateStatus,
       author: { login: 'author' },
       changedFiles: files.length,
       files: files.slice(0, 100).map((path) => ({ path })),
@@ -144,6 +145,7 @@ beforeEach(async () => {
   notices = [];
   fail = '';
   state = 'OPEN';
+  mergeStateStatus = 'CLEAN';
   actualHead = head;
   labels = [];
   files = ['src/app.ts'];
@@ -194,6 +196,16 @@ describe('daemon merge sweep behavior', () => {
       expect(
         calls.some((args) => args.includes('repos/synthetic/merge/pulls/1/files?per_page=100'))
       ).toBe(true);
+    }
+  );
+  test.each(['UNSTABLE', 'BLOCKED', 'UNKNOWN'])(
+    'a completed scope cannot bypass unsettled commit status %s',
+    async (status) => {
+      db.prepare("UPDATE pack_coding_pr_ledger SET state='waiting_human'").run();
+      files = Array.from({ length: 171 }, (_, i) => `src/file-${i}.ts`);
+      mergeStateStatus = status;
+      await sweep()(10);
+      expect(merges()).toHaveLength(0);
     }
   );
   test.each(['ci', 'review', 'thread', 'read'])(

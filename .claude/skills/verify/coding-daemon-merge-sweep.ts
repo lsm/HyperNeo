@@ -57,7 +57,7 @@ try{
  if(largeFiles){
  const pages=[allPaths.slice(0,100),allPaths.slice(100)].map(page=>page.map(filename=>({filename})));
  rejectSignoff=false;
- for(const extra of [{files:pages,finalBase:'e'.repeat(40)},{files:[pages[0],pages[0].slice(0,71)]},{files:[pages[0]]},{files:[null]},{files:pages,fail:'/files?'},{files:[pages[0],pages[1].map((file,i)=>i===70?{filename:'docs/design/requires-signoff.md'}:file)]}]){
+ for(const extra of [{files:pages,pr:{...pr,mergeStateStatus:'UNSTABLE'}},{files:pages,finalBase:'e'.repeat(40)},{files:[pages[0],pages[0].slice(0,71)]},{files:[pages[0]]},{files:[null]},{files:pages,fail:'/files?'},{files:[pages[0],pages[1].map((file,i)=>i===70?{filename:'docs/design/requires-signoff.md'}:file)]}]){
  publish({labels:[[]],...extra});await runSweep();assert.equal(mergeCalls().length,0);
  }
  assert.equal(ledger.list()[0].state,'waiting_human');
@@ -65,7 +65,7 @@ try{
  assert.deepEqual(mergeCalls(),[['pr','merge',url,'--squash','--match-head-commit',head]]);
  assert.equal(notices.filter(text=>text.includes('Merge confirmed:')).length,1);
  assert.deepEqual(await rpc('pack.preferences.list',{}),preferences);
- evidence.completeFileScope=171;evidence.movedBaseAndDuplicatePagesHeld=true;evidence.incompleteMalformedAndFailedReadsHeld=true;evidence.protectedLastPageHeld=true;evidence.savedPreferencesUnchanged=true;evidence.mergeCommands=mergeCalls();evidence.executorActivated=true;evidence.verified=true;
+ evidence.completeFileScope=171;evidence.movedBaseAndDuplicatePagesHeld=true;evidence.unsettledCommitStatusHeld=true;evidence.incompleteMalformedAndFailedReadsHeld=true;evidence.protectedLastPageHeld=true;evidence.savedPreferencesUnchanged=true;evidence.mergeCommands=mergeCalls();evidence.executorActivated=true;evidence.verified=true;
  }else if(zeroRequired){
  publish({labels:[[]],zeroRequired:true});rejectSignoff=false;
  await runSweep();await runSweep();
