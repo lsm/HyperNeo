@@ -293,6 +293,15 @@ describe('daemon merge sweep behavior', () => {
     await run(11);
     expect(merges()).toHaveLength(1);
   });
+  test('owner execution evaluates handoff without entering daemon merge attempts or warnings', async () => {
+    policy('mergeBy', 'owner');
+    policy('mergePolicy', 'ci_only');
+    await sweep()(10);
+    expect(calls.some((args) => args[2] === 'checks')).toBe(true);
+    expect(merges()).toEqual([]);
+    expect(await ledger.write('daemonMerge', { kind: 'list' })).toEqual([]);
+    expect(warnings.some((args) => JSON.stringify(args).includes('merge_by_owner'))).toBe(false);
+  });
   test('pins a single unowned merge and records executor/head/time across overlapping sweeps', async () => {
     const run = sweep();
     await Promise.all([run(10), run(11)]);

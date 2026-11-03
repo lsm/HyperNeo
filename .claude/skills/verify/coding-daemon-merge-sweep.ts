@@ -18,6 +18,7 @@ const humanWaiting=process.argv.includes('human-waiting-ci'),humanSibling=proces
 const humanOwner=process.argv.includes('human-owner');
 const humanUnconfigured=process.argv.includes('human-unconfigured');
 const humanDefault=process.argv.includes('human-default')||humanOwner||humanUnconfigured||humanWaiting||humanSibling;
+const ownerCi=process.argv.includes('owner-ci');
 const pendingLedger=process.argv.includes('approved-no-checks');
 const noChecks=process.argv.includes('no-checks');
 const zeroRequired=process.argv.includes('zero-required')||noChecks||pendingLedger;
@@ -74,7 +75,14 @@ try{
  const pack=makePack();let preferences=await rpc('pack.preferences.list',{});let tick=Date.now();
  const runSweep=()=>pack.sweep!(tick+=61_000);
  const mergeCalls=()=>readFileSync(join(run,'evidence/gh.jsonl'),'utf8').trim().split('\n').filter(Boolean).map(line=>JSON.parse(line)).filter(args=>args[0]==='pr'&&args[1]==='merge');
- if(humanDefault){
+ if(ownerCi){
+ publish({labels:[[]]});rejectSignoff=false;
+ for(const[key,value]of Object.entries({mergeBy:'owner',mergePolicy:'ci_only'}))assert((await rpc('pack.preferences.set',{pack:'coding',scope:{kind:'repo',key:'synthetic/merge'},key,value})).ok);
+ await runSweep();await runSweep();
+ assert.deepEqual(mergeCalls(),[]);assert(!holds.some(text=>text.includes('merge_by_owner')));
+ assert.deepEqual(await ledger.write('daemonMerge',{kind:'list'}),[]);
+ evidence.ownerExecutionNoDaemonAttempt=true;evidence.verified=true;
+ }else if(humanDefault){
  publish({labels:[[]],emptyChecks:true});rejectSignoff=false;
  assert((await rpc('pack.preferences.set',{pack:'coding',scope:{kind:'repo',key:'synthetic/merge'},key:'mergePolicy',value:'ci_only'})).ok);
  if(humanOwner){
