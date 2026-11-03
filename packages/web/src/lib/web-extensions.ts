@@ -74,17 +74,25 @@ export function webExtensionDeclined(id: keyof WebExtensions): boolean {
 }
 
 export async function loadWebExtensions(
-  hub: MessageHub,
-  loaders: WebExtensionLoaders
+  getHub: () => Promise<MessageHub>,
+  loaders: WebExtensionLoaders,
+  retryMs = 2000
 ): Promise<void> {
-  const listed = await invokeOperation<{ extensions: { id: string }[] }>(
-    hub,
-    'daemon.extensions'
-  ).then(
-    (result) => new Set(result.extensions.map((extension) => extension.id)),
-    () => null
-  );
-  for (const id of Object.keys(loaders) as (keyof WebExtensions)[]) {
-    registerWebExtension(id, !listed || listed.has(id) ? await loaders[id]() : null);
+  for (;;) {
+    try {
+      const listed = await invokeOperation<{ extensions: { id: string }[] }>(
+        await getHub(),
+        'daemon.extensions'
+      ).then(
+        (result) => new Set(result.extensions.map((extension) => extension.id)),
+        () => null
+      );
+      for (const id of Object.keys(loaders) as (keyof WebExtensions)[]) {
+        registerWebExtension(id, !listed || listed.has(id) ? await loaders[id]() : null);
+      }
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, retryMs));
+    }
   }
 }

@@ -6,14 +6,9 @@ import { PairPage } from './components/pairing/PairPage.tsx';
 import { connectionManager } from './lib/connection-manager.ts';
 import { loadWebExtensions } from './lib/web-extensions.ts';
 
-void connectionManager
-  .getHub()
-  .then((hub) =>
-    loadWebExtensions(hub, {
-      space: () => import('./lib/space-web-extension.ts').then((m) => m.spaceWebExtension),
-    })
-  )
-  .catch(() => {});
+void loadWebExtensions(() => connectionManager.getHub(), {
+  space: () => import('./lib/space-web-extension.ts').then((m) => m.spaceWebExtension),
+});
 
 if ('scrollRestoration' in history) {
   history.scrollRestoration = 'manual';

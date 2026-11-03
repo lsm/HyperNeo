@@ -130,7 +130,8 @@ export default function MainContent() {
   }
 
   function renderContent() {
-    if (spaceId && space) {
+    if (spaceId) {
+      if (!space) return lazyFallback;
       return (
         <Suspense fallback={lazyFallback}>
           <space.SpaceIsland
@@ -145,7 +146,7 @@ export default function MainContent() {
     }
 
     if (navSection === 'spaces') {
-      return space && <space.SpacesHome />;
+      return space ? <space.SpacesHome /> : lazyFallback;
     }
 
     if (sessionId) {
@@ -208,7 +209,7 @@ export default function MainContent() {
       );
     }
 
-    return space && <space.SpacesHome />;
+    return space ? <space.SpacesHome /> : lazyFallback;
   }
 
   return (
