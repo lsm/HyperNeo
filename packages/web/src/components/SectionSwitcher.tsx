@@ -6,6 +6,7 @@ import {
 } from '../lib/signals.ts';
 import { navigateToSessions, navigateToSpaces } from '../lib/router.ts';
 import { cn } from '../lib/utils.ts';
+import { webExtensionDeclined } from '../lib/web-extensions.ts';
 
 interface SectionSwitcherProps {
   onClose?: () => void;
@@ -50,7 +51,9 @@ export function SectionSwitcher({
         )}
         role="tablist"
       >
-        {SECTIONS.map((section) => {
+        {SECTIONS.filter(
+          (section) => section.id !== 'spaces' || !webExtensionDeclined('space')
+        ).map((section) => {
           const isActive = navSection === section.id;
           return (
             <button

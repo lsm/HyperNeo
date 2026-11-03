@@ -1,4 +1,5 @@
 import type {
+  MessageHub,
   Space,
   SpaceLongHorizonAgent,
   SpaceTask,
@@ -6,6 +7,7 @@ import type {
 } from '@hyperneo/shared';
 import type { ComponentType } from 'preact';
 import { type ReadonlySignal, signal } from '@preact/signals';
+import { invokeOperation } from './operations';
 import type { SpaceViewMode } from './signals';
 
 export type SpaceWithTaskList = Space & { tasks: SpaceTask[] };
@@ -52,15 +54,37 @@ interface WebExtensions {
   space: SpaceWebExtension;
 }
 
-const registered = signal<Partial<WebExtensions>>({});
+type WebExtensionLoaders = { [K in keyof WebExtensions]: () => Promise<WebExtensions[K]> };
+
+const registered = signal<{ [K in keyof WebExtensions]?: WebExtensions[K] | null }>({});
 
 export function registerWebExtension<K extends keyof WebExtensions>(
   id: K,
-  extension: WebExtensions[K]
+  extension: WebExtensions[K] | null
 ): void {
   registered.value = { ...registered.value, [id]: extension };
 }
 
 export function webExtension<K extends keyof WebExtensions>(id: K): WebExtensions[K] | undefined {
-  return registered.value[id];
+  return registered.value[id] ?? undefined;
+}
+
+export function webExtensionDeclined(id: keyof WebExtensions): boolean {
+  return registered.value[id] === null;
+}
+
+export async function loadWebExtensions(
+  hub: MessageHub,
+  loaders: WebExtensionLoaders
+): Promise<void> {
+  const listed = await invokeOperation<{ extensions: { id: string }[] }>(
+    hub,
+    'daemon.extensions'
+  ).then(
+    (result) => new Set(result.extensions.map((extension) => extension.id)),
+    () => null
+  );
+  for (const id of Object.keys(loaders) as (keyof WebExtensions)[]) {
+    registerWebExtension(id, !listed || listed.has(id) ? await loaders[id]() : null);
+  }
 }

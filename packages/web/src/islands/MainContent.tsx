@@ -1,5 +1,6 @@
 import { SessionSchedules } from '../components/SessionSchedules.tsx';
 import { lazy, Suspense } from 'preact/compat';
+import { useEffect } from 'preact/hooks';
 import {
   currentSessionIdSignal,
   currentSpaceCanonicalIdSignal,
@@ -10,7 +11,8 @@ import {
   navSectionSignal,
   settingsSectionSignal,
 } from '../lib/signals.ts';
-import { webExtension } from '../lib/web-extensions.ts';
+import { navigateToSessions } from '../lib/router.ts';
+import { webExtension, webExtensionDeclined } from '../lib/web-extensions.ts';
 import { BottomTabBar } from './BottomTabBar.tsx';
 import { VoiceRecordingIndicator } from '../components/voice/VoiceRecordingIndicator.tsx';
 import { VoiceSurfaceContext } from '../hooks/useVoiceRecorder';
@@ -101,11 +103,16 @@ export default function MainContent() {
   const spaceRouteId = currentSpaceIdSignal.value;
   const spaceId = currentSpaceCanonicalIdSignal.value ?? spaceRouteId;
   const space = webExtension('space');
+  const spaceDeclined = webExtensionDeclined('space');
   const spaceSessionViewId = currentSpaceSessionIdSignal.value;
   const spaceTaskViewId = currentSpaceTaskIdSignal.value;
   const spaceViewMode = currentSpaceViewModeSignal.value;
   const navSection = navSectionSignal.value;
   const settingsSection = settingsSectionSignal.value;
+
+  useEffect(() => {
+    if (spaceDeclined && navSection === 'spaces') navigateToSessions(true);
+  }, [spaceDeclined, navSection]);
 
   let contentKey: string;
   if (spaceRouteId) {

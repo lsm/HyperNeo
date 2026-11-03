@@ -12,6 +12,7 @@ import {
   navSectionSignal,
 } from '../../lib/signals';
 import { BottomTabBar } from '../BottomTabBar';
+import { registerWebExtension, type SpaceWebExtension } from '../../lib/web-extensions';
 
 vi.mock('../../lib/router', () => ({
   navigateToSessions: vi.fn(),
@@ -139,5 +140,29 @@ describe('BottomTabBar space active tab', () => {
     currentSpaceSessionIdSignal.value = 'session-agent-1';
     rerender(<BottomTabBar />);
     expect(selectedTabLabel()).toBe('Agents');
+  });
+});
+
+describe('BottomTabBar without Space', () => {
+  beforeEach(() => {
+    window.matchMedia = vi.fn().mockReturnValue({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    navSectionSignal.value = 'chats';
+    currentSpaceIdSignal.value = null;
+  });
+
+  afterEach(() => {
+    cleanup();
+    registerWebExtension('space', { store: spaceStore } as unknown as SpaceWebExtension);
+  });
+
+  it('shows no Spaces tab when the daemon does not provide Space', () => {
+    registerWebExtension('space', null);
+    render(<BottomTabBar />);
+    const tabs = screen.getAllByRole('tab').map((tab) => tab.getAttribute('aria-label'));
+    expect(tabs).toEqual(['Chats', 'Settings']);
   });
 });

@@ -16,6 +16,7 @@ vi.mock('../../lib/space-store', () => ({
 }));
 
 vi.mock('../../lib/router', () => ({
+  navigateToSessions: vi.fn(),
   navigateToSpace: vi.fn(),
   navigateToSpaceTask: vi.fn(),
   navigateToSpaceSession: vi.fn(),
@@ -51,6 +52,7 @@ import {
   navSectionSignal,
 } from '../../lib/signals';
 import { registerWebExtension } from '../../lib/web-extensions';
+import { navigateToSessions } from '../../lib/router';
 
 function makeTask(id: string, status: SpaceTask['status'], title = `Task ${id}`): SpaceTask {
   return {
@@ -124,5 +126,20 @@ describe('SpacesHome running list', () => {
     expect(screen.getByText(/All quiet — no active work across your spaces/)).toBeTruthy();
     expect(screen.queryAllByText('In Progress').length).toBe(0);
     expect(screen.queryByText('Task t1')).toBeNull();
+  });
+});
+
+describe('MainContent without Space', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('sends Space routes to chats when the daemon does not provide Space', () => {
+    registerWebExtension('space', null);
+    navSectionSignal.value = 'spaces';
+    currentSessionIdSignal.value = null;
+    currentSpaceIdSignal.value = 'space-1';
+    render(<MainContent />);
+    expect(navigateToSessions).toHaveBeenCalledWith(true);
   });
 });
