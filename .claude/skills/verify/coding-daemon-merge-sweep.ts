@@ -116,6 +116,9 @@ try{
  assert(visible.items[0].fullText.includes(url)&&visible.items[0].fullText.includes('manual merge'));
  assert.equal(ledger.list()[0].state,'waiting_human');
  await runSweep();assert.equal((await page()).items.length,1);assert.equal(humanNotices.length,1);
+ const conflicting=await publishCodingHumanMerge({conversation:()=>conversation,append:input=>app!.db.gateway.call(neoPublicationWrites,'append',input),notify:()=>{throw new Error('A conflicting notice must not notify again');}},`coding-no-checks:${url}:${head}`,'Changed wording for the same already-delivered handoff');
+ assert.equal(conflicting,false);assert.deepEqual((await page()).items,visible.items);
+ await makePack().sweep!(tick+=61_000);assert.deepEqual((await page()).items,visible.items);assert.equal(humanNotices.length,1);evidence.wordingConflictPreservesDeliveredNotice=true;
  assert.deepEqual(await rpc('pack.preferences.list',{}),preferences);
  assert((await rpc('pack.preferences.set',{pack:'coding',scope:{kind:'global',key:''},key:'allowNoChecksMerge',value:true})).ok);
  await runSweep();assert.equal(mergeCalls().length,0,'A global opt-in must not authorize this repo');

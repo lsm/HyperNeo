@@ -138,6 +138,13 @@ same-head bot gates remain in the build and sweep journeys. Handoff-state and
 publication writes are forbidden on the main-thread DB facade during the proof;
 they must run through the existing writer gateway.
 
+After delivery, try changed wording with the same publication identity. The
+immutable-publication conflict must leave the original human-visible handoff
+readable and unchanged, without another notification. Recreating the pack and
+running the normal sweep must still preserve exactly that one notice. A false
+append result does not remove an already-delivered publication; changing an
+existing notice would require the publication's explicit edit/correction path.
+
 
 Add `approved-no-checks` for a bot-approved PR whose ledger still says
 approved_pending because a check suite exists but no status rollup does. It must
