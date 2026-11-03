@@ -52,8 +52,16 @@ export class DaemonExtensions {
     for (const extension of this.loaded) await extension.start?.();
   }
 
-  async stop(): Promise<void> {
-    for (const extension of [...this.loaded].reverse()) await extension.stop?.();
+  async stop(): Promise<{ id: string; error: unknown }[]> {
+    const failures: { id: string; error: unknown }[] = [];
+    for (const extension of [...this.loaded].reverse()) {
+      try {
+        await extension.stop?.();
+      } catch (error) {
+        failures.push({ id: extension.id, error });
+      }
+    }
+    return failures;
   }
 }
 

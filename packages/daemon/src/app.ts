@@ -697,6 +697,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     messageHub.registerRouter(router);
     const extensions = new DaemonExtensions(db.getDatabase(), messageHub);
     extensions.register({ id: 'space' });
+    const logExtensionStopFailures = (failures: { id: string; error: unknown }[]) => {
+      for (const { id, error } of failures)
+        logError(`[Daemon] Extension ${id} failed to stop:`, error);
+    };
 
     const transport = new WebSocketServerTransport({
       name: 'websocket-server',
@@ -1255,7 +1259,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         () => messageDeliveryProcessor.stop(),
         () => messageHub.cleanup(),
         () => rpcHandlerCleanup(),
-        () => extensions.stop(),
+        () => extensions.stop().then(logExtensionStopFailures),
         () => spaceRuntimeService.stop(),
         () => inactivityScan,
         () => liveQueries.dispose(),
@@ -1839,7 +1843,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         messageHub.cleanup();
 
         await rpcHandlerCleanup();
-        await extensions.stop();
+        logExtensionStopFailures(await extensions.stop());
 
         liveQueries.dispose();
 

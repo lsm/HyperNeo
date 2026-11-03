@@ -53,6 +53,24 @@ describe('DaemonExtensions', () => {
   });
 });
 
+describe('DaemonExtensions.stop', () => {
+  it('stops every extension and reports the ones that failed', async () => {
+    const stopped: string[] = [];
+    const failure = new Error('stop failed');
+    const extensions = new DaemonExtensions(db, hub);
+    extensions.register({ id: 'a', stop: () => void stopped.push('a') });
+    extensions.register({
+      id: 'b',
+      stop: () => {
+        throw failure;
+      },
+    });
+    extensions.register({ id: 'c', stop: () => void stopped.push('c') });
+    expect(await extensions.stop()).toEqual([{ id: 'b', error: failure }]);
+    expect(stopped).toEqual(['c', 'a']);
+  });
+});
+
 describe('createDaemonExtensionsOperation', () => {
   it('lists only the extensions loaded in this daemon', async () => {
     const extensions = new DaemonExtensions(db, hub);
