@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
@@ -30,7 +31,7 @@ try{
  JobQueueProcessor.prototype.start=function(){processors.add(this);return start.call(this);};
  try{app=await createDaemonApp({config:{...getConfig({host:'127.0.0.1',port:0,dbPath:join(run,'data/daemon.db'),workspaceRoot:join(run,'workspace')}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});}finally{JobQueueProcessor.prototype.start=start;}
  assert.notEqual(app.server.port,8399);await Promise.all([...processors].map(p=>p.stop()));main=app.db.getDatabase();await waitForSdkBodyCopy(main);
- const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();
+ const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({ createSocket: createLocalSocket,url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();
  const input={sourceMessageOrCard:{kind:'todo',id:'synthetic-missing-artifact-source'},reference:'synthetic-report.md',requestId:crypto.randomUUID()};
  const invoke=()=>hub.request('operation.invoke',{name:'artifact.reference.resolve',input});
  measuring=true;const at=performance.now();assert.deepEqual(await invoke(),{accepted:false,reason:'unavailable'});evidence.firstRpcMs=performance.now()-at;const retained=main.prepare('SELECT * FROM artifact_file_identity').all() as {singleton:number;daemon_id:string}[];assert.equal(retained.length,1);assert.equal(retained[0].singleton,1);assert(uuid(retained[0].daemon_id));assert.deepEqual(await invoke(),{accepted:false,reason:'unavailable'});assert.deepEqual(main.prepare('SELECT * FROM artifact_file_identity').all(),retained);assert.equal(main.prepare('SELECT COUNT(*) AS n FROM artifact_files').get()!.n,0);assert.deepEqual(mainStatements,[]);evidence.realRpcRefusalAndRetainedIdentity=true;evidence.referenceRpcIdentityNowWorkerBacked=true;

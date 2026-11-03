@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -33,7 +34,7 @@ SQLite.prototype.prepare=function(...args){
 SQLite.prototype.exec=function(sql:string){if(record&&targetSql.test(sql)){mainSql++;throw new Error('Todo add SQL executed on daemon main');}return Reflect.apply(sqliteExec,this,[sql]);};
 const path=join(run,'data/daemon.db');
 const app=await createDaemonApp({config:{...getConfig({port:0,host:'127.0.0.1',dbPath:path}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});assert.notEqual(app.server.port,8399);
-const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);
+const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketClientTransport({ createSocket: createLocalSocket,url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);
 const db=app.db.getDatabase(),store=new NeoAskTodoRepository(db),sessions=new NeoTodoSessionRepository(db);
 type Input=Parameters<typeof neoTodoAddWrites.run>[1];type Receipt=ReturnType<typeof neoTodoAddWrites.run>;
 const op={name:'neo.todoAddWrites',mode:'write',run:()=>{throw new Error('Todo add must execute in writer worker');}} as DbOp<Input,Receipt>;

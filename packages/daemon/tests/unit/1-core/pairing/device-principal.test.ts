@@ -57,10 +57,10 @@ async function refused(pending: unknown) {
 }
 
 describe('operation callers from paired devices', () => {
-  test('an unpaired connection keeps calling everything as the local user, as today', async () => {
+  test('an unpaired RPC connection cannot call owner operations', async () => {
     const call = connectedAs(null);
-    expect(await call('session.archive')).toEqual({ principal: 'local' });
-    expect(await call('client.list')).toEqual({ principal: 'local' });
+    await refused(call('session.archive'));
+    await refused(call('client.list'));
   });
 
   test('a paired human device calls everything as the local user and is known by its kind', async () => {

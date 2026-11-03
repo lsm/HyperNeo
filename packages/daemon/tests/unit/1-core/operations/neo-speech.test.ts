@@ -16,7 +16,12 @@ import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbo
 import { runDbOpOn } from '../../helpers/run-db-op.ts';
 
 const sessionId = 'neo:10000000-0000-4000-8000-000000000001';
-const human: OperationCaller = { source: 'rpc', principal: 'local', clientId: 'phone' };
+const human: OperationCaller = {
+  source: 'rpc',
+  principal: 'local',
+  clientId: 'phone',
+  device: { deviceId: 'synthetic-phone', kind: 'human' },
+};
 const neo: OperationCaller = { source: 'mcp', sessionId, role: 'neo' };
 
 describe('spoken replies separate from publications', () => {

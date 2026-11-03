@@ -24,3 +24,6 @@ the Spaces home lists it, New Space opens the Create Space dialog, ⌘K finds th
 space and opens it, and the space overview plus the side-panel detail render
 (`space-overview-dashboard`, `Space navigation` with `space-detail-goals`). No page errors. Evidence:
 `$RUN/evidence/web-extension-space.json`, `spaces-home.png`, `space-overview.png`.
+
+The helper authenticates RPC and the browser with only the isolated daemon's
+owner credential; no anonymous owner connection or live credential is used.

@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -32,7 +33,7 @@ try{
  JobQueueProcessor.prototype.start=function(){processors.add(this);return start.call(this);};try{app=await createDaemonApp({config:{...getConfig({host:'127.0.0.1',port:0,dbPath:join(run,'data/daemon.db'),workspaceRoot:join(run,'workspace')}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});}finally{JobQueueProcessor.prototype.start=start;}
  assert.notEqual(app.server.port,8399);await Promise.all([...processors].map(p=>p.stop()));main=app.db.getDatabase();await waitForSdkBodyCopy(main);
  const daemonId=crypto.randomUUID();main.prepare('INSERT INTO artifact_file_identity VALUES(1,?)').run(daemonId);main.prepare("INSERT INTO sessions(id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?,'Synthetic',?,'now','now','active','{}','{}')").run('synthetic-neo',join(run,'workspace'));new NeoAskTodoRepository(main).openAsk({id:'synthetic-artifact-ask',sessionId:'synthetic-neo',projectId:null,originMessageId:null,title:'Synthetic row',request:'Synthetic proof only',createdAt:Date.now()});
- const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();
+ const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({ createSocket: createLocalSocket,url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();
  const args=(request=crypto.randomUUID()):Args=>[{kind:'ask',id:'synthetic-artifact-ask'},request,'synthetic-fingerprint','a'.repeat(64),{daemonId,artifactId:crypto.randomUUID(),title:'Synthetic 🦊',kind:'markdown',byteLength:3},'{"adapter":"hyperneo","id":"synthetic-neo"}','report.md',{kind:'worktree'},undefined,'logical-'+request];
  const publish=(values:Args)=>app!.db.gateway.run(command,{method:'publish',args:values});
  const count=()=>Number(main!.prepare('SELECT COUNT(*) AS n FROM artifact_files').get()!.n);const retained=(id:string)=>main!.prepare('SELECT receipt,created_at,context_kind,context_id,request_id,fingerprint,sha256,byte_length,producer_ref,source_path FROM artifact_files WHERE artifact_id=?').get(id);

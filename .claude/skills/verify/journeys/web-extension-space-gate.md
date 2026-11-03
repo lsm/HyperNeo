@@ -22,3 +22,6 @@ but not spaces, no `space-web-extension`/`SpaceIsland` chunk is requested, and
 no page errors. Evidence: `$RUN/evidence/web-extension-space-gate.json`,
 `no-space-sidebar.png`, `no-space-desktop.png`, `no-space-phone.png`. Also rerun
 `web-extension-space-surfaces.md` for the Space-on path.
+
+The helper authenticates RPC and the browser with only the isolated daemon's
+owner credential; no anonymous owner connection or live credential is used.

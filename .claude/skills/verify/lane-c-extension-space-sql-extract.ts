@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -41,7 +42,7 @@ try {
   assert.notEqual(app.server.port,8399);await Promise.all([...processors].map(p=>p.stop()));main=app.db.getDatabase();await waitForSdkBodyCopy(main);assert(manager);
   const now=Date.now();main.prepare('INSERT INTO spaces(id,slug,workspace_path,name,created_at,updated_at)VALUES(?,?,?,?,?,?)').run(spaceId,'synthetic-space-config',join(run,'workspace'),'Synthetic config',now,now);
   const store=new ExternalEventExtensionConfigStore(main);await store.setGlobalConfig('github',{source:'github',globallyEnabled:false,capabilities:{rpcConfig:true,polling:false,webhooks:false}});
-  const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();
+  const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({createSocket: createLocalSocket, url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();
   assert.deepEqual(await hub.request('externalEvents.extensions.setGlobalEnabled',{source:'github',enabled:true}),{source:'github',globallyEnabled:true});
   Database.prototype.prepare=function(sql,...rest){const db=this,statement=Reflect.apply(original.prepare,this,[sql,...rest]);if(!/INSERT INTO space_external_event_source_configs/i.test(sql))return statement;return new Proxy(statement,{get(target,key){const value=Reflect.get(target,key);if(typeof value!=='function')return value;return(...args:unknown[])=>{if(measuring&&db===main&&key==='run')bindings.push(args);return Reflect.apply(value,target,args);};}});};
   measuring=true;const replies=[];let createdAt:unknown;const at=performance.now();

@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, statSync, writeFileSync, readFileSync } from 'node:fs';
@@ -81,7 +82,7 @@ sys.stderr.write('Refused non-fixture gh call');sys.exit(1)
  const work=new NeoAskTodoRepository(main);work.openAsk({id:'synthetic-artifact-ask',sessionId:'synthetic-neo',projectId:null,originMessageId:null,title:'Synthetic Git capture',request:'Synthetic proof only',createdAt:Date.now()});work.addTodo('synthetic-artifact-todo','synthetic-artifact-ask',{title:'Synthetic document',doneWhen:'',instruction:null,check:null,named:null},Date.now());
  const reference=`https://github.com/synthetic/fixture/blob/${sha}/report.md`;const setSource=(value:string)=>main!.prepare('UPDATE neo_todos SET evidence=? WHERE id=?').run(value,'synthetic-artifact-todo');setSource(reference);main.prepare('UPDATE neo_todos SET repo=? WHERE id=?').run('github.com/synthetic/fixture','synthetic-artifact-todo');
  const input={requestId:'11111111-1111-4111-8111-111111111111',sourceMessageOrCard:{kind:'todo' as const,id:'synthetic-artifact-todo'},reference};
- const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();
+ const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({ createSocket: createLocalSocket,url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();
  type Reply={accepted:true;artifact:{daemonId:string;artifactId:string;kind:string;byteLength:number}};
  const invoke=(value=input)=>hub.request<Reply>('operation.invoke',{name:'artifact.reference.resolve',input:value});
  const identity=()=>main!.prepare('SELECT daemon_id AS retained FROM artifact_file_identity').get()?.retained;const count=()=>Number(main!.prepare('SELECT COUNT(*) AS n FROM artifact_files').get()!.n);

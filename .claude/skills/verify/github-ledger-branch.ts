@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -39,7 +40,7 @@ globalThis.fetch=(()=>{throw new Error('No real HTTP in synthetic proof');}) as 
 async function open(){
   app=await createDaemonApp({config:getConfig({port:0,host:'127.0.0.1',dbPath:join(run,'data/daemon.db')}),verbose:false});
   await app.jobProcessor.stop();assert.notEqual(app.server.port,8399);
-  ws=new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws=createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done,fail)=>{ws!.onopen=()=>done();ws!.onerror=()=>fail(new Error('connect'));});
 }
 const rpc=(name:string,input:unknown={})=>new Promise<any>((done,fail)=>{

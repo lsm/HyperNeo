@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -58,7 +59,7 @@ try {
   assert(publications.append({ conversationId, publicationId, shortText: 'Read report', fullText: 'Read `report.md`.', links: [{ kind: 'work', id: 'todo', label: 'Report' }] }).accepted);
   const foreignPublication = crypto.randomUUID();
   assert(publications.append({ conversationId: crypto.randomUUID(), publicationId: foreignPublication, shortText: 'Hidden', fullText: 'Read `report.md`.', links: [{ kind: 'work', id: 'todo', label: 'Report' }] }).accepted);
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise((resolve, reject) => { ws!.onopen = resolve; ws!.onerror = reject; });
   type Reply = { accepted?: boolean; reason?: string; data?: string; artifact?: { artifactId: string } };
   const call = (name: string, input: unknown) => new Promise<Reply>((resolve, reject) => {
