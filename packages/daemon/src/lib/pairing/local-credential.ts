@@ -1,6 +1,6 @@
 import { constants, openSync, fstatSync, readFileSync, closeSync, lstatSync } from 'node:fs';
 import NodeWebSocket from 'ws';
-import { mkdir, open } from 'node:fs/promises';
+import { mkdir, open, link, rm } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { getDataDir } from '../data-dir.ts';
@@ -44,16 +44,20 @@ export function createLocalSocket(url: string, path = localCredentialPath()): We
 
 export async function ensureLocalCredential(db: DbGateway): Promise<void> {
   await mkdir(getDataDir(), { recursive: true, mode: 0o700 });
+  const temporary = `${localCredentialPath()}.${randomBytes(8).toString('hex')}.tmp`;
   try {
-    const file = await open(localCredentialPath(), 'wx', 0o600);
+    const file = await open(temporary, 'wx', 0o600);
     try {
-      if (process.platform === 'win32') checkWindowsCredential(localCredentialPath(), true);
+      if (process.platform === 'win32') checkWindowsCredential(temporary, true);
       await file.writeFile(randomBytes(32).toString('base64url'));
     } finally {
       await file.close();
     }
+    await link(temporary, localCredentialPath());
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+  } finally {
+    await rm(temporary, { force: true });
   }
   await db.run(enrollLocalDevice, { credential: await readLocalCredential(), now: Date.now() });
 }

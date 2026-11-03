@@ -50,4 +50,14 @@ describe('local credential creation', () => {
     expect(readLocalCredential(file)).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(run).toHaveBeenCalledTimes(1);
   });
+  test('concurrent starts enroll the same completed credential', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'credential-create-'));
+    process.env.HYPERNEO_DATA_DIR = dir;
+    const run = vi.fn();
+    const db = { run } as unknown as DbGateway;
+    await Promise.all([ensureLocalCredential(db), ensureLocalCredential(db)]);
+    const credential = readLocalCredential(join(dir, 'local-rpc.credential'));
+    expect(run).toHaveBeenCalledTimes(2);
+    for (const call of run.mock.calls) expect(call[1].credential).toBe(credential);
+  });
 });
