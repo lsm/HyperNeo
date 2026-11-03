@@ -1,6 +1,5 @@
 import type { ArtifactRefusal } from '@hyperneo/shared/types/artifact-file';
 import { posix } from 'node:path';
-import superpipe, { type PipelineAPI } from 'superpipe';
 import { isLocalUser } from '../operations/caller.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import { secretName } from '../secret-file-name.ts';
@@ -158,16 +157,3 @@ export function resolveArtifactSource<
     },
   };
 }
-
-export const admitArtifactCapture = (superpipe({})('artifact-capture-policy') as PipelineAPI)
-  .input(['context', 'source', 'caller', 'deps'])
-  .pipe(admitArtifactContext, 'context', 'result:policy')
-  .pipe(loadArtifactContextBinding, ['policy', 'deps', 'caller'], 'result:policy')
-  .pipe(authorizeArtifactCaller, ['policy', 'caller'], 'result:policy')
-  .pipe(resolveArtifactSource, ['policy', 'source', 'deps'], 'result:policy')
-  .endAsync('policy') as (
-  context: ArtifactContext,
-  source: string,
-  caller: OperationCaller,
-  deps: ArtifactPolicyDependencies
-) => Promise<OpenPlan | ArtifactRefusal>;

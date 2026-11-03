@@ -1,6 +1,12 @@
 # Explicit relative CSS/raster bundles (slice 22)
 
-Register each CSS file or PNG/JPEG/GIF/WebP through `artifact.file.register` first.
+C3 update: local registration is retired. These helpers seed synthetic historical
+attachment rows/blobs directly via legacy-attachment-fixture.ts; any registration
+wording below describes the historical data, not a currently available API.
+New working files use source-bound live reads. No production snapshots are created.
+
+
+Seed historical CSS/raster attachments with legacy-attachment-fixture.ts first; the local registration API is retired.
 CSS is an inert text artifact. Register the HTML with an optional `bundle` array:
 
 ```json
@@ -58,7 +64,7 @@ NODE_PATH=<directory-containing-playwright> VERIFY_BROWSER=<headless-Chromium-bi
 
 The helper owns a metadata-only NODE_ENV=test CLI daemon with fresh HOME/data/DB,
 no keys, no provider turn and no model mock. It refuses 8399/busy ports. It seeds
-through preview-register.ts, registers all entries via operation.invoke, retains
+through preview-register.ts, seeds historical entries directly and reads through operation.invoke, retains
 originals by rename, stops before the existing publication seed, then restarts.
 The real Neo message card opens the actual preview at 1280/390px. Require the
 stylesheet's green title, decoded orange chart and CSS background, empty opaque

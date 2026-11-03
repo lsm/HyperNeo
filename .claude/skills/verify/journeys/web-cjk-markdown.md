@@ -22,7 +22,7 @@ NODE_PATH=<directory containing playwright> VERIFY_BROWSER=<Chrome executable> \
 ```
 
 Use installed Chrome if a cached Chromium has missing framework files. The helper
-blocks off-origin requests, registers the file via artifact.file.register, and
+blocks off-origin requests, seeds a synthetic historical attachment with legacy-attachment-fixture.ts, and
 visits its artifact preview and the worker chat at 1280 and 390 pixels. It asserts
 exact bold and italic text, no bold spill into ordinary text, literal code and
 escaped stars, single-dollar currency, table cells and a hard break. Inspect all

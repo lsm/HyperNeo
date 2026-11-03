@@ -1,6 +1,12 @@
 # In-app previews: producer references (slice 12)
 
-A worker registers a file with `artifact.file.register`; Neo then shows it as a
+C3 update: local registration is retired. These helpers seed synthetic historical
+attachment rows/blobs directly via legacy-attachment-fixture.ts; any registration
+wording below describes the historical data, not a currently available API.
+New working files use source-bound live reads. No production snapshots are created.
+
+
+The fixture seeds a historical worker attachment directly; Neo shows it as a
 short card instead of pasting the document. Two producer paths carry the
 returned reference in an optional `artifacts` list:
 

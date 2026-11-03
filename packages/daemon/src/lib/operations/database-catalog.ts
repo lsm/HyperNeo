@@ -6,7 +6,6 @@ import { readWorkerIdentity, sessionWorkerRef } from '../neo/worker-identity.ts'
 import { invokeOperation } from './invoke.ts';
 import { createArtifactReadOperations } from '../artifacts/read-operations.ts';
 import { createArtifactReferenceResolve } from '../artifacts/resolve-operation.ts';
-import { createArtifactRegistration } from '../artifacts/register-operation.ts';
 import { createBuildOperation } from '../system/build-operation.ts';
 import { daemonPairingLimiter } from '../pairing/pairing-limiter.ts';
 import { createDevicePairingOperations } from '../pairing/pairing-operations.ts';
@@ -120,7 +119,6 @@ export function createDatabaseOperationCatalog(
     },
     [
       ...extra,
-      createArtifactRegistration(() => db.getDatabase()),
       ...createArtifactReadOperations(() => db.getDatabase()),
       createLiveFileRead(() => db.getDatabase()),
       createArtifactReferenceResolve(() => db.getDatabase()),

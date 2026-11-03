@@ -77,6 +77,7 @@ export async function verifyLiveFilePage(page, {run, base, width, bun, cards = f
     await tap(image);
     const raster = page.getByRole('img', {name: 'current.png', exact: true});
     await raster.waitFor();
+    await page.waitForFunction(alt => { const node = [...document.images].find(node => node.alt === alt); return node?.complete && node.naturalWidth > 0; }, image.split('/').at(-1));
     await raster.evaluate(node => node.decode());
     assert.equal((await raster.evaluate(node => [node.naturalWidth, node.naturalHeight])).join(','), '256,160');
     const color = () => raster.evaluate(node => { const canvas = document.createElement('canvas'); canvas.width=256; canvas.height=160; const ctx=canvas.getContext('2d'); ctx.drawImage(node,0,0); return Array.from(ctx.getImageData(0,0,1,1).data); });
@@ -86,6 +87,7 @@ export async function verifyLiveFilePage(page, {run, base, width, bun, cards = f
     await copyFile(join(run, 'image-b.png'), image);
     await tap(image);
     await raster.waitFor();
+    await page.waitForFunction(alt => { const node = [...document.images].find(node => node.alt === alt); return node?.complete && node.naturalWidth > 0; }, image.split('/').at(-1));
     await raster.evaluate(node => node.decode());
     assert.equal((await color()).join(','), '180,80,30,255');
     await shot('image-edited');

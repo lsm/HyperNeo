@@ -51,7 +51,7 @@ renameSync(join(root, 'pr.json'), join(root, 'pr.retained.json')); assert.deepEq
 source('[PR](https://unconfigured.example/lsm/HyperNeo/pull/42)'); db.prepare(`UPDATE neo_todos SET repo = 'unconfigured.example/lsm/hyperneo' WHERE id='todo'`).run();
 before = calls().length; assert.deepEqual(await call({ ...request, reference: 'https://unconfigured.example/lsm/HyperNeo/pull/42' }), unavailable); assert.equal(calls().length, before);
 source(); db.prepare(`UPDATE neo_todos SET repo = 'github.com/lsm/hyperneo' WHERE id='todo'`).run();
-const changing = createOperationRegistry([createArtifactReferenceResolve(() => db, data, join(root, 'home'), undefined, async (target) => {
+const changing = createOperationRegistry([createArtifactReferenceResolve(() => db, data, join(root, 'home'), async (target) => {
  const result = await readBoundPrSummary(target); source('Reference removed'); return result;
 })]);
 assert.deepEqual(await call(request, changing), unavailable); source();

@@ -10,7 +10,7 @@ import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repos
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import { NeoPublicationRepository } from '../../../packages/daemon/src/storage/repositories/neo-publication-repository.ts';
 import { createArtifactReferenceResolve } from '../../../packages/daemon/src/lib/artifacts/resolve-operation.ts';
-import { createArtifactRegistration } from '../../../packages/daemon/src/lib/artifacts/register-operation.ts';
+import { legacyAttachmentFixture } from './legacy-attachment-fixture.ts';
 import { createArtifactReadOperations } from '../../../packages/daemon/src/lib/artifacts/read-operations.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
@@ -37,7 +37,7 @@ async function call(name: string, input: unknown, catalog = registry) {
 }
 const expected = readFileSync(join(root, 'workspace', 'report.md'));
 const upgrade = { accepted: false, reason: 'client_upgrade_required', detail: 'This client uses retired local snapshot previews. Update HyperNeo and reopen the file from its message to read the current file.' };
-const receipt = await createArtifactRegistration(() => db, data, join(root, 'home')).execute({ requestId: 'legacy', context: { kind: 'todo', id: 'todo' }, path: 'report.md', title: 'Previously saved report' }, human) as { accepted: boolean; artifact: { artifactId: string } };
+const receipt = await legacyAttachmentFixture(() => db, data, join(root, 'home')).execute({ requestId: 'legacy', context: { kind: 'todo', id: 'todo' }, path: 'report.md', title: 'Previously saved report' }, human) as { accepted: boolean; artifact: { artifactId: string } };
 assert.deepEqual(await call('artifact.reference.resolve', request), upgrade);
 assert(receipt.accepted); assert(!JSON.stringify(receipt).includes(root));
 const id = { artifactId: receipt.artifact.artifactId };
@@ -93,16 +93,6 @@ sessions.recordRef('todo', { adapter: 'hyperneo', id: 'remote-worker', daemon: '
 db.prepare(`UPDATE neo_todos SET evidence = 'report.md' WHERE id='todo'`).run();
 assert.equal((await call('artifact.reference.resolve', { ...request, sourceMessageOrCard: { kind: 'todo', id: 'todo' } })).reason, 'owning_daemon_unavailable');
 sessions.recordRef('todo', { adapter: 'hyperneo', id: 'worker' });
-const actual = createArtifactRegistration(() => db, data, join(root, 'home'));
-const changing = createOperationRegistry([createArtifactReferenceResolve(() => db, data, join(root, 'home'), async (input, caller) => {
-  const result = await actual.execute(input, caller);
-  db.prepare(`UPDATE sdk_message_bodies SET sdk_message = ? WHERE seq = (SELECT rowid FROM sdk_messages WHERE id='source')`).run(payload('Reference removed during capture'));
-  return result;
-})]);
-const beforeChange = count();
-assert.deepEqual(await call('artifact.reference.resolve', { ...selected, requestId: randomUUID() }, changing), upgrade);
-assert.equal(count(), beforeChange);
-db.prepare(`UPDATE sdk_message_bodies SET sdk_message = ? WHERE seq = (SELECT rowid FROM sdk_messages WHERE id='source')`).run(payload('Read `report.md`.'));
 sessions.recordRef('todo', { adapter: 'hyperneo', id: 'replacement' });
 sessions.recordRef('other', { adapter: 'hyperneo', id: 'replacement' });
 assert.deepEqual(await call('artifact.reference.resolve', selected), unavailable);

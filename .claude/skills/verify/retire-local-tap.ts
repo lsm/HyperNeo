@@ -1,3 +1,4 @@
+import { legacyAttachmentFixture } from './legacy-attachment-fixture.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, readdirSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -26,7 +27,7 @@ try {
   await app.jobProcessor.stop();
   await transport.initialize();
   const call = <T = Record<string, unknown>>(name: string, input: unknown) => hub.request<T>('operation.invoke', { name, input });
-  const saved = await call<{ accepted: boolean; artifact: { artifactId: string } }>('artifact.file.register', { requestId: 'existing-attachment', context: { kind: 'todo', id: 'todo' }, path: 'report.md', title: 'Previously saved report' });
+  const saved = legacyAttachmentFixture(() => app.db.getDatabase(), join(run, 'data'), join(run, 'home')).execute( { requestId: 'existing-attachment', context: { kind: 'todo', id: 'todo' }, path: 'report.md', title: 'Previously saved report' });
   assert(saved.accepted);
   const db = app.db.getDatabase();
   const rows = () => db.prepare('SELECT * FROM artifact_files ORDER BY artifact_id').all();

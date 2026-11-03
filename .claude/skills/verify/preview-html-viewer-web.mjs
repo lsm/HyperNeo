@@ -27,12 +27,13 @@ if (phase === 'seed') {
  writeFileSync(join(run, 'workspace', 'deep.html'), '<div>'.repeat(520) + 'Deep source' + '</div>'.repeat(520));
  console.log('seeded synthetic hostile HTML and source-only document'); process.exit(0);
 }
+const historical = (input) => JSON.parse(execFileSync('bun', [join(verify, 'legacy-attachment-fixture.ts'), run, JSON.stringify(input)], { env: { HOME: join(run, 'home'), NODE_ENV: 'test', HYPERNEO_DATA_DIR: join(run, 'data'), TMPDIR: run, PATH: process.env.PATH }, encoding: 'utf8' }));
 const rpc = (name, input) => {
  const out = execFileSync('bun', [join(verify, 'rpc.ts'), name, JSON.stringify(input)], { env: { ...process.env, VERIFY_PORT: port }, encoding: 'utf8' });
  const reply = JSON.parse(out).reply; assert(!reply.error, out); return reply.value ?? reply;
 };
 const register = (path) => {
- const result = rpc('artifact.file.register', { requestId: `html-viewer-${path}`, context: { kind: 'todo', id: 'todo' }, path, title: path === 'hostile.html' ? 'Static layout report' : 'Deep HTML source' });
+ const result = historical({ requestId: `html-viewer-${path}`, context: { kind: 'todo', id: 'todo' }, path, title: path === 'hostile.html' ? 'Static layout report' : 'Deep HTML source' });
  assert(result.accepted, JSON.stringify(result)); return result.artifact.artifactId;
 };
 if (phase === 'prepare') {

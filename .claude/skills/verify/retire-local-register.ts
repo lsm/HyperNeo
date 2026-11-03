@@ -25,9 +25,11 @@ try {
   writeFileSync(input.path, '# Current A\n');
   const before = app.db.getDatabase().prepare('SELECT COUNT(*) AS n FROM artifact_files').get();
   assert(!registry.entries.some((op) => op.name === 'artifact.file.register'));
-  const reply = await hub.request<{ kind: string; code: string }>('operation.invoke', { name: 'artifact.file.register', input });
-  assert.equal(reply.kind, 'failed');
-  assert.equal(reply.code, 'unknown_operation');
+  await assert.rejects(hub.request('operation.invoke', { name: 'artifact.file.register', input }), (error: unknown) => {
+    assert.equal((error as { code: string }).code, 'METHOD_NOT_FOUND');
+    assert.match(String(error), /Unknown operation: artifact.file.register/);
+    return true;
+  });
   const mcp = createOperationMcpHandler(() => registry, () => ({ sessionId: 'synthetic', role: 'neo' }));
   const result = await mcp({ name: 'artifact.file.register', input });
   assert(result.isError);
