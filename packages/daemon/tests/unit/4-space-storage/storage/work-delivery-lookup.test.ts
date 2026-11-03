@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { WorkDeliveryInputRepository } from '../../../../src/storage/repositories/work-delivery-input-repository.ts';
@@ -13,7 +14,19 @@ test('worker delivery history uses a bounded lookup without changing identity or
   try {
     runMigrations(db, () => {});
     createTables(db);
+    db.exec(`DROP INDEX IF EXISTS idx_work_delivery_inputs_ref;
+      DELETE FROM migration_markers WHERE key='migration_469'`);
     seedWorkDeliveryFixture(db);
+    const retained = () =>
+      createHash('sha256')
+        .update(
+          JSON.stringify(db.prepare('SELECT * FROM work_delivery_inputs ORDER BY rowid').all())
+        )
+        .digest('hex');
+    const original = retained();
+    runMigrations(db, () => {});
+    runMigrations(db, () => {});
+    expect(retained()).toBe(original);
     const statements: string[] = [];
     const observed = new Proxy(db, {
       get(target, key) {
