@@ -17,8 +17,8 @@ RUN=$(mktemp -d "${TMPDIR:-/tmp}/hyperneo-verify.XXXXXX") && rmdir "$RUN"
 
 Checks: the daemon lists `space`; the unmodified page shows the Spaces home and
 tab and loads the Space chunk; with `space` removed, `/spaces` lands on
-`/sessions`, there is no Spaces tab at 1280 or 390 px, ⌘K `>go to` lists sessions
+`/sessions`, there is no Spaces tab at 1280 or 390 px (the desktop sidebar shows a plain Chats label instead of a one-slot switcher), ⌘K `>go to` lists sessions
 but not spaces, no `space-web-extension`/`SpaceIsland` chunk is requested, and
 no page errors. Evidence: `$RUN/evidence/web-extension-space-gate.json`,
-`no-space-desktop.png`, `no-space-phone.png`. Also rerun
+`no-space-sidebar.png`, `no-space-desktop.png`, `no-space-phone.png`. Also rerun
 `web-extension-space-surfaces.md` for the Space-on path.

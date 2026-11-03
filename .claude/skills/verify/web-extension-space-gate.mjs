@@ -61,8 +61,10 @@ try {
 
   const desktop = await open(true, 1280);
   await desktop.page.waitForURL(/\/sessions$/);
-  await desktop.page.getByRole('tab', { name: 'Chats', exact: true }).waitFor();
+  await desktop.page.getByRole('button', { name: 'Chats', exact: true }).first().waitFor();
+  assert.equal(await desktop.page.getByText('Spaces', { exact: true }).count(), 0);
   assert.equal(await desktop.page.getByRole('tab', { name: 'Spaces', exact: true }).count(), 0);
+  await desktop.page.screenshot({ path: `${run}/evidence/no-space-sidebar.png`, clip: { x: 0, y: 0, width: 400, height: 200 }, animations: 'disabled' });
   await desktop.page.keyboard.press('Meta+k');
   const input = desktop.page.getByTestId('command-palette-input');
   await input.fill('>go to');

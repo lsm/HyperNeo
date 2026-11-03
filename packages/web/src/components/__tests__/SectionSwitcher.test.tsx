@@ -16,7 +16,8 @@ describe('SectionSwitcher', () => {
   it('hides Spaces when the daemon does not provide Space', () => {
     registerWebExtension('space', null);
     render(<SectionSwitcher />);
-    expect(screen.getByRole('tab', { name: 'Chats' })).toBeTruthy();
-    expect(screen.queryByRole('tab', { name: 'Spaces' })).toBeNull();
+    expect(screen.queryByRole('tablist')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Chats' })).toBeTruthy();
+    expect(screen.queryByText('Spaces')).toBeNull();
   });
 });
