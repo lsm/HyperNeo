@@ -116,10 +116,13 @@ try{
  const visible=await page();assert(visible.ok);assert.equal(visible.items.length,1);
  assert(visible.items[0].fullText.includes(url)&&visible.items[0].fullText.includes('manual merge'));
  assert.equal(ledger.list()[0].state,'waiting_human');
+ const settledReadCount=readFileSync(join(run,'evidence/gh.jsonl'),'utf8').trim().split('\n').filter(Boolean).length,settledStateSince=ledger.list()[0].stateSince;
  await runSweep();assert.equal((await page()).items.length,1);assert.equal(humanNotices.length,1);
+ if(humanWaiting||humanSibling)assert.equal(ledger.list()[0].stateSince,settledStateSince,'A settled handoff must not flap through reconcile');else assert.equal(readFileSync(join(run,'evidence/gh.jsonl'),'utf8').trim().split('\n').filter(Boolean).length,settledReadCount,'Settled handoffs must make no more GitHub calls');
  const conflicting=await publishCodingHumanMerge({conversation:()=>conversation,append:input=>app!.db.gateway.call(neoPublicationWrites,'append',input),notify:()=>{throw new Error('A conflicting notice must not notify again');}},`coding-no-checks:${url}:${head}`,'Changed wording for the same already-delivered handoff');
  assert.equal(conflicting,false);assert.deepEqual((await page()).items,visible.items);
  await makePack().sweep!(tick+=61_000);assert.deepEqual((await page()).items,visible.items);assert.equal(humanNotices.length,1);evidence.wordingConflictPreservesDeliveredNotice=true;
+ assert.equal(readFileSync(join(run,'evidence/gh.jsonl'),'utf8').trim().split('\n').filter(Boolean).length,settledReadCount);evidence.settledHandoffNoGithubReads=true;evidence.stableHumanStateSince=true;
  assert.deepEqual(await rpc('pack.preferences.list',{}),preferences);
  assert((await rpc('pack.preferences.set',{pack:'coding',scope:{kind:'global',key:''},key:'allowNoChecksMerge',value:true})).ok);
  await runSweep();assert.equal(mergeCalls().length,0,'A global opt-in must not authorize this repo');
