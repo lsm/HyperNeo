@@ -132,6 +132,7 @@ const DEVICE_OPERATIONS: Record<'relay' | 'daemon', ReadonlySet<string>> = {
 
 function isDeviceAdmitted(operation: OperationDefinition, caller: OperationCaller): boolean {
   const kind = caller.device?.kind;
+  if (caller.source === 'rpc' && caller.clientId !== undefined && !kind) return false;
   return !kind || kind === 'human' || DEVICE_OPERATIONS[kind].has(operation.name);
 }
 

@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import {mkdirSync,writeFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
@@ -62,7 +63,7 @@ try{
  const truncatedPublish=await invoke('neo.publication.publish',{...draft,requestId:crypto.randomUUID(),session:'truncated'});assert.equal(truncatedPublish.reason,'session_lookup_failed');assert.deepEqual(app.db.getDatabase().prepare('SELECT COUNT(*) AS n FROM neo_publications').get(),beforeTruncated);
  const unavailable=await invoke('neo.publication.publish',{...draft,requestId:crypto.randomUUID(),session:'codex-desktop:unavailable'});assert.equal(unavailable.reason,'session_lookup_failed');
  const edited=await invoke('neo.publication.edit',{requestId:crypto.randomUUID(),publicationId:first.publication.publicationId,fullText:'Edited report'});assert(edited.accepted);assert.equal(edited.publication.sessionSource.adapter,'codex-desktop');
- ws=new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);await new Promise((resolve,reject)=>{ws!.onopen=resolve;ws!.onerror=reject;});
+ ws=createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);await new Promise((resolve,reject)=>{ws!.onopen=resolve;ws!.onerror=reject;});
  const rpc=(name:string,input:unknown)=>new Promise<Record<string,unknown>>((resolve,reject)=>{
   const id=crypto.randomUUID(),timeout=setTimeout(()=>reject(new Error('RPC timeout')),10000);
   ws!.onmessage=event=>{const response=JSON.parse(String(event.data));if((response.requestId??response.id)!==id)return;clearTimeout(timeout);response.error?reject(new Error(JSON.stringify(response.error))):resolve(response.data.value??response.data);};

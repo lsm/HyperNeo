@@ -98,8 +98,10 @@ if [ "$READY" != "1" ]; then
 fi
 echo "[deno-smoke] HTTP GET / -> 200"
 
-if ! SMOKE_WS_URL="ws://localhost:$PORT/ws" deno eval '
-	const ws = new WebSocket(Deno.env.get("SMOKE_WS_URL"));
+if ! SMOKE_CREDENTIAL_FILE="$WORK_DIR/data/local-rpc.credential" SMOKE_WS_URL="ws://localhost:$PORT/ws" deno eval --config "$REPO_ROOT/packages/daemon/deno.json" '
+	const { default: WebSocket } = await import("npm:ws@8.21.3");
+	const credential = (await Deno.readTextFile(Deno.env.get("SMOKE_CREDENTIAL_FILE"))).trim();
+	const ws = new WebSocket(Deno.env.get("SMOKE_WS_URL"), { headers: { authorization: `Bearer ${credential}` } });
 	const timer = setTimeout(() => {
 		console.error("[deno-smoke] FAIL: /ws handshake timed out");
 		Deno.exit(1);
@@ -154,8 +156,10 @@ if ! SMOKE_WS_URL="ws://localhost:$PORT/ws" deno eval '
 	exit 1
 fi
 
-if ! SMOKE_WS_URL="ws://localhost:$PORT/ws" SMOKE_WORKSPACE_PATH="$WORK_DIR" deno eval '
-	const ws = new WebSocket(Deno.env.get("SMOKE_WS_URL"));
+if ! SMOKE_CREDENTIAL_FILE="$WORK_DIR/data/local-rpc.credential" SMOKE_WS_URL="ws://localhost:$PORT/ws" SMOKE_WORKSPACE_PATH="$WORK_DIR" deno eval --config "$REPO_ROOT/packages/daemon/deno.json" '
+	const { default: WebSocket } = await import("npm:ws@8.21.3");
+	const credential = (await Deno.readTextFile(Deno.env.get("SMOKE_CREDENTIAL_FILE"))).trim();
+	const ws = new WebSocket(Deno.env.get("SMOKE_WS_URL"), { headers: { authorization: `Bearer ${credential}` } });
 	const timer = setTimeout(() => { console.error("SDK status reader RPC timed out"); Deno.exit(1); }, 15000);
 	let sessionId, liveSnapshot = false;
 	const send = (id, method, data) => ws.send(JSON.stringify({ id, method, data, type:"REQ", sessionId:"global", version:"1.0.0", timestamp:new Date().toISOString() }));
@@ -238,7 +242,7 @@ DAEMON_PID=""
 # Repository fixtures own the migrated DB only after the daemon writer has exited.
 echo "[deno-smoke] daemon stopped; running isolated database fixtures"
 
-if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_READER_PATH="$REPO_ROOT/packages/daemon/src/storage/sdk-status-reader.ts" deno eval --config "$REPO_ROOT/packages/daemon/deno.json" '
+if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_READER_PATH="$REPO_ROOT/packages/daemon/src/storage/sdk-status-reader.ts" deno eval '
   const { SDKStatusReader } = await import("file://" + Deno.env.get("SMOKE_READER_PATH"));
   const { DatabaseSync } = await import("node:sqlite");
   const db = new DatabaseSync(Deno.env.get("SMOKE_DB_PATH"));
@@ -268,7 +272,7 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_READER_PATH="$REPO_ROOT/packages/daemon/src/
   } finally { await reader.close(); }
 '; then dump_log; exit 1; fi
 
-if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno eval --config "$REPO_ROOT/packages/daemon/deno.json" '
+if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno eval '
   const src = "file://" + Deno.env.get("SMOKE_SRC");
   const { DbGateway } = await import(src + "/storage/db-gateway/db-gateway.ts");
   const { recordWouldRefuse } = await import(src + "/storage/repositories/device-pairing-repository.ts");
@@ -290,7 +294,7 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
   exit 1
 fi
 
-if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno eval --config "$REPO_ROOT/packages/daemon/deno.json" '
+if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno eval '
   const src = "file://" + Deno.env.get("SMOKE_SRC");
   const { DbGateway } = await import(src + "/storage/db-gateway/db-gateway.ts");
   const { ingestSessionEvent } = await import(src + "/lib/external-events/session-external-event-store.ts");
@@ -385,7 +389,7 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno ev
   exit 1
 fi
 
-if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno eval --config "$REPO_ROOT/packages/daemon/deno.json" '
+if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno eval '
   const src = Deno.env.get("SMOKE_SRC"), path = Deno.env.get("SMOKE_DB_PATH");
   const { Database } = await import(src + "/storage/sqlite-compat.ts");
   const { DbGateway } = await import(src + "/storage/db-gateway/db-gateway.ts");

@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -24,7 +25,7 @@ let app:Awaited<ReturnType<typeof createDaemonApp>>|undefined,transport:WebSocke
 const evidence:Record<string,unknown>={verified:false,executorActivated:false,mainSql:0};
 try{
  app=await createDaemonApp({config,verbose:false});await app.spaceRuntimeService.ready();await app.jobProcessor.stop();assert.notEqual(app.server.port,8399);
- const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`});hub.registerTransport(transport);await transport.connect();
+ const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({ createSocket: createLocalSocket,url:`ws://127.0.0.1:${app.server.port}/ws`});hub.registerTransport(transport);await transport.connect();
  const rpc=(name:string,input:unknown)=>hub.request<{ok:boolean}>('operation.invoke',{name,input});
  for(const[key,value]of Object.entries({mergeBy:'daemon',mergePolicy:'review_bot',reviewBot:'fixture-bot',humanSignoff:['label:human-merge']}))assert((await rpc('pack.preferences.set',{pack:'coding',scope:{kind:'repo',key:'synthetic/merge'},key,value})).ok);
  const db=app.db.getDatabase(),ledger=new CodingPrLedgerRepository(db),policy=ledger.policy('synthetic/merge');

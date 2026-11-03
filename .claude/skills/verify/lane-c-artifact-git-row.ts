@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, statSync, writeFileSync, readFileSync } from 'node:fs';
@@ -53,7 +54,7 @@ sys.stderr.write('Refused non-fixture gh call');sys.exit(1)
  const ask={id:'synthetic-git-ask',sessionId:'synthetic-neo',projectId:null,originMessageId:null,title:'Synthetic Git row',request:'Synthetic proof only',createdAt:Date.now()},work=new NeoAskTodoRepository(main);work.openAsk(ask);work.addTodo('synthetic-git-todo',ask.id,{title:'Synthetic document',doneWhen:'',instruction:null,check:null,named:null},Date.now());
  const reference=`https://github.com/synthetic/fixture/blob/${sha}/report.md`,setSource=(text:string)=>main!.prepare('UPDATE neo_todos SET evidence=? WHERE id=?').run(text,'synthetic-git-todo');setSource(reference);main.prepare('UPDATE neo_todos SET repo=? WHERE id=?').run('github.com/synthetic/fixture','synthetic-git-todo');
  const input={requestId:crypto.randomUUID(),sourceMessageOrCard:{kind:'todo' as const,id:'synthetic-git-todo'},reference};
- const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();
+ const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({createSocket: createLocalSocket, url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();
  type Reply={accepted:true;artifact:ArtifactRef}|{accepted:false;reason:string};
  const invoke=(value=input)=>hub.request<Reply>('operation.invoke',{name:'artifact.reference.resolve',input:value});
  const count=()=>Number(main!.prepare('SELECT COUNT(*) AS n FROM artifact_files').get()!.n);const retained=(request:string)=>main!.prepare('SELECT receipt FROM artifact_files WHERE request_id=?').get('git:'+request)?.receipt as string|undefined;

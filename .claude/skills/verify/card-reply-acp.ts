@@ -1,3 +1,4 @@
+import { createLocalSocket } from "../../../packages/daemon/src/lib/pairing/local-credential.ts";
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -24,7 +25,7 @@ const app = await createDaemonApp({
   config: { ...getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), disableWorktrees: true, disableGoalProcessing: true }, verbose: false,
 });
 const hub = new MessageHub({ defaultSessionId: 'global' });
-const transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
+const transport = new WebSocketClientTransport({ createSocket: createLocalSocket, url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
 hub.registerTransport(transport);
 const evidence: Record<string, unknown> = {};
 async function until(check: () => boolean | Promise<boolean>, label: string) {

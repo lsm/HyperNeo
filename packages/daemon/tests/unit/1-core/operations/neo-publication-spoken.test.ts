@@ -113,7 +113,12 @@ describe('publication speech follows the committed version', () => {
           registry,
           'neo.speech.listen',
           { sessionId, enabled },
-          { source: 'rpc', principal: 'local', clientId }
+          {
+            source: 'rpc',
+            principal: 'local',
+            clientId,
+            device: { deviceId: `synthetic-${clientId}`, kind: 'human' },
+          }
         )
       ).toMatchObject({ kind: 'completed', value: { ok: true } });
     };

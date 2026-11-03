@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -38,7 +39,7 @@ try{
   assert.notEqual(app.server.port,8399);await Promise.all([...processors].map(p=>p.stop()));main=app.db.getDatabase();await waitForSdkBodyCopy(main);assert(manager);
   const now=Date.now();main.prepare('INSERT INTO spaces(id,slug,workspace_path,name,created_at,updated_at)VALUES(?,?,?,?,?,?)').run(spaceId,'synthetic-source-enabled',join(run,'workspace'),'Synthetic source',now,now);
   const store=new ExternalEventExtensionConfigStore(main);await store.setGlobalConfig(source,{source,globallyEnabled:false,capabilities:{rpcConfig:true,polling:false,webhooks:false}});
-  const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();assert.deepEqual(await hub.request('externalEvents.extensions.setGlobalEnabled',{source,enabled:true}),{source,globallyEnabled:true});
+  const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({createSocket: createLocalSocket, url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();assert.deepEqual(await hub.request('externalEvents.extensions.setGlobalEnabled',{source,enabled:true}),{source,globallyEnabled:true});
   for(const repo of ['repo-one','repo-two'])await hub.request('space.github.watchRepo',{spaceId,owner:'synthetic-owner',repo,enabled:false,pollingEnabled:false,webhookEnabled:false});
   const created=new Map((main.prepare('SELECT id,created_at FROM space_github_watched_repos WHERE space_id=?').all(spaceId) as {id:string;created_at:number}[]).map(row=>[row.id,row.created_at]));
   Database.prototype.prepare=function(sql,...rest){const db=this,statement=Reflect.apply(original.prepare,this,[sql,...rest]);if(!/INSERT INTO space_github_source_settings|UPDATE space_github_watched_repos SET enabled/i.test(sql))return statement;return new Proxy(statement,{get(target,key){const value=Reflect.get(target,key);if(typeof value!=='function')return value;return(...args:unknown[])=>{if(measuring&&db===main&&key==='run')bindings.push(args);return Reflect.apply(value,target,args);};}});};

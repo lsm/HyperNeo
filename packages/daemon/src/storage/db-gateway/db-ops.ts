@@ -66,6 +66,7 @@ import { codingSweepReads, codingSweepWrites } from '../../lib/neo/packs/coding/
 import { codingTodoPrWrites } from '../../lib/neo/packs/coding/todo-prs.ts';
 import { codingDeliveryWrites } from '../../lib/neo/packs/coding/delivery-facts.ts';
 import {
+  enrollLocalDevice,
   recordUnpaired,
   recordWouldRefuse,
   touchDevice,
@@ -217,6 +218,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     neoWakeQueueWrite,
     ...SDK_MESSAGE_TRANSACTIONS,
     recordWouldRefuse,
+    enrollLocalDevice,
     touchDevice,
     recordUnpaired,
     jobQueueWrites,

@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { createPollingGitFixture } from './github-poll-git.ts';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -52,7 +53,7 @@ try {
   if(repo==='conditional')db.prepare('UPDATE space_github_watched_repos SET poll_cursor=? WHERE id=?').run(JSON.stringify({lastSeenAt:when-3600_000,etags:{issue_comments:'"fixture"',review_comments:'"fixture"',pulls:'"fixture"'},recentPullRequestNumbers:[7],recentPullRequestHeadShas:{7:'a'.repeat(40)}}),row.id);
  }
  await new ExternalEventExtensionConfigStore(db).setGlobalConfig('github',{source:'github',globallyEnabled:true,capabilities:{polling:true,rpcConfig:true}});
- ws=new WebSocket('ws://127.0.0.1:'+app.server.port+'/ws');
+ ws=createLocalSocket('ws://127.0.0.1:'+app.server.port+'/ws');
  await new Promise<void>((done,fail)=>{ws!.onopen=()=>done();ws!.onerror=()=>fail(new Error('RPC unavailable'));});
  const poll=()=>new Promise<unknown>((done,fail)=>{
   const id=crypto.randomUUID(),timer=setTimeout(()=>fail(new Error('RPC deadline')),30000);

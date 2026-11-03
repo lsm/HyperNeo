@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -21,7 +22,7 @@ const network=globalThis.fetch;
 globalThis.fetch=(()=>{throw new Error('External HTTP disabled');}) as typeof fetch;
 const app=await createDaemonApp({config:getConfig({port:0,host:'127.0.0.1',dbPath:join(run,'data/daemon.db')}),verbose:false});
 assert.notEqual(app.server.port,8399);
-const hub=new MessageHub({defaultSessionId:'global'}), transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`});
+const hub=new MessageHub({defaultSessionId:'global'}), transport=new WebSocketClientTransport({ createSocket: createLocalSocket,url:`ws://127.0.0.1:${app.server.port}/ws`});
 hub.registerTransport(transport);
 const db=app.db.getDatabase(),store=new NeoAskTodoRepository(db),sessions=new NeoTodoSessionRepository(db);
 const prepare=db.prepare.bind(db),replay=app.db.gateway.onChanges;

@@ -192,7 +192,12 @@ describe('Daemon app mailbox registration', () => {
       app!.sessionManager.getOperationRegistry(),
       'neo.speech.listen',
       { sessionId: 'neo:root', enabled },
-      { source: 'rpc', principal: 'local', clientId }
+      {
+        source: 'rpc',
+        principal: 'local',
+        clientId,
+        device: { deviceId: `synthetic-${clientId}`, kind: 'human' },
+      }
     );
     expect(result).toMatchObject({ kind: 'completed', value: { ok: true } });
   }

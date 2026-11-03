@@ -8,7 +8,7 @@ assert(port && run && port !== '8399');
 const log = readFileSync(`${run}/daemon.log`, 'utf8');
 assert(log.includes('HyperNeo Test Server') && log.includes(`Database: ${run}/`));
 const listed = JSON.parse(execFileSync('bun', ['.claude/skills/verify/rpc.ts', 'daemon.extensions'], {
-  env: { ...process.env, VERIFY_PORT: port }, encoding: 'utf8',
+  env: { ...process.env, HYPERNEO_DATA_DIR: `${run}/data`, VERIFY_PORT: port }, encoding: 'utf8',
 })).reply;
 assert(listed.extensions.some((extension) => extension.id === 'space'), JSON.stringify(listed));
 const evidence = { head: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), daemonExtensions: listed, runs: {} };
@@ -17,6 +17,7 @@ const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_B
 
 async function open(withoutSpace, width) {
   const page = await browser.newPage({ viewport: { width, height: 900 }, locale: 'en-US' });
+  await page.context().addCookies([{ name: 'hyperneo_device', value: readFileSync(`${run}/data/local-rpc.credential`, 'utf8'), url: `http://127.0.0.1:${port}`, httpOnly: true, sameSite: 'Strict' }]);
   const errors = [];
   const spaceChunks = [];
   page.on('pageerror', (error) => errors.push(String(error)));

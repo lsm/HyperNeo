@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -62,7 +63,7 @@ try{
  const setSource=(value:string)=>main!.prepare('UPDATE neo_todos SET evidence=? WHERE id=?').run(value,'synthetic-artifact-todo');setSource('Read `report.md`.');
  const source=join(run,'workspace/report.md');const text='# Synthetic reference snapshot\n';writeFileSync(source,text);
  const input={requestId:'11111111-1111-4111-8111-111111111111',sourceMessageOrCard:{kind:'todo' as const,id:'synthetic-artifact-todo'},reference:'report.md'};
- const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();
+ const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({ createSocket: createLocalSocket,url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();
  type Reply={accepted:true;artifact:{daemonId:string;artifactId:string;kind:string;byteLength:number}};
  const invoke=(value=input)=>hub.request<Reply>('operation.invoke',{name:'artifact.reference.resolve',input:value});
  const identity=()=>main!.prepare('SELECT daemon_id AS retained FROM artifact_file_identity').get()?.retained;

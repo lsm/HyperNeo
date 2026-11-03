@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -116,7 +117,7 @@ try {
   const door: Caller = { source: 'mcp', principal: 'session-door' };
   const revoke = (id: string, caller = human) => app!.db.gateway.run(command, { method: 'revoke', args: [id, caller, Date.now()] });
   const hub = new MessageHub({ defaultSessionId: 'global' });
-  const transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
+  const transport = new WebSocketClientTransport({createSocket: createLocalSocket,  url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
   transports.push(transport); hub.registerTransport(transport); await transport.initialize();
   let previous = performance.now(); let maxLoopLagMs = 0;
   timer = setInterval(() => { const now = performance.now(); maxLoopLagMs = Math.max(maxLoopLagMs, now - previous - 5); previous = now; }, 5);

@@ -1,3 +1,4 @@
+import { readLocalCredential } from '../packages/daemon/src/lib/pairing/local-credential.ts';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -71,13 +72,14 @@ function rpcCall(
   });
 }
 
-function connectWebSocket(url: string): Promise<WebSocket> {
+async function connectWebSocket(url: string): Promise<WebSocket> {
+  const credential = await readLocalCredential(join(workspace, 'data/local-rpc.credential'));
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(
       () => reject(new Error('WebSocket connection timed out')),
       RPC_TIMEOUT
     );
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(url, { headers: { authorization: `Bearer ${credential}` } });
     ws.addEventListener('open', () => {
       clearTimeout(timeout);
       resolve(ws);
@@ -118,7 +120,13 @@ log(`Workspace: ${workspace}`);
 
 const proc = spawn(binaryPath, ['--port', String(port)], {
   stdio: ['ignore', 'pipe', 'pipe'],
-  env: { ...process.env, NODE_ENV: 'production' },
+  env: {
+    PATH: process.env.PATH,
+    NODE_ENV: 'test',
+    HOME: join(workspace, 'home'),
+    HYPERNEO_DATA_DIR: join(workspace, 'data'),
+    DB_PATH: join(workspace, 'data/daemon.db'),
+  },
 });
 
 let serverOutput = '';

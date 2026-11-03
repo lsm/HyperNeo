@@ -1,6 +1,8 @@
 import { SESSION_CLI_USAGE } from './session-cli-commands.ts';
 import { request } from 'node:http';
+import { dirname, join } from 'node:path';
 import { sessionDoorPath } from '@hyperneo/daemon/lib/messaging/session-door';
+import { readLocalCredential } from '@hyperneo/daemon/lib/pairing/local-credential';
 import { WORKER_REPORT_KINDS } from '@hyperneo/shared/types/worker-report';
 
 type Env = Record<string, string | undefined>;
@@ -66,10 +68,16 @@ function planPairCommand(
   return { value: { name: 'device.pair.create', input } };
 }
 
-function post(socketPath: string, body: unknown): Promise<{ status: number; body: unknown }> {
+async function post(socketPath: string, body: unknown): Promise<{ status: number; body: unknown }> {
+  const credential = await readLocalCredential(join(dirname(socketPath), 'local-rpc.credential'));
   return new Promise((resolve, reject) => {
     const call = request(
-      { socketPath, path: '/', method: 'POST', headers: { 'content-type': 'application/json' } },
+      {
+        socketPath,
+        path: '/',
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${credential}` },
+      },
       (response) => {
         const chunks: Buffer[] = [];
         response.on('data', (chunk: Buffer) => chunks.push(chunk));

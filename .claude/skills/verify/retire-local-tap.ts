@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { legacyAttachmentFixture } from './legacy-attachment-fixture.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, readdirSync, writeFileSync, unlinkSync } from 'node:fs';
@@ -17,7 +18,7 @@ const seed = Bun.spawn([process.execPath, fileURLToPath(new URL('./preview-resol
 assert.equal(await seed.exited, 0, await new Response(seed.stdout).text());
 const app = await createDaemonApp({ config: { ...getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db') }), disableWorktrees: true }, verbose: false });
 const hub = new MessageHub({ defaultSessionId: 'global' });
-const transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
+const transport = new WebSocketClientTransport({createSocket: createLocalSocket,  url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
 hub.registerTransport(transport);
 const evidence: Record<string, unknown> = { port: app.server.port };
 const receipts: unknown[] = [];

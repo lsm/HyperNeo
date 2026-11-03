@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../src/lib/pairing/local-credential.ts';
 import { legacyAttachmentFixture } from '../../../../.claude/skills/verify/legacy-attachment-fixture.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
@@ -65,6 +66,7 @@ async function start() {
   assert.notEqual(app.server.port, 8399);
   hub = new MessageHub({ defaultSessionId: 'global' });
   transport = new WebSocketClientTransport({
+    createSocket: createLocalSocket,
     url: `ws://127.0.0.1:${app.server.port}/ws`,
     autoReconnect: false,
   });

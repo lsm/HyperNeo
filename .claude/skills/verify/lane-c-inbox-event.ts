@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -62,7 +63,7 @@ try{
  JobQueueProcessor.prototype.start=function(){processors.add(this);return start.call(this);};
  try{app=await createDaemonApp({config:{...getConfig({host:'127.0.0.1',port:0,dbPath:join(run,'data/daemon.db'),workspaceRoot:join(run,'workspace')}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});}finally{JobQueueProcessor.prototype.start=start;}
  assert.notEqual(app.server.port,8399);await Promise.all([...processors].map(p=>p.stop()));main=app.db.getDatabase();await waitForSdkBodyCopy(main);
- const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();
+ const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({ createSocket: createLocalSocket,url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();
  type Item=import('../../../packages/shared/src/mod.ts').InboxItem;
  const repo=new InboxItemRepository(main);const notices:Item[]=[];let eventErrors=0;
  unsubscribe.push(app.internalEventBus.subscribe('github.inboxItemAdded',data=>{const item=data.item as Item;assert.deepEqual(repo.listItems().find(row=>row.id===item.id),item);notices.push(item);},{subscriberName:'synthetic-inbox-committed'}));

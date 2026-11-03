@@ -9,7 +9,7 @@ const log = readFileSync(`${run}/daemon.log`, 'utf8');
 assert(log.includes('HyperNeo Test Server') && log.includes(`Database: ${run}/`));
 function rpc(name, input = {}) {
   const result = JSON.parse(execFileSync('bun', ['.claude/skills/verify/rpc.ts', name, JSON.stringify(input)], {
-    env: { ...process.env, VERIFY_PORT: port }, encoding: 'utf8',
+    env: { ...process.env, HYPERNEO_DATA_DIR: `${run}/data`, VERIFY_PORT: port }, encoding: 'utf8',
   })).reply;
   assert(!result.error, JSON.stringify(result));
   return result;
@@ -22,6 +22,7 @@ const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, locale: 'en-US' });
+  await page.context().addCookies([{ name: 'hyperneo_device', value: readFileSync(`${run}/data/local-rpc.credential`, 'utf8'), url: `http://127.0.0.1:${port}`, httpOnly: true, sameSite: 'Strict' }]);
   const errors = [];
   page.on('pageerror', (error) => errors.push(String(error)));
 

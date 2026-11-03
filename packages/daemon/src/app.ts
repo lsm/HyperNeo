@@ -17,6 +17,7 @@ import { releaseFailedStartup } from './lib/startup-cleanup.ts';
 import { createPairRoute } from './lib/pairing/pair-route.ts';
 import { createRequestGuard } from './lib/pairing/origin-host.ts';
 import { createUpgradeAuthenticator, type UpgradeIdentity } from './lib/pairing/upgrade-auth.ts';
+import { ensureLocalCredential } from './lib/pairing/local-credential.ts';
 import { daemonPairingLimiter } from './lib/pairing/pairing-limiter.ts';
 import { DevicePairingRepository } from './storage/repositories/device-pairing-repository.ts';
 import { Database } from './storage/database.ts';
@@ -1223,6 +1224,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       db: () => db.gateway,
       now: Date.now,
     });
+    if (process.env.NODE_ENV !== 'test' || process.env.HYPERNEO_DATA_DIR)
+      await ensureLocalCredential(db.gateway);
     const guardRequest = createRequestGuard({
       db: () => db.gateway,
       allowedHosts: () => settingsManager.getGlobalSettings().allowedHosts ?? [],
@@ -1300,9 +1303,17 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         }
 
         if (url.pathname === '/ws') {
+          const device = await authenticateUpgrade(req, client?.remoteAddress ?? null);
+          if (!device)
+            return new Response('Device pairing required', {
+              status: 401,
+              headers: { 'Cache-Control': 'no-store' },
+            });
+          if (req.headers.get('upgrade')?.toLowerCase() !== 'websocket')
+            return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
           const upgradeResponse = upgrade(req, {
             connectionSessionId: 'global',
-            device: await authenticateUpgrade(req, client?.remoteAddress ?? null),
+            device,
           });
 
           if (upgradeResponse) {
@@ -1545,12 +1556,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     sessionDoor =
       process.env.NODE_ENV === 'test' && !process.env.HYPERNEO_DATA_DIR
         ? null
-        : await startSessionDoor(() => sessionManager.getOperationRegistry()).catch(
-            (error: unknown) => {
-              logError('[Daemon] Session door not started:', error);
-              return null;
-            }
-          );
+        : await startSessionDoor(
+            () => sessionManager.getOperationRegistry(),
+            authenticateUpgrade
+          ).catch((error: unknown) => {
+            logError('[Daemon] Session door not started:', error);
+            return null;
+          });
     if (process.env.NODE_ENV !== 'test') {
       processWatchdog.start();
       logInfo('[Daemon] Process watchdog started');

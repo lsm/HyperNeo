@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile, unlink, rename, symlink, truncate } from 'node:fs/promises';
 import { existsSync, read } from 'node:fs';
@@ -66,7 +67,7 @@ try {
   const counts = () => [db.prepare('SELECT COUNT(*) AS n FROM artifact_files').get(), db.prepare('SELECT COUNT(*) AS n FROM artifact_file_identity').get()];
   const before = counts();
   assert.equal(existsSync(join(run, 'data/artifacts')), false);
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise((resolve, reject) => { ws!.onopen = resolve; ws!.onerror = reject; });
   type Result = { accepted: boolean; reason?: string; kind?: string; version?: string; data?: string; nextOffset?: number; byteLength?: number; complete?: boolean };
   const call = (input: object) => new Promise<Result>((resolve, reject) => {

@@ -64,6 +64,7 @@ async function startPairableDaemon() {
       const path = new URL(request.url).pathname;
       if (path === '/pair') return pair(request);
       const device = await authenticate(request, client?.remoteAddress ?? null);
+      if (!device) return new Response('Device pairing required', { status: 401 });
       return (
         upgrade(request, { connectionSessionId: 'global', device }) ??
         new Response('upgrade failed', { status: 500 })
@@ -139,7 +140,7 @@ describe('attaching a daemon with a pairing code', () => {
     ]);
   });
 
-  test('revoking the paired daemon closes its connection, and reconnecting is still served unpaired', async () => {
+  test('revoking the paired daemon closes its connection and refuses reconnecting', async () => {
     const made = remote.devices.createCode('daemon', null, true, Date.now());
     await attach({ code: made.code });
     expect(await daemons.invoke('b', 'work.status', {})).toEqual({ kind: 'daemon' });
@@ -150,7 +151,7 @@ describe('attaching a daemon with a pairing code', () => {
     while (remote.clientCount() > 0 && Date.now() < deadline)
       await new Promise((resolve) => setTimeout(resolve, 10));
     expect(remote.clientCount()).toBe(0);
-    expect(await daemons.invoke('b', 'work.status', {})).toEqual({ kind: null });
+    await expect(daemons.invoke('b', 'work.status', {})).rejects.toThrow();
   });
 
   test('a wrong code is refused and leaves nothing attached or stored', async () => {
@@ -164,9 +165,9 @@ describe('attaching a daemon with a pairing code', () => {
     });
   });
 
-  test('without a code the daemon attaches unpaired as before, and detaching forgets a credential', async () => {
+  test('without a credential connecting fails, and detaching forgets a paired credential', async () => {
     await attach({});
-    expect(await daemons.invoke('b', 'work.status', {})).toEqual({ kind: null });
+    await expect(daemons.invoke('b', 'work.status', {})).rejects.toThrow();
     const made = remote.devices.createCode('daemon', null, true, Date.now());
     await attach({ code: made.code });
     await invokeOperation(operations, 'daemon.detach', { daemonId: 'b' }, human);
