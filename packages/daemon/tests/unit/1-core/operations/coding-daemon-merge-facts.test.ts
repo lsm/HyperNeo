@@ -10,6 +10,7 @@ const url = 'https://github.com/synthetic/merge/pull/1',
   head = 'a'.repeat(40);
 let db: Database, fail: string, finalHead: string, labels: unknown, reviews: unknown;
 let files: { path: string }[], changedFiles: number;
+let completeFiles: string[] | undefined;
 let calls: string[][], state: string, mergeCommit: { oid: string } | null;
 let checksReply: { stdout: string; stderr: string; exit: number } | undefined;
 const spawn: SpawnFn = (args) => {
@@ -29,6 +30,12 @@ const spawn: SpawnFn = (args) => {
     };
   else if (args.some((a) => a.endsWith('/labels'))) value = labels;
   else if (args.some((a) => a.endsWith('/reviews'))) value = reviews;
+  else if (args.some((a) => a.includes('/files?')))
+    value = completeFiles
+      ? [completeFiles.slice(0, 100), completeFiles.slice(100)].map((page) =>
+          page.map((filename) => ({ filename }))
+        )
+      : [files.map((file) => ({ filename: file.path }))];
   else if (args[2] === 'checks')
     value = [{ name: 'Required', bucket: 'pass', link: url + '/checks' }];
   else
@@ -68,6 +75,7 @@ beforeEach(() => {
   finalHead = head;
   files = [{ path: 'src/app.ts' }];
   changedFiles = 1;
+  completeFiles = undefined;
   calls = [];
   labels = [[{ name: 'bug' }], [{ name: 'human-merge' }]];
   reviews = [
@@ -145,7 +153,7 @@ describe('readCodingDaemonMergeFacts', () => {
       else process.env.GH_HOST = configured;
     }
   });
-  test.each(['/labels', '/reviews', 'checks', 'graphql'])(
+  test.each(['/labels', '/reviews', '/files?', 'checks', 'graphql'])(
     'fails closed on an unreadable %s',
     async (part) => {
       fail = part;
@@ -186,6 +194,26 @@ describe('readCodingDaemonMergeFacts', () => {
       ok: true,
       files: null,
     });
+  });
+  test('reads every changed path when pr view truncates at 100 files', async () => {
+    completeFiles = Array.from({ length: 171 }, (_, i) => `src/file-${i}.ts`);
+    files = completeFiles.slice(0, 100).map((path) => ({ path }));
+    changedFiles = completeFiles.length;
+    expect(await readCodingDaemonMergeFacts(db, url, spawn)).toMatchObject({
+      ok: true,
+      files: completeFiles,
+    });
+    expect(calls.find((args) => args.some((arg) => arg.includes('/files?')))).toEqual([
+      'gh',
+      'api',
+      '--hostname',
+      'github.com',
+      '--paginate',
+      '--slurp',
+      'repos/synthetic/merge/pulls/1/files?per_page=100',
+      '--jq',
+      '[.[][] | .filename]',
+    ]);
   });
 });
 

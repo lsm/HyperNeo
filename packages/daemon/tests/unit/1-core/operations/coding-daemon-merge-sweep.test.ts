@@ -64,6 +64,10 @@ const spawn: SpawnFn = (args) => {
       },
     };
   else if (args.some((a) => a.endsWith('/labels'))) data = [labels.map((name) => ({ name }))];
+  else if (args.some((a) => a.includes('/files?')))
+    data = [files.slice(0, 100), files.slice(100)].map((page) =>
+      page.map((filename) => ({ filename }))
+    );
   else if (args.some((a) => a.endsWith('/reviews')))
     data = [
       [
@@ -87,7 +91,7 @@ const spawn: SpawnFn = (args) => {
       mergeStateStatus: 'CLEAN',
       author: { login: 'author' },
       changedFiles: files.length,
-      files: files.map((path) => ({ path })),
+      files: files.slice(0, 100).map((path) => ({ path })),
       labels: [],
       mergeCommit: state === 'MERGED' ? { oid: 'c'.repeat(40) } : null,
     };
@@ -175,6 +179,22 @@ afterEach(() => {
 });
 describe('daemon merge sweep behavior', () => {
   test.each([false, true])(
+    'complete 171-file scope holds only for a protected tail path=%s',
+    async (protectedTail) => {
+      files = Array.from({ length: 171 }, (_, i) => `src/file-${i}.ts`);
+      if (protectedTail) files[170] = 'docs/design/requires-signoff.md';
+      const run = sweep();
+      await run(10);
+      await run(11);
+      expect(merges()).toEqual(
+        protectedTail ? [] : [['gh', 'pr', 'merge', url, '--squash', '--match-head-commit', head]]
+      );
+      expect(
+        calls.some((args) => args.includes('repos/synthetic/merge/pulls/1/files?per_page=100'))
+      ).toBe(true);
+    }
+  );
+  test.each([false, true])(
     'daemon merges a zero-required-checks PR once with owner=%s',
     async (owned) => {
       if (owned)
@@ -260,7 +280,7 @@ describe('daemon merge sweep behavior', () => {
       expect(merges()).toHaveLength(1);
     }
   });
-  test.each(['/labels', '/reviews', 'checks', 'graphql', 'view', 'final'])(
+  test.each(['/labels', '/reviews', '/files?', 'checks', 'graphql', 'view', 'final'])(
     'does nothing when %s cannot be read',
     async (part) => {
       fail = part;
