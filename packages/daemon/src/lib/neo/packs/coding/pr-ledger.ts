@@ -1,4 +1,6 @@
 import { CODING_DAEMON_MERGE_MAX_ATTEMPTS } from './daemon-merge-attempt.ts';
+import { codingNoChecksNeedsHuman } from './daemon-merge-gates.ts';
+import { codingHumanHandoffs } from './human-merge-notice.ts';
 import { codingReviewOnHead } from './review.ts';
 import { codingLedgerPollReads } from './ledger-poll-db.ts';
 import { isRateLimitError } from '../../../session/rate-limit-detector.ts';
@@ -156,6 +158,7 @@ export function codingPrReplyAt(pr: Node): number | null {
 
 export interface CodingMergePolicy {
   provenance?: boolean;
+  allowNoChecksMerge?: boolean;
   mergeBy?: 'owner' | 'daemon';
   mergePolicy?: 'review_bot' | 'ci_only' | 'human';
   reviewBot?: string;
@@ -201,7 +204,11 @@ export function codingPrState(
     if (humanSignoff) return 'waiting_human';
     return readyCi ? 'approved_green' : 'approved_pending';
   }
-  return readyCi ? (humanSignoff ? 'waiting_human' : 'approved_green') : 'waiting_ci';
+  return readyCi
+    ? humanSignoff || (noCi && codingNoChecksNeedsHuman(policy, 0))
+      ? 'waiting_human'
+      : 'approved_green'
+    : 'waiting_ci';
 }
 
 export type CodingPrTransition = CodingLedgerRow & { from: CodingPrState };
@@ -515,7 +522,8 @@ export class CodingPrLedgerRepository {
 
   read(method: 'lastReads'): Promise<ReturnType<CodingPrLedgerRepository['lastReads']>>;
   read(method: 'list'): Promise<ReturnType<CodingPrLedgerRepository['list']>>;
-  read(method: 'lastReads' | 'list') {
+  read(method: 'humanHandoffs'): Promise<ReturnType<CodingPrLedgerRepository['humanHandoffs']>>;
+  read(method: 'lastReads' | 'list' | 'humanHandoffs') {
     return gatewayFor(this.db).call(codingLedgerReads, method);
   }
 
@@ -554,8 +562,22 @@ export class CodingPrLedgerRepository {
     }));
   }
 
+  holdForHuman(repo: string, number: number, head: string, at: number) {
+    this.db.run(
+      "UPDATE pack_coding_pr_ledger SET state='waiting_human', state_since=?, terminal_event_json=NULL WHERE repo=? AND number=? AND head=? AND state IN ('approved_green','approved_pending','waiting_ci') AND closed_at IS NULL",
+      at,
+      repo,
+      number,
+      head
+    );
+  }
+
+  humanHandoffs() {
+    return codingHumanHandoffs(this.db, this.list());
+  }
+
   policy(repo: string): CodingMergePolicy {
-    const read = (key: string) => {
+    const preference = (key: string) => {
       const scope = this.db
         .prepare(`SELECT scope_key FROM neo_pack_preferences
         WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?`)
@@ -565,9 +587,12 @@ export class CodingPrLedgerRepository {
         'coding',
         { kind: 'repo', key: scope?.scope_key ?? repo },
         key
-      )?.value;
+      );
     };
+    const read = (key: string) => preference(key)?.value;
+    const noChecks = preference('allowNoChecksMerge');
     return {
+      allowNoChecksMerge: noChecks?.scope.kind === 'repo' && noChecks.value === true,
       mergeBy: (read('mergeBy') ?? 'owner') as CodingMergePolicy['mergeBy'],
       provenance: read('provenance') as boolean | undefined,
       mergePolicy: read('mergePolicy') as CodingMergePolicy['mergePolicy'],
@@ -583,6 +608,17 @@ export class CodingPrLedgerRepository {
     observedAt = now
   ): CodingPrTransition[] {
     return this.db.transaction(() => {
+      const handedOff = this.humanHandoffs();
+      rows = rows.map((row) =>
+        ['approved_green', 'approved_pending', 'waiting_ci', 'waiting_human'].includes(row.state) &&
+        codingNoChecksNeedsHuman(this.policy(row.repo), 0) &&
+        handedOff.some(
+          (prior) =>
+            prior.repo === row.repo && prior.number === row.number && prior.head === row.head
+        )
+          ? { ...row, state: 'waiting_human' }
+          : row
+      );
       const before = new Map(
         (
           this.db
@@ -1018,6 +1054,7 @@ export async function reconcileCodingPrLedger(
 }
 
 type CodingLedgerWrite =
+  | 'holdForHuman'
   | 'daemonMerge'
   | 'acceptTerminalEvent'
   | 'acceptHealthNotice'
@@ -1038,6 +1075,7 @@ export const codingLedgerWrites = defineRepositoryOp<CodingPrLedgerRepository, C
   'write',
   CodingPrLedgerRepository,
   [
+    'holdForHuman',
     'daemonMerge',
     'acceptTerminalEvent',
     'acceptHealthNotice',
@@ -1059,5 +1097,5 @@ export const codingLedgerReads = defineRepositoryOp(
   'coding.ledger.read',
   'read',
   CodingPrLedgerRepository,
-  ['lastReads', 'list', 'readHealth', 'policyContext'] as const
+  ['lastReads', 'list', 'humanHandoffs', 'readHealth', 'policyContext'] as const
 );

@@ -25,6 +25,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.message.send',
   'neo.open',
   'neo.pack.read',
+  'neo.peer.accept',
   'neo.peer.invite',
   'neo.peer.list',
   'neo.peer.remove',

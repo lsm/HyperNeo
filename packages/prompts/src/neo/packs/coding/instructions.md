@@ -30,7 +30,7 @@ retry; all gates are checked again. Unreadable outcomes retain the receipt and C
 error without consuming the retry budget. The daemon stops after three confirmed
 failed attempts per head and tells Neo the last error; resolve it before manual action.
 Retry-limit reports remain pending until Neo accepts them, even if the PR closes
-or repository policy changes. Human policy and sign-off still require the human.
+or repository policy changes. Human policy and sign-off still require the human. With zero required checks and no configured review-bot gate, work is handed to the human for manual merge, including owner-execution repositories. Never ask workers to merge these PRs. Only the exact repository setting `allowNoChecksMerge:true` opts into zero-check merging; its default is false and global values do not authorize it. Human handoff notices are published directly and do not complete pr_merged checks.
 When the human wants to merge a PR themselves, call neo.coding.merge.human with
 its URL and enabled:true to add human-merge; use enabled:false if they change
 their mind. Never change saved

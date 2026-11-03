@@ -56,11 +56,11 @@ try {
   assert.equal((await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'repo', key: repo }, key: 'mergeBy', value: 'daemon' })).ok, true);
   assert.equal((await rpc('pack.preferences.get', { pack: 'coding', scope: { kind: 'repo', key: repo }, key: 'mergeBy' })).preference.value, 'daemon');
   const head = 'a'.repeat(40);
-  const facts = { ok: true as const, head, state: 'OPEN', draft: false, mergeable: 'MERGEABLE', requiredCi: { head, green: true }, threads: { head, unresolved: 0 }, reviews: [{ login: 'hyperneo-ai-test', head, state: 'APPROVED' }], files: ['src/app.ts'], labels: [] as string[] };
+  const facts = { ok: true as const, head, state: 'OPEN', draft: false, mergeable: 'MERGEABLE', requiredCi: { head, green: true, count: 1 }, threads: { head, unresolved: 0 }, reviews: [{ login: 'hyperneo-ai-test', head, state: 'APPROVED' }], files: ['src/app.ts'], labels: [] as string[] };
   const decisions = {
     unowned: pack.decideMerge(facts, ledger.policy(repo)),
     owner: pack.decideMerge(facts, { ...ledger.policy(repo), mergeBy: 'owner' }),
-    staleCi: pack.decideMerge({ ...facts, requiredCi: { head: 'b'.repeat(40), green: true } }, ledger.policy(repo)),
+    staleCi: pack.decideMerge({ ...facts, requiredCi: { head: 'b'.repeat(40), green: true, count: 1 } }, ledger.policy(repo)),
     unresolved: pack.decideMerge({ ...facts, threads: { head, unresolved: 1 } }, ledger.policy(repo)),
     unreadable: pack.decideMerge({ ok: false, reason: 'Synthetic GitHub read failure' }, ledger.policy(repo)),
     humanPolicy: pack.decideMerge(facts, { ...ledger.policy(repo), mergePolicy: 'human' }),

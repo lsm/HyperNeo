@@ -70,6 +70,7 @@ export function createCodingPack(deps: {
   const prSweepDeps: CodingSweepDeps = {
     tell: async (ref, key, text) =>
       deps.prSweepDeps.tell(ref, key, await notificationContext(text)),
+    human: async (key, text) => (await deps.prSweepDeps.human?.(key, text)) ?? false,
     wake: async (key, text) => deps.prSweepDeps.wake(key, await notificationContext(text)),
   };
   const mergeSweep = createCodingDaemonMergeSweep(
@@ -123,6 +124,17 @@ export function createCodingPack(deps: {
         type: { kind: 'boolean' },
         default: true,
         ask: 'Require author model and harness provenance and a different reviewer model? Until answered, this is on without saving a preference.',
+      },
+      allowNoChecksMerge: {
+        label: { en: 'Allow merging without checks', 'zh-Hans': '允许无检查合并' },
+        valueLabels: {
+          true: { en: 'Allow for this repository', 'zh-Hans': '允许本仓库' },
+          false: { en: 'Hand off to the human', 'zh-Hans': '交给人类合并' },
+        },
+        scope: 'repo',
+        type: { kind: 'boolean' },
+        default: false,
+        ask: 'Allow zero-required-check merges without a review bot in this repository? Only an explicit repository setting enables this; all other merge gates still apply.',
       },
       mergeBy: {
         label: { en: 'Merge executor', 'zh-Hans': '合并执行者' },
@@ -184,13 +196,13 @@ export function createCodingPack(deps: {
     observeSessions: (sessions, now) => deps.prLedger.write('observeSessions', sessions, now),
     sweep: async (now) => {
       await deps.prLedger.write('observeSessions', await readClaudeOwners(), now);
-      await deliverCodingPrEvents(deps.prEvents, [], prSweepDeps);
       const transitions = await reconcileCodingPrLedger(
         deps.prLedger,
         codingWatchedRepos(deps.database()) ?? deps.projectRepos(),
         deps.readLedgerRepo ?? readCodingLedgerRepo,
         now
       );
+      await mergeSweep(now);
       await deliverCodingPrEvents(deps.prEvents, transitions, prSweepDeps);
       await deliverCodingHealth(
         deps.prLedger,
@@ -200,7 +212,6 @@ export function createCodingPack(deps: {
       );
       await wakeCodingUnownedPrs(deps.prEvents, prSweepDeps.wake, now);
       await sweepCodingPrs(deps.prSweep, prSweepDeps, now);
-      await mergeSweep(now);
     },
     stats: async (now) => ({
       'ready to merge >1h': (await deps.prLedger.read('list')).filter(

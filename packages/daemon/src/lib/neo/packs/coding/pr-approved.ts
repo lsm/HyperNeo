@@ -1,3 +1,6 @@
+import { codingNoChecksNeedsHuman } from './daemon-merge-gates.ts';
+import { readCodingRequiredChecks } from './daemon-merge-facts.ts';
+import { spawnProcess } from '../../../runtime-spawn/index.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import type { NeoTodoCheckResult } from '../../pack-contract.ts';
@@ -57,16 +60,14 @@ const readHead = async (subject: Subject, run: LedgerQuotaRun): Promise<Gate<Hea
 const readDecision = async (
   head: Head,
   subject: Subject,
-  run: LedgerQuotaRun
+  run: LedgerQuotaRun,
+  checksRead: (url: string) => ReturnType<LedgerQuotaRun>
 ): Promise<Gate<Head>> => {
   if (subject.policy.mergePolicy === 'ci_only') {
-    const result = await run(
-      ['gh', 'pr', 'checks', subject.url, '--required', '--json', 'bucket,name,link'],
-      'graphql'
-    );
+    const result = await checksRead(subject.url);
     const checks = schema.Checks.safeParse(result.ok ? result.data : null);
     return checks.success &&
-      checks.data.length > 0 &&
+      !codingNoChecksNeedsHuman(subject.policy, checks.data.length) &&
       checks.data.every((check) => check.bucket === 'pass')
       ? { value: head }
       : pending();
@@ -99,16 +100,17 @@ const confirm = async (
   return 'value' in current &&
     current.value.headRefOid === head.headRefOid &&
     policy.mergePolicy === subject.policy.mergePolicy &&
-    policy.reviewBot === subject.policy.reviewBot
+    policy.reviewBot === subject.policy.reviewBot &&
+    policy.allowNoChecksMerge === subject.policy.allowNoChecksMerge
     ? { value: head }
     : pending();
 };
 const check = (superpipe({})('coding.check-pr-approved') as PipelineAPI)
-  .input(['url', 'readPolicy', 'run'])
+  .input(['url', 'readPolicy', 'run', 'checksRead'])
   .pipe(plan, ['url', 'readPolicy'], 'result:result')
   .pipe((subject: Subject) => subject, 'result', 'subject')
   .pipe(readHead, ['subject', 'run'], 'result:result')
-  .pipe(readDecision, ['result', 'subject', 'run'], 'result:result')
+  .pipe(readDecision, ['result', 'subject', 'run', 'checksRead'], 'result:result')
   .pipe(confirm, ['result', 'subject', 'readPolicy', 'run'], 'result:result')
   .pipe(
     (head: Head, subject: Subject): NeoTodoCheckResult => ({
@@ -121,8 +123,17 @@ const check = (superpipe({})('coding.check-pr-approved') as PipelineAPI)
   .endAsync('result') as (
   url: string,
   readPolicy: ReadPolicy,
-  run: LedgerQuotaRun
+  run: LedgerQuotaRun,
+  checksRead: (url: string) => ReturnType<LedgerQuotaRun>
 ) => Promise<NeoTodoCheckResult>;
 
-export const checkCodingPrApproved = (url: string, readPolicy: ReadPolicy, run = runCodingGh) =>
-  check(url, readPolicy, run).catch(() => ({ done: false, evidence: null }));
+export const checkCodingPrApproved = (url: string, readPolicy: ReadPolicy, run?: LedgerQuotaRun) =>
+  check(
+    url,
+    readPolicy,
+    run ?? runCodingGh,
+    run
+      ? (url) =>
+          run(['gh', 'pr', 'checks', url, '--required', '--json', 'bucket,name,link'], 'graphql')
+      : (url) => readCodingRequiredChecks(url, spawnProcess)
+  ).catch(() => ({ done: false, evidence: null }));

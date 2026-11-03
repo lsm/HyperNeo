@@ -158,7 +158,7 @@ describe('policy-aware merge readiness', () => {
     expect(messages.every((text) => !/merge/i.test(text))).toBe(true);
   });
   test.each(['review_bot', 'ci_only', 'human'])(
-    'fix-it/terminal states survive %s, and no-CI is green when policy permits',
+    'fix-it/terminal states survive %s, and zero-CI merging needs explicit permission',
     async (policy) => {
       const { save, cycle } = fixture();
       save('mergePolicy', policy);
@@ -176,7 +176,11 @@ describe('policy-aware merge readiness', () => {
       expect(await cycle(3, 'SUCCESS', [], { mergeable: 'CONFLICTING' })).toBe('dirty');
       expect(await cycle(4, 'SUCCESS', [], { state: 'MERGED' })).toBe('merged');
       expect(await cycle(5, 'SUCCESS', [], { state: 'CLOSED' })).toBe('closed');
-      expect(await cycle(6, null)).toBe(policy === 'human' ? 'waiting_human' : 'approved_green');
+      expect(await cycle(6, null)).toBe(
+        policy === 'review_bot' ? 'approved_green' : 'waiting_human'
+      );
+      save('allowNoChecksMerge', true);
+      expect(await cycle(7, null)).toBe(policy === 'human' ? 'waiting_human' : 'approved_green');
     }
   );
 

@@ -23,6 +23,6 @@ cleanly before the wrapper removes their homes, data and certificate material.
 
 neo-peer-receive.test.ts also advances time between admission and queued writer
 execution: the claim must use its fresh execution time and reject expiration.
-The API catalog must contain invite/list/remove and no neo.peer.accept. Acceptance
-and outgoing vault storage belong to the next slice; this journey does not claim
-natural-language interpretation or actual peer message delivery.
+The API catalog must contain invite/list/remove. For outgoing acceptance and vault
+storage, follow neo-peer-accept.md. This journey does not claim natural-language
+interpretation or actual peer message delivery.

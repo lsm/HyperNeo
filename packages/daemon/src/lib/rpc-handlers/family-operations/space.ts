@@ -1,0 +1,49 @@
+import type { OperationDefinition } from '../../operations/registry.ts';
+import { resolveSessionSpaceId } from '../../space/runtime/space-caller-scope.ts';
+import { resolveSpaceMcpSessionPolicy } from '../../space/runtime/space-mcp-session-policy.ts';
+import { registerAgentOperations } from './agents.ts';
+import { registerArtifactOperations } from './artifacts.ts';
+import type { SessionSpacePort } from './context.ts';
+import { registerEvolutionOperations } from './evolution.ts';
+import { registerExternalEventOperations } from './external-events.ts';
+import { registerGoalOperations } from './goals.ts';
+import { registerMessagingOperations } from './messaging.ts';
+import { registerScheduleOperations } from './schedule.ts';
+import type { SpaceFamilyContext } from './space-context.ts';
+import { registerSpaceOperations } from './spaces.ts';
+import { registerWorkflowOperations } from './workflows.ts';
+
+export function createSessionSpacePort(context: SpaceFamilyContext): SessionSpacePort {
+  const scopeDeps = {
+    getSession: (sessionId: string) => context.deps.db.getSession(sessionId),
+    taskRepo: context.spaceTaskRepo,
+    nodeExecutionRepo: context.nodeExecutionRepo,
+    longHorizonAgentRepo: context.longHorizonAgentRepo,
+    hasDirectWorkerProvenance: context.hasDirectWorkerProvenance,
+    resolveDirectWorker: context.resolveDirectWorker,
+  };
+  return {
+    sessionSpaceId: (session) => resolveSessionSpaceId(session, scopeDeps),
+    resolveRole: (session) => resolveSpaceMcpSessionPolicy(session, scopeDeps).role,
+    getSpace: (spaceId) => context.deps.spaceManager.getSpace(spaceId),
+    addSession: (spaceId, sessionId) => context.deps.spaceManager.addSession(spaceId, sessionId),
+    attachTools: (sessionId) => context.spaceRuntimeService.reattachMemberSpaceTools(sessionId),
+    liveSession: (sessionId) => context.taskAgentManager?.getCachedAgentSessionById(sessionId),
+    isRuntimeSettingsPreparing: (sessionId) =>
+      context.taskAgentManager.isRuntimeSettingsPreparing(sessionId),
+  };
+}
+
+export function collectSpaceFamilyOperations(context: SpaceFamilyContext): OperationDefinition[] {
+  return [
+    ...registerAgentOperations(context),
+    ...registerArtifactOperations(context),
+    ...registerEvolutionOperations(context),
+    ...registerExternalEventOperations(context),
+    ...registerGoalOperations(context),
+    ...registerMessagingOperations(context),
+    ...registerScheduleOperations(context),
+    ...registerSpaceOperations(context),
+    ...registerWorkflowOperations(context),
+  ];
+}

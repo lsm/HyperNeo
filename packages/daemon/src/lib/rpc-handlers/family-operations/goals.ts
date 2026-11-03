@@ -5,9 +5,9 @@ import { SessionGoalRepository } from '../../../storage/repositories/session-goa
 import { SessionGoalSchedules } from '../../goals/session-goal-schedules.ts';
 import { NeoAskTodoRepository } from '../../../storage/repositories/neo-ask-todo-repository.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
-import type { FamilyOperationContext } from './context.ts';
+import type { SpaceFamilyContext } from './space-context.ts';
 
-export function registerGoalOperations(context: FamilyOperationContext): OperationDefinition[] {
+export function registerGoalOperations(context: SpaceFamilyContext): OperationDefinition[] {
   const audit = new McpAuditLogRepository(context.deps.db.getDatabase());
   const goals = new SessionGoalRepository(context.deps.db.getDatabase(), context.deps.reactiveDb);
   const schedules = new SessionGoalSchedules(

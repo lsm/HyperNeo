@@ -1,3 +1,5 @@
+import { publishCodingHumanMerge } from './coding/human-merge-notice.ts';
+import { neoPublicationWrites } from '../../../storage/repositories/neo-publication-repository.ts';
 import { NEO_DEFAULT_PACKS } from './index.ts';
 import { createNeoProjectTreeOperations } from './coding/project-tree-operations.ts';
 import { NeoService } from '../service.ts';
@@ -95,6 +97,17 @@ export function createNeoService(...args: NeoServiceArgs) {
         listGithub: (args, coverage) => configured.listGithub(args, coverage),
         todoPrs,
         prSweepDeps: {
+          human: (key, text) =>
+            publishCodingHumanMerge(
+              {
+                conversation: () => configured.repo.conversationId(),
+                append: (input) =>
+                  configured.db.gateway.call(neoPublicationWrites, 'append', input),
+                notify: configured.notifyPublicationsChanged,
+              },
+              key,
+              text
+            ),
           tell: (ref, key, text) => configured.sendToRef(ref, key, text),
           wake: (key, text) => configured.wakeNeo(key, text),
         },

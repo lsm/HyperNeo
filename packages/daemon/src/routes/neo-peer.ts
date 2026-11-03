@@ -8,7 +8,7 @@ import { createPairingLimiter } from '../lib/pairing/pairing-limiter.ts';
 const Input = z.object({ code: z.string().min(1).max(64) }).strict();
 const answer = (status: number, body: unknown) =>
   Response.json(body, { status, headers: { 'cache-control': 'no-store' } });
-function readBody(req: Request) {
+export function readBody(req: Pick<Request, 'body'>): Promise<unknown> {
   let size = 0;
   const body = req.body?.pipeThrough(
     new TransformStream<Uint8Array, Uint8Array>({
