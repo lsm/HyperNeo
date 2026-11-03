@@ -1,3 +1,34 @@
+import { createWorkflowTaskRecoveryExecutor } from '../tasks/recovery-executor.ts';
+import { recoverTaskExecution } from '../tasks/recover-task-execution.ts';
+import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
+import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
+import { createSpaceCallerScopeResolver } from '../space/runtime/space-caller-scope.ts';
+import { createSpaceScopeResolver } from '../space/runtime/space-scope-resolver.ts';
+import { createDatabaseDirectTaskWorkerResolver } from '../tasks/direct-task-worker-identity.ts';
+import { generateUUID } from '@hyperneo/shared';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import type { UUID } from 'crypto';
+import type { AgentSession } from '../agent/agent-session.ts';
+import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers.ts';
+import { createDefaultSessionResolutionDeps } from '../session-resolution/default-deps.ts';
+import { ensureSession } from '../session-resolution/ensure-session.ts';
+import { TaskAgentManager } from '../space/runtime/task-agent-manager.ts';
+import { spaceTaskWriter } from '../../storage/repositories/space-task-repository.ts';
+import { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository.ts';
+import {
+  deliverSpaceAgentMessage,
+  type SessionInjectionOutcome,
+} from '../messaging/session-message-delivery.ts';
+import { resolveDeliverySession } from '../session-resolution/resolve-delivery-session.ts';
+import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers.ts';
+import { setupNodeExecutionHandlers } from './space-node-execution-handlers.ts';
+import { setupSpaceExportImportHandlers } from './space-export-import-handlers.ts';
+import type { TaskAgentManagerConfig } from '../space/runtime/task-agent-manager.ts';
+import type { OperationDefinition } from '../operations/registry.ts';
+import type { SessionReportHandler } from '../messaging/message-send.ts';
+import type { createNeoCodingReaders } from '../neo/packs/runtime.ts';
+
+type CodingPrStateReader = ReturnType<typeof createNeoCodingReaders>['readPrState'];
 import { stampActiveAttemptList } from '../tasks/direct-attempt-flag.ts';
 import { registerDirectStartJobs } from '../tasks/direct-start-jobs.ts';
 import {
@@ -967,4 +998,398 @@ export async function setupSpaceServices(
     resolveClones,
     spaceWorktreeManager,
   };
+}
+
+type SpaceServices = Awaited<ReturnType<typeof setupSpaceServices>>;
+
+export function setupSpaceTaskAgents(
+  deps: RPCHandlerDependencies,
+  services: SpaceServices,
+  {
+    readGithubPr,
+    readGithubReviewThreads,
+  }: Pick<TaskAgentManagerConfig, 'readGithubPr' | 'readGithubReviewThreads'>
+) {
+  const {
+    spaceTaskRepo,
+    spaceWorkflowRunRepo,
+    artifactRepo,
+    channelCycleRepo,
+    scheduleService,
+    longHorizonAgentRepo,
+    evolutionScopeService,
+    spaceGoalService,
+    spaceAgentTemplateRepo,
+    spaceWorkflowManager,
+    nodeExecutionRepo,
+    replyRoutingRegistry,
+    artifactProfile,
+    spaceRuntimeService,
+    spaceWorktreeManager,
+  } = services;
+  let sessionResolutionDeps: ReturnType<typeof createDefaultSessionResolutionDeps>;
+  const sessionMessageInjector = async (
+    spaceId: string,
+    message: string,
+    replyToSessionId?: string | null,
+    explicitMessageId?: string,
+    injectorOptions?: {
+      onConsumed?: (settledSessionId: string) => void;
+      lateSettlement?: import('../messaging/session-message-delivery.ts').SessionLateSettlementOwner;
+      onLateFailure?: () => void;
+    }
+  ): Promise<SessionInjectionOutcome> => {
+    const { sessionId, session } = await resolveDeliverySession<AgentSession>(
+      spaceId,
+      replyToSessionId,
+      sessionResolutionDeps,
+      (sessionId) => deps.sessionManager.getSessionAsync(sessionId)
+    );
+    const messageId = explicitMessageId ?? generateUUID();
+    const sdkUserMessage: SDKUserMessage & { isSynthetic: boolean } = {
+      type: 'user' as const,
+      uuid: messageId as UUID,
+      session_id: sessionId,
+      parent_tool_use_id: null,
+      isSynthetic: true,
+      message: {
+        role: 'user' as const,
+        content: [{ type: 'text' as const, text: message }],
+      },
+    };
+    return await deliverSpaceAgentMessage(
+      {
+        db: deps.db.getDatabase(),
+        sdkMessageRepo: deps.reactiveDb.db.getSDKMessageRepo(),
+        publishStatusChanged: async (sid, dbId, status) => {
+          await deps.internalEventBus
+            .publish('messages.statusChanged', {
+              sessionId: sid,
+              messageIds: [dbId],
+              status,
+            })
+            .catch(() => {});
+        },
+        jobQueue: deps.reactiveDb.db.getJobQueueRepo(),
+        stateManager: session.stateManager,
+        onConsumed: injectorOptions?.onConsumed,
+        lateSettlement: injectorOptions?.lateSettlement,
+        onLateFailure: injectorOptions?.onLateFailure,
+      },
+      {
+        sessionId,
+        messageId,
+        sdkUserMessage,
+      }
+    );
+  };
+
+  const taskAgentManager = new TaskAgentManager({
+    db: deps.reactiveDb.db,
+    readGithubPr,
+    readGithubReviewThreads,
+    sessionManager: deps.sessionManager,
+    reactiveDb: deps.reactiveDb,
+    spaceManager: deps.spaceManager,
+    longHorizonAgentRepo,
+    templateRepo: spaceAgentTemplateRepo,
+    spaceWorkflowManager,
+    spaceRuntimeService,
+    taskRepo: spaceTaskRepo,
+    writeTask: spaceTaskWriter(deps.reactiveDb.db.getDatabase(), deps.reactiveDb),
+    workflowRunRepo: spaceWorkflowRunRepo,
+    channelCycleRepo,
+    messageHub: deps.messageHub,
+    getApiKey: () => deps.authManager.getCurrentApiKey(),
+    defaultModel: deps.config.defaultModel,
+    worktreeManager: spaceWorktreeManager,
+    skillsManager: deps.skillsManager,
+    appMcpServerRepo: deps.reactiveDb.db.appMcpServers,
+    nodeExecutionRepo,
+    dbPath: deps.db.getDatabasePath(),
+    artifactRepo,
+    sessionMessageInjector,
+    messageResolverFactory: (spaceId, context) =>
+      spaceRuntimeService.createMessageResolver(spaceId, context),
+    longTermAgentDelivery: spaceRuntimeService.longTermAgentDeliveryCallbacks(),
+    scheduleService,
+    internalEventBus: deps.internalEventBus,
+    replyRoutingRegistry,
+    memoryRepo: deps.db.agentMemory,
+    goalService: spaceGoalService,
+    evolutionScopeService,
+    externalEventStore: deps.externalEventStore,
+    artifactProfile,
+  });
+
+  deps.commandBus.register('agent.message.inject', async (command) => {
+    if (!taskAgentManager) {
+      return { ok: false, error: 'TaskAgentManager unavailable' };
+    }
+    try {
+      await taskAgentManager.injectSubSessionMessage(
+        command.sessionId,
+        command.message,
+        true,
+        undefined,
+        command.deliveryMode ?? 'immediate',
+        'system'
+      );
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err };
+    }
+  });
+
+  const directTaskExecutionRepo = new DirectTaskExecutionRepository(deps.db.getDatabase());
+  const directTaskWorkerResolver = createDatabaseDirectTaskWorkerResolver(deps.db.getDatabase());
+
+  return {
+    taskAgentManager,
+    directTaskExecutionRepo,
+    directTaskWorkerResolver,
+    sessionResolutionDeps: () => sessionResolutionDeps,
+    setSessionResolutionDeps: (resolved: ReturnType<typeof createDefaultSessionResolutionDeps>) => {
+      sessionResolutionDeps = resolved;
+    },
+  };
+}
+
+export function completeSpaceSetup(
+  deps: RPCHandlerDependencies,
+  services: SpaceServices,
+  agents: ReturnType<typeof setupSpaceTaskAgents>,
+  familyOperations: readonly OperationDefinition[],
+  handleWorkerQuestion: SessionReportHandler,
+  readPrState: (prUrl: string) => ReturnType<CodingPrStateReader>
+) {
+  const {
+    spaceTaskRepo,
+    spaceWorkflowRunRepo,
+    artifactRepo,
+    channelCycleRepo,
+    spaceRepo,
+    longHorizonAgentRepo,
+    spaceGoalService,
+    spaceWorkflowRepo,
+    spaceWorkflowManager,
+    emitClaimedTaskUpdate,
+    spaceTaskManagerFactory,
+    nodeExecutionRepo,
+    pendingCompletion,
+    replyRoutingRegistry,
+    artifactProfile,
+    spaceRuntimeService,
+  } = services;
+  const {
+    taskAgentManager,
+    directTaskExecutionRepo,
+    directTaskWorkerResolver,
+    sessionResolutionDeps,
+    setSessionResolutionDeps,
+  } = agents;
+  const spaceOperationRegistryProvider = createSpaceOperationRegistryProvider(
+    deps.db,
+    deps.jobQueue,
+    {
+      blockExecution: (spaceId, taskId, params) =>
+        spaceRuntimeService.stopWorkflowBackedTask(spaceId, taskId, params),
+      stopForStatus: (spaceId, taskId, params) =>
+        spaceRuntimeService.stopWorkflowBackedTaskForStatus(spaceId, taskId, params),
+      getSession: (sessionId) => deps.db.getSession(sessionId),
+      getTaskManager: spaceTaskManagerFactory,
+      getWorkflow: (workflowId) => spaceWorkflowManager.getWorkflow(workflowId),
+      recoverWorkflowTask: (spaceId, taskId, targetStatus, options) =>
+        recoverTaskExecution(
+          createWorkflowTaskRecoveryExecutor(spaceId, spaceRuntimeService, options),
+          taskId,
+          targetStatus
+        ),
+      handoffWorkerSession: (spaceId, taskId) =>
+        spaceRuntimeService.recoverWorkflowBackedTask(spaceId, taskId, 'in_progress', {
+          manualHandoff: true,
+        }),
+      taskRepo: spaceTaskRepo,
+      nodeExecutionRepo,
+      longHorizonAgentRepo,
+      hasDirectWorkerProvenance: (sessionId) =>
+        directTaskExecutionRepo.hasSessionProvenance(sessionId),
+      resolveDirectWorker: directTaskWorkerResolver,
+      runOp: deps.db.runSpaceTaskOp,
+      workflowRunRepo: spaceWorkflowRunRepo,
+      getWorkflowForRun: (run) => spaceWorkflowManager.getWorkflowForRun(run),
+      taskAgentManager,
+      ensureTargetSession: (target) => spaceRuntimeService.ensureToolTargetSession(target),
+      activateNode: async (runId, nodeId) => {
+        await spaceRuntimeService.activateWorkflowNode(runId, nodeId);
+      },
+      messageResolverFactory: (spaceId, context) =>
+        spaceRuntimeService.createMessageResolver(spaceId, context),
+      longTermAgentDelivery: spaceRuntimeService.longTermAgentDeliveryCallbacks(),
+      replyRoutingRegistry,
+      emitTaskUpdated: async (spaceId, task) => {
+        await deps.internalEventBus.publish('space.task.updated', {
+          sessionId: 'global',
+          spaceId,
+          taskId: task.id,
+          task,
+        });
+      },
+      emitTaskCreated: async (spaceId, task) => {
+        await deps.internalEventBus.publish('space.task.created', {
+          sessionId: 'global',
+          spaceId,
+          taskId: task.id,
+          task,
+        });
+      },
+      getSpace: (spaceId) => deps.spaceManager.getSpace(spaceId),
+      validateDefaultTaskWorkspace: (spaceId) =>
+        deps.spaceManager.validateDefaultTaskWorkspace(spaceId),
+      resolveResultArtifactSummary: (task) =>
+        task.workflowRunId
+          ? (artifactProfile.summarizeRunOutcome(task.workflowRunId) ?? null)
+          : null,
+      sessionManager: deps.sessionManager,
+      ...createCompletionGateBindings({
+        resolveWorkflowForTask: (task) => {
+          const run = task.workflowRunId ? spaceWorkflowRunRepo.getRun(task.workflowRunId) : null;
+          return run?.workflowId ? (spaceWorkflowManager.getWorkflowForRun(run) ?? null) : null;
+        },
+        isCoderOwnedMergeWorkflow,
+        resolvePrUrl: (task) =>
+          task.workflowRunId
+            ? artifactProfile.resolveInitialPrimaryLinkUrl(task.workflowRunId)
+            : '',
+        getPrState: async (prUrl) => {
+          const outcome = await readPrState(prUrl);
+          if ('reason' in outcome) throw new Error(outcome.reason);
+          return outcome.value;
+        },
+        workflowDeclaresPostApprovalRoute: (taskId) =>
+          spaceRuntimeService.workflowDeclaresPostApprovalRoute(taskId),
+      }),
+    },
+    pendingCompletion,
+    {
+      reactiveDb: deps.reactiveDb,
+      onTaskReopened: (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
+      onTaskClaimed: emitClaimedTaskUpdate,
+    },
+    {
+      getSession: (sessionId) => deps.db.getSession(sessionId),
+      getTaskManager: spaceTaskManagerFactory,
+      taskRepo: spaceTaskRepo,
+      nodeExecutionRepo,
+      longHorizonAgentRepo,
+      hasDirectWorkerProvenance: (sessionId) =>
+        directTaskExecutionRepo.hasSessionProvenance(sessionId),
+      resolveDirectWorker: directTaskWorkerResolver,
+      runOp: deps.db.runSpaceTaskOp,
+      emitTaskUpdated: async (spaceId, task) => {
+        await deps.internalEventBus.publish('space.task.updated', {
+          sessionId: 'global',
+          spaceId,
+          taskId: task.id,
+          task,
+        });
+      },
+      isWorkflowRunActive: (workflowRunId) =>
+        spaceRuntimeService.isWorkflowRunActive(workflowRunId),
+      recoverTransition: (spaceId, taskId, status, expected) =>
+        recoverTaskExecution(
+          createWorkflowTaskRecoveryExecutor(spaceId, spaceRuntimeService, expected),
+          taskId,
+          status
+        ),
+      stopForStatus: (spaceId, taskId, params, expected) =>
+        spaceRuntimeService.stopWorkflowBackedTaskForStatus(spaceId, taskId, params, expected),
+      parkStopped: (spaceId, taskId, expected) =>
+        spaceRuntimeService.parkStoppedWorkflowTask(spaceId, taskId, expected),
+    },
+    familyOperations,
+    handleWorkerQuestion
+  );
+
+  deps.sessionManager.setDefaultOperationRegistryProvider(spaceOperationRegistryProvider);
+  deps.sessionManager.setCallerScopeResolver(
+    createSpaceCallerScopeResolver({
+      getSession: (sessionId) => deps.db.getSession(sessionId),
+      hasDirectWorkerProvenance: (sessionId) =>
+        directTaskExecutionRepo.hasSessionProvenance(sessionId),
+      resolveDirectWorker: directTaskWorkerResolver,
+      taskRepo: spaceTaskRepo,
+      nodeExecutionRepo,
+      longHorizonAgentRepo,
+    })
+  );
+
+  deps.sessionManager.setSpaceScopeResolver(
+    createSpaceScopeResolver({
+      getSession: (sessionId) => deps.db.getSession(sessionId),
+      getSpace: (spaceId) => spaceRepo.getSpace(spaceId),
+      hasDirectWorkerProvenance: (sessionId) =>
+        directTaskExecutionRepo.hasSessionProvenance(sessionId),
+      resolveDirectWorker: directTaskWorkerResolver,
+      taskRepo: spaceTaskRepo,
+      nodeExecutionRepo,
+      longHorizonAgentRepo,
+    })
+  );
+
+  spaceRuntimeService.setTaskAgentManager(taskAgentManager);
+  deps.sessionManager.setSpaceRuntimeMcpProvider(spaceRuntimeService);
+  spaceRuntimeService.start();
+
+  setSessionResolutionDeps(
+    createDefaultSessionResolutionDeps({
+      sessionManager: deps.sessionManager,
+      taskAgentManager,
+      spaceRuntimeService,
+      nodeExecutionRepo,
+      taskRepo: spaceTaskRepo,
+      longHorizonAgentRepo,
+    })
+  );
+  setupSpaceTaskMessageHandlers(
+    deps.messageHub,
+    taskAgentManager,
+    deps.db,
+    deps.internalEventBus,
+    nodeExecutionRepo,
+    channelCycleRepo,
+    undefined,
+    (target) => ensureSession(target, sessionResolutionDeps())
+  );
+
+  setupSpaceExportImportHandlers(
+    deps.messageHub,
+    deps.spaceManager,
+    longHorizonAgentRepo,
+    spaceWorkflowRepo,
+    spaceWorkflowManager,
+    deps.db.getDatabase(),
+    deps.internalEventBus,
+    spaceRuntimeService
+  );
+
+  const hookStateRepo = new WorkflowHookStateRepository(deps.db.getDatabase());
+  setupSpaceWorkflowRunHandlers(
+    deps.messageHub,
+    spaceWorkflowManager,
+    spaceWorkflowRunRepo,
+    spaceTaskManagerFactory,
+    deps.internalEventBus,
+    artifactRepo,
+    hookStateRepo,
+    (runId, sessionId) =>
+      nodeExecutionRepo
+        .listByAgentSessionId(sessionId)
+        .some((execution) => execution.workflowRunId === runId),
+    (sessionId) => taskAgentManager.isRetryableActionRestorePending(sessionId)
+  );
+
+  setupNodeExecutionHandlers(deps.messageHub, nodeExecutionRepo, spaceWorkflowRunRepo);
+
+  return spaceOperationRegistryProvider;
 }
