@@ -358,6 +358,18 @@ describe('daemon merge sweep behavior', () => {
     expect(merges()).toEqual([]);
     expect(await ledger.write('daemonMerge', { kind: 'list' })).toEqual([]);
     expect(warnings.some((args) => JSON.stringify(args).includes('merge_by_owner'))).toBe(false);
+    expect(calls).toEqual([
+      ['gh', 'pr', 'checks', url, '--required', '--json', 'bucket,name,link'],
+      ['gh', 'pr', 'checks', url, '--required', '--json', 'bucket,name,link'],
+    ]);
+  });
+  test('owner execution with zero-check opt-in needs neither handoff nor merge facts', async () => {
+    policy('mergeBy', 'owner');
+    policy('mergePolicy', 'ci_only');
+    policy('allowNoChecksMerge', true);
+    await sweep()(10);
+    expect(calls).toEqual([]);
+    expect(await ledger.write('daemonMerge', { kind: 'list' })).toEqual([]);
   });
   test('pins a single unowned merge and records executor/head/time across overlapping sweeps', async () => {
     const run = sweep();

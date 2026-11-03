@@ -96,6 +96,7 @@ try{
  for(const[key,value]of Object.entries({mergeBy:'owner',mergePolicy:'ci_only'}))assert((await rpc('pack.preferences.set',{pack:'coding',scope:{kind:'repo',key:'synthetic/merge'},key,value})).ok);
  await runSweep();await runSweep();
  assert.deepEqual(mergeCalls(),[]);assert(!holds.some(text=>text.includes('merge_by_owner')));
+ const reads=readFileSync(join(run,'evidence/gh.jsonl'),'utf8').trim().split('\n').filter(Boolean).map(line=>JSON.parse(line));assert.equal(reads.length,2);assert(reads.every(args=>args[0]==='pr'&&args[1]==='checks'));evidence.ownerChecksOnly=true;
  assert.deepEqual(await ledger.write('daemonMerge',{kind:'list'}),[]);
  evidence.ownerExecutionNoDaemonAttempt=true;evidence.verified=true;
  }else if(humanDefault){
