@@ -199,6 +199,7 @@ describe('daemon merge sweep behavior', () => {
     'a truncated-scope ledger never bypasses fresh %s gates',
     async (condition) => {
       db.prepare("UPDATE pack_coding_pr_ledger SET state='waiting_human'").run();
+      files = Array.from({ length: 171 }, (_, i) => `src/file-${i}.ts`);
       if (condition === 'ci') ci = 'pending';
       if (condition === 'review') reviewHead = 'b'.repeat(40);
       if (condition === 'thread') unresolved = true;

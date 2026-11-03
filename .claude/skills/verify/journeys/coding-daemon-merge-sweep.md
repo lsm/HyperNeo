@@ -94,3 +94,11 @@ attempt and then apply an external merge. The normal ledger MERGED event must
 notify the linked owner once; only approved-green manual merge instructions
 are suppressed for daemon execution. Terminal fixtures must contain the PR
 only in the done connection with a real closedAt value.
+
+Add `large-files` for a 171-file PR whose ledger and `gh pr view` expose only
+100 paths. The actual facts reader must paginate the REST files endpoint and
+merge once with the full head. A protected design path on the last page must
+hold; missing pages, malformed data and a failed files read must also hold.
+No policy changes or manual merge are used to complete the scope.
+Ordinary waiting_human rows remain signaling-only. This exception requires a
+truncated file summary plus complete current scope and passing fresh gates.

@@ -22,6 +22,7 @@ const Response = z.tuple([
   schema.Checks,
   schema.Threads,
   z.array(z.array(z.object({ name: z.string() }))).min(1),
+  z.array(z.array(z.object({ filename: z.string() }))).min(1),
 ]);
 type Observed = z.infer<typeof Response>;
 async function readRequiredChecks(url: string, spawn: SpawnFn): Promise<ConnectorOutcome> {
@@ -93,6 +94,14 @@ const collect = async (db: Database, url: string, spawn: SpawnFn) => {
       '--slurp',
       `repos/${meta.owner}/${meta.repo}/issues/${meta.number}/labels`,
     ]),
+    gh([
+      'api',
+      '--hostname',
+      meta.host,
+      '--paginate',
+      '--slurp',
+      `repos/${meta.owner}/${meta.repo}/pulls/${meta.number}/files?per_page=100`,
+    ]),
   ]);
   return {
     responses: responses.map((response) => (response.ok ? response.data : null)),
@@ -100,7 +109,7 @@ const collect = async (db: Database, url: string, spawn: SpawnFn) => {
       response.ok
         ? []
         : [
-            `${['pull', 'reviews', 'required_checks', 'review_threads', 'labels'][index]}: ${response.error}`,
+            `${['pull', 'reviews', 'required_checks', 'review_threads', 'labels', 'files'][index]}: ${response.error}`,
           ]
     ),
   };
@@ -119,8 +128,16 @@ const parse = ({ responses, failures }: Awaited<ReturnType<typeof collect>>, url
         'fresh_complete_merge_facts_required: Fresh, complete GitHub merge facts are required. Leave the PR unchanged until every required read succeeds.'
       );
 };
-const project = ([pr, reviews, checks, threads, labels]: Observed): CodingDaemonMergeFacts & {
+const project = ([
+  pr,
+  reviews,
+  checks,
+  threads,
+  labels,
+  files,
+]: Observed): CodingDaemonMergeFacts & {
   mergeCommit?: string | null;
+  fileScopePaginated: boolean;
 } => ({
   ok: true,
   head: pr.headRefOid,
@@ -134,7 +151,8 @@ const project = ([pr, reviews, checks, threads, labels]: Observed): CodingDaemon
     .flatMap((review) =>
       review.user ? [{ ...review.user, head: review.commit_id, state: review.state }] : []
     ),
-  files: pr.changedFiles === pr.files.length ? pr.files.map((file) => file.path) : null,
+  files: pr.changedFiles === files.flat().length ? files.flat().map((file) => file.filename) : null,
+  fileScopePaginated: pr.changedFiles > pr.files.length && pr.changedFiles === files.flat().length,
   labels: labels.flat().map((label) => label.name),
   mergeCommit: pr.mergeCommit?.oid ?? null,
 });

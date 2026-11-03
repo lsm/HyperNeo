@@ -193,6 +193,7 @@ describe('readCodingDaemonMergeFacts', () => {
     expect(await readCodingDaemonMergeFacts(db, url, spawn)).toMatchObject({
       ok: true,
       files: null,
+      fileScopePaginated: false,
     });
   });
   test('reads every changed path when pr view truncates at 100 files', async () => {
@@ -202,6 +203,7 @@ describe('readCodingDaemonMergeFacts', () => {
     expect(await readCodingDaemonMergeFacts(db, url, spawn)).toMatchObject({
       ok: true,
       files: completeFiles,
+      fileScopePaginated: true,
     });
     expect(calls.find((args) => args.some((arg) => arg.includes('/files?')))).toEqual([
       'gh',
