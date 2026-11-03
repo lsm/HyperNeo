@@ -6,6 +6,10 @@ import {
 import { createTables, runMigrations } from '../packages/daemon/src/storage/schema';
 import { Database } from '../packages/daemon/src/storage/sqlite-compat';
 import { createSpaceTables } from '../packages/daemon/tests/unit/helpers/space-test-db';
+import { registerSchemaExtension } from '../packages/daemon/src/storage/schema/extensions';
+import { SPACE_SCHEMA } from '../packages/daemon/src/storage/schema/space-schema';
+
+registerSchemaExtension(SPACE_SCHEMA);
 
 type ColumnRow = {
   name: string;
