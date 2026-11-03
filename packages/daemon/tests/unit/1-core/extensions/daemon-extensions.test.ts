@@ -62,5 +62,6 @@ describe('createDaemonExtensionsOperation', () => {
     expect(await operation.execute({}, { source: 'rpc' } as never)).toEqual({
       extensions: [{ id: 'space', webRoutes: [] }],
     });
+    expect(operation.inputSchema.parse(undefined)).toEqual({});
   });
 });

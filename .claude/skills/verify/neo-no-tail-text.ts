@@ -7,7 +7,7 @@ import { resolveSDKCliPath } from '../../../packages/daemon/src/lib/agent/sdk-cl
 import { Database } from '../../../packages/daemon/src/storage/database.ts';
 import { createReactiveDatabase } from '../../../packages/daemon/src/storage/reactive-database.ts';
 import { InternalEventBus } from '../../../packages/daemon/src/lib/internal-event-bus.ts';
-import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/runtime.ts';
+import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
 import { createNeoPublicationOperation } from '../../../packages/daemon/src/lib/neo/publication-operation.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { createOperationMcpHandler, OperationMcpInvocationSchema } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';

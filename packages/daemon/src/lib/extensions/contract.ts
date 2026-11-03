@@ -71,7 +71,7 @@ export function createDaemonExtensionsOperation(extensions: DaemonExtensions) {
     name: 'daemon.extensions',
     description:
       'List the extensions loaded in this daemon, each with the web routes it serves. An extension missing from the list is not available here.',
-    inputSchema: z.object({}),
+    inputSchema: z.object({}).default({}),
     resultSchema: DaemonExtensionsResultSchema,
     policy: { safetyClass: 'read' },
     execute: async () => extensions.manifest(),

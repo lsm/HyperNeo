@@ -5,7 +5,7 @@ import { execFile as execFileCallback, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
-import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/runtime.ts';
+import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
 import { sweepNeoPacks } from '../../../packages/daemon/src/lib/neo/pack-sweep.ts';
 import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
 
