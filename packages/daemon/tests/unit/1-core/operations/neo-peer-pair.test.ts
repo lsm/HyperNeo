@@ -38,7 +38,8 @@ const call = async (name: string, input: unknown, as = caller) => {
     input,
     as
   );
-  return (result.kind === 'completed' ? result.value : null) as PairResult | null;
+  if (result.kind !== 'completed') throw new Error(`${name}: ${result.code}: ${result.message}`);
+  return result.value as PairResult;
 };
 beforeEach(async () => {
   previous = process.env.HYPERNEO_DATA_DIR;
@@ -75,12 +76,9 @@ afterEach(async () => {
 test('Neo invites a named peer from a consumed human request without granting a device', async () => {
   const before = db.getDatabase().prepare('SELECT count(*) AS n FROM paired_devices').get();
   const invited = await call('neo.peer.invite', { name: 'Contact A' });
-  expect(invited).toMatchObject({
-    accepted: true,
-    id: expect.any(String),
-    code: expect.any(String),
-    expiresAt: expect.any(Number),
-  });
+  expect(invited.accepted).toBe(true);
+  expect(typeof invited.id).toBe('string');
+  expect(typeof invited.code).toBe('string');
   expect(invited!.expiresAt - Date.now()).toBeGreaterThan(590_000);
   expect(await call('neo.peer.list', {})).toMatchObject({
     accepted: true,
@@ -97,20 +95,29 @@ test.each(['missing', 'foreign', 'system', 'task', 'unconsumed'])(
   'cannot use %s input as consent to invite, accept or remove',
   async (kind) => {
     const id = crypto.randomUUID();
-    if (kind !== 'missing') {
+    if (kind === 'system' || kind === 'task') {
+      db.getSDKMessageRepo().saveUserMessage(root, {
+        type: 'user',
+        uuid: id,
+        session_id: root,
+        parent_tool_use_id: null,
+        inputKind: kind,
+        message: { role: 'user', content: 'External data' },
+      } as import('@hyperneo/shared/sdk').SDKUserMessage);
+      db.getSDKMessageRepo().markDeliveryConsumedByUuid(root, id);
+      service.asks.append({
+        conversationId: service.repo.conversationId()!,
+        requestId: id,
+        askOrigin: { sessionId: root, messageId: id },
+        content: 'External data',
+      });
+    } else if (kind !== 'missing') {
       await call(
         'neo.message.send',
         { sessionId: root, requestId: id, content: 'Synthetic request' },
         { source: 'rpc', principal: 'local' }
       );
       if (kind !== 'unconsumed') db.getSDKMessageRepo().markDeliveryConsumedByUuid(root, id);
-      if (kind === 'system' || kind === 'task') {
-        const repo = db.getSDKMessageRepo();
-        const stored = repo.getMessageByStatusAndUuid(root, 'consumed', id)!;
-        repo.saveUserMessage(root, { ...stored, inputKind: kind } as Parameters<
-          typeof repo.saveUserMessage
-        >[1]);
-      }
     }
     const invalid = {
       ...caller,
@@ -130,7 +137,7 @@ test.each(['missing', 'foreign', 'system', 'task', 'unconsumed'])(
     ] as const)
       expect(await call(name, input, invalid)).toMatchObject({
         accepted: false,
-        reason: 'human_input_required',
+        reason: kind === 'foreign' ? 'own_neo_required' : 'human_input_required',
       });
     expect(network).not.toHaveBeenCalled();
   }
@@ -144,7 +151,8 @@ test('accept stores a peer credential privately and remove revokes the relations
     address: 'https://peer.invalid',
     code: 'synthetic',
   });
-  expect(accepted).toMatchObject({ accepted: true, id: expect.any(String) });
+  expect(accepted.accepted).toBe(true);
+  expect(typeof accepted.id).toBe('string');
   expect(JSON.stringify(accepted)).not.toContain(credential);
   expect(network).toHaveBeenCalledTimes(1);
   const listed = await call('neo.peer.list', {});
@@ -166,4 +174,31 @@ test('a refused or malformed remote pairing cannot create a local connection', a
   network.mockResolvedValue(Response.json({ credential: 'not a credential' }));
   expect(await call('neo.peer.accept', input)).toMatchObject({ accepted: false });
   expect(await call('neo.peer.list', {})).toMatchObject({ accepted: true, peers: [] });
+});
+
+test('accept cannot recreate a contact removed while its remote invitation is being claimed', async () => {
+  const invited = await call('neo.peer.invite', { name: 'Contact B' });
+  spyOn(globalThis, 'fetch').mockImplementation(async () => {
+    await call('neo.peer.remove', { id: invited.id });
+    return Response.json({ credential: 'a'.repeat(64) });
+  });
+  expect(await call('neo.peer.accept', {
+    name: 'Contact B', address: 'https://peer.invalid', code: 'synthetic',
+  })).toMatchObject({ accepted: false, reason: 'relationship_changed' });
+  expect(await call('neo.peer.list', {})).toMatchObject({ accepted: true, peers: [] });
+  expect(db.getDatabase().prepare("SELECT count(*) AS n FROM provider_credentials WHERE provider_id LIKE 'hyperneo.peer.%'").get()).toEqual({ n: 0 });
+});
+
+test('accept leaves no secret when the local contact name changes during the remote claim', async () => {
+  spyOn(globalThis, 'fetch').mockImplementation(async () => {
+    await call('neo.peer.invite', { name: 'Contact B' });
+    return Response.json({ credential: 'a'.repeat(64) });
+  });
+  expect(await call('neo.peer.accept', {
+    name: 'Contact B', address: 'https://peer.invalid', code: 'synthetic',
+  })).toMatchObject({ accepted: false, reason: 'relationship_changed' });
+  expect(await call('neo.peer.list', {})).toMatchObject({
+    accepted: true, peers: [{ name: 'Contact B', address: null }],
+  });
+  expect(db.getDatabase().prepare("SELECT count(*) AS n FROM provider_credentials WHERE provider_id LIKE 'hyperneo.peer.%'").get()).toEqual({ n: 0 });
 });
