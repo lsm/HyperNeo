@@ -22,6 +22,10 @@ import { SpaceRepository } from '../../storage/repositories/space-repository.ts'
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
 import type { DaemonExtension } from '../extensions/contract.ts';
+import { createSpaceAdapter, spaceTaskControl } from '../drivers/space-adapter.ts';
+import type { SessionManager } from '../session/session-manager.ts';
+import type { TaskAgentManager } from './runtime/task-agent-manager.ts';
+import { hostname } from 'node:os';
 import type { ReactiveDatabase } from '../../storage/reactive-database.ts';
 import type { SpaceAgentInactivityWatchdogService } from '../agents/inactivity-watchdog-service.ts';
 import type { SpaceGoalService } from '../goals/service.ts';
@@ -43,6 +47,8 @@ interface SpaceDaemonExtensionDeps {
   cancelInactivityWatchdog: () => void;
   logInfo: (...args: unknown[]) => void;
   logError: (...args: unknown[]) => void;
+  sessionManager: Pick<SessionManager, 'getOperationRegistry'>;
+  taskAgentManager: TaskAgentManager;
 }
 
 export function createSpaceDaemonExtension({
@@ -61,6 +67,8 @@ export function createSpaceDaemonExtension({
   cancelInactivityWatchdog,
   logInfo,
   logError,
+  sessionManager,
+  taskAgentManager,
 }: SpaceDaemonExtensionDeps): DaemonExtension {
   let reaperTimer: ReturnType<typeof setInterval> | null = null;
   let inactivityWatchdogTimer: ReturnType<typeof setInterval> | null = null;
@@ -258,5 +266,22 @@ export function createSpaceDaemonExtension({
       await Promise.race([inactivityScan, new Promise((resolve) => setTimeout(resolve, 5000))]);
     }
   };
-  return { id: 'space', start, stop };
+  return {
+    id: 'space',
+    start,
+    stop,
+    adapters: ({ searchChats }) => [
+      createSpaceAdapter({
+        readTurnEnds: (sessionId, since) => db.readHyperneoTurnEndsAsync(sessionId, since),
+        db: () => db.getDatabase(),
+        machine: hostname(),
+        searchChats,
+        tasks: spaceTaskControl({
+          deps: { sessionManager, db },
+          spaceRuntimeService,
+          taskAgentManager,
+        }),
+      }),
+    ],
+  };
 }

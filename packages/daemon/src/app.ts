@@ -1207,6 +1207,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         cancelInactivityWatchdog,
         logInfo,
         logError,
+        sessionManager,
+        taskAgentManager: rpcHandlers.taskAgentManager,
       })
     );
 

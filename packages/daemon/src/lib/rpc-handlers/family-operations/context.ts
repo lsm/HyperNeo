@@ -39,6 +39,7 @@ import type { RPCHandlerDependencies } from '../index.ts';
 import type { SessionScheduler } from '../../scheduler/session-schedules.ts';
 import type { NeoPack } from '../../neo/pack-contract.ts';
 import type { WorkAdapter } from '../../drivers/types.ts';
+import type { DaemonAdapterHost } from '../../extensions/contract.ts';
 
 export interface FamilyOperationContext {
   readonly driverHealthNotice?: (id: string, text: string) => Promise<boolean>;
@@ -46,7 +47,7 @@ export interface FamilyOperationContext {
   readonly sessionScheduler: SessionScheduler;
   readonly goalMandateChange?: (ref: string, revision: string | null) => Promise<string | null>;
   readonly neoPacks: () => readonly NeoPack[];
-  readonly extensionAdapters?: () => readonly WorkAdapter[];
+  readonly extensionAdapters?: (host: DaemonAdapterHost) => readonly WorkAdapter[];
   readonly claudeInbox?: ReturnType<typeof createClaudeInboxDriver>;
   readonly claudeDesktopMods?: ReturnType<typeof createClaudeDesktopModsDriver>;
   readonly executionPreparations?: () => readonly {
