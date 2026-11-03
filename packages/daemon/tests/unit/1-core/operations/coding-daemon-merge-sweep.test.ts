@@ -174,6 +174,41 @@ afterEach(() => {
   db.close();
 });
 describe('daemon merge sweep behavior', () => {
+  test.each([false, true])(
+    'daemon merges a zero-required-checks PR once with owner=%s',
+    async (owned) => {
+      if (owned)
+        db.prepare('UPDATE pack_coding_pr_ledger SET owner=?').run(
+          JSON.stringify({ adapter: 'hyperneo', id: 'fixture-owner' })
+        );
+      const noRequired: SpawnFn = (args, options) => {
+        if (args[2] !== 'checks') return spawn(args, options);
+        calls.push(args);
+        return {
+          stdout: new Response('').body,
+          stderr: new Response("no required checks reported on the 'fixture' branch\n").body,
+          exited: Promise.resolve(1),
+          exitCode: 1,
+          kill() {},
+        };
+      };
+      const run = sweep(noRequired, {
+        tell: async (_owner, _key, text) => {
+          notices.push(text);
+          return true;
+        },
+      });
+      await run(10);
+      await run(11);
+      expect(merges()).toEqual([
+        ['gh', 'pr', 'merge', url, '--squash', '--match-head-commit', head],
+      ]);
+      expect(notices).toEqual([expect.stringContaining('Merge confirmed:')]);
+      expect(
+        db.prepare('SELECT head,actor,merge_commit FROM pack_coding_daemon_merges').all()
+      ).toEqual([{ head, actor: 'daemon:coding-sweep', merge_commit: 'c'.repeat(40) }]);
+    }
+  );
   test('pins a single unowned merge and records executor/head/time across overlapping sweeps', async () => {
     const run = sweep();
     await Promise.all([run(10), run(11)]);
@@ -185,37 +220,46 @@ describe('daemon merge sweep behavior', () => {
       { head, actor: 'daemon:coding-sweep', merge_commit: 'c'.repeat(40) },
     ]);
   });
-  test.each(['owner', 'human', 'path', 'ci', 'review', 'thread', 'head', 'closed', 'late'])(
-    'holds %s',
-    async (condition) => {
-      if (condition === 'owner') policy('mergeBy', 'owner');
-      if (condition === 'human') policy('mergePolicy', 'human');
-      if (condition === 'path') files = ['docs/design/merge.md'];
-      if (condition === 'ci') ci = 'pending';
-      if (condition === 'review') reviewHead = 'b'.repeat(40);
-      if (condition === 'thread') unresolved = true;
-      if (condition === 'head') actualHead = 'b'.repeat(40);
-      if (condition === 'closed') state = 'CLOSED';
-      const delayed: SpawnFn = (args) => {
-        if (
-          condition === 'late' &&
-          args[2] === 'view' &&
-          calls.filter((a) => a[2] === 'view').length === 1
-        )
-          labels = ['human-merge'];
-        return spawn(args);
-      };
-      await sweep(delayed)(10);
-      expect(merges()).toHaveLength(0);
-      if (['path', 'late'].includes(condition))
-        expect(notices.some((text) => text.includes('sign-off'))).toBe(true);
-      if (condition === 'late') {
-        labels = [];
-        await sweep(delayed)(11);
-        expect(merges()).toHaveLength(1);
-      }
+  test.each([
+    'owner',
+    'human',
+    'path',
+    'ci',
+    'failed-ci',
+    'review',
+    'thread',
+    'head',
+    'closed',
+    'late',
+  ])('holds %s', async (condition) => {
+    if (condition === 'owner') policy('mergeBy', 'owner');
+    if (condition === 'human') policy('mergePolicy', 'human');
+    if (condition === 'path') files = ['docs/design/merge.md'];
+    if (condition === 'ci') ci = 'pending';
+    if (condition === 'failed-ci') ci = 'fail';
+    if (condition === 'review') reviewHead = 'b'.repeat(40);
+    if (condition === 'thread') unresolved = true;
+    if (condition === 'head') actualHead = 'b'.repeat(40);
+    if (condition === 'closed') state = 'CLOSED';
+    const delayed: SpawnFn = (args) => {
+      if (
+        condition === 'late' &&
+        args[2] === 'view' &&
+        calls.filter((a) => a[2] === 'view').length === 1
+      )
+        labels = ['human-merge'];
+      return spawn(args);
+    };
+    await sweep(delayed)(10);
+    expect(merges()).toHaveLength(0);
+    if (['path', 'late'].includes(condition))
+      expect(notices.some((text) => text.includes('sign-off'))).toBe(true);
+    if (condition === 'late') {
+      labels = [];
+      await sweep(delayed)(11);
+      expect(merges()).toHaveLength(1);
     }
-  );
+  });
   test.each(['/labels', '/reviews', 'checks', 'graphql', 'view', 'final'])(
     'does nothing when %s cannot be read',
     async (part) => {
