@@ -416,7 +416,7 @@ test.each(
             state: 'OPEN',
             draft: false,
             mergeable: 'MERGEABLE',
-            requiredCi: { head: headA, green: true },
+            requiredCi: { count: 1, head: headA, green: true },
             threads: { head: headA, unresolved: 0 },
             files: [],
             labels: [],
@@ -428,3 +428,15 @@ test.each(
     }
   }
 );
+
+test('CI-only zero checks need a repository opt-in and revoke with it', async () => {
+  const r = reader({ mergePolicy: 'ci_only' });
+  r.state.checks = [];
+  expect((await r.check()).done).toBe(false);
+  r.state.policy = { mergePolicy: 'ci_only', allowNoChecksMerge: true };
+  expect((await r.check()).done).toBe(true);
+  r.state.duringDecision = () => {
+    r.state.policy = { mergePolicy: 'ci_only', allowNoChecksMerge: false };
+  };
+  expect((await r.check()).done).toBe(false);
+});

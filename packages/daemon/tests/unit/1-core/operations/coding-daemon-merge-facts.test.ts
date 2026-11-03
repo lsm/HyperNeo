@@ -121,7 +121,7 @@ describe('readCodingDaemonMergeFacts', () => {
       expect(await readCodingDaemonMergeFacts(db, url, spawn)).toMatchObject({
         ok: true,
         head,
-        requiredCi: { head, green: true },
+        requiredCi: { head, green: true, count: 0 },
       });
     }
   );

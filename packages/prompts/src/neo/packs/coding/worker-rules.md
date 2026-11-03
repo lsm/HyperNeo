@@ -52,3 +52,5 @@ Before changing application code, locate .claude/skills/verify*/SKILL.md or the 
     with kind question and no question envelope, never a human card.
 
 Use message.send with an explicit kind (done, blocked, question, failed), or hyperneo send <Neo id> --kind <kind> <text>. Use done for PR milestones. Message Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings.
+
+Without required checks or a review-bot gate, hand the finished work to the human for manual merge unless the repository data explicitly says `allowNoChecksMerge: true`. Owner execution alone is not that permission. Never enable or change this preference yourself.

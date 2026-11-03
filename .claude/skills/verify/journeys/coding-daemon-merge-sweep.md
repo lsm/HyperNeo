@@ -120,3 +120,70 @@ restoring the exact no-checks response, it must merge once with the full pinned
 head and persist the daemon receipt, without changing saved preferences.
 Both no-checks diagnostics still require exit 1 and empty stdout; extra error
 lines, wrong exit codes, invalid JSON, auth errors and timeouts remain unreadable.
+
+
+Add `human-default`, `human-owner` and `human-unconfigured` for the zero-required-check
+human handoff. Each boots an isolated daemon, uses a synthetic public conversation
+and reads the actual notice through `neo.publication.read`. First discovery with
+no owner, an owned PR with owner execution, and an unconfigured repository must
+all remain unmerged and visibly wait for the human. A failed delivery is retried
+through a recreated pack; the persisted publication appears once, survives repeated
+sweeps and does not change preferences. A global allowNoChecksMerge value must not
+authorize any repository. Only a subsequent explicit synthetic repo opt-in (with
+ci_only and daemon execution) restores exactly one SHA-pinned merge. No actual
+GitHub call, live database, provider or browser is used. Human notification is a
+persisted conversation message with the PR URL and manual next step, not an
+approval card or permission for an agent to merge. Existing required-check and
+same-head bot gates remain in the build and sweep journeys. Handoff-state and
+publication writes are forbidden on the main-thread DB facade during the proof;
+they must run through the existing writer gateway.
+
+After delivery, try changed wording with the same publication identity. The
+immutable-publication conflict must leave the original human-visible handoff
+readable and unchanged, without another notification. Recreating the pack and
+running the normal sweep must still preserve exactly that one notice. A false
+append result does not remove an already-delivered publication; changing an
+existing notice would require the publication's explicit edit/correction path.
+
+
+Add `approved-no-checks` for a bot-approved PR whose ledger still says
+approved_pending because a check suite exists but no status rollup does. It must
+reach the fresh required-check reader; a known empty set plus current-head bot
+approval must execute one pinned squash, persist the daemon receipt and never
+repeat the command. Pending required CI, unreadable checks and an old-head bot
+review remain held. The pending-ledger exception admits only a known zero required
+count; it does not substitute cached review/CI or promote pending nonempty CI.
+
+
+Add `human-waiting-ci` and `human-sibling-ci` to repeat the human-visible handoff
+with an initially waiting_ci ledger: the PR has a non-required check suite, or
+another open PR has CI while this one has none. Both must reach fresh zero-required
+facts, show waiting_human and the durable public notice, then merge once only after
+explicit repo opt-in. The fresh zero-count exception does not admit nonempty CI
+from a waiting ledger. It keeps missing/old bot approval, pending checks, read
+failures, human sign-off labels and unresolved threads blocked.
+
+
+Add `owner-ci` for an owner-execution PR with a nonempty passing required set.
+Fresh facts still evaluate whether human handoff is needed, then owner execution
+must stop before the daemon merge-attempt pipeline. Repeated sweeps must issue no
+merge, reserve no receipt and produce no merge_by_owner warning. Existing human-owner
+proofs continue to require the visible zero-check handoff.
+The owner-ci proof also checks the actual CLI log: each sweep must run only its
+required-check probe, not reviews, labels, files, threads or head reads. An owner
+with explicit zero-check opt-in has neither a handoff nor a daemon merge to do
+and makes no merge-facts calls. A known empty required set still triggers full
+fresh validation before publishing the human handoff; an unreadable probe stays
+held with a human-handoff diagnostic, not a daemon-merge warning. Existing durable
+merge receipts retain their full recovery reads even if the executor changes.
+
+Successful handoffs use their existing persisted publication as the per-head
+fact; no duplicate hold table or migration is added. After first delivery and
+pack recreation, all human variants must make zero additional handoff GitHub
+calls for that head, and reconcile must preserve waiting_human and its stateSince. The
+non-required-suite and sibling-CI variants exercise the old state flap. Failed
+delivery remains retryable. Add `human-new-head` to prove a different head gets
+its own fresh validation and notice, while explicit repo opt-in still resumes
+daemon merging. A known handoff holds until a new head or relevant policy change;
+its cached fact never authorizes an automatic merge. Unit coverage also holds
+new acquisitions while reconcile is failed, cooling down or below its quota floor.

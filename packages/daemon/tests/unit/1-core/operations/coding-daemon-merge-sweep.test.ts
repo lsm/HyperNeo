@@ -271,6 +271,167 @@ describe('daemon merge sweep behavior', () => {
       ).toEqual([{ head, actor: 'daemon:coding-sweep', merge_commit: 'c'.repeat(40) }]);
     }
   );
+  test('a bot-approved ledger row awaiting CI reaches fresh zero-required-check gates', async () => {
+    db.prepare("UPDATE pack_coding_pr_ledger SET state='approved_pending'").run();
+    const noRequired: SpawnFn = (args, options) => {
+      if (args[2] !== 'checks') return spawn(args, options);
+      calls.push(args);
+      return {
+        stdout: new Response('[]').body,
+        stderr: new Response('').body,
+        exited: Promise.resolve(0),
+        exitCode: 0,
+        kill() {},
+      };
+    };
+    const run = sweep(noRequired);
+    await run(10);
+    await run(11);
+    expect(merges()).toEqual([['gh', 'pr', 'merge', url, '--squash', '--match-head-commit', head]]);
+    expect(notices).toEqual([expect.stringContaining('Merge confirmed:')]);
+  });
+  test.each([
+    'pending',
+    'read-failure',
+    'old-review',
+    'nonempty-green',
+    'human-signoff',
+    'unresolved-thread',
+  ])('pending ledger admission still refuses %s from fresh facts', async (reason) => {
+    db.prepare("UPDATE pack_coding_pr_ledger SET state='approved_pending'").run();
+    if (reason === 'pending') ci = 'pending';
+    if (reason === 'read-failure') fail = 'checks';
+    if (reason === 'old-review') reviewHead = 'b'.repeat(40);
+    if (reason === 'human-signoff') labels = ['human-merge'];
+    if (reason === 'unresolved-thread') unresolved = true;
+    const fresh: SpawnFn = (args, options) => {
+      if (args[2] !== 'checks' || ['pending', 'read-failure', 'nonempty-green'].includes(reason))
+        return spawn(args, options);
+      calls.push(args);
+      return {
+        stdout: new Response('[]').body,
+        stderr: new Response('').body,
+        exited: Promise.resolve(0),
+        exitCode: 0,
+        kill() {},
+      };
+    };
+    await sweep(fresh)(10);
+    expect(calls.some((args) => args[2] === 'checks')).toBe(true);
+    expect(merges()).toEqual([]);
+  });
+  test('CI-only waiting rows reach human handoff and explicit opt-in, with fresh gates', async () => {
+    policy('mergePolicy', 'ci_only');
+    db.prepare("UPDATE pack_coding_pr_ledger SET state='waiting_ci'").run();
+    const noRequired: SpawnFn = (args, options) => {
+      if (args[2] !== 'checks') return spawn(args, options);
+      calls.push(args);
+      return {
+        stdout: new Response('[]').body,
+        stderr: new Response('').body,
+        exited: Promise.resolve(0),
+        exitCode: 0,
+        kill() {},
+      };
+    };
+    const human: string[] = [];
+    const run = sweep(noRequired, {
+      human: async (_key, text) => {
+        human.push(text);
+        return true;
+      },
+    });
+    await run(10);
+    expect(merges()).toEqual([]);
+    expect(human).toEqual([expect.stringContaining('manual merge')]);
+    expect(ledger.stateOf(url)).toBe('waiting_human');
+    policy('allowNoChecksMerge', true);
+    db.prepare("UPDATE pack_coding_pr_ledger SET state='waiting_ci'").run();
+    await run(11);
+    expect(merges()).toHaveLength(1);
+  });
+  test('owner execution evaluates handoff without entering daemon merge attempts or warnings', async () => {
+    policy('mergeBy', 'owner');
+    policy('mergePolicy', 'ci_only');
+    const run = sweep();
+    await run(10);
+    await run(11);
+    expect(calls.some((args) => args[2] === 'checks')).toBe(true);
+    expect(merges()).toEqual([]);
+    expect(await ledger.write('daemonMerge', { kind: 'list' })).toEqual([]);
+    expect(warnings.some((args) => JSON.stringify(args).includes('merge_by_owner'))).toBe(false);
+    expect(calls).toEqual([
+      ['gh', 'pr', 'checks', url, '--required', '--json', 'bucket,name,link'],
+      ['gh', 'pr', 'checks', url, '--required', '--json', 'bucket,name,link'],
+    ]);
+  });
+  test('owner execution with zero-check opt-in needs neither handoff nor merge facts', async () => {
+    policy('mergeBy', 'owner');
+    policy('mergePolicy', 'ci_only');
+    policy('allowNoChecksMerge', true);
+    await sweep()(10);
+    expect(calls).toEqual([]);
+    expect(await ledger.write('daemonMerge', { kind: 'list' })).toEqual([]);
+  });
+  test.each(['unreadable', 'malformed'])(
+    'owner handoff holds on a %s required-check probe without reading merge facts',
+    async (reason) => {
+      policy('mergeBy', 'owner');
+      policy('mergePolicy', 'ci_only');
+      const human: string[] = [];
+      const probe: SpawnFn = (args, options) => {
+        if (reason === 'unreadable') {
+          fail = 'checks';
+          return spawn(args, options);
+        }
+        calls.push(args);
+        return {
+          stdout: new Response('{}').body,
+          stderr: new Response('').body,
+          exited: Promise.resolve(0),
+          exitCode: 0,
+          kill() {},
+        };
+      };
+      await sweep(probe, { human: async (_key, text) => !!human.push(text) })(10);
+      expect(calls).toEqual([
+        ['gh', 'pr', 'checks', url, '--required', '--json', 'bucket,name,link'],
+      ]);
+      expect(human).toEqual([]);
+      expect(warnings.some((args) => args[0] === 'Human merge handoff held')).toBe(true);
+      expect(warnings.some((args) => args[0] === 'Daemon merge held')).toBe(false);
+    }
+  );
+  test.each(['failed', 'cooldown', 'low-quota', 'core-empty', 'core-positive'])(
+    'owner probes respect reconcile health: %s',
+    async (reason) => {
+      policy('mergeBy', 'owner');
+      policy('mergePolicy', 'ci_only');
+      await ledger.write('recordHealth', 'synthetic/merge', {
+        at: 2,
+        outcome: reason === 'failed' ? 'failed' : reason === 'cooldown' ? 'cooldown' : 'complete',
+        ...(reason === 'cooldown' ? { retryAt: 1000 } : {}),
+        ...(['low-quota', 'core-empty', 'core-positive'].includes(reason)
+          ? {
+              quota: {
+                status: 200,
+                resource: reason === 'low-quota' ? 'graphql' : 'core',
+                remaining: reason === 'core-empty' ? 0 : 100,
+                resetAt: 1000,
+                requestId: null,
+                retryAfterMs: null,
+              },
+            }
+          : {}),
+      });
+      await sweep()(10);
+      expect(calls).toEqual(
+        reason === 'core-positive'
+          ? [['gh', 'pr', 'checks', url, '--required', '--json', 'bucket,name,link']]
+          : []
+      );
+    }
+  );
   test('pins a single unowned merge and records executor/head/time across overlapping sweeps', async () => {
     const run = sweep();
     await Promise.all([run(10), run(11)]);
