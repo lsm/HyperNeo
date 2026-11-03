@@ -78,7 +78,7 @@ import {
 import type { SessionLoadErrorKind, SessionUnavailableKind } from '../lib/session-load-error.ts';
 import { type SessionStore, sessionStore } from '../lib/session-store.ts';
 import { type SearchMessageLoadTarget, searchHighlightMessageIdSignal } from '../lib/signals.ts';
-import { spaceStore } from '../lib/space-store.ts';
+import { webExtension } from '../lib/web-extensions.ts';
 import { connectionState, globalSettings } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
 import { cn } from '../lib/utils';
@@ -230,9 +230,11 @@ export default function ChatContainer({
   const [pendingErrorMessage, setPendingErrorMessage] = useState<string | null>(null);
   const pendingTextareaRef = useRef<HTMLTextAreaElement>(null);
 
+  const spaceStore = webExtension('space')?.store;
+  const taskActivity = spaceStore?.taskActivity.value;
   const pendingLiveMember = useMemo(() => {
     if (!pendingAgent) return undefined;
-    const members = spaceStore.taskActivity.value.get(pendingAgent.taskId) ?? [];
+    const members = taskActivity?.get(pendingAgent.taskId) ?? [];
     return members.find(
       (m) =>
         m.kind === 'node_agent' &&
@@ -242,7 +244,7 @@ export default function ChatContainer({
         m.nodeExecution?.status !== 'pending' &&
         (!pendingAgent.workflowNodeId || m.nodeExecution?.nodeId === pendingAgent.workflowNodeId)
     );
-  }, [pendingAgent, spaceStore.taskActivity.value]);
+  }, [pendingAgent, taskActivity]);
 
   useEffect(() => {
     if (pendingLiveMember?.sessionId && pendingAgent) {
@@ -270,7 +272,7 @@ export default function ChatContainer({
   }, [pendingAgent]);
 
   const handlePendingSend = useCallback(async () => {
-    if (!pendingAgent) return;
+    if (!pendingAgent || !spaceStore) return;
     const trimmed = pendingContent.trim();
     if (!trimmed || pendingSubmitting) return;
     setPendingSubmitting(true);
@@ -313,7 +315,7 @@ export default function ChatContainer({
     } finally {
       setPendingSubmitting(false);
     }
-  }, [pendingAgent, pendingContent, pendingSubmitting]);
+  }, [pendingAgent, pendingContent, pendingSubmitting, spaceStore]);
 
   const handlePendingKeyDown = useCallback(
     (e: KeyboardEvent) => {

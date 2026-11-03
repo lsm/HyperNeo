@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
-import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/runtime.ts';
+import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
 import type { NeoSessionFacts } from '../../../packages/daemon/src/lib/neo/pack-contract.ts';
 
 const run = resolve(process.argv[2]), execFile = promisify(execFileCallback);

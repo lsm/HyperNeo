@@ -26,6 +26,11 @@ import type {
   WorkSummary,
 } from './types.ts';
 import { reject } from './work-operations.ts';
+import { invokeOperation } from '../operations/invoke.ts';
+import type { SessionManager } from '../session/session-manager.ts';
+import type { Database } from '../../storage/database.ts';
+import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
+import type { TaskAgentManager } from '../space/runtime/task-agent-manager.ts';
 import { matchChatsBy } from './match-chats.ts';
 
 const OPEN_TASK = `status IN ('draft', 'open', 'in_progress', 'review', 'approved', 'blocked', 'rate_limited', 'usage_limited')`;
@@ -688,5 +693,99 @@ export function createSpaceAdapter(deps: SpaceAdapterDeps): WorkAdapter {
       };
     },
     stop: (ref, context) => runSpaceStop(ref, context, deps),
+  };
+}
+
+export interface SpaceTaskControlContext {
+  readonly deps: {
+    readonly sessionManager: Pick<SessionManager, 'getOperationRegistry'>;
+    readonly db: Pick<Database, 'getSDKMessageRepo'>;
+  };
+  readonly spaceRuntimeService: Pick<SpaceRuntimeService, 'ensureToolTargetSession'>;
+  readonly taskAgentManager: Pick<TaskAgentManager, 'injectSubSessionMessage'>;
+}
+
+export function spaceTaskControl(context: SpaceTaskControlContext): SpaceTaskControl {
+  const invoke = async (name: string, input: unknown, caller: OperationCaller) => {
+    const outcome = await invokeOperation(
+      context.deps.sessionManager.getOperationRegistry(),
+      name,
+      input,
+      spaceTaskCaller(caller)
+    );
+    return outcome.kind === 'completed' ? outcome.value : outcome.message;
+  };
+  return {
+    rename: async (target, title, caller) => {
+      const result = await invoke(
+        target.agentId ? 'agent.update' : 'task.update',
+        target.agentId
+          ? { spaceId: target.spaceId, agentId: target.agentId, name: title }
+          : { taskId: target.taskId, title },
+        caller
+      );
+      const reason = taskOperationRejection(result);
+      return reason
+        ? reject('not_delivered', reason)
+        : { ok: true, value: { renamed: true, title } };
+    },
+    create: async (spaceId, title, description, caller) => {
+      const created = await invoke('task.create', { spaceId, title, description }, caller);
+      const reason = taskOperationRejection(created);
+      return reason === null ? { taskId: (created as { id: string }).id } : { reason };
+    },
+    messageAgent: async (agent, message, { from, caller }) => {
+      const sent = (await invoke(
+        'message.send',
+        {
+          agent: { space: agent.spaceId, agent: agent.id },
+          message: {
+            type: 'user',
+            message: { role: 'user', content: message },
+            parent_tool_use_id: null,
+            ...(from === 'chat' ? {} : { inputKind: 'task' }),
+          },
+          from,
+        },
+        caller
+      )) as { kind?: unknown; reason?: unknown } | string;
+      if (typeof sent === 'object' && sent?.kind === 'accepted') return { accepted: true };
+      return {
+        reason:
+          typeof sent === 'string' ? sent : String(sent?.reason ?? 'message.send refused it.'),
+      };
+    },
+    message: async (taskId, node, message, fromHuman) => {
+      try {
+        const ensured = await context.spaceRuntimeService.ensureToolTargetSession({
+          kind: 'worker',
+          taskId,
+          agentName: node.agentName,
+          workflowNodeId: node.workflowNodeId,
+          waitCapMs: 0,
+        });
+        const sessionId = ensured.kind === 'resolved' ? ensured.sessionId : node.agentSessionId;
+        if (!sessionId)
+          return { reason: 'reason' in ensured ? ensured.reason : 'No worker session.' };
+        const messageId = await context.taskAgentManager.injectSubSessionMessage(
+          sessionId,
+          message,
+          !fromHuman
+        );
+        const sent = context.deps.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId);
+        return {
+          delivered: sent?.sendStatus !== 'deferred',
+          ...(sent && messageId ? { receipt: { executionId: sessionId, inputId: messageId } } : {}),
+        };
+      } catch (error) {
+        return { reason: error instanceof Error ? error.message : String(error) };
+      }
+    },
+    cancel: async (taskId, caller) => {
+      const reason = taskOperationRejection(
+        await invoke('task.transition', { taskId, status: 'cancelled' }, caller)
+      );
+      return reason === null ? { cancelled: true } : { reason };
+    },
   };
 }

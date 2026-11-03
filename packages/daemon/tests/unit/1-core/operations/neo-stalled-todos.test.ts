@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { MessageHub } from '@hyperneo/shared';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createTestDb } from '../../../helpers/database.ts';
 

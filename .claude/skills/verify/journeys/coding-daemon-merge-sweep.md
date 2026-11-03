@@ -94,3 +94,29 @@ attempt and then apply an external merge. The normal ledger MERGED event must
 notify the linked owner once; only approved-green manual merge instructions
 are suppressed for daemon execution. Terminal fixtures must contain the PR
 only in the done connection with a real closedAt value.
+
+Add `large-files` for a 171-file PR whose ledger and `gh pr view` expose only
+100 paths. The actual facts reader must paginate filenames-only GraphQL pages and
+merge once with the full head. A protected design path on the last page must
+hold; missing pages, malformed data and a failed files read must also hold.
+No policy changes or manual merge are used to complete the scope.
+Ordinary waiting_human rows remain signaling-only. This exception requires a
+truncated file summary plus complete current scope and passing fresh gates.
+
+The file read pins both head and base SHA before/after pagination. A moving base
+with an unchanged head, or repeated pages whose count looks complete, must hold.
+The accepted final-read-to-merge race in #9458 remains unchanged.
+A completed scope also needs GitHub's passing commit status (CLEAN/HAS_HOOKS),
+not only passing required checks. UNSTABLE, BLOCKED and UNKNOWN must hold.
+
+File pages contain paths and snapshot metadata, never patches. The 1 MiB output
+bound remains; oversized patch fixtures must not be downloaded by this reader.
+
+Add `no-checks` to cover repositories with no CI at all. The fake CLI returns
+exit 1, empty stdout and exactly `no checks reported on the 'fixture' branch`
+on stderr. Before admitting that empty required set, the real daemon sweep must
+hold HTTP 502 and 504 failures with no attempt receipt or merge command. After
+restoring the exact no-checks response, it must merge once with the full pinned
+head and persist the daemon receipt, without changing saved preferences.
+Both no-checks diagnostics still require exit 1 and empty stdout; extra error
+lines, wrong exit codes, invalid JSON, auth errors and timeouts remain unreadable.

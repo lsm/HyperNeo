@@ -19,7 +19,11 @@ import {
   currentSessionIdSignal,
   type CommandPaletteMode,
 } from '../lib/signals.ts';
-import { spaceStore, type SpaceWithTasks } from '../lib/space-store.ts';
+import {
+  type SpaceWithTaskList,
+  webExtension,
+  webExtensionDeclined,
+} from '../lib/web-extensions.ts';
 import { sessions } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
 import { cn } from '../lib/utils.ts';
@@ -198,7 +202,7 @@ function sessionItems(allSessions: Session[], query: string, limit: number): Pal
   }));
 }
 
-function spaceItems(spaces: SpaceWithTasks[], query: string, limit: number): PaletteItem[] {
+function spaceItems(spaces: SpaceWithTaskList[], query: string, limit: number): PaletteItem[] {
   const trimmed = query.trim();
   const ranked = spaces
     .map((space) => {
@@ -229,7 +233,7 @@ function spaceItems(spaces: SpaceWithTasks[], query: string, limit: number): Pal
 }
 
 function taskItemsFromSpaces(
-  spaces: SpaceWithTasks[],
+  spaces: SpaceWithTaskList[],
   query: string,
   limit: number
 ): PaletteItem[] {
@@ -284,6 +288,8 @@ function shouldSearchMessages(query: string, mode: CommandPaletteMode): boolean 
   return mode === 'quick-open' && trimmed.length > 0 && !trimmed.startsWith('>');
 }
 
+const EMPTY_SPACES: SpaceWithTaskList[] = [];
+
 export function CommandPalette() {
   const open = commandPaletteOpenSignal.value;
   const mode = commandPaletteModeSignal.value;
@@ -301,7 +307,9 @@ export function CommandPalette() {
     setSelectedIndex(0);
     setMessageResults([]);
     setRegistryVersion((v) => v + 1);
-    spaceStore.initGlobalList().catch(() => {});
+    webExtension('space')
+      ?.store.initGlobalList()
+      .catch(() => {});
     setTimeout(() => inputRef.current?.focus(), 0);
   }, [open, mode]);
 
@@ -352,12 +360,20 @@ export function CommandPalette() {
   }, [open, query, mode]);
 
   const allSessions = sessions.value;
-  const spacesWithTasks = spaceStore.spacesWithTasks.value;
+  const spacesWithTasks = webExtension('space')?.store.spacesWithTasks.value ?? EMPTY_SPACES;
+  const spaceDeclined = webExtensionDeclined('space');
 
   const items = useMemo(() => {
     const forcedCommand = query.trimStart().startsWith('>');
     const commandQuery = forcedCommand ? query.trimStart().slice(1).trimStart() : query;
-    const commands = commandItems(commandRegistry.search(commandQuery));
+    const commands = commandItems(
+      commandRegistry
+        .search(commandQuery)
+        .filter(
+          ({ command }) =>
+            !spaceDeclined || (command.id !== 'nav.spaces' && command.category !== 'space')
+        )
+    );
     const quickItems = [
       ...sessionItems(allSessions, query, query.trim() ? 8 : 5),
       ...spaceItems(spacesWithTasks, query, query.trim() ? 5 : 3),
@@ -370,7 +386,7 @@ export function CommandPalette() {
       return query.trim() ? [...commands.slice(0, 8), ...quickItems.slice(0, 8)] : commands;
     }
     return query.trim() ? [...quickItems, ...commands.slice(0, 5)] : quickItems;
-  }, [query, mode, messageResults, allSessions, spacesWithTasks, registryVersion]);
+  }, [query, mode, messageResults, allSessions, spacesWithTasks, registryVersion, spaceDeclined]);
 
   const groupedItems = useMemo(() => {
     const groups: Array<{ key: PaletteItem['group']; items: PaletteItem[] }> = [];

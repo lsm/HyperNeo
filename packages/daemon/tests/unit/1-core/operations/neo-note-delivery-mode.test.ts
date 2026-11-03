@@ -7,7 +7,7 @@ import {
   defineOperation,
 } from '../../../../src/lib/operations/registry.ts';
 import { wakeStalledAsks } from '../../../../src/lib/neo/stalled-asks.ts';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
 import {
   InternalEventBus,
   type DaemonInternalEventMap,

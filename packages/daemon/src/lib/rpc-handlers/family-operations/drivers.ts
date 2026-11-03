@@ -64,12 +64,6 @@ import {
   createHyperneoAdapter,
   type HyperneoSessionControl,
 } from '../../drivers/hyperneo-adapter.ts';
-import {
-  createSpaceAdapter,
-  type SpaceTaskControl,
-  spaceTaskCaller,
-  taskOperationRejection,
-} from '../../drivers/space-adapter.ts';
 import type { PlaceGroup, WorkAdapter } from '../../drivers/types.ts';
 import {
   createWorkVerbOperations,
@@ -466,91 +460,6 @@ function codexDesktopAdapters(
   ];
 }
 
-export function spaceTaskControl(context: FamilyOperationContext): SpaceTaskControl {
-  const invoke = async (name: string, input: unknown, caller: OperationCaller) => {
-    const outcome = await invokeOperation(
-      context.deps.sessionManager.getOperationRegistry(),
-      name,
-      input,
-      spaceTaskCaller(caller)
-    );
-    return outcome.kind === 'completed' ? outcome.value : outcome.message;
-  };
-  return {
-    rename: async (target, title, caller) => {
-      const result = await invoke(
-        target.agentId ? 'agent.update' : 'task.update',
-        target.agentId
-          ? { spaceId: target.spaceId, agentId: target.agentId, name: title }
-          : { taskId: target.taskId, title },
-        caller
-      );
-      const reason = taskOperationRejection(result);
-      return reason
-        ? reject('not_delivered', reason)
-        : { ok: true, value: { renamed: true, title } };
-    },
-    create: async (spaceId, title, description, caller) => {
-      const created = await invoke('task.create', { spaceId, title, description }, caller);
-      const reason = taskOperationRejection(created);
-      return reason === null ? { taskId: (created as { id: string }).id } : { reason };
-    },
-    messageAgent: async (agent, message, { from, caller }) => {
-      const sent = (await invoke(
-        'message.send',
-        {
-          agent: { space: agent.spaceId, agent: agent.id },
-          message: {
-            type: 'user',
-            message: { role: 'user', content: message },
-            parent_tool_use_id: null,
-            ...(from === 'chat' ? {} : { inputKind: 'task' }),
-          },
-          from,
-        },
-        caller
-      )) as { kind?: unknown; reason?: unknown } | string;
-      if (typeof sent === 'object' && sent?.kind === 'accepted') return { accepted: true };
-      return {
-        reason:
-          typeof sent === 'string' ? sent : String(sent?.reason ?? 'message.send refused it.'),
-      };
-    },
-    message: async (taskId, node, message, fromHuman) => {
-      try {
-        const ensured = await context.spaceRuntimeService.ensureToolTargetSession({
-          kind: 'worker',
-          taskId,
-          agentName: node.agentName,
-          workflowNodeId: node.workflowNodeId,
-          waitCapMs: 0,
-        });
-        const sessionId = ensured.kind === 'resolved' ? ensured.sessionId : node.agentSessionId;
-        if (!sessionId)
-          return { reason: 'reason' in ensured ? ensured.reason : 'No worker session.' };
-        const messageId = await context.taskAgentManager.injectSubSessionMessage(
-          sessionId,
-          message,
-          !fromHuman
-        );
-        const sent = context.deps.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId);
-        return {
-          delivered: sent?.sendStatus !== 'deferred',
-          ...(sent && messageId ? { receipt: { executionId: sessionId, inputId: messageId } } : {}),
-        };
-      } catch (error) {
-        return { reason: error instanceof Error ? error.message : String(error) };
-      }
-    },
-    cancel: async (taskId, caller) => {
-      const reason = taskOperationRejection(
-        await invoke('task.transition', { taskId, status: 'cancelled' }, caller)
-      );
-      return reason === null ? { cancelled: true } : { reason };
-    },
-  };
-}
-
 export function registerDriverOperations(context: FamilyOperationContext): OperationDefinition[] {
   const prepareExecution: WorkExecutionPreparer = (request, location) =>
     workStartPreparation.prepare(request, location, context.executionPreparations?.() ?? [], {
@@ -659,14 +568,6 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       makeFolder: (folder: string) => mkdirSync(folder),
       homeDir: homedir(),
     }),
-    createSpaceAdapter({
-      readTurnEnds: (sessionId, since) =>
-        context.deps.db.readHyperneoTurnEndsAsync(sessionId, since),
-      db,
-      machine,
-      searchChats: ownChats,
-      tasks: spaceTaskControl(context),
-    }),
     ...codex(),
     ...desktop,
     ...claudeCodeAdapters(
@@ -692,7 +593,11 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       if (index >= 0) adapters.splice(index, 1);
       if (selected) adapters.push(...codex());
     }
-    return adapters;
+    return [
+      adapters[0],
+      ...(context.extensionAdapters?.({ searchChats: ownChats }) ?? []),
+      ...adapters.slice(1),
+    ];
   };
   const health = createDriverHealthRuntime(context, currentAdapters);
   const deps = {

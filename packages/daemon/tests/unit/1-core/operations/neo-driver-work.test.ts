@@ -27,7 +27,7 @@ import {
   readDriverSent,
   readDriverSettlement,
 } from '../../../../src/lib/neo/driver-work.ts';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import { createNeoOperations } from '../../helpers/neo-service.ts';
 import type { NeoRef } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
 import { withCodingWorkGoal as withWorkGoal } from '../../../../src/lib/neo/packs/coding/work-goal.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';

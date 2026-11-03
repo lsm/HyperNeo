@@ -18,19 +18,13 @@ import { readLiveClaudeSessions } from '../drivers/claude-desktop-adapter.ts';
 import { spawnProcess } from '../runtime-spawn/index.ts';
 import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
 import { join, resolve } from 'node:path';
-import { stampActiveAttemptList } from '../tasks/direct-attempt-flag.ts';
-import { registerDirectStartJobs } from '../tasks/direct-start-jobs.ts';
-import {
-  createDirectOutcomeRequester,
-  registerDirectOutcomeJobs,
-} from '../tasks/direct-outcome-jobs.ts';
-import { settleTaskDependents } from '../tasks/settle-dependents.ts';
 import { createWorkflowTaskRecoveryExecutor } from '../tasks/recovery-executor.ts';
 import { recoverTaskExecution } from '../tasks/recover-task-execution.ts';
-import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
 import { createSpaceOperationRegistryProvider } from '../tasks/operations.ts';
 import { collectFamilyOperations, type FamilyOperationContext } from './family-operations/index.ts';
-import { createNeoService } from '../neo/packs/runtime.ts';
+import { createNeoService, neoPacksExtension } from '../neo/packs/runtime.ts';
+import { setupSpaceServices } from './space-setup.ts';
+import { createDaemonExtensionsOperation, type DaemonExtensions } from '../extensions/contract.ts';
 import {
   NEO_DRIVER_REFRESH,
   refreshNeoDriverWork,
@@ -78,9 +72,8 @@ import { createSpaceCallerScopeResolver } from '../space/runtime/space-caller-sc
 import { createSpaceScopeResolver } from '../space/runtime/space-scope-resolver.ts';
 import { createDatabaseDirectTaskWorkerResolver } from '../tasks/direct-task-worker-identity.ts';
 import { DirectTaskExecutionRepository } from '../../storage/repositories/direct-task-execution-repository.ts';
-import type { MessageHub, SessionMetadata, SpaceTask } from '@hyperneo/shared';
+import type { MessageHub } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
-import type { SpaceGoalOutcomeNotification } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -110,67 +103,16 @@ import type { GitHubService } from '../github/github-service.ts';
 import { Logger } from '../logger.ts';
 import { setupDialogHandlers } from './dialog-handlers.ts';
 import { setupQuestionHandlers } from './question-handlers.ts';
-import { setupSpaceHandlers } from './space-handlers.ts';
 import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers.ts';
-import { publishUnifiedAgentCreated } from '../agents/unified-agent-events.ts';
-import { createResolveClones } from '../session/clone-cascade.ts';
-import { nodeWorkspaceValidationIo } from '../workspaces/validation-pipeline.ts';
-import { createCloneLifecycleEffects } from './session-handlers.ts';
 import { createDefaultSessionResolutionDeps } from '../session-resolution/default-deps.ts';
 import { ensureSession } from '../session-resolution/ensure-session.ts';
-import { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
 import { TaskAgentManager } from '../space/runtime/task-agent-manager.ts';
-import { ReplyRoutingRegistry } from '../messaging/reply-routing-registry.ts';
 import { SpaceWorktreeManager } from '../workspaces/worktree-manager.ts';
-import { CodingArtifactProfile } from '../workflows/coding-artifact-profile.ts';
-import {
-  setupSpaceWorkflowHandlers,
-  checkBuiltInWorkflowDriftOnStartup,
-  restampBuiltInWorkflowsOnStartup,
-} from './space-workflow-handlers.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
-import { SpaceTaskManager } from '../tasks/task-manager.ts';
-import { SpaceWorkflowManager, createSpaceAgentLookup } from '../workflows/workflow-manager.ts';
-import type { SpaceAgentLookup } from '../workflows/workflow-manager.ts';
-import {
-  SpaceTaskRepository,
-  spaceTaskWriter,
-} from '../../storage/repositories/space-task-repository.ts';
-import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
-import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository.ts';
+import { spaceTaskWriter } from '../../storage/repositories/space-task-repository.ts';
 import { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository.ts';
-import { createConversationFrictionEvidenceHandler } from '../job-handlers/conversation-friction-evidence.handler.ts';
-import { handleGoalAutomationExecute } from '../job-handlers/goal-automation-execute.handler.ts';
 import { GoalAutomationService } from '../goals/automation-service.ts';
-import {
-  GOAL_AUTOMATION_EXECUTE,
-  SPACE_CONVERSATION_FRICTION_ANALYZE,
-} from '../job-queue-constants.ts';
-import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository.ts';
-import { SessionRepository } from '../../storage/repositories/session-repository.ts';
-import { setupSpaceAgentReminderHandlers } from './space-agent-reminder-handlers.ts';
-import { setupSpaceAgentSubscriptionHandlers } from './space-agent-subscription-handlers.ts';
-import { setupSpaceAgentTemplateHandlers } from './space-agent-template-handlers.ts';
-import {
-  buildAgentCreate,
-  type SpaceAgentV2Deps,
-  archiveAgentSessions,
-  setupSpaceAgentV2Handlers,
-} from './space-agent-v2-handlers.ts';
-import { buildTemplateExtrasSeeder } from '../agents/template-extras-seeding.ts';
-import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
-import {
-  SpaceLongHorizonAgentRepository,
-  templateInstanceScanFromRepo,
-} from '../../storage/repositories/space-long-horizon-agent-repository.ts';
-import { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
-import { SpaceAgentGoalScopeRepository } from '../../storage/repositories/space-agent-goal-scope-repository.ts';
-import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
-import { SpaceAgentReminderRepository } from '../../storage/repositories/space-agent-reminder-repository.ts';
-import { SpaceAgentSubscriptionRepository } from '../../storage/repositories/space-agent-subscription-repository.ts';
-import { SpaceSessionEventSubscriptionRepository } from '../../storage/repositories/space-session-event-subscription-repository.ts';
-import { SpaceAgentTemplateManager } from '../agents/template-manager.ts';
-import { createAgentTemplateResolverFactory } from '../workflows/run-template-snapshot.ts';
+import { archiveAgentSessions } from './space-agent-v2-handlers.ts';
 import {
   deliverSpaceAgentMessage,
   type SessionInjectionOutcome,
@@ -178,15 +120,8 @@ import {
 import { resolveDeliverySession } from '../session-resolution/resolve-delivery-session.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
-import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
 import { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
-import { GOAL_OUTCOME_WAKE_ENABLED } from '../space/runtime/goal-outcome-wake-flag.ts';
 import { SpaceAgentInactivityWatchdogService } from '../agents/inactivity-watchdog-service.ts';
-import type { InactivityWatchdogSessionSnapshot } from '../agents/inactivity-watchdog-service.ts';
-import {
-  SpaceAgentInactivityClaimRepository,
-  SpaceAgentInactivityConfigRepository,
-} from '../../storage/repositories/space-agent-inactivity-repository.ts';
 import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers.ts';
 import { setupNodeExecutionHandlers } from './space-node-execution-handlers.ts';
 import { setupSpaceExportImportHandlers } from './space-export-import-handlers.ts';
@@ -203,25 +138,9 @@ import type { SkillsManager } from '../skills-manager.ts';
 import { setupWorkspaceHandlers } from './workspace-handlers.ts';
 import { setupGitHandlers } from './git-handlers.ts';
 import { WorkspaceHistoryRepository } from '../../storage/repositories/workspace-history-repository.ts';
-import { TaskScheduleRepository } from '../../storage/repositories/task-schedule-repository.ts';
-import { SpaceRepository } from '../../storage/repositories/space-repository.ts';
-import { setupTaskScheduleHandlers } from './task-schedule-handlers.ts';
 import { setupAgentMemoryHandlers } from './agent-memory-handlers.ts';
-import { setupSpaceGoalHandlers } from './space-goal-handlers.ts';
-import { subscribeAgentActivationOutcomeRedelivery } from '../goals/agent-activation-outcome-redelivery.ts';
-import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../goals/owner-change-outcome-redelivery.ts';
-import { setupEvolutionHandlers } from './evolution-handlers.ts';
-import { EvolutionConversationAnalysisService } from '../evolution/conversation-analysis-service.ts';
-import { EvolutionEpisodeService } from '../evolution/episode-service.ts';
-import { EvolutionScopeService } from '../evolution/scope-service.ts';
-import { EvolutionTraceEvidenceService } from '../evolution/trace-evidence-service.ts';
-import { ScheduleService } from '../schedule/schedule-service.ts';
-import { SpaceGoalEventRepository } from '../../storage/repositories/space-goal-event-repository.ts';
-import { SpaceGoalOutcomeNotificationRepository } from '../../storage/repositories/space-goal-outcome-notification-repository.ts';
-import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
 import { SpaceGoalService } from '../goals/service.ts';
 import { ExternalEventExtensionConfigStore } from '../external-events/extension-config-store.ts';
-import { mergeEvolutionPolicy } from '../evolution/scope-service.ts';
 import {
   isHttpExtension,
   isRpcExtension,
@@ -245,23 +164,8 @@ import {
 } from '../goals/automation-schedule-sync.ts';
 export { readSelfNagScheduleScopeId, syncGoalAutomationSelfNagScheduleForScope };
 
-function createGoalAutomationSelfNagSchedules(
-  goalRepo: SpaceGoalRepository,
-  scheduleService: ScheduleService,
-  evolutionRepo: EvolutionRepository
-): void {
-  for (const goal of goalRepo.listAllActive()) {
-    for (const scope of evolutionRepo.listScopes({ spaceId: goal.spaceId, spaceGoalId: goal.id })) {
-      try {
-        syncGoalAutomationSelfNagScheduleForScope({ goalRepo, scheduleService, scope });
-      } catch (err) {
-        log.warn('could not create Evolution self-nag schedule', err);
-      }
-    }
-  }
-}
-
 export interface RPCHandlerDependencies {
+  extensions: DaemonExtensions;
   watchSessionRepo?: (owner: string, repo: string) => Promise<string | null>;
   messageHub: MessageHub;
   deviceOf: (clientId: string) => UpgradeIdentity | null;
@@ -290,15 +194,6 @@ export interface RPCHandlerDependencies {
 }
 
 const log = new Logger('rpc-handlers');
-
-function toEpochMs(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
-  if (typeof value === 'string') {
-    const parsed = Date.parse(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
 
 export function setupExternalEventExtensionHandlers(deps: RPCHandlerDependencies): void {
   deps.messageHub.onRequest('space.externalEvents.listDeliveries', async (data) => {
@@ -451,9 +346,6 @@ export async function setupRPCHandlers(
   };
   const writeToolPreferences: SessionToolPreferenceWriter = (id, request, tools) =>
     exclusiveToolPreferences(id, () => persistToolPreferences(id, request, tools));
-  const pendingInactivityRunNow = new Set<Promise<void>>();
-  let inactivityRunNowCancelled = false;
-  let inactivityAborted = false;
   setupMessageHandlers(deps.messageHub, deps.sessionManager, deps.db);
   setupOperationHandlers(
     deps.messageHub,
@@ -555,758 +447,48 @@ export async function setupRPCHandlers(
     (sessionId) => !!neoCoordinatorBinding(deps.db, sessionId)
   );
 
-  const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase(), deps.reactiveDb);
-  const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(deps.db.getDatabase());
-  const artifactRepo = new WorkflowRunArtifactRepository(deps.db.getDatabase(), deps.reactiveDb);
-  const channelCycleRepo = new ChannelCycleRepository(deps.db.getDatabase());
-  const taskScheduleRepo = new TaskScheduleRepository(deps.db.getDatabase());
-  const spaceRepo = new SpaceRepository(deps.db.getDatabase());
-  const sessionRepo = new SessionRepository(deps.db.getDatabase());
-
-  const scheduleService = new ScheduleService({
-    db: deps.db.getDatabase(),
-    scheduleRepo: taskScheduleRepo,
-    jobQueue: deps.jobQueue,
-    spaceRepo,
-  });
-
-  const spaceGoalRepo = new SpaceGoalRepository(deps.db.getDatabase(), deps.reactiveDb);
-  const spaceGoalEventRepo = new SpaceGoalEventRepository(deps.db.getDatabase(), deps.reactiveDb);
-  const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(deps.db.getDatabase());
-  const outcomeNotificationRepo = new SpaceGoalOutcomeNotificationRepository(deps.db.getDatabase());
-  const evolutionTraceEvidenceService = new EvolutionTraceEvidenceService({
-    db: deps.db.getDatabase(),
-    evolutionRepo: deps.db.evolution,
-    taskRepo: spaceTaskRepo,
-  });
-  const evolutionConversationAnalysisService = new EvolutionConversationAnalysisService({
-    db: deps.db.getDatabase(),
-    evolutionRepo: deps.db.evolution,
-    taskRepo: spaceTaskRepo,
-    spaceRepo,
-  });
-  deps.jobProcessor.register(
-    SPACE_CONVERSATION_FRICTION_ANALYZE,
-    createConversationFrictionEvidenceHandler(evolutionConversationAnalysisService)
-  );
-  const evolutionScopeService = new EvolutionScopeService({
-    evolutionRepo: deps.db.evolution,
-    spaceRepo,
-    goalRepo: spaceGoalRepo,
-    taskRepo: spaceTaskRepo,
-    workflowRunRepo: spaceWorkflowRunRepo,
+  const {
+    stopInactivityRunNow,
+    cancelInactivityWatchdog: cancelSpaceInactivityWatchdog,
+    spaceTaskRepo,
+    spaceWorkflowRunRepo,
     artifactRepo,
-    traceEvidenceService: evolutionTraceEvidenceService,
-    jobQueue: deps.jobQueue,
-  });
-  let deliverOutcomeWake: (notification: SpaceGoalOutcomeNotification) => void = () => {};
-  const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
-  const spaceAgentGoalScopeRepo = new SpaceAgentGoalScopeRepository(
-    deps.db.getDatabase(),
-    spaceAgentRepo
-  );
-
-  const spaceGoalService = new SpaceGoalService({
-    goalRepo: spaceGoalRepo,
-    goalEventRepo: spaceGoalEventRepo,
-    taskRepo: spaceTaskRepo,
-    spaceRepo,
-    scheduleService,
-    db: deps.db.getDatabase(),
-    goalScopeRepo: spaceAgentGoalScopeRepo,
-    agentRepo: spaceAgentRepo,
-    outcomeNotificationRepo,
-    evolutionScopeService,
-    reactiveDb: deps.reactiveDb,
-    eventHub: {
-      publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
-    },
-    resolveWorkspacePath: (spaceId, rawPath) =>
-      deps.spaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath),
-    onGoalResumed: (goalId, spaceId) => {
-      for (const scope of deps.db.evolution.listScopes({ spaceId, spaceGoalId: goalId })) {
-        try {
-          syncGoalAutomationSelfNagScheduleForScope({
-            goalRepo: spaceGoalRepo,
-            scheduleService,
-            scope,
-            db: deps.db.getDatabase(),
-          });
-        } catch (err) {
-          log.warn('could not sync self-nag schedule on goal resume', err);
-        }
-      }
-    },
-    onOutcomeNotification: (notification) => {
-      try {
-        deliverOutcomeWake(notification);
-      } catch (err) {
-        log.warn(
-          `Goal outcome wake delivery threw for notification "${notification.id}": ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    },
-  });
-  const goalAutomationService = new GoalAutomationService({
-    goalRepo: spaceGoalRepo,
-    taskRepo: spaceTaskRepo,
-    evolutionRepo: deps.db.evolution,
-    cursorRepo: deps.db.goalAutomationCursors,
-    jobQueue: deps.jobQueue,
-    evolutionScopeService,
-  });
-  spaceGoalService.setGoalAutomationService(goalAutomationService);
-  createGoalAutomationSelfNagSchedules(spaceGoalRepo, scheduleService, deps.db.evolution);
-  deps.internalEventBus.subscribe(
-    'externalEvent.published',
-    (event) => {
-      goalAutomationService.onExternalEventPublished(event);
-    },
-    { subscriberName: 'goal-automation-service' }
-  );
-
-  const spaceWorkflowRepo = new SpaceWorkflowRepository(deps.db.getDatabase());
-  spaceWorkflowRepo.backfillExistingDefinitionVersions();
-  const spaceAgentTemplateRepo = new SpaceAgentTemplateRepository(deps.db.getDatabase());
-  const agentTemplateResolverFor = createAgentTemplateResolverFactory(spaceAgentTemplateRepo);
-  await spaceWorkflowRunRepo.backfillDefinitionPins(
-    (id) => spaceWorkflowRepo.getWorkflow(id),
-    agentTemplateResolverFor
-  );
-  await spaceWorkflowRunRepo.migrateSnapshotlessPins(agentTemplateResolverFor, (id) =>
-    spaceWorkflowRepo.getWorkflow(id)
-  );
-  const agentLookup: SpaceAgentLookup = createSpaceAgentLookup(longHorizonAgentRepo);
-  const spaceWorkflowManager = new SpaceWorkflowManager(
-    spaceWorkflowRepo,
-    agentLookup,
-    spaceAgentTemplateRepo
-  );
-
-  const emitClaimedTaskUpdate = (taskId: string) => {
-    const task = spaceTaskRepo.getTask(taskId);
-    if (!task) return;
-    void deps.internalEventBus
-      .publish('space.task.updated', {
-        sessionId: 'global',
-        spaceId: task.spaceId,
-        taskId: task.id,
-        task,
-      })
-      .catch((error) => log.warn('Failed to emit direct claim task update:', error));
-  };
-
-  registerDirectStartJobs({
-    db: deps.db.getDatabase(),
-    reactiveDb: deps.reactiveDb,
-    sessionDb: deps.db,
-    sessionManager: deps.sessionManager,
-    defaultModel: deps.config.defaultModel,
-    jobQueue: deps.jobQueue,
-    jobProcessor: deps.jobProcessor,
-    onTaskReopened: (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
-    onTaskClaimed: emitClaimedTaskUpdate,
-    onTaskActivated: emitClaimedTaskUpdate,
-  });
-
-  registerDirectOutcomeJobs({
-    db: deps.db.getDatabase(),
-    reactiveDb: deps.reactiveDb,
-    sessionManager: deps.sessionManager,
-    jobQueue: deps.jobQueue,
-    jobProcessor: deps.jobProcessor,
-    onAttemptRetired: emitClaimedTaskUpdate,
-    onTaskUpdated: (task) =>
-      void deps.internalEventBus
-        .publish('space.task.updated', {
-          sessionId: 'global',
-          spaceId: task.spaceId,
-          taskId: task.id,
-          task,
-        })
-        .catch((error) => log.warn('Failed to emit direct outcome task update:', error)),
-    settleDependents: (task) => settleEndedTask(task),
-    onTaskReopened: (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
-    onTerminalTransition: (taskId, fromStatus) =>
-      spaceGoalService.handleTaskTerminal(taskId, { fromStatus, deferPostCommitEffects: true }),
-  });
-
-  const settleEndedTask = (task: SpaceTask) =>
-    settleTaskDependents(task, {
-      getTaskManager: spaceTaskManagerFactory,
-      getActiveAttempt: (taskId) =>
-        new DirectTaskExecutionRepository(deps.db.getDatabase()).getActive(taskId),
-      stopForStatus: (spaceId, taskId, params, expected) =>
-        spaceRuntimeService.stopWorkflowBackedTaskForStatus(spaceId, taskId, params, expected),
-      requestDirectOutcome: createDirectOutcomeRequester(deps.db.getDatabase(), deps.jobQueue),
-    });
-
-  const spaceTaskManagerFactory = (spaceId: string): SpaceTaskManager => {
-    return new SpaceTaskManager(
-      deps.db.getDatabase(),
-      spaceId,
-      deps.reactiveDb,
-      evolutionScopeService,
-      (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
-      (taskId, fromStatus) =>
-        spaceGoalService.handleTaskTerminal(taskId, { fromStatus, deferPostCommitEffects: true }),
-      (rawPath) => deps.spaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath),
-      settleEndedTask
-    );
-  };
-
-  setupSpaceWorkflowHandlers(
-    deps.messageHub,
-    deps.spaceManager,
-    spaceWorkflowManager,
-    deps.internalEventBus,
-    spaceWorkflowRunRepo
-  );
-
-  void restampBuiltInWorkflowsOnStartup(
-    spaceWorkflowManager,
-    deps.spaceManager,
-    (workflowId) =>
-      spaceWorkflowRunRepo
-        .listByWorkflow(workflowId)
-        .some(
-          (run) =>
-            run.status === 'in_progress' || run.status === 'blocked' || run.status === 'pending'
-        ) || spaceTaskRepo.hasApprovedTaskForWorkflow(workflowId)
-  )
-    .then(() => {
-      void checkBuiltInWorkflowDriftOnStartup(spaceWorkflowManager, deps.spaceManager);
-    })
-    .catch((err: unknown) => {
-      log.warn('built-in workflow restamp failed:', err);
-    });
-
-  const nodeExecutionRepo = new NodeExecutionRepository(deps.db.getDatabase(), deps.reactiveDb);
-  const pendingCompletion: Parameters<typeof createSpaceOperationRegistryProvider>[3] = {
-    getSession: (id) => deps.db.getSession(id),
-    getTask: (id) => spaceTaskRepo.getTask(id),
-    getTaskManager: spaceTaskManagerFactory,
-    policyContext: { taskRepo: spaceTaskRepo, nodeExecutionRepo, longHorizonAgentRepo },
-    getSpaceAutonomyLevel: async (spaceId) => {
-      const space = await deps.spaceManager.getSpace(spaceId);
-      return space?.autonomyLevel ?? 1;
-    },
-    dispatchApproval: (spaceId, taskId, source, approvalReason, guard) =>
-      spaceRuntimeService.dispatchPostApproval(spaceId, taskId, source, { approvalReason }, guard),
-    warn: (operationName, taskId, detail) =>
-      log.warn(`${operationName}: dispatch failed after approval for ${taskId}: ${detail}`),
-    emitTaskUpdated: async (spaceId, task) => {
-      await deps.internalEventBus.publish('space.task.updated', {
-        sessionId: 'global',
-        spaceId,
-        taskId: task.id,
-        task,
-      });
-    },
-    audit: (operationName, session, previous, input) => {
-      new McpAuditLogRepository(deps.db.getDatabase()).createEntry({
-        sessionId: session.id,
-        agentName: session.metadata.promptProvenance?.agentName,
-        toolName: operationName,
-        spaceId: previous.spaceId,
-        taskId: input.taskId,
-        paramsSummary: JSON.stringify({
-          approved: input.approved,
-          reason: input.reason,
-          previousStatus: previous.status,
-        }),
-      });
-    },
-  };
-  const replyRoutingRegistry = new ReplyRoutingRegistry();
-  const artifactProfile = new CodingArtifactProfile({
-    db: deps.db.getDatabase(),
-    artifactRepo,
-    resolvePrReadyHookIds: (runId: string) => {
-      const run = spaceWorkflowRunRepo.getRun(runId);
-      if (!run?.workflowId) return undefined;
-      const wf = spaceWorkflowManager.getWorkflowForRun(run);
-      if (!wf) return undefined;
-      const ids = new Set<string>();
-      for (const h of wf.hooks ?? []) {
-        if (h.validator?.kind === 'built_in' && h.validator.id === 'pr_ready') ids.add(h.id);
-      }
-      return ids;
-    },
-  });
-  const evolutionEpisodeService = new EvolutionEpisodeService({
-    evolutionRepo: deps.db.evolution,
-    spaceRepo,
-    taskRepo: spaceTaskRepo,
-    workflowRunRepo: spaceWorkflowRunRepo,
-    artifactRepo,
-    artifactProfile,
-    goalService: spaceGoalService,
-    db: deps.db.getDatabase(),
-    taskCreatedEventHub: {
-      publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
-    },
-  });
-  deps.jobProcessor.register(GOAL_AUTOMATION_EXECUTE, async (job) =>
-    handleGoalAutomationExecute(job, {
-      db: deps.db.getDatabase(),
-      goalRepo: spaceGoalRepo,
-      taskRepo: spaceTaskRepo,
-      evolutionRepo: deps.db.evolution,
-      cursorRepo: deps.db.goalAutomationCursors,
-      episodeService: evolutionEpisodeService,
-      jobQueue: deps.jobQueue,
-      taskCreatedEventHub: {
-        publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
-      },
-    })
-  );
-  setupEvolutionHandlers(
-    deps.messageHub,
-    evolutionScopeService,
-    evolutionEpisodeService,
-    {
-      beforeScopeCreate: (params) => {
-        validateGoalAutomationSelfNagPolicy(params);
-      },
-      beforeScopeUpdate: (existing, params) => {
-        validateGoalAutomationSelfNagPolicy({
-          policy: params.policyPatch
-            ? mergeEvolutionPolicy(existing.policy, params.policyPatch)
-            : params.policy
-              ? { ...existing.policy, ...params.policy }
-              : existing.policy,
-        });
-      },
-      onScopeSaved: (scope) => {
-        syncGoalAutomationSelfNagScheduleForScope({
-          goalRepo: spaceGoalRepo,
-          scheduleService,
-          scope,
-          db: deps.db.getDatabase(),
-        });
-      },
-    },
-    deps.db.getDatabase()
-  );
-
-  const spaceAgentInactivityConfigRepo = new SpaceAgentInactivityConfigRepository(
-    deps.db.getDatabase()
-  );
-  const spaceAgentInactivityClaimRepo = new SpaceAgentInactivityClaimRepository(
-    deps.db.getDatabase()
-  );
-
-  const spaceAgentReminderRepo = new SpaceAgentReminderRepository(
-    deps.db.getDatabase(),
-    spaceAgentRepo
-  );
-  const spaceAgentSubscriptionRepo = new SpaceAgentSubscriptionRepository(
-    deps.db.getDatabase(),
-    spaceAgentRepo
-  );
-  const spaceSessionEventSubscriptionRepo = new SpaceSessionEventSubscriptionRepository(
-    deps.db.getDatabase()
-  );
-
-  const spaceRuntimeService: SpaceRuntimeService = new SpaceRuntimeService({
-    ownedAgents: spaceAgentRepo,
-    db: deps.db.getDatabase(),
-    dbPath: deps.db.getDatabasePath(),
-    spaceManager: deps.spaceManager,
-    longHorizonAgentRepo,
-    goalScopeRepo: spaceAgentGoalScopeRepo,
-    subscriptionRepo: spaceAgentSubscriptionRepo,
-    sessionSubscriptionRepo: spaceSessionEventSubscriptionRepo,
-    reminderRepo: spaceAgentReminderRepo,
-    spaceWorkflowManager,
-    workflowRunRepo: spaceWorkflowRunRepo,
-    taskRepo: spaceTaskRepo,
-    nodeExecutionRepo,
-    reactiveDb: deps.reactiveDb,
     channelCycleRepo,
-    sessionManager: deps.sessionManager,
-    internalEventBus: deps.internalEventBus,
-    artifactRepo,
-    actorRegistryRepos: {
-      spaceRepo,
-      sessionRepo,
-      longHorizonAgentRepo,
-      workflowRepo: spaceWorkflowRepo,
-      workflowRunRepo: spaceWorkflowRunRepo,
-      nodeExecutionRepo,
-    },
+    taskScheduleRepo,
+    spaceRepo,
     scheduleService,
-    commandBus: deps.commandBus,
-    externalEventStore: deps.externalEventStore,
-    externalEventService: deps.externalEventService,
-    replyRoutingRegistry,
-    memoryRepo: deps.db.agentMemory,
-    goalService: spaceGoalService,
+    spaceGoalRepo,
+    spaceGoalEventRepo,
+    longHorizonAgentRepo,
     evolutionScopeService,
-    artifactProfile,
-    outcomeNotificationRepo,
-    enableGoalOutcomeWake: GOAL_OUTCOME_WAKE_ENABLED,
-    inactivityConfigRepo: spaceAgentInactivityConfigRepo,
-    inactivityClaimRepo: spaceAgentInactivityClaimRepo,
-    inactivityRunNow: (spaceId, agentId) => {
-      const sessionId = longHorizonAgentRepo.getById(agentId)?.sessionId;
-      const db = deps.db.getDatabase();
-      const anchorRow =
-        sessionId !== null && sessionId !== undefined
-          ? (db
-              .prepare(
-                `SELECT MAX(timestamp) AS ts FROM sdk_messages
-                 WHERE session_id = ? AND COALESCE(send_status, 'consumed') = 'consumed'
-                   AND timestamp < (
-                     SELECT MAX(timestamp) FROM sdk_messages
-                     WHERE session_id = ? AND COALESCE(send_status, 'consumed') = 'consumed'
-                       AND message_type = 'user'
-                   )`
-              )
-              .get(sessionId, sessionId) as { ts?: string | number | null } | null)
-          : null;
-      const invokingUserRow =
-        sessionId !== null && sessionId !== undefined
-          ? (db
-              .prepare(
-                `SELECT MAX(timestamp) AS ts FROM sdk_messages
-                 WHERE session_id = ? AND COALESCE(send_status, 'consumed') = 'consumed'
-                   AND message_type = 'user'`
-              )
-              .get(sessionId) as { ts?: string | number | null } | null)
-          : null;
-      const activityBaseline = toEpochMs(anchorRow?.ts) ?? undefined;
-      const invokingUserMsgAt = toEpochMs(invokingUserRow?.ts);
-      const invokedAt = Date.now();
-      let task: Promise<void>;
-      const run = async () => {
-        try {
-          while (!inactivityRunNowCancelled) {
-            if (sessionId !== null && sessionId !== undefined) {
-              const row = db
-                .prepare(`SELECT processing_state FROM sessions WHERE id = ?`)
-                .get(sessionId) as { processing_state?: string | null } | null;
-              let status = 'idle';
-              try {
-                const parsed = row?.processing_state
-                  ? (JSON.parse(row.processing_state) as { status?: unknown })
-                  : null;
-                if (parsed && typeof parsed.status === 'string') status = parsed.status;
-              } catch {}
-              if (
-                status !== 'processing' &&
-                status !== 'queued' &&
-                status !== 'running' &&
-                status !== 'waiting_for_input' &&
-                status !== 'rate_limit_cooldown'
-              ) {
-                break;
-              }
-            } else {
-              break;
-            }
-            await new Promise<void>((resolve) => {
-              const timer = setTimeout(resolve, 2000);
-              timer.unref();
-            });
-          }
-          if (!inactivityRunNowCancelled) {
-            await spaceAgentInactivityWatchdog
-              .scanAgent(spaceId, agentId, activityBaseline, invokedAt, invokingUserMsgAt)
-              .catch(() => {});
-          }
-        } finally {
-          pendingInactivityRunNow.delete(task);
-        }
-      };
-      task = run();
-      pendingInactivityRunNow.add(task);
-      void task.catch(() => {});
-      return Promise.resolve();
-    },
-  });
-  const spaceAgentInactivityWatchdog: SpaceAgentInactivityWatchdogService =
-    new SpaceAgentInactivityWatchdogService({
-      configRepo: spaceAgentInactivityConfigRepo,
-      claimRepo: spaceAgentInactivityClaimRepo,
-      agentRepo: longHorizonAgentRepo,
-      spaceManager: deps.spaceManager,
-      scannerToken: `inactivity-scanner:${deps.db.getDatabasePath()}`,
-      shouldAbort: () => inactivityAborted,
-      getSessionSnapshot: (spaceId, agentId): InactivityWatchdogSessionSnapshot | null => {
-        const agent = longHorizonAgentRepo.getById(agentId);
-        if (agent === null || agent.spaceId !== spaceId || agent.sessionId === null) return null;
-        const db = deps.db.getDatabase();
-        const sessionRow = db
-          .prepare(`SELECT created_at, status, processing_state FROM sessions WHERE id = ?`)
-          .get(agent.sessionId) as {
-          created_at?: string | number;
-          status?: string | null;
-          processing_state?: string | null;
-        } | null;
-        if (
-          sessionRow !== null &&
-          (sessionRow.status === 'archived' || sessionRow.status === 'ended')
-        ) {
-          return null;
-        }
-        const consumedRow = db
-          .prepare(
-            `SELECT MAX(timestamp) AS ts FROM sdk_messages
-           WHERE session_id = ? AND COALESCE(send_status, 'consumed') = 'consumed'`
-          )
-          .get(agent.sessionId) as { ts?: string | number | null } | null;
-        const consumedUserRow = db
-          .prepare(
-            `SELECT MAX(timestamp) AS ts FROM sdk_messages
-           WHERE session_id = ? AND COALESCE(send_status, 'consumed') = 'consumed'
-             AND message_type = 'user'`
-          )
-          .get(agent.sessionId) as { ts?: string | number | null } | null;
-        const pendingRow = db
-          .prepare(
-            `SELECT COUNT(*) AS n FROM sdk_messages
-           WHERE session_id = ? AND send_status IN ('enqueued', 'submitted', 'deferred')`
-          )
-          .get(agent.sessionId) as { n?: number } | null;
-        const pendingMailboxRow = db
-          .prepare(
-            `SELECT COUNT(*) AS n FROM job_queue
-           WHERE queue = 'mailbox' AND status IN ('pending', 'processing')
-             AND json_extract(payload, '$.to.sessionId') = ?`
-          )
-          .get(agent.sessionId) as { n?: number } | null;
-        let status = 'idle';
-        const liveSession = deps.sessionManager?.getCachedSession(agent.sessionId);
-        if (liveSession) {
-          status = liveSession.stateManager.getState().status;
-        } else {
-          try {
-            const parsed = sessionRow?.processing_state
-              ? (JSON.parse(sessionRow.processing_state) as { status?: unknown })
-              : null;
-            if (parsed && typeof parsed.status === 'string') status = parsed.status;
-          } catch {}
-        }
-        return {
-          latestConsumedMessageAt: toEpochMs(consumedRow?.ts),
-          latestConsumedUserMessageAt: toEpochMs(consumedUserRow?.ts),
-          sessionCreatedAt: toEpochMs(sessionRow?.created_at),
-          busyWithOtherWork:
-            status === 'processing' ||
-            status === 'queued' ||
-            status === 'running' ||
-            status === 'rate_limit_cooldown' ||
-            status === 'waiting_for_input',
-          pendingOtherAcceptedDelivery: (pendingRow?.n ?? 0) > 0 || (pendingMailboxRow?.n ?? 0) > 0,
-        };
-      },
-      isNagDeliveryPending: (spaceId, agentId, claimKey) => {
-        const agent = longHorizonAgentRepo.getById(agentId);
-        if (agent === null || agent.spaceId !== spaceId || agent.sessionId === null) return false;
-        const sessionId = agent.sessionId;
-        const row = deps.db
-          .getDatabase()
-          .prepare(
-            `SELECT send_status FROM sdk_messages
-             WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'user'`
-          )
-          .get(sessionId, claimKey) as { send_status?: string | null } | null;
-        const status = row?.send_status ?? null;
-        if (status === 'enqueued' || status === 'submitted' || status === 'deferred') return true;
-        return (
-          deps.db.getJobQueueRepo().listActiveByPayload('mailbox', {
-            'to.sessionId': sessionId,
-            messageUuid: claimKey,
-          }).length > 0
-        );
-      },
-      isNagDeliveryFailed: (spaceId, agentId, claimKey) => {
-        const agent = longHorizonAgentRepo.getById(agentId);
-        if (agent === null || agent.spaceId !== spaceId || agent.sessionId === null) return false;
-        const sessionId = agent.sessionId;
-        const row = deps.db
-          .getDatabase()
-          .prepare(
-            `SELECT send_status FROM sdk_messages
-             WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'user'`
-          )
-          .get(sessionId, claimKey) as { send_status?: string | null } | null;
-        const activeMailbox =
-          deps.db.getJobQueueRepo().listActiveByPayload('mailbox', {
-            'to.sessionId': sessionId,
-            messageUuid: claimKey,
-          }).length > 0;
-        if (row?.send_status === 'failed') return !activeMailbox;
-        if (row == null) {
-          return (
-            !activeMailbox &&
-            deps.db.getJobQueueRepo().getLatestByPayload('mailbox', {
-              'to.sessionId': sessionId,
-              messageUuid: claimKey,
-            })?.status === 'dead'
-          );
-        }
-        return false;
-      },
-      deliverNag: (args) =>
-        spaceRuntimeService.deliverLongHorizonAgentNag({
-          spaceId: args.spaceId,
-          agentId: args.agentId,
-          message: args.prompt,
-          idempotencyKey: args.idempotencyKey,
-          expectedConfigRevision: args.configRevision,
-        }),
-    });
-
-  deliverOutcomeWake = (notification) => {
-    void spaceRuntimeService.deliverGoalOutcomeWake(notification).catch((err) => {
-      log.warn(
-        `Goal outcome wake delivery failed for notification "${notification.id}": ${err instanceof Error ? err.message : String(err)}`
-      );
-    });
-  };
-
-  deps.spaceManager.onSpaceResumedRegister((spaceId) => {
-    try {
-      const recovered = scheduleService.recoverSchedulesForSpace(spaceId);
-      if (recovered > 0) {
-        log.info('recovered schedules after space resume', { spaceId, recovered });
-      }
-    } catch (err) {
-      log.error('schedule recovery after space resume failed (non-fatal)', err);
-    }
-    spaceRuntimeService.recoverStalledWorkflowRunsAfterSpaceResume(spaceId);
-    void spaceRuntimeService.recoverPendingOutcomeNotificationsForSpace(spaceId);
-  });
-
-  subscribeGoalOwnerChangeOutcomeRedelivery({
-    internalEventBus: deps.internalEventBus,
-    recoverPendingOutcomeNotificationsForGoal: (goalId) =>
-      spaceRuntimeService.recoverPendingOutcomeNotificationsForGoal(goalId),
-  });
-
-  subscribeAgentActivationOutcomeRedelivery({
-    internalEventBus: deps.internalEventBus,
-    listAgentGoalLinks: (agentId) => spaceAgentGoalScopeRepo.listGoals(agentId),
-    recoverPendingOutcomeNotificationsForGoal: (goalId) =>
-      spaceRuntimeService.recoverPendingOutcomeNotificationsForGoal(goalId),
-  });
-
-  const spaceAgentTemplateManager = new SpaceAgentTemplateManager(
+    spaceAgentRepo,
+    spaceAgentGoalScopeRepo,
+    spaceGoalService,
+    goalAutomationService,
+    spaceWorkflowRepo,
     spaceAgentTemplateRepo,
-    undefined,
-    templateInstanceScanFromRepo(longHorizonAgentRepo)
-  );
-
-  setupSpaceAgentTemplateHandlers(deps.messageHub, {
-    spaceManager: deps.spaceManager,
-    templateManager: spaceAgentTemplateManager,
+    spaceWorkflowManager,
+    emitClaimedTaskUpdate,
+    spaceTaskManagerFactory,
+    nodeExecutionRepo,
+    pendingCompletion,
+    replyRoutingRegistry,
+    artifactProfile,
+    evolutionEpisodeService,
+    spaceAgentInactivityConfigRepo,
+    spaceAgentInactivityClaimRepo,
+    spaceAgentReminderRepo,
+    spaceAgentSubscriptionRepo,
+    spaceSessionEventSubscriptionRepo,
+    spaceRuntimeService,
+    spaceAgentInactivityWatchdog,
+    spaceAgentTemplateManager,
+    spaceAgentV2Deps,
+    resolveClones,
+    spaceWorktreeManager,
+  } = await setupSpaceServices(deps, {
+    spaceOperationRegistryProvider: () => spaceOperationRegistryProvider(),
   });
-
-  setupSpaceAgentSubscriptionHandlers(deps.messageHub, {
-    subscriptions: spaceAgentSubscriptionRepo,
-    agents: spaceAgentRepo,
-    runtimeService: spaceRuntimeService,
-  });
-
-  setupSpaceAgentReminderHandlers(deps.messageHub, { reminders: spaceAgentReminderRepo });
-
-  const spaceAgentV2Deps: SpaceAgentV2Deps = {
-    agents: spaceAgentRepo,
-    templates: spaceAgentTemplateRepo,
-    spaceExists: async (spaceId) => (await deps.spaceManager.getSpace(spaceId)) !== null,
-    getSession: (sessionId) => deps.db.getSession(sessionId),
-    internalEventBus: deps.internalEventBus,
-    legacyAgents: longHorizonAgentRepo,
-    reminders: spaceAgentReminderRepo,
-    removeAgentSubscriptions: (spaceId, agentId) =>
-      spaceRuntimeService.removeLongHorizonAgentSubscriptions(spaceId, agentId),
-    refreshAgentSubscriptions: (spaceId, agentId) =>
-      spaceRuntimeService.refreshLongHorizonAgentSubscriptions(spaceId, agentId),
-    clearSessionProvider: (spaceId, agentId) =>
-      spaceRuntimeService.clearLongTermAgentSessionProvider(spaceId, agentId),
-    seedTemplateExtras: buildTemplateExtrasSeeder({
-      store: {
-        upsertSubscription: (params) => spaceAgentSubscriptionRepo.upsertSubscription(params),
-        deleteSubscription: (id) => spaceAgentSubscriptionRepo.deleteSubscription(id),
-        createReminder: (params) => spaceAgentReminderRepo.createReminder(params),
-      },
-      refreshSubscription: (spaceId, subscriptionId) =>
-        spaceRuntimeService.refreshLongHorizonSubscription(spaceId, subscriptionId),
-    }),
-  };
-
-  const cloneLifecycle = createCloneLifecycleEffects(
-    deps.sessionManager,
-    deps.spaceManager,
-    deps.internalEventBus,
-    (id) => deps.db.getSession(id)
-  );
-  const stampProvenance = async (
-    sessionId: string,
-    promptProvenance: NonNullable<SessionMetadata['promptProvenance']>
-  ) => {
-    const current = deps.db.getSession(sessionId);
-    if (current) {
-      await deps.db.updateSession(sessionId, {
-        metadata: { ...current.metadata, promptProvenance },
-      });
-    }
-  };
-  spaceAgentV2Deps.stampProvenance = stampProvenance;
-  const resolveClones = createResolveClones({
-    listChildren: (parentId) => deps.db.listChildSessions(parentId),
-    detach: async (sessionId) => {
-      await deps.db.detachSessionFromParent(sessionId);
-    },
-    agentOwning: (sessionId) => {
-      const id = spaceAgentRepo.getBySessionId(sessionId)?.id;
-      return id ? longHorizonAgentRepo.getById(id) : null;
-    },
-    listAgents: (spaceId) => longHorizonAgentRepo.listBySpaceId(spaceId),
-    createAgent: (params) => {
-      const agent = longHorizonAgentRepo.create(params);
-      const created = spaceAgentRepo.getById(agent.id);
-      if (created) {
-        deps.internalEventBus
-          .publish('spaceAgentV2.created', {
-            sessionId: `space:${agent.spaceId}`,
-            spaceId: agent.spaceId,
-            agent: created,
-          })
-          .catch(() => {});
-        void publishUnifiedAgentCreated(deps.internalEventBus, agent).catch(() => {});
-      }
-      return agent;
-    },
-    stampProvenance,
-    ...cloneLifecycle,
-  });
-  spaceAgentV2Deps.resolveClones = resolveClones;
-  spaceAgentV2Deps.retirePrimarySession = (sessionId, action) =>
-    action === 'delete'
-      ? cloneLifecycle.deleteChild(sessionId)
-      : cloneLifecycle.archiveChild(sessionId);
-  spaceAgentV2Deps.listClones = (parentId) => deps.db.listChildSessions(parentId);
-  spaceAgentV2Deps.commitsAhead = (worktree, alsoDeleting) =>
-    deps.sessionManager.getWorktreeManager().getCommitsAhead(worktree, undefined, { alsoDeleting });
-
-  setupSpaceAgentV2Handlers(deps.messageHub, spaceAgentV2Deps);
-
-  const createSeedAgent = buildAgentCreate(spaceAgentV2Deps);
-  const seedSpaceAgents = async (spaceId: string, templateKeys: readonly string[]) => {
-    const errors: { key: string; error: string }[] = [];
-    for (const key of templateKeys) {
-      try {
-        await createSeedAgent({ spaceId, templateKey: key });
-      } catch (error) {
-        errors.push({ key, error: error instanceof Error ? error.message : String(error) });
-      }
-    }
-    return { errors };
-  };
 
   setupSessionHandlers(
     deps.messageHub,
@@ -1325,39 +507,6 @@ export async function setupRPCHandlers(
       },
     }
   );
-
-  setupTaskScheduleHandlers(deps.messageHub, {
-    scheduleService,
-    spaceManager: deps.spaceManager,
-  });
-
-  setupSpaceGoalHandlers(deps.messageHub, {
-    goalService: spaceGoalService,
-    spaceManager: deps.spaceManager,
-    goalScopeRepo: spaceAgentGoalScopeRepo,
-    operations: () => spaceOperationRegistryProvider(),
-    internalEventBus: deps.internalEventBus,
-  });
-
-  setupSpaceHandlers(
-    deps.messageHub,
-    deps.spaceManager,
-    spaceTaskRepo,
-    spaceWorkflowRunRepo,
-    deps.internalEventBus,
-    spaceWorkflowManager,
-    deps.sessionManager,
-    spaceRuntimeService,
-    seedSpaceAgents,
-    (tasks) => stampActiveAttemptList(deps.db.getDatabase(), tasks),
-    (path) => nodeWorkspaceValidationIo.canHostTaskWorktree(path)
-  );
-
-  deps.messageHub.onRequest('space.externalEvents.queueHealth', async () => {
-    return spaceRuntimeService.getQueueHealthSnapshot();
-  });
-
-  const spaceWorktreeManager = new SpaceWorktreeManager(deps.db.getDatabase());
 
   let sessionResolutionDeps: ReturnType<typeof createDefaultSessionResolutionDeps>;
   const sessionMessageInjector = async (
@@ -1506,6 +655,7 @@ export async function setupRPCHandlers(
     driverCleanup,
     sessionScheduler,
     neoPacks: () => neoService.packs(),
+    extensionAdapters: (host) => deps.extensions.adapters(host),
     claudeDesktopMods,
     claudeInbox,
     deps,
@@ -1554,6 +704,7 @@ export async function setupRPCHandlers(
     deps.internalEventBus,
     (settings) => publishGlobalSettings(deps.internalEventBus, settings, deps.credentialManager)
   );
+  deps.extensions.register(neoPacksExtension(neoService));
   deps.reactiveDb.on('change:neo_session_messages', () => neoService.notifyChanged());
   neoService.filePacks = adoptNeoFilePacks(
     loadNeoFilePacks({
@@ -1580,6 +731,8 @@ export async function setupRPCHandlers(
       goalMandateChange: (ref, revision) => neoHome.changedRevision(ref, revision),
       executionPreparations: () => neoService.packs(),
     }),
+    ...deps.extensions.operations(),
+    createDaemonExtensionsOperation(deps.extensions),
     ...createNeoOperations(neoService),
     ...createNeoHomeOperations(neoService, neoHome),
     createNeoHomeGithubOperation(neoService, neoHome),
@@ -1906,8 +1059,7 @@ export async function setupRPCHandlers(
         }
       } finally {
         await neoService.dispose();
-        inactivityRunNowCancelled = true;
-        await Promise.allSettled(pendingInactivityRunNow);
+        await stopInactivityRunNow();
         unsubLiveQuery();
         await spaceRuntimeService.stop();
         fileIndex.dispose();
@@ -1919,10 +1071,7 @@ export async function setupRPCHandlers(
     spaceGoalService,
     goalAutomationService,
     spaceAgentInactivityWatchdog,
-    cancelInactivityWatchdog: () => {
-      inactivityAborted = true;
-      inactivityRunNowCancelled = true;
-    },
+    cancelInactivityWatchdog: cancelSpaceInactivityWatchdog,
     sessionScheduler,
     wakePollingConcern: (key: string, text: string) => neoService.wakeNeo(key, text),
     notifyScheduleIdle: neoService.notifyScheduleIdle,

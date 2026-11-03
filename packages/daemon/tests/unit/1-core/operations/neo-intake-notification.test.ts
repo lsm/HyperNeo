@@ -8,8 +8,8 @@ import type { Session } from '@hyperneo/shared';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import { ensurePromptInTransaction as ensurePrompt } from '../../../../src/lib/agent/message-delivery-outbox.ts';
 import { createNeoIntakeOperation, neoIntakeMessage } from '../../../../src/lib/neo/intake.ts';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
+import { createNeoOperations } from '../../helpers/neo-service.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,

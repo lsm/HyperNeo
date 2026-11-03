@@ -9,7 +9,8 @@ import {
 } from '@hyperneo/shared';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { TaskComposerTarget, FileDropHandler } from '../../hooks';
-import { useImageDropZone, useResolvedSpaceTask } from '../../hooks';
+import { useImageDropZone } from '../../hooks';
+import { useResolvedSpaceTask } from '../../hooks/useResolvedSpaceTask';
 import { getTaskStatusConfig } from '../../lib/task-status';
 import { pushOverlayHistory, pushOverlayHistoryForPendingAgent } from '../../lib/router';
 import { currentSpaceIdSignal } from '../../lib/signals';

@@ -1,3 +1,4 @@
+import { runMigration469 } from './m469-work-delivery-ref-index.ts';
 import { runMigration467 } from './m467-google-connections.ts';
 import { runMigration466 } from './m466-neo-question-retire-when.ts';
 import { runMigration461 } from './m461-neo-card-search-fts.ts';
@@ -992,6 +993,7 @@ export function runMigrations(
   run(migrationMarkerKey(468), () => {
     db.exec('UPDATE work_feed_offsets SET offset = 0, size = -1');
   });
+  run(migrationMarkerKey(469), () => runMigration469(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
