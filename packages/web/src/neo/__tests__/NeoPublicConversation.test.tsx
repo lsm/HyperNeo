@@ -79,6 +79,22 @@ const conversation = (asks = [ask()], publications = [publication()]) =>
     }
   );
 
+it('does not auto-link bare or relative PR filenames in a public reply', async () => {
+  const text = 'Review `CLAUDE.md` and `docs/guide.md`. The report is `/reports/review.md`.';
+  render(
+    <NeoPublicConversation
+      conversation={conversation([], [publication({ shortText: text, fullText: text, links: [] })])}
+    />
+  );
+  expect(await screen.findByText('CLAUDE.md')).toBeTruthy();
+  expect(screen.queryByRole('link', { name: 'Open preview: CLAUDE.md' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Open current file: CLAUDE.md' })).toBeNull();
+  expect(screen.queryByRole('link', { name: 'Open preview: docs/guide.md' })).toBeNull();
+  expect(
+    await screen.findByRole('link', { name: 'Open preview: /reports/review.md' })
+  ).toBeTruthy();
+});
+
 afterEach(() => {
   cleanup();
   closeArtifactPreview();
