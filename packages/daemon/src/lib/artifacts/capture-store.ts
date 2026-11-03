@@ -1,10 +1,10 @@
 import type { ArtifactLimits } from '@hyperneo/shared/types/artifact-file';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants, fstatSync, read, type Stats } from 'node:fs';
-import fs, { type FileHandle } from 'node:fs/promises';
+import fs from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { withArtifactDescriptor, withStoredArtifactDescriptor } from '../runtime-artifact-open.ts';
+import { withStoredArtifactDescriptor } from '../runtime-artifact-open.ts';
 import { ArtifactLimitsSchema } from './file-contracts.ts';
 import { admitArtifactStorage } from './capture-admission.ts';
 
@@ -40,7 +40,7 @@ async function inventory(root: string) {
   return { entries, retainedBytes };
 }
 
-async function copyDescriptor(fd: number, initial: Stats, destination?: FileHandle) {
+async function copyDescriptor(fd: number, initial: Stats) {
   const hash = createHash('sha256');
   const buffer = Buffer.alloc(256 * 1024);
   let position = 0;
@@ -54,7 +54,6 @@ async function copyDescriptor(fd: number, initial: Stats, destination?: FileHand
     );
     if (!bytesRead) return null;
     hash.update(buffer.subarray(0, bytesRead));
-    if (destination) await destination.writeFile(buffer.subarray(0, bytesRead));
     position += bytesRead;
   }
   const after = fstatSync(fd);
@@ -88,24 +87,11 @@ export async function createArtifactCaptureStore(
         entries: (await inventory(root)).entries,
       };
     },
-    async hashSource(sourceRoot: string, segments: string[]) {
-      const result = await withArtifactDescriptor(sourceRoot, segments, async (fd, initial) => {
-        const admission = admitArtifactStorage(initial.size, limits, 0, 0);
-        if (typeof admission !== 'number') return admission;
-        const sha256 = await copyDescriptor(fd, initial);
-        return sha256
-          ? { accepted: true as const, sha256 }
-          : { accepted: false as const, reason: 'source_changed' as const };
-      });
-      return result.accepted ? result.value : result;
-    },
-    async capture(sourceRoot: string | Uint8Array, segments: string[] = []) {
-      if (typeof sourceRoot !== 'string') {
-        const admission = admitArtifactStorage(sourceRoot.byteLength, limits, used, reserved);
-        if (typeof admission !== 'number') return admission;
-      }
-      const bytes = typeof sourceRoot === 'string' ? null : Buffer.from(sourceRoot);
-      const consume = async (fd: number | null, initial: Stats | { size: number }) => {
+    async capture(source: Uint8Array) {
+      const admission = admitArtifactStorage(source.byteLength, limits, used, reserved);
+      if (typeof admission !== 'number') return admission;
+      const bytes = Buffer.from(source);
+      const consume = async (initial: { size: number }) => {
         const admission = admitArtifactStorage(initial.size, limits, used, reserved);
         if (typeof admission !== 'number') return admission;
         reserved += admission;
@@ -115,16 +101,12 @@ export async function createArtifactCaptureStore(
           await syncDirectory(root);
           await syncDirectory(dirname(root));
           const snapshot = await fs.open(staged, 'wx', 0o600);
-          let sha256: string | null;
+          let sha256: string;
           try {
             await syncDirectory(join(root, 'staging'));
-            sha256 = bytes
-              ? await snapshot
-                  .writeFile(bytes)
-                  .then(() => createHash('sha256').update(bytes).digest('hex'))
-              : await copyDescriptor(fd!, initial as Stats, snapshot);
-            if (sha256 === null)
-              return { accepted: false as const, reason: 'source_changed' as const };
+            sha256 = await snapshot
+              .writeFile(bytes)
+              .then(() => createHash('sha256').update(bytes).digest('hex'));
             await snapshot.chmod(0o444);
             await snapshot.sync();
           } finally {
@@ -165,10 +147,7 @@ export async function createArtifactCaptureStore(
           reserved -= admission;
         }
       };
-      const result = bytes
-        ? { accepted: true as const, value: await consume(null, { size: bytes.length }) }
-        : await withArtifactDescriptor(sourceRoot as string, segments, consume);
-      return result.accepted ? result.value : result;
+      return consume({ size: bytes.length });
     },
   };
 }

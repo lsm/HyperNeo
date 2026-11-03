@@ -9,6 +9,7 @@ import { createArtifactCaptureStore } from '../../../packages/daemon/src/lib/art
 const root = realpathSync(resolve(process.argv[2] ?? ''));
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(root, 'home'));
+mkdirSync(join(root, 'evidence'), { recursive: true });
 if (process.argv[3] === 'crash') {
   const source = join(root, 'crash-source');
   mkdirSync(source);
@@ -180,5 +181,5 @@ assert(readFileSync(blob).equals(bytes));
 const evidence = { exactBytes: true, deduplicated: true, quotaReserved: true, callerMutationIsolated: true,
   interruptionsRetained: true, restartPreserved: true, byteLength: bytes.length, sha256: hash,
   actualProcessCrash: true, interruptedCommitRetried: true, storedExcessLinksRefused: true, sharedInodeCountedOnce: true, recovery: recoveredState, priorFaults: await reopened.inspect() };
-writeFileSync(join(root, 'capture-evidence.json'), JSON.stringify(evidence, null, 2));
+writeFileSync(join(root, 'evidence/capture-evidence.json'), JSON.stringify(evidence, null, 2));
 console.log(JSON.stringify(evidence));
