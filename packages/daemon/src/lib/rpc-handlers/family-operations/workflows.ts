@@ -1,8 +1,8 @@
 import type { OperationDefinition } from '../../operations/registry.ts';
 import { createWorkflowOperations } from '../../workflows/operations.ts';
-import type { FamilyOperationContext } from './context.ts';
+import type { SpaceFamilyContext } from './space-context.ts';
 
-export function registerWorkflowOperations(context: FamilyOperationContext): OperationDefinition[] {
+export function registerWorkflowOperations(context: SpaceFamilyContext): OperationDefinition[] {
   return createWorkflowOperations({
     getSession: (sessionId) => context.deps.db.getSession(sessionId),
     taskRepo: context.spaceTaskRepo,

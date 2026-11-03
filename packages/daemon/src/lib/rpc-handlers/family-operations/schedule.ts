@@ -3,11 +3,11 @@ import { Logger } from '../../logger.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
 import { createScheduleOperations } from '../../schedule/operations.ts';
 import { resolveSessionSpaceId } from '../../space/runtime/space-caller-scope.ts';
-import type { FamilyOperationContext } from './context.ts';
+import type { SpaceFamilyContext } from './space-context.ts';
 
 const log = new Logger('schedule-operations');
 
-export function registerScheduleOperations(context: FamilyOperationContext): OperationDefinition[] {
+export function registerScheduleOperations(context: SpaceFamilyContext): OperationDefinition[] {
   const scopeDeps = {
     getSession: (sessionId: string) => context.deps.db.getSession(sessionId),
     taskRepo: context.spaceTaskRepo,
