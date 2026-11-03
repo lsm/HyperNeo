@@ -43,7 +43,7 @@ foreach ($credentialRule in $credentialAcl.GetAccessRules($true, $true, [System.
         HYPERNEO_CREDENTIAL_PATH: path,
         HYPERNEO_CREDENTIAL_CREATE: create ? '1' : '0',
       },
-      stdio: 'pipe',
+      stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
       timeout: 10_000,
     }
