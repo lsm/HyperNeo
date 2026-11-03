@@ -58,6 +58,10 @@ import {
   extractLatestTodos,
   formatDate,
 } from '../SessionInspector';
+import { spaceWebExtension } from '../../lib/space-web-extension';
+import { registerWebExtension } from '../../lib/web-extensions';
+
+registerWebExtension('space', spaceWebExtension);
 
 function session(overrides: Partial<Session> = {}): Session {
   return {

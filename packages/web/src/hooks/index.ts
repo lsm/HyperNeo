@@ -23,5 +23,4 @@ export {
 export { useGroupMessages } from './useGroupMessages';
 export { useReferenceAutocomplete, extractActiveAtQuery } from './useReferenceAutocomplete';
 export { useClickOutside } from './useClickOutside';
-export { useResolvedSpaceTask } from './useResolvedSpaceTask';
 export { useTargetSessionContext, type TaskComposerTarget } from './useTargetSessionContext';
