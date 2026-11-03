@@ -11,6 +11,7 @@ const url = 'https://github.com/synthetic/merge/pull/1',
 let db: Database, fail: string, finalHead: string, labels: unknown, reviews: unknown;
 let files: { path: string }[], changedFiles: number;
 let calls: string[][], state: string, mergeCommit: { oid: string } | null;
+let checksReply: { stdout: string; stderr: string; exit: number } | undefined;
 const spawn: SpawnFn = (args) => {
   calls.push(args);
   let value: unknown;
@@ -46,11 +47,12 @@ const spawn: SpawnFn = (args) => {
       mergeCommit,
     };
   const broken = !!fail && args.some((a) => a.includes(fail));
+  const reply = args[2] === 'checks' ? checksReply : undefined;
   return {
-    stdout: new Response(JSON.stringify(value)).body,
-    stderr: new Response(broken ? 'synthetic read failure' : '').body,
-    exited: Promise.resolve(broken ? 1 : 0),
-    exitCode: broken ? 1 : 0,
+    stdout: new Response(reply?.stdout ?? JSON.stringify(value)).body,
+    stderr: new Response(reply?.stderr ?? (broken ? 'synthetic read failure' : '')).body,
+    exited: Promise.resolve(reply?.exit ?? (broken ? 1 : 0)),
+    exitCode: reply?.exit ?? (broken ? 1 : 0),
     kill() {},
   };
 };
@@ -60,6 +62,7 @@ beforeEach(() => {
   createTables(db);
   createCodingPackTables(db);
   fail = '';
+  checksReply = undefined;
   state = 'OPEN';
   mergeCommit = null;
   finalHead = head;
@@ -81,6 +84,41 @@ beforeEach(() => {
 afterEach(() => db.close());
 
 describe('readCodingDaemonMergeFacts', () => {
+  test('reads gh explicit no-required-checks exit 1 as a known empty set', async () => {
+    checksReply = {
+      stdout: '',
+      stderr: "no required checks reported on the 'fixture' branch\n",
+      exit: 1,
+    };
+    expect(await readCodingDaemonMergeFacts(db, url, spawn)).toMatchObject({
+      ok: true,
+      head,
+      requiredCi: { head, green: true },
+    });
+  });
+  test.each([
+    { stdout: '', stderr: '', exit: 1 },
+    { stdout: '', stderr: "no checks reported on the 'fixture' branch\n", exit: 1 },
+    { stdout: '', stderr: 'gh: HTTP 401', exit: 1 },
+    { stdout: '', stderr: 'gh: HTTP 403', exit: 1 },
+    { stdout: '', stderr: 'gh: HTTP 504', exit: 1 },
+    { stdout: 'not json', stderr: '', exit: 0 },
+    { stdout: '', stderr: '', exit: 0 },
+    {
+      stdout: 'not json',
+      stderr: "no required checks reported on the 'fixture' branch\n",
+      exit: 1,
+    },
+    { stdout: '', stderr: "no required checks reported on the 'fixture' branch\n", exit: 2 },
+    {
+      stdout: '',
+      stderr: "gh: HTTP 403\nno required checks reported on the 'fixture' branch\n",
+      exit: 1,
+    },
+  ])('keeps an unreadable checks response closed: %j', async (reply) => {
+    checksReply = reply;
+    expect(await readCodingDaemonMergeFacts(db, url, spawn)).toMatchObject({ ok: false });
+  });
   test('reads all labels and review pages before returning facts on the final head', async () => {
     const facts = await readCodingDaemonMergeFacts(db, url, spawn);
     expect(facts).toMatchObject({
