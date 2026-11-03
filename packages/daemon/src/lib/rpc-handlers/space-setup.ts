@@ -121,6 +121,14 @@ import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repos
 import { SpaceGoalService } from '../goals/service.ts';
 import { mergeEvolutionPolicy } from '../evolution/scope-service.ts';
 import type { RPCHandlerDependencies } from './index.ts';
+import type { SpaceRpcHost } from './space-rpc.ts';
+import type { FamilyOperationContext } from './family-operations/context.ts';
+import { collectSpaceFamilyOperations, createSessionSpacePort } from './family-operations/space.ts';
+import { setupSpaceMcpHandlers } from './space-mcp-handlers.ts';
+import { archiveAgentSessions } from './space-agent-v2-handlers.ts';
+import type { SessionTarget } from '../session-resolution/target.ts';
+import type { SpaceManager } from '../space/managers/space-manager.ts';
+import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { OperationRegistry } from '../operations/registry.ts';
 
 import { validateGoalAutomationSelfNagPolicy } from '../evolution/evolution-policy-validation.ts';
@@ -153,8 +161,12 @@ function toEpochMs(value: unknown): number | null {
   return null;
 }
 
-export async function setupSpaceServices(
-  deps: RPCHandlerDependencies,
+export interface SpaceRpcDependencies extends RPCHandlerDependencies {
+  spaceManager: SpaceManager;
+}
+
+async function setupSpaceServices(
+  deps: SpaceRpcDependencies,
   {
     spaceOperationRegistryProvider,
   }: {
@@ -1002,8 +1014,8 @@ export async function setupSpaceServices(
 
 type SpaceServices = Awaited<ReturnType<typeof setupSpaceServices>>;
 
-export function setupSpaceTaskAgents(
-  deps: RPCHandlerDependencies,
+function setupSpaceTaskAgents(
+  deps: SpaceRpcDependencies,
   services: SpaceServices,
   {
     readGithubPr,
@@ -1155,8 +1167,8 @@ export function setupSpaceTaskAgents(
   };
 }
 
-export function completeSpaceSetup(
-  deps: RPCHandlerDependencies,
+function completeSpaceSetup(
+  deps: SpaceRpcDependencies,
   services: SpaceServices,
   agents: ReturnType<typeof setupSpaceTaskAgents>,
   familyOperations: readonly OperationDefinition[],
@@ -1392,4 +1404,100 @@ export function completeSpaceSetup(
   setupNodeExecutionHandlers(deps.messageHub, nodeExecutionRepo, spaceWorkflowRunRepo);
 
   return spaceOperationRegistryProvider;
+}
+
+export async function createSpaceRpc(deps: SpaceRpcDependencies, host: SpaceRpcHost) {
+  setupSpaceMcpHandlers(
+    deps.messageHub,
+    deps.internalEventBus,
+    deps.db,
+    deps.spaceManager,
+    deps.mcpImportService
+  );
+  let registryProvider: () => OperationRegistry;
+  const services = await setupSpaceServices(deps, {
+    spaceOperationRegistryProvider: () => registryProvider(),
+  });
+  const agents = setupSpaceTaskAgents(deps, services, host);
+  const { taskAgentManager, directTaskExecutionRepo, directTaskWorkerResolver } = agents;
+  const family = {
+    deps,
+    spaceManager: deps.spaceManager,
+    spaceRuntimeService: services.spaceRuntimeService,
+    taskAgentManager,
+    spaceTaskManagerFactory: services.spaceTaskManagerFactory,
+    spaceTaskRepo: services.spaceTaskRepo,
+    nodeExecutionRepo: services.nodeExecutionRepo,
+    longHorizonAgentRepo: services.longHorizonAgentRepo,
+    spaceAgentRepo: services.spaceAgentRepo,
+    spaceAgentGoalScopeRepo: services.spaceAgentGoalScopeRepo,
+    spaceAgentTemplateRepo: services.spaceAgentTemplateRepo,
+    spaceAgentTemplateManager: services.spaceAgentTemplateManager,
+    spaceAgentReminderRepo: services.spaceAgentReminderRepo,
+    spaceAgentSubscriptionRepo: services.spaceAgentSubscriptionRepo,
+    spaceSessionEventSubscriptionRepo: services.spaceSessionEventSubscriptionRepo,
+    hasDirectWorkerProvenance: (sessionId: string) =>
+      directTaskExecutionRepo.hasSessionProvenance(sessionId),
+    resolveDirectWorker: directTaskWorkerResolver,
+    spaceAgentInactivityConfigRepo: services.spaceAgentInactivityConfigRepo,
+    spaceAgentInactivityClaimRepo: services.spaceAgentInactivityClaimRepo,
+    spaceGoalService: services.spaceGoalService,
+    spaceGoalRepo: services.spaceGoalRepo,
+    spaceGoalEventRepo: services.spaceGoalEventRepo,
+    goalAutomationService: services.goalAutomationService,
+    evolutionScopeService: services.evolutionScopeService,
+    evolutionEpisodeService: services.evolutionEpisodeService,
+    scheduleService: services.scheduleService,
+    taskScheduleRepo: services.taskScheduleRepo,
+    spaceWorkflowRepo: services.spaceWorkflowRepo,
+    spaceWorkflowRunRepo: services.spaceWorkflowRunRepo,
+    spaceWorkflowManager: services.spaceWorkflowManager,
+    artifactRepo: services.artifactRepo,
+    artifactProfile: services.artifactProfile,
+    channelCycleRepo: services.channelCycleRepo,
+    replyRoutingRegistry: services.replyRoutingRegistry,
+    archiveAgentSessions: (agent: SpaceLongHorizonAgent) =>
+      agent.sessionId
+        ? archiveAgentSessions(services.spaceAgentV2Deps, agent.sessionId)
+        : Promise.resolve({ ok: true as const }),
+  };
+  return {
+    services: {
+      spaceRuntimeService: services.spaceRuntimeService,
+      taskAgentManager,
+      spaceWorktreeManager: services.spaceWorktreeManager,
+      spaceGoalService: services.spaceGoalService,
+      goalAutomationService: services.goalAutomationService,
+      spaceAgentInactivityWatchdog: services.spaceAgentInactivityWatchdog,
+      cancelInactivityWatchdog: services.cancelInactivityWatchdog,
+    },
+    sessionSpace: createSessionSpacePort(family),
+    membership: deps.spaceManager,
+    ensureSession: (target: SessionTarget) => ensureSession(target, agents.sessionResolutionDeps()),
+    resolveClones: services.resolveClones,
+    primaryAgentFor: (sessionId: string) => {
+      const agent = services.spaceAgentRepo.getBySessionId(sessionId);
+      return agent ? { id: agent.id, displayName: agent.displayName } : null;
+    },
+    familyOperations: (core: FamilyOperationContext) =>
+      collectSpaceFamilyOperations({ ...core, ...family }),
+    complete: (
+      familyOperations: readonly OperationDefinition[],
+      handleWorkerQuestion: SessionReportHandler,
+      readPrState: (prUrl: string) => ReturnType<CodingPrStateReader>
+    ) => {
+      registryProvider = completeSpaceSetup(
+        deps,
+        services,
+        agents,
+        familyOperations,
+        handleWorkerQuestion,
+        readPrState
+      );
+    },
+    stop: async () => {
+      await services.stopInactivityRunNow();
+      await services.spaceRuntimeService.stop();
+    },
+  };
 }

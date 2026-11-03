@@ -924,6 +924,7 @@ describe('Session RPC Handlers — models.list', () => {
     let eventBus: ReturnType<typeof createMockInternalEventBus>;
     let removeSessionMock: ReturnType<typeof mock>;
     let archiveResourcesMock: ReturnType<typeof mock>;
+    let sessionManager: SessionManager;
 
     beforeEach(async () => {
       messageHubData = createMockMessageHub();
@@ -931,7 +932,7 @@ describe('Session RPC Handlers — models.list', () => {
       removeSessionMock = mock(async () => ({ id: 'space-1', sessionIds: [] }));
       archiveResourcesMock = mock(async () => undefined);
 
-      const sessionManager = {
+      sessionManager = {
         getSessionAsync: mock(async () => ({
           getSessionData: () => ({
             id: 'sess-1',
@@ -1117,6 +1118,23 @@ describe('Session RPC Handlers — models.list', () => {
       expect(result.success).toBe(true);
       expect(archiveResourcesMock).toHaveBeenCalledWith('sess-1', 'ui_session_archive');
       expect(removeSessionMock).toHaveBeenCalledWith('space-1', 'sess-1');
+    });
+
+    it('archives a session that names a space when Space is not loaded', async () => {
+      const hub = createMockMessageHub();
+      const { setupSessionHandlers } = await import(
+        '../../../../src/lib/rpc-handlers/session-handlers'
+      );
+      setupSessionHandlers(hub.hub, sessionManager, eventBus);
+
+      const result = (await hub.handlers.get('session.archive')!(
+        { sessionId: 'sess-1', confirmed: true },
+        {}
+      )) as { success: boolean };
+
+      expect(result.success).toBe(true);
+      expect(archiveResourcesMock).toHaveBeenCalledWith('sess-1', 'ui_session_archive');
+      expect(removeSessionMock).not.toHaveBeenCalled();
     });
   });
 
