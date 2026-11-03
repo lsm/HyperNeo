@@ -54,6 +54,7 @@ import {
 import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus.ts';
 import { setupRPCHandlers } from './lib/rpc-handlers/index.ts';
 import { DaemonExtensions } from './lib/extensions/contract.ts';
+import { createSpaceDaemonExtension } from './lib/space/daemon-extension.ts';
 import { contributeDefaultOperations } from './lib/operations/database-catalog.ts';
 import { createSpaceDefaultOperations } from './lib/tasks/catalog-operations.ts';
 import { connectedDeviceReads } from './storage/repositories/connected-device-read.ts';
@@ -147,8 +148,6 @@ import {
 } from './lib/event-loop-stall-marker.ts';
 import { WorkflowHookRuntimeService } from './lib/workflows/hook-runtime-service.ts';
 import { WorkflowHookStateRepository } from './storage/repositories/workflow-hook-state-repository.ts';
-import { SpaceLongHorizonAgentRepository } from './storage/repositories/space-long-horizon-agent-repository.ts';
-import { SpaceAgentReminderRepository } from './storage/repositories/space-agent-reminder-repository.ts';
 import { SpaceAgentRepository } from './storage/repositories/space-agent-repository.ts';
 import { SpaceManager } from './lib/space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service.ts';
@@ -169,11 +168,9 @@ import { enqueueMailboxExpireIfMissing } from './lib/job-handlers/mailbox-expire
 import { createSkillValidateHandler } from './lib/job-handlers/skill-validate.handler.ts';
 import {
   JOB_QUEUE_CLEANUP,
-  LONG_HORIZON_AGENT_REMINDER_FIRE,
   MEMORY_CONSOLIDATION,
   MESSAGE_DELIVERY,
   SKILL_VALIDATE,
-  TASK_SCHEDULE_FIRE,
   SESSION_SCHEDULE_FIRE,
 } from './lib/job-queue-constants.ts';
 import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler.ts';
@@ -185,18 +182,7 @@ import { MAILBOX_LANE } from './lib/mailbox/enqueue.ts';
 import { settleMessageDeliveryDeadLetter } from './lib/job-handlers/message-delivery-dead-letter.ts';
 import { asMessageDeliveryPayload } from './lib/agent/message-delivery.ts';
 import { deliveryMetrics } from './lib/agent/message-delivery-metrics.ts';
-import { handleTaskScheduleFire } from './lib/job-handlers/task-schedule-fire.handler.ts';
-import {
-  backfillLongHorizonAgentReminderNextRunAt,
-  enqueueLongHorizonAgentReminderScanIfMissing,
-  handleLongHorizonAgentReminderFire,
-} from './lib/job-handlers/long-horizon-agent-reminder-fire.handler.ts';
-import { readReminderOccurrenceState } from './lib/agents/reminder-delivery-registry.ts';
-import { resolveAgentSessionId } from './lib/space/long-term-agent-session.ts';
-import { TaskScheduleRepository } from './storage/repositories/task-schedule-repository.ts';
 import { SpaceRepository } from './storage/repositories/space-repository.ts';
-import { SpaceTaskRepository } from './storage/repositories/space-task-repository.ts';
-import { SpaceGoalRepository } from './storage/repositories/space-goal-repository.ts';
 import {
   AppMcpLifecycleManager,
   McpImportService,
@@ -699,7 +685,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     messageHub.registerRouter(router);
     const extensions = new DaemonExtensions(db.getDatabase(), messageHub);
-    extensions.register({ id: 'space' });
     contributeDefaultOperations('space', createSpaceDefaultOperations);
     const logExtensionStopFailures = (failures: { id: string; error: unknown }[]) => {
       for (const { id, error } of failures)
@@ -1205,6 +1190,25 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     startupTimer.start('space runtime ready kickoff + HTTP/WS server bind');
     const spaceRuntimeReadyPromise = spaceRuntimeService.ready();
+    extensions.register(
+      createSpaceDaemonExtension({
+        db,
+        reactiveDb,
+        jobQueue,
+        jobProcessor,
+        internalEventBus,
+        spaceManager,
+        spaceWorktreeManager,
+        spaceAgentInactivityWatchdog,
+        spaceRuntimeService,
+        spaceRuntimeReadyPromise,
+        spaceGoalService,
+        goalAutomationService,
+        cancelInactivityWatchdog,
+        logInfo,
+        logError,
+      })
+    );
 
     const wsHandlers = createWebSocketHandlers(transport, sessionManager);
     const pairing = new DevicePairingRepository(db.getDatabase());
@@ -1230,23 +1234,17 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     let server: ServerHandle | undefined;
     let removeRuntimeDescriptorFile = () => {};
     let sessionDoor: Awaited<ReturnType<typeof startSessionDoor>> | null = null;
-    let reaperTimer: ReturnType<typeof setInterval> | null = null;
-    let inactivityWatchdogTimer: ReturnType<typeof setInterval> | null = null;
-    let inactivityScan: Promise<void> | null = null;
-    let inactivityShutdownStarted = false;
     failedStartupCleanup = async () => {
       startupAborted = true;
-      inactivityShutdownStarted = true;
+      const extensionsStopped = extensions.stop();
       await releaseFailedStartup([
         () => server?.stop(true),
         () => removeRuntimeDescriptorFile(),
         () => sessionDoor?.close(),
         () => {
           for (const timer of cooldownResumeTimers) clearTimeout(timer);
-          if (reaperTimer !== null) clearInterval(reaperTimer);
-          if (inactivityWatchdogTimer !== null) clearInterval(inactivityWatchdogTimer);
         },
-        () => cancelInactivityWatchdog(),
+        () => extensionsStopped.then(logExtensionStopFailures),
         () => db.stopSdkMessageColumnsBackfill(),
         () => clientEventBridge.stop(),
         () => processWatchdog.stop(),
@@ -1263,9 +1261,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         () => messageDeliveryProcessor.stop(),
         () => messageHub.cleanup(),
         () => rpcHandlerCleanup(),
-        () => extensions.stop().then(logExtensionStopFailures),
         () => spaceRuntimeService.stop(),
-        () => inactivityScan,
         () => liveQueries.dispose(),
         () => gitHubService?.stop(),
         ...extensionManager
@@ -1516,102 +1512,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       })
     );
 
-    const taskScheduleRepo = new TaskScheduleRepository(db.getDatabase());
-    const taskScheduleSpaceRepo = new SpaceRepository(db.getDatabase());
-    const taskScheduleTaskRepo = new SpaceTaskRepository(db.getDatabase(), reactiveDb);
-    jobProcessor.register(TASK_SCHEDULE_FIRE, async (job) => {
-      return handleTaskScheduleFire(job, {
-        db: db.getDatabase(),
-        scheduleRepo: taskScheduleRepo,
-        jobQueue,
-        spaceRepo: taskScheduleSpaceRepo,
-        taskRepo: taskScheduleTaskRepo,
-        eventHub: internalEventBus,
-        goalService: spaceGoalService,
-        goalRepo: new SpaceGoalRepository(db.getDatabase(), reactiveDb),
-        goalAutomationService,
-      });
-    });
-
-    const lhAgentReminderRepo = new SpaceAgentReminderRepository(
-      db.getDatabase(),
-      new SpaceAgentRepository(db.getDatabase())
-    );
-    const lhAgentReminderSpaceRepo = new SpaceRepository(db.getDatabase());
-    const lhAgentReminderAgentRepo = new SpaceLongHorizonAgentRepository(db.getDatabase());
-    jobProcessor.register(LONG_HORIZON_AGENT_REMINDER_FIRE, async (job) => {
-      return handleLongHorizonAgentReminderFire(job, {
-        reminderRepo: lhAgentReminderRepo,
-        spaceRepo: lhAgentReminderSpaceRepo,
-        jobQueue,
-        deliver: (args) => spaceRuntimeService.deliverLongHorizonAgentReminder(args),
-        getOccurrenceDeliveryState: (spaceId, agentId, idempotencyKey) => {
-          const sessionId = resolveAgentSessionId(lhAgentReminderAgentRepo, spaceId, agentId);
-          return sessionId
-            ? readReminderOccurrenceState(reactiveDb?.db, sessionId, idempotencyKey)
-            : 'absent';
-        },
-      });
-    });
-
-    if (process.env.NODE_ENV !== 'test') {
-      const now = Date.now();
-
-      const isJobLost = (status: string | undefined): boolean =>
-        status === undefined ||
-        status === 'completed' ||
-        status === 'failed' ||
-        status === 'dead' ||
-        status === 'cancelled';
-
-      const reseedSchedule = (scheduleId: string, scheduleNextRunAt: number | null): void => {
-        const runAt =
-          scheduleNextRunAt !== null && scheduleNextRunAt > now ? scheduleNextRunAt : now;
-        const newJob = jobQueue.enqueue({
-          queue: TASK_SCHEDULE_FIRE,
-          payload: { scheduleId },
-          runAt,
-        });
-        taskScheduleRepo.updatePendingJobId(scheduleId, newJob.id);
-        logInfo('[Daemon] Re-seeded lost job for schedule', {
-          scheduleId,
-          newJobId: newJob.id,
-        });
-      };
-
-      try {
-        const activeSchedules = taskScheduleRepo.listActiveWithPendingJob();
-        for (const schedule of activeSchedules) {
-          if (!schedule.pendingJobId) continue;
-          const job = jobQueue.getJob(schedule.pendingJobId);
-          if (isJobLost(job?.status)) {
-            reseedSchedule(schedule.id, schedule.nextRunAt);
-          }
-        }
-
-        const RECOVERY_PAGE_SIZE = 200;
-        let totalReseeded = 0;
-        while (true) {
-          const dueSchedules = taskScheduleRepo.listActiveDue(now, RECOVERY_PAGE_SIZE);
-          let pageReseeded = 0;
-          for (const schedule of dueSchedules) {
-            if (schedule.pendingJobId) continue;
-            reseedSchedule(schedule.id, schedule.nextRunAt);
-            pageReseeded++;
-          }
-          totalReseeded += pageReseeded;
-          if (dueSchedules.length < RECOVERY_PAGE_SIZE || pageReseeded === 0) break;
-        }
-        if (totalReseeded > 0) {
-          logInfo('[Daemon] Re-seeded due schedules with no pending job', {
-            count: totalReseeded,
-          });
-        }
-      } catch (err) {
-        logError('[Daemon] Task schedule startup re-seed failed (non-fatal):', err);
-      }
-    }
-
     googleRefresh.start();
     if (usesHumanLogin()) {
       oauthRefreshScheduler.start();
@@ -1633,28 +1533,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     logInfo('[Daemon] Ensured initial memory_consolidation job');
     enqueueMailboxExpireIfMissing(jobQueue, Date.now());
     logInfo('[Daemon] Ensured initial mailbox.expire job');
-    enqueueLongHorizonAgentReminderScanIfMissing(jobQueue, Date.now());
-    logInfo('[Daemon] Ensured initial longHorizonAgentReminder.fire scan job');
-    if (process.env.NODE_ENV !== 'test') {
-      try {
-        const backfilled = backfillLongHorizonAgentReminderNextRunAt(lhAgentReminderRepo);
-        if (backfilled > 0) {
-          logInfo('[Daemon] Backfilled next_run_at for LH agent reminders', {
-            count: backfilled,
-          });
-        }
-      } catch (err) {
-        logError('[Daemon] LH agent reminder backfill failed (non-fatal):', err);
-      }
-    }
-
+    await extensions.start();
     jobProcessor.start();
     logInfo('[Daemon] Job queue processor started');
     mailboxExpireProcessor.start();
     logInfo('[Daemon] Mailbox expiration job processor started');
     messageDeliveryProcessor.start();
     logInfo('[Daemon] Message-delivery job processor started');
-    await extensions.start();
     sessionDoor =
       process.env.NODE_ENV === 'test' && !process.env.HYPERNEO_DATA_DIR
         ? null
@@ -1667,71 +1552,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     if (process.env.NODE_ENV !== 'test') {
       processWatchdog.start();
       logInfo('[Daemon] Process watchdog started');
-    }
-
-    if (process.env.NODE_ENV !== 'test') {
-      const worktreeStartupCleanup = async () => {
-        try {
-          const spaces = await spaceManager.listSpaces(false);
-          for (const space of spaces) {
-            await spaceWorktreeManager.cleanupOrphaned(space.id);
-          }
-          logInfo('[Daemon] Worktree orphan cleanup complete');
-        } catch (err) {
-          logError('[Daemon] Worktree orphan cleanup failed:', err);
-        }
-
-        try {
-          await spaceWorktreeManager.reapExpiredWorktrees();
-          logInfo('[Daemon] Worktree TTL reaper complete');
-        } catch (err) {
-          logError('[Daemon] Worktree TTL reaper failed:', err);
-        }
-      };
-      void worktreeStartupCleanup();
-
-      const WORKTREE_REAPER_INTERVAL_MS = 60 * 60 * 1000;
-      reaperTimer = setInterval(() => {
-        spaceWorktreeManager.reapExpiredWorktrees().catch((err) => {
-          logError('[Daemon] Periodic worktree TTL reaper failed:', err);
-        });
-      }, WORKTREE_REAPER_INTERVAL_MS);
-      reaperTimer.unref();
-    }
-
-    if (process.env.NODE_ENV !== 'test') {
-      const scanInactivityWatchdog = (): Promise<void> => {
-        if (inactivityScan !== null) return inactivityScan;
-        const run = (async () => {
-          try {
-            const spaces = await spaceManager.listSpaces(false);
-            for (const space of spaces) {
-              await spaceAgentInactivityWatchdog.scanSpace(space.id);
-            }
-          } catch (err) {
-            logError('[Daemon] Inactivity watchdog scan failed:', err);
-          }
-        })();
-        inactivityScan = run;
-        void run.finally(() => {
-          inactivityScan = null;
-        });
-        return run;
-      };
-      let inactivitySpaceRuntimeReady = false;
-      void spaceRuntimeReadyPromise.then(() => {
-        inactivitySpaceRuntimeReady = true;
-        if (!inactivityShutdownStarted) {
-          void scanInactivityWatchdog();
-        }
-      });
-      const INACTIVITY_WATCHDOG_SCAN_INTERVAL_MS = 5 * 60 * 1000;
-      inactivityWatchdogTimer = setInterval(() => {
-        if (inactivitySpaceRuntimeReady) {
-          void scanInactivityWatchdog();
-        }
-      }, INACTIVITY_WATCHDOG_SCAN_INTERVAL_MS);
-      inactivityWatchdogTimer.unref();
     }
 
     let isCleanedUp = false;
@@ -1747,19 +1567,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       removeRuntimeDescriptorFile();
       await sessionDoor?.close();
 
-      if (reaperTimer !== null) {
-        clearInterval(reaperTimer);
-        reaperTimer = null;
-      }
-      if (inactivityWatchdogTimer !== null) {
-        clearInterval(inactivityWatchdogTimer);
-        inactivityWatchdogTimer = null;
-      }
-      inactivityShutdownStarted = true;
-      cancelInactivityWatchdog();
-      if (inactivityScan !== null) {
-        await Promise.race([inactivityScan, new Promise((resolve) => setTimeout(resolve, 5000))]);
-      }
+      logExtensionStopFailures(await extensions.stop());
 
       try {
         clientEventBridge.stop();
@@ -1848,7 +1656,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         messageHub.cleanup();
 
         await rpcHandlerCleanup();
-        logExtensionStopFailures(await extensions.stop());
 
         liveQueries.dispose();
 
