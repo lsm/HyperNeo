@@ -157,7 +157,7 @@ export function getAccessibleTableNames(scopeType: DbScopeType): string[] {
 }
 
 export function getBlacklistedColumns(tableName: string): string[] {
-  for (const scopeType of ['global', 'room', 'space'] as const) {
+  for (const scopeType of ['global', 'space'] as const) {
     const table = getScopeConfig(scopeType).find((cfg) => cfg.tableName === tableName);
     if (table) return table.blacklistedColumns;
   }

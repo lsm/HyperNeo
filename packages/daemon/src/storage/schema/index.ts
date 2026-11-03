@@ -331,142 +331,11 @@ export function createTables(db: BunDatabase): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_providers_sort_order ON providers(sort_order)`);
 
   db.exec(`
-      CREATE TABLE IF NOT EXISTS rooms (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        background_context TEXT,
-        instructions TEXT,
-        allowed_paths TEXT DEFAULT '[]',
-        default_path TEXT,
-        default_model TEXT,
-        allowed_models TEXT DEFAULT '[]',
-        session_ids TEXT DEFAULT '[]',
-        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'archived')),
-        config TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      )
-    `);
-
-  db.exec(`
-      CREATE TABLE IF NOT EXISTS tasks (
-        id TEXT PRIMARY KEY,
-        room_id TEXT NOT NULL,
-        title TEXT NOT NULL,
-        description TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled', 'archived', 'rate_limited', 'usage_limited')),
-        priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
-        progress INTEGER,
-        current_step TEXT,
-        result TEXT,
-        error TEXT,
-        depends_on TEXT DEFAULT '[]',
-        created_at INTEGER NOT NULL,
-        started_at INTEGER,
-        completed_at INTEGER,
-        task_type TEXT DEFAULT 'coding' CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'goal_review')),
-        assigned_agent TEXT DEFAULT 'coder' CHECK(assigned_agent IN ('coder', 'general', 'planner')),
-        created_by_task_id TEXT,
-        archived_at INTEGER,
-        active_session TEXT,
-        pr_url TEXT,
-        pr_number INTEGER,
-        pr_created_at INTEGER,
-        input_draft TEXT,
-        updated_at INTEGER,
-        short_id TEXT,
-        restrictions TEXT,
-        FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
-      )
-    `);
-
-  db.exec(`
-      CREATE TABLE IF NOT EXISTS goals (
-        id TEXT PRIMARY KEY,
-        room_id TEXT NOT NULL,
-        title TEXT NOT NULL,
-        description TEXT NOT NULL DEFAULT '',
-        status TEXT NOT NULL DEFAULT 'active'
-          CHECK(status IN ('active', 'needs_human', 'completed', 'archived')),
-        priority TEXT NOT NULL DEFAULT 'normal'
-          CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
-        progress INTEGER DEFAULT 0,
-        linked_task_ids TEXT DEFAULT '[]',
-        metrics TEXT DEFAULT '{}',
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        completed_at INTEGER,
-        planning_attempts INTEGER DEFAULT 0,
-        goal_review_attempts INTEGER DEFAULT 0,
-        mission_type TEXT NOT NULL DEFAULT 'one_shot'
-          CHECK(mission_type IN ('one_shot', 'measurable', 'recurring')),
-        autonomy_level TEXT NOT NULL DEFAULT 'supervised'
-          CHECK(autonomy_level IN ('supervised', 'semi_autonomous')),
-        schedule TEXT,
-        schedule_paused INTEGER NOT NULL DEFAULT 0,
-        next_run_at INTEGER,
-        structured_metrics TEXT,
-        max_consecutive_failures INTEGER NOT NULL DEFAULT 3,
-        max_planning_attempts INTEGER NOT NULL DEFAULT 0,
-        consecutive_failures INTEGER NOT NULL DEFAULT 0,
-        replan_count INTEGER NOT NULL DEFAULT 0,
-        short_id TEXT,
-        FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
-      )
-    `);
-
-  db.exec(`
       CREATE TABLE IF NOT EXISTS short_id_counters (
         entity_type TEXT NOT NULL,
         scope_id    TEXT NOT NULL,
         counter     INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (entity_type, scope_id)
-      )
-    `);
-
-  db.exec(
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_room_short_id ON tasks(room_id, short_id) WHERE short_id IS NOT NULL`
-  );
-  db.exec(
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_goals_room_short_id ON goals(room_id, short_id) WHERE short_id IS NOT NULL`
-  );
-
-  db.exec(`
-      CREATE TABLE IF NOT EXISTS mission_metric_history (
-        id TEXT PRIMARY KEY,
-        goal_id TEXT NOT NULL,
-        metric_name TEXT NOT NULL,
-        value REAL NOT NULL,
-        recorded_at INTEGER NOT NULL,
-        FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE
-      )
-    `);
-
-  db.exec(`
-      CREATE TABLE IF NOT EXISTS mission_executions (
-        id TEXT PRIMARY KEY,
-        goal_id TEXT NOT NULL,
-        execution_number INTEGER NOT NULL,
-        started_at INTEGER,
-        completed_at INTEGER,
-        status TEXT NOT NULL DEFAULT 'running',
-        result_summary TEXT,
-        task_ids TEXT NOT NULL DEFAULT '[]',
-        planning_attempts INTEGER NOT NULL DEFAULT 0,
-        FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE,
-        UNIQUE(goal_id, execution_number)
-      )
-    `);
-
-  db.exec(`
-      CREATE TABLE IF NOT EXISTS room_github_mappings (
-        id TEXT PRIMARY KEY,
-        room_id TEXT NOT NULL,
-        repositories TEXT NOT NULL,
-        priority INTEGER NOT NULL DEFAULT 0,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
       )
     `);
 
@@ -545,8 +414,7 @@ export function createTables(db: BunDatabase): void {
         security_check TEXT NOT NULL,
         raw_event TEXT NOT NULL,
         received_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        FOREIGN KEY (routed_to_room_id) REFERENCES rooms(id) ON DELETE SET NULL
+        updated_at INTEGER NOT NULL
       )
     `);
 
@@ -609,15 +477,6 @@ export function createTables(db: BunDatabase): void {
   );
 
   db.exec(`
-      CREATE TABLE IF NOT EXISTS room_mcp_enablement (
-        room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-        server_id TEXT NOT NULL REFERENCES app_mcp_servers(id) ON DELETE CASCADE,
-        enabled INTEGER NOT NULL DEFAULT 1,
-        PRIMARY KEY (room_id, server_id)
-      )
-    `);
-
-  db.exec(`
       CREATE TABLE IF NOT EXISTS mcp_enablement (
         server_id  TEXT NOT NULL REFERENCES app_mcp_servers(id) ON DELETE CASCADE,
         scope_type TEXT NOT NULL CHECK (scope_type IN ('space', 'room', 'session')),
@@ -643,15 +502,6 @@ export function createTables(db: BunDatabase): void {
         built_in INTEGER NOT NULL DEFAULT 0,
         validation_status TEXT NOT NULL DEFAULT 'pending',
         created_at INTEGER NOT NULL
-      )
-    `);
-
-  db.exec(`
-      CREATE TABLE IF NOT EXISTS room_skill_overrides (
-        skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
-        room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-        enabled INTEGER NOT NULL DEFAULT 1,
-        PRIMARY KEY (skill_id, room_id)
       )
     `);
 
@@ -791,24 +641,6 @@ function createIndexes(db: BunDatabase): void {
       ON sdk_messages(task_id, timestamp DESC)
       WHERE message_type = 'assistant'`);
 
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room_updated ON tasks(room_id, updated_at DESC)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_room ON goals(room_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)`);
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_goals_mission_scheduler ON goals(mission_type, schedule_paused, next_run_at)`
-  );
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_mission_metric_history_lookup ON mission_metric_history(goal_id, metric_name, recorded_at)`
-  );
-  db.exec(
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_executions_one_running ON mission_executions(goal_id) WHERE status = 'running'`
-  );
-
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_room_github_mappings_room ON room_github_mappings(room_id)`
-  );
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_github_watched_repo_lookup ON space_github_watched_repos(owner, repo, enabled)`
   );
