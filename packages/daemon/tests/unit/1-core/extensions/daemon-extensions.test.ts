@@ -71,6 +71,24 @@ describe('DaemonExtensions.stop', () => {
   });
 });
 
+describe('DaemonExtensions.stop timing', () => {
+  it('runs the last extension stop hook up to its first await before stop returns', async () => {
+    let flagged = false;
+    const extensions = new DaemonExtensions(db, hub);
+    extensions.register({ id: 'core' });
+    extensions.register({
+      id: 'space',
+      stop: async () => {
+        flagged = true;
+        await Promise.resolve();
+      },
+    });
+    const stopping = extensions.stop();
+    expect(flagged).toBe(true);
+    expect(await stopping).toEqual([]);
+  });
+});
+
 describe('createDaemonExtensionsOperation', () => {
   it('lists only the extensions loaded in this daemon', async () => {
     const extensions = new DaemonExtensions(db, hub);

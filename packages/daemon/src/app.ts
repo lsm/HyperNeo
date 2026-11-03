@@ -1236,6 +1236,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     let sessionDoor: Awaited<ReturnType<typeof startSessionDoor>> | null = null;
     failedStartupCleanup = async () => {
       startupAborted = true;
+      const extensionsStopped = extensions.stop();
       await releaseFailedStartup([
         () => server?.stop(true),
         () => removeRuntimeDescriptorFile(),
@@ -1243,7 +1244,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         () => {
           for (const timer of cooldownResumeTimers) clearTimeout(timer);
         },
-        () => extensions.stop().then(logExtensionStopFailures),
+        () => extensionsStopped.then(logExtensionStopFailures),
         () => db.stopSdkMessageColumnsBackfill(),
         () => clientEventBridge.stop(),
         () => processWatchdog.stop(),
