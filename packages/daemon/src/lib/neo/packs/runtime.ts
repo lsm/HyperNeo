@@ -31,6 +31,7 @@ import { createCodingConnectorPrReader } from './coding/connector-pr-reader.ts';
 import { createCodingPrStateReader } from './coding/pr-state-reader.ts';
 import { createLifeAdminPack } from './life-admin/pack.ts';
 import { createCoreTodoPack } from '../core-todo-checks.ts';
+import type { DaemonExtension } from '../../extensions/contract.ts';
 
 export function createNeoCodingReaders(db: () => Database) {
   const readMerge = createCodingMergeReader(db);
@@ -154,4 +155,14 @@ export function createNeoService(...args: NeoServiceArgs) {
     ...args
   );
   return Object.assign(service, readers, { todoPrs });
+}
+
+export function neoPacksExtension(service: NeoService): DaemonExtension {
+  return {
+    id: 'neo-packs',
+    schema: (db) => {
+      for (const pack of service.builtinPacks) pack.todos?.schema(db);
+    },
+    operations: () => service.packOperations,
+  };
 }

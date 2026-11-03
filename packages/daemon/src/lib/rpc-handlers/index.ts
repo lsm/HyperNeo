@@ -30,7 +30,8 @@ import { recoverTaskExecution } from '../tasks/recover-task-execution.ts';
 import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
 import { createSpaceOperationRegistryProvider } from '../tasks/operations.ts';
 import { collectFamilyOperations, type FamilyOperationContext } from './family-operations/index.ts';
-import { createNeoService } from '../neo/packs/runtime.ts';
+import { createNeoService, neoPacksExtension } from '../neo/packs/runtime.ts';
+import { createDaemonExtensionsOperation, type DaemonExtensions } from '../extensions/contract.ts';
 import {
   NEO_DRIVER_REFRESH,
   refreshNeoDriverWork,
@@ -262,6 +263,7 @@ function createGoalAutomationSelfNagSchedules(
 }
 
 export interface RPCHandlerDependencies {
+  extensions: DaemonExtensions;
   watchSessionRepo?: (owner: string, repo: string) => Promise<string | null>;
   messageHub: MessageHub;
   deviceOf: (clientId: string) => UpgradeIdentity | null;
@@ -1506,6 +1508,7 @@ export async function setupRPCHandlers(
     driverCleanup,
     sessionScheduler,
     neoPacks: () => neoService.packs(),
+    extensionAdapters: () => deps.extensions.adapters(),
     claudeDesktopMods,
     claudeInbox,
     deps,
@@ -1554,6 +1557,7 @@ export async function setupRPCHandlers(
     deps.internalEventBus,
     (settings) => publishGlobalSettings(deps.internalEventBus, settings, deps.credentialManager)
   );
+  deps.extensions.register(neoPacksExtension(neoService));
   deps.reactiveDb.on('change:neo_session_messages', () => neoService.notifyChanged());
   neoService.filePacks = adoptNeoFilePacks(
     loadNeoFilePacks({
@@ -1580,6 +1584,8 @@ export async function setupRPCHandlers(
       goalMandateChange: (ref, revision) => neoHome.changedRevision(ref, revision),
       executionPreparations: () => neoService.packs(),
     }),
+    ...deps.extensions.operations(),
+    createDaemonExtensionsOperation(deps.extensions),
     ...createNeoOperations(neoService),
     ...createNeoHomeOperations(neoService, neoHome),
     createNeoHomeGithubOperation(neoService, neoHome),

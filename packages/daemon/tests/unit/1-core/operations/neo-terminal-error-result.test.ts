@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import type { SDKMessage, SDKResultSuccess, SDKUserMessage } from '@hyperneo/shared/sdk';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import {
   InternalEventBus,

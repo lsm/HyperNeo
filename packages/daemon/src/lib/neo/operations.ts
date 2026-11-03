@@ -654,7 +654,6 @@ export function createNeoOperations(service: NeoService) {
     stop: (todo) => service.todoRunner.stop(todo),
   };
   return [
-    ...service.packOperations,
     ...service.speech.operations,
     createNeoProjectForgetOperation(service.repo, (repos) => {
       for (const pack of service.installedPacks()) pack.forgetRepositories?.(repos);

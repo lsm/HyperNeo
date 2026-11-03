@@ -53,6 +53,7 @@ import {
 } from './lib/internal-command-bus.ts';
 import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus.ts';
 import { setupRPCHandlers } from './lib/rpc-handlers/index.ts';
+import { DaemonExtensions } from './lib/extensions/contract.ts';
 import { connectedDeviceReads } from './storage/repositories/connected-device-read.ts';
 import { applyProviderModelAllowlistsToEnv } from './lib/rpc-handlers/settings-handlers.ts';
 import { WebSocketServerTransport } from './lib/websocket-server-transport.ts';
@@ -694,6 +695,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     });
 
     messageHub.registerRouter(router);
+    const extensions = new DaemonExtensions(db.getDatabase(), messageHub);
+    extensions.register({ id: 'space' });
+    const logExtensionStopFailures = (failures: { id: string; error: unknown }[]) => {
+      for (const { id, error } of failures)
+        logError(`[Daemon] Extension ${id} failed to stop:`, error);
+    };
 
     const transport = new WebSocketServerTransport({
       name: 'websocket-server',
@@ -1130,6 +1137,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     startupTimer.start('rpc handlers + space runtime provision');
     const rpcHandlers = await setupRPCHandlers({
+      extensions,
       purgeClaudeFeed: (sessionIds) => purgeWorkFeedSessions(db.gateway, 'claude', sessionIds),
       deviceOf: (clientId) => transport.deviceOf(clientId),
       watchSessionRepo: async (owner, repo) =>
@@ -1251,6 +1259,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         () => messageDeliveryProcessor.stop(),
         () => messageHub.cleanup(),
         () => rpcHandlerCleanup(),
+        () => extensions.stop().then(logExtensionStopFailures),
         () => spaceRuntimeService.stop(),
         () => inactivityScan,
         () => liveQueries.dispose(),
@@ -1640,6 +1649,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     logInfo('[Daemon] Mailbox expiration job processor started');
     messageDeliveryProcessor.start();
     logInfo('[Daemon] Message-delivery job processor started');
+    await extensions.start();
     sessionDoor =
       process.env.NODE_ENV === 'test' && !process.env.HYPERNEO_DATA_DIR
         ? null
@@ -1833,6 +1843,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         messageHub.cleanup();
 
         await rpcHandlerCleanup();
+        logExtensionStopFailures(await extensions.stop());
 
         liveQueries.dispose();
 

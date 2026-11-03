@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
-import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/runtime.ts';
+import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { waitForSdkBodyCopy } from './wait-for-sdk-body-copy.ts';
 const run = resolve(process.argv.at(-1)!);

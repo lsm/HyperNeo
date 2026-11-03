@@ -6,7 +6,7 @@ import { resolveSDKCliPath } from '../../../packages/daemon/src/lib/agent/sdk-cl
 import { Database } from '../../../packages/daemon/src/storage/database.ts';
 import { createReactiveDatabase } from '../../../packages/daemon/src/storage/reactive-database.ts';
 import { InternalEventBus } from '../../../packages/daemon/src/lib/internal-event-bus.ts';
-import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/runtime.ts';
+import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
 import { MessageQueue } from '../../../packages/daemon/src/lib/agent/message-queue.ts';
 import { QueryRunner } from '../../../packages/daemon/src/lib/agent/query-runner.ts';
 import { createNeoPublicationOperation } from '../../../packages/daemon/src/lib/neo/publication-operation.ts';

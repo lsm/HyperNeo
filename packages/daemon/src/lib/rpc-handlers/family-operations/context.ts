@@ -38,6 +38,7 @@ import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
 import type { RPCHandlerDependencies } from '../index.ts';
 import type { SessionScheduler } from '../../scheduler/session-schedules.ts';
 import type { NeoPack } from '../../neo/pack-contract.ts';
+import type { WorkAdapter } from '../../drivers/types.ts';
 
 export interface FamilyOperationContext {
   readonly driverHealthNotice?: (id: string, text: string) => Promise<boolean>;
@@ -45,6 +46,7 @@ export interface FamilyOperationContext {
   readonly sessionScheduler: SessionScheduler;
   readonly goalMandateChange?: (ref: string, revision: string | null) => Promise<string | null>;
   readonly neoPacks: () => readonly NeoPack[];
+  readonly extensionAdapters?: () => readonly WorkAdapter[];
   readonly claudeInbox?: ReturnType<typeof createClaudeInboxDriver>;
   readonly claudeDesktopMods?: ReturnType<typeof createClaudeDesktopModsDriver>;
   readonly executionPreparations?: () => readonly {

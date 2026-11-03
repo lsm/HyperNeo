@@ -679,6 +679,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       () => new Set(context.deps.db.listAcpSessionIds().map((session) => session.acpSessionId)),
       context
     ),
+    ...(context.extensionAdapters?.() ?? []),
   ];
   let selectedCodex = adapters.some((adapter) => adapter.id === 'codex-desktop')
     ? codexStatePath(homedir())

@@ -15,7 +15,7 @@ import { createOperationRegistry } from '../../../packages/daemon/src/lib/operat
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 import { ErrorManager, ErrorCategory } from '../../../packages/daemon/src/lib/error-manager.ts';
 import { createDaemonInternalEventBus } from '../../../packages/daemon/src/lib/internal-event-bus.ts';
-import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/runtime.ts';
+import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
 import { createMailboxDeliveryHandler } from '../../../packages/daemon/src/lib/mailbox/delivery.ts';
 
 const run = resolve(process.argv.at(-1)!);
