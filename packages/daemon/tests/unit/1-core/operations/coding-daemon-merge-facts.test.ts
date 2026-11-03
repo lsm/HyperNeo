@@ -13,6 +13,7 @@ let db: Database, fail: string, finalHead: string, labels: unknown, reviews: unk
 let files: { path: string }[], changedFiles: number;
 let completeFiles: string[] | undefined;
 let finalBase: string;
+let largePatch: boolean;
 let calls: string[][], state: string, mergeCommit: { oid: string } | null;
 let checksReply: { stdout: string; stderr: string; exit: number } | undefined;
 const spawn: SpawnFn = (args) => {
@@ -56,6 +57,10 @@ const spawn: SpawnFn = (args) => {
       labels: [],
       mergeCommit,
     };
+  if (largePatch && args.some((arg) => arg.includes('/files?'))) {
+    const pages = value as { filename: string; patch?: string }[][];
+    pages[0][0].patch = 'x'.repeat(1_100_000);
+  }
   const broken = !!fail && args.some((a) => a.includes(fail));
   const reply = args[2] === 'checks' ? checksReply : undefined;
   return {
@@ -80,6 +85,7 @@ beforeEach(() => {
   files = [{ path: 'src/app.ts' }];
   changedFiles = 1;
   completeFiles = undefined;
+  largePatch = false;
   calls = [];
   labels = [[{ name: 'bug' }], [{ name: 'human-merge' }]];
   reviews = [
@@ -191,6 +197,13 @@ describe('readCodingDaemonMergeFacts', () => {
     const result = await readCodingDaemonMergeFacts(db, url, spawn);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toMatch(/: .+/);
+  });
+  test('reads filenames without downloading a patch larger than the output cap', async () => {
+    largePatch = true;
+    expect(await readCodingDaemonMergeFacts(db, url, spawn)).toMatchObject({
+      ok: true,
+      files: ['src/app.ts'],
+    });
   });
   test('refuses a changed base even when the head and state stay unchanged', async () => {
     finalBase = 'e'.repeat(40);
