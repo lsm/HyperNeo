@@ -13,6 +13,19 @@ assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert(!existsSync(join(run, 'data/daemon.db')));
 for (const part of ['bin', 'data', 'workspace', 'evidence', 'tmp']) mkdirSync(join(run, part), { recursive: true });
+if (process.platform === 'win32') {
+  const probe = join(run, 'tmp/acl-probe');
+  writeFileSync(probe, '');
+  const phases: string[] = [];
+  try {
+    execFileSync(join(process.env.SystemRoot!, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', 'exit 0'], { env: { SystemRoot: process.env.SystemRoot, USERPROFILE: join(run, 'home'), TEMP: join(run, 'tmp') }, stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000, windowsHide: true });
+    phases.push('powershell-started');
+    checkWindowsCredential(probe, true);
+    phases.push('acl-without-open-handle');
+  } finally {
+    writeFileSync(join(run, 'evidence/acl-startup.json'), JSON.stringify(phases));
+  }
+}
 for (const command of ['security', 'gh', 'open', 'ps'])
   writeFileSync(join(run, 'bin', command), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 writeFileSync(join(run, 'bin/security'), "#!/bin/sh\nprintf \"unexpected-discovery\\n\" >> \"$HYPERNEO_DATA_DIR/security-attempts\"\nexit 1\n", { mode: 0o700 });
