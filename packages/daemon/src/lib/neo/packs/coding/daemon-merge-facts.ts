@@ -49,7 +49,7 @@ async function readRequiredChecks(url: string, spawn: SpawnFn): Promise<Connecto
     if (
       code === 1 &&
       stdout.text === '' &&
-      /^no required checks reported on the '[^\r\n]+' branch$/.test(stderr.text.trim())
+      /^no (?:required )?checks reported on the '[^\r\n]+' branch$/.test(stderr.text.trim())
     )
       return { ok: true, data: [] };
     if (code !== 0)
