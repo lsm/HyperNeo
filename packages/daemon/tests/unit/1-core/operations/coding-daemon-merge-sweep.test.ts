@@ -181,6 +181,7 @@ describe('daemon merge sweep behavior', () => {
   test.each([false, true])(
     'complete 171-file scope holds only for a protected tail path=%s',
     async (protectedTail) => {
+      db.prepare("UPDATE pack_coding_pr_ledger SET state='waiting_human'").run();
       files = Array.from({ length: 171 }, (_, i) => `src/file-${i}.ts`);
       if (protectedTail) files[170] = 'docs/design/requires-signoff.md';
       const run = sweep();
@@ -192,6 +193,18 @@ describe('daemon merge sweep behavior', () => {
       expect(
         calls.some((args) => args.includes('repos/synthetic/merge/pulls/1/files?per_page=100'))
       ).toBe(true);
+    }
+  );
+  test.each(['ci', 'review', 'thread', 'read'])(
+    'a truncated-scope ledger never bypasses fresh %s gates',
+    async (condition) => {
+      db.prepare("UPDATE pack_coding_pr_ledger SET state='waiting_human'").run();
+      if (condition === 'ci') ci = 'pending';
+      if (condition === 'review') reviewHead = 'b'.repeat(40);
+      if (condition === 'thread') unresolved = true;
+      if (condition === 'read') fail = '/files?';
+      await sweep()(10);
+      expect(merges()).toHaveLength(0);
     }
   );
   test.each([false, true])(

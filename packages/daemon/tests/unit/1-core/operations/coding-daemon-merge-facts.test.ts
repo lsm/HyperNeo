@@ -211,8 +211,6 @@ describe('readCodingDaemonMergeFacts', () => {
       '--paginate',
       '--slurp',
       'repos/synthetic/merge/pulls/1/files?per_page=100',
-      '--jq',
-      '[.[][] | .filename]',
     ]);
   });
 });
