@@ -182,11 +182,22 @@ test('accept cannot recreate a contact removed while its remote invitation is be
     await call('neo.peer.remove', { id: invited.id });
     return Response.json({ credential: 'a'.repeat(64) });
   });
-  expect(await call('neo.peer.accept', {
-    name: 'Contact B', address: 'https://peer.invalid', code: 'synthetic',
-  })).toMatchObject({ accepted: false, reason: 'relationship_changed' });
+  expect(
+    await call('neo.peer.accept', {
+      name: 'Contact B',
+      address: 'https://peer.invalid',
+      code: 'synthetic',
+    })
+  ).toMatchObject({ accepted: false, reason: 'relationship_changed' });
   expect(await call('neo.peer.list', {})).toMatchObject({ accepted: true, peers: [] });
-  expect(db.getDatabase().prepare("SELECT count(*) AS n FROM provider_credentials WHERE provider_id LIKE 'hyperneo.peer.%'").get()).toEqual({ n: 0 });
+  expect(
+    db
+      .getDatabase()
+      .prepare(
+        "SELECT count(*) AS n FROM provider_credentials WHERE provider_id LIKE 'hyperneo.peer.%'"
+      )
+      .get()
+  ).toEqual({ n: 0 });
 });
 
 test('accept leaves no secret when the local contact name changes during the remote claim', async () => {
@@ -194,11 +205,23 @@ test('accept leaves no secret when the local contact name changes during the rem
     await call('neo.peer.invite', { name: 'Contact B' });
     return Response.json({ credential: 'a'.repeat(64) });
   });
-  expect(await call('neo.peer.accept', {
-    name: 'Contact B', address: 'https://peer.invalid', code: 'synthetic',
-  })).toMatchObject({ accepted: false, reason: 'relationship_changed' });
+  expect(
+    await call('neo.peer.accept', {
+      name: 'Contact B',
+      address: 'https://peer.invalid',
+      code: 'synthetic',
+    })
+  ).toMatchObject({ accepted: false, reason: 'relationship_changed' });
   expect(await call('neo.peer.list', {})).toMatchObject({
-    accepted: true, peers: [{ name: 'Contact B', address: null }],
+    accepted: true,
+    peers: [{ name: 'Contact B', address: null }],
   });
-  expect(db.getDatabase().prepare("SELECT count(*) AS n FROM provider_credentials WHERE provider_id LIKE 'hyperneo.peer.%'").get()).toEqual({ n: 0 });
+  expect(
+    db
+      .getDatabase()
+      .prepare(
+        "SELECT count(*) AS n FROM provider_credentials WHERE provider_id LIKE 'hyperneo.peer.%'"
+      )
+      .get()
+  ).toEqual({ n: 0 });
 });

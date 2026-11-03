@@ -14,6 +14,7 @@ import { parsePositiveInt, type Config } from './config.ts';
 import type { WebSocketData } from './types/websocket.ts';
 import { createHttpWsServer, type ServerHandle } from './lib/runtime-server/index.ts';
 import { releaseFailedStartup } from './lib/startup-cleanup.ts';
+import { createPeerPairRoute } from './routes/neo-peer.ts';
 import { createPairRoute } from './lib/pairing/pair-route.ts';
 import { createRequestGuard } from './lib/pairing/origin-host.ts';
 import { createUpgradeAuthenticator, type UpgradeIdentity } from './lib/pairing/upgrade-auth.ts';
@@ -1223,6 +1224,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       limiter: daemonPairingLimiter,
       now: Date.now,
     });
+    const handlePeerPair = createPeerPairRoute(db.gateway);
     const authenticateUpgrade = createUpgradeAuthenticator({
       db: () => db.gateway,
       now: Date.now,
@@ -1346,6 +1348,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         }
 
         if (url.pathname === '/pair' && req.method === 'POST') return handlePair(req);
+        if (url.pathname === '/neo-peer/pair') return handlePeerPair(req);
 
         const extensionRoute = extensionManager
           .getRegisteredRoutes()

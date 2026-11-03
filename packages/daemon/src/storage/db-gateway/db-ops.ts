@@ -1,3 +1,4 @@
+import { peerReads, peerWrites } from '../repositories/neo-peer-repository.ts';
 import { neoStallReminderWrite } from '../repositories/neo-stall-reminder-write.ts';
 import { historySnapshotReads } from '../repositories/sdk-history-snapshot-read.ts';
 import { toolRecoveryWrites } from '../repositories/tool-continuation-recovery-repository.ts';
@@ -269,6 +270,8 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     credentialStoreWrites,
     googleConnectionReads,
     googleConnectionWrites,
+    peerReads,
+    peerWrites,
     enqueueSessionDelivery,
     jobStaleReclaimWrites,
     mailboxExpiryReads,
