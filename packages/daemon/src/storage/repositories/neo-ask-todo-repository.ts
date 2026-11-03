@@ -954,7 +954,9 @@ export class NeoAskTodoRepository {
         .map((node) => node.id)
     );
     return new Set(
-      family.filter((todo) => isStartable(todo) && independent.has(todo.id)).map((todo) => todo.id)
+      family
+        .filter((todo) => todo.askId === askId && isStartable(todo) && independent.has(todo.id))
+        .map((todo) => todo.id)
     );
   }
 

@@ -1,8 +1,7 @@
 # Approved dependency chains do not ask Start again
 
-Read shared SKILL.md isolation and resource rules. Use pinned Bun 1.4.2.
-This journey owns an ephemeral test daemon, a fresh home/database, a refusing
-GitHub stub and a synthetic Codex app-server socket. It uses no provider or model.
+Use pinned Bun 1.4.2 and the isolated setup in SKILL.md. This journey adds a synthetic
+Codex app-server socket and refusing GitHub stub; no provider or model is used.
 
 ```sh
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence .claude/skills/verify/todo-plan-recompute.ts chain-verify
@@ -22,11 +21,10 @@ It reseeds the card, restarts the daemon, then completes the predecessor; dispat
 must happen once. No live todo is edited. Mode chain-before reproduces the old
 blocked successor through the same MCP/RPC doors; keep this helper from the PR.
 
-Preserve observed.json and proof.log outside the worktree. Require wrapper exit 0
-and a clean daemon shutdown. This proves daemon state, public cards and worker
-transport; browser rendering, real Codex execution and model reasoning are not
-covered. Shared todo-plan-recompute setup explicitly awaits session persistence
-and sets disableWorktrees on the effective configuration.
+Keep observed.json/proof.log outside the worktree; require wrapper exit 0 and clean shutdown.
+Proof covers daemon state, public cards and synthetic worker transport.
+Browser rendering, real Codex execution and model reasoning remain unverified.
+Shared setup awaits session persistence and sets disableWorktrees:true.
 
 Run `chain-edges` and `chain-check` in separate fresh evidence directories.
 It opens a real two-repository plan: the dependent is alone in a sibling card
@@ -39,3 +37,5 @@ regressions also cover implicit ordering after removal and explicit human holds.
 Run `chain-parent` in another fresh directory. A real parent decision must stop
 its child after the predecessor closes; a public human answer releases it once.
 Scope regressions keep sibling questions and questions linked to other todos local.
+For ownership, edit an independent todo's check to an existing sibling repository.
+After driver refresh, only its destination Start card may list it; no work starts.
