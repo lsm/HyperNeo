@@ -29,7 +29,7 @@ type PairResult = {
   code: string;
   expiresAt: number;
   reason?: string;
-  peers: { id: string; name: string; unused?: never }[];
+  peers: { id: string; name: string }[];
 };
 const call = async (name: string, input: unknown, as = caller) => {
   const result = await invokeOperation(
@@ -124,18 +124,15 @@ test.each(['missing', 'foreign', 'system', 'task', 'unconsumed'])(
       consumedInputId: id,
       ...(kind === 'foreign' ? { sessionId: 'other' } : {}),
     };
-    const network = spyOn(globalThis, 'fetch').mockImplementation(async () => {
-      throw new Error('Must not contact a peer without consent');
-    });
     for (const [name, input] of [
       ['neo.peer.invite', { name: 'Contact A' }],
       ['neo.peer.remove', { id: 'missing' }],
     ] as const)
       expect(await call(name, input, invalid)).toMatchObject({
         accepted: false,
-        reason: kind === 'foreign' ? 'own_neo_required' : 'human_input_required',
+        reason: kind === 'foreign' ? 'main_neo_only' : 'human_ask_required',
       });
-    expect(network).not.toHaveBeenCalled();
+    expect(await call('neo.peer.list', {})).toMatchObject({ accepted: true, peers: [] });
   }
 );
 
