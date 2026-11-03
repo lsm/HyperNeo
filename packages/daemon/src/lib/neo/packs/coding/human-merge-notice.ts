@@ -4,6 +4,22 @@ import type {
   NeoPublicationAppendResult,
 } from '@hyperneo/shared/types/neo-publication';
 import { neoDerivedId } from '../../derived-id.ts';
+import type { Database } from '../../../../storage/sqlite-compat.ts';
+import { NeoRepository } from '../../../../storage/repositories/neo-repository.ts';
+import { NeoPublicationRepository } from '../../../../storage/repositories/neo-publication-repository.ts';
+import type { CodingLedgerRow } from './pr-ledger.ts';
+
+export function codingHumanHandoffs(db: Database, rows: readonly CodingLedgerRow[]) {
+  const conversation = new NeoRepository(db).conversationId();
+  const publications = new NeoPublicationRepository(db);
+  return conversation
+    ? rows.filter((row) => {
+        const url =
+          `https://${process.env.GH_HOST ?? 'github.com'}/${row.repo}/pull/${row.number}`.toLowerCase();
+        return publications.get(conversation, neoDerivedId(`coding-no-checks:${url}:${row.head}`));
+      })
+    : [];
+}
 
 type Delivery = {
   conversation(): string | null;

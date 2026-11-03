@@ -17,8 +17,9 @@ import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/s
 
 const humanWaiting=process.argv.includes('human-waiting-ci'),humanSibling=process.argv.includes('human-sibling-ci');
 const humanOwner=process.argv.includes('human-owner');
+const humanNewHead=process.argv.includes('human-new-head');
 const humanUnconfigured=process.argv.includes('human-unconfigured');
-const humanDefault=process.argv.includes('human-default')||humanOwner||humanUnconfigured||humanWaiting||humanSibling;
+const humanDefault=process.argv.includes('human-default')||humanOwner||humanUnconfigured||humanWaiting||humanSibling||humanNewHead;
 const ownerCi=process.argv.includes('owner-ci');
 const pendingLedger=process.argv.includes('approved-no-checks');
 const largeFiles=process.argv.includes('large-files');
@@ -73,7 +74,7 @@ try{
  const notices:string[]=[];let deliver=true,rejectSignoff=true;
  const snapshot=()=>JSON.parse(readFileSync(join(run,'fixture.json'),'utf8'));
  const makePack=()=>createCodingPack({database:()=>db,readPrs:async()=>[],readClaudeOwners:async()=>[],todoPrs:new CodingTodoPrRepository(db),prLedger:ledger,prEvents:new CodingPrEventRepository(db),prSweep:new CodingPrSweepRepository(db),projectRepos:()=>['synthetic/merge'],prSweepDeps:{human:async(key:string,text:string)=>humanDelivery&&publishCodingHumanMerge({conversation:()=>new NeoRepository(db).conversationId(),append:input=>app!.db.gateway.call(neoPublicationWrites,'append',input),notify:()=>{humanNotices.push(text);}},key,text),tell:async(_owner,_key,text)=>{if(external&&deliver){notices.push(text);return true;}return false;},wake:async(_key,text)=>{if(rejectSignoff&&text.includes('requires human sign-off')){rejectSignoff=false;throw new Error('Synthetic mailbox unavailable');}if(deliver)notices.push(text);return deliver;}},readLedgerRepo:async()=>{
- const node={number:7,title:'Synthetic daemon merge',headRefName:'fixture',headRefOid:head,state:terminal?(external?'MERGED':'CLOSED'):'OPEN',closedAt:terminal?new Date().toISOString():null,isDraft:false,mergeable:'MERGEABLE',reviewDecision:'APPROVED',files:{nodes:largeFiles?allPaths.slice(0,100).map(path=>({path})):[{path:'src/app.ts'}],pageInfo:{hasNextPage:largeFiles}},labels:{nodes:[],pageInfo:{hasNextPage:false}},reviews:{nodes:[{state:'APPROVED',commit:{oid:head},author:{login:'fixture-bot'}}]},commits:{nodes:[{commit:(pendingLedger||humanWaiting)?{statusCheckRollup:null,checkSuites:{totalCount:1}}:humanSibling?{statusCheckRollup:null,checkSuites:{totalCount:0}}:{statusCheckRollup:{state:'SUCCESS'}}}]}};
+ const node={number:7,title:'Synthetic daemon merge',headRefName:'fixture',headRefOid:snapshot().pr.headRefOid,state:terminal?(external?'MERGED':'CLOSED'):'OPEN',closedAt:terminal?new Date().toISOString():null,isDraft:false,mergeable:'MERGEABLE',reviewDecision:'APPROVED',files:{nodes:largeFiles?allPaths.slice(0,100).map(path=>({path})):[{path:'src/app.ts'}],pageInfo:{hasNextPage:largeFiles}},labels:{nodes:[],pageInfo:{hasNextPage:false}},reviews:{nodes:[{state:'APPROVED',commit:{oid:head},author:{login:'fixture-bot'}}]},commits:{nodes:[{commit:(pendingLedger||humanWaiting)?{statusCheckRollup:null,checkSuites:{totalCount:1}}:humanSibling?{statusCheckRollup:null,checkSuites:{totalCount:0}}:{statusCheckRollup:{state:'SUCCESS'}}}]}};
  return {data:{rateLimit:{remaining:5000},repository:{nameWithOwner:'synthetic/merge',open:{pageInfo:{hasNextPage:false},nodes:terminal?[]:humanSibling?[node,{...node,number:8,isDraft:true,commits:{nodes:[{commit:{statusCheckRollup:{state:'SUCCESS'}}}]}}]:isolated?[node,{...node,number:8}]:[node]},done:{nodes:terminal?[node]:[]}}}};
  }});
  const pack=makePack();let preferences=await rpc('pack.preferences.list',{});let tick=Date.now();
@@ -123,6 +124,9 @@ try{
  assert.equal(conflicting,false);assert.deepEqual((await page()).items,visible.items);
  await makePack().sweep!(tick+=61_000);assert.deepEqual((await page()).items,visible.items);assert.equal(humanNotices.length,1);evidence.wordingConflictPreservesDeliveredNotice=true;
  assert.equal(readFileSync(join(run,'evidence/gh.jsonl'),'utf8').trim().split('\n').filter(Boolean).length,settledReadCount);evidence.settledHandoffNoGithubReads=true;evidence.stableHumanStateSince=true;
+ if(humanNewHead){
+ pr.headRefOid='b'.repeat(40);publish({labels:[[]],emptyChecks:true});await runSweep();assert.equal((await page()).items.length,2);assert((await page()).items[1].fullText.includes(pr.headRefOid));const nextReads=readFileSync(join(run,'evidence/gh.jsonl'),'utf8');assert(nextReads.trim().split('\n').length>settledReadCount);await makePack().sweep!(tick+=61_000);assert.equal(readFileSync(join(run,'evidence/gh.jsonl'),'utf8'),nextReads);pr.headRefOid=head;publish({labels:[[]],emptyChecks:true});evidence.newHeadGetsOwnHandoff=true;
+ }
  assert.deepEqual(await rpc('pack.preferences.list',{}),preferences);
  assert((await rpc('pack.preferences.set',{pack:'coding',scope:{kind:'global',key:''},key:'allowNoChecksMerge',value:true})).ok);
  await runSweep();assert.equal(mergeCalls().length,0,'A global opt-in must not authorize this repo');
@@ -130,7 +134,7 @@ try{
  for(const[key,value]of Object.entries({mergeBy:'daemon',mergePolicy:'ci_only',allowNoChecksMerge:true}))assert((await rpc('pack.preferences.set',{pack:'coding',scope:{kind:'repo',key:'synthetic/merge'},key,value})).ok);
  await runSweep();await runSweep();
  assert.equal(mergeCalls().length,1,'An explicit repo opt-in restores one daemon merge');
- assert.equal((await page()).items.length,1);
+ assert.equal((await page()).items.length,humanNewHead?2:1);
  evidence.publicHumanNotice=visible.items[0];evidence.failedDeliveryRecovered=true;evidence.noOwner=!humanOwner;evidence.ownerExecution=humanOwner;evidence.unconfigured=humanUnconfigured;evidence.noDuplicateNotice=true;evidence.globalOptInIgnored=true;evidence.repoOptInMerged=true;evidence.mergeCommands=mergeCalls();evidence.verified=true;
  }else if(zeroRequired){
  rejectSignoff=false;

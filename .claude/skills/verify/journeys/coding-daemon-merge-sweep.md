@@ -176,3 +176,14 @@ and makes no merge-facts calls. A known empty required set still triggers full
 fresh validation before publishing the human handoff; an unreadable probe stays
 held with a human-handoff diagnostic, not a daemon-merge warning. Existing durable
 merge receipts retain their full recovery reads even if the executor changes.
+
+Successful handoffs use their existing persisted publication as the per-head
+fact; no duplicate hold table or migration is added. After first delivery and
+pack recreation, all human variants must make zero additional handoff GitHub
+calls for that head, and reconcile must preserve waiting_human and its stateSince. The
+non-required-suite and sibling-CI variants exercise the old state flap. Failed
+delivery remains retryable. Add `human-new-head` to prove a different head gets
+its own fresh validation and notice, while explicit repo opt-in still resumes
+daemon merging. A known handoff holds until a new head or relevant policy change;
+its cached fact never authorizes an automatic merge. Unit coverage also holds
+new acquisitions while reconcile is failed, cooling down or below its quota floor.

@@ -402,6 +402,36 @@ describe('daemon merge sweep behavior', () => {
       expect(warnings.some((args) => args[0] === 'Daemon merge held')).toBe(false);
     }
   );
+  test.each(['failed', 'cooldown', 'low-quota', 'core-empty', 'core-positive'])(
+    'owner probes respect reconcile health: %s',
+    async (reason) => {
+      policy('mergeBy', 'owner');
+      policy('mergePolicy', 'ci_only');
+      await ledger.write('recordHealth', 'synthetic/merge', {
+        at: 2,
+        outcome: reason === 'failed' ? 'failed' : reason === 'cooldown' ? 'cooldown' : 'complete',
+        ...(reason === 'cooldown' ? { retryAt: 1000 } : {}),
+        ...(['low-quota', 'core-empty', 'core-positive'].includes(reason)
+          ? {
+              quota: {
+                status: 200,
+                resource: reason === 'low-quota' ? 'graphql' : 'core',
+                remaining: reason === 'core-empty' ? 0 : 100,
+                resetAt: 1000,
+                requestId: null,
+                retryAfterMs: null,
+              },
+            }
+          : {}),
+      });
+      await sweep()(10);
+      expect(calls).toEqual(
+        reason === 'core-positive'
+          ? [['gh', 'pr', 'checks', url, '--required', '--json', 'bucket,name,link']]
+          : []
+      );
+    }
+  );
   test('pins a single unowned merge and records executor/head/time across overlapping sweeps', async () => {
     const run = sweep();
     await Promise.all([run(10), run(11)]);

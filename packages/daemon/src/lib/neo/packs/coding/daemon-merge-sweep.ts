@@ -8,7 +8,12 @@ import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { Logger } from '../../../logger.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
-import type { CodingPrLedgerRepository, CodingMergePolicy, CodingPrState } from './pr-ledger.ts';
+import {
+  CODING_LEDGER_MIN_RATE,
+  type CodingPrLedgerRepository,
+  type CodingMergePolicy,
+  type CodingPrState,
+} from './pr-ledger.ts';
 import type { CodingPrEventRepository } from './pr-events.ts';
 import type { CodingSweepDeps } from './pr-sweep.ts';
 import { readCodingDaemonMergeFacts, readCodingRequiredChecks } from './daemon-merge-facts.ts';
@@ -172,16 +177,34 @@ export function createCodingDaemonMergeSweep(
         row.closedAt === null &&
         ['approved_green', 'approved_pending', 'waiting_ci', 'waiting_human'].includes(row.state)
     );
+    const handedOff = await ledger.read('humanHandoffs');
     const observed = await Promise.all(
-      rows.map(async ({ repo, number, head, state }) => ({
-        url: `https://${process.env.GH_HOST ?? 'github.com'}/${repo}/pull/${number}`.toLowerCase(),
-        head,
-        ledgerState: state,
-        policy: (await ledger.pollContextCurrent(repo)).policy,
-      }))
+      rows.map(async ({ repo, number, head, state }) => {
+        const { policy, health } = await ledger.pollContextCurrent(repo);
+        return {
+          url: `https://${process.env.GH_HOST ?? 'github.com'}/${repo}/pull/${number}`.toLowerCase(),
+          head,
+          ledgerState: state,
+          policy,
+          settled:
+            codingNoChecksNeedsHuman(policy, 0) &&
+            handedOff.some(
+              (prior) => prior.repo === repo && prior.number === number && prior.head === head
+            ),
+          readable:
+            !health ||
+            (health.reason === 'complete' &&
+              (health.quota?.remaining == null ||
+                health.quota.remaining >=
+                  (health.quota.resource === 'graphql' ? CODING_LEDGER_MIN_RATE : 1))),
+        };
+      })
     );
     const candidates = observed.filter(
-      (row) => row.policy.mergeBy === 'daemon' || codingNoChecksNeedsHuman(row.policy, 0)
+      (row) =>
+        !row.settled &&
+        row.readable &&
+        (row.policy.mergeBy === 'daemon' || codingNoChecksNeedsHuman(row.policy, 0))
     );
     const receipts = await record({ kind: 'list' });
     const pending = [

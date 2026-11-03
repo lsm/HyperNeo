@@ -1,5 +1,6 @@
 import { CODING_DAEMON_MERGE_MAX_ATTEMPTS } from './daemon-merge-attempt.ts';
 import { codingNoChecksNeedsHuman } from './daemon-merge-gates.ts';
+import { codingHumanHandoffs } from './human-merge-notice.ts';
 import { codingReviewOnHead } from './review.ts';
 import { codingLedgerPollReads } from './ledger-poll-db.ts';
 import { isRateLimitError } from '../../../session/rate-limit-detector.ts';
@@ -521,7 +522,8 @@ export class CodingPrLedgerRepository {
 
   read(method: 'lastReads'): Promise<ReturnType<CodingPrLedgerRepository['lastReads']>>;
   read(method: 'list'): Promise<ReturnType<CodingPrLedgerRepository['list']>>;
-  read(method: 'lastReads' | 'list') {
+  read(method: 'humanHandoffs'): Promise<ReturnType<CodingPrLedgerRepository['humanHandoffs']>>;
+  read(method: 'lastReads' | 'list' | 'humanHandoffs') {
     return gatewayFor(this.db).call(codingLedgerReads, method);
   }
 
@@ -570,6 +572,10 @@ export class CodingPrLedgerRepository {
     );
   }
 
+  humanHandoffs() {
+    return codingHumanHandoffs(this.db, this.list());
+  }
+
   policy(repo: string): CodingMergePolicy {
     const preference = (key: string) => {
       const scope = this.db
@@ -602,6 +608,17 @@ export class CodingPrLedgerRepository {
     observedAt = now
   ): CodingPrTransition[] {
     return this.db.transaction(() => {
+      const handedOff = this.humanHandoffs();
+      rows = rows.map((row) =>
+        ['approved_green', 'approved_pending', 'waiting_ci', 'waiting_human'].includes(row.state) &&
+        codingNoChecksNeedsHuman(this.policy(row.repo), 0) &&
+        handedOff.some(
+          (prior) =>
+            prior.repo === row.repo && prior.number === row.number && prior.head === row.head
+        )
+          ? { ...row, state: 'waiting_human' }
+          : row
+      );
       const before = new Map(
         (
           this.db
@@ -1080,5 +1097,5 @@ export const codingLedgerReads = defineRepositoryOp(
   'coding.ledger.read',
   'read',
   CodingPrLedgerRepository,
-  ['lastReads', 'list', 'readHealth', 'policyContext'] as const
+  ['lastReads', 'list', 'humanHandoffs', 'readHealth', 'policyContext'] as const
 );
