@@ -233,18 +233,66 @@ describe('daemon merge sweep behavior', () => {
     expect(merges()).toEqual([['gh', 'pr', 'merge', url, '--squash', '--match-head-commit', head]]);
     expect(notices).toEqual([expect.stringContaining('Merge confirmed:')]);
   });
-  test.each(['pending', 'read-failure', 'old-review'])(
-    'pending ledger admission still refuses %s from fresh facts',
-    async (reason) => {
-      db.prepare("UPDATE pack_coding_pr_ledger SET state='approved_pending'").run();
-      if (reason === 'pending') ci = 'pending';
-      if (reason === 'read-failure') fail = 'checks';
-      if (reason === 'old-review') reviewHead = 'b'.repeat(40);
-      await sweep()(10);
-      expect(calls.some((args) => args[2] === 'checks')).toBe(true);
-      expect(merges()).toEqual([]);
-    }
-  );
+  test.each([
+    'pending',
+    'read-failure',
+    'old-review',
+    'nonempty-green',
+    'human-signoff',
+    'unresolved-thread',
+  ])('pending ledger admission still refuses %s from fresh facts', async (reason) => {
+    db.prepare("UPDATE pack_coding_pr_ledger SET state='approved_pending'").run();
+    if (reason === 'pending') ci = 'pending';
+    if (reason === 'read-failure') fail = 'checks';
+    if (reason === 'old-review') reviewHead = 'b'.repeat(40);
+    if (reason === 'human-signoff') labels = ['human-merge'];
+    if (reason === 'unresolved-thread') unresolved = true;
+    const fresh: SpawnFn = (args, options) => {
+      if (args[2] !== 'checks' || ['pending', 'read-failure', 'nonempty-green'].includes(reason))
+        return spawn(args, options);
+      calls.push(args);
+      return {
+        stdout: new Response('[]').body,
+        stderr: new Response('').body,
+        exited: Promise.resolve(0),
+        exitCode: 0,
+        kill() {},
+      };
+    };
+    await sweep(fresh)(10);
+    expect(calls.some((args) => args[2] === 'checks')).toBe(true);
+    expect(merges()).toEqual([]);
+  });
+  test('CI-only waiting rows reach human handoff and explicit opt-in, with fresh gates', async () => {
+    policy('mergePolicy', 'ci_only');
+    db.prepare("UPDATE pack_coding_pr_ledger SET state='waiting_ci'").run();
+    const noRequired: SpawnFn = (args, options) => {
+      if (args[2] !== 'checks') return spawn(args, options);
+      calls.push(args);
+      return {
+        stdout: new Response('[]').body,
+        stderr: new Response('').body,
+        exited: Promise.resolve(0),
+        exitCode: 0,
+        kill() {},
+      };
+    };
+    const human: string[] = [];
+    const run = sweep(noRequired, {
+      human: async (_key, text) => {
+        human.push(text);
+        return true;
+      },
+    });
+    await run(10);
+    expect(merges()).toEqual([]);
+    expect(human).toEqual([expect.stringContaining('manual merge')]);
+    expect(ledger.stateOf(url)).toBe('waiting_human');
+    policy('allowNoChecksMerge', true);
+    db.prepare("UPDATE pack_coding_pr_ledger SET state='waiting_ci'").run();
+    await run(11);
+    expect(merges()).toHaveLength(1);
+  });
   test('pins a single unowned merge and records executor/head/time across overlapping sweeps', async () => {
     const run = sweep();
     await Promise.all([run(10), run(11)]);
