@@ -1,3 +1,4 @@
+import { createPeerMessageRoute } from '../../routes/neo-peer-message.ts';
 import { createSessionToolActivationOperation } from '../tools/session-tool-activation.ts';
 import {
   createSessionToolPreferenceWriter,
@@ -275,6 +276,7 @@ export interface RPCHandlerSetupResult {
   spaceAgentInactivityWatchdog: SpaceAgentInactivityWatchdogService;
   cancelInactivityWatchdog: () => void;
   sessionScheduler: SessionScheduler;
+  handlePeerMessage: (req: Request) => Promise<Response>;
   prepareNeoInput: ReturnType<typeof createNeoService>['speech']['prepareInput'];
   notifyScheduleIdle: ReturnType<typeof createNeoService>['notifyScheduleIdle'];
   wakePollingConcern: (key: string, text: string) => Promise<boolean>;
@@ -754,6 +756,7 @@ export async function setupRPCHandlers(
     sessionScheduler,
     wakePollingConcern: (key: string, text: string) => neoService.wakeNeo(key, text),
     notifyScheduleIdle: neoService.notifyScheduleIdle,
+    handlePeerMessage: createPeerMessageRoute(neoService),
     prepareNeoInput: neoService.speech.prepareInput.bind(neoService.speech),
   };
 }

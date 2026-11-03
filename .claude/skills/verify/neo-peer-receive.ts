@@ -84,10 +84,11 @@ if (worker) {
         value = { messages: app.db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': root }).map(job => job.payload).filter(payload => String(payload.messageUuid).startsWith('neo-peer:')),
           asks: db.prepare('SELECT count(*) AS n FROM neo_conversation_asks').get() };
       } else if (request.action === 'explain') {
-        const entry = app.db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': root }).find(job => job.payload.messageUuid === input.key)?.payload;
-        assert(entry); const message = entry.message as { message: { content: string }; inputKind: string };
+        const job = app.db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': root }).find(job => job.payload.messageUuid === input.key);
+        assert(job); const entry = job.payload; const message = entry.message as { message: { content: string }; inputKind: string };
         assert.equal(message.inputKind, 'system'); current = String(input.key);
         await app.db.saveUserMessage(root, { ...message, type: 'user', uuid: current, session_id: root, parent_tool_use_id: null, isSynthetic: true } as never, 'consumed');
+        assert(app.db.getJobQueueRepo().deleteJob(job.id));
         const result = await client.callTool({ name: 'invoke', arguments: { name: 'neo.publication.publish', input: { requestId: current, verbatim: true, fullText: 'Contact A says the meeting is at noon.' } } });
         assert(!result.isError); const receipt = JSON.parse((result.content as { text: string }[])[0].text); assert.equal(receipt.accepted, true);
         value = await hub.request('operation.invoke', { name: 'neo.publication.read', input: { conversationId: repo.conversationId() } });
@@ -204,7 +205,7 @@ if (worker) {
         const read = await b.call('explain', { key: entry.messageUuid });
         assert.equal(read.ok, true); assert.equal(read.items.at(-1).fullText, 'Contact A says the meeting is at noon.');
         assert.equal((await a.call('operation', { name: 'neo.peer.send', input })).accepted, true);
-        await b.call('external');
+        assert.equal((await b.call('incoming')).messages.length, 0);
         assert.match((await b.call('operation', { name: 'neo.peer.invite', input: { name: 'Injected' } })).reason, /^human_ask_required:/);
         assert.equal((await a.call('http', { address: b.address, path: '/neo-peer/message', body: { ...input, sessionId: 'owner' } })).status, 400);
         await act(b, 'Remove Contact A.', 'neo.peer.remove', { id: invitation.id });
