@@ -14,7 +14,6 @@ let files: { path: string }[], changedFiles: number;
 let completeFiles: string[] | undefined;
 let finalBase: string;
 let pageBase: string;
-let largePatch: boolean;
 let calls: string[][], state: string, mergeCommit: { oid: string } | null;
 let checksReply: { stdout: string; stderr: string; exit: number } | undefined;
 const spawn: SpawnFn = (args) => {
@@ -52,12 +51,6 @@ const spawn: SpawnFn = (args) => {
     };
   else if (args.some((a) => a.endsWith('/labels'))) value = labels;
   else if (args.some((a) => a.endsWith('/reviews'))) value = reviews;
-  else if (args.some((a) => a.includes('/files?')))
-    value = completeFiles
-      ? [completeFiles.slice(0, 100), completeFiles.slice(100)].map((page) =>
-          page.map((filename) => ({ filename }))
-        )
-      : [files.map((file) => ({ filename: file.path }))];
   else if (args[2] === 'checks')
     value = [{ name: 'Required', bucket: 'pass', link: url + '/checks' }];
   else
@@ -76,10 +69,6 @@ const spawn: SpawnFn = (args) => {
       labels: [],
       mergeCommit,
     };
-  if (largePatch && args.some((arg) => arg.includes('/files?'))) {
-    const pages = value as { filename: string; patch?: string }[][];
-    pages[0][0].patch = 'x'.repeat(1_100_000);
-  }
   const broken = !!fail && args.some((a) => a.includes(fail));
   const reply = args[2] === 'checks' ? checksReply : undefined;
   return {
@@ -105,7 +94,6 @@ beforeEach(() => {
   files = [{ path: 'src/app.ts' }];
   changedFiles = 1;
   completeFiles = undefined;
-  largePatch = false;
   calls = [];
   labels = [[{ name: 'bug' }], [{ name: 'human-merge' }]];
   reviews = [
@@ -225,11 +213,11 @@ describe('readCodingDaemonMergeFacts', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toMatch(/: .+/);
   });
-  test('reads filenames without downloading a patch larger than the output cap', async () => {
-    largePatch = true;
+  test('fails closed if the filenames-only reply exceeds the output cap', async () => {
+    completeFiles = ['x'.repeat(1_100_000)];
     expect(await readCodingDaemonMergeFacts(db, url, spawn)).toMatchObject({
-      ok: true,
-      files: ['src/app.ts'],
+      ok: false,
+      reason: expect.stringContaining('files:'),
     });
   });
   test('refuses file pages bound to another base', async () => {
@@ -268,7 +256,11 @@ describe('readCodingDaemonMergeFacts', () => {
       files: completeFiles,
       fileScopePaginated: true,
     });
-    expect(calls.find((args) => args.some((arg) => arg.includes('CodingMergeFiles')))).toEqual(
+    const fileCall = calls.find((args) => args.some((arg) => arg.includes('CodingMergeFiles')))!;
+    const query = fileCall.find((arg) => arg.startsWith('query='))!;
+    expect(query).toMatch(/nodes\s*{\s*path\s*}/);
+    expect(query).not.toContain('patch');
+    expect(fileCall).toEqual(
       expect.arrayContaining([
         'gh',
         'api',
