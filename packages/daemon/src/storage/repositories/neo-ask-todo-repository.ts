@@ -959,6 +959,7 @@ export class NeoAskTodoRepository {
   }
 
   joinStartQuestion(todo: NeoTodo, now: number): boolean {
+    this.pruneQuestions(todo.askId, now);
     const startable = this.startQuestionTodos(todo.askId);
     if (!startable.has(todo.id)) return false;
     const todos = this.listTodos(todo.askId);
@@ -1098,6 +1099,12 @@ export class NeoAskTodoRepository {
   }
 
   private pruneQuestions(askId: string, now: number): void {
+    const root = this.getAsk(askId)?.parentId ?? askId;
+    for (const id of [root, ...this.listChildAsks(root).map((ask) => ask.id)])
+      this.pruneAskQuestions(id, now);
+  }
+
+  private pruneAskQuestions(askId: string, now: number): void {
     const todos = this.listTodos(askId);
     const startable = this.startQuestionTodos(askId);
     for (const question of this.listQuestions(askId)) {

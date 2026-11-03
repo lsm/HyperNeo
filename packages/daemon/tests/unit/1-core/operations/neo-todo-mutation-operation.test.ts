@@ -94,7 +94,9 @@ describe('Writer-backed todo operation activation', () => {
         artifact: () => null,
         stop,
         resolveTarget: async (ref) => ({ value: ref }),
-        advance: () => start('peer'),
+        advance: async () => {
+          if (store.getTodo('peer')?.state === 'todo') await start('peer');
+        },
         changed: () => {
           order.push('announce');
         },

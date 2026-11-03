@@ -16,8 +16,8 @@ Require no Start question rows, exactly one native turn per step and no duplicat
 on repeated refresh. neo.todo.add must follow the same rule. Independent start:false
 work still gets its Start card. Contracts also preserve an explicit human hold.
 
-The helper seeds an old Start card only in its synthetic database. A real todo edit
-must prune it and release the dependent immediately, without a full refresh.
+The helper seeds old Start cards only in its synthetic database. Real todo edits
+and independent additions must release stale members without a full refresh.
 It reseeds the card, restarts the daemon, then completes the predecessor; dispatch
 must happen once. No live todo is edited. Mode chain-before reproduces the old
 blocked successor through the same MCP/RPC doors; keep this helper from the PR.
@@ -30,8 +30,8 @@ and sets disableWorktrees on the effective configuration.
 
 Run `chain-edges` and `chain-check` in separate fresh evidence directories.
 It opens a real two-repository plan: the dependent is alone in a sibling card
-with no local Start answer. Completing the first repository must dispatch the
-second once. Remove an unstarted prerequisite, or let its check pass in `chain-check`.
+with no local Start answer. Seed its old card; a real close RPC must retire it and
+dispatch the sibling once. Remove a prerequisite, or pass its check in `chain-check`.
 `after` authorizes its dependent without a root Start answer or a new card/flag.
 An independent unapproved todo keeps its Start card. Preserve snapshots/counts. Unit
 regressions also cover implicit ordering after removal and explicit human holds.

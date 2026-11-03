@@ -150,7 +150,12 @@ export function wireNeoTodoMutations(
       async (receipt: Receipt, input: Input) => {
         if ('startNext' in receipt) {
           deps.changed();
-          if (receipt.startNext || (input.kind === 'edit' && input.instruction)) {
+          if (
+            receipt.startNext ||
+            input.kind === 'close' ||
+            input.kind === 'remove' ||
+            (input.kind === 'edit' && input.instruction)
+          ) {
             await deps.advance();
             receipt = {
               ...receipt,
