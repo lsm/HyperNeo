@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { z } from 'zod';
 import type { MessageHub } from '@hyperneo/shared';
 import type { PlaceGroup, WorkStatus } from '../../../../src/lib/drivers/types.ts';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
+import { createNeoOperations } from '../../helpers/neo-service.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
 import {
   keepNeoSessionPrs,
   NEO_SESSION_PR_READS_MAX,

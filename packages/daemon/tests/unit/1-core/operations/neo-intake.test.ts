@@ -7,7 +7,7 @@ import {
   requireNeoIntakeTarget,
   requireNeoRootTarget,
 } from '../../../../src/lib/neo/intake.ts';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import { createNeoOperations } from '../../helpers/neo-service.ts';
 import type { NeoService } from '../../../../src/lib/neo/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
