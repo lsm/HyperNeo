@@ -214,6 +214,37 @@ describe('daemon merge sweep behavior', () => {
       ).toEqual([{ head, actor: 'daemon:coding-sweep', merge_commit: 'c'.repeat(40) }]);
     }
   );
+  test('a bot-approved ledger row awaiting CI reaches fresh zero-required-check gates', async () => {
+    db.prepare("UPDATE pack_coding_pr_ledger SET state='approved_pending'").run();
+    const noRequired: SpawnFn = (args, options) => {
+      if (args[2] !== 'checks') return spawn(args, options);
+      calls.push(args);
+      return {
+        stdout: new Response('[]').body,
+        stderr: new Response('').body,
+        exited: Promise.resolve(0),
+        exitCode: 0,
+        kill() {},
+      };
+    };
+    const run = sweep(noRequired);
+    await run(10);
+    await run(11);
+    expect(merges()).toEqual([['gh', 'pr', 'merge', url, '--squash', '--match-head-commit', head]]);
+    expect(notices).toEqual([expect.stringContaining('Merge confirmed:')]);
+  });
+  test.each(['pending', 'read-failure', 'old-review'])(
+    'pending ledger admission still refuses %s from fresh facts',
+    async (reason) => {
+      db.prepare("UPDATE pack_coding_pr_ledger SET state='approved_pending'").run();
+      if (reason === 'pending') ci = 'pending';
+      if (reason === 'read-failure') fail = 'checks';
+      if (reason === 'old-review') reviewHead = 'b'.repeat(40);
+      await sweep()(10);
+      expect(calls.some((args) => args[2] === 'checks')).toBe(true);
+      expect(merges()).toEqual([]);
+    }
+  );
   test('pins a single unowned merge and records executor/head/time across overlapping sweeps', async () => {
     const run = sweep();
     await Promise.all([run(10), run(11)]);
