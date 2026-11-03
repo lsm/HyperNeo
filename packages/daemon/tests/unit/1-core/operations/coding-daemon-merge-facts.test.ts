@@ -7,10 +7,12 @@ import { readCodingDaemonMergeFacts } from '../../../../src/lib/neo/packs/coding
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn/types.ts';
 
 const url = 'https://github.com/synthetic/merge/pull/1',
-  head = 'a'.repeat(40);
+  head = 'a'.repeat(40),
+  base = 'd'.repeat(40);
 let db: Database, fail: string, finalHead: string, labels: unknown, reviews: unknown;
 let files: { path: string }[], changedFiles: number;
 let completeFiles: string[] | undefined;
+let finalBase: string;
 let calls: string[][], state: string, mergeCommit: { oid: string } | null;
 let checksReply: { stdout: string; stderr: string; exit: number } | undefined;
 const spawn: SpawnFn = (args) => {
@@ -43,7 +45,8 @@ const spawn: SpawnFn = (args) => {
       url,
       body: '',
       state,
-      headRefOid: args.at(-1) === 'headRefOid,state' ? finalHead : head,
+      headRefOid: args.at(-1)!.startsWith('headRefOid,state') ? finalHead : head,
+      baseRefOid: args.at(-1)!.startsWith('headRefOid,state') ? finalBase : base,
       isDraft: false,
       mergeable: 'MERGEABLE',
       mergeStateStatus: 'CLEAN',
@@ -73,6 +76,7 @@ beforeEach(() => {
   state = 'OPEN';
   mergeCommit = null;
   finalHead = head;
+  finalBase = base;
   files = [{ path: 'src/app.ts' }];
   changedFiles = 1;
   completeFiles = undefined;
@@ -187,6 +191,21 @@ describe('readCodingDaemonMergeFacts', () => {
     const result = await readCodingDaemonMergeFacts(db, url, spawn);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toMatch(/: .+/);
+  });
+  test('refuses a changed base even when the head and state stay unchanged', async () => {
+    finalBase = 'e'.repeat(40);
+    expect((await readCodingDaemonMergeFacts(db, url, spawn)).ok).toBe(false);
+  });
+  test('duplicate pages cannot complete a truncated file scope', async () => {
+    completeFiles = Array.from({ length: 171 }, (_, i) => `src/file-${i}.ts`);
+    completeFiles[170] = completeFiles[0];
+    files = completeFiles.slice(0, 100).map((path) => ({ path }));
+    changedFiles = completeFiles.length;
+    expect(await readCodingDaemonMergeFacts(db, url, spawn)).toMatchObject({
+      ok: true,
+      files: null,
+      fileScopePaginated: false,
+    });
   });
   test('keeps truncated file scope unknown instead of declaring it complete', async () => {
     changedFiles = 101;

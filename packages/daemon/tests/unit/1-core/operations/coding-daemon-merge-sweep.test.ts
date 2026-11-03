@@ -86,6 +86,7 @@ const spawn: SpawnFn = (args) => {
       body: '',
       state,
       headRefOid: actualHead,
+      baseRefOid: 'd'.repeat(40),
       isDraft: false,
       mergeable: 'MERGEABLE',
       mergeStateStatus: 'CLEAN',
