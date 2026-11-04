@@ -333,6 +333,7 @@ describe('todo dependencies', () => {
     'split-legacy',
     'extend-legacy',
     'completed-legacy',
+    'rechecked-cancel',
   ];
   test.each(chainModes)(
     'authorized dependency chain advances without extra Start cards; root=%s',
@@ -345,7 +346,12 @@ describe('todo dependencies', () => {
           title: 'Approved chain',
           request: 'Complete all three steps.',
           todos: [
-            { ...step('PR1'), ...work, ...repo('first'), start: mode !== 'unstarted' },
+            {
+              ...step('PR1'),
+              ...work,
+              ...repo('first'),
+              start: !['unstarted', 'rechecked-cancel'].includes(mode),
+            },
             { ...step('PR2', [0]), ...work, ...repo('second') },
             { ...step('PR3', [1]), ...work, ...repo('second') },
           ],
@@ -359,10 +365,16 @@ describe('todo dependencies', () => {
             "UPDATE neo_todos SET state = CASE WHEN id = ? THEN 'done' ELSE state END, check_json = NULL"
           ).run(first.id);
         if (mode.includes('legacy')) seedLegacy(second);
-        else expect(store.listQuestions(first.askId)).toHaveLength(mode === 'unstarted' ? 1 : 0);
+        else
+          expect(store.listQuestions(first.askId)).toHaveLength(
+            ['unstarted', 'rechecked-cancel'].includes(mode) ? 1 : 0
+          );
         if (mode === 'extend-legacy')
           await invoke('neo.todo.add', { askId: first.askId, ...step('Independent', []), ...work });
+        if (mode === 'rechecked-cancel')
+          store.updateTodo(first, { state: 'closed_unverified' }, Date.now());
         if (mode !== 'completed-legacy') await complete(runner, store.getTodo(first.id)!);
+        if (mode === 'rechecked-cancel') expect(store.getTodo(second.id)?.state).toBe('doing');
         await (mode === 'completed-legacy' ? runner.refresh(() => {}) : runner.advance());
         expect(store.getTodo(second.id)?.state).toBe('doing');
         expect(store.getTodo(third.id)?.state).toBe('todo');
@@ -377,9 +389,9 @@ describe('todo dependencies', () => {
         await runner.refresh(() => {});
         expect(store.getTodo(third.id)?.state).toBe('doing');
         expect(sessions.readRef(third.id)).toEqual(target.ref);
-        expect(sent).toHaveLength(mode === 'unstarted' ? 2 : 3);
+        expect(sent).toHaveLength(['unstarted', 'rechecked-cancel'].includes(mode) ? 2 : 3);
         await runner.refresh(() => {});
-        expect(sent).toHaveLength(mode === 'unstarted' ? 2 : 3);
+        expect(sent).toHaveLength(['unstarted', 'rechecked-cancel'].includes(mode) ? 2 : 3);
       } finally {
         db.close();
       }
