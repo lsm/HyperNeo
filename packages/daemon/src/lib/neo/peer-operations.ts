@@ -207,7 +207,7 @@ export function createPeerOperations(service: NeoService) {
     defineOperation({
       name: 'neo.peer.send',
       description:
-        'Send text to one configured contact, only as the human asked. Receipt means the other Neo accepted it, not that the human read it. Retries keep requestId and content.',
+        'Send text to one configured contact on a recorded current human request. Receipt means the other Neo accepted it, not that the human read it. Retries keep requestId and content.',
       policy,
       inputSchema: Send,
       resultSchema: z.union([Accepted, Refused]),
@@ -215,7 +215,7 @@ export function createPeerOperations(service: NeoService) {
         .input(['input', 'caller'])
         .pipe(facts, 'caller', 'facts')
         .pipe(
-          ({ own, human }: ReturnType<typeof facts>) => admit(own, human, false),
+          ({ own, human }: ReturnType<typeof facts>) => admit(own, human, true),
           'facts',
           'result:answer'
         )
