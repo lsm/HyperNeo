@@ -98,60 +98,7 @@ if [ "$READY" != "1" ]; then
 fi
 echo "[deno-smoke] HTTP GET / -> 200"
 
-if ! SMOKE_CREDENTIAL_FILE="$WORK_DIR/data/local-rpc.credential" SMOKE_WS_URL="ws://localhost:$PORT/ws" deno eval --config "$REPO_ROOT/packages/daemon/deno.json" '
-	const { default: WebSocket } = await import("npm:ws@8.21.3");
-	const credential = (await Deno.readTextFile(Deno.env.get("SMOKE_CREDENTIAL_FILE"))).trim();
-	const ws = new WebSocket(Deno.env.get("SMOKE_WS_URL"), { headers: { authorization: `Bearer ${credential}` } });
-	const timer = setTimeout(() => {
-		console.error("[deno-smoke] FAIL: /ws handshake timed out");
-		Deno.exit(1);
-	}, 15000);
-	ws.addEventListener("open", () => {
-		clearTimeout(timer);
-		console.log("[deno-smoke] WebSocket /ws handshake OPEN");
-		const id = crypto.randomUUID();
-		const rpcTimer = setTimeout(() => {
-			console.error("[deno-smoke] FAIL: system.health RPC timed out");
-			Deno.exit(1);
-		}, 15000);
-		ws.addEventListener("message", (event) => {
-			let msg;
-			try {
-				msg = JSON.parse(event.data);
-			} catch {
-				return;
-			}
-			if (msg.requestId !== id && msg.id !== id) return;
-			clearTimeout(rpcTimer);
-			if (msg.error) {
-				console.error(`[deno-smoke] FAIL: system.health errored: ${msg.error}`);
-				Deno.exit(1);
-			}
-			const data = msg.data ?? {};
-			if (data.status !== "ok") {
-				console.error(`[deno-smoke] FAIL: system.health returned unexpected payload: ${JSON.stringify(data).slice(0, 200)}`);
-				Deno.exit(1);
-			}
-			console.log("[deno-smoke] system.health RPC ok");
-			ws.close();
-			Deno.exit(0);
-		});
-		ws.send(JSON.stringify({
-			id,
-			type: "REQ",
-			sessionId: "global",
-			method: "system.health",
-			data: {},
-			timestamp: new Date().toISOString(),
-			version: "1.0.0",
-		}));
-	});
-	ws.addEventListener("error", () => {
-		clearTimeout(timer);
-		console.error("[deno-smoke] FAIL: /ws handshake errored");
-		Deno.exit(1);
-	});
-'; then
+if ! SMOKE_CREDENTIAL_FILE="$WORK_DIR/data/local-rpc.credential" SMOKE_WS_URL="ws://localhost:$PORT/ws" deno run -A --config "$REPO_ROOT/packages/daemon/deno.json" "$REPO_ROOT/packages/daemon/scripts/deno-health-probe.mjs"; then
 	dump_log
 	exit 1
 fi

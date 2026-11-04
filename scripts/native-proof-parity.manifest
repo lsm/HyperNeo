@@ -1,4 +1,4 @@
-sha256	02224e9929e8957e20e64501292e357803e59e3e56753ad382bf1f1bae0347e5
+sha256	b0e5cc56fc1ee98e17686b8d82d20cbe8b911ff0ebff39e87eda86806993fbe7
 neo-settings-writer.ts	env -i HOME="$NEO_SETTINGS_RUN/home" PATH="$PATH" TMPDIR="$NEO_SETTINGS_RUN/tmp" NODE_ENV=test  HYPERNEO_DATA_DIR="$NEO_SETTINGS_RUN/data" LOG_LEVEL=warn  deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/neo-settings-writer.ts" verify "$NEO_SETTINGS_RUN"
 lane-b-cleanup-enqueue.ts	env -i HOME="$CLEANUP_ENQUEUE_RUN/home" PATH="$PATH" NODE_ENV=test  HYPERNEO_DATA_DIR="$CLEANUP_ENQUEUE_RUN/data" LOG_LEVEL=warn  deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-cleanup-enqueue.ts" "$CLEANUP_ENQUEUE_RUN"
 workflow-identity-contract.ts	env -i HOME="$WORKFLOW_IDENTITY_CONTRACT_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_IDENTITY_CONTRACT_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-identity-contract.ts" verify "$WORKFLOW_IDENTITY_CONTRACT_RUN"
