@@ -295,7 +295,7 @@ describe('Neo preview Work layout', () => {
       screen.getByRole('button', { name: 'Restore side by side' }).getAttribute('aria-pressed')
     ).toBe('true');
     fireEvent.click(screen.getByRole('button', { name: 'Close worker chat' }));
-    expect(screen.queryByRole('tab', { name: /artifact-session-tab/ })).toBeNull();
+    expect(document.getElementById('artifact-session-tab-worker')).toBeNull();
     expect(
       screen.getByRole('button', { name: 'Restore side by side' }).getAttribute('aria-pressed')
     ).toBe('true');
@@ -324,7 +324,7 @@ describe('Neo preview Work layout', () => {
     );
     expect(artifactPreviewWorkspace.state.value.open).toBe(true);
     fireEvent.click(chat);
-    expect(screen.queryByRole('tab', { name: /artifact-session-tab/ })).toBeNull();
+    expect(document.getElementById('artifact-session-tab-worker')).toBeNull();
     expect(vi.mocked(history.back).mock.calls.length).toBe(backs);
     fireEvent.popState(window);
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());

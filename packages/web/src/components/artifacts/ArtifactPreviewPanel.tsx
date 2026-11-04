@@ -87,13 +87,19 @@ export function ArtifactPreviewPanel({
   useLayoutEffect(() => {
     touch.current = null;
   }, [top, phone, suspended]);
+  const dismiss = () => {
+    if (sessionActive && session) session.onClose();
+    else closeArtifactPreview();
+  };
+  const dismissRef = useRef(dismiss);
+  dismissRef.current = dismiss;
 
   useLayoutEffect(() => {
     if (!open) return;
     const entry = generateUUID();
     history.pushState({ ...history.state, artifactPreview: entry }, '');
     const onPop = () => {
-      if (visible.current) closeArtifactPreview();
+      if (visible.current) dismissRef.current();
     };
     let foregroundEscape: KeyboardEvent | undefined;
     const onCapture = (event: KeyboardEvent) => {
@@ -115,7 +121,7 @@ export function ArtifactPreviewPanel({
         !event.defaultPrevented &&
         foregroundEscape !== event
       )
-        closeArtifactPreview();
+        dismissRef.current();
     };
     window.addEventListener('popstate', onPop);
     window.addEventListener('keydown', onCapture, true);
@@ -144,7 +150,7 @@ export function ArtifactPreviewPanel({
         aria-label={t('artifact.dismiss')}
         class="artifact-preview-backdrop"
         hidden={suspended}
-        onClick={closeArtifactPreview}
+        onClick={dismiss}
       />
       <div
         ref={dialog}
@@ -231,7 +237,7 @@ export function ArtifactPreviewPanel({
             end.clientY - start.y > 80 &&
             end.clientY - start.y > Math.abs(end.clientX - start.x) * 1.5
           )
-            closeArtifactPreview();
+            dismiss();
         }}
         onTouchCancel={(event) => {
           if (phone) event.stopPropagation();
@@ -245,7 +251,7 @@ export function ArtifactPreviewPanel({
           <button
             type="button"
             aria-label={t('artifact.close')}
-            onClick={closeArtifactPreview}
+            onClick={dismiss}
             class="absolute right-1 top-1 z-10 h-11 w-11 rounded-md text-fg-muted hover:bg-fill-soft hover:text-fg"
           >
             ×
@@ -343,12 +349,13 @@ export function ArtifactPreviewPanel({
               )}
             </div>
           ))}
-        {sessionActive && session && (
+        {tabbed && session && (
           <div
             id={artifactSessionTabIds(session.id).panel}
             role="tabpanel"
+            hidden={!sessionActive}
             aria-labelledby={artifactSessionTabIds(session.id).tab}
-            class="flex min-h-0 flex-1 flex-col"
+            class={sessionActive ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
           >
             {session.children}
           </div>

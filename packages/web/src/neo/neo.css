@@ -601,6 +601,13 @@
 .artifact-preview-panel section > header {
   padding-right: 44px;
 }
+.artifact-preview-panel .neo-session-pane {
+  position: static;
+  z-index: auto;
+  flex: 1 1 0;
+  min-height: 0;
+  background: transparent;
+}
 .neo-shell:has(> .artifact-preview-panel[hidden]) {
   --artifact-preview-width: 0px;
 }
