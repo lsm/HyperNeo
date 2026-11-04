@@ -46,6 +46,11 @@ function decode(row: Row): NeoPublication {
   };
 }
 
+function withoutNeoSession(payloadJson: string): string {
+  const { session, ...stored } = JSON.parse(payloadJson) as NeoPublicationInput;
+  return workerSession(session) ? payloadJson : JSON.stringify(stored);
+}
+
 function hasTrigger(
   db: Database,
   conversationId: string,
@@ -174,11 +179,11 @@ function appendImmutable(
           ...original,
           shortText: first.shortText,
           fullText: first.fullText,
-          session: first.session,
+          session: workerSession(first.session),
           awaiting: first.awaiting,
         }
       : null;
-    return row.payloadJson === payload ||
+    return withoutNeoSession(row.payloadJson) === payload ||
       (initial && JSON.stringify(admitNeoPublication(initial)) === JSON.stringify({ value: input }))
       ? { accepted: true, created: !!inserted, publication: decode(row) }
       : { accepted: false, reason: 'publication_conflict' };
