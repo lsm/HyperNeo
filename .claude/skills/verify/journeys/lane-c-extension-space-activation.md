@@ -31,6 +31,8 @@ contracts remain. Preserve metrics, wrapper status and JSON before cleanup.
 
 Count complete owned Space-store constructor/DDL/read/mapping/validation units,
 record helpers, and the unchanged full command/SQL helper, plus import/smoke.
+The unchanged JSON parser body is now in its constructor-free shared module
+under the separate #9663 read extraction; the Space reader still uses it on main.
 The external GitHub RPC/caller, framework and app roots are pinned unchanged,
 not a full public/plugin/runtime transitive audit, as with global activation.
 Constructor DDL, reads and upstream GitHub mutations remain on main. No new

@@ -1,3 +1,5 @@
+import { lookupGlobalExtensionConfig } from '../../storage/repositories/global-extension-config-lookup.ts';
+import { parseJsonRecord } from '../../storage/repositories/extension-config-json.ts';
 import { spaceExtensionConfigWrites } from '../../storage/repositories/space-extension-config-write.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { globalExtensionConfigWrites } from '../../storage/repositories/global-extension-config-write.ts';
@@ -8,14 +10,6 @@ import type {
   ExternalEventExtensionConfigStore as ExternalEventExtensionConfigStoreContract,
   SpaceExternalEventSourceConfig,
 } from './types.ts';
-
-interface GlobalConfigRow {
-  source: string;
-  globally_enabled: number;
-  capabilities_json: string;
-  secrets_ref: string | null;
-  settings_json: string | null;
-}
 
 interface SpaceConfigRow {
   space_id: string;
@@ -35,19 +29,7 @@ export class ExternalEventExtensionConfigStore
 
   async getGlobalConfig(source: string): Promise<ExternalEventExtensionConfig> {
     validateSourceId(source);
-    const row = this.db
-      .prepare(`SELECT * FROM external_event_extension_configs WHERE source = ?`)
-      .get(source) as GlobalConfigRow | undefined;
-
-    if (!row) {
-      return {
-        source,
-        globallyEnabled: false,
-        capabilities: {},
-      };
-    }
-
-    return globalRowToConfig(row);
+    return lookupGlobalExtensionConfig(this.db, source);
   }
 
   async getSpaceConfig(
@@ -130,17 +112,6 @@ export function ensureExternalEventExtensionConfigTables(db: BunDatabase): void 
 	`);
 }
 
-function globalRowToConfig(row: GlobalConfigRow): ExternalEventExtensionConfig {
-  const config: ExternalEventExtensionConfig = {
-    source: row.source,
-    globallyEnabled: row.globally_enabled === 1,
-    capabilities: parseJsonRecord(row.capabilities_json),
-  };
-  if (row.secrets_ref !== null) config.secretsRef = row.secrets_ref;
-  if (row.settings_json !== null) config.settings = parseJsonRecord(row.settings_json);
-  return config;
-}
-
 function spaceRowToConfig(row: SpaceConfigRow): SpaceExternalEventSourceConfig {
   return {
     spaceId: row.space_id,
@@ -148,16 +119,6 @@ function spaceRowToConfig(row: SpaceConfigRow): SpaceExternalEventSourceConfig {
     enabled: row.enabled === 1,
     settings: parseJsonRecord(row.settings_json),
   };
-}
-
-function parseJsonRecord(value: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {}
-  return {};
 }
 
 function validateGlobalConfig(source: string, config: ExternalEventExtensionConfig): void {
