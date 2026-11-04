@@ -216,6 +216,7 @@ describe('Neo desktop panes', () => {
     expect(container.querySelector('main [data-testid="neo-chat-panel"]')).toBeNull();
     const tab = screen.getByRole('tab', { selected: true });
     expect(tab.id).toBe('artifact-session-tab-result-session');
+    expect(tab.textContent).toBe('Todo result');
     const panel = screen.getByRole('tabpanel', { name: tab.textContent ?? '' });
     expect(within(panel).getByTestId('neo-chat-panel').dataset.sessionId).toBe('result-session');
     fireEvent.click(screen.getByRole('button', { name: 'Close chat' }));
