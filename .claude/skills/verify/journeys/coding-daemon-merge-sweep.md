@@ -68,6 +68,9 @@ not treated as notice of the later green transition.
 When adding a Neo operation, also run `tests/unit/1-core/operations/neo.test.ts`
 with the shared isolated unit setup. Its advertised-tool catalog must include the
 new tool while retaining the existing bound-session authorization assertions.
+Also run `tests/unit/1-core/operations/input-examples.test.ts` and the
+`operation-input-examples` journey: the exact-head retry schema needs a declared
+valid URL and SHA example so MCP invalid-input responses show the next valid shape.
 
 The helper saves coding-daemon-merge-sweep.json and the exact CLI invocation log,
 stops its daemon and preserves evidence before the wrapper removes synthetic data.

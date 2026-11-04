@@ -18,7 +18,15 @@ const Input = z
       .transform((url) => url.toLowerCase()),
     head: z.string().regex(/^[a-f\d]{40}$/i),
   })
-  .strict();
+  .strict()
+  .meta({
+    examples: [
+      {
+        url: 'https://github.com/example/repo/pull/1',
+        head: 'a'.repeat(40),
+      },
+    ],
+  });
 type Input = z.infer<typeof Input>;
 const refuse = (reason: string) => ({ reason: { accepted: false as const, reason } });
 
