@@ -16,7 +16,11 @@ HOME/data/TMPDIR; retained logs, JSON and run-status.json survive cleanup.
 The wrapper checks resource thresholds on Darwin. Linux must not need macOS
 memory_pressure or /System/Volumes/Data to run this same entry point.
 
-Run bun-native-smoke.test.ts with the isolated unit setup. It exercises the real
+Run bun-native-smoke.test.ts and proof-resource-guard.test.ts with the isolated
+unit setup. Resource-refusal fixtures explicitly report Darwin through their
+own uname executable on every host; Linux portability fixtures report Linux.
+Together they exercise both platform decisions without depending on the host.
+The native smoke fixture exercises the real
 shell entry point and wrapper with synthetic child executables: Linux
 portability, explicit Bun selection despite an inherited Deno choice, quoted
 paths, mode and directory arguments, Darwin resource refusal and early exit on
