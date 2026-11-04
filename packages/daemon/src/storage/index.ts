@@ -80,13 +80,6 @@ export type {
   CreateInboxItemParams,
   InboxItemFilter,
 } from './repositories/inbox-item-repository.ts';
-export type {
-  CreateGoalParams,
-  UpdateGoalParams,
-  CreateExecutionParams,
-  UpdateExecutionParams,
-} from './repositories/goal-repository.ts';
-export { getEffectiveMaxPlanningAttempts } from './repositories/goal-repository.ts';
 export type { Job, EnqueueParams } from './repositories/job-queue-repository.ts';
 export { JobQueueProcessor } from './job-queue-processor.ts';
 export type {
@@ -96,7 +89,6 @@ export type {
 } from './job-queue-processor.ts';
 
 // @public - Library export
-export { GoalRepository } from './repositories/goal-repository.ts';
 export { AppMcpServerRepository } from './repositories/app-mcp-server-repository.ts';
 export { McpEnablementRepository } from './repositories/mcp-enablement-repository.ts';
 export { SkillRepository } from './repositories/skill-repository.ts';

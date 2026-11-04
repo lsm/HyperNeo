@@ -9,6 +9,16 @@ class Peers {
   list() {
     return this.db.prepare('SELECT id,name,address FROM neo_peers ORDER BY name').all() as Peer[];
   }
+  byId(id: string) {
+    return this.db
+      .prepare('SELECT id,name,address FROM neo_peers WHERE id=?')
+      .get(id) as Peer | null;
+  }
+  credential(token: string) {
+    return this.db
+      .prepare('SELECT id,name,address FROM neo_peers WHERE credential_hash=?')
+      .get(hash(token)) as Peer | null;
+  }
   named(name: string) {
     return this.db
       .prepare('SELECT id,name,address FROM neo_peers WHERE name=?')
@@ -42,7 +52,12 @@ class Peers {
     this.db.prepare('DELETE FROM neo_peers WHERE id=?').run(id);
   }
 }
-export const peerReads = defineRepositoryOp('neo.peer.read', 'read', Peers, ['list', 'named']);
+export const peerReads = defineRepositoryOp('neo.peer.read', 'read', Peers, [
+  'list',
+  'named',
+  'byId',
+  'credential',
+]);
 export const peerWrites = defineRepositoryOp('neo.peer.write', 'write', Peers, [
   'invite',
   'claim',

@@ -29,6 +29,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.peer.invite',
   'neo.peer.list',
   'neo.peer.remove',
+  'neo.peer.send',
   'neo.preferences.set',
   'neo.project.forget',
   'neo.project.move',

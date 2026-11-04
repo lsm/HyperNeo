@@ -8,13 +8,13 @@ import { createPairingLimiter } from '../lib/pairing/pairing-limiter.ts';
 const Input = z.object({ code: z.string().min(1).max(64) }).strict();
 const answer = (status: number, body: unknown) =>
   Response.json(body, { status, headers: { 'cache-control': 'no-store' } });
-export function readBody(req: Pick<Request, 'body'>): Promise<unknown> {
+export function readBody(req: Pick<Request, 'body'>, limit = 1024): Promise<unknown> {
   let size = 0;
   const body = req.body?.pipeThrough(
     new TransformStream<Uint8Array, Uint8Array>({
       transform(chunk, controller) {
         size += chunk.byteLength;
-        if (size > 1024) throw new Error('Pair request too large');
+        if (size > limit) throw new Error('Pair request too large');
         controller.enqueue(chunk);
       },
     })
@@ -37,7 +37,7 @@ export function createPeerPairRoute(db: DbGateway) {
     .input(['req'])
     .pipe(() => limiter.admit(Date.now()).ok, 'req', 'allowed')
     .pipe(admitRequest, 'allowed', 'result:pair')
-    .pipe(readBody, ['req', 'pair'], 'body')
+    .pipe((req: Request) => readBody(req), ['req', 'pair'], 'body')
     .pipe(parse, 'body', 'result:pair')
     .pipe(
       async ({ code }: z.infer<typeof Input>) => {

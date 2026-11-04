@@ -97,9 +97,7 @@ export function setupLiveQueryHandlers(
     mapResult: () => readSessionListMetadata(db),
   });
 
-  const stmtRoom = db.prepare('SELECT id FROM rooms WHERE id = ?');
   const stmtGroup = db.prepare('SELECT ref_id, group_type FROM session_groups WHERE id = ?');
-  const stmtTask = db.prepare('SELECT room_id FROM tasks WHERE id = ?');
   const stmtSpace = db.prepare('SELECT id FROM spaces WHERE id = ?');
   const stmtSession = readMessageFeed
     ? undefined
@@ -141,13 +139,7 @@ export function setupLiveQueryHandlers(
         throw new Error(`Unauthorized: session group "${groupId}" not found`);
       }
       if (group.group_type === 'task') {
-        const task = stmtTask.get(group.ref_id) as { room_id: string } | null;
-        if (!task) {
-          throw new Error(`Unauthorized: task "${group.ref_id}" not found`);
-        }
-        if (!stmtRoom.get(task.room_id)) {
-          throw new Error(`Unauthorized: room "${task.room_id}" not found`);
-        }
+        throw new Error(`Unauthorized: task "${group.ref_id}" not found`);
       }
     } else if (
       queryName === 'spaceTaskActivity.byTask' ||
