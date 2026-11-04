@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 const PR_URL = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g;
-const PR_CREATE = /(?:^|\\n|[^\w-])gh\s+pr\s+create\b/;
+const PR_CREATE = /(?:^|\\n|[^\w-])gh\s+pr\s+create\b|github_create_pull_request\b/;
 export const WORK_OPENED_PRS_MAX = 10;
 
 export function keepOpenedPrs(urls: readonly string[]): string[] {
