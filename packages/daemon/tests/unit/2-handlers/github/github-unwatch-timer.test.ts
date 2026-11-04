@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { DbGateway, bindGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import type { DbOp } from '../../../../src/storage/db-gateway/db-op';
@@ -130,6 +135,28 @@ describe('Public unwatch timer callback reader wiring', () => {
         lightweight: true,
       })
     ).polling.active;
+  test('complete timer caller and auth fit the measured scope without caller exclusions', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'timer-reader-measure-'));
+    try {
+      const output = join(dir, 'boundary.json');
+      execFileSync(
+        process.execPath,
+        ['.claude/skills/verify/lane-c-github-unwatch-measure.cjs', output],
+        { cwd: fileURLToPath(new URL('../../../../../../', import.meta.url)) }
+      );
+      expect(JSON.parse(readFileSync(output, 'utf8'))).toMatchObject({
+        fullOwnedGraphLines: 196,
+        excludedLines: 0,
+        caller: {
+          name: 'space.github.unwatchRepo',
+          lines: 24,
+          onlyAwaitedTimerCallChanged: true,
+        },
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   test('public unwatch awaits the reader and avoids the legacy main query', async () => {
     await request(true);
     expect(await active()).toBe(true);
@@ -179,6 +206,8 @@ describe('Public unwatch timer callback reader wiring', () => {
     gateway.failNext = true;
     await expect(unwatch()).rejects.toThrow('synthetic timer reader unavailable');
     expect(gateway.reads).toBe(1);
+    expect(remove).toHaveBeenCalledTimes(1);
+    await new Promise<void>((resolve) => setImmediate(resolve));
     expect(remove).toHaveBeenCalledTimes(1);
     expect(notices).toHaveLength(before);
     expect(extension.repo.getPollingIntent(space)).toBe(true);
