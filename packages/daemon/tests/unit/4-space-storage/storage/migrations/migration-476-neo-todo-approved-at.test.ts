@@ -44,4 +44,15 @@ describe('migration 476 neo todo approved at', () => {
     });
     db.close();
   });
+
+  test('a backfill that fails leaves nothing for the rerun to skip', () => {
+    const db = seeded();
+    db.exec('ALTER TABLE neo_questions RENAME TO neo_questions_later');
+    expect(() => runMigration476(db)).toThrow();
+    db.exec('ALTER TABLE neo_questions_later RENAME TO neo_questions');
+    runMigration476(db);
+    const queued = db.prepare("SELECT approved_at AS at FROM neo_todos WHERE id = 'queued'").get();
+    expect(queued).toEqual({ at: 9 });
+    db.close();
+  });
 });
