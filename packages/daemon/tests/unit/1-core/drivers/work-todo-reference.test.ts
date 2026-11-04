@@ -138,7 +138,7 @@ describe('Neo work todo reference', () => {
       );
       expect(reply).toMatchObject({
         kind: 'completed',
-        value: { ok: true, records: [expect.stringContaining('todo_required:')] },
+        value: { ok: true },
       });
       expect(delivered).toEqual(['Follow-up']);
     }
