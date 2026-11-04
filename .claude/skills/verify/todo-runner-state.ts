@@ -42,7 +42,7 @@ try {
   new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
   store.openAsk({id:'ask',projectId:null,sessionId:root,originMessageId:null,title:'Ordered work',request:'Keep full work',createdAt:1,repo:'github.com/synthetic/base'});
   for(const id of ['state','claim']) {
-    store.addTodo(id,'ask',{title:id,doneWhen:'Observed',check:null,instruction:'Continue work',named:null},1);
+    store.addTodo(id,'ask',{ approvedAt: 1,title:id,doneWhen:'Observed',check:null,instruction:'Continue work',named:null},1);
     sessions.create(id,{verb:'send',ref:{adapter:'hyperneo',id:'old-worker'}});
   }
   const text='Stored runner report 🦊\n'.repeat(20000).trim();
@@ -82,7 +82,7 @@ try {
   assert((await visible(claims[0].ask.id)).entry.todos.some(todo=>todo.id==='claim' && todo.state==='doing'));
   assert.equal(sessions.readRef('claim'),null); assert.deepEqual(sessionCount(),originalSessions);
   result.singleClaimWinner=true; result.currentTarget=true; result.atomicRelocation=true;
-  store.addTodo('stable','ask',{title:'Stable',doneWhen:'Observed',check:null,instruction:null,named:null},4);
+  store.addTodo('stable','ask',{ approvedAt: 1,title:'Stable',doneWhen:'Observed',check:null,instruction:null,named:null},4);
   prepare("UPDATE neo_todos SET state='doing',started_at=4 WHERE id='stable'").run();
   store.askQuestion('stale','ask',{kind:'start',text:'Start?',startTodos:['stable'],options:null,multiple:false,yesLabel:null,noLabel:null},4);
   const previous=tables.length; record=true;

@@ -47,7 +47,7 @@ const runner=createNeoTodoRunner({ limits: () => ({ running: 99, perGroup: 99 })
 const refresh=()=>runner.refresh((_message,error)=>{warnings.push(String(error));});
 const result:Record<string,unknown>={runtimeRecoveryActivated:true};
 const seed=(id:string)=>{
-  store.addTodo(id,'ask',{title:id,doneWhen:'Observed',check:null,instruction:'Continue work',named:null},1);
+  store.addTodo(id,'ask',{ approvedAt: 1,title:id,doneWhen:'Observed',check:null,instruction:'Continue work',named:null},1);
   sessions.create(id,{verb:'start',adapter:'hyperneo',place:{machine:'synthetic',name:'Fixture',folder:join(run,'workspace')}});
   store.claimStart(store.getTodo(id)!,2);
 };

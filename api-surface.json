@@ -19692,6 +19692,12 @@
                     "addedAfterStart": {
                       "type": "boolean"
                     },
+                    "approvedAt": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
                     "artifacts": {
                       "items": {
                         "additionalProperties": false,
@@ -20019,6 +20025,7 @@
                     "dependsOn",
                     "replacedBy",
                     "addedAfterStart",
+                    "approvedAt",
                     "report",
                     "evidence",
                     "createdAt",
@@ -20637,6 +20644,12 @@
                           "addedAfterStart": {
                             "type": "boolean"
                           },
+                          "approvedAt": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
                           "artifacts": {
                             "items": {
                               "additionalProperties": false,
@@ -20964,6 +20977,7 @@
                           "dependsOn",
                           "replacedBy",
                           "addedAfterStart",
+                          "approvedAt",
                           "report",
                           "evidence",
                           "createdAt",
@@ -21513,6 +21527,12 @@
                     "addedAfterStart": {
                       "type": "boolean"
                     },
+                    "approvedAt": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
                     "artifacts": {
                       "items": {
                         "additionalProperties": false,
@@ -21825,6 +21845,7 @@
                     "dependsOn",
                     "replacedBy",
                     "addedAfterStart",
+                    "approvedAt",
                     "report",
                     "evidence",
                     "createdAt",
@@ -22038,6 +22059,12 @@
                     "addedAfterStart": {
                       "type": "boolean"
                     },
+                    "approvedAt": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
                     "artifacts": {
                       "items": {
                         "additionalProperties": false,
@@ -22350,6 +22377,7 @@
                     "dependsOn",
                     "replacedBy",
                     "addedAfterStart",
+                    "approvedAt",
                     "report",
                     "evidence",
                     "createdAt",
@@ -22953,6 +22981,12 @@
                         "addedAfterStart": {
                           "type": "boolean"
                         },
+                        "approvedAt": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
                         "artifacts": {
                           "items": {
                             "additionalProperties": false,
@@ -23280,6 +23314,7 @@
                         "dependsOn",
                         "replacedBy",
                         "addedAfterStart",
+                        "approvedAt",
                         "report",
                         "evidence",
                         "createdAt",
@@ -23633,6 +23668,12 @@
                     "addedAfterStart": {
                       "type": "boolean"
                     },
+                    "approvedAt": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
                     "artifacts": {
                       "items": {
                         "additionalProperties": false,
@@ -23945,6 +23986,7 @@
                     "dependsOn",
                     "replacedBy",
                     "addedAfterStart",
+                    "approvedAt",
                     "report",
                     "evidence",
                     "createdAt",
@@ -29182,6 +29224,12 @@
                           "addedAfterStart": {
                             "type": "boolean"
                           },
+                          "approvedAt": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
                           "artifacts": {
                             "items": {
                               "additionalProperties": false,
@@ -29509,6 +29557,7 @@
                           "dependsOn",
                           "replacedBy",
                           "addedAfterStart",
+                          "approvedAt",
                           "report",
                           "evidence",
                           "createdAt",
@@ -37005,6 +37054,12 @@
                           "addedAfterStart": {
                             "type": "boolean"
                           },
+                          "approvedAt": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
                           "artifacts": {
                             "items": {
                               "additionalProperties": false,
@@ -37332,6 +37387,7 @@
                           "dependsOn",
                           "replacedBy",
                           "addedAfterStart",
+                          "approvedAt",
                           "report",
                           "evidence",
                           "createdAt",
@@ -38094,6 +38150,12 @@
                   "addedAfterStart": {
                     "type": "boolean"
                   },
+                  "approvedAt": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
                   "artifacts": {
                     "items": {
                       "additionalProperties": false,
@@ -38381,6 +38443,7 @@
                   "dependsOn",
                   "replacedBy",
                   "addedAfterStart",
+                  "approvedAt",
                   "report",
                   "evidence",
                   "createdAt",
@@ -38396,6 +38459,12 @@
                   "properties": {
                     "addedAfterStart": {
                       "type": "boolean"
+                    },
+                    "approvedAt": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
                     },
                     "artifacts": {
                       "items": {
@@ -38684,6 +38753,7 @@
                     "dependsOn",
                     "replacedBy",
                     "addedAfterStart",
+                    "approvedAt",
                     "report",
                     "evidence",
                     "createdAt",
@@ -38781,6 +38851,12 @@
                   "addedAfterStart": {
                     "type": "boolean"
                   },
+                  "approvedAt": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
                   "artifacts": {
                     "items": {
                       "additionalProperties": false,
@@ -39068,6 +39144,7 @@
                   "dependsOn",
                   "replacedBy",
                   "addedAfterStart",
+                  "approvedAt",
                   "report",
                   "evidence",
                   "createdAt",
@@ -39083,6 +39160,12 @@
                   "properties": {
                     "addedAfterStart": {
                       "type": "boolean"
+                    },
+                    "approvedAt": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
                     },
                     "artifacts": {
                       "items": {
@@ -39371,6 +39454,7 @@
                     "dependsOn",
                     "replacedBy",
                     "addedAfterStart",
+                    "approvedAt",
                     "report",
                     "evidence",
                     "createdAt",
@@ -39451,6 +39535,12 @@
                   "addedAfterStart": {
                     "type": "boolean"
                   },
+                  "approvedAt": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
                   "artifacts": {
                     "items": {
                       "additionalProperties": false,
@@ -39738,6 +39828,7 @@
                   "dependsOn",
                   "replacedBy",
                   "addedAfterStart",
+                  "approvedAt",
                   "report",
                   "evidence",
                   "createdAt",
@@ -39753,6 +39844,12 @@
                   "properties": {
                     "addedAfterStart": {
                       "type": "boolean"
+                    },
+                    "approvedAt": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
                     },
                     "artifacts": {
                       "items": {
@@ -40041,6 +40138,7 @@
                     "dependsOn",
                     "replacedBy",
                     "addedAfterStart",
+                    "approvedAt",
                     "report",
                     "evidence",
                     "createdAt",
@@ -40121,6 +40219,12 @@
                   "addedAfterStart": {
                     "type": "boolean"
                   },
+                  "approvedAt": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
                   "artifacts": {
                     "items": {
                       "additionalProperties": false,
@@ -40408,6 +40512,7 @@
                   "dependsOn",
                   "replacedBy",
                   "addedAfterStart",
+                  "approvedAt",
                   "report",
                   "evidence",
                   "createdAt",
@@ -40423,6 +40528,12 @@
                   "properties": {
                     "addedAfterStart": {
                       "type": "boolean"
+                    },
+                    "approvedAt": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
                     },
                     "artifacts": {
                       "items": {
@@ -40711,6 +40822,7 @@
                     "dependsOn",
                     "replacedBy",
                     "addedAfterStart",
+                    "approvedAt",
                     "report",
                     "evidence",
                     "createdAt",
@@ -41079,6 +41191,12 @@
                   "addedAfterStart": {
                     "type": "boolean"
                   },
+                  "approvedAt": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
                   "artifacts": {
                     "items": {
                       "additionalProperties": false,
@@ -41366,6 +41484,7 @@
                   "dependsOn",
                   "replacedBy",
                   "addedAfterStart",
+                  "approvedAt",
                   "report",
                   "evidence",
                   "createdAt",
@@ -41381,6 +41500,12 @@
                   "properties": {
                     "addedAfterStart": {
                       "type": "boolean"
+                    },
+                    "approvedAt": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
                     },
                     "artifacts": {
                       "items": {
@@ -41669,6 +41794,7 @@
                     "dependsOn",
                     "replacedBy",
                     "addedAfterStart",
+                    "approvedAt",
                     "report",
                     "evidence",
                     "createdAt",
@@ -41757,6 +41883,12 @@
                   "addedAfterStart": {
                     "type": "boolean"
                   },
+                  "approvedAt": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
                   "artifacts": {
                     "items": {
                       "additionalProperties": false,
@@ -42044,6 +42176,7 @@
                   "dependsOn",
                   "replacedBy",
                   "addedAfterStart",
+                  "approvedAt",
                   "report",
                   "evidence",
                   "createdAt",
@@ -42059,6 +42192,12 @@
                   "properties": {
                     "addedAfterStart": {
                       "type": "boolean"
+                    },
+                    "approvedAt": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
                     },
                     "artifacts": {
                       "items": {
@@ -42347,6 +42486,7 @@
                     "dependsOn",
                     "replacedBy",
                     "addedAfterStart",
+                    "approvedAt",
                     "report",
                     "evidence",
                     "createdAt",
@@ -42431,6 +42571,12 @@
                   "addedAfterStart": {
                     "type": "boolean"
                   },
+                  "approvedAt": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
                   "artifacts": {
                     "items": {
                       "additionalProperties": false,
@@ -42718,6 +42864,7 @@
                   "dependsOn",
                   "replacedBy",
                   "addedAfterStart",
+                  "approvedAt",
                   "report",
                   "evidence",
                   "createdAt",
@@ -42733,6 +42880,12 @@
                   "properties": {
                     "addedAfterStart": {
                       "type": "boolean"
+                    },
+                    "approvedAt": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
                     },
                     "artifacts": {
                       "items": {
@@ -43021,6 +43174,7 @@
                     "dependsOn",
                     "replacedBy",
                     "addedAfterStart",
+                    "approvedAt",
                     "report",
                     "evidence",
                     "createdAt",
@@ -43096,6 +43250,12 @@
                   "addedAfterStart": {
                     "type": "boolean"
                   },
+                  "approvedAt": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
                   "artifacts": {
                     "items": {
                       "additionalProperties": false,
@@ -43383,6 +43543,7 @@
                   "dependsOn",
                   "replacedBy",
                   "addedAfterStart",
+                  "approvedAt",
                   "report",
                   "evidence",
                   "createdAt",
@@ -43398,6 +43559,12 @@
                   "properties": {
                     "addedAfterStart": {
                       "type": "boolean"
+                    },
+                    "approvedAt": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
                     },
                     "artifacts": {
                       "items": {
@@ -43686,6 +43853,7 @@
                     "dependsOn",
                     "replacedBy",
                     "addedAfterStart",
+                    "approvedAt",
                     "report",
                     "evidence",
                     "createdAt",

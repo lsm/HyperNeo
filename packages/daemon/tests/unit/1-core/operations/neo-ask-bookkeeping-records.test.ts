@@ -44,6 +44,7 @@ function setup(overrides: Partial<Pick<NeoTodoControls, 'resolveTarget' | 'start
     'todo',
     ask.id,
     {
+      approvedAt: 1,
       title: 'Synthetic task',
       doneWhen: 'Result observed',
       instruction: 'Work',

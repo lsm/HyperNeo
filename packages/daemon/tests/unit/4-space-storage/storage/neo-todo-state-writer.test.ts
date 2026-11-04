@@ -29,7 +29,14 @@ function fixture(state: NeoTodo['state'] = 'doing', humanBlocked = false, askClo
     store.addTodo(
       id,
       'ask',
-      { title: id, doneWhen: 'Observed', check: null, instruction: 'Continue work', named: null },
+      {
+        approvedAt: 1,
+        title: id,
+        doneWhen: 'Observed',
+        check: null,
+        instruction: 'Continue work',
+        named: null,
+      },
       1
     );
   db.prepare(

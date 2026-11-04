@@ -1,4 +1,4 @@
-import { NEO_TODO_NOT_READY, neoTodoAfterRefusal, neoTodoReady } from './todo-dependencies.ts';
+import { neoTodoAfterRefusal } from './todo-dependencies.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -12,6 +12,7 @@ import {
 import { NeoAskEntrySchema } from './ask-entries.ts';
 import {
   recordNeoTodo,
+  startNeoTodoWhenFree,
   resolveNeoTodoDraft,
   type NeoTodoControls,
   NeoTodoDraftSchema,
@@ -207,10 +208,7 @@ export function createNeoAskRecordOperations(
         const badAfter = input.todos
           .map((todo, index) => {
             const row = recordedRow(todo);
-            if (row)
-              return todo.start && isNeoTodoStartable(row) && !neoTodoReady(existing, row.id)
-                ? NEO_TODO_NOT_READY
-                : null;
+            if (row) return null;
             return neoTodoAfterRefusal(
               existing,
               index,
@@ -218,8 +216,7 @@ export function createNeoAskRecordOperations(
                 typeof ref === 'number' && ref < index && input.todos[ref]
                   ? (recordedRow(input.todos[ref])?.id ?? ref)
                   : ref
-              ),
-              todo.start
+              )
             );
           })
           .find(Boolean);
@@ -277,7 +274,7 @@ export function createNeoAskRecordOperations(
                 split
               )
             : todo.start && isNeoTodoStartable(row)
-              ? await controls.start(row.id)
+              ? await startNeoTodoWhenFree(store, controls, store.approveTodo(row, Date.now()))
               : { ok: true as const };
           if (!added.ok) return added;
           if (row && todo.after)

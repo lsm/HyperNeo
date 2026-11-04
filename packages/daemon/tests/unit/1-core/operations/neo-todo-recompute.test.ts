@@ -142,6 +142,7 @@ function fixture(legacyCheck = false, legacyResult?: NeoTodoCheckResult) {
         id,
         'ask',
         {
+          approvedAt: 1,
           title: id,
           doneWhen: 'Synthetic facts met',
           check: { pack: 'synthetic', kind: 'met', params: {} },
@@ -226,6 +227,7 @@ describe('ordered ask progression from facts', () => {
       const f = fixture();
       f.add('first');
       f.add('next');
+      f.store.updateTodo(f.store.getTodo('next')!, { approvedAt: null }, 1);
       f.store.askQuestion(
         'start-next',
         'ask',

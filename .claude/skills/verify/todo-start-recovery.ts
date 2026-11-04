@@ -35,7 +35,7 @@ const recover=(id:string,now=10)=>app.db.gateway.run({name:'neo.todoRunnerWrites
 const visible=()=>hub.request<{ok:true;entry:{todos:NeoTodo[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId:'ask'}});
 const result:Record<string,unknown>={runtimeCallersMoved:false};
 const seed=(id:string)=>{
-  store.addTodo(id,'ask',{title:id,doneWhen:'Observed',check:null,instruction:'Continue work',named:null},1);
+  store.addTodo(id,'ask',{ approvedAt: 1,title:id,doneWhen:'Observed',check:null,instruction:'Continue work',named:null},1);
   sessions.create(id,{verb:'start',adapter:'hyperneo',place:{machine:'synthetic',name:'Fixture',folder:join(run,'workspace')}});
   store.claimStart(store.getTodo(id)!,2);
 };

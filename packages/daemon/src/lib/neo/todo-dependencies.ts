@@ -46,24 +46,15 @@ export const NEO_TODO_NOT_READY =
 export function neoTodoAfterRefusal(
   existing: readonly NeoTodo[],
   index: number | null,
-  after: readonly (string | number)[] | undefined,
-  start: boolean
+  after: readonly (string | number)[] | undefined
 ): string | null {
   if (!after) return null;
-  const live = new Map(
-    existing.filter((todo) => todo.state !== 'removed').map((todo) => [todo.id, todo.state])
-  );
+  const live = new Set(existing.filter((todo) => todo.state !== 'removed').map((todo) => todo.id));
   if (new Set(after).size !== after.length) return neoTodoDependencyRefusal('duplicate_dependency');
-  if (
-    after.some((ref) => (typeof ref === 'number' ? index === null || ref >= index : !live.has(ref)))
+  return after.some((ref) =>
+    typeof ref === 'number' ? index === null || ref >= index : !live.has(ref)
   )
-    return neoTodoDependencyRefusal('dependency_not_found');
-  return start &&
-    after.some(
-      (ref) =>
-        typeof ref === 'number' || !['done', 'closed_unverified'].includes(live.get(ref) ?? '')
-    )
-    ? NEO_TODO_NOT_READY
+    ? neoTodoDependencyRefusal('dependency_not_found')
     : null;
 }
 

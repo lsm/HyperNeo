@@ -156,7 +156,7 @@ describe('todo dependencies', () => {
     }
   });
 
-  test('start is refused for a step that still waits for unfinished steps', async () => {
+  test('start on a step that waits for unfinished steps approves it without dispatching', async () => {
     const { db, invoke, step } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
@@ -171,7 +171,8 @@ describe('todo dependencies', () => {
         target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } },
         start: true,
       });
-      expect(added).toMatchObject({ ok: false, reason: expect.stringContaining('not_ready') });
+      expect(added).toMatchObject({ ok: true, todo: { state: 'todo', startedAt: null } });
+      expect(added.todo.approvedAt).not.toBeNull();
     } finally {
       db.close();
     }
@@ -231,7 +232,7 @@ describe('todo dependencies', () => {
     }
   });
 
-  test('a repeated plan cannot start a recorded step that still waits for unfinished steps', async () => {
+  test('a repeated plan approves a recorded step that still waits, without starting it', async () => {
     const { db, store, invoke, step } = setup();
     try {
       const plan = { title: 'Plan', request: 'Plan' };
@@ -253,8 +254,9 @@ describe('todo dependencies', () => {
           { ...step('B'), ...work, start: true },
         ],
       });
-      expect(again).toMatchObject({ ok: false, reason: expect.stringContaining('not_ready') });
-      expect(store.getTodo(opened.todos[1].id)?.state).toBe(opened.todos[1].state);
+      expect(again).toMatchObject({ ok: true });
+      expect(store.getTodo(opened.todos[1].id)).toMatchObject({ state: 'todo', startedAt: null });
+      expect(store.getTodo(opened.todos[1].id)?.approvedAt).not.toBeNull();
     } finally {
       db.close();
     }

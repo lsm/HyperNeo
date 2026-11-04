@@ -51,6 +51,7 @@ describe('Writer-backed todo operation activation', () => {
         id,
         'ask',
         {
+          approvedAt: 1,
           title: id,
           doneWhen: 'Merged',
           check: { pack: 'coding', kind: 'pr_merged', params: { urls: [] } },
