@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 async function stopOwnedProbe(parent: ChildProcess, closed: Promise<unknown>) {
-  if (parent.exitCode === null && parent.signalCode === null) parent.kill('SIGKILL');
+  if (parent.exitCode === null && parent.signalCode === null) parent.kill('SIGTERM');
   await closed.catch(() => undefined);
 }
 
@@ -63,7 +63,7 @@ describe('Bun daemon boot probe construction', () => {
     } finally {
       rmSync(run, { recursive: true, force: true });
     }
-  });
+  }, 60000);
   test('external cancellation returns 143 and waits for its owned daemon child', async () => {
     const run = realpathSync(mkdtempSync(join(tmpdir(), 'bun-boot-cancel-')));
     const parent = spawn(
@@ -113,7 +113,7 @@ describe('Bun daemon boot probe construction', () => {
       await stopOwnedProbe(parent, result);
       rmSync(run, { recursive: true, force: true });
     }
-  });
+  }, 60000);
   test('startup-wait cleanup lets the probe stop and reap its daemon before data removal', async () => {
     const run = realpathSync(mkdtempSync(join(tmpdir(), 'bun-boot-timeout-')));
     const ready = join(run, 'daemon-ready'),

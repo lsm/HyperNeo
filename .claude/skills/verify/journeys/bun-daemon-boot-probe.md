@@ -18,6 +18,11 @@ Send real SIGTERM to the owned child and require code 0 plus the graceful
 shutdown log, not a forced kill. Failure cleanup closes the owned socket and
 stops/waits for the child; preserve child log and JSON evidence before the parent
 wrapper removes synthetic data. External cancellation must not leave the child.
+If a test times out waiting for readiness, forward TERM to its probe and await
+the probe's close before removing data. Never SIGKILL only that parent. The
+startup-wait regression uses a delayed synthetic child to prove this cleanup
+without waiting for a slow machine or leaving an orphan. Test deadlines must
+allow the probe's startup and child-cleanup deadlines to finish.
 
 This is a construction proof on POSIX source startup/shutdown. Native Windows
 signal behavior, GUI, compiled binaries and model/provider behavior are separate
