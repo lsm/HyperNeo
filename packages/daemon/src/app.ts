@@ -1348,6 +1348,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         }
 
         if (url.pathname === '/pair' && req.method === 'POST') return handlePair(req);
+        if (url.pathname === '/neo-peer/message' && req.method === 'POST')
+          return rpcHandlers.handlePeerMessage(req);
         if (url.pathname === '/neo-peer/pair' && req.method === 'POST') return handlePeerPair(req);
 
         const extensionRoute = extensionManager

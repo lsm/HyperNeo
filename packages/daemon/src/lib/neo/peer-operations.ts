@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
+import { PeerMessage } from '../../routes/neo-peer-message.ts';
 import { readBody } from '../../routes/neo-peer.ts';
 import { artifactIdentityWrites } from '../../storage/repositories/artifact-file-identity-write.ts';
 import { createCredentialStore } from '../credentials/credential-store.ts';
@@ -106,6 +107,32 @@ export function createPeerOperations(service: NeoService) {
         'relationship_changed: Read the current contacts and ask the human before pairing again.',
     };
   }
+  const Send = PeerMessage.extend({ id: z.string().min(1) });
+  const unavailable = () =>
+    refuse('peer_unavailable: List contacts and pair with the intended recipient before sending.');
+  const loadPeer = (input: z.infer<typeof Send>) => db.call(peerReads, 'byId', input.id);
+  type Destination = NonNullable<Awaited<ReturnType<typeof loadPeer>>>;
+  async function postMessage(peer: Destination, input: z.infer<typeof Send>, secret: string) {
+    try {
+      const response = await fetch(new URL('/neo-peer/message', peer.address!), {
+        method: 'POST',
+        redirect: 'error',
+        signal: AbortSignal.timeout(15_000),
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` },
+        body: JSON.stringify({ requestId: input.requestId, content: input.content }),
+      });
+      const receipt = z
+        .object({ accepted: z.literal(true) })
+        .strict()
+        .safeParse(await readBody(response));
+      if (response.ok && receipt.success) return { accepted: true as const };
+    } catch {}
+    return {
+      accepted: false as const,
+      reason:
+        'delivery_unconfirmed: The recipient has not confirmed receipt. Retry only with the same requestId and content; do not claim it was read.',
+    };
+  }
   return [
     defineOperation({
       name: 'neo.peer.accept',
@@ -176,6 +203,57 @@ export function createPeerOperations(service: NeoService) {
         await db.call(peerWrites, 'remove', id);
         return { accepted: true as const };
       }),
+    }),
+    defineOperation({
+      name: 'neo.peer.send',
+      description:
+        'Send text to one configured contact on a recorded current human request. Receipt means the other Neo accepted it, not that the human read it. Retries keep requestId and content.',
+      policy,
+      inputSchema: Send,
+      resultSchema: z.union([Accepted, Refused]),
+      execute: (superpipe({})('neo.peer.send') as PipelineAPI)
+        .input(['input', 'caller'])
+        .pipe(facts, 'caller', 'facts')
+        .pipe(
+          ({ own, human }: ReturnType<typeof facts>) => admit(own, human, true),
+          'facts',
+          'result:answer'
+        )
+        .pipe(loadPeer, ['input', 'answer'], 'peer')
+        .pipe(
+          (peer: Awaited<ReturnType<typeof loadPeer>>) =>
+            peer?.address ? { value: peer } : unavailable(),
+          'peer',
+          'result:answer'
+        )
+        .pipe(
+          async (peer: Destination) =>
+            createCredentialStore(service.db.getDatabase()).get(...(await secretAddress(peer.id))),
+          'answer',
+          'secret'
+        )
+        .pipe(
+          (secret: string | null, peer: Destination) => {
+            const parsed = Remote.extend({ address: Address }).safeParse(
+              secret ? JSON.parse(secret) : null
+            );
+            return parsed.success && parsed.data.address === peer.address
+              ? { value: parsed.data.credential }
+              : unavailable();
+          },
+          ['secret', 'answer'],
+          'result:answer'
+        )
+        .pipe(
+          (secret: string, peer: Destination, input: z.infer<typeof Send>) =>
+            postMessage(peer, input, secret),
+          ['answer', 'peer', 'input'],
+          'answer'
+        )
+        .endAsync('answer') as (
+        input: z.infer<typeof Send>,
+        caller: OperationCaller
+      ) => Promise<Awaited<ReturnType<typeof postMessage>> | Refusal>,
     }),
   ];
 }
