@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database } from '../../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../../src/storage/schema/index.ts';
+import { runMigration474 } from '../../../../../src/storage/schema/m474-trim-sdk-message-indexes.ts';
 
 const DROPPED = [
   'idx_sdk_messages_bg_task_time',
@@ -50,5 +51,26 @@ describe('migration 474: trim sdk_messages indexes', () => {
       .all('task') as { detail: string }[];
 
     expect(plan.map(({ detail }) => detail).join(' ')).toContain('idx_sdk_messages_task_id');
+  });
+
+  test('deleting a Space finds its messages through a task index', () => {
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT id FROM sdk_messages
+         WHERE task_id IN (SELECT id FROM space_tasks WHERE space_id = ?)`
+      )
+      .all('space') as { detail: string }[];
+
+    expect(plan.map(({ detail }) => detail).join(' ')).toContain(
+      'SEARCH sdk_messages USING INDEX idx_sdk_messages_task'
+    );
+  });
+
+  test('a database without sdk_messages is left alone', () => {
+    const empty = new Database(':memory:');
+
+    expect(() => runMigration474(empty)).not.toThrow();
+    expect(empty.prepare(`SELECT 1 FROM sqlite_schema`).all()).toEqual([]);
+    empty.close();
   });
 });
