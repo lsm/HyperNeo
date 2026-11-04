@@ -281,10 +281,11 @@ describe('daemon merge sweep behavior', () => {
           kill() {},
         };
       };
+      const prs: (string | undefined)[] = [];
       const run = sweep(noRequired, {
         tell: async (_owner, _key, text, pr) => {
-          expect(text).toContain(pr);
           notices.push(text);
+          prs.push(pr);
           return true;
         },
       });
@@ -294,6 +295,7 @@ describe('daemon merge sweep behavior', () => {
         ['gh', 'pr', 'merge', url, '--squash', '--match-head-commit', head],
       ]);
       expect(notices).toEqual([expect.stringContaining('Merge confirmed:')]);
+      expect(prs).toEqual([url]);
       expect(
         db.prepare('SELECT head,actor,merge_commit FROM pack_coding_daemon_merges').all()
       ).toEqual([{ head, actor: 'daemon:coding-sweep', merge_commit: 'c'.repeat(40) }]);
@@ -597,7 +599,7 @@ test('daemon execution suppresses owner merge events and reminders', async () =>
   );
   const messages: string[] = [];
   const receive = async (...args: unknown[]) => {
-    messages.push(String(args.at(-1)));
+    messages.push(args.map(String).join('\n'));
     return true;
   };
   const delivery = { tell: receive, wake: receive };
