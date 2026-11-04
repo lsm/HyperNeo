@@ -888,6 +888,32 @@ describe('todo dependencies', () => {
     }
   });
 
+  test('start with an implied prerequisite refuses before adding work', async () => {
+    const { db, store, sessions, invoke, step, sent, work } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Plan',
+        request: 'Plan',
+        todos: [step('A')],
+      });
+      const [a] = opened.todos;
+      const add = () =>
+        invoke('neo.todo.add', { askId: a.askId, ...step('B'), ...work, start: true });
+      expect(await add()).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('not_ready'),
+      });
+      expect(store.listTodos(a.askId)).toHaveLength(1);
+      expect(sessions.queueFacts().candidates).toHaveLength(0);
+      store.updateTodo(a, { state: 'done' }, Date.now());
+      expect(await add()).toMatchObject({ ok: true });
+      expect(store.listTodos(a.askId)).toHaveLength(2);
+      expect(sent).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
   test('start refuses unfinished or cancelled prerequisites before adding work', async () => {
     const { db, store, invoke, step, sent } = setup();
     try {
