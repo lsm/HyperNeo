@@ -64,6 +64,10 @@
     "paths": ["/Users/a/b.md"]
   },
   {
+    "text": "报告：/Users/a/b.abcdefghijklmnop",
+    "paths": ["/Users/a/b.abcdefghijklmnop"]
+  },
+  {
     "text": "https://example.com/a.md",
     "paths": []
   },
