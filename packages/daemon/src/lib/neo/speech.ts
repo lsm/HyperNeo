@@ -10,6 +10,7 @@ import { voiceDiagnostic } from '../voice/diagnostics.ts';
 import { NeoSpeechAudio } from './speech-audio.ts';
 import { neoDerivedId } from './derived-id.ts';
 import type { ClientEventData } from '../operations/client-event-schemas.ts';
+import { isSDKResultSuccess, type SDKMessage } from '@hyperneo/shared/sdk';
 
 const Result = z.object({
   ok: z.boolean(),
@@ -55,6 +56,24 @@ type SpeechReceipt = {
 type Entry = { id: string; sessionId: string; clientId: string; text: string; state: SpeechState };
 type Listener = { clientId: string; pending: Set<string>; audio: boolean; voice: string };
 
+function spokenReply(text: string): string {
+  const plain = text
+    .replace(/```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)/g, ' ')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^[ \t]*(?:#{1,6}|[-*+]|\d+\.)\s+/gm, '')
+    .replace(/[*_`]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const sentences =
+    plain
+      .match(/[^.!?。！？]+(?:[.!?。！？]+|$)/g)
+      ?.slice(0, 3)
+      .join('')
+      .trim() ?? '';
+  const characters = Array.from(sentences);
+  return characters.length > 240 ? characters.slice(0, 239).join('') + '…' : sentences;
+}
+
 const listeningInput = (superpipe({})('neo.input.listening') as PipelineAPI)
   .input(['loaded', 'listening'])
   .pipe(
@@ -94,7 +113,8 @@ export class NeoSpeech {
     private readonly isNeo: (sessionId: string) => boolean,
     audioBase?: string,
     audioRequest?: typeof fetch,
-    private readonly onListeningChanged?: (sessionId: string, listening: boolean) => Promise<void>
+    private readonly onListeningChanged?: (sessionId: string, listening: boolean) => Promise<void>,
+    private readonly canReadSession: (sessionId: string) => boolean = isNeo
   ) {
     this.audio = new NeoSpeechAudio(
       (client, data) => this.send(client, data),
@@ -129,7 +149,10 @@ export class NeoSpeech {
               action === 'say'
                 ? caller.source === 'mcp' && caller.role === 'neo'
                 : caller.source === 'rpc' && caller.principal === 'local' && !!caller.clientId;
-            return admitted && sessionId && this.isNeo(sessionId)
+            const available =
+              sessionId &&
+              (action === 'say' ? this.isNeo(sessionId) : this.canReadSession(sessionId));
+            return admitted && available
               ? { value: sessionId }
               : { reason: { ok: false, reason: 'neo_speech_not_available' } };
           },
@@ -213,6 +236,25 @@ export class NeoSpeech {
     return this.isNeo(sessionId) ? listeningInput(loaded, this.listeners.has(sessionId)) : loaded;
   }
 
+  async complete(sessionId: string, message: SDKMessage): Promise<void> {
+    if (
+      !this.listeners.has(sessionId) ||
+      this.isNeo(sessionId) ||
+      !isSDKResultSuccess(message) ||
+      message.is_error ||
+      ('parent_tool_use_id' in message && message.parent_tool_use_id != null)
+    )
+      return;
+    const text = spokenReply(message.result);
+    if (text)
+      await this.enqueue(
+        'say',
+        sessionId,
+        { requestId: `turn:${message.uuid}`, text },
+        { source: 'internal', sessionId }
+      );
+  }
+
   async publish(sessionId: string, version: string, text?: string) {
     await this.serial;
     const receipt = text
@@ -234,7 +276,7 @@ export class NeoSpeech {
 
   private async notifyListening(sessionId: string, before: boolean): Promise<void> {
     const listening = this.listeners.has(sessionId);
-    if (before !== listening)
+    if (before !== listening && this.isNeo(sessionId))
       await this.onListeningChanged?.(sessionId, listening).catch(() =>
         new Logger('NeoSpeech').warn('Listening state injection failed')
       );
@@ -345,10 +387,12 @@ export class NeoSpeech {
   ): Promise<SpeechReceipt> {
     const clientId = caller.clientId ?? '';
     if (action === 'listen' && 'enabled' in input) {
-      const prior = this.listeners.get(sessionId);
-      if (prior && (prior.clientId === clientId || input.enabled)) {
-        this.send(prior.clientId, { type: 'stop', sessionId });
-        await this.disconnect(prior.clientId, sessionId);
+      for (const [previousSession, prior] of this.listeners) {
+        if (!input.enabled && (previousSession !== sessionId || prior.clientId !== clientId))
+          continue;
+        this.send(prior.clientId, { type: 'stop', sessionId: previousSession });
+        await this.disconnect(prior.clientId, previousSession);
+        if (previousSession !== sessionId) await this.notifyListening(previousSession, true);
       }
       if (input.enabled && this.hub.getRouter()?.getClientById(clientId))
         this.listeners.set(sessionId, {

@@ -474,7 +474,7 @@ describe('spoken replies separate from publications', () => {
     expect(await say('first')).toMatchObject({ ok: true, id: first.id, created: false });
     expect(messages.filter((item) => item.message.data.type === 'say')).toHaveLength(4);
   });
-  test('disabling one session preserves another session on the same phone', async () => {
+  test('a stale disable for the previous composer preserves the current session', async () => {
     const second = 'neo:10000000-0000-4000-8000-000000000002';
     mailbox.db.prepare('INSERT INTO sessions(id) VALUES (?)').run(second);
     await listen();
@@ -586,10 +586,12 @@ describe('spoken replies separate from publications', () => {
     audioController.close();
     for (let i = 0; i < 100 && !messages.some((item) => item.message.data.type === 'end'); i++)
       await new Promise((done) => setTimeout(done, 1));
+    const audioEvents = messages.filter((item) =>
+      ['audio', 'end'].includes(item.message.data.type)
+    );
+    expect(audioEvents).toHaveLength(2);
     expect(
-      messages
-        .filter((item) => ['audio', 'end'].includes(item.message.data.type))
-        .every((item) => item.client === 'phone' && item.message.data.sessionId === worker)
+      audioEvents.every((item) => item.client === 'phone' && item.message.data.sessionId === worker)
     ).toBe(true);
     expect(
       await call('ack', { sessionId: worker, id: said.message.data.id, state: 'played' })
