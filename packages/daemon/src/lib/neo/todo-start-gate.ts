@@ -43,11 +43,14 @@ export const neoTodoAwaitsApproval = (todo: NeoTodo) =>
   todo.approvedAt === null &&
   (todo.state === 'todo' || (todo.state === 'blocked' && todo.blockedBy === 'question'));
 
+const neoTodoCancellationPending = (todo: NeoTodo, family: readonly NeoTodo[]) =>
+  todo.startedAt === null &&
+  (todo.state === 'todo' ||
+    (todo.state === 'blocked' && (todo.blockedBy === 'question' || todo.blockedBy === 'check'))) &&
+  neoTodoCancelledDependencies(family, todo.id).length > 0;
+
 export const neoTodoOnStartCard = (todo: NeoTodo, family: readonly NeoTodo[]) =>
-  neoTodoAwaitsApproval(todo) ||
-  ((todo.state === 'todo' || (todo.state === 'blocked' && todo.blockedBy === 'question')) &&
-    todo.startedAt === null &&
-    neoTodoCancelledDependencies(family, todo.id).length > 0);
+  neoTodoAwaitsApproval(todo) || neoTodoCancellationPending(todo, family);
 
 const quoted = (todos: readonly NeoTodo[]) => todos.map((todo) => `"${todo.title}"`).join(', ');
 
@@ -98,9 +101,7 @@ export const neoTodosAwaitingCancellationCard = (
   family.filter(
     (todo) =>
       todo.askId === askId &&
-      todo.startedAt === null &&
-      neoTodoOnStartCard(todo, family) &&
-      neoTodoCancelledDependencies(family, todo.id).length > 0 &&
+      neoTodoCancellationPending(todo, family) &&
       !questions.some((q) => q.state === 'open' && q.startTodos?.includes(todo.id))
   );
 
@@ -111,9 +112,10 @@ export function planNeoStartAnswer(
   withdrawn: string | undefined,
   now: number
 ): NeoTodoPatch | null {
-  if (todo.state !== 'blocked' || todo.blockedBy !== 'question')
+  const cancelled = neoTodoCancellationPending(todo, family);
+  if (!cancelled && (todo.state !== 'blocked' || todo.blockedBy !== 'question'))
     return ticked?.includes(todo.id) ? { approvedAt: now } : null;
-  if (neoTodoCancelledDependencies(family, todo.id).length) {
+  if (cancelled) {
     if (withdrawn) return null;
     return ticked?.includes(todo.id)
       ? {

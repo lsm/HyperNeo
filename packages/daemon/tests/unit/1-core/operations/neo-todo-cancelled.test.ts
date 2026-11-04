@@ -447,7 +447,7 @@ describe('cancelled prerequisites', () => {
       const after = store.getTodo(d.id)!;
       if (answer === 'no') expect(after.state).toBe('removed');
       else if (kind === 'work') expect(after.state).toBe('doing');
-      else expect(after).toMatchObject({ state: 'blocked', blockedBy: 'check', dependsOn: [] });
+      else expect(after).toMatchObject({ state: 'todo', blockedBy: null, dependsOn: [] });
     } finally {
       db.close();
     }
