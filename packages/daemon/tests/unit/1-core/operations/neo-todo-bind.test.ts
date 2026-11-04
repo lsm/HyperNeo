@@ -155,7 +155,7 @@ describe('bind an already running worker without dispatch', () => {
           },
         ],
       });
-      const todo = opened.todos[0];
+      const todo = store.updateTodo(opened.todos[0], { approvedAt: 1 }, 1);
       store.updateTodo(
         todo,
         { state: 'failed', reason: 'Delivery was not confirmed', finishedAt: 2 },
