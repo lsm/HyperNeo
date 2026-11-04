@@ -55,6 +55,7 @@ import {
 } from './lib/internal-command-bus.ts';
 import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus.ts';
 import { setupRPCHandlers } from './lib/rpc-handlers/index.ts';
+import { createSpaceRpc } from './lib/rpc-handlers/space-setup.ts';
 import { DaemonExtensions } from './lib/extensions/contract.ts';
 import { registerSchemaExtension } from './storage/schema/extensions.ts';
 import { SPACE_SCHEMA } from './storage/schema/space-schema.ts';
@@ -1130,35 +1131,37 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     }
 
     startupTimer.start('rpc handlers + space runtime provision');
-    const rpcHandlers = await setupRPCHandlers({
-      extensions,
-      purgeClaudeFeed: (sessionIds) => purgeWorkFeedSessions(db.gateway, 'claude', sessionIds),
-      deviceOf: (clientId) => transport.deviceOf(clientId),
-      watchSessionRepo: async (owner, repo) =>
-        (await githubEventExtension?.watchSessionRepo(owner, repo)) ?? null,
-      messageHub,
-      sessionManager,
-      authManager,
-      credentialManager,
-      settingsManager,
-      config,
-      internalEventBus,
-      commandBus,
-      externalEventStore,
-      db,
-      gitHubService: gitHubService ?? undefined,
-      externalEventService,
-      externalEventExtensionManager: extensionManager,
-      externalEventExtensionConfigStore: extensionConfigStore,
-      externalEventExtensionContext: extensionContext,
-      spaceManager,
-      jobQueue,
-      jobProcessor,
-      reactiveDb,
-      liveQueries,
-      skillsManager,
-      mcpImportService,
-    });
+    const rpcHandlers = await setupRPCHandlers(
+      {
+        extensions,
+        purgeClaudeFeed: (sessionIds) => purgeWorkFeedSessions(db.gateway, 'claude', sessionIds),
+        deviceOf: (clientId) => transport.deviceOf(clientId),
+        watchSessionRepo: async (owner, repo) =>
+          (await githubEventExtension?.watchSessionRepo(owner, repo)) ?? null,
+        messageHub,
+        sessionManager,
+        authManager,
+        credentialManager,
+        settingsManager,
+        config,
+        internalEventBus,
+        commandBus,
+        externalEventStore,
+        db,
+        gitHubService: gitHubService ?? undefined,
+        externalEventService,
+        externalEventExtensionManager: extensionManager,
+        externalEventExtensionConfigStore: extensionConfigStore,
+        externalEventExtensionContext: extensionContext,
+        jobQueue,
+        jobProcessor,
+        reactiveDb,
+        liveQueries,
+        skillsManager,
+        mcpImportService,
+      },
+      (rpcDeps, host) => createSpaceRpc({ ...rpcDeps, spaceManager }, host)
+    );
     void recoverRestartCutTurns(cutOffSessionIds, restartRecoveryDeps)
       .then((results) => {
         const acted = results.filter((result) => result.resumed).length;
@@ -1181,17 +1184,18 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       timer.unref?.();
       return timer;
     });
+    const { cleanup: rpcHandlerCleanup, space } = rpcHandlers;
+    if (!space) throw new Error('Space RPC setup did not run');
     const {
-      cleanup: rpcHandlerCleanup,
       spaceRuntimeService,
       spaceWorktreeManager,
       spaceGoalService,
       goalAutomationService,
       spaceAgentInactivityWatchdog,
       cancelInactivityWatchdog,
-    } = rpcHandlers;
+    } = space;
     wakePollingConcern = rpcHandlers.wakePollingConcern;
-    taskAgentManager = rpcHandlers.taskAgentManager;
+    taskAgentManager = space.taskAgentManager;
 
     startupTimer.start('space runtime ready kickoff + HTTP/WS server bind');
     const spaceRuntimeReadyPromise = spaceRuntimeService.ready();
@@ -1213,7 +1217,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         logInfo,
         logError,
         sessionManager,
-        taskAgentManager: rpcHandlers.taskAgentManager,
+        taskAgentManager: space.taskAgentManager,
       })
     );
 

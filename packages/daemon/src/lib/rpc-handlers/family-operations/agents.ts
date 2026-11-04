@@ -100,7 +100,7 @@ export function registerAgentOperations(context: SpaceFamilyContext): OperationD
       refreshSubscription: (spaceId, subscriptionId) =>
         context.spaceRuntimeService.refreshLongHorizonSubscription(spaceId, subscriptionId),
       getSpaceAutonomyLevel: async (spaceId) => {
-        const space = await context.deps.spaceManager.getSpace(spaceId);
+        const space = await context.spaceManager.getSpace(spaceId);
         return space?.autonomyLevel ?? 1;
       },
       publishAgentCreated,

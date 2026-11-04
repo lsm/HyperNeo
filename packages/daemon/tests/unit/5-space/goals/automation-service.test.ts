@@ -29,10 +29,8 @@ import { SpaceRepository } from '../../../../src/storage/repositories/space-repo
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { TaskScheduleRepository } from '../../../../src/storage/repositories/task-schedule-repository';
-import {
-  validateGoalAutomationSelfNagPolicy,
-  syncGoalAutomationSelfNagScheduleForScope,
-} from '../../../../src/lib/rpc-handlers';
+import { validateGoalAutomationSelfNagPolicy } from '../../../../src/lib/evolution/evolution-policy-validation';
+import { syncGoalAutomationSelfNagScheduleForScope } from '../../../../src/lib/goals/automation-schedule-sync';
 import { mergeEvolutionPolicy } from '../../../../src/lib/evolution/scope-service';
 import { ScheduleService } from '../../../../src/lib/schedule/schedule-service';
 import { createSpaceTables } from '../../helpers/space-test-db';
