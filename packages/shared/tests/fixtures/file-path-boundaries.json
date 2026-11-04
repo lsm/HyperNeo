@@ -65,7 +65,8 @@
   },
   {
     "text": "报告：/Users/a/b.abcdefghijklmnop",
-    "paths": ["/Users/a/b.abcdefghijklmnop"]
+    "paths": ["/Users/a/b.abcdefghijklmnop"],
+    "readReason": "unsupported_type"
   },
   {
     "text": "https://example.com/a.md",
