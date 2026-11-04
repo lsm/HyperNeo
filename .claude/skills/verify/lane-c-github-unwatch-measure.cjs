@@ -30,7 +30,7 @@ function walk(node) {
 walk(sf);
 if (!caller || selected.length !== selectedNames.length) throw Error('Missing owned timer roots');
 if (hash(JSON.stringify(unchanged)) !== 'f6a8ef25d752690c4f42bb045b575d645e0ea61e3f2d59b20b04143490cd7ba9') throw Error('Other extension method or field changed');
-if (hash(JSON.stringify(otherRpcs)) !== '10b90cf1bce82d0045311b61e138b2580754383166dbc6ced8ff9875d044f413') throw Error('Other public RPC caller changed');
+if (hash(JSON.stringify(otherRpcs)) !== '51bb61fa54d36ca92a518c229b334cb94de8c76594e6a7cfe81f6ba119e79ccb') throw Error('Other public RPC caller changed');
 const specs = [
   ['github-polling-usage-read.ts', 47, '84752c5c336df50f98a7941c53eb93c343ac0ff443e7c669fc52566a33145289'],
   ['github-polling-repos-read.ts', 53, '91cf741b3bde862ff72018712a04f4672e87497f82c8810e0a60449ab93630f8'],
@@ -46,6 +46,6 @@ const importLines = 1, smokeLines = 1;
 const fullOwnedGraphLines = selected.concat(data, [caller]).reduce((n, row) => n + row.lines, importLines + smokeLines);
 if (fullOwnedGraphLines > 200) throw Error('Public unwatch timer slice exceeds 200 lines');
 if (fs.readFileSync('scripts/deno-smoke.sh', 'utf8').split('\n').filter(line => line.includes('lane-c-github-unwatch-timer.ts')).length !== 1) throw Error('Missing/duplicate native registration');
-const report = { head: cp.execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), selected, caller, data, importLines, smokeLines, fullOwnedGraphLines, excludedLines: 0, contract: 'One public timer call site awaits the registered reader in the existing effect queue; captured handle prevents clearing another lifetime. No timer/provider skips admission, errors propagate after known writes, no fallback/replay.', auditLimit: 'Complete selected unwatch caller/auth, timer owner and reader/query/mapper counted. Watch keeps the unchanged legacy sync helper; the unwatch deletion/webhook/config subtree is unchanged and not re-audited. Existing writer/capability subtrees retain separate audits; no full public/framework/runtime closure, background polling reader or #9438/#8714 completion claim.' };
+const report = { head: cp.execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), selected, caller, data, importLines, smokeLines, fullOwnedGraphLines, excludedLines: 0, contract: 'One public timer call site awaits the registered reader in the existing effect queue; captured handle prevents clearing another lifetime. No timer/provider skips admission, errors propagate after known writes, no fallback/replay.', auditLimit: 'Sibling #9655 refreshes only the watchRepo callback pin: approved fresh167/excluded97/known264, no changes to this owned graph. Complete selected unwatch caller/auth, timer owner and reader/query/mapper counted. Watch keeps the unchanged legacy sync helper; the unwatch deletion/webhook/config subtree is unchanged and not re-audited. Existing writer/capability subtrees retain separate audits; no full public/framework/runtime closure, background polling reader or #9438/#8714 completion claim.' };
 fs.writeFileSync(process.argv[2], JSON.stringify(report, null, 2) + '\n');
 console.log(JSON.stringify({ fullOwnedGraphLines, excludedLines: 0 }));

@@ -29,7 +29,8 @@ notification ordering, no-timer and present-session-provider admission skips.
 timer owner/queue/fields, complete reader/query/mapper modules, import and smoke
 registration: 196 lines, zero exclusions. Other unwatch webhook/config effects
 are unchanged and not re-audited. No full public/runtime closure, mutation
-ownership or atomicity claim; watchRepo still uses the legacy timer helper.
+ownership or atomicity claim. The separate watch timer slice uses its approved
+fresh 167 / excluded 97 / known 264 boundary; its other effects remain on main.
 Sibling scope pins are refreshed with this explicitly measured caller change.
 
 Keep native JSON, wrapper status and latency/clone/RSS/WAL/loop metrics outside

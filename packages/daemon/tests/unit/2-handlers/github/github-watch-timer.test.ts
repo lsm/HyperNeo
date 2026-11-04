@@ -1,5 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  listGitHubPollingRepos,
+  listGitHubPollingConfiguredRepos,
+  countGitHubSpacesWithPollingIntent,
+} from '../../../../src/storage/repositories/github-polling-repos-read';
+import { listGitHubWatchedRepos } from '../../../../src/storage/repositories/github-watched-repos-read';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { DbGateway, bindGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import type { DbOp } from '../../../../src/storage/db-gateway/db-op';
@@ -132,6 +143,70 @@ describe('Public watch timer callback reader wiring', () => {
         lightweight: true,
       })
     ).polling.active;
+  test('approved two-module boundary pins complete files with 167 fresh and 264 known lines', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'watch-reader-measure-'));
+    try {
+      const output = join(dir, 'boundary.json');
+      execFileSync(
+        process.execPath,
+        ['.claude/skills/verify/lane-c-github-watch-measure.cjs', output],
+        { cwd: fileURLToPath(new URL('../../../../../../', import.meta.url)) }
+      );
+      const report = JSON.parse(readFileSync(output, 'utf8'));
+      expect(report).toMatchObject({
+        fresh: 167,
+        excludedLines: 97,
+        knownTotal: 264,
+        caller: { name: 'space.github.watchRepo', lines: 92, onlyAwaitedTimerCallChanged: true },
+      });
+      expect(
+        report.data.filter((row: { auditedStable: boolean }) => row.auditedStable)
+      ).toMatchObject([
+        { lines: 53, sha256: '91cf741b3bde862ff72018712a04f4672e87497f82c8810e0a60449ab93630f8' },
+        { lines: 44, sha256: '4c5945ea131459249bb302cdb27ee6a014fc6aadd5d15f9d402b3226972e6a95' },
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  test('audited query and mapper preserve scope, orphan selection, cursor data and parse errors', async () => {
+    await request(true);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'synthetic-orphan',
+      owner: 'orphan-owner',
+      repo: 'orphan',
+      pollingEnabled: true,
+      webhookEnabled: false,
+    });
+    db.prepare('UPDATE space_github_watched_repos SET poll_cursor=? WHERE space_id=?').run(
+      JSON.stringify({ lastEventId: 'synthetic-cursor' }),
+      space
+    );
+    expect(listGitHubPollingRepos(db).map((row) => row.spaceId)).toEqual([
+      'synthetic-orphan',
+      space,
+    ]);
+    expect(listGitHubPollingRepos(db, space)).toMatchObject([
+      {
+        spaceId: space,
+        owner: 'synthetic-owner',
+        pollingEnabled: true,
+        webhookEnabled: false,
+        pollCursor: { lastEventId: 'synthetic-cursor' },
+      },
+    ]);
+    expect(listGitHubPollingConfiguredRepos(db).map((row) => row.spaceId)).toEqual([space]);
+    expect(countGitHubSpacesWithPollingIntent(db)).toBe(1);
+    expect(listGitHubWatchedRepos(db, space)).toMatchObject([
+      { spaceId: space, pollCursor: { lastEventId: 'synthetic-cursor' } },
+    ]);
+    db.prepare('UPDATE space_github_watched_repos SET poll_cursor=? WHERE space_id=?').run(
+      '{',
+      space
+    );
+    expect(() => listGitHubPollingRepos(db, space)).toThrow();
+    expect(() => listGitHubWatchedRepos(db, space)).toThrow();
+  });
   test('public watch awaits the reader and avoids the legacy main query', async () => {
     await request(true);
     expect(await active()).toBe(true);

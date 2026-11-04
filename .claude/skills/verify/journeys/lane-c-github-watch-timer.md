@@ -17,7 +17,8 @@ Retain another active orphan row to prove the unscoped timer selection. Hold an
 actual native reader reply while a newer enable commits; health stays responsive
 and the effect queue orders acknowledgement. A stop/restart while a reply is held
 must preserve the replacement timer; restore RPC handlers removed by manager stop.
-Inject one reader error: the watch RPC rejects after its known upsert/snapshot,
+Compare stored row scalar values rather than SQL-adapter object prototypes
+(Deno returns null-prototype rows). Inject one reader error: the watch RPC rejects after its known upsert/snapshot,
 adds no upsert replay or notification, and preserves the timer. A later explicit
 request succeeds independently. Focused tests cover no-timer/session-provider
 admission skips and query/mapper interfaces, including malformed cursor errors.
