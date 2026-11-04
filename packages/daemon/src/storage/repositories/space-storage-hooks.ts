@@ -3,13 +3,22 @@ import { basename, resolve } from 'node:path';
 import type { Database } from '../sqlite-compat.ts';
 import { SpaceRepository } from './space-repository.ts';
 import { SpaceWorkflowRepository } from './space-workflow-repository.ts';
-import { SpaceWorkflowRunRepository } from './space-workflow-run-repository.ts';
 import { SpaceWorkspaceRepository } from './space-workspace-repository.ts';
 
 export function spaceSlotSkillVetoes(db: Database, provenance: PromptProvenanceInit): string[] {
   if (!provenance.workflowRunId || !provenance.nodeId) return [];
-  const run = new SpaceWorkflowRunRepository(db).getRun(provenance.workflowRunId);
-  const workflow = run ? new SpaceWorkflowRepository(db).getWorkflowForRun(run) : null;
+  const run = db
+    .prepare('SELECT workflow_id, definition_version FROM space_workflow_runs WHERE id = ?')
+    .get(provenance.workflowRunId) as {
+    workflow_id: string;
+    definition_version: string | null;
+  } | null;
+  const workflow = run
+    ? new SpaceWorkflowRepository(db).getWorkflowForRun({
+        workflowId: run.workflow_id,
+        definitionVersion: run.definition_version,
+      })
+    : null;
   const slot = workflow?.nodes
     .find((node) => node.id === provenance.nodeId)
     ?.agents.find(
