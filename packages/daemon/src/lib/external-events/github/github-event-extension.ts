@@ -563,7 +563,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       });
       await this.persistSpaceConfig(context, params.spaceId);
       await this.disablePollingCapabilityIfUnused(context);
-      this.maybeStopPolling();
+      await this.stopIdlePollingOnReader();
       context.onSourceConfigChanged({
         source: this.sourceId,
         spaceId: params.spaceId,
