@@ -260,6 +260,18 @@ describe('legacy tool selection migration', () => {
     expect(db.prepare('SELECT settings FROM global_settings').get()).toEqual({ settings: 'null' });
   });
 
+  it('migrates sessions and globals when the Space tables do not exist', () => {
+    session('legacy', { tools: {} });
+    db.exec('DROP TABLE spaces');
+
+    migrateSessionToolSelections(db, catalog);
+
+    expect(selected('legacy')).toBeDefined();
+    expect(
+      (db.prepare('SELECT settings FROM global_settings').get() as { settings: string }).settings
+    ).toContain('toolSelectionDefaults');
+  });
+
   it('rolls back all writes if a database write fails', () => {
     session('good');
     session('bad');

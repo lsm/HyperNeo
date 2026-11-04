@@ -1,3 +1,4 @@
+import type { PromptProvenanceInit } from '../../lib/agent/agent-session.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 export interface SchemaExtension {
@@ -6,6 +7,8 @@ export interface SchemaExtension {
   indexes?(db: BunDatabase): void;
   baseline?: { statements: readonly string[]; presentWhenTable: string };
   migrations?: Readonly<Record<string, (db: BunDatabase) => void>>;
+  sessionSkillVetoes?(db: BunDatabase, provenance: PromptProvenanceInit): string[];
+  workspaceSources?(db: BunDatabase): { path: string; label: string }[];
 }
 
 const schemaExtensions = new Map<string, SchemaExtension>();
@@ -30,6 +33,25 @@ export function extensionMigration(key: string): ((db: BunDatabase) => void) | u
   return undefined;
 }
 
+export function extensionSessionSkillVetoes(
+  db: BunDatabase,
+  provenance: PromptProvenanceInit
+): string[] {
+  return [...schemaExtensions.values()].flatMap(
+    (extension) => extension.sessionSkillVetoes?.(db, provenance) ?? []
+  );
+}
+
+export function extensionWorkspaceSources(db: BunDatabase): { path: string; label: string }[] {
+  return [...schemaExtensions.values()].flatMap(
+    (extension) => extension.workspaceSources?.(db) ?? []
+  );
+}
+
+export function schemaTableExists(db: BunDatabase, table: string): boolean {
+  return !!db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table);
+}
+
 export function applyExtensionBaselines(
   db: BunDatabase,
   markers: { baselineDone: boolean; applied(key: string): boolean; mark(key: string): void }
@@ -38,9 +60,7 @@ export function applyExtensionBaselines(
   for (const { id, baseline } of schemaExtensions.values()) {
     const key = `schema_baseline_${id}`;
     if (!baseline || markers.applied(key)) continue;
-    const present = db
-      .prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?")
-      .get(baseline.presentWhenTable);
+    const present = schemaTableExists(db, baseline.presentWhenTable);
     db.transaction(() => {
       if (!present) for (const sql of baseline.statements) db.exec(sql);
       markers.mark(key);
