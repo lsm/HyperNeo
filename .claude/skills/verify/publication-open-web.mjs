@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { leaveSession, sessionTitle } from './session-pane-web.mjs';
 import { readFileSync,writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 const run=process.argv[2], fixture=JSON.parse(readFileSync(`${run}/fixture.json`,'utf8'));
@@ -32,9 +33,9 @@ try {
  if(touch)await button.tap();else await button.click();
  if(entry.session==='local-worker' || entry.session==='space-session') {
  const heading=entry.session==='space-session'?'Space session':'Local worker';
- const pane=page.locator('.neo-session-pane');await pane.getByRole('heading',{name:new RegExp(heading)}).waitFor();
- await pane.getByRole('button',{name:'Back to Neo',exact:true}).click();await button.waitFor();
- if(!touch && theme==='light'){await button.focus();await button.press('Enter');await pane.getByRole('heading',{name:new RegExp(heading)}).waitFor();await pane.getByRole('button',{name:'Back to Neo',exact:true}).click();}
+ const pane=page.locator('.neo-session-pane');await sessionTitle(page, {name:new RegExp(heading)}).waitFor();
+ await leaveSession(page);await button.waitFor();
+ if(!touch && theme==='light'){await button.focus();await button.press('Enter');await sessionTitle(page, {name:new RegExp(heading)}).waitFor();await leaveSession(page);}
  } else {
  const expected=entry.session.startsWith('codex')?'codex://threads/synthetic-thread':'claude://claude.ai/epitaxy/synthetic-session';
  assert.equal((await page.evaluate(()=>window.nativeOpens)).at(-1),expected);

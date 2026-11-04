@@ -184,7 +184,7 @@ describe('desktop preview file tabs', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close Report A' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(artifactPreviewWorkspace.state.value).toEqual({
-      open: true,
+      open: false,
       files: [],
       selectedId: null,
     });
@@ -196,7 +196,7 @@ describe('desktop preview file tabs', () => {
     await open('a');
     await open('b');
     await open('c');
-    expect(screen.queryByRole('button', { name: /Other files/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Other tabs/ })).toBeNull();
     const slot = screen.getByRole('tab', { name: 'Report C' }).parentElement!;
     expect(Number.parseFloat(slot.style.width)).toBeLessThan(176);
     expect(Number.parseFloat(slot.style.width)).toBeGreaterThanOrEqual(88);
@@ -210,7 +210,7 @@ describe('desktop preview file tabs', () => {
     expect(screen.getByRole('tab', { name: 'Report F' }).getAttribute('aria-selected')).toBe(
       'true'
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Other files (3)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Other tabs (3)' }));
     const item = await screen.findByRole('menuitem', { name: 'Report D' });
     fireEvent.click(item);
     await waitFor(() =>
@@ -228,7 +228,7 @@ describe('desktop preview file tabs', () => {
     await open('a');
     await open('b');
     await open('c');
-    const more = screen.getByRole('button', { name: 'Other files (1)' });
+    const more = screen.getByRole('button', { name: 'Other tabs (1)' });
     fireEvent.click(more);
     const item = await screen.findByRole('menuitem');
     fireEvent.keyDown(item, { key: 'Escape' });
