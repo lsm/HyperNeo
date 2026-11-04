@@ -338,6 +338,34 @@ describe('cancelled prerequisites', () => {
     }
   });
 
+  test('answering a cancellation card makes no second card', async () => {
+    const { db, store, invoke, step, runner, work } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'One card',
+        request: 'A, then D and E.',
+        todos: [
+          step('A', []),
+          { ...step('D', [0]), ...work, start: true },
+          { ...step('E', [0]), ...work, start: true },
+        ],
+      });
+      const [a, d, e] = opened.todos;
+      await invoke('neo.todo.remove', { todoId: a.id, reason: 'Cancelled by the human.' });
+      const answer = card(store, d)!;
+      expect(answer.startTodos).toEqual([d.id, e.id]);
+      const before = store.listQuestions(a.askId).length;
+      store.answerQuestion(answer, [d.id], 'button', Date.now());
+      expect(store.listQuestions(a.askId)).toHaveLength(before);
+      await runner.refresh(() => {});
+      expect(store.getTodo(e.id)?.state).toBe('removed');
+      expect(store.getTodo(d.id)?.state).toBe('doing');
+      expect(store.listQuestions(a.askId).filter((q) => q.state === 'open')).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+
   test('approval follows a replaced replacement to the live step', async () => {
     const { db, store, invoke, step, runner, sent, work } = setup();
     try {
