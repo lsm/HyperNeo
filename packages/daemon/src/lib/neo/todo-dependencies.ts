@@ -67,6 +67,12 @@ export const NEO_TODO_CANCELLED_DEPENDENCY =
 export const NEO_TODO_AWAITING_START =
   'awaiting_start: this step is on an open Start card; the human answers it before it can wait for other steps.';
 
+export const NEO_TODO_QUESTION_OPEN =
+  'question_open: an open question holds this step; the queue starts it after the human answers.';
+
+export const NEO_TODO_NOT_STARTABLE =
+  'not_startable: release or retry this step before making it independent, so the human can approve it.';
+
 export const NEO_TODO_NOT_READY =
   'not_ready: this step waits for unfinished steps; add it without start and the daemon starts it once they are done.';
 

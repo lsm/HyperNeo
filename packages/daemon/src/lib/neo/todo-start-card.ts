@@ -88,6 +88,14 @@ export function planNeoStartCardPrune(
       };
 }
 
+export const neoTodoHeldByQuestion = (todoId: string, questions: readonly NeoQuestion[]) =>
+  questions.some(
+    (question) =>
+      question.state === 'open' &&
+      (!question.todoId || question.todoId === todoId) &&
+      (question.kind !== 'start' || !!question.startTodos?.includes(todoId))
+  );
+
 export function neoTodoAwaitsStartAnswer(
   todo: NeoTodo,
   family: readonly NeoTodo[],

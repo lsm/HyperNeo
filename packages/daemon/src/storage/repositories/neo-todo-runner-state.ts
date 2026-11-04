@@ -9,7 +9,12 @@ import type { NeoTodoPolicy } from '../../lib/neo/todo-operations.ts';
 import { neoTodoPolicies } from '../../lib/neo/packs/todo-policies.ts';
 import { neoMoveTodo, neoTodoRepo } from '../../lib/neo/todo-repo.ts';
 import { requireNeoTodoStartable } from '../../lib/neo/todo-runner.ts';
-import { neoTodoReady, NEO_TODO_NOT_READY } from '../../lib/neo/todo-dependencies.ts';
+import {
+  neoTodoReady,
+  NEO_TODO_NOT_READY,
+  NEO_TODO_QUESTION_OPEN,
+} from '../../lib/neo/todo-dependencies.ts';
+import { neoTodoHeldByQuestion } from '../../lib/neo/todo-start-card.ts';
 import { sameNeoTodoCheck } from '../../lib/neo/todo-completion.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
@@ -80,6 +85,15 @@ const claim = (superpipe({})('neo.todo.claim-start-state') as PipelineAPI)
       neoTodoReady(store.listFamilyTodos(plan.ask.id), plan.todo.id)
         ? { value: plan }
         : { reason: { ok: false as const, reason: NEO_TODO_NOT_READY } },
+    ['store', 'outcome'],
+    'result:outcome'
+  )
+  .pipe(
+    (store: NeoAskTodoRepository, plan: Start) =>
+      plan.ask.parentId &&
+      neoTodoHeldByQuestion(plan.todo.id, store.listQuestionsForAsks([plan.ask.parentId]))
+        ? { reason: { ok: false as const, reason: NEO_TODO_QUESTION_OPEN } }
+        : { value: plan },
     ['store', 'outcome'],
     'result:outcome'
   )

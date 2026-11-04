@@ -5,6 +5,7 @@ import { JobQueueRepository } from './job-queue-repository.ts';
 import { SDKMessageRepository } from './sdk-message-repository.ts';
 import { sdkMailboxFailure } from './sdk-message-transactions.ts';
 import { neoTodoReady } from '../../lib/neo/todo-dependencies.ts';
+import { neoTodoHeldByQuestion } from '../../lib/neo/todo-start-card.ts';
 import { neoTodoAwaitsHuman } from '../../lib/neo/todo-state.ts';
 import { NeoTurnReportReceipts } from '../../lib/neo/turn-report-receipts.ts';
 import {
@@ -247,16 +248,11 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
         !asked.some((question) => question.kind === 'start' && question.state === 'answered')
       )
         return [];
-      const questions = asked.filter((question) => question.state === 'open');
       return plan.flatMap((next) =>
         next.state === 'todo' &&
         next.startedAt === null &&
         neoTodoReady(family, next.id) &&
-        !questions.some(
-          (question) =>
-            (!question.todoId || question.todoId === next.id) &&
-            (question.kind !== 'start' || !!question.startTodos?.includes(next.id))
-        )
+        !neoTodoHeldByQuestion(next.id, asked)
           ? [{ ask, next, target: this.get(next.id) }]
           : []
       );

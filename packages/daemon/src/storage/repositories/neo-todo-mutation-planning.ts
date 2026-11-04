@@ -2,10 +2,12 @@ import {
   neoTodoDependencyRefusal,
   NEO_TODO_AWAITING_START,
   NEO_TODO_CANCELLED_DEPENDENCY,
+  NEO_TODO_NOT_STARTABLE,
+  neoTodoDependencyNodes,
   neoTodoCancelledDependencies,
   planNeoTodoDependencies,
 } from '../../lib/neo/todo-dependencies.ts';
-import { neoTodoAwaitsStartAnswer } from '../../lib/neo/todo-start-card.ts';
+import { neoTodoAwaitsStartAnswer, neoTodoStartable } from '../../lib/neo/todo-start-card.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
@@ -178,6 +180,15 @@ class NeoTodoMutationPlanner {
             neoTodoAwaitsStartAnswer(plan.todo, family, todos.listQuestions(plan.todo.askId))
           )
             return { reason: { ok: false as const, reason: NEO_TODO_AWAITING_START } };
+          if (
+            !after.length &&
+            plan.todo.startedAt === null &&
+            !neoTodoStartable(plan.todo) &&
+            neoTodoDependencyNodes(family).some(
+              (node) => node.id === plan.todo.id && !!node.dependsOn?.length
+            )
+          )
+            return { reason: { ok: false as const, reason: NEO_TODO_NOT_STARTABLE } };
           return { value: { ...plan, patch: { ...plan.patch, dependsOn } } };
         },
         'outcome',
