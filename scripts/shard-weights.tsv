@@ -520,8 +520,6 @@
 4144	packages/daemon/tests/unit/4-space-storage/storage/external-event-extension.test.ts
 109	packages/daemon/tests/unit/4-space-storage/storage/external-event-service.test.ts
 826	packages/daemon/tests/unit/4-space-storage/storage/external-event-store.test.ts
-62	packages/daemon/tests/unit/4-space-storage/storage/goal-repository-live-query.test.ts
-10	packages/daemon/tests/unit/4-space-storage/storage/goal-repository-short-id.test.ts
 13	packages/daemon/tests/unit/4-space-storage/storage/hidden-subtype-idle-detection.test.ts
 47	packages/daemon/tests/unit/4-space-storage/storage/inbox-item-repository.test.ts
 7	packages/daemon/tests/unit/4-space-storage/storage/ingest-external-event-pipeline.test.ts
@@ -703,7 +701,6 @@
 118	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-443-session-schedule-wakes.test.ts
 6642	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-45_test.ts
 13445	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-47_test.ts
-993	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-48_test.ts
 2343	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-51_test.ts
 7778	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-53_test.ts
 2919	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-54_test.ts
@@ -770,7 +767,6 @@
 225	packages/daemon/tests/unit/4-space-storage/storage/sqlite-query-observability.test.ts
 7	packages/daemon/tests/unit/4-space-storage/storage/sqlite-statement-cache.test.ts
 4210	packages/daemon/tests/unit/4-space-storage/storage/task-id-resolution-cache.test.ts
-41	packages/daemon/tests/unit/4-space-storage/storage/task-live-query-archived-filter.test.ts
 274	packages/daemon/tests/unit/4-space-storage/storage/task-schedule-repository.test.ts
 253	packages/daemon/tests/unit/4-space-storage/storage/tool-continuation-recovery-repository.test.ts
 11	packages/daemon/tests/unit/4-space-storage/storage/topic-trie.test.ts

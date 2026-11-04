@@ -103,9 +103,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
     db = new BunDatabase(':memory:');
     createTables(db);
     runMigration74(db);
-    db.exec(
-      `INSERT OR IGNORE INTO rooms (id, name, created_at, updated_at) VALUES ('${roomId}', 'Test Room', ${now}, ${now})`
-    );
   });
 
   afterEach(() => {
@@ -4570,17 +4567,10 @@ describe('NAMED_QUERY_REGISTRY', () => {
     const workerSessionId = 'worker-session-contract';
     const leaderSessionId = 'leader-session-contract';
 
-    function insertTask(): void {
-      db.exec(
-        `INSERT OR IGNORE INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at, updated_at)
-				 VALUES ('${taskId}', '${roomId}', 'Task', 'Desc', 'in_progress', 'normal', '[]', ${Date.now()}, ${Date.now()})`
-      );
-    }
-
     function insertGroup(): void {
       db.exec(
         `INSERT OR IGNORE INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
-				 VALUES ('${groupId}', 'task', '${taskId}', 0,
+				 VALUES ('${groupId}', 'task_pair', '${taskId}', 0,
 				 '${JSON.stringify({ workerRole: 'coder', feedbackIteration: 2, submittedForReview: false })}',
 				 ${Date.now()})`
       );
@@ -4620,20 +4610,17 @@ describe('NAMED_QUERY_REGISTRY', () => {
     }
 
     test('SQL executes without error against the real schema', () => {
-      insertTask();
       insertGroup();
       expect(() => executeSQLAndMap()).not.toThrow();
     });
 
     test('returns empty array when no sdk/event rows exist for the group', () => {
-      insertTask();
       insertGroup();
       const rows = executeSQLAndMap();
       expect(rows).toEqual([]);
     });
 
     test('returns camelCase row shape and injects _taskMeta for sdk messages', () => {
-      insertTask();
       insertGroup();
       insertSdkMessage(workerSessionId, 'worker-msg-1', 1000);
       insertSdkMessage(leaderSessionId, 'leader-msg-1', 2000);
@@ -4657,7 +4644,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
     });
 
     test('includes operational sdk rows when building the group timeline', () => {
-      insertTask();
       insertGroup();
       insertSdkMessage(workerSessionId, 'visible-worker-msg', 1000);
       for (const subtype of ['thinking_tokens', 'session_state_changed', 'commands_changed']) {
@@ -4675,7 +4661,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
     });
 
     test('includes rows retracted by refusal fallback notices when building the group timeline', () => {
-      insertTask();
       insertGroup();
       insertSdkMessage(
         workerSessionId,
@@ -4700,7 +4685,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
     });
 
     test('event rows keep null sessionId and status text extraction', () => {
-      insertTask();
       insertGroup();
       insertEvent('status', { text: 'Mid status marker' }, 1500);
 
@@ -4756,7 +4740,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
     });
 
     test('turnUserMessageId forwards the latest settled user row per session', () => {
-      insertTask();
       insertGroup();
       const insertUser = (id: string, ts: number): void => {
         db.exec(`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status)
