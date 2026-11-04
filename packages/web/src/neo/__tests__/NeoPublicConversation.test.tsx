@@ -79,6 +79,16 @@ const conversation = (asks = [ask()], publications = [publication()]) =>
     }
   );
 
+it('does not invent a path by parsing Markdown across short and full fields', () => {
+  const text = '_~/report.md';
+  render(
+    <NeoPublicConversation
+      conversation={conversation([], [publication({ shortText: text, fullText: text, links: [] })])}
+    />
+  );
+  expect(screen.queryByRole('button', { name: 'Open current file: report.md' })).toBeNull();
+});
+
 it('does not auto-link bare or relative PR filenames in a public reply', async () => {
   const text = 'Review `CLAUDE.md` and `docs/guide.md`. The report is `/reports/review.md`.';
   render(
