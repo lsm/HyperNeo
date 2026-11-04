@@ -133,6 +133,49 @@ const complete = (runner: ReturnType<typeof createNeoTodoRunner>, todo: NeoTodo)
   runner.recompute(todo, {}, Date.now(), { state: 'done', evidence: 'Completed.' });
 
 describe('todo dependencies', () => {
+  test.each(['remove', 'close', 'replacement'])(
+    'a selected candidate is checked again after prerequisite %s',
+    async (mode) => {
+      const { db, store, sessions, invoke, step, runner, sent, work } = setup();
+      try {
+        const {
+          todos: [a, b, replacement],
+        } = await invoke('neo.ask.open', {
+          title: 'Claim cancellation',
+          request: 'Finish A before B.',
+          todos: [step('A', []), { ...step('B', [0]), ...work }, step('Replacement', [])],
+        });
+        store.updateTodo(a, { state: 'done' }, Date.now());
+        const candidate = sessions.queueFacts().candidates.find((item) => item.id === b.id);
+        expect(candidate).toBeDefined();
+        expect(
+          await invoke(mode === 'close' ? 'neo.todo.close' : 'neo.todo.remove', {
+            todoId: a.id,
+            reason: 'Cancelled before the claim.',
+            ...(mode === 'replacement' ? { replacedBy: replacement.id } : {}),
+          })
+        ).toMatchObject({ ok: true });
+        expect(await runner.start(candidate!.id)).toMatchObject({ ok: false });
+        expect(store.getTodo(b.id)?.startedAt).toBeNull();
+        expect(sent).toHaveLength(0);
+        if (mode === 'replacement') await complete(runner, replacement);
+        else {
+          const card = store
+            .listQuestions(b.askId)
+            .find((q) => q.state === 'open' && q.startTodos?.includes(b.id))!;
+          expect(card).toBeDefined();
+          store.answerQuestion(card, [b.id], 'button', Date.now());
+          await runner.advance();
+        }
+        expect(store.getTodo(b.id)?.state).toBe('doing');
+        await runner.advance();
+        expect(sent).toHaveLength(1);
+      } finally {
+        db.close();
+      }
+    }
+  );
+
   test.each([false, true])(
     'editing a dependent to independent asks before dispatch; explicit=%s',
     async (explicit) => {
@@ -238,6 +281,8 @@ describe('todo dependencies', () => {
     'legacy-close',
     'decline',
     'held',
+    'failed',
+    'failed-after-cancel',
   ])('cancelled prerequisites need one human decision: %s', async (mode) => {
     const { db, store, invoke, step, runner, sent, work } = setup();
     try {
@@ -257,6 +302,12 @@ describe('todo dependencies', () => {
       const cancelled = middle ? b : a;
       const dependent = middle ? c : b;
       const before = sent.length;
+      if (mode === 'failed')
+        store.updateTodo(
+          dependent,
+          { state: 'failed', reason: 'Synthetic check failed.' },
+          Date.now()
+        );
       if (mode === 'held')
         await invoke('neo.todo.hold', { todoId: dependent.id, reason: 'Human said wait.' });
       if (mode === 'legacy-close')
@@ -273,6 +324,26 @@ describe('todo dependencies', () => {
                 : {}),
           })
         ).toMatchObject({ ok: true });
+      if (mode === 'failed-after-cancel')
+        store.updateTodo(
+          store.getTodo(dependent.id)!,
+          { state: 'failed', reason: 'Synthetic check failed.' },
+          Date.now()
+        );
+      if (mode.startsWith('failed')) {
+        await runner.refresh(() => {});
+        expect(store.getTodo(dependent.id)).toMatchObject({
+          state: 'failed',
+          reason: 'Synthetic check failed.',
+        });
+        expect(
+          store
+            .listQuestions(dependent.askId)
+            .filter((q) => q.state === 'open' && q.startTodos?.includes(dependent.id))
+        ).toHaveLength(0);
+        expect(sent).toHaveLength(before);
+        return;
+      }
       if (mode === 'held') {
         expect(store.getTodo(dependent.id)).toMatchObject({
           blockedBy: 'held',
@@ -486,6 +557,17 @@ describe('todo dependencies', () => {
         ok: true,
       });
       expect(store.getTodo(b.id)?.dependsOn).toEqual([]);
+      await invoke('neo.todo.remove', { todoId: a.id, reason: 'Cancelled.' });
+      expect(await invoke('neo.todo.edit', { todoId: b.id, after: [a.id] })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('dependency_not_found'),
+      });
+      expect(await invoke('neo.todo.add', { askId, ...step('C', [a.id]) })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('dependency_not_found'),
+      });
+      expect(store.getTodo(b.id)?.dependsOn).toEqual([]);
+      expect(store.listTodos(askId)).toHaveLength(2);
     } finally {
       db.close();
     }

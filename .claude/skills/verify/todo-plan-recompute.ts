@@ -9,11 +9,12 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
+import { neoTodoRunnerWrites } from '../../../packages/daemon/src/storage/repositories/neo-todo-runner-state.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 
 const [mode, directory] = process.argv.slice(2),
   run = resolve(directory);
-assert(['before', 'verify', 'chain-before', 'chain-verify', 'chain-edges', 'chain-parent', 'chain-check', 'chain-cancel-implicit', 'chain-cancel-close', 'chain-cancel-replacement', 'chain-cancel-decline'].includes(mode));
+assert(['before', 'verify', 'chain-before', 'chain-verify', 'chain-edges', 'chain-parent', 'chain-check', 'chain-cancel-implicit', 'chain-cancel-close', 'chain-cancel-replacement', 'chain-cancel-decline', 'chain-cancel-claim'].includes(mode));
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -290,7 +291,18 @@ try {
         const denied = await call('neo.todo.add', { askId: a.askId, ...step('cancelled-start'), after: [a.id], start: true }, false);
         assert.equal(denied.ok, false); assert.match(denied.reason, /not_ready/); assert.equal((await read(a.askId)).todos.length, 3);
       }
+      if (mode === 'chain-cancel-claim') store.updateTodo(a, { state: 'done' }, Date.now());
+      const candidate = mode === 'chain-cancel-claim' ? sessions.queueFacts().candidates.find(item => item.id === b.id) : null;
+      if (mode === 'chain-cancel-claim') assert(candidate);
       await (mode === 'chain-check' ? complete(a.title) : call(mode === 'chain-cancel-close' ? 'neo.todo.close' : 'neo.todo.remove', { todoId: a.id, reason: 'No longer needed.', ...(mode === 'chain-cancel-replacement' ? { replacedBy: independent.id } : {}) }));
+      if (candidate) {
+        const grant = await app!.db.gateway.call(neoTodoRunnerWrites, 'claim', candidate.id, Date.now());
+        evidence.claimAfterCancellation = { grant, publicState: await read(b.askId), starts: starts() };
+        assert.equal(grant.ok, false);
+        if (!grant.ok) assert.match(grant.reason, /not_ready/);
+        assert.equal((await read(b.askId)).todos.find((t: { id: string }) => t.id === b.id).startedAt, null);
+        assert.equal(starts(), 2);
+      }
       await refresh();
       if (mode === 'chain-cancel-implicit') {
         const paused = await read(b.askId); evidence.pausedCancellation = paused;
