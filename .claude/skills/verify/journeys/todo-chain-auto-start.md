@@ -15,6 +15,8 @@ A passing check must release a prior cancellation card and dispatch its successo
 Passing checks authorize dependents without a Start answer; cancellation never does. chain-edges must observe one cancellation card, zero premature sends, then public approval makes the dependent independent and dispatches once.
 chain-cancel-implicit also preserves an explicit hold until release and rejects start:true after a never-started legacy closed prerequisite without adding work.
 Run chain-cancel-implicit, chain-cancel-close, chain-cancel-replacement, and chain-cancel-decline separately through the same wrapper.
+Run chain-cancel-claim: select a ready queue candidate, cancel its prerequisite, then invoke the actual writer claim. Require not_ready, no startedAt and no extra worker input; human approval then dispatches once. The same run refuses new removed-ID add/edit requests without adding work and preserves a failed check-only dependent without a cancellation card across refreshes.
+Unit contracts also require failed todos to retain their failure without a Start card, reject newly edited removed-ID references, and refuse stale claims after close/replacement.
 Unit contracts cover explicit/implicit cancellation, middle-of-chain removal, prior approval, replacement, decline, close-before-start, and no duplicate cards. Run chain-parent: a real parent decision holds its child
 until a public human answer, then one dispatch; scope contracts keep sibling/unrelated linked questions local.
 Follow-through contracts require a fresh reminder interval after a human answer.

@@ -124,7 +124,7 @@ function setup(
     const todo = store.addTodo(
       crypto.randomUUID(),
       'ask',
-      { title: 'Rows', doneWhen: 'PR merged', check, instruction, named: null },
+      { title: 'Rows', doneWhen: 'PR merged', check, instruction, named: null, dependsOn: [] },
       1
     );
     sessions.create(todo.id, {
@@ -1968,7 +1968,14 @@ describe('a todo sent to an existing session', () => {
       const todo = store.addTodo(
         id,
         'ask',
-        { title: id, doneWhen: 'Done', check: null, instruction: `Do ${id}`, named: null },
+        {
+          title: id,
+          doneWhen: 'Done',
+          check: null,
+          instruction: `Do ${id}`,
+          named: null,
+          dependsOn: [],
+        },
         1
       );
       sessions.create(todo.id, { verb: 'send', ref: claude });

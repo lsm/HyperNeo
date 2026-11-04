@@ -66,8 +66,12 @@ try {
   record=true;
   await assert.rejects(runner.recompute(checked,{},10,{state:'done',evidence:'Complete'}),/synthetic rollback/);
   record=false; assert.equal(tables.length,0); assert.deepEqual(await visible(),before); assert.deepEqual(effects,[]);
+  prepare("UPDATE neo_todos SET state='done' WHERE id='state'").run();
+  const readyBefore = await visible();
   await assert.rejects(runner.start('claim'),/synthetic rollback/);
-  assert.deepEqual(await visible(),before); assert.deepEqual(effects,[]);
+  assert.deepEqual(await visible(),readyBefore); assert.deepEqual(effects,[]);
+  prepare("UPDATE neo_todos SET state='doing' WHERE id='state'").run();
+  assert.deepEqual(await visible(),before);
   db.exec('DROP TRIGGER refuse_stamp'); result.rollbackPreservesCard=true;
   prepare('UPDATE neo_todo_sessions SET target=? WHERE todo_id=?').run(JSON.stringify({verb:'send',ref:{adapter:'hyperneo',id:'current-worker'}}),'claim');
   const queuedBefore=await visible();

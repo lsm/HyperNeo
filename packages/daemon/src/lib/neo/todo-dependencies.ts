@@ -50,7 +50,12 @@ export const planNeoTodoDependencies = (superpipe({})('neo.todo.plan-dependencie
   .input(['todos', 'todoId', 'after'])
   .pipe(neoTodoDependencyNodes, 'todos', 'nodes')
   .pipe(requireDistinctDependencies, ['todoId', 'after'], 'result:dependencies')
-  .pipe(requireExistingDependencies, ['nodes', 'after'], 'result:dependencies')
+  .pipe(
+    (todos: readonly NeoTodo[]) => todos.filter((todo) => todo.state !== 'removed'),
+    'todos',
+    'available'
+  )
+  .pipe(requireExistingDependencies, ['available', 'after'], 'result:dependencies')
   .pipe(requireAcyclicDependencies, ['nodes', 'todoId', 'after'], 'result:dependencies')
   .pipe((after: readonly string[]) => [...after], 'after', 'dependencies')
   .end('dependencies') as (

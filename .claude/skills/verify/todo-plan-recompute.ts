@@ -302,6 +302,13 @@ try {
         if (!grant.ok) assert.match(grant.reason, /not_ready/);
         assert.equal((await read(b.askId)).todos.find((t: { id: string }) => t.id === b.id).startedAt, null);
         assert.equal(starts(), 2);
+        for (const name of ['neo.todo.edit', 'neo.todo.add']) {
+          const denied = await call(name, { ...(name === 'neo.todo.edit' ? { todoId: independent.id } : { askId: a.askId, ...step('removed-reference') }), after: [a.id] }, false);
+          assert.match(denied.reason, /dependency_not_found/);
+        }
+        const unchanged = await read(a.askId); evidence.refusedRemovedReferences = unchanged;
+        assert.equal(unchanged.todos.length, 3);
+        assert.deepEqual(unchanged.todos.find((t: { id: string }) => t.id === independent.id).dependsOn, []);
       }
       await refresh();
       if (mode === 'chain-cancel-implicit') {
@@ -335,6 +342,20 @@ try {
       const expected = mode === 'chain-cancel-decline' ? 2 : 3;
       assert.equal(starts(), expected);
       await refresh(); assert.equal(starts(), expected);
+      if (mode === 'chain-cancel-claim') {
+        const failed = await call('neo.ask.open', { title: 'Failed dependency', request: 'Keep the observed failure.', todos: [
+          { title: 'failure-root', after: [], check: step('failure-root').check },
+          { title: 'failure-dependent', after: [0], check: step('failure-dependent').check },
+        ] });
+        const [root, dependent] = failed.todos;
+        store.updateTodo(dependent, { state: 'failed', reason: 'Synthetic check failed.' }, Date.now());
+        await call('neo.todo.remove', { todoId: root.id, reason: 'Cancelled.' });
+        await refresh(); await refresh();
+        const snapshot = await read(dependent.askId); evidence.failedCancellation = snapshot;
+        assert.equal(snapshot.todos.find((t: { id: string }) => t.id === dependent.id).state, 'failed');
+        assert(!snapshot.questions.some((q: { state: string; startTodos?: string[] }) => q.state === 'open' && q.startTodos?.includes(dependent.id)));
+        assert.equal(starts(), expected);
+      }
     } else {
     const opened = await chain('approved');
     const [first, second, third] = opened.todos;

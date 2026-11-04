@@ -14,6 +14,9 @@ card retired; the saved red proof must fail on that visible difference.
 After activation, a failed recomputation or claim preserves the entire card
 and emits no change notice or dispatch.
 
+The claim rollback fixture records its prerequisite done before injecting the claim,
+then restores the working predecessor for the separate completion-lock scenario.
+Claims must be dependency-ready; rollback assertions and effects remain unchanged.
 A held WAL lock must delay completion and all effects. After release, the
 runner must preserve the complete Unicode report and dispatch its successor
 once, using the current stored target. Pruning alone announces a change;

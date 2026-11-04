@@ -977,11 +977,9 @@ export class NeoAskTodoRepository {
         .filter(
           (todo) =>
             todo.askId === askId &&
-            ((isStartable(todo) && independent.has(todo.id)) ||
-              (todo.startedAt === null &&
-                todo.blockedBy !== 'held' &&
-                !['done', 'closed_unverified', 'removed'].includes(todo.state) &&
-                neoTodoCancelledDependencies(family, todo.id).length > 0))
+            isStartable(todo) &&
+            (independent.has(todo.id) ||
+              (todo.startedAt === null && neoTodoCancelledDependencies(family, todo.id).length > 0))
         )
         .map((todo) => todo.id)
     );

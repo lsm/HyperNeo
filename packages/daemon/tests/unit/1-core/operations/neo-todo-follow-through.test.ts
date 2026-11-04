@@ -132,7 +132,14 @@ function world() {
     const todo = store.addTodo(
       crypto.randomUUID(),
       'ask',
-      { title: 'Rows', doneWhen: 'PR merged', check: null, instruction, named: null },
+      {
+        title: 'Rows',
+        doneWhen: 'PR merged',
+        check: null,
+        instruction,
+        named: null,
+        dependsOn: [],
+      },
       base
     );
     sessions.create(todo.id, {
