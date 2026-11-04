@@ -43,7 +43,7 @@ try {
   new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
   store.openAsk({id:'ask',projectId:null,sessionId:root,originMessageId:null,title:'Atomic work',request:'Keep full work',createdAt:1});
   const check={pack:'core',kind:'evidence',params:{path:join(run,'not-created')}};
-  store.addTodo('first','ask',{title:'first',doneWhen:'Merged',check,instruction:null,named:null},1);
+  store.addTodo('first','ask',{ approvedAt: 1,title:'first',doneWhen:'Merged',check,instruction:null,named:null},1);
   const before=await visible(), text='Committed full report 🦊\n'.repeat(20000).trim();
   await hub.request('system.health',{});
   db.exec('BEGIN IMMEDIATE'); held=true; record=true;
@@ -67,7 +67,7 @@ try {
   result.notificationsAfterCommit=true;
   result.fullReport={bytes:Buffer.byteLength(text),sha256:createHash('sha256').update(text).digest('hex')};
   const prior=events;
-  store.addTodo('peer','ask',{title:'peer',doneWhen:'Pending evidence',check,instruction:null,named:null},3);
+  store.addTodo('peer','ask',{ approvedAt: 1,title:'peer',doneWhen:'Pending evidence',check,instruction:null,named:null},3);
   store.askQuestion('reply','ask',{kind:'reply',todoId:'peer',text:'Answer first',options:null,multiple:false,yesLabel:null,noLabel:null},4);
   const withCard=await visible();
   const blocked=await commit({kind:'close',todoId:'peer',reason:'Finished'});

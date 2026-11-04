@@ -59,7 +59,7 @@ try{
  assert.notEqual(app.server.port,8399);await Promise.all([...processors].map(p=>p.stop()));main=app.db.getDatabase();await waitForSdkBodyCopy(main);
  main.prepare("INSERT INTO sessions(id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?,'Synthetic',?,'now','now','active','{}','{}')").run('synthetic-neo',join(run,'workspace'));
  const work=new NeoAskTodoRepository(main);work.openAsk({id:'synthetic-artifact-ask',sessionId:'synthetic-neo',projectId:null,originMessageId:null,title:'Synthetic reference',request:'Synthetic proof only',createdAt:Date.now()});
- work.addTodo('synthetic-artifact-todo','synthetic-artifact-ask',{title:'Synthetic document',doneWhen:'',instruction:null,check:null,named:null},Date.now());
+ work.addTodo('synthetic-artifact-todo','synthetic-artifact-ask',{ approvedAt: 1,title:'Synthetic document',doneWhen:'',instruction:null,check:null,named:null},Date.now());
  const setSource=(value:string)=>main!.prepare('UPDATE neo_todos SET evidence=? WHERE id=?').run(value,'synthetic-artifact-todo');setSource('Read `report.md`.');
  const source=join(run,'workspace/report.md');const text='# Synthetic reference snapshot\n';writeFileSync(source,text);
  const input={requestId:'11111111-1111-4111-8111-111111111111',sourceMessageOrCard:{kind:'todo' as const,id:'synthetic-artifact-todo'},reference:'report.md'};
