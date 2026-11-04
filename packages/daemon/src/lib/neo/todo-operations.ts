@@ -29,11 +29,7 @@ import {
 } from './todo-completion.ts';
 import { neoTodoHome, neoTodoRepo } from './todo-repo.ts';
 import { isNeoTodoStartable, planNeoTodoAwaitingStart } from './todo-runner.ts';
-import {
-  NEO_TODO_NOT_APPROVED,
-  neoTodoAwaitsApproval,
-  neoTodoStartRefusal,
-} from './todo-start-gate.ts';
+import { NEO_TODO_NOT_APPROVED, neoTodoStartRefusal } from './todo-start-gate.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -253,7 +249,7 @@ const bindNeoTodo = (superpipe({})('neo.todo.bind-worker') as PipelineAPI)
         ? fail(`todo_settled: cannot bind a ${todo.state} todo.`)
         : todo.blockedBy === 'held'
           ? fail('todo_held: the human is holding this todo; release it first.')
-          : todo.instruction && neoTodoAwaitsApproval(todo)
+          : todo.instruction && todo.approvedAt === null
             ? fail(NEO_TODO_NOT_APPROVED)
             : todo.startedAt === null &&
                 neoTodoCancelledDependencies(todos.listFamilyTodos(todo.askId), todo.id).length
