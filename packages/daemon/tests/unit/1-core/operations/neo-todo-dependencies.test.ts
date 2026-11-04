@@ -237,6 +237,7 @@ describe('todo dependencies', () => {
     'close',
     'legacy-close',
     'decline',
+    'held',
   ])('cancelled prerequisites need one human decision: %s', async (mode) => {
     const { db, store, invoke, step, runner, sent, work } = setup();
     try {
@@ -256,6 +257,8 @@ describe('todo dependencies', () => {
       const cancelled = middle ? b : a;
       const dependent = middle ? c : b;
       const before = sent.length;
+      if (mode === 'held')
+        await invoke('neo.todo.hold', { todoId: dependent.id, reason: 'Human said wait.' });
       if (mode === 'legacy-close')
         store.updateTodo(cancelled, { state: 'closed_unverified' }, Date.now());
       else
@@ -270,6 +273,20 @@ describe('todo dependencies', () => {
                 : {}),
           })
         ).toMatchObject({ ok: true });
+      if (mode === 'held') {
+        expect(store.getTodo(dependent.id)).toMatchObject({
+          blockedBy: 'held',
+          blockedReason: 'Human said wait.',
+        });
+        expect(
+          store
+            .listQuestions(dependent.askId)
+            .filter((q) => q.state === 'open' && q.startTodos?.includes(dependent.id))
+        ).toHaveLength(0);
+        expect(await invoke('neo.todo.hold', { todoId: dependent.id, reason: null })).toMatchObject(
+          { ok: true }
+        );
+      }
       const initialCard = store
         .listQuestions(dependent.askId)
         .find((q) => q.state === 'open' && q.startTodos?.includes(dependent.id))?.id;
@@ -489,22 +506,33 @@ describe('todo dependencies', () => {
     }
   });
 
-  test('start is refused for a step that still waits for unfinished steps', async () => {
-    const { db, invoke, step } = setup();
+  test('start refuses unfinished or cancelled prerequisites before adding work', async () => {
+    const { db, store, invoke, step, sent } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
         title: 'Plan',
         request: 'Plan',
         todos: [step('A')],
       });
-      const added = await invoke('neo.todo.add', {
-        askId: opened.todos[0].askId,
-        ...step('B', [opened.todos[0].id]),
-        instruction: 'Do B.',
-        target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } },
-        start: true,
+      const add = () =>
+        invoke('neo.todo.add', {
+          askId: opened.todos[0].askId,
+          ...step('B', [opened.todos[0].id]),
+          instruction: 'Do B.',
+          target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } },
+          start: true,
+        });
+      expect(await add()).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('not_ready'),
       });
-      expect(added).toMatchObject({ ok: false, reason: expect.stringContaining('not_ready') });
+      store.updateTodo(opened.todos[0], { state: 'closed_unverified' }, Date.now());
+      expect(await add()).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('not_ready'),
+      });
+      expect(store.listTodos(opened.todos[0].askId)).toHaveLength(1);
+      expect(sent).toHaveLength(0);
     } finally {
       db.close();
     }

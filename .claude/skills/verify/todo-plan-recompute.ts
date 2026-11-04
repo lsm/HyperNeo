@@ -284,8 +284,20 @@ try {
         { ...step('removed-independent'), after: [] },
       ] });
       const [a, b, independent] = removed.todos;
+      if (mode === 'chain-cancel-implicit') {
+        await call('neo.todo.hold', { todoId: b.id, reason: 'Human paused this work.' });
+        store.updateTodo(a, { state: 'closed_unverified' }, Date.now());
+        const denied = await call('neo.todo.add', { askId: a.askId, ...step('cancelled-start'), after: [a.id], start: true });
+        assert.equal(denied.ok, false); assert.match(denied.reason, /not_ready/); assert.equal((await read(a.askId)).todos.length, 3);
+      }
       await (mode === 'chain-check' ? complete(a.title) : call(mode === 'chain-cancel-close' ? 'neo.todo.close' : 'neo.todo.remove', { todoId: a.id, reason: 'No longer needed.', ...(mode === 'chain-cancel-replacement' ? { replacedBy: independent.id } : {}) }));
       await refresh();
+      if (mode === 'chain-cancel-implicit') {
+        const paused = await read(b.askId); evidence.pausedCancellation = paused;
+        assert.equal(paused.todos.find((t: { id: string }) => t.id === b.id).blockedBy, 'held');
+        assert(!paused.questions.some((q: { state: string; startTodos?: string[] }) => q.state === 'open' && q.startTodos?.includes(b.id)));
+        assert.equal((await call('neo.todo.hold', { todoId: b.id, reason: null })).ok, true); await refresh();
+      }
       const released = await read(b.askId);
       evidence.removed = released;
       assert.deepEqual(released.todos.filter((t: { id: string }) => t.id === a.id).map((t: { state: string; startedAt: number | null }) => [t.state, t.startedAt]), [[mode === 'chain-check' ? 'done' : 'removed', null]]);
