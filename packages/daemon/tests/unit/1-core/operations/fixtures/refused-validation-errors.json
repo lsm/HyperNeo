@@ -28,5 +28,10 @@
       "check": { "pack": "coding", "kind": "pr_merged", "params": {} }
     },
     "source": "Neo-supplied instruction-without-target refusal, adapted to the current schema"
+  },
+  {
+    "source": "regression",
+    "operation": "neo.coding.merge.retry",
+    "input": {}
   }
 ]
