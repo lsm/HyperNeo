@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import type { Session } from '@hyperneo/shared';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -160,6 +161,10 @@ describe('inactivity nag probes reconciled with mailbox admissions', () => {
         rmSync(dirname(dbPath), { recursive: true, force: true });
       }
     }
+  });
+
+  it('sets the Space session port on the database', () => {
+    expect(db.spaceSessions?.taskForSession({ id: 'none', context: {} } as Session)).toBeNull();
   });
 
   function seedWatchedAgent(): Fixture {

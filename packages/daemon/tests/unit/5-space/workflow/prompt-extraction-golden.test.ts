@@ -12,7 +12,7 @@ import { reviewerAgent } from '../../../../src/lib/agent/coordinator/reviewer.ts
 import { testerAgent } from '../../../../src/lib/agent/coordinator/tester.ts';
 import { vcsAgent } from '../../../../src/lib/agent/coordinator/vcs.ts';
 import { verifierAgent } from '../../../../src/lib/agent/coordinator/verifier.ts';
-import { NON_DELEGATING_GENERAL_AGENT } from '../../../../src/lib/agents/custom-agent.ts';
+import { NON_DELEGATING_GENERAL_AGENT } from '../../../../src/lib/agent/non-delegating-agent.ts';
 import { LONG_HORIZON_SCHEDULING_GUARDRAIL } from '../../../../src/lib/agents/long-horizon-tools.ts';
 import {
   getPresetAgentTemplates,

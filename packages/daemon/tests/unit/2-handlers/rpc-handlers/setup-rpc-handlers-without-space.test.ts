@@ -125,6 +125,7 @@ describe('setupRPCHandlers without a Space factory', () => {
 
   it('returns no Space services', () => {
     expect(setup.space).toBeUndefined();
+    expect(db.spaceSessions).toBeUndefined();
   });
 
   it('gives sessions a core operation registry without Space families', () => {
