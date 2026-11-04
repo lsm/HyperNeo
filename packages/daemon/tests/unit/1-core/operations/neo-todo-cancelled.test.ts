@@ -366,6 +366,52 @@ describe('cancelled prerequisites', () => {
     }
   });
 
+  test('a started step added after a removed one gets its card at once', async () => {
+    const { db, store, invoke, step, sent, work } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Late step',
+        request: 'A, then a late step.',
+        todos: [step('A', [])],
+      });
+      const [a] = opened.todos;
+      await invoke('neo.todo.remove', { todoId: a.id, reason: 'Cancelled by the human.' });
+      const added = await invoke('neo.todo.add', {
+        askId: a.askId,
+        ...step('Late'),
+        ...work,
+        start: true,
+      });
+      expect(added).toMatchObject({ ok: true });
+      expect(card(store, added.todo)).toBeDefined();
+      expect(store.getTodo(added.todo.id)).toMatchObject({
+        state: 'blocked',
+        blockedBy: 'question',
+      });
+      expect(sent).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a removed step cannot make an edit look like a cycle', async () => {
+    const { db, invoke, step } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'No false cycle',
+        request: 'T, R, then X.',
+        todos: [step('T', []), step('R'), step('X', [1])],
+      });
+      const [t, r, x] = opened.todos;
+      await invoke('neo.todo.remove', { todoId: r.id, reason: 'Cancelled by the human.' });
+      expect(await invoke('neo.todo.edit', { todoId: t.id, after: [x.id] })).toMatchObject({
+        ok: true,
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   test('approval follows a replaced replacement to the live step', async () => {
     const { db, store, invoke, step, runner, sent, work } = setup();
     try {
