@@ -59,7 +59,7 @@ const visible = async (id: string) => (await hub.request<NeoSnapshot>('operation
 const root = 'neo:10000000-0000-4000-8000-000000008950';
 const add = (id: string) => {
   todos.openAsk({ id, projectId: null, sessionId: root, originMessageId: null, title: id, request: 'Atomic finalization', createdAt: 1 });
-  const todo = todos.addTodo(id, id, { title: id, doneWhen: 'Observed outcome', check: null, instruction: 'Synthetic work', named: null }, 1);
+  const todo = todos.addTodo(id, id, { approvedAt: 1, title: id, doneWhen: 'Observed outcome', check: null, instruction: 'Synthetic work', named: null }, 1);
   todos.updateTodo(todo, { state: 'doing', startedAt: 2 }, 2);
   todos.askQuestion(`${id}-start`, id, { text: 'Start?', kind: 'start', options: null, multiple: false, yesLabel: null, noLabel: null, startTodos: [id] }, 3);
 };

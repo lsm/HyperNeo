@@ -389,6 +389,7 @@ describe('Neo artifact taps', () => {
       blockedBy: null,
       replacedBy: null,
       addedAfterStart: false,
+      approvedAt: null,
       report: null,
       evidence: 'Attached',
       createdAt: 1,

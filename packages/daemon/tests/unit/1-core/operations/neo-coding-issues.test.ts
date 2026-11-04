@@ -139,6 +139,7 @@ function fixture() {
         id,
         'ask',
         {
+          approvedAt: 1,
           title: id,
           doneWhen: 'Issue completed',
           check: {

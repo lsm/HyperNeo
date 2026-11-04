@@ -58,7 +58,14 @@ function world() {
     const todo = store.addTodo(
       id,
       'ask',
-      { title: id, doneWhen: 'done', check: null, instruction: 'Do it.', named: null },
+      {
+        approvedAt: 1,
+        title: id,
+        doneWhen: 'done',
+        check: null,
+        instruction: 'Do it.',
+        named: null,
+      },
       1
     );
     sessions.create(todo.id, {

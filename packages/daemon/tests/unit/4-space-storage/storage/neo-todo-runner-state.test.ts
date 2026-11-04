@@ -57,7 +57,14 @@ describe('Data-only atomic runner state commands', () => {
       store.addTodo(
         id,
         'ask',
-        { title: id, doneWhen: 'Observed', check: null, instruction: 'Continue work', named: null },
+        {
+          approvedAt: 1,
+          title: id,
+          doneWhen: 'Observed',
+          check: null,
+          instruction: 'Continue work',
+          named: null,
+        },
         1
       );
       sessions.create(id, { verb: 'send', ref: { adapter: 'hyperneo', id: `worker-${id}` } });

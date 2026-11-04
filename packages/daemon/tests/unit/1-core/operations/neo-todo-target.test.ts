@@ -122,6 +122,7 @@ describe('todo target identity at the MCP add door', () => {
     try {
       const original = { adapter: 'hyperneo', id: full };
       const added = await f.add({ verb: 'send', ref: original });
+      f.todos.updateTodo(added.todo, { approvedAt: 1 }, 1);
       const ref = { adapter: 'codex-desktop', daemon: 'synthetic-peer', id: full.slice(0, 8) };
       const result = await f.bind(added.todo.id, ref);
       expect(result.ok).toBe(true);

@@ -4,7 +4,7 @@ import type { ReactiveDatabase } from '../reactive-database.ts';
 import { JobQueueRepository } from './job-queue-repository.ts';
 import { SDKMessageRepository } from './sdk-message-repository.ts';
 import { sdkMailboxFailure } from './sdk-message-transactions.ts';
-import { neoTodoReady } from '../../lib/neo/todo-dependencies.ts';
+import { neoTodoStartRefusal, neoTodoWaitReason } from '../../lib/neo/todo-start-gate.ts';
 import { neoTodoAwaitsHuman } from '../../lib/neo/todo-state.ts';
 import { NeoTurnReportReceipts } from '../../lib/neo/turn-report-receipts.ts';
 import {
@@ -240,25 +240,14 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     );
     const waiting = asks.flatMap((ask) => {
       const plan = todos.filter((todo) => todo.askId === ask.id);
-      const asked = store.listQuestions(ask.id);
-      if (
-        !plan.some(
-          (todo) => todo.startedAt !== null || ['done', 'closed_unverified'].includes(todo.state)
-        ) &&
-        !asked.some((question) => question.kind === 'start' && question.state === 'answered')
-      )
-        return [];
-      const questions = asked.filter((question) => question.state === 'open');
+      const asked = store.gateQuestions(ask);
       const family = store.listFamilyTodos(ask.id);
       return plan.flatMap((next) =>
         next.state === 'todo' &&
         next.startedAt === null &&
-        neoTodoReady(family, next.id) &&
-        !questions.some(
-          (question) =>
-            (!question.todoId || question.todoId === next.id) &&
-            (question.kind !== 'start' || !!question.startTodos?.includes(next.id))
-        )
+        !(next.instruction
+          ? neoTodoStartRefusal(next, family, asked)
+          : neoTodoWaitReason(next, family, asked))
           ? [{ ask, next, target: this.get(next.id) }]
           : []
       );

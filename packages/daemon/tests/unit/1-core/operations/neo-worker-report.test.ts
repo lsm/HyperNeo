@@ -68,7 +68,14 @@ async function setup() {
   const todo = service.todos.addTodo(
     'todo',
     'ask',
-    { title: 'Build', doneWhen: 'Done', instruction: 'Stay quiet', check: null, named: null },
+    {
+      approvedAt: 1,
+      title: 'Build',
+      doneWhen: 'Done',
+      instruction: 'Stay quiet',
+      check: null,
+      named: null,
+    },
     1
   );
   service.todoSessions.bind(todo.id, ref, 2);

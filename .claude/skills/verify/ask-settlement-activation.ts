@@ -49,7 +49,7 @@ const visible=(askId:string)=>hub.request<{ok:true;entry:{ask:NeoAsk;todos:NeoTo
 const stable=async(askId:string)=>{const {entry}=await visible(askId);return {ask:entry.ask,todos:entry.todos.map(({id,state,report,reason,evidence})=>({id,state,report,reason,evidence})),questions:entry.questions};};
 const ask=(id:string,parentId:string|null=null)=>store.openAsk({id,parentId,repo:parentId?'github.com/fixture/child':null,projectId:null,sessionId:root,originMessageId:null,title:id,request:'Keep full work',createdAt:1});
 const seed=(id:string,askId:string,adopted=false)=>{
- store.addTodo(id,askId,{title:id,doneWhen:'Observed outcome',check:null,instruction:null,named:null},1);
+ store.addTodo(id,askId,{ approvedAt: 1,title:id,doneWhen:'Observed outcome',check:null,instruction:null,named:null},1);
  store.updateTodo(store.getTodo(id)!,{state:'doing',report,reason:'Prior diagnostic'},2);
  if(adopted)sessions.bind(id,{adapter:'hyperneo',id},2);else{sessions.create(id,{verb:'send',ref:{adapter:'hyperneo',id}});sessions.recordRef(id,{adapter:'hyperneo',id},2);}sessions.recordLive(id,'running',undefined);
 };

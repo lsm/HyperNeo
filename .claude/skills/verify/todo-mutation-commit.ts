@@ -42,7 +42,7 @@ try {
   new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
   store.openAsk({id:'ask',projectId:null,sessionId:root,originMessageId:null,title:'Atomic work',request:'Keep full work',createdAt:1});
   const check={pack:'coding',kind:'pr_merged',params:{urls:[]}};
-  for(const id of ['first','peer']) store.addTodo(id,'ask',{title:id,doneWhen:'Merged',check,instruction:null,named:null},1);
+  for(const id of ['first','peer']) store.addTodo(id,'ask',{ approvedAt: 1,title:id,doneWhen:'Merged',check,instruction:null,named:null},1);
   const before=await visible(), text='Committed full report 🦊\n'.repeat(20000).trim();
   await hub.request('system.health',{});
   db.exec('BEGIN IMMEDIATE'); held=true; record=true;
