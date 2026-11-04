@@ -1,5 +1,8 @@
 import { globalExtensionConfigReads } from '../../storage/repositories/global-extension-config-read.ts';
-import { parseJsonRecord } from '../../storage/repositories/extension-config-json.ts';
+import {
+  lookupSpaceExtensionConfig,
+  listEnabledSpaceExtensionConfigs,
+} from '../../storage/repositories/space-extension-config-lookup.ts';
 import { spaceExtensionConfigWrites } from '../../storage/repositories/space-extension-config-write.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { globalExtensionConfigWrites } from '../../storage/repositories/global-extension-config-write.ts';
@@ -10,13 +13,6 @@ import type {
   ExternalEventExtensionConfigStore as ExternalEventExtensionConfigStoreContract,
   SpaceExternalEventSourceConfig,
 } from './types.ts';
-
-interface SpaceConfigRow {
-  space_id: string;
-  source: string;
-  enabled: number;
-  settings_json: string;
-}
 
 export type { ExternalEventExtensionConfig, SpaceExternalEventSourceConfig } from './types.ts';
 
@@ -38,24 +34,12 @@ export class ExternalEventExtensionConfigStore
   ): Promise<SpaceExternalEventSourceConfig | null> {
     validateSpaceId(spaceId);
     validateSourceId(source);
-    const row = this.db
-      .prepare(
-        `SELECT * FROM space_external_event_source_configs WHERE space_id = ? AND source = ?`
-      )
-      .get(spaceId, source) as SpaceConfigRow | undefined;
-    return row ? spaceRowToConfig(row) : null;
+    return lookupSpaceExtensionConfig(this.db, spaceId, source);
   }
 
   async listEnabledSpaces(source: string): Promise<SpaceExternalEventSourceConfig[]> {
     validateSourceId(source);
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM space_external_event_source_configs
-				 WHERE source = ? AND enabled = 1
-				 ORDER BY space_id`
-      )
-      .all(source) as SpaceConfigRow[];
-    return rows.map(spaceRowToConfig);
+    return listEnabledSpaceExtensionConfigs(this.db, source);
   }
 
   async setGlobalConfig(source: string, config: ExternalEventExtensionConfig): Promise<void> {
@@ -110,15 +94,6 @@ export function ensureExternalEventExtensionConfigTables(db: BunDatabase): void 
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
-}
-
-function spaceRowToConfig(row: SpaceConfigRow): SpaceExternalEventSourceConfig {
-  return {
-    spaceId: row.space_id,
-    source: row.source,
-    enabled: row.enabled === 1,
-    settings: parseJsonRecord(row.settings_json),
-  };
 }
 
 function validateGlobalConfig(source: string, config: ExternalEventExtensionConfig): void {
