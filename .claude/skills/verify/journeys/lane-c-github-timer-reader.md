@@ -27,7 +27,7 @@ preserve the new lifetime's timer. No SQLite transaction spans these waits.
 Count complete read/query/mapper modules, new timer method, existing queue and
 resource fields, complete selected public handler and auth gate, import and
 smoke registration: 199 lines, no exclusions. The original synchronous helper
-is now unused and retained for a separate deletion slice; the separately measured 196-line unwatch slice reuses
+is deleted under the separate #9657 ownership-guard slice; the separately measured 196-line unwatch slice reuses
 the reader helper. Watch uses the approved 167/97/264 boundary in its own
 journey; its validation/webhook/config subtree remains unchanged; do not claim #9438 or #8714 complete. No caller
 bridge exception or full public/runtime closure claim is made. Refresh existing

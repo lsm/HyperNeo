@@ -1924,13 +1924,6 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     });
   }
 
-  private maybeStopPolling(): void {
-    if (!this.pollTimer) return;
-    if (this.options.sessionWatchRepos || this.repo.listPollingRepos().length > 0) return;
-    clearTimeout(this.pollTimer);
-    this.pollTimer = null;
-  }
-
   private resetRateLimitObservation(): void {
     this.lastRateLimitInfo = undefined;
     this.lastRateLimitObservedAt = 0;
