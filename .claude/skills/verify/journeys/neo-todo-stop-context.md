@@ -1,5 +1,8 @@
 # Activate shared worker-stop reads (#8712 core 4b)
 
+Stop scenarios are independent (`dependsOn: []`) and record prior real work
+(`startedAt`). Cancellation and dependent consent are in todo-chain-auto-start.md.
+
 Use SKILL.md's guarded metadata-only wrapper, existing dependencies and a fresh
 absolute evidence directory:
 

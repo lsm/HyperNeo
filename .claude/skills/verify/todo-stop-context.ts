@@ -41,8 +41,8 @@ type Receipt={ok:false;reason:string}|{ok:true;todo:NeoTodo;records?:string[]};
 const mutate=(kind:'close'|'remove',id:string,replacedBy?:string)=>hub.request<Receipt>('operation.invoke',{name:`neo.todo.${kind}`,input:{todoId:id,reason:'Explicit human outcome',...(replacedBy?{replacedBy}:{})}});
 const visible=(askId='ask')=>hub.request<{ok:true;entry:{todos:NeoTodo[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId}});
 const seed=(id:string,askId='ask')=>{
- store.addTodo(id,askId,{title:id,doneWhen:'Observed',check:null,instruction:null,named:null},1);
- store.updateTodo(store.getTodo(id)!,{state:'doing',report},2);
+ store.addTodo(id,askId,{title:id,doneWhen:'Observed',check:null,instruction:null,named:null,dependsOn:[]},1);
+ store.updateTodo(store.getTodo(id)!,{state:'doing',startedAt:2,report},2);
  sessions.create(id,{verb:'send',ref:{adapter:'hyperneo',id}});sessions.recordRef(id,{adapter:'hyperneo',id},2);
 };
 const card=(id:string)=>store.askQuestion(`${id}-card`,'ask',{kind:'reply',todoId:id,text:'Choose first',options:null,multiple:false,yesLabel:null,noLabel:null},4);

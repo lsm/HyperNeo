@@ -334,7 +334,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         todo: NeoTodo
       ) => {
         if (receipt.changed) deps.changed();
-        if (receipt.startNext) await advance();
+        if (receipt.startNext || (receipt.changed && receipt.todo?.state === 'done'))
+          await advance();
         return receipt.todo ?? todo;
       },
       ['receipt', 'todo'],

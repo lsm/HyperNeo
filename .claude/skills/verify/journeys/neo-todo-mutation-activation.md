@@ -1,5 +1,8 @@
 # Activate todo mutation operations (#8712 core 1c)
 
+The completion fixture records a prior start; an unstarted close is cancellation.
+Keep the unanswered-card refusal and rollback assertions unchanged.
+
 Use SKILL.md's guarded metadata-only wrapper with existing dependencies and a
 fresh absolute evidence directory:
 

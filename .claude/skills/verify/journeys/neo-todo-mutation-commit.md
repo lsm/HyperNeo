@@ -1,5 +1,8 @@
 # Build atomic todo mutation commits (#8712 core 1b)
 
+The completion fixture records a prior start; closing unstarted work is cancellation,
+covered separately by todo-chain-auto-start.md. Keep all stale-check/card assertions.
+
 Use the shared guarded metadata-only wrapper from SKILL.md. Run from the task
 checkout with existing dependencies and a fresh absolute evidence directory:
 

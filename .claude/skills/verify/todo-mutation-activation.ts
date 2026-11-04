@@ -68,6 +68,7 @@ try {
   result.fullReport={bytes:Buffer.byteLength(text),sha256:createHash('sha256').update(text).digest('hex')};
   const prior=events;
   store.addTodo('peer','ask',{title:'peer',doneWhen:'Pending evidence',check,instruction:null,named:null},3);
+  store.updateTodo(store.getTodo('peer')!,{startedAt:3},3);
   store.askQuestion('reply','ask',{kind:'reply',todoId:'peer',text:'Answer first',options:null,multiple:false,yesLabel:null,noLabel:null},4);
   const withCard=await visible();
   const blocked=await commit({kind:'close',todoId:'peer',reason:'Finished'});

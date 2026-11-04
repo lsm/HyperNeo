@@ -13,7 +13,7 @@ work status/send are synthetic: no files are deleted and no real worker runs.
 The real question-answer and chat RPCs answer a still-queued human_confirmed
 todo with yes, no, a choice selection, a reply, and a free-text answer to a
 yes/no card, covering todo, doing, blocked, failed and closed_unverified states. Each public ask read must show Done and its successor Doing, with exactly
-one dispatch, without running the scheduled refresh. Any recorded human answer satisfies the decision check; it records that an
+one dispatch, without running the scheduled refresh, including after a legacy cancellation card retires. Any recorded human answer satisfies the decision check; it records that an
 answer exists rather than granting permission for a particular follow-up action. The same question semantics apply on
 periodic refresh, so recorded historical answers recover after deployment.
 

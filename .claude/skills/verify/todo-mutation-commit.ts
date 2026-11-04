@@ -64,7 +64,7 @@ try {
   result.notificationsAfterCommit=true;
   result.fullReport={bytes:Buffer.byteLength(text),sha256:createHash('sha256').update(text).digest('hex')};
   const previous=store.getTodo('peer')!.check;
-  store.updateTodo(store.getTodo('peer')!,{check:{pack:'core',kind:'evidence',params:{path:join(run,'not-created')}}},3);
+  store.updateTodo(store.getTodo('peer')!,{startedAt:2,check:{pack:'core',kind:'evidence',params:{path:join(run,'not-created')}}},3);
   record=true; const prior=events;
   const stale=await commit({kind:'close',todoId:'peer',reason:'Finished'},{check:previous,result:{done:true}});
   assert(!stale.ok && stale.reason.startsWith('todo_changed:')); assert.equal(events,prior);
