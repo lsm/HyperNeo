@@ -14,6 +14,7 @@ const daemon: OperationCaller = { source: 'internal', role: 'neo' };
 function fixture(sendInputs?: unknown) {
   const delivered: string[] = [];
   const deliver = async (_ref: unknown, message: string) => {
+    if (message === 'Throw') throw new Error('transport lost');
     delivered.push(message);
     return { ok: true as const, value: { delivered: true } };
   };
@@ -104,6 +105,25 @@ describe('Neo and daemon sends say what they are', () => {
       value: { ok: false, reason: 'todo_required', notSent: true },
     });
     expect(delivered).toEqual([]);
+  });
+
+  test.each(['work.send', 'work.queue'])('%s records a thrown delivery', async (name) => {
+    const failed: unknown[] = [];
+    const { registry } = fixture({
+      accept: async () => 'input-1',
+      recordOutcome: async () => {},
+      recordFailure: async (id: string, error: unknown) => {
+        failed.push([id, String(error)]);
+      },
+    });
+    const reply = await invokeOperation(
+      registry,
+      name,
+      { ref, message: 'Throw', notice: true },
+      daemon
+    );
+    expect(reply.kind).toBe('failed');
+    expect(failed).toEqual([['input-1', 'Error: transport lost']]);
   });
 
   test('a daemon send is recorded with its todo and its delivery outcome', async () => {
