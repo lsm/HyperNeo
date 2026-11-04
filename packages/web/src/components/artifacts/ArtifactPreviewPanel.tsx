@@ -89,7 +89,10 @@ export function ArtifactPreviewPanel({
   }, [top, phone, suspended]);
   const dismiss = () => {
     if (session && !top) session.onClose();
-    else closeArtifactPreview();
+    else {
+      closeArtifactPreview();
+      session?.onSelect();
+    }
   };
   const dismissRef = useRef(dismiss);
   dismissRef.current = dismiss;

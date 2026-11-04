@@ -141,7 +141,7 @@ export function NeoLive() {
   const closeChat = useCallback(() => setChat(null), []);
   const openSession = (link: string, label?: string) => {
     if (!link.startsWith('/session/')) return window.open(link, '_blank', 'noopener');
-    artifactPreviewWorkspace.select(null);
+    if (columns && previewDesktop) artifactPreviewWorkspace.select(null);
     setSessionFocus(true);
     setChat({ sessionId: link.slice('/session/'.length), label });
   };
@@ -1202,7 +1202,7 @@ export function NeoLive() {
                 selected: sessionSelected,
                 onSelect: () => {
                   setSessionFocus(true);
-                  artifactPreviewWorkspace.select(null);
+                  if (artifactPreviewStack.value.length) artifactPreviewWorkspace.select(null);
                 },
                 onClose: closeChat,
                 children: (
