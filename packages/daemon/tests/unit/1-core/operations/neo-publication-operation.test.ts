@@ -55,7 +55,8 @@ describe('Neo publication without runtime input attribution', () => {
       getRootBinding: () => repo.defaultBinding(),
       hasProject: (id) => !!repo.getProject(id),
       publication: (conversation: string, id: string) => ledger.get(conversation, id),
-      lookupSession: (id: string) => (id === 'worker' ? 'found' : 'not_found'),
+      lookupSession: (id: string) =>
+        id === 'worker' || id === root.sessionId ? 'found' : 'not_found',
       sourceSession: () => sourceSession,
       append: async (input) => {
         if (held) await held;
@@ -69,6 +70,12 @@ describe('Neo publication without runtime input attribution', () => {
     });
   });
   afterEach(() => mailbox.close());
+  const rawPayload = () =>
+    (
+      mailbox.db.prepare('SELECT payload_json FROM neo_publications').get() as {
+        payload_json: string;
+      }
+    ).payload_json;
 
   test('published and retried messages tell the model no assistant text is needed unless a record was requested', async () => {
     const handler = createOperationMcpHandler(
@@ -226,6 +233,51 @@ describe('Neo publication without runtime input attribution', () => {
       publication: { links },
     });
     expect(ledger.list(conversationId)).toEqual([expect.objectContaining({ links })]);
+  });
+
+  test('session null is the same as no session', async () => {
+    const handler = createOperationMcpHandler(
+      createOperationRegistry([createNeoPublicationOperation(publish)]),
+      () => caller
+    );
+    const reply = JSON.parse(
+      (await handler({ name: 'neo.publication.publish', input: { ...draft, session: null } }))
+        .content[0].text
+    );
+    expect(reply).toMatchObject({ accepted: true, created: true });
+    expect(ledger.list(conversationId)[0].session).toBeUndefined();
+  });
+
+  test('Open never points at Neo: its own session is dropped, a worker is kept', async () => {
+    const own = await publish({ ...draft, session: root.sessionId }, caller);
+    expect(own).toMatchObject({ accepted: true, created: true });
+    expect(ledger.list(conversationId)[0].session).toBeUndefined();
+
+    sourceSession = root.sessionId;
+    await publish({ ...draft, requestId: 'send-two' }, caller);
+    expect(ledger.list(conversationId)[1].session).toBeUndefined();
+
+    await publish({ ...draft, requestId: 'send-three', session: 'worker' }, caller);
+    expect(ledger.list(conversationId)[2].session).toBe('worker');
+  });
+
+  test('a stored Neo session is hidden from readers and left in the row', async () => {
+    await publish({ ...draft, session: 'worker' }, caller);
+    const stored = JSON.stringify({ ...JSON.parse(rawPayload()), session: root.sessionId });
+    mailbox.db.prepare('UPDATE neo_publications SET payload_json = ?').run(stored);
+
+    expect(ledger.list(conversationId)[0].session).toBeUndefined();
+    expect(JSON.parse(rawPayload()).session).toBe(root.sessionId);
+  });
+
+  test('a retry of a row that stored a Neo session is the same send', async () => {
+    await publish(draft, caller);
+    const stored = JSON.stringify({ ...JSON.parse(rawPayload()), session: root.sessionId });
+    mailbox.db.prepare('UPDATE neo_publications SET payload_json = ?').run(stored);
+
+    expect(await publish(draft, caller)).toMatchObject({ accepted: true, created: false });
+    expect(ledger.list(conversationId)).toHaveLength(1);
+    expect(rawPayload()).toBe(stored);
   });
 
   test('rejects an unknown session without saving and accepts a corrected retry', async () => {

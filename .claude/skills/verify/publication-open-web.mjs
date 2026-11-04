@@ -8,6 +8,7 @@ const cases=[];
 try {
  for(const touch of [false,true])for(const theme of ['light','dark']) {
  const context=await browser.newContext({viewport:touch?{width:390,height:844}:{width:1280,height:900},hasTouch:touch,locale:'en-US',colorScheme:theme});
+ await context.addCookies([{name:'hyperneo_device',value:readFileSync(`${run}/data/local-rpc.credential`,'utf8').trim(),url:fixture.url}]);
  const page=await context.newPage();
  try {
  await page.addInitScript(theme=>{localStorage.setItem('theme',theme);window.nativeOpens=[];window.open=(link)=>{window.nativeOpens.push(link);return null;};},theme);
@@ -29,8 +30,8 @@ try {
  assert(Math.abs(position.x+position.width-(row.x+row.width))<=8);assert(position.y<bubble.y);
  await page.screenshot({path:`${run}/evidence/${theme}-${touch?'touch':'desktop'}-${entry.session.split(':')[0]}.png`,fullPage:true,animations:'disabled'});
  if(touch)await button.tap();else await button.click();
- if(entry.session==='local-worker' || entry.session==='space-session' || entry.session.startsWith('neo:')) {
- const heading=entry.session==='space-session'?'Space session':entry.session.startsWith('neo:')?'Synthetic Neo':'Local worker';
+ if(entry.session==='local-worker' || entry.session==='space-session') {
+ const heading=entry.session==='space-session'?'Space session':'Local worker';
  const pane=page.locator('.neo-session-pane');await pane.getByRole('heading',{name:new RegExp(heading)}).waitFor();
  await pane.getByRole('button',{name:'Back to Neo',exact:true}).click();await button.waitFor();
  if(!touch && theme==='light'){await button.focus();await button.press('Enter');await pane.getByRole('heading',{name:new RegExp(heading)}).waitFor();await pane.getByRole('button',{name:'Back to Neo',exact:true}).click();}
