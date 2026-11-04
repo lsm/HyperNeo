@@ -8,6 +8,7 @@ import { connectionState } from '../../lib/state.ts';
 import {
   artifactPreviewWorkspace,
   closeArtifactPreview,
+  openArtifactPreview,
 } from '../../lib/artifact-preview-store.ts';
 import { NeoLive } from '../NeoLive.tsx';
 import { testAskEntry, testTodo } from './neo-test-views.ts';
@@ -224,6 +225,53 @@ describe('Neo desktop panes', () => {
     expect(tab.textContent).toBe('Todo result');
     const panel = screen.getByRole('tabpanel', { name: tab.textContent ?? '' });
     expect(within(panel).getByTestId('neo-chat-panel').dataset.sessionId).toBe('result-session');
+    fireEvent.click(screen.getByRole('button', { name: 'Close chat' }));
+    expect(screen.queryByTestId('neo-chat-panel')).toBeNull();
+    expect(artifactPreviewWorkspace.state.value.open).toBe(false);
+    expect(screen.queryByRole('tablist')).toBeNull();
+  });
+
+  it('opening a session over a reference leaves no empty Work panel after the session closes', () => {
+    closeArtifactPreview();
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches:
+        query === '(min-width: 720px)' ||
+        (query === '(min-width: 1120px)' && window.innerWidth >= 1120),
+    }));
+    const { model } = mount();
+    act(() => {
+      openArtifactPreview({
+        kind: 'reference',
+        source: { kind: 'publication', id: 'synthetic-publication' },
+        reference: '~/HyperNeo/synthetic.html',
+      });
+    });
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [
+            testAskEntry('result', 'Fictional result', {
+              state: 'done',
+              doneCount: 1,
+              todos: [testTodo('result', { state: 'done', link: '/session/result-session' })],
+            }),
+          ],
+        },
+      };
+    });
+    fireEvent.click(
+      within(screen.getByRole('article', { name: 'Fictional result', hidden: true })).getByRole(
+        'button',
+        {
+          name: '全部 · 1',
+          hidden: true,
+        }
+      )
+    );
+    fireEvent.click(screen.getByRole('button', { name: '打开 Todo result' }));
+    expect(screen.getByTestId('neo-chat-panel').dataset.sessionId).toBe('result-session');
     fireEvent.click(screen.getByRole('button', { name: 'Close chat' }));
     expect(screen.queryByTestId('neo-chat-panel')).toBeNull();
     expect(artifactPreviewWorkspace.state.value.open).toBe(false);
