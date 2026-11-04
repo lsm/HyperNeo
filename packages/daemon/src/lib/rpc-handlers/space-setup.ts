@@ -122,6 +122,7 @@ import { SpaceGoalService } from '../goals/service.ts';
 import { mergeEvolutionPolicy } from '../evolution/scope-service.ts';
 import type { RPCHandlerDependencies } from './index.ts';
 import type { SpaceRpcHost } from './space-rpc.ts';
+import { createSpaceSessionPort } from '../space/runtime/space-session-port.ts';
 import type { FamilyOperationContext } from './family-operations/context.ts';
 import { collectSpaceFamilyOperations, createSessionSpacePort } from './family-operations/space.ts';
 import { setupSpaceMcpHandlers } from './space-mcp-handlers.ts';
@@ -1420,6 +1421,12 @@ export async function createSpaceRpc(deps: SpaceRpcDependencies, host: SpaceRpcH
   const services = await setupSpaceServices(deps, {
     spaceOperationRegistryProvider: () => registryProvider(),
   });
+  deps.db.spaceSessions = createSpaceSessionPort(
+    deps.db.getDatabase(),
+    services.spaceTaskRepo,
+    services.nodeExecutionRepo,
+    services.longHorizonAgentRepo
+  );
   const agents = setupSpaceTaskAgents(deps, services, host);
   const { taskAgentManager, directTaskExecutionRepo, directTaskWorkerResolver } = agents;
   const family = {

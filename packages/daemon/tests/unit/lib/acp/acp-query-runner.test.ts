@@ -226,11 +226,6 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
         reopenDeliveryByUuid: mock(() => 'delivery-row-1'),
         markDeliveryRetryableByUuid: mock(() => null),
       })),
-      getNodeExecutionRepo: mock(() => ({
-        getByAgentSessionId: mock(() => null),
-        getById: mock(() => null),
-      })),
-      getSpaceTaskRepo: mock(() => ({ getTask: mock(() => null) })),
     } as unknown as Database,
     messageHub: { event: mock(() => {}) } as unknown as MessageHub,
     internalEventBus: { publishAsync: mock(async () => {}) },

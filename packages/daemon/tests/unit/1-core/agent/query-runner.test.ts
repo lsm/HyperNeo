@@ -160,14 +160,6 @@ describe('QueryRunner', () => {
       updateSession: updateSessionSpy,
       getSDKMessages: getSDKMessagesSpy,
       updateMessageStatus: updateMessageStatusSpy,
-      getNodeExecutionRepo: mock(() => ({
-        getByAgentSessionId: (sessionId: string) =>
-          sessionId === 'space:s1:task:t1:exec:e1' ? { id: 'exec-1' } : null,
-      })),
-      getSpaceTaskRepo: mock(() => ({
-        getTask: (taskId: string) =>
-          taskId === 't1' ? { id: 't1', spaceId: 's1', workflowRunId: 'run-1' } : null,
-      })),
     } as unknown as Database;
 
     publishSpy = mock(async () => {});

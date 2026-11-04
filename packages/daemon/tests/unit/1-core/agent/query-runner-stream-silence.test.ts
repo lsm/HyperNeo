@@ -144,8 +144,6 @@ describe('QueryRunner stream silence watchdog', () => {
         updateSession: () => {},
         getSDKMessages: () => ({ messages: [], hasMore: false }),
         updateMessageStatus: () => {},
-        getNodeExecutionRepo: () => ({ getByAgentSessionId: () => null }),
-        getSpaceTaskRepo: () => ({ getTask: () => null }),
       } as unknown as Database,
       messageHub: {
         event: async () => {},

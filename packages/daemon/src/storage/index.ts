@@ -44,11 +44,9 @@ import {
 } from './repositories/sdk-message-repository.ts';
 import type { SdkMessageWriteMethod } from './repositories/sdk-message-writes.ts';
 import { SettingsRepository } from './repositories/settings-repository.ts';
+import type { SpaceSessionPort } from '../lib/agent/space-session-port.ts';
 import { JobQueueRepository } from './repositories/job-queue-repository.ts';
 import { AppMcpServerRepository } from './repositories/app-mcp-server-repository.ts';
-import { SpaceTaskRepository } from './repositories/space-task-repository.ts';
-import { NodeExecutionRepository } from './repositories/node-execution-repository.ts';
-import { SpaceLongHorizonAgentRepository } from './repositories/space-long-horizon-agent-repository.ts';
 import { McpEnablementRepository } from './repositories/mcp-enablement-repository.ts';
 import { SkillRepository } from './repositories/skill-repository.ts';
 import { WorkspaceHistoryRepository } from './repositories/workspace-history-repository.ts';
@@ -113,11 +111,9 @@ export class Database {
   private sessionRepo!: SessionRepository;
   private sdkMessageRepo!: SDKMessageRepository;
   private settingsRepo!: SettingsRepository;
+  spaceSessions?: SpaceSessionPort;
   private jobQueueRepo!: JobQueueRepository;
   private appMcpServerRepo!: AppMcpServerRepository;
-  private spaceTaskRepo!: SpaceTaskRepository;
-  private nodeExecutionRepo!: NodeExecutionRepository;
-  private longHorizonAgentRepo!: SpaceLongHorizonAgentRepository;
   private mcpEnablementRepo!: McpEnablementRepository;
   private skillRepo!: SkillRepository;
   private workspaceHistoryRepo!: WorkspaceHistoryRepository;
@@ -174,9 +170,6 @@ export class Database {
     this.sessionRepo = new SessionRepository(db);
     this.sdkMessageRepo = new SDKMessageRepository(db, reactiveDb);
     this.settingsRepo = new SettingsRepository(db);
-    this.spaceTaskRepo = new SpaceTaskRepository(db, reactiveDb);
-    this.nodeExecutionRepo = new NodeExecutionRepository(db, reactiveDb);
-    this.longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
     this.jobQueueRepo = new JobQueueRepository(db);
     this.appMcpServerRepo = new AppMcpServerRepository(db, reactiveDb);
     this.mcpEnablementRepo = new McpEnablementRepository(db, reactiveDb);
@@ -671,18 +664,6 @@ export class Database {
     ...args: Parameters<SDKMessageRepository[K]>
   ): Promise<ReturnType<SDKMessageRepository[K]>> {
     return this.sdkMessageRepo.write(method, ...args);
-  }
-
-  getSpaceTaskRepo(): SpaceTaskRepository {
-    return this.spaceTaskRepo;
-  }
-
-  getNodeExecutionRepo(): NodeExecutionRepository {
-    return this.nodeExecutionRepo;
-  }
-
-  getLongHorizonAgentRepo(): SpaceLongHorizonAgentRepository {
-    return this.longHorizonAgentRepo;
   }
 
   getDatabasePath(): string {

@@ -1,7 +1,6 @@
-import { NON_DELEGATING_GENERAL_PROMPT } from '@hyperneo/prompts';
 import type { AgentSessionInit, PromptProvenanceInit } from '../agent/agent-session.ts';
+import { NON_DELEGATING_GENERAL_AGENT } from '../agent/non-delegating-agent.ts';
 import type {
-  AgentDefinition,
   Space,
   SpaceLongHorizonAgent,
   SpaceTask,
@@ -25,15 +24,6 @@ export {
 export { buildCustomAgentTaskMessage } from './task-message.ts';
 
 export const DEFAULT_CUSTOM_AGENT_MODEL = 'claude-sonnet-4-6';
-
-export const NON_DELEGATING_GENERAL_AGENT: AgentDefinition = {
-  description:
-    'Investigate a focused question using files, search, shell commands, and web sources. Complete the assigned work directly; do not delegate it to another agent.',
-  tools: ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'Skill', 'ToolSearch'],
-  disallowedTools: ['Agent', 'Task', 'TaskOutput', 'TaskStop'],
-  prompt: NON_DELEGATING_GENERAL_PROMPT,
-  model: 'inherit',
-};
 
 const log = new Logger('custom-agent');
 
