@@ -315,7 +315,7 @@ export function requireNeoProjectTarget(
   caller: OperationCaller,
   inNeoProject: (sessionId: string) => boolean
 ): { value: SendInput } | { reason: SendResult } {
-  return caller.role === 'neo' && !inNeoProject(input.sessionId)
+  return caller.role === 'neo' && caller.source === 'mcp' && !inNeoProject(input.sessionId)
     ? {
         reason: {
           kind: 'rejected',

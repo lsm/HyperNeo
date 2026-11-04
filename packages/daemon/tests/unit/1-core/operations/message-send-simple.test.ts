@@ -380,6 +380,12 @@ describe('Neo message.send stays in its project', () => {
     );
   });
 
+  test('the Space driver delivers a Neo work.send through message.send', async () => {
+    expect(await send('space-agent', { ...neo, source: 'internal' })).toMatchObject({
+      value: { kind: 'accepted' },
+    });
+  });
+
   test('a worker still reports to any session', async () => {
     expect(await send('other-worker', { source: 'mcp', sessionId: 'worker' })).toMatchObject({
       value: { kind: 'accepted' },
