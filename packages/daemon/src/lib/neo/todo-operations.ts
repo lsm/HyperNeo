@@ -511,7 +511,7 @@ export function planNeoTodoClose(
     value: {
       todo,
       patch: {
-        state: todo.startedAt === null ? 'removed' : 'done',
+        state: todo.startedAt === null && todo.state !== 'done' ? 'removed' : 'done',
         reason: input.reason,
         evidence: input.reason,
         finishedAt: now,
