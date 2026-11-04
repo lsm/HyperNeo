@@ -39,6 +39,7 @@ describe('GitHub cursor persistence extraction', () => {
         pass: true,
         mainThreadMovementClaim: false,
         publicRpc: {
+          mainCursorUpdates: 0,
           cursorResetAndUnrelatedFieldsPreserved: true,
           disableDoesNotRewriteCursor: true,
           savedProjectionMatchesCommit: true,

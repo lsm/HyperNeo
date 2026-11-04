@@ -8747,6 +8747,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
 
   test('space.github.setPollingEnabled flips global capability and starts timer', async () => {
     const db = setupDb();
+    seedRpcSpace(db);
     const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
     const { clientHub, hub, ready } = setupHubPair();
     await ready;
@@ -8975,6 +8976,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
 
   test('space.github.setPollingEnabled false clears the timer when no polling repos remain', async () => {
     const db = setupDb();
+    seedRpcSpace(db);
     const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
     const { clientHub, hub, ready } = setupHubPair();
     await ready;
@@ -9010,6 +9012,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
 
   test('space.github.setPollingEnabled(false) flips the global capability off when no polling repos remain', async () => {
     const db = setupDb();
+    seedRpcSpace(db);
     const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
     const { clientHub, hub, ready } = setupHubPair();
     await ready;
@@ -9043,10 +9046,16 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
 
   test('space.github.setPollingEnabled persists per-space intent independent of polling rows', async () => {
     const db = setupDb();
+    seedRpcSpace(db);
     const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
     const { clientHub, hub, ready } = setupHubPair();
     await ready;
-    const configStore = new RecordingConfigStore({ globallyEnabled: true, polling: false });
+    const configStore = new SqliteExtensionConfigStore(db);
+    await configStore.setGlobalConfig('github', {
+      source: 'github',
+      globallyEnabled: true,
+      capabilities: { rpcConfig: true, polling: false },
+    });
     const context = {
       publisher: { publish: async () => {} },
       config: configStore,
@@ -9078,6 +9087,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
 
   test('space.github.setPollingEnabled(true) skips repos with webhook delivery configured (manual or auto)', async () => {
     const db = setupDb();
+    seedRpcSpace(db);
     const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
     const { clientHub, hub, ready } = setupHubPair();
     await ready;
