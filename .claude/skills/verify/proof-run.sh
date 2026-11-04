@@ -4,7 +4,9 @@ EVIDENCE=$1
 PROOF=$2
 shift 2
 [[ "$EVIDENCE" = /* ]] || { echo 'Evidence directory must be absolute'; exit 2; }
-bash "$(dirname "${BASH_SOURCE[0]}")/resource-check.sh"
+if [[ "$(uname)" = Darwin ]]; then
+  bash "$(dirname "${BASH_SOURCE[0]}")/resource-check.sh"
+fi
 mkdir "$EVIDENCE"
 PROOF_TMP_ROOT=${TMPDIR:-/private/tmp}
 RUN=$(mktemp -d "${PROOF_TMP_ROOT%/}/${VERIFY_PROOF_PREFIX:-hyperneo-proof-}XXXXXX")
