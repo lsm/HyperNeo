@@ -338,6 +338,29 @@ describe('cancelled prerequisites', () => {
     }
   });
 
+  test('approval never waits on a replacement that waits for the dependent', async () => {
+    const { db, store, invoke, step, runner, work } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Replacement cycle',
+        request: 'A, then D; B replaces A.',
+        todos: [
+          step('A', []),
+          { ...step('D', [0]), ...work, start: true },
+          { ...step('B', []), ...work, start: true },
+        ],
+      });
+      const [a, d, b] = opened.todos;
+      await invoke('neo.todo.remove', { todoId: a.id, reason: 'Replaced.', replacedBy: b.id });
+      await invoke('neo.todo.edit', { todoId: b.id, after: [d.id] });
+      store.answerQuestion(card(store, d)!, [d.id], 'button', Date.now());
+      await runner.refresh(() => {});
+      expect(store.getTodo(d.id)).toMatchObject({ state: 'doing', dependsOn: [] });
+    } finally {
+      db.close();
+    }
+  });
+
   test('approving a cancelled prerequisite keeps waiting on the other prerequisites', async () => {
     const { db, store, invoke, step, runner, sent, work } = setup();
     try {
