@@ -156,6 +156,7 @@ describe('todo dependencies', () => {
         await invoke('neo.todo.edit', { todoId: second.id, after: [] });
         expect(store.listQuestions(second.askId).filter((q) => q.state === 'open')).toHaveLength(1);
         store.answerQuestion(card!, [second.id], 'button', Date.now());
+        await invoke('neo.todo.edit', { todoId: second.id, after: [] });
         await complete(runner, store.getTodo(first.id)!);
         expect(store.getTodo(second.id)?.state).toBe('doing');
         await runner.refresh(() => {});

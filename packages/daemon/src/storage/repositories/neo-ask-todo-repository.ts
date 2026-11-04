@@ -729,9 +729,24 @@ export class NeoAskTodoRepository {
     if (!current) return { todo: null, startNext: null };
     this.pruneQuestions(current.askId, now);
     if (current.state === 'removed') return { todo: current, startNext: null };
+    const independent =
+      change.dependsOn?.length === 0 &&
+      neoTodoDependencyNodes(this.listFamilyTodos(current.askId)).some(
+        (node) => node.id === current.id && !!node.dependsOn?.length
+      );
     return recomputeTodoState(
       () => this.stateFacts(current, change, judgement),
-      (plan) => ({ todo: this.writeTodo(current, plan.patch, now)!, startNext: plan.startNext }),
+      (plan) => {
+        let todo = this.writeTodo(current, plan.patch, now)!;
+        if (
+          independent &&
+          todo.startedAt === null &&
+          todo.instruction &&
+          this.joinStartQuestion(todo, now)
+        )
+          todo = this.updateTodo(todo, {}, now);
+        return { todo, startNext: plan.startNext };
+      },
       now
     );
   }

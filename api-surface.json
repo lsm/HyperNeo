@@ -40733,7 +40733,7 @@
             "type": "array"
           },
           "after": {
-            "description": "Replace the todo ids this todo waits for; [] lets it run alongside the others.",
+            "description": "Replace the todo ids this todo waits for; [] makes it independent. Clearing an unstarted dependent requires its Start approval before dispatch.",
             "items": {
               "minLength": 1,
               "type": "string"

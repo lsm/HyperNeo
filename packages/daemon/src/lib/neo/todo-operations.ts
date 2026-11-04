@@ -303,7 +303,9 @@ const Edit = z.object({
     .array(Text)
     .max(20)
     .optional()
-    .describe('Replace the todo ids this todo waits for; [] lets it run alongside the others.'),
+    .describe(
+      'Replace the todo ids this todo waits for; [] makes it independent. Clearing an unstarted dependent requires its Start approval before dispatch.'
+    ),
 });
 type EditPlan = Omit<z.infer<typeof Edit>, 'hold'> & { hold?: string | null };
 
