@@ -44,14 +44,14 @@ export function neoTodoDependenciesAfterApproval(
   todoId: string
 ): string[] {
   const cancelled = neoTodoCancelledDependencies(todos, todoId);
-  const live = (id: string | null) =>
-    todos.some((todo) => todo.id === id && todo.state !== 'removed');
+  const usable = (id: string | null) =>
+    !!id && typeof planNeoTodoDependencies(todos, todoId, [id]) !== 'string';
   return [
     ...new Set(
       dependencies(todos, todoId).flatMap((id) => {
         const gone = cancelled.find((todo) => todo.id === id);
         if (!gone) return [id];
-        return gone.replacedBy && live(gone.replacedBy) ? [gone.replacedBy] : [];
+        return gone.replacedBy && usable(gone.replacedBy) ? [gone.replacedBy] : [];
       })
     ),
   ];

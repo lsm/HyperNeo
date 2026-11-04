@@ -347,12 +347,14 @@ describe('cancelled prerequisites', () => {
         todos: [
           step('A', []),
           { ...step('D', [0]), ...work, start: true },
-          { ...step('B', []), ...work, start: true },
+          { ...step('B', []), ...work },
         ],
       });
       const [a, d, b] = opened.todos;
       await invoke('neo.todo.remove', { todoId: a.id, reason: 'Replaced.', replacedBy: b.id });
-      await invoke('neo.todo.edit', { todoId: b.id, after: [d.id] });
+      expect(await invoke('neo.todo.edit', { todoId: b.id, after: [d.id] })).toMatchObject({
+        ok: true,
+      });
       store.answerQuestion(card(store, d)!, [d.id], 'button', Date.now());
       await runner.refresh(() => {});
       expect(store.getTodo(d.id)).toMatchObject({ state: 'doing', dependsOn: [] });
