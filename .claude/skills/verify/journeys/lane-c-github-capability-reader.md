@@ -9,7 +9,7 @@ measuring. Never touch live data, credentials or port 8399.
 Drive actual `space.github.setPollingEnabled` requests. Reject configured-row,
 Space-intent and session-scope capability SELECTs on the main connection. Verify
 global capability and saved config after public readback. The separate timer
-helper remains for watch/unwatch. The public polling timer caller is migrated
+helper now serves all three timer callers; see their separate journeys. The public polling timer caller is migrated
 separately under #9651; its Space-only proof is `lane-c-github-timer-reader.md`.
 The capability audit refreshes its sibling-code pin without changing the owned
 198-line capability subtree. Never claim a full no-SQL-main result. Other read/public/runtime closure is not audited here.
@@ -29,7 +29,7 @@ and parsing errors; command contracts are pinned by the construction journey.
 Count complete reader/query/mapper modules, both touched capability helpers and
 the queue owner and tail field. Count and pin the same existing global-config getter/setter
 interface roots separately as not audited transitively. No new dependency
-exclusions. Keep the scope at most 200 lines; timer wiring follows after merge.
+exclusions. Keep the scope at most 200 lines; timer callers have separate scoped proofs.
 `lane-c-github-capability-measure.cjs` records 175 owned lines, the same 22
 config bridge lines and one smoke registration: 198 known, with no data exclusions.
 Refresh the two existing capability interface pins and contracts in the writer
