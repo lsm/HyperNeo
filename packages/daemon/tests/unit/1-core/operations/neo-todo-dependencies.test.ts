@@ -107,17 +107,70 @@ function setup() {
     doneWhen: 'Result verified',
     ...(after ? { after } : {}),
   });
-  return { db, store, sessions, invoke, step, runner, sent };
+  const target = { verb: 'send' as const, ref: { adapter: 'hyperneo', id: 'w' } };
+  const work = { target, instruction: 'Perform the approved step.' };
+  const seedLegacy = (todo: NeoTodo) => {
+    store.updateTodo(todo, { state: 'blocked', blockedBy: 'question' }, Date.now());
+    store.askQuestion(
+      crypto.randomUUID(),
+      todo.askId,
+      {
+        text: 'Start legacy step?',
+        kind: 'start',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: [todo.id],
+      },
+      Date.now()
+    );
+  };
+  return { db, store, sessions, invoke, step, runner, sent, target, work, seedLegacy };
 }
 
+const complete = (runner: ReturnType<typeof createNeoTodoRunner>, todo: NeoTodo) =>
+  runner.recompute(todo, {}, Date.now(), { state: 'done', evidence: 'Completed.' });
+
 describe('todo dependencies', () => {
+  test.each([false, true])(
+    'editing a dependent to independent asks before dispatch; explicit=%s',
+    async (explicit) => {
+      const { db, store, invoke, step, runner, sent, work } = setup();
+      try {
+        const opened = await invoke('neo.ask.open', {
+          title: 'Edit ordering',
+          request: 'Complete this chain.',
+          todos: [
+            { ...step('First'), ...work, start: true },
+            { ...step('Second', explicit ? [0] : undefined), ...work },
+          ],
+        });
+        const [first, second] = opened.todos;
+        expect((await invoke('neo.todo.edit', { todoId: second.id, after: [] })).ok).toBe(true);
+        await runner.refresh(() => {});
+        expect(store.getTodo(second.id)).toMatchObject({ state: 'blocked', blockedBy: 'question' });
+        const card = store.listQuestions(second.askId).find((q) => q.state === 'open');
+        expect(card?.startTodos).toEqual([second.id]);
+        expect(sent).toHaveLength(1);
+        await invoke('neo.todo.edit', { todoId: second.id, after: [] });
+        expect(store.listQuestions(second.askId).filter((q) => q.state === 'open')).toHaveLength(1);
+        store.answerQuestion(card!, [second.id], 'button', Date.now());
+        await complete(runner, store.getTodo(first.id)!);
+        expect(store.getTodo(second.id)?.state).toBe('doing');
+        await runner.refresh(() => {});
+        expect(sent).toHaveLength(2);
+      } finally {
+        db.close();
+      }
+    }
+  );
+
   test.each(['parent', 'sibling', 'linked-parent', 'child'] as const)(
     'a split dependent respects the scope of a %s question',
     async (scope) => {
-      const { db, store, invoke, step, runner, sent } = setup();
+      const { db, store, invoke, step, runner, sent, work, seedLegacy } = setup();
       try {
-        const target = { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } };
-        const work = { target, instruction: 'Complete the approved repository step.' };
         const opened = await invoke('neo.ask.open', {
           title: 'Parent decision scope',
           request: 'Complete both repositories after any applicable decision.',
@@ -149,14 +202,7 @@ describe('todo dependencies', () => {
           },
           Date.now()
         );
-        store.updateTodo(second, { state: 'blocked', blockedBy: 'question' }, Date.now());
-        const legacy = {
-          ...question,
-          kind: 'start' as const,
-          todoId: null,
-          startTodos: [second.id],
-        };
-        store.askQuestion('legacy-scope', second.askId, legacy, Date.now());
+        seedLegacy(second);
         db.prepare("UPDATE neo_todos SET state = 'done', finished_at = ? WHERE id = ?").run(
           Date.now(),
           first.id
@@ -180,12 +226,8 @@ describe('todo dependencies', () => {
   test.each([false, true])(
     'removing an unstarted predecessor releases its dependent but not independent work; explicit=%s',
     async (explicit) => {
-      const { db, store, invoke, step, runner, sent } = setup();
+      const { db, store, invoke, step, runner, sent, work } = setup();
       try {
-        const work = {
-          target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } },
-          instruction: 'Complete this step.',
-        };
         const opened = await invoke('neo.ask.open', {
           title: 'Cancelled prerequisite',
           request: 'Complete the dependent if its prerequisite is closed.',
@@ -229,10 +271,8 @@ describe('todo dependencies', () => {
   test.each(chainModes)(
     'authorized dependency chain advances without extra Start cards; root=%s',
     async (mode) => {
-      const { db, store, sessions, invoke, step, runner, sent } = setup();
+      const { db, store, sessions, invoke, step, runner, sent, target, work, seedLegacy } = setup();
       try {
-        const target = { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } };
-        const work = { target, instruction: 'Perform the next approved step.' };
         const repo = (name: string) =>
           mode.startsWith('split') ? { named: { repository: `synthetic/${name}` } } : {};
         const opened = await invoke('neo.ask.open', {
@@ -252,38 +292,11 @@ describe('todo dependencies', () => {
           db.prepare(
             "UPDATE neo_todos SET state = CASE WHEN id = ? THEN 'done' ELSE state END, check_json = NULL"
           ).run(first.id);
-        if (mode.includes('legacy')) {
-          store.updateTodo(
-            second,
-            {
-              state: 'blocked',
-              blockedBy: 'question',
-              blockedReason: 'Waiting for the human to start it.',
-            },
-            Date.now()
-          );
-          store.askQuestion(
-            'legacy-start',
-            second.askId,
-            {
-              text: 'Start PR2?',
-              kind: 'start',
-              options: null,
-              multiple: false,
-              noLabel: null,
-              yesLabel: null,
-              startTodos: [second.id],
-            },
-            Date.now()
-          );
-        } else expect(store.listQuestions(first.askId)).toHaveLength(mode === 'unstarted' ? 1 : 0);
+        if (mode.includes('legacy')) seedLegacy(second);
+        else expect(store.listQuestions(first.askId)).toHaveLength(mode === 'unstarted' ? 1 : 0);
         if (mode === 'extend-legacy')
           await invoke('neo.todo.add', { askId: first.askId, ...step('Independent', []), ...work });
-        if (mode !== 'completed-legacy')
-          await runner.recompute(store.getTodo(first.id)!, {}, Date.now(), {
-            state: 'done',
-            evidence: 'PR1 merged.',
-          });
+        if (mode !== 'completed-legacy') await complete(runner, store.getTodo(first.id)!);
         await (mode === 'completed-legacy' ? runner.refresh(() => {}) : runner.advance());
         expect(store.getTodo(second.id)?.state).toBe('doing');
         expect(store.getTodo(third.id)?.state).toBe('todo');
@@ -294,10 +307,7 @@ describe('todo dependencies', () => {
             .filter((q) => q.state !== 'retired')
             .map((q) => q.state)
         ).toEqual(mode === 'extend-legacy' ? ['open'] : []);
-        await runner.recompute(store.getTodo(second.id)!, {}, Date.now(), {
-          state: 'done',
-          evidence: 'PR2 merged.',
-        });
+        await complete(runner, store.getTodo(second.id)!);
         await runner.refresh(() => {});
         expect(store.getTodo(third.id)?.state).toBe('doing');
         expect(sessions.readRef(third.id)).toEqual(target.ref);
@@ -311,12 +321,8 @@ describe('todo dependencies', () => {
   );
 
   test('an independent unapproved todo still asks and an explicit hold still stops a dependency', async () => {
-    const { db, store, invoke, step, runner, sent } = setup();
+    const { db, store, invoke, step, runner, sent, work } = setup();
     try {
-      const work = {
-        target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } },
-        instruction: 'Do the work.',
-      };
       const opened = await invoke('neo.ask.open', {
         title: 'Unapproved',
         request: 'Consider work.',
@@ -332,10 +338,7 @@ describe('todo dependencies', () => {
       });
       expect(added.ok).toBe(true);
       await invoke('neo.todo.hold', { todoId: added.todo.id, reason: 'Human said wait.' });
-      await runner.recompute(opened.todos[0], {}, Date.now(), {
-        state: 'done',
-        evidence: 'Already satisfied.',
-      });
+      await complete(runner, opened.todos[0]);
       await runner.refresh(() => {});
       expect(store.getTodo(added.todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'held' });
       expect(sent).toHaveLength(0);

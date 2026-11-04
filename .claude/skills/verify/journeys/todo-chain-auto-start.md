@@ -1,26 +1,22 @@
 # Approved dependency chains do not ask Start again
 
-Use pinned Bun 1.4.2 and SKILL.md isolation; createLocalSocket authenticates the fresh daemon.
-The helper owns a synthetic Codex socket and refusing GitHub stub; no provider/model is used.
-
+Use pinned Bun 1.4.2 and SKILL.md isolation/authentication; no provider or model is used.
+The helper owns a synthetic Codex socket, refusing GitHub stub, and disposable daemon.
 ```sh
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence .claude/skills/verify/todo-plan-recompute.ts chain-verify
 ```
-
-The registered MCP handler admits neo.ask.open; public neo.ask.read exposes client cards.
-Start only step one of three using the same worker; after and late neo.todo.add steps dispatch once.
-Repeated refresh never duplicates sends; independent start:false still asks; explicit holds stop work.
-Seed old Start cards only in the synthetic DB. Real edits and independent additions release stale members.
-Persist the predecessor done and descendants checkless, reseed the stale card, then restart and refresh.
-Require card retirement and exactly one successor dispatch, without a new predecessor write or checker.
-Run chain-edges and chain-check in separate fresh evidence directories for split-repository recovery.
-A real close RPC retires the sibling's legacy card and dispatches once without full refresh.
-Remove an unstarted prerequisite or pass its check: after authorizes the dependent without a Start answer.
-Unrelated independent work retains its Start card; units also cover implicit ordering after removal.
-Run chain-parent separately: a real parent decision holds its child until a public human answer, then one send.
-The follow-through unit contracts require a fresh reminder interval after a human answer.
-Scope regressions keep sibling and unrelated linked questions local. Move independent work by editing
-its check to an existing sibling repository; after refresh only the destination card lists it, with no dispatch.
+The registered MCP handler admits work; public neo.ask.read exposes client cards.
+Require one dispatch per step in a three-step same-worker chain and late neo.todo.add; refresh never duplicates.
+Independent start:false asks; explicit holds stop work. Real edits/additions release synthetic stale-card members.
+Persist a done predecessor and checkless descendants, reseed the stale card, restart and refresh.
+Require retirement and one successor dispatch without a new predecessor write or checker.
+Run chain-edges and chain-check separately: a close RPC releases the sibling's legacy card without full refresh.
+Removed prerequisites and passing checks authorize dependents without a Start answer; unrelated independents still ask.
+Unit contracts cover implicit removal ordering. Run chain-parent: a real parent decision holds its child
+until a public human answer, then one dispatch; scope contracts keep sibling/unrelated linked questions local.
+Follow-through contracts require a fresh reminder interval after a human answer.
+Move independent work by editing its check to a sibling repository: only the destination card lists it; no dispatch.
+Editing an unstarted dependent to after:[] must ask; repeated edits reuse its card, and a human answer authorizes it.
 Preserve observed.json/proof.log outside the worktree; require wrapper exit 0 and clean shutdown.
 Setup awaits session persistence and sets disableWorktrees:true. Never edit live todos.
-Proof covers public cards, daemon state and synthetic transport; browser/real worker/model execution is unverified.
+Public cards/state and synthetic transport are covered; browser/real worker/model execution remain unverified.
