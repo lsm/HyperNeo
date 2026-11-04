@@ -1,3 +1,4 @@
+import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/runtime.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { publishCodingHumanMerge } from '../../../packages/daemon/src/lib/neo/packs/coding/human-merge-notice.ts';
 import { neoPublicationWrites } from '../../../packages/daemon/src/storage/repositories/neo-publication-repository.ts';
@@ -49,6 +50,7 @@ import{readFileSync,appendFileSync,existsSync,writeFileSync}from'node:fs';import
 `,{mode:0o700});
 const network=globalThis.fetch;globalThis.fetch=(()=>{throw new Error('External HTTP forbidden');}) as typeof fetch;
 const config=getConfig({port:0,host:'127.0.0.1',dbPath:join(run,'data/daemon.db')});
+let neo:ReturnType<typeof createNeoService>|undefined;
 let app:Awaited<ReturnType<typeof createDaemonApp>>|undefined,transport:WebSocketClientTransport|undefined,terminal=false;
 const holds:string[]=[];let unsubscribe=()=>{};
 const evidence:Record<string,unknown>={verified:false,executorActivated:false};
@@ -60,10 +62,11 @@ try{
  assert((await rpc('pack.preferences.set',{pack:'coding',scope:{kind:'global',key:''},key:'watchedRepos',value:['synthetic/merge']})).ok);
  const db=app.db.getDatabase(),ledger=new CodingPrLedgerRepository(db);
  const conversation='20000000-0000-4000-8000-000000009601',root=`neo:${conversation}`;
- if(humanDefault){
+ if(humanDefault||ciRetry){
  db.prepare("INSERT INTO sessions(id,title,workspace_path,created_at,last_active_at,status,type,config,metadata) VALUES (?,'Synthetic Neo',?,'2026-11-03','2026-11-03','active','worker','{}','{}')").run(root,run);
  new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
  }
+ if(ciRetry){await app.db.updateGlobalSettings({neo:{packs:[]}});neo=createNeoService(app.db,app.sessionManager,app.messageHub,app.internalEventBus);}
  let humanDelivery=false;
  if(humanDefault){
  const prepare=db.prepare.bind(db),runSql=db.run.bind(db);
@@ -76,7 +79,7 @@ try{
  const humanNotices:string[]=[];
  const notices:string[]=[];let deliver=true,rejectSignoff=true;
  const snapshot=()=>JSON.parse(readFileSync(join(run,'fixture.json'),'utf8'));
- const makePack=()=>createCodingPack({database:()=>db,readPrs:async()=>[],readClaudeOwners:async()=>[],todoPrs:new CodingTodoPrRepository(db),prLedger:ledger,prEvents:new CodingPrEventRepository(db),prSweep:new CodingPrSweepRepository(db),projectRepos:()=>['synthetic/merge'],prSweepDeps:{human:async(key:string,text:string)=>humanDelivery&&publishCodingHumanMerge({conversation:()=>new NeoRepository(db).conversationId(),append:input=>app!.db.gateway.call(neoPublicationWrites,'append',input),notify:()=>{humanNotices.push(text);}},key,text),tell:async(_owner,_key,text)=>{if(external&&deliver){notices.push(text);return true;}return false;},wake:async(_key,text)=>{if(rejectSignoff&&text.includes('requires human sign-off')){rejectSignoff=false;throw new Error('Synthetic mailbox unavailable');}if(deliver)notices.push(text);return deliver;}},readLedgerRepo:async()=>{
+ const makePack=()=>createCodingPack({database:()=>db,readPrs:async()=>[],readClaudeOwners:async()=>[],todoPrs:new CodingTodoPrRepository(db),prLedger:ledger,prEvents:new CodingPrEventRepository(db),prSweep:new CodingPrSweepRepository(db),projectRepos:()=>['synthetic/merge'],prSweepDeps:{human:async(key:string,text:string)=>humanDelivery&&publishCodingHumanMerge({conversation:()=>new NeoRepository(db).conversationId(),append:input=>app!.db.gateway.call(neoPublicationWrites,'append',input),notify:()=>{humanNotices.push(text);}},key,text),tell:async(_owner,_key,text)=>{if(external&&deliver){notices.push(text);return true;}return false;},wake:async(key,text)=>{if(rejectSignoff&&text.includes('requires human sign-off')){rejectSignoff=false;throw new Error('Synthetic mailbox unavailable');}if(deliver)notices.push(text);return ciRetry&&deliver?neo!.wakeNeo(key,text):deliver;}},readLedgerRepo:async()=>{
  const node={number:7,title:'Synthetic daemon merge',headRefName:'fixture',headRefOid:snapshot().pr.headRefOid,state:terminal?(external?'MERGED':'CLOSED'):'OPEN',closedAt:terminal?new Date().toISOString():null,isDraft:false,mergeable:'MERGEABLE',reviewDecision:'APPROVED',files:{nodes:largeFiles?allPaths.slice(0,100).map(path=>({path})):[{path:'src/app.ts'}],pageInfo:{hasNextPage:largeFiles}},labels:{nodes:[],pageInfo:{hasNextPage:false}},reviews:{nodes:[{state:'APPROVED',commit:{oid:head},author:{login:'fixture-bot'}}]},commits:{nodes:[{commit:((pendingLedger&&!snapshot().ciReady)||humanWaiting)?{statusCheckRollup:ciStartup?{state:'PENDING'}:null,checkSuites:{totalCount:1}}:humanSibling?{statusCheckRollup:null,checkSuites:{totalCount:0}}:{statusCheckRollup:{state:'SUCCESS'}}}]}};
  return {data:{rateLimit:{remaining:5000},repository:{nameWithOwner:'synthetic/merge',open:{pageInfo:{hasNextPage:false},nodes:terminal?[]:humanSibling?[node,{...node,number:8,isDraft:true,commits:{nodes:[{commit:{statusCheckRollup:{state:'SUCCESS'}}}]}}]:isolated?[node,{...node,number:8}]:[node]},done:{nodes:terminal?[node]:[]}}}};
  }});
@@ -84,7 +87,9 @@ try{
  const runSweep=()=>pack.sweep!(tick+=61_000);
  const mergeCalls=()=>readFileSync(join(run,'evidence/gh.jsonl'),'utf8').trim().split('\n').filter(Boolean).map(line=>JSON.parse(line)).filter(args=>args[0]==='pr'&&args[1]==='merge');
  if(ciRetry){
+ const stoppedReports=()=>db.prepare("SELECT payload FROM job_queue WHERE queue='mailbox' ORDER BY id").all().map((row:{payload:string})=>JSON.parse(row.payload)).filter(job=>String(job.message.message.content).includes('3 failed attempts'));
  for(let i=0;i<3;i++){const[receipt]=await ledger.write('daemonMerge',{kind:'begin',url,head,actor:'daemon:coding-sweep',at:tick+i});assert(receipt);await ledger.write('daemonMerge',{...receipt,kind:'failed',error:'The base branch policy prohibits the merge.',at:receipt.startedAt});await ledger.write('daemonMerge',{...receipt,kind:'void',at:receipt.startedAt});}
+ await runSweep();assert.equal(stoppedReports().length,1);
  const historical=db.prepare('SELECT * FROM pack_coding_daemon_merge_failures ORDER BY started_at').all();assert.equal(historical.length,3);
  const retry=pack.operations!.find(op=>op.name==='neo.coding.merge.retry');assert(retry,'Neo must have a gated path to accept a stopped report');
  const input={url,head};const callsBefore=readFileSync(join(run,'evidence/gh.jsonl'),'utf8');assert.equal((await retry.execute(input,{role:'worker'} as never)).accepted,false);assert.equal(readFileSync(join(run,'evidence/gh.jsonl'),'utf8'),callsBefore);
@@ -92,7 +97,9 @@ try{
  for(const extra of [{pr:{...pr,mergeStateStatus:'BLOCKED'},zeroRequired:true},{labels:[[{name:'human-merge'}]]},{fail:'/reviews'}]){publish({labels:[[]],...extra});assert.equal((await retry.execute(input,{role:'neo'} as never)).accepted,false);assert.equal((await ledger.write('daemonMerge',{kind:'failures',url,head}))[0].failures,3);}
  publish({labels:[[]]});assert.equal((await retry.execute(input,{role:'neo'} as never)).accepted,true);assert.deepEqual(await ledger.write('daemonMerge',{kind:'failures',url,head}),[]);assert.deepEqual(db.prepare('SELECT * FROM pack_coding_daemon_merge_failures ORDER BY started_at').all(),historical);
  const afterRetry=readFileSync(join(run,'evidence/gh.jsonl'),'utf8');assert.equal((await retry.execute(input,{role:'neo'} as never)).accepted,false);assert.equal(readFileSync(join(run,'evidence/gh.jsonl'),'utf8'),afterRetry);
- rejectSignoff=false;publish({labels:[[]]});await runSweep();await runSweep();assert.equal(mergeCalls().length,1);assert.equal(notices.filter(text=>text.includes('Merge confirmed:')).length,1);assert.deepEqual(db.prepare('SELECT * FROM pack_coding_daemon_merge_failures ORDER BY started_at').all(),historical);
+ rejectSignoff=false;publish({labels:[[]],mergeFailed:true});await runSweep();await runSweep();await runSweep();await runSweep();assert.equal(mergeCalls().length,3);assert.equal(stoppedReports().length,2,'Neo must receive both stopped-budget reports');
+ publish({labels:[[]]});assert.equal((await retry.execute(input,{role:'neo'} as never)).accepted,true);await runSweep();await runSweep();assert.equal(mergeCalls().length,4);assert.equal(notices.filter(text=>text.includes('Merge confirmed:')).length,1);const allFailures=db.prepare('SELECT * FROM pack_coding_daemon_merge_failures ORDER BY started_at').all();assert.equal(allFailures.length,6);assert.deepEqual(allFailures.slice(0,3),historical);
+ evidence.newStoppedEpisodeNotified=true;evidence.neoStoppedReports=stoppedReports();
  evidence.stoppedReportRetryFreshGated=true;evidence.historicalFailuresPreserved=true;evidence.readyCiMergedOnce=true;evidence.mergeCommands=mergeCalls();evidence.verified=true;
  }else if(ciStartup||ciRace){
  rejectSignoff=false;
@@ -192,5 +199,5 @@ try{
  assert.deepEqual(await label.execute({url,enabled:false},{role:'neo'} as never),{accepted:true});assert.deepEqual(snapshot().labels,[[]]);evidence.explicitHumanIntentLabelTool=true;
  assert.deepEqual(await rpc('pack.preferences.list',{}),preferences);assert.equal(pack.preferences!.mergeBy.default,'owner');evidence.savedPreferencesUnchanged=true;assert(mergeCalls().every(args=>args[2]===url));evidence.host=host;evidence.mergeCommands=mergeCalls();evidence.executorActivated=true;evidence.verified=true;
  }
-}finally{unsubscribe();await transport?.close();await app?.cleanup();globalThis.fetch=network;evidence.resourcesStopped=true;writeFileSync(join(run,'evidence/coding-daemon-merge-sweep.json'),JSON.stringify(evidence,null,2));}
+}finally{unsubscribe();await transport?.close();await neo?.dispose();await app?.cleanup();globalThis.fetch=network;evidence.resourcesStopped=true;writeFileSync(join(run,'evidence/coding-daemon-merge-sweep.json'),JSON.stringify(evidence,null,2));}
 console.log(JSON.stringify(evidence));
