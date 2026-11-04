@@ -1,41 +1,25 @@
 # Approved dependency chains do not ask Start again
 
 Use pinned Bun 1.4.2 and SKILL.md isolation; createLocalSocket authenticates the fresh daemon.
-A synthetic Codex socket and refusing GitHub stub replace external services; no model is used.
+The helper owns a synthetic Codex socket and refusing GitHub stub; no provider/model is used.
 
 ```sh
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence .claude/skills/verify/todo-plan-recompute.ts chain-verify
 ```
 
-The real registered MCP handler admits neo.ask.open for the synthetic bound Neo.
-Public neo.ask.read RPC returns the cards a client sees. Start only the first of
-three worker todos; the next two use after indexes and the same recorded target.
-Creating each real core.evidence file completes its predecessor on driver refresh.
-Require no Start question rows, exactly one native turn per step and no duplicate
-on repeated refresh. neo.todo.add must follow the same rule. Independent start:false
-work still gets its Start card. Contracts also preserve an explicit human hold.
-
-The helper seeds old Start cards only in its synthetic database. Real todo edits
-and independent additions must release stale members without a full refresh.
-It reseeds the card, restarts the daemon, then completes the predecessor; dispatch
-must happen once. No live todo is edited. Mode chain-before reproduces the old
-blocked successor through the same MCP/RPC doors; keep this helper from the PR.
-
-Keep observed.json/proof.log outside the worktree; require wrapper exit 0 and clean shutdown.
-Proof covers daemon state, public cards and synthetic worker transport.
-Browser rendering, real Codex execution and model reasoning remain unverified.
-Shared setup awaits session persistence and sets disableWorktrees:true.
-
-Run `chain-edges` and `chain-check` in separate fresh evidence directories.
-It opens a real two-repository plan: the dependent is alone in a sibling card
-with no local Start answer. Seed its old card; a real close RPC must retire it and
-dispatch the sibling once. Remove a prerequisite, or pass its check in `chain-check`.
-`after` authorizes its dependent without a root Start answer or a new card/flag.
-An independent unapproved todo keeps its Start card. Preserve snapshots/counts. Unit
-regressions also cover implicit ordering after removal and explicit human holds.
-
-Run `chain-parent` in another fresh directory. A real parent decision must stop
-its child after the predecessor closes; a public human answer releases it once.
-Scope regressions keep sibling questions and questions linked to other todos local.
-For ownership, edit an independent todo's check to an existing sibling repository.
-After driver refresh, only its destination Start card may list it; no work starts.
+The registered MCP handler admits neo.ask.open; public neo.ask.read exposes client cards.
+Start only step one of three using the same worker; after and late neo.todo.add steps dispatch once.
+Repeated refresh never duplicates sends; independent start:false still asks; explicit holds stop work.
+Seed old Start cards only in the synthetic DB. Real edits and independent additions release stale members.
+Persist the predecessor done and descendants checkless, reseed the stale card, then restart and refresh.
+Require card retirement and exactly one successor dispatch, without a new predecessor write or checker.
+Run chain-edges and chain-check in separate fresh evidence directories for split-repository recovery.
+A real close RPC retires the sibling's legacy card and dispatches once without full refresh.
+Remove an unstarted prerequisite or pass its check: after authorizes the dependent without a Start answer.
+Unrelated independent work retains its Start card; units also cover implicit ordering after removal.
+Run chain-parent separately: a real parent decision holds its child until a public human answer, then one send.
+Scope regressions keep sibling and unrelated linked questions local. Move independent work by editing
+its check to an existing sibling repository; after refresh only the destination card lists it, with no dispatch.
+Preserve observed.json/proof.log outside the worktree; require wrapper exit 0 and clean shutdown.
+Setup awaits session persistence and sets disableWorktrees:true. Never edit live todos.
+Proof covers public cards, daemon state and synthetic transport; browser/real worker/model execution is unverified.

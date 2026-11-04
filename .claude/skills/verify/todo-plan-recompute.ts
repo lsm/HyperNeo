@@ -337,10 +337,11 @@ try {
         const pruned = await read(a.askId); evidence[add ? 'extensionPruned' : 'editPruned'] = pruned; assert.equal(pruned.todos.find((t: { id: string }) => t.id === b.id).state, 'todo');
         if (add) await call('neo.todo.remove', { todoId: changed.todo.id, reason: 'Fixture cleanup after extension assertion.' });
       }
-      seedLegacy(b);
+      app!.db.getDatabase().prepare("UPDATE neo_todos SET state = CASE WHEN id = ? THEN 'done' ELSE state END, check_json = NULL WHERE ask_id = ?").run(a.id, a.askId);
+      seedLegacy(b); evidence.legacyBeforeRestart = await read(a.askId);
       await ws!.close(); await app!.cleanup(); app = undefined; ws = undefined;
       await open();
-      await complete(a.title);
+      await refresh();
       const recovered = await read(a.askId);
       assert.equal(recovered.todos.find((t: { id: string }) => t.id === b.id).state, 'doing');
       assert(recovered.questions.every((q: { state: string }) => q.state !== 'open'));

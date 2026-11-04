@@ -157,10 +157,10 @@ describe('todo dependencies', () => {
           startTodos: [second.id],
         };
         store.askQuestion('legacy-scope', second.askId, legacy, Date.now());
-        await runner.recompute(store.getTodo(first.id)!, {}, Date.now(), {
-          state: 'done',
-          evidence: 'First repository PR merged.',
-        });
+        db.prepare("UPDATE neo_todos SET state = 'done', finished_at = ? WHERE id = ?").run(
+          Date.now(),
+          first.id
+        );
         await runner.refresh(() => {});
         if (scope === 'parent' || scope === 'child') {
           expect(store.getTodo(second.id)?.state).not.toBe('doing');
@@ -217,7 +217,16 @@ describe('todo dependencies', () => {
     }
   );
 
-  test.each(['approved', 'legacy', 'unstarted', 'split', 'split-legacy', 'extend-legacy'])(
+  const chainModes = [
+    'approved',
+    'legacy',
+    'unstarted',
+    'split',
+    'split-legacy',
+    'extend-legacy',
+    'completed-legacy',
+  ];
+  test.each(chainModes)(
     'authorized dependency chain advances without extra Start cards; root=%s',
     async (mode) => {
       const { db, store, sessions, invoke, step, runner, sent } = setup();
@@ -239,6 +248,10 @@ describe('todo dependencies', () => {
         const [first, second, third] = opened.todos;
         expect(first.askId !== second.askId).toBe(mode.startsWith('split'));
         if (mode.startsWith('split')) expect(store.listQuestions(second.askId)).toHaveLength(0);
+        if (mode === 'completed-legacy')
+          db.prepare(
+            "UPDATE neo_todos SET state = CASE WHEN id = ? THEN 'done' ELSE state END, check_json = NULL"
+          ).run(first.id);
         if (mode.includes('legacy')) {
           store.updateTodo(
             second,
@@ -266,11 +279,12 @@ describe('todo dependencies', () => {
         } else expect(store.listQuestions(first.askId)).toHaveLength(mode === 'unstarted' ? 1 : 0);
         if (mode === 'extend-legacy')
           await invoke('neo.todo.add', { askId: first.askId, ...step('Independent', []), ...work });
-        await runner.recompute(store.getTodo(first.id)!, {}, Date.now(), {
-          state: 'done',
-          evidence: 'PR1 merged.',
-        });
-        await runner.advance();
+        if (mode !== 'completed-legacy')
+          await runner.recompute(store.getTodo(first.id)!, {}, Date.now(), {
+            state: 'done',
+            evidence: 'PR1 merged.',
+          });
+        await (mode === 'completed-legacy' ? runner.refresh(() => {}) : runner.advance());
         expect(store.getTodo(second.id)?.state).toBe('doing');
         expect(store.getTodo(third.id)?.state).toBe('todo');
         expect(sessions.readRef(second.id)).toEqual(target.ref);
