@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { getDataDir } from '../../../../src/lib/data-dir.ts';
 import { workerWritableRoots } from '../../../../src/lib/drivers/worker-sandbox.ts';
+import { createNeoAskRecordOperations } from '../../../../src/lib/neo/ask-record-operations.ts';
 import { neoEvidenceRefusal } from '../../../../src/lib/neo/core-todo-checks.ts';
 import { todoEvidenceFile } from '../../../../src/lib/work-locations.ts';
 import {
@@ -10,6 +11,7 @@ import {
   type NeoTodoControls,
 } from '../../../../src/lib/neo/todo-operations.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -47,8 +49,23 @@ function setup(repository: string | null) {
     () => packs,
     () => null
   ).find((op) => op.name === 'neo.todo.add')!;
-  return {
+  const open = createNeoAskRecordOperations(
     store,
+    new NeoTodoSessionRepository(db),
+    controls,
+    () => null,
+    () => true,
+    () => [],
+    () => packs,
+    () => null,
+    async (todos) => [...todos],
+    { gateway: gatewayFor(db), changed: () => {} }
+  ).find((op) => op.name === 'neo.ask.open')!;
+  return {
+    db,
+    store,
+    open: async (input: unknown) =>
+      (await open.execute(open.inputSchema.parse(input), owner)) as { ok: boolean },
     add: async (params: Record<string, unknown>) =>
       (await add.execute(
         add.inputSchema.parse({
@@ -87,6 +104,42 @@ describe('neo.todo.add evidence paths', () => {
   test('a repo todo may name a path outside the user folder', async () => {
     const { add } = setup('lsm/hyperneo');
     expect((await add({ path: `${userFolder}-other/proof.md` })).ok).toBe(true);
+  });
+
+  test('neo.ask.open refuses a misplaced path before recording anything', async () => {
+    const { db, open } = setup(null);
+    const evidence = (params: Record<string, unknown>) => ({
+      pack: 'core',
+      kind: 'evidence',
+      params,
+    });
+    const result = await open({
+      title: 'New work',
+      request: 'New work',
+      todos: [
+        { title: 'First', check: evidence({}) },
+        {
+          title: 'Second',
+          check: evidence({ path: join(userFolder, 'proof.md') }),
+          instruction: 'Prove it',
+          target: {
+            verb: 'start',
+            adapter: 'hyperneo',
+            place: {
+              machine: 'm',
+              name: 'Repo',
+              folder: '/repo',
+              remotes: ['git@github.com:lsm/hyperneo.git'],
+            },
+          },
+        },
+      ],
+    });
+    const count = (table: string) =>
+      (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+    expect(result.ok).toBe(false);
+    expect(count('neo_asks')).toBe(1);
+    expect(count('neo_todos')).toBe(0);
   });
 
   test('an unchanged path on an existing todo keeps working', () => {
