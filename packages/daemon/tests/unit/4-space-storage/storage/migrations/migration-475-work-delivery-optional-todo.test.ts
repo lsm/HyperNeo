@@ -46,4 +46,18 @@ describe('migration 475: optional todo on work delivery inputs', () => {
       { name: 'idx_work_delivery_inputs_todo' },
     ]);
   });
+
+  test('a failure partway through leaves the original table and rows in place', () => {
+    db.prepare(INSERT).run('kept', 'todo-1');
+    db.exec(`DROP INDEX idx_work_delivery_inputs_todo;
+      CREATE TABLE unrelated (id TEXT);
+      CREATE INDEX idx_work_delivery_inputs_todo ON unrelated(id);`);
+
+    expect(() => runMigration475(db)).toThrow();
+
+    expect(db.prepare('SELECT id FROM work_delivery_inputs').all()).toEqual([{ id: 'kept' }]);
+    expect(
+      db.prepare(`SELECT 1 FROM sqlite_schema WHERE name = 'work_delivery_inputs_next'`).get()
+    ).toBeNull();
+  });
 });
