@@ -1,4 +1,5 @@
-import { withCodingWorkerStartBrief } from './worker-worktree-brief.ts';
+import { describeCodingStageTodo, codingStageWorkerExclusions } from './stage-todo.ts';
+import { withCodingStageWorkerStartBrief } from './worker-worktree-brief.ts';
 import { createCodingHumanMergeOperation } from './human-merge-operation.ts';
 import { createCodingDaemonMergeSweep } from './daemon-merge-sweep.ts';
 import { checkCodingPrApproved } from './pr-approved.ts';
@@ -56,6 +57,7 @@ export function createCodingPack(deps: {
   readLedgerRepo?: CodingLedgerRead;
   readClaudeOwners?: ReturnType<typeof createCodingClaudeOwnerReader>;
 }): NeoPack & {
+  describeStageTodo: typeof describeCodingStageTodo;
   readMergeFacts: typeof readCodingDaemonMergeFacts;
   decideMerge: typeof decideCodingDaemonMerge;
   recordSmoke: typeof recordCodingSmoke;
@@ -88,6 +90,7 @@ export function createCodingPack(deps: {
   );
   return {
     ...CODING_PACK_BRIEF,
+    describeStageTodo: describeCodingStageTodo,
     readMergeFacts: readCodingDaemonMergeFacts,
     decideMerge: decideCodingDaemonMerge,
     recordSmoke: recordCodingSmoke,
@@ -231,7 +234,8 @@ export function createCodingPack(deps: {
       ),
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
     workerRules: NEO_PACK_CODING_WORKER_RULES,
-    workerStartBrief: withCodingWorkerStartBrief,
+    workerStartExclusions: (todo) => codingStageWorkerExclusions(deps.database(), todo),
+    workerStartBrief: withCodingStageWorkerStartBrief,
     workerBrief: (instruction, identity) =>
       withCodingWorkerProvenance(workerContext(instruction), identity),
     workGoal: (instruction, goal) => workerContext(withCodingWorkGoal(instruction, goal)),

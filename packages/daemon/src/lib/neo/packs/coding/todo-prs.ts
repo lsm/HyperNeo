@@ -1,3 +1,5 @@
+import { codingStageTodoParams, checkCodingStageTodo } from './stage-todo.ts';
+import { NeoTodoSessionRepository } from '../../../../storage/repositories/neo-todo-session-repository.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { codingApprovalUrl } from './pr-approved.ts';
 import { CodingStageFactsRepository } from './stage-facts.ts';
@@ -58,6 +60,15 @@ export class CodingTodoPrRepository {
     for (const row of rows)
       for (const claim of planCodingIssuePrClaims(row.repo, row.number, row.body ?? '', todos))
         this.claim(claim.todoId, [{ url: claim.url, claim: 'branch' }], now, 'additive');
+  }
+
+  stageResult(todo: NeoTodo) {
+    const params = codingStageTodoParams(todo);
+    return checkCodingStageTodo(
+      todo,
+      new NeoTodoSessionRepository(this.db).readCard(todo.id),
+      params ? this.stageFacts.read(params.url) : []
+    );
   }
 
   stages(todoId: string) {
@@ -402,7 +413,7 @@ export function codingTodoRepository(
   if (issue) return neoGitRepo(`github.com/${issue.owner}/${issue.repo}`);
   const urls =
     todo.check?.pack === 'coding'
-      ? todo.check.kind === 'pr_approved'
+      ? ['pr_approved', 'stage_result'].includes(todo.check.kind)
         ? [todo.check.params.url]
         : todo.check.params.urls
       : null;
@@ -444,6 +455,9 @@ function codingIssueCheck(issue: NeoRefState | undefined): NeoTodoCheckResult {
 }
 
 export function codingTodoDoneWhen(check: NeoTodoCheck): string | null {
+  const stage = codingStageTodoParams({ check });
+  if (stage)
+    return `${stage.stage === 'review' ? 'Review' : 'Verify'} verdict recorded for ${stage.url} at ${stage.head}.`;
   if (check.kind === 'pr_approved')
     return `${check.params.url} approved under the repository's saved merge policy`;
   if (check.kind === 'issue_closed') return `${check.params.issue} completed`;
@@ -457,6 +471,10 @@ export function codingTodoDoneWhen(check: NeoTodoCheck): string | null {
 export function codingTodoCheckRefusal(
   draft: Pick<NeoTodo, 'check' | 'instruction'>
 ): string | null {
+  if (draft.check?.kind === 'stage_result')
+    return codingStageTodoParams(draft)
+      ? null
+      : 'stage_result_invalid: use parentTodoId, PR url, full head, stage and acceptanceContract.';
   if (draft.check?.kind === 'pr_approved')
     return codingApprovalUrl(draft.check.params.url)
       ? null
@@ -483,6 +501,7 @@ type CodingTodoFacts = {
   incomplete?: true;
   issue?: NeoRefState;
   approval?: NeoTodoCheckResult;
+  stageResult?: NeoTodoCheckResult;
 };
 
 const readIssueFacts = (superpipe({})('coding.issue-facts') as PipelineAPI)
@@ -633,6 +652,8 @@ export function createCodingTodoPack(
     detached = false
   ): Promise<CodingTodoFacts | null> => {
     if (todo.check && todo.check.pack !== 'coding') return null;
+    if (todo.check?.kind === 'stage_result')
+      return { prs: [], observedAt: Date.now(), stageResult: repo.stageResult(todo) };
     if (todo.check?.kind === 'pr_approved')
       return {
         prs: [],
@@ -661,14 +682,17 @@ export function createCodingTodoPack(
     if (persist) await repo.write('record', todo.id, [...prs, ...open], observedAt);
     return { prs, observedAt };
   };
-  const checked = (todo: NeoTodo, facts: CodingTodoFacts) =>
-    todo.check?.kind === 'pr_approved'
+  const checked = (todo: NeoTodo, facts: CodingTodoFacts) => {
+    if (todo.check?.kind === 'stage_result')
+      return facts.stageResult ?? { done: false, evidence: null };
+    return todo.check?.kind === 'pr_approved'
       ? (facts.approval ?? { done: false, evidence: null })
       : todo.check?.kind === 'issue_closed'
         ? codingIssueCheck(facts.issue)
         : todo.check
           ? codingTodoCheck(todo.check.kind, facts.prs, facts.observedAt)
           : null;
+  };
   return {
     readFacts,
     judge: (todo, facts) => {
@@ -694,7 +718,7 @@ export function createCodingTodoPack(
       return checked(todo, facts);
     },
     statusLine: (todo) => codingTodoStatusLine(todo, repo.prs(todo.id), ledger),
-    waiting: (todo) => repo.readWaiting(todo.id),
+    waiting: (todo) => todo.check?.kind === 'stage_result' || repo.readWaiting(todo.id),
     ...createCodingTodoPolicy(repo),
   };
 }

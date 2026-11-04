@@ -1,3 +1,5 @@
+import { describeCodingStageTodo } from '../../../src/lib/neo/packs/coding/stage-todo.ts';
+import { neoGitRepo } from '../../../src/lib/neo/todo-repo.ts';
 import type { Database } from '../../../src/storage/sqlite-compat.ts';
 import { createCodingPack } from '../../../src/lib/neo/packs/coding/pack.ts';
 import { createCodingPackTables } from '../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
@@ -24,14 +26,9 @@ export const stageTarget = {
   place: { machine: 'fixture', name: 'Fixture', folder: '/synthetic' },
   model: 'claude-opus-5-5',
 };
-export const stageDraft = (stage: 'review' | 'verify' = 'review') => ({
-  title: `${stage === 'review' ? 'Review' : 'Verify'} PR #7 at ${stageParams.head}`,
-  check: { pack: 'coding', kind: 'stage_result', params: { ...stageParams, stage } },
-  instruction: 'Inspect the exact synthetic head.',
-  target: { verb: 'start', ...stageTarget },
-  after: [],
-  start: true,
-});
+export const stageDraft = (stage: 'review' | 'verify' = 'review', head = stageParams.head) =>
+  describeCodingStageTodo({ ...stageParams, stage, head }, stageTarget);
+
 export function codingStageTodoFixture(db: Database) {
   createCodingPackTables(db);
   const store = new NeoAskTodoRepository(db),
@@ -52,7 +49,7 @@ export function codingStageTodoFixture(db: Database) {
     id: 'ask',
     sessionId: 'fixture-neo',
     projectId: null,
-    repo: 'synthetic/stages',
+    repo: neoGitRepo('github.com/synthetic/stages'),
     originMessageId: null,
     title: 'Synthetic coding matter',
     request: 'Ship a change',

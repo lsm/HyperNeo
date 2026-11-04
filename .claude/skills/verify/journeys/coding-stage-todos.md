@@ -19,7 +19,8 @@ with author and earlier actor excluded. The existing verdict repository is the
 synthetic recording edge; fail and inconclusive are completed stage work, never
 an approving verdict. Core completion closes each stage and frees its worker;
 the author's merge todo stays doing. A new head has a new pending stage todo and
-cannot consume an older verdict. No worker identity is written to pack facts.
+cannot consume an older verdict. `neo.ask.read` confirms the same doing/done
+states on the public work card. No worker identity is written to pack facts.
 Unit tests cover malformed metadata, exact binding/head/contract checks,
 stall shielding and complete role-contract delivery after core prompt formatting.
 

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { QA_SYSTEM_CONTRACT, REVIEWER_SYSTEM_CONTRACT } from '../../../packages/prompts/src/mod.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -33,6 +34,7 @@ try {
     inputSchema: StartWorkInputSchema, resultSchema: StartWorkResultSchema,
     execute: async input => {
       const ref = { adapter: 'fixture', id: ['author', 'reviewer', 'verifier'].find(id => !input.excludeRefs?.some(ref => ref.id === id))! };
+      assert(input.message.includes(starts.length === 1 ? QA_SYSTEM_CONTRACT : REVIEWER_SYSTEM_CONTRACT));
       starts.push({ input, ref }); recordStartedWork(db, ref);
       return { ok: true as const, value: { ref, title: input.title, place: input.place!, status: 'running' as const, lastActivityAt: Date.now(), model: stageTarget.model } };
     },
@@ -41,7 +43,7 @@ try {
   app.sessionManager.setOperationRegistryProvider(() => boundRegistry);
   ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`, join(run, 'data/local-rpc.credential'));
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC open failed')); });
-  const rpc = (name: string, input: unknown) => new Promise<{ ok: boolean; reason?: string; todo?: { id: string; state: string; askId: string; evidence: string | null } }>((done, fail) => {
+  const rpc = (name: string, input: unknown) => new Promise<{ ok: boolean; reason?: string; todo?: { id: string; state: string; askId: string; evidence: string | null }; entry?: { todos: { id: string; state: string; title: string }[] } }>((done, fail) => {
     const id = crypto.randomUUID(), timer = setTimeout(() => fail(new Error('RPC timeout')), 10000);
     ws!.onmessage = event => {
       const reply = JSON.parse(String(event.data));
@@ -77,6 +79,10 @@ try {
   assert.equal(next.todo.state, 'doing');
   assert.equal((await fixture.pack.todos!.check(fixture.store.getTodo(next.todo.id)!))?.done, false);
   assert.deepEqual(db.prepare('SELECT count(*) AS n FROM pack_facts').get(), { n: 0 });
+  const visible = await rpc('neo.ask.read', { askId: fixture.ask.id });
+  assert(visible.ok && visible.entry, JSON.stringify(visible));
+  for (const [id, state] of [[fixture.author.id, 'doing'], [review.todo.id, 'done'], [verify.todo.id, 'done'], [next.todo.id, 'doing']])
+    assert.equal(visible.entry.todos.find(todo => todo.id === id)?.state, state);
   evidence.push({ starts, todos: fixture.store.listTodos(fixture.ask.id), bindings: fixture.store.listTodos(fixture.ask.id).map(todo => ({ id: todo.id, card: fixture.sessions.readCard(todo.id), deliveries: fixture.sessions.inputs.list(todo.id) })), verdicts: fixture.ledger.stageFacts.read(stageParams.url) });
   console.log('PASS: actual daemon core RPC starts separate Review/Verify todos, preserves independent bindings, closes fail/inconclusive stages, frees actors, leaves author doing and new head pending.');
 } finally {
