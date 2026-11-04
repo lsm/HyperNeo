@@ -27,8 +27,10 @@ vi.mock('../NeoComposer.tsx', () => ({
 }));
 vi.mock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
 vi.mock('../NeoSessionPane.tsx', () => ({
-  NeoSessionPane: ({ onClose }: { onClose: () => void }) => (
-    <button onClick={onClose}>Close worker chat</button>
+  NeoSessionPane: ({ sessionId, onClose }: { sessionId: string; onClose: () => void }) => (
+    <button data-session={sessionId} onClick={onClose}>
+      Close worker chat
+    </button>
   ),
 }));
 vi.mock('../../lib/connection-manager.ts', () => ({
@@ -500,6 +502,22 @@ describe('Neo preview Work layout', () => {
     expect(screen.getByRole('button', { name: 'Close worker chat' })).toBeTruthy();
     expect(tabNames()).toEqual([]);
     expect(screen.queryByRole('dialog', { name: /worker/ })).toBeNull();
+  });
+
+  it('keeps the selected session on a phone when several session tabs are open', async () => {
+    mount();
+    await open('a');
+    act(() => openArtifactPreview({ kind: 'session', sessionId: 'first' }, 'First'));
+    act(() => openArtifactPreview({ kind: 'session', sessionId: 'second' }, 'Second'));
+    act(() => resize(390));
+    expect(screen.getByRole('button', { name: 'Close worker chat' }).dataset.session).toBe(
+      'second'
+    );
+    expect(artifactPreviewWorkspace.state.value.files.map((file) => file.title)).toEqual([
+      'File a',
+    ]);
+    act(() => resize(1300));
+    expect(tabNames()).toEqual(['Your work · 1', 'File a', 'Second']);
   });
 
   it('carries the open session across the phone boundary', () => {
