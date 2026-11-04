@@ -36,7 +36,7 @@ import { join } from 'path';
 import type { Database } from '../../storage/database.ts';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository.ts';
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository.ts';
-import { NON_DELEGATING_GENERAL_AGENT } from '../agents/custom-agent.ts';
+import { NON_DELEGATING_GENERAL_AGENT } from './non-delegating-agent.ts';
 import { PROVIDER_KEY_ENV_VARS } from '../credential-discovery.ts';
 import { getDataDir } from '../data-dir.ts';
 import { readClaudeWorkerSandbox } from '../drivers/claude-native-writes.ts';

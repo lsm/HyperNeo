@@ -38,11 +38,12 @@ Eleven interface roots remain pinned after deleting the retired six-line timer
 helper under #9657; no replacement root or exclusion is added. Their original total was 117,
 correcting the earlier 116 arithmetic. The three query methods now delegate to
 verbatim extracted SQL under #9645, and the capability helpers gain the reader and effect queue under #9649, so the
-current interface total is 79 (previously 85 before that deletion).
+current interface total is 67 after the additional #9663 getGlobalConfig
+delegation (79 before delegation, 85 before helper deletion).
 That extraction counts its complete helper/mapper/constructor graph separately
 at 146 lines with zero exclusions. The capability activation separately counts
-175 owned lines, the same 22 config bridge lines and one smoke registration
-(198 known); no new data exclusion or root was added.
+175 owned lines, the same get/set config interface roots, now 10 lines and one smoke registration
+(186 known); no new data exclusion or root was added.
 Refresh the hash and interface contract together with its tests and remeasure
 the graph when deliberately changing an interface. Any further exclusion needs
 a coordinator decision; this measurement never grants one.

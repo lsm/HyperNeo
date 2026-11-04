@@ -341,9 +341,10 @@ describe('AgentSession task-notification requery (incident replay)', () => {
         cancelForSessionWithMessages: () => [],
         cancelDelivery: () => {},
       })),
-      getNodeExecutionRepo: mock(() => ({
-        getByAgentSessionId: () => ({ id: 'exec-1', workflowRunId: 'run-1' }),
-      })),
+      spaceSessions: {
+        queryStartGuard: () => undefined,
+        workflowRunIdForSession: () => 'run-1',
+      },
     } as unknown as Database;
 
     return new AgentSession(

@@ -1,6 +1,6 @@
 import type { Database } from '../sqlite-compat.ts';
 
-export function runMigration474(db: Database): void {
+export function runMigration475(db: Database): void {
   const columns = db.prepare('PRAGMA table_info(work_delivery_inputs)').all() as {
     name: string;
     notnull: number;

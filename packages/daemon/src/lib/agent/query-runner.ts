@@ -32,10 +32,6 @@ import type { ProviderEnvVars } from '../provider-service.ts';
 import { setKeyBridgeThinkingOff } from '../providers/provider-key-bridge.ts';
 import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
 import { resolveAvailableQueryProvider } from '../providers/registry.js';
-import {
-  FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
-  resolveSpaceMcpSessionPolicy,
-} from '../space/runtime/space-mcp-session-policy.ts';
 import { sleep } from '../utils/sleep.ts';
 import { QueryFailureGovernor, QueryFailureCapError } from './query-failure-episode.ts';
 import type { AgentSession } from './agent-session.ts';
@@ -917,21 +913,16 @@ export class QueryRunner {
 
       queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
       const mcpServerNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
-      const spacePolicy = resolveSpaceMcpSessionPolicy(session, {
-        nodeExecutionRepo: this.ctx.db.getNodeExecutionRepo(),
-        taskRepo: this.ctx.db.getSpaceTaskRepo(),
-        longHorizonAgentRepo:
-          this.ctx.db.getLongHorizonAgentRepo?.() ?? FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
-      });
-      const isWorkflowSubSession = spacePolicy.isWorkflowWorker;
+      const spacePolicy = this.ctx.db.spaceSessions?.mcpPolicy(session);
+      const isWorkflowSubSession = spacePolicy?.isWorkflowWorker;
       const sessionTaskId = session.context?.taskId as string | undefined;
       const snapshotPayload = {
         event: 'query.mcp.snapshot',
         sessionId: session.id,
         sessionType: session.type,
-        role: spacePolicy.role,
-        owner: spacePolicy.owner,
-        ...(spacePolicy.spaceId ? { spaceId: spacePolicy.spaceId } : {}),
+        role: spacePolicy?.role ?? 'session',
+        owner: spacePolicy?.owner ?? 'none',
+        ...(spacePolicy?.spaceId ? { spaceId: spacePolicy.spaceId } : {}),
         ...(sessionTaskId ? { taskId: sessionTaskId } : {}),
         ...(isWorkflowSubSession ? { workflowSubSession: true } : {}),
         mcpServers: mcpServerNames,

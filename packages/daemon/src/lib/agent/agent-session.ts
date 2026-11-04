@@ -62,7 +62,6 @@ import type {
   OperationRegistryProvider,
 } from '../operations/registry.ts';
 import { SettingsManager } from '../settings-manager.ts';
-import { createDirectQueryStartGuard } from '../tasks/direct-query-start-guard.ts';
 import {
   NETWORK_OUTAGE_NOTICE,
   NetworkOutagePause,
@@ -949,7 +948,7 @@ export class AgentSession
         `Session ${this.session.id} is ${this.session.status}; refusing to start the query`
       );
     }
-    const startGuard = createDirectQueryStartGuard(this.db.getDatabase(), () => this.session);
+    const startGuard = this.db.spaceSessions?.queryStartGuard(() => this.session);
     const rawProviderId = this.session.config.provider as string | undefined;
     const normalizedProviderId = rawProviderId?.trim() || undefined;
     if (rawProviderId !== normalizedProviderId) {
@@ -2456,12 +2455,11 @@ export class AgentSession
   private async escalateTaskNotificationRequeryExhaustion(): Promise<void> {
     const attempts = this.taskNotificationRequeryAttempts;
     const episodeToken = this.taskNotificationRequeryEpisodeToken;
-    const execution = this.db.getNodeExecutionRepo?.().getByAgentSessionId(this.session.id) ?? null;
     const event = buildTaskNotificationRequeryEscalationEvent({
       sessionId: this.session.id,
       spaceId: this.session.context?.spaceId,
       taskId: this.session.context?.taskId,
-      workflowRunId: execution?.workflowRunId,
+      workflowRunId: this.db.spaceSessions?.workflowRunIdForSession(this.session.id),
       attempts,
       timestamp: new Date().toISOString(),
     });

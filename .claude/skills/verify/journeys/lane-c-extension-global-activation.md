@@ -26,7 +26,9 @@ and later reads never replay it. This proof does not claim mixed enable/disable
 concurrency repair or lifecycle recovery after an unknown receipt.
 
 Pin the full 49-line merged command/helper hashes and contracts, unchanged
-validation/clock/read/table helpers and lifecycle/RPC/caller roots. Their dynamic
+validation/clock/table helpers and lifecycle/RPC/caller roots. The global read
+body and shared parser now have the separate #9663 lookup extraction audit;
+that step keeps reads on main. Their dynamic
 plugin/transitive framework/startup closure is outside this owned wiring audit.
 The Space setter is activated separately by lane-c-extension-space-activation.md;
 reads and constructor DDL remain separate. Update the earlier

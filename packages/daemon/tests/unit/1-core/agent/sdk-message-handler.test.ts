@@ -4936,16 +4936,12 @@ describe('SDKMessageHandler', () => {
   });
 
   describe('repeated tool error recovery enqueue fencing', () => {
-    let recoveryTaskRepo: { getTaskBySessionId: () => unknown; getTask: () => null };
-
     beforeEach(() => {
-      recoveryTaskRepo = {
-        getTaskBySessionId: () => ({ id: 'task-1', evolutionScopeId: 'scope-1' }),
-        getTask: () => null,
-      };
       mockContext.db = {
         ...mockDb,
-        getSpaceTaskRepo: () => recoveryTaskRepo,
+        spaceSessions: {
+          taskForSession: () => ({ id: 'task-1', evolutionScopeId: 'scope-1' }),
+        },
       } as unknown as Database;
     });
 
