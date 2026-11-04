@@ -463,6 +463,9 @@ describe('CodingTodoPrRepository.holder', () => {
     repo.record(holder.id, [pr(9553, 'OPEN', { url })], 1);
     expect(repo.holder('https://github.com/lsm/hyperneo/pull/9553', worker)).toBe(holder.id);
     expect(repo.holder(url, { ...worker, id: 'other-thread' })).toBeUndefined();
+    repo.record(docs.id, [pr(9553, 'OPEN', { url })], 1);
+    expect(repo.holder(url, worker)).toBeUndefined();
+    repo.record(docs.id, [], 1);
     todos.updateTodo(holder, { state: 'done' }, 2);
     expect(repo.holder(url, worker)).toBeUndefined();
   });

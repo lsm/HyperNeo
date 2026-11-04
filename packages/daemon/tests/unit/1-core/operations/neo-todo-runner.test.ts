@@ -1175,6 +1175,56 @@ describe('neo todo runner', () => {
     }
   });
 
+  test('a turn started by a notice reaches Neo once, attached to no todo', async () => {
+    const h = setup(false);
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      const other = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      await h.runner.start(todo.id);
+      await h.runner.start(other.id);
+      const worker = { adapter: 'codex-desktop', id: 'shared-thread' };
+      const nudgedAt = Date.now() + 10;
+      h.sessions.recordRef(todo.id, worker, nudgedAt);
+      h.sessions.recordRef(other.id, worker, nudgedAt);
+      const nudge = await h.sessions.inputs.accept(
+        null,
+        'neo',
+        { verb: 'send', ref: worker },
+        'lsm/hyperneo#1 has failing CI.',
+        nudgedAt
+      );
+      await h.sessions.inputs.recordOutcome(nudge, { ref: worker }, nudgedAt);
+      const before = h.store.getTodo(todo.id)!;
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: nudgedAt + 100,
+          turnEnds: [
+            {
+              id: 'notice-turn',
+              startedAt: nudgedAt,
+              at: nudgedAt + 100,
+              message: 'Blocked (needs_human): which CI fix do you want?',
+            },
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      await h.runner.refresh(() => {});
+      const reports = h.told.filter((text) => text.includes('which CI fix do you want?'));
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).not.toContain(todo.id);
+      expect(reports[0]).not.toContain(other.id);
+      expect(h.store.getTodo(todo.id)).toMatchObject({
+        state: before.state,
+        report: before.report,
+      });
+    } finally {
+      h.db.close();
+    }
+  });
+
   test.each(['earlier', 'later', 'other-sender', 'other-recipient', 'unknown-start'])(
     'does not silence a new worker report for an unrelated send: %s',
     async (scenario) => {

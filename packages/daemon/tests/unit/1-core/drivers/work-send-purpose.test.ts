@@ -30,6 +30,7 @@ function fixture(sendInputs?: unknown) {
       remote: { list: () => [], invoke: async () => ({}) },
       daemonName: 'fixture',
       sendInputs,
+      isOpenTodo: (id: string, owner: string) => id === 'open-todo' && owner === 'root',
     } as never)
   );
   return { delivered, registry };
@@ -51,7 +52,8 @@ describe('Neo and daemon sends say what they are', () => {
   });
 
   test.each([
-    [{ todoId: 'any-todo' }, neo],
+    [{ todoId: 'open-todo' }, neo],
+    [{ todoId: 'any-todo' }, daemon],
     [{ notice: true }, neo],
     [{ notice: true }, daemon],
     [{}, { source: 'rpc' } as OperationCaller],
@@ -67,6 +69,27 @@ describe('Neo and daemon sends say what they are', () => {
     expect(reply).toMatchObject({ kind: 'completed', value: { ok: true } });
     expect(delivered).toEqual(['Hello']);
   });
+
+  test.each([
+    ['closed-or-unknown', neo],
+    ['open-todo', { ...neo, sessionId: 'another-neo' }],
+  ] as const)(
+    'a Neo send naming %s from that session is refused unsent',
+    async (todoId, caller) => {
+      const { registry, delivered } = fixture();
+      const reply = await invokeOperation(
+        registry,
+        'work.send',
+        { ref, message: 'Hi', todoId },
+        caller
+      );
+      expect(reply).toMatchObject({
+        kind: 'completed',
+        value: { ok: false, reason: 'todo_required', notSent: true },
+      });
+      expect(delivered).toEqual([]);
+    }
+  );
 
   test('a daemon send is recorded with its todo and its delivery outcome', async () => {
     const accepted: unknown[] = [];
