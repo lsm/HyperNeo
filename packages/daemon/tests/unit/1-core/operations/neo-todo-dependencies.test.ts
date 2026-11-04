@@ -367,7 +367,7 @@ describe('todo dependencies', () => {
         .listQuestions(dependent.askId)
         .filter((q) => q.state === 'open' && q.startTodos?.includes(dependent.id));
       expect(cards).toHaveLength(1);
-      expect(cards[0].id).toBe(initialCard);
+      expect(cards[0].id).toBe(initialCard!);
       expect(cards[0].text).toContain(cancelled.title);
       expect(cards[0].text).toContain('cancelled');
       if (mode.startsWith('replacement')) {
@@ -521,6 +521,7 @@ describe('todo dependencies', () => {
             multiple: false,
             noLabel: null,
             yesLabel: null,
+            startTodos: null,
           },
           Date.now()
         );

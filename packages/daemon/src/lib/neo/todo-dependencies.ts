@@ -9,25 +9,16 @@ import {
 } from '../work-queue/dependency-plan.ts';
 
 export function neoTodoDependencyNodes(todos: readonly NeoTodo[]): DependencyNode[] {
-  const replacement = (id: string, seen = new Set<string>()): string => {
-    const todo = todos.find((item) => item.id === id);
-    if (seen.has(id) || todo?.state !== 'removed' || !todo.replacedBy) return id;
-    seen.add(id);
-    return todos.some((item) => item.id === todo.replacedBy)
-      ? replacement(todo.replacedBy, seen)
-      : id;
-  };
   return todos.map((todo) => {
-    if (todo.dependsOn)
-      return { id: todo.id, dependsOn: todo.dependsOn.map((id) => replacement(id)) };
+    if (todo.dependsOn) return { id: todo.id, dependsOn: [...todo.dependsOn] };
     const previous = todos
       .filter((other) => other.askId === todo.askId && other.position < todo.position)
       .sort((a, b) => b.position - a.position)[0];
-    return { id: todo.id, dependsOn: previous ? [replacement(previous.id)] : [] };
+    return { id: todo.id, dependsOn: previous ? [previous.id] : [] };
   });
 }
 
-const neoTodoFinished = (todo: NeoTodo | undefined) =>
+export const neoTodoFinished = (todo: NeoTodo | undefined) =>
   todo?.state === 'done' || (todo?.state === 'closed_unverified' && todo.startedAt !== null);
 
 export function neoTodoReady(todos: readonly NeoTodo[], todoId: string): boolean {
@@ -44,6 +35,12 @@ export function neoTodoCancelledDependencies(todos: readonly NeoTodo[], todoId: 
       node?.dependsOn?.includes(todo.id) &&
       (todo.state === 'removed' || (todo.state === 'closed_unverified' && todo.startedAt === null))
   );
+}
+
+export function neoTodoRemainingDependencies(todos: readonly NeoTodo[], todoId: string): string[] {
+  const cancelled = new Set(neoTodoCancelledDependencies(todos, todoId).map((todo) => todo.id));
+  const node = neoTodoDependencyNodes(todos).find((item) => item.id === todoId);
+  return (node?.dependsOn ?? []).filter((id) => !cancelled.has(id));
 }
 
 export const planNeoTodoDependencies = (superpipe({})('neo.todo.plan-dependencies') as PipelineAPI)
@@ -63,6 +60,9 @@ export const planNeoTodoDependencies = (superpipe({})('neo.todo.plan-dependencie
   todoId: string,
   after: readonly string[]
 ) => string[] | DependencyRejection;
+
+export const NEO_TODO_CANCELLED_DEPENDENCY =
+  'cancelled_dependency: a prerequisite of this step was cancelled; only the human can clear it by answering its card.';
 
 export const NEO_TODO_NOT_READY =
   'not_ready: this step waits for unfinished steps; add it without start and the daemon starts it once they are done.';

@@ -320,15 +320,16 @@ try {
       const released = await read(b.askId);
       evidence.removed = released;
       assert.deepEqual(released.todos.filter((t: { id: string }) => t.id === a.id).map((t: { state: string; startedAt: number | null }) => [t.state, t.startedAt]), [[mode === 'chain-check' ? 'done' : 'removed', null]]);
-      if (mode === 'chain-cancel-replacement') {
-        assert.equal(starts(), 2);
-        assert(!released.questions.some((q: { state: string; startTodos?: string[] }) => q.state === 'open' && q.startTodos?.includes(b.id)));
-        await complete(independent.title);
-      } else if (mode !== 'chain-check') {
+      if (mode !== 'chain-check') {
         assert.equal(starts(), 2);
         const cancelled = released.questions.find((q: { state: string; startTodos?: string[] }) => q.state === 'open' && q.startTodos?.includes(b.id));
         assert(cancelled, 'cancelled prerequisites require a human decision');
         assert.match(cancelled.text, /removed-first.*cancelled|cancelled.*removed-first/);
+        if (mode === 'chain-cancel-replacement') {
+          await complete(independent.title);
+          await refresh();
+          assert.equal(starts(), 2, 'a finished replacement must not start the dependent');
+        }
         await refresh();
         assert.equal((await read(b.askId)).questions.filter((q: { state: string; startTodos?: string[] }) => q.state === 'open' && q.startTodos?.includes(b.id)).length, 1);
         assert.equal((await rpc('neo.question.answer', { questionId: cancelled.id, answer: mode === 'chain-cancel-decline' ? [] : [b.id] })).ok, true);
@@ -337,7 +338,7 @@ try {
       evidence.cancelledApproved = approved;
       const next = approved.todos.find((t: { id: string }) => t.id === b.id);
       assert.equal(next.state, mode === 'chain-cancel-decline' ? 'removed' : 'doing');
-      if (mode !== 'chain-check' && mode !== 'chain-cancel-replacement' && mode !== 'chain-cancel-decline') assert.deepEqual(next.dependsOn, []);
+      if (mode !== 'chain-check' && mode !== 'chain-cancel-decline') assert.deepEqual(next.dependsOn, []);
       assert.equal(approved.questions.filter((q: { state: string; startTodos?: string[] }) => q.state === 'open' && q.startTodos?.includes(b.id)).length, 0);
       const expected = mode === 'chain-cancel-decline' ? 2 : 3;
       assert.equal(starts(), expected);

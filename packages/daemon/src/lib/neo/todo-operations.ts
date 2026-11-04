@@ -1,5 +1,7 @@
 import {
+  NEO_TODO_CANCELLED_DEPENDENCY,
   neoTodoAfterRefusal,
+  neoTodoCancelledDependencies,
   neoTodoDependencyRefusal,
   planNeoTodoDependencies,
 } from './todo-dependencies.ts';
@@ -233,13 +235,16 @@ function joinNeoStartQuestion(todos: NeoAskTodoRepository, todo: NeoTodo): void 
 const bindNeoTodo = (superpipe({})('neo.todo.bind-worker') as PipelineAPI)
   .input(['todos', 'sessions', 'todo', 'ref'])
   .pipe(
-    (todo: NeoTodo): Gate<NeoTodo> =>
+    (todos: NeoAskTodoRepository, todo: NeoTodo): Gate<NeoTodo> =>
       ['done', 'removed'].includes(todo.state)
         ? fail(`todo_settled: cannot bind a ${todo.state} todo.`)
         : todo.blockedBy === 'held'
           ? fail('todo_held: the human is holding this todo; release it first.')
-          : { value: todo },
-    'todo',
+          : todo.startedAt === null &&
+              neoTodoCancelledDependencies(todos.listFamilyTodos(todo.askId), todo.id).length
+            ? fail(NEO_TODO_CANCELLED_DEPENDENCY)
+            : { value: todo },
+    ['todos', 'todo'],
     'result:bound'
   )
   .pipe(
@@ -784,7 +789,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.bind',
       description:
-        'Bind an unfinished todo on an open ask to an existing running worker, without sending or starting anything. Use this to repair a failed backfill instead of retrying its instruction. Records worker and doing, clears failure and old delivery evidence; does not stop the existing worker.',
+        'Bind an unfinished todo on an open ask to an existing running worker, without sending or starting anything. Use this to repair a failed backfill instead of retrying its instruction. Records worker and doing, clears failure and old delivery evidence; does not stop the existing worker. Refused for an unstarted todo with a cancelled prerequisite until the human answers its card.',
       inputSchema: Bind,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -793,7 +798,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.edit',
       description:
-        'Change a todo on an open ask you own: title or check {pack, kind, params}; the completion sentence is generated from the check, or reword it directly with doneWhen. addUrls appends PR URLs to its PR-merge check. Duplicate claims and URLs unsupported by the check are recorded without blocking the edit. Prefer editing to adding a duplicate PR todo. Or record completion evidence (done met for what you read, reported for a claim you cannot read); without a passed outcome check it stays open, blocked by its check, and finishes by itself once the check passes; give a working document or evidence file as its absolute path on the owning daemon with one sentence of evidence, not the pasted document. Preview only files on this daemon. Remote files return owner_unavailable; identify their owner rather than re-publishing their paths as local. The artifacts field remains for existing saved attachments and fixed-head Git references. Completion with an unanswered card is refused until the human answers it. Worker final-line blockers are recorded automatically: needs_human first wakes Neo: answer the worker and continue if you can; otherwise ask the human with neo.question.ask (yesno or choice with options) linked to the todo. An unchanged todo without a linked open question gets a human reply card after 60 minutes; handle environment blockers by retrying or escalating their cause. To hold or release a todo use neo.todo.hold. priority changes where waiting work starts in the queue. A check-only todo queued without instruction or target reminds Neo daily after 24 hours: provide both, or hold/remove it. instruction with target gives a todo that has not started and has no instruction its work; the queue then starts it like any approved step. A start target for a coding todo needs target.place from work.find.',
+        'Change a todo on an open ask you own: title or check {pack, kind, params}; the completion sentence is generated from the check, or reword it directly with doneWhen. addUrls appends PR URLs to its PR-merge check. Duplicate claims and URLs unsupported by the check are recorded without blocking the edit. Prefer editing to adding a duplicate PR todo. Or record completion evidence (done met for what you read, reported for a claim you cannot read); without a passed outcome check it stays open, blocked by its check, and finishes by itself once the check passes; give a working document or evidence file as its absolute path on the owning daemon with one sentence of evidence, not the pasted document. Preview only files on this daemon. Remote files return owner_unavailable; identify their owner rather than re-publishing their paths as local. The artifacts field remains for existing saved attachments and fixed-head Git references. Completion with an unanswered card is refused until the human answers it. Worker final-line blockers are recorded automatically: needs_human first wakes Neo: answer the worker and continue if you can; otherwise ask the human with neo.question.ask (yesno or choice with options) linked to the todo. An unchanged todo without a linked open question gets a human reply card after 60 minutes; handle environment blockers by retrying or escalating their cause. To hold or release a todo use neo.todo.hold. after is refused while a prerequisite is cancelled: only the human answering its card clears it. priority changes where waiting work starts in the queue. A check-only todo queued without instruction or target reminds Neo daily after 24 hours: provide both, or hold/remove it. instruction with target gives a todo that has not started and has no instruction its work; the queue then starts it like any approved step. A start target for a coding todo needs target.place from work.find.',
       inputSchema: Edit,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -812,7 +817,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.remove',
       description:
-        'Remove a todo from an open ask you own, with the reason; its session stops if it is running, unless the todo only follows a session the human tracked. An invalid replacedBy is recorded while removal proceeds without a replacement link. replacedBy names a live, acyclic replacement that dependents wait for instead. Without one, unstarted dependents ask the human whether to continue independently or be removed. A removed todo stays listed, struck through.',
+        'Remove a todo from an open ask you own, with the reason; its session stops if it is running, unless the todo only follows a session the human tracked. An invalid replacedBy is recorded while removal proceeds without a replacement link. Unstarted dependents ask the human once whether to continue without it or be removed; approval keeps waiting on their other prerequisites. replacedBy names a live, acyclic replacement shown on that card; it does not skip the card and dependents do not wait for it. A removed todo stays listed, struck through.',
       inputSchema: Remove,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

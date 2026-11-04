@@ -12,7 +12,7 @@ Persist a done predecessor and checkless descendants, reseed the stale card, res
 Require retirement and one successor dispatch without a new predecessor write or checker.
 Run chain-edges and chain-check separately: a close RPC releases the sibling's legacy card without full refresh.
 A passing check must release a prior cancellation card and dispatch its successor immediately, without refresh.
-Passing checks authorize dependents without a Start answer; cancellation never does. chain-edges must observe one cancellation card, zero premature sends, then public approval makes the dependent independent and dispatches once.
+Passing checks authorize dependents without a Start answer; cancellation never does. chain-edges must observe one cancellation card, zero premature sends, then public approval removes only the cancelled prerequisite and dispatches once. A replaced prerequisite asks the same way; finishing the replacement alone must not start the dependent.
 chain-cancel-implicit also preserves an explicit hold until release and rejects start:true after a never-started legacy closed prerequisite without adding work.
 Run chain-cancel-implicit, chain-cancel-close, chain-cancel-replacement, and chain-cancel-decline separately through the same wrapper.
 Run chain-cancel-claim: select a ready queue candidate, cancel its prerequisite, then invoke the actual writer claim. Require not_ready, no startedAt and no extra worker input; human approval then dispatches once. The same run refuses new removed-ID add/edit requests without adding work and preserves a failed check-only dependent without a cancellation card across refreshes.

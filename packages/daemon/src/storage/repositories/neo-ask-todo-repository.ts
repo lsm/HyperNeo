@@ -30,7 +30,15 @@ import type {
   NeoTodo,
   NeoTodoCheck,
 } from '@hyperneo/shared/types/neo-ask';
-import { neoStartQuestionTitle } from '../../lib/neo/start-question.ts';
+import {
+  neoStartCardText,
+  neoStartCardTodos,
+  neoTodosAwaitingCancellationCard,
+  neoTodoStartable,
+  planNeoStartCardPrune,
+  planNeoStartCardRelease,
+  type NeoStartCardOutcome,
+} from '../../lib/neo/todo-start-card.ts';
 import type { Database } from '../sqlite-compat.ts';
 
 export type NeoTodoDraft = Pick<NeoTodo, 'title' | 'doneWhen' | 'check' | 'instruction' | 'named'> &
@@ -198,9 +206,6 @@ const toTodo = ({
   named: parsed<Record<string, unknown>>(named),
   addedAfterStart: addedAfterStart === 1,
 });
-
-const isStartable = (todo: NeoTodo) =>
-  todo.state === 'todo' || (todo.state === 'blocked' && todo.blockedBy === 'question');
 
 export interface NeoCardReplyContext {
   conversationId: string;
@@ -629,6 +634,9 @@ export class NeoAskTodoRepository {
 
   moveTodo(todo: NeoTodo, askId: string, repo: string, now: number): NeoTodo {
     this.db.transaction(() => {
+      const cancelled = neoTodoCancelledDependencies(this.listFamilyTodos(todo.askId), todo.id);
+      if (!todo.dependsOn && cancelled.length)
+        this.updateTodo(todo, { dependsOn: cancelled.map((item) => item.id) }, now);
       this.db
         .prepare(
           `UPDATE neo_todos SET repo = ?2, position = CASE WHEN ask_id = ?1 THEN position
@@ -638,7 +646,7 @@ export class NeoAskTodoRepository {
         .run(askId, repo, todo.id);
       this.pruneQuestions(todo.askId, now);
       const moved = this.getTodo(todo.id)!;
-      if (askId !== todo.askId && moved.instruction && isStartable(moved))
+      if (askId !== todo.askId && moved.instruction && neoTodoStartable(moved))
         this.joinStartQuestion(moved, now);
     })();
     this.db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ? AND repo IS NULL').run(repo, askId);
@@ -965,43 +973,10 @@ export class NeoAskTodoRepository {
     this.touchAsk(question.askId, now);
   }
 
-  private startQuestionTodos(askId: string): Set<string> {
-    const family = this.listFamilyTodos(askId);
-    const independent = new Set(
-      neoTodoDependencyNodes(family)
-        .filter((node) => !node.dependsOn?.length)
-        .map((node) => node.id)
-    );
-    return new Set(
-      family
-        .filter(
-          (todo) =>
-            todo.askId === askId &&
-            isStartable(todo) &&
-            (independent.has(todo.id) ||
-              (todo.startedAt === null && neoTodoCancelledDependencies(family, todo.id).length > 0))
-        )
-        .map((todo) => todo.id)
-    );
-  }
-
-  private startQuestionText(ids: readonly string[], family: readonly NeoTodo[]): string {
-    return [
-      neoStartQuestionTitle(ids.map((id) => family.find((todo) => todo.id === id) ?? {})),
-      ...ids.flatMap((id) => {
-        const cancelled = neoTodoCancelledDependencies(family, id);
-        return cancelled.length
-          ? [
-              `Prerequisite ${cancelled.map((todo) => `"${todo.title}"`).join(', ')} was cancelled. Go ahead with "${family.find((todo) => todo.id === id)?.title}" independently? Select it to continue; leave it unticked to remove it.`,
-            ]
-          : [];
-      }),
-    ].join('\n');
-  }
-
   joinStartQuestion(todo: NeoTodo, now: number, prune = true): boolean {
     if (prune) this.pruneQuestions(todo.askId, now);
-    const startable = this.startQuestionTodos(todo.askId);
+    const family = this.listFamilyTodos(todo.askId);
+    const startable = neoStartCardTodos(family, todo.askId);
     if (!startable.has(todo.id)) return false;
     const todos = this.listTodos(todo.askId);
     const open = this.listQuestions(todo.askId).find(
@@ -1011,7 +986,7 @@ export class NeoAskTodoRepository {
       todos.some((item) => item.id === id && startable.has(item.id))
     );
     const startTodos = [...new Set([...listed, todo.id])];
-    const text = this.startQuestionText(startTodos, this.listFamilyTodos(todo.askId));
+    const text = neoStartCardText(startTodos, family);
     if (open)
       this.extendStartQuestion(
         open.id,
@@ -1055,11 +1030,9 @@ export class NeoAskTodoRepository {
         'open'
       );
       if (answered) {
-        this.releaseStartTodos(
-          question.id,
-          now,
-          question.kind === 'start' ? [answer].flat().map(String) : undefined
-        );
+        this.releaseStartTodos(question.id, now, {
+          ticked: question.kind === 'start' ? [answer].flat().map(String) : [],
+        });
         if (answer === 'yes') {
           applyPackPreferenceAnswer(this.db, question.id);
           const rules = applyNeoRuleAnswer(this.db, question.id, approval);
@@ -1110,7 +1083,8 @@ export class NeoAskTodoRepository {
         { state: 'retired', retired_reason: reason, replaced_by: replacedBy },
         'open'
       );
-      if (retired) this.releaseStartTodos(question.id, now, [], 'Start question withdrawn.');
+      if (retired)
+        this.releaseStartTodos(question.id, now, { withdrawn: 'Start question withdrawn.' });
       return retired;
     })();
     if (!changed) return null;
@@ -1145,7 +1119,8 @@ export class NeoAskTodoRepository {
 
   private pruneAskQuestions(askId: string, now: number): void {
     const todos = this.listTodos(askId);
-    const startable = this.startQuestionTodos(askId);
+    const family = this.listFamilyTodos(askId);
+    const startable = neoStartCardTodos(family, askId);
     for (const question of this.listQuestions(askId)) {
       if (question.state !== 'open') continue;
       if (
@@ -1158,16 +1133,10 @@ export class NeoAskTodoRepository {
           this.questionsPruned?.();
         continue;
       }
-      if (question.kind !== 'start' || question.state !== 'open' || !question.startTodos) continue;
-      const kept = question.startTodos.filter((id) => startable.has(id));
-      if (
-        kept.length === question.startTodos.length &&
-        !kept.some((id) => neoTodoCancelledDependencies(this.listFamilyTodos(askId), id).length)
-      )
-        continue;
-      const text = this.startQuestionText(kept, this.listFamilyTodos(askId));
-      if (kept.length === question.startTodos.length && text === question.text) continue;
-      if (!kept.length)
+      if (question.kind !== 'start' || !question.startTodos) continue;
+      const plan = planNeoStartCardPrune(question, startable, this.listFamilyTodos(askId));
+      if (!plan) continue;
+      if (!plan.kept.length)
         this.db
           .prepare(
             `UPDATE neo_questions SET start_todos = '[]', state = 'retired',
@@ -1177,31 +1146,25 @@ export class NeoAskTodoRepository {
       else
         this.db
           .prepare('UPDATE neo_questions SET start_todos = ?, text = ? WHERE id = ?')
-          .run(JSON.stringify(kept), text, question.id);
-      for (const id of question.startTodos.filter((id) => !kept.includes(id))) {
+          .run(JSON.stringify(plan.kept), plan.text, question.id);
+      for (const id of plan.released) {
         const todo = this.getTodo(id);
         if (todo?.blockedBy === 'question') this.updateTodo(todo, {}, now);
       }
       this.questionsPruned?.();
     }
     if (this.getAsk(askId)?.status !== 'open') return;
-    for (const todo of todos.filter((item) => startable.has(item.id))) {
-      if (
-        !neoTodoCancelledDependencies(this.listFamilyTodos(askId), todo.id).length ||
-        this.listQuestions(askId).some((q) => q.state === 'open' && q.startTodos?.includes(todo.id))
-      )
-        continue;
+    for (const todo of neoTodosAwaitingCancellationCard(
+      this.listFamilyTodos(askId),
+      askId,
+      this.listQuestions(askId)
+    )) {
       this.joinStartQuestion(todo, now, false);
       this.updateTodo(todo, { state: 'blocked', blockedBy: 'question' }, now);
     }
   }
 
-  private releaseStartTodos(
-    questionId: string,
-    now: number,
-    ticked?: readonly string[],
-    heldReason = 'Not ticked in the start answer.'
-  ): void {
+  private releaseStartTodos(questionId: string, now: number, outcome: NeoStartCardOutcome): void {
     const question = this.getQuestion(questionId);
     const waiting = new Set(
       (question ? this.listQuestions(question.askId) : [])
@@ -1210,38 +1173,9 @@ export class NeoAskTodoRepository {
     );
     for (const id of question?.startTodos ?? []) {
       const todo = this.getTodo(id);
-      if (todo?.state === 'blocked' && todo.blockedBy === 'question' && !waiting.has(id)) {
-        if (ticked && neoTodoCancelledDependencies(this.listFamilyTodos(todo.askId), id).length) {
-          this.writeTodo(
-            todo,
-            ticked.includes(id)
-              ? { state: 'todo', dependsOn: [] }
-              : {
-                  state: 'removed',
-                  reason: 'The human declined after a prerequisite was cancelled.',
-                  finishedAt: now,
-                },
-            now,
-            false,
-            false
-          );
-          continue;
-        }
-        this.writeTodo(
-          todo,
-          ticked && !ticked.includes(id)
-            ? {
-                state: 'blocked',
-                blockedBy: 'held',
-                blockedReason: heldReason,
-                nextAction: 'The human releases it.',
-              }
-            : { state: 'todo' },
-          now,
-          false,
-          false
-        );
-      }
+      if (todo?.state !== 'blocked' || todo.blockedBy !== 'question' || waiting.has(id)) continue;
+      const patch = planNeoStartCardRelease(todo, this.listFamilyTodos(todo.askId), outcome, now);
+      if (patch) this.writeTodo(todo, patch, now, false, false);
     }
     if (question) this.pruneQuestions(question.askId, now);
   }
