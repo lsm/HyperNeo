@@ -28,7 +28,8 @@ concurrency repair or lifecycle recovery after an unknown receipt.
 Pin the full 49-line merged command/helper hashes and contracts, unchanged
 validation/clock/read/table helpers and lifecycle/RPC/caller roots. Their dynamic
 plugin/transitive framework/startup closure is outside this owned wiring audit.
-Reads, Space setter and constructor DDL remain separate. Update the earlier
+The Space setter is activated separately by lane-c-extension-space-activation.md;
+reads and constructor DDL remain separate. Update the earlier
 extraction proof to require zero public main UPSERTs while retaining its direct
 scratch-helper rollback contracts. Evidence: extension-global-activation.json.
 Close owned socket, lock, processors and app before cleanup. Deployment is Neo-owned.

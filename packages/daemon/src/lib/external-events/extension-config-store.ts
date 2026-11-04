@@ -1,4 +1,4 @@
-import { persistSpaceExtensionConfig } from '../../storage/repositories/space-extension-config-persist.ts';
+import { spaceExtensionConfigWrites } from '../../storage/repositories/space-extension-config-write.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { globalExtensionConfigWrites } from '../../storage/repositories/global-extension-config-write.ts';
 import { isRecord } from '../record.ts';
@@ -92,7 +92,14 @@ export class ExternalEventExtensionConfigStore
     validateSourceId(source);
     validateSpaceConfig(spaceId, source, config);
     const now = Date.now();
-    persistSpaceExtensionConfig(this.db, spaceId, source, config, now);
+    await gatewayFor(this.db).call(
+      spaceExtensionConfigWrites,
+      'persist',
+      spaceId,
+      source,
+      config,
+      now
+    );
   }
 }
 
