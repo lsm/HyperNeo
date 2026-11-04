@@ -1,6 +1,10 @@
 import type { Database } from '../sqlite-compat.ts';
 
 export function runMigration474(db: Database): void {
+  if (
+    !db.prepare(`SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'sdk_messages'`).get()
+  )
+    return;
   db.exec(`
     DROP INDEX IF EXISTS idx_sdk_messages_bg_task_time;
     DROP INDEX IF EXISTS idx_sdk_messages_bg_tool_time;

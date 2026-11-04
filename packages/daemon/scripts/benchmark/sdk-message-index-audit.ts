@@ -92,7 +92,7 @@ const INDEXES: readonly IndexDefinition[] = [
   },
   {
     name: 'idx_sdk_messages_task_session_turn',
-    ddl: 'idx_sdk_messages_task_session_turn(task_id, session_id, conversation_turn_index)',
+    ddl: 'idx_sdk_messages_task_session_turn(task_id, session_id, conversation_turn_index) WHERE task_id IS NOT NULL',
   },
 ];
 
