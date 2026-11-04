@@ -183,6 +183,29 @@ describe('desktop preview file tabs', () => {
     expect(artifactPreviewWorkspace.state.value.files.length).toBe(1);
   });
 
+  it('Escape that clears the last file selects the session tab instead of an empty strip', async () => {
+    const onSelect = vi.fn();
+    render(
+      <ArtifactPreviewPanel
+        fileTabs
+        work={{ id: 'neo-preview-work-panel', showTab: true, count: 2 }}
+        session={{
+          id: 'session-1',
+          title: 'Work chat',
+          selected: false,
+          onSelect,
+          onClose: () => {},
+          children: <p>Session body</p>,
+        }}
+      />
+    );
+    act(() => artifactPreviewWorkspace.select(null));
+    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a' }, title('a')));
+    await screen.findByRole('heading', { name: 'Document a' });
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
   it('shows no strip or panel when Your work is the only tab', () => {
     render(
       <ArtifactPreviewPanel
