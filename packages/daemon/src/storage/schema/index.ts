@@ -398,28 +398,6 @@ export function createTables(db: BunDatabase): void {
     `);
 
   db.exec(`
-      CREATE TABLE IF NOT EXISTS inbox_items (
-        id TEXT PRIMARY KEY,
-        source TEXT NOT NULL CHECK(source IN ('github_issue', 'github_comment', 'github_pr')),
-        repository TEXT NOT NULL,
-        issue_number INTEGER NOT NULL,
-        comment_id TEXT,
-        title TEXT NOT NULL,
-        body TEXT NOT NULL,
-        author TEXT NOT NULL,
-        author_permission TEXT,
-        labels TEXT NOT NULL DEFAULT '[]',
-        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'routed', 'dismissed', 'blocked')),
-        routed_to_room_id TEXT,
-        routed_at INTEGER,
-        security_check TEXT NOT NULL,
-        raw_event TEXT NOT NULL,
-        received_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      )
-    `);
-
-  db.exec(`
       CREATE TABLE IF NOT EXISTS session_groups (
         id TEXT PRIMARY KEY,
         group_type TEXT NOT NULL DEFAULT 'task',
@@ -650,10 +628,6 @@ function createIndexes(db: BunDatabase): void {
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_github_events_repo ON space_github_events(space_id, repo_owner, repo_name, pr_number)`
-  );
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_inbox_items_status ON inbox_items(status)`);
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_inbox_items_repository ON inbox_items(repository, issue_number)`
   );
   db.exec(`CREATE INDEX IF NOT EXISTS idx_session_groups_ref ON session_groups(ref_id)`);
   db.exec(
