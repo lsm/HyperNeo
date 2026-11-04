@@ -78,6 +78,24 @@ const interfaces = interfaceSpecs.flatMap(([file, names]) => {
 const fresh = freshFiles.reduce((n, row) => n + row.lines, 0) + uuidRoot.lines + handlerRoot.lines + authorization.lines;
 const dataExcluded = data.reduce((n, row) => n + row.lines, 0);
 const interfaceLines = interfaces.reduce((n, row) => n + row.lines, 0);
-const report = { base: cp.execFileSync('git', ['rev-parse', 'origin/dev'], { encoding: 'utf8' }).trim(), phase, fresh, dataExcluded, ownedKnown: fresh + dataExcluded, interfaceLines, previousGrant: { fresh: 154, dataExcluded: 272, ownedKnown: 426, interfaceLines: 116 }, data, freshFiles, uuidRoot, handlerRoot, authorization, interfaces, auditLimit: 'Seven audited data exclusions only. Interface roots explicitly pinned-not-audited; no full public/shared barrel/runtime closure. Main callback reads still block #8714 and are tracked in #9438. Current 117 versus granted 116 interface lines needs coordinator reconciliation before implementation.' };
+const approvedInterfaceHashes = {
+  "enablePollingCapability": "4e420bfc4d7ff56a8f89ad1c73cf5ba41299f561473bff53338cb7f9fb6f767b",
+  "disablePollingCapabilityIfUnused": "ef314f86addab932a67ee75012aeabd188201fa52368037be7aae6e0a6fa0008",
+  "assertPollingIntervalEnabled": "a573480e0955085bea56fa5d99b98fd61b0b60ee3cba5f211b89c962aa6147a1",
+  "ensurePollingActive": "b40fa77bfb50f6856fdbffbecba6650605de19a902eb79c3628c08f57bee6590",
+  "maybeStopPolling": "7aa0c402af118228db9d0ff59350ed862dac15e895ea5b9fc1a738b6ca3bb88d",
+  "getPollIntervalMs": "2836cf7a3bf0c7162a3e55b25bae19640e8cbeecb491f89f0ac304d936fb0232",
+  "scheduleNextPoll": "412d5ea222fb60761a0bf8e6aac10a512079c91859e5a866fdcbbd9dca28b70b",
+  "listAllPollingConfiguredRepos": "16dbe8f397356583494b6735cacb6d1f6e9279ea5273948cf959235a0c3fe1ce",
+  "countSpacesWithPollingIntent": "05f132b69f854d7f4c6e5e28336fd66fe6d8a8a0e6104ae1cf4f5a1b144397d6",
+  "listPollingRepos": "274fcd6df42475444d4901ff853f78f8bf10c601e6ed166b84a5f052a60cacbd",
+  "getGlobalConfig": "1306ba148315c07ee063837c76ee9fad5cd02471779338d4f4741eb587054ea1",
+  "setGlobalConfig": "9fda9b0825dc5a808ea4876bdd824280ed4dc40d30fffd76faaa3542a516986a"
+};
+for (const row of interfaces) {
+  if (approvedInterfaceHashes[row.name] !== row.sha256) throw Error('Approved interface root drift: ' + row.name);
+  row.unchangedSinceApprovedCommandBase = true;
+}
+const report = { head: cp.execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), phase, fresh, dataExcluded, ownedKnown: fresh + dataExcluded, interfaceLines, previousGrant: { fresh: 154, dataExcluded: 272, ownedKnown: 426, interfaceLines: 116 }, data, freshFiles, uuidRoot, handlerRoot, authorization, interfaces, auditLimit: 'Seven audited data exclusions only. Interface roots explicitly pinned-not-audited; no full public/shared barrel/runtime closure. Main callback reads still block #8714 and are tracked in #9438. The same twelve byte-identical approved interface roots total 117, correcting the earlier 116 arithmetic; no additional root or exclusion. Any actual interface drift fails this measurement.' };
 fs.writeFileSync(process.argv[2], JSON.stringify(report, null, 2) + '\n');
 console.log(JSON.stringify({ phase, fresh, dataExcluded, ownedKnown: report.ownedKnown, interfaceLines }));

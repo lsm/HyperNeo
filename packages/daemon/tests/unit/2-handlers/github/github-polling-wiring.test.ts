@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops';
 import { vi } from 'vitest';
 import { Database } from '../../../../src/storage/sqlite-compat';
@@ -175,6 +179,43 @@ describe('GitHub polling RPC writer wiring', () => {
           .digest('hex')
       ).toBe(sha);
     expect(DB_OPS.get(opName)?.mode).toBe('write');
+  });
+  test('the approved fresh boundary and unchanged interface roots remain explicit', () => {
+    const temporary = mkdtempSync(join(tmpdir(), 'github-polling-boundary-'));
+    try {
+      const output = join(temporary, 'boundary.json');
+      execFileSync(
+        process.execPath,
+        [
+          fileURLToPath(
+            new URL(
+              '../../../../../../.claude/skills/verify/lane-c-github-polling-wiring-measure.cjs',
+              import.meta.url
+            )
+          ),
+          output,
+        ],
+        { cwd: fileURLToPath(new URL('../../../../../..', import.meta.url)), stdio: 'pipe' }
+      );
+      const measured = JSON.parse(readFileSync(output, 'utf8'));
+      expect(measured).toMatchObject({
+        phase: 'wired',
+        fresh: 154,
+        dataExcluded: 272,
+        ownedKnown: 426,
+        interfaceLines: 117,
+      });
+      expect(measured.data).toHaveLength(7);
+      expect(measured.interfaces).toHaveLength(12);
+      expect(
+        measured.interfaces.every(
+          (row: { pinnedNotAudited: boolean; unchangedSinceApprovedCommandBase: boolean }) =>
+            row.pinnedNotAudited && row.unchangedSinceApprovedCommandBase
+        )
+      ).toBe(true);
+    } finally {
+      rmSync(temporary, { recursive: true, force: true });
+    }
   });
   test('ordinary reply and notification follow a consistent committed polling snapshot', async () => {
     const watched = state().watched;

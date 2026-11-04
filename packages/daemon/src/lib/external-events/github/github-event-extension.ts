@@ -1,3 +1,4 @@
+import { gitHubPollingWrites } from '../../../storage/repositories/github-polling-enabled-write.ts';
 import { gatewayFor } from '../../../storage/db-gateway/db-gateway.ts';
 import { gitHubSpaceEnabledWrites } from '../../../storage/repositories/github-space-enabled-write.ts';
 import { gitHubFilterWrites } from '../../../storage/repositories/github-filter-write.ts';
@@ -654,28 +655,17 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (params.enabled) {
         this.assertPollingIntervalEnabled();
       }
-      const repos = this.repo.listWatchedRepos(params.spaceId);
-      for (const repo of repos) {
-        if (params.enabled && repo.webhookEnabled && repo.webhookSecret) {
-          continue;
-        }
-        this.repo.upsertWatchedRepo({
-          spaceId: repo.spaceId,
-          owner: repo.owner,
-          repo: repo.repo,
-          pollingEnabled: params.enabled,
-        });
-      }
+      await gatewayFor(this.db).run(gitHubPollingWrites, {
+        spaceId: params.spaceId,
+        enabled: params.enabled,
+      });
       if (params.enabled) {
-        this.repo.setPollingIntent(params.spaceId, true);
         await this.enablePollingCapability(context);
         this.ensurePollingActive();
       } else {
-        this.repo.setPollingIntent(params.spaceId, false);
         await this.disablePollingCapabilityIfUnused(context);
         this.maybeStopPolling();
       }
-      await this.persistSpaceConfig(context, params.spaceId);
       context.onSourceConfigChanged({
         source: this.sourceId,
         spaceId: params.spaceId,

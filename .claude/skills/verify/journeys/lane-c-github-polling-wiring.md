@@ -32,5 +32,15 @@ node .claude/skills/verify/lane-c-github-polling-wiring-measure.cjs /absolute/me
 
 It verifies the seven approved full-module data hashes and records fresh owned
 units and unchanged interface roots. Interface roots are pinned, not audited.
-Any difference from the coordinator's recorded boundary needs reconciliation;
-this measurement never grants itself a new exclusion.
+All twelve interface roots must remain byte-identical to the approved command
+base. Their measured total is 117, correcting the earlier 116 arithmetic without
+adding an excluded root. Actual drift needs a new coordinator decision; this
+measurement never grants itself an exclusion.
+
+Run the repository's full `bun run check` separately. The supplementary full
+TypeScript 6 solution audit is `bun node_modules/typescript/bin/tsc --build
+--noEmit`; retain its complete output and compare unchanged production source
+before classifying a failure as existing. On the resumed base, that audit fails
+at `google-calendar-operations.ts:114` on both baseline and fixed source; no
+TypeScript 6 pass is claimed. The required repository quality check uses
+TypeScript 7 and passes independently.
