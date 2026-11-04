@@ -19,6 +19,8 @@ import {
 import { mirrorNeoWorkspaceProjectsAsync } from '../../neo/project-mirror-async.ts';
 import { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../storage/repositories/neo-ask-todo-repository.ts';
+import { WorkDeliveryInputRepository } from '../../../storage/repositories/work-delivery-input-repository.ts';
+import { readDriverOutcome } from '../../neo/driver-work.ts';
 import { existsSync, mkdirSync, statSync } from 'node:fs';
 import { codexStatePath } from '../../../storage/codex-desktop-read.ts';
 import { homedir, hostname } from 'node:os';
@@ -68,6 +70,7 @@ import type { PlaceGroup, WorkAdapter } from '../../drivers/types.ts';
 import {
   createWorkVerbOperations,
   type WorkSendUncertainty,
+  type WorkVerbDeps,
 } from '../../drivers/work-operations.ts';
 import { sessionSender } from '../../messaging/message-send.ts';
 import { renderAddress } from '../../mailbox/address.ts';
@@ -614,8 +617,35 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       const store = new NeoAskTodoRepository(db());
       const todo = store.getTodo(todoId);
       const ask = todo ? store.getAsk(todo.askId) : null;
-      return ask?.status === 'open' && ask.sessionId === sessionId;
+      return (
+        !!todo &&
+        ['todo', 'doing', 'blocked'].includes(todo.state) &&
+        ask?.status === 'open' &&
+        ask.sessionId === sessionId
+      );
     },
+    sendInputs: {
+      accept: (input, from) =>
+        new WorkDeliveryInputRepository(db()).accept(
+          input.todoId ?? null,
+          from,
+          { verb: 'send', ref: input.ref },
+          input.message,
+          Date.now()
+        ),
+      recordOutcome: (id, ref, outcome) =>
+        new WorkDeliveryInputRepository(db()).recordOutcome(
+          id,
+          readDriverOutcome({ verb: 'send', ref }, { kind: 'completed', value: outcome }),
+          Date.now()
+        ),
+      recordFailure: (id, error) =>
+        new WorkDeliveryInputRepository(db()).recordOutcome(
+          id,
+          { failure: String(error) },
+          Date.now()
+        ),
+    } satisfies WorkVerbDeps['sendInputs'],
     recordStarted: (ref: StartedWork) => recordStartedWork(db(), ref),
     freeWorkers: (adapter: string) => readFreeWorkers(db(), adapter),
     markUnusable: (ref: StartedWork) => markWorkUnusable(db(), ref),

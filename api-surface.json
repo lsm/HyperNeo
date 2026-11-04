@@ -54319,6 +54319,11 @@
             ],
             "type": "string"
           },
+          "notice": {
+            "const": true,
+            "description": "This send is a notice, not a piece of work. Neo sends need this or todoId.",
+            "type": "boolean"
+          },
           "ref": {
             "properties": {
               "adapter": {
@@ -54341,7 +54346,7 @@
             "type": "object"
           },
           "todoId": {
-            "description": "Todo reference for bookkeeping, including follow-ups; missing or stale references are recorded without blocking.",
+            "description": "The open todo this send belongs to. A Neo send needs this or notice.",
             "minLength": 1,
             "type": "string"
           }
@@ -55043,6 +55048,11 @@
             ],
             "type": "string"
           },
+          "notice": {
+            "const": true,
+            "description": "This send is a notice, not a piece of work. Neo sends need this or todoId.",
+            "type": "boolean"
+          },
           "ref": {
             "properties": {
               "adapter": {
@@ -55065,7 +55075,7 @@
             "type": "object"
           },
           "todoId": {
-            "description": "Todo reference for bookkeeping, including follow-ups; missing or stale references are recorded without blocking.",
+            "description": "The open todo this send belongs to. A Neo send needs this or notice.",
             "minLength": 1,
             "type": "string"
           }
