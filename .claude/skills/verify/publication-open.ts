@@ -36,8 +36,10 @@ try {
  const fixtures=[];
  for(const [session,title] of [[worker,'Local session reply'],[root,'Neo session reply'],[room,'Space session reply'],['codex-desktop:synthetic-thread','Codex session reply'],['claude-desktop:synthetic-session','Claude session reply'],['codex-desktop:linkless','Session without app link'],[undefined,'Ordinary reply']] as const){
  const result=JSON.parse((await publish({name:'neo.publication.publish',input:{requestId:crypto.randomUUID(),shortText:title,fullText:`${title}\n\nSynthetic full report`,...(session?{session}:{})}})).content[0].text);
- assert(result.accepted,JSON.stringify(result));fixtures.push({session,title,id:result.publication.publicationId});
+ assert(result.accepted,JSON.stringify(result));assert.equal(result.publication.session,session===root?undefined:session);fixtures.push({session:session===root?undefined:session,title,id:result.publication.publicationId});
  }
+ const stored=JSON.parse((await publish({name:'neo.publication.publish',input:{requestId:crypto.randomUUID(),shortText:'Stored Neo session reply',fullText:'Stored Neo session reply'}})).content[0].text).publication.publicationId;
+ app.db.getDatabase().prepare("UPDATE neo_publications SET payload_json=json_set(payload_json,'$.session',?) WHERE publication_id=?").run(root,stored);fixtures.push({session:undefined,title:'Stored Neo session reply',id:stored});
  const store=new NeoAskTodoRepository(app.db.getDatabase()),links=new NeoTodoSessionRepository(app.db.getDatabase()),at=Date.now();
  store.openAsk({id:'comparison-work',sessionId:root,projectId:null,originMessageId:null,title:'Comparison work card',request:'Synthetic comparison',createdAt:at});
  const todo=store.addTodo('comparison-todo','comparison-work',{title:'Same local worker',doneWhen:'Observed Open',check:null,instruction:null,named:null},at);links.bind(todo.id,{adapter:'hyperneo',id:worker},at);links.recordRef(todo.id,{adapter:'hyperneo',id:worker},at,`/session/${worker}`);

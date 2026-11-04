@@ -114,7 +114,7 @@ describe('human reset receipt coordinator construction', () => {
       }
     >;
     for (const [name, group] of Object.entries(dependencies)) {
-      expect(group.lines).toBe(name === 'resetReceipt' ? 142 : 283);
+      expect(group.lines).toBe(name === 'resetReceipt' ? 142 : 288);
       expect(hash(JSON.stringify(group.units))).toBe(group.sha256);
       for (const unit of group.units) {
         const text = readFileSync(new URL(unit.file, root), 'utf8');
