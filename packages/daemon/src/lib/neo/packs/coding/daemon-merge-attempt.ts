@@ -16,6 +16,8 @@ export function planCodingMergeAttempt(
 ) {
   if (facts.ok && facts.head === head && facts.state === 'MERGED' && facts.mergeCommit)
     return { kind: 'confirmed' as const, commit: facts.mergeCommit };
+  if (facts.ok && facts.state === 'OPEN' && (!facts.requiredCi.green || !facts.passingCommitStatus))
+    return { kind: 'not_ready' as const };
   if (facts.ok && facts.state === 'OPEN')
     return {
       kind: 'retry' as const,

@@ -26,9 +26,14 @@ The repo-scoped `mergeBy` preference defaults to `owner` without saving a value.
 `daemon` runs fresh merge gates in the coding sweep, squash-merges eligible PRs
 on their exact head, records receipts and tells the owner or Neo. Do not chase
 owners to merge in daemon repos. A fresh OPEN result releases a failed attempt for
-retry; all gates are checked again. Unreadable outcomes retain the receipt and CLI
+retry; all gates are checked again. Pending CI or GitHub's unready commit status
+does not consume the budget; unreadable outcomes retain the receipt and CLI
 error without consuming the retry budget. The daemon stops after three confirmed
-failed attempts per head and tells Neo the last error; resolve it before manual action.
+failed attempts per head and tells Neo the last error; resolve it before reopening the budget.
+After resolving a stopped report, Neo may call neo.coding.merge.retry with its URL
+and exact head. It accepts the report and reopens the budget only after every fresh
+merge gate passes, preserves historical failures, and leaves merging to the daemon.
+When a stopped PR later passes fresh gates, Neo receives a new ready cue; it does not reopen the budget itself.
 Retry-limit reports remain pending until Neo accepts them, even if the PR closes
 or repository policy changes. Human policy and sign-off still require the human. With zero required checks and no configured review-bot gate, work is handed to the human for manual merge, including owner-execution repositories. Never ask workers to merge these PRs. Only the exact repository setting `allowNoChecksMerge:true` opts into zero-check merging; its default is false and global values do not authorize it. Human handoff notices are published directly and do not complete pr_merged checks.
 When the human wants to merge a PR themselves, call neo.coding.merge.human with

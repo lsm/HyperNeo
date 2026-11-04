@@ -5,8 +5,8 @@
   "units": [
     {
       "file": "packages/daemon/src/lib/mcp/mcp-import-service.ts",
-      "lines": 1016,
-      "sha256": "5aa7d9956296babfbc0adcb00d63ca045c49f596d86215642a625bf4eac620c5"
+      "lines": 991,
+      "sha256": "2d44b5777dc63e54f9de05a5b3b23e6c08c52ee89e4eab94efdf7fd9d6d7ac4d"
     },
     {
       "file": "packages/daemon/src/lib/mcp/mcp-server-namespace.ts",
@@ -35,8 +35,8 @@
     },
     {
       "file": "packages/daemon/src/storage/repositories/tool-default-transition.ts",
-      "lines": 252,
-      "sha256": "cfd1b005040ee2c67de16eaa7a5aeae26cfa1c2bc8f13801a69e2a9498cab857"
+      "lines": 253,
+      "sha256": "c5f99e8e216a9bac3c53bf1e3d39e4f4470e9cd26e40ca43dd9f179547e50247"
     },
     {
       "file": "packages/daemon/src/storage/repositories/tool-preference-commit.ts",

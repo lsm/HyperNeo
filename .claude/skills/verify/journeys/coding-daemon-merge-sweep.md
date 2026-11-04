@@ -37,6 +37,41 @@ exits nonzero. Only a readable OPEN result releases/counts the attempt; retries
 recheck every gate.
 Readable held warnings are durably acknowledged and terminal attempts retire; confirmation stays distinct.
 
+Add `ci-startup-queued` and `ci-startup-running` for the #9623/#9625 failure:
+the required aggregate check has not appeared, so the CLI returns exit 1, empty
+stdout and the owner's exact `no required checks reported` diagnostic while
+GitHub's commit state is BLOCKED. Across repeated pack recreation, no merge or
+failure charge may occur. Once CI and the commit status are green, exactly one
+pinned merge and confirmation must occur. Add `ci-merge-race` to make a new pending
+run appear during an attempted merge: its readable OPEN confirmation releases the
+receipt without charging a failure, and the later green turn merges normally.
+
+Add `ci-retry-budget` for Neo's stopped-report acceptance path. Workers, another
+head, pending CI, a human label and unreadable reviews must not reopen the budget.
+The exact ready head may be acknowledged once through neo.coding.merge.retry;
+historical failures remain unchanged and the daemon, not that operation, merges.
+A per-head retry acknowledgement is stored independently of transient merge
+receipts, whose notice rows have a cascading foreign key. It survives receipt
+release. Unit coverage verifies that the next episode still stops at three,
+including timestamp zero and an acknowledgement made after a clock rollback.
+The retry-budget helper uses the real Neo mailbox with its processor stopped:
+after an explicit retry and another genuine three-failure stop, two distinct
+stopped reports must be queued for Neo. Repeated sweeps add neither duplicate
+report nor merge. This proves delivery acceptance, not model consumption.
+Add `ci-stopped-ready` for an owned, budget-exhausted PR whose CI later turns
+green. A fresh-gate read failure must send no ready cue. After every gate passes,
+the real Neo mailbox must receive one actionable `neo.coding.merge.retry` cue,
+including after pack recreation. The stopped budget remains closed until Neo
+acknowledges it; the worker receives no manual-merge instruction. That explicit
+acknowledgement then permits exactly one daemon merge. Earlier stop delivery is
+not treated as notice of the later green transition.
+When adding a Neo operation, also run `tests/unit/1-core/operations/neo.test.ts`
+with the shared isolated unit setup. Its advertised-tool catalog must include the
+new tool while retaining the existing bound-session authorization assertions.
+Also run `tests/unit/1-core/operations/input-examples.test.ts` and the
+`operation-input-examples` journey: the exact-head retry schema needs a declared
+valid URL and SHA example so MCP invalid-input responses show the next valid shape.
+
 The helper saves coding-daemon-merge-sweep.json and the exact CLI invocation log,
 stops its daemon and preserves evidence before the wrapper removes synthetic data.
 No GUI, live GitHub merge or installed daemon deployment is exercised.

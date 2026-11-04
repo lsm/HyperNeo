@@ -1,3 +1,7 @@
+import {
+  spaceSlotSkillVetoes,
+  spaceWorkspaceSources,
+} from '../repositories/space-storage-hooks.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SchemaExtension } from './extensions.ts';
 import { runMigration239 } from './m239-rename-worker-coder-template-key.ts';
@@ -322,6 +326,8 @@ export const SPACE_SCHEMA: SchemaExtension = {
   tables: createSpaceTables,
   indexes: createSpaceIndexes,
   baseline: { statements: spaceBaseline, presentWhenTable: 'spaces' },
+  sessionSkillVetoes: spaceSlotSkillVetoes,
+  workspaceSources: spaceWorkspaceSources,
   migrations: {
     migration_239: runMigration239,
     migration_240: runMigration240,
