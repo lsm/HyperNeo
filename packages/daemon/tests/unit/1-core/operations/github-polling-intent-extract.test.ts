@@ -39,7 +39,7 @@ describe('GitHub polling intent SQL extraction', () => {
         pass: true,
         mainThreadMovementClaim: false,
         publicRpc: {
-          mainStatementRuns: 3,
+          mainStatementRuns: 0,
           snapshotAndCreationTimesPreserved: true,
           enabledAndFilterFlagPreserved: true,
         },
