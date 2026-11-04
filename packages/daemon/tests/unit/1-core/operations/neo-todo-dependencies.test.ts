@@ -641,6 +641,78 @@ describe('todo dependencies', () => {
     }
   });
 
+  test.each(['held', 'failed'])(
+    'a %s dependent cannot become independent without a card',
+    async (mode) => {
+      const { db, store, invoke, step, work } = setup();
+      try {
+        const opened = await invoke('neo.ask.open', {
+          title: 'Paused dependent',
+          request: 'Finish A before D.',
+          todos: [step('A', []), { ...step('D', [0]), ...work }],
+        });
+        const [a, d] = opened.todos;
+        if (mode === 'held')
+          await invoke('neo.todo.hold', { todoId: d.id, reason: 'Human said wait.' });
+        else store.updateTodo(d, { state: 'failed', reason: 'Synthetic failure.' }, Date.now());
+        expect(await invoke('neo.todo.edit', { todoId: d.id, after: [] })).toMatchObject({
+          ok: false,
+          reason: expect.stringContaining('not_startable'),
+        });
+        expect(store.getTodo(d.id)?.dependsOn).toEqual([a.id]);
+      } finally {
+        db.close();
+      }
+    }
+  );
+
+  test('answering a cancellation card waits for an open question on the parent ask', async () => {
+    const { db, store, invoke, step, runner, sent, work } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Split decision',
+        request: 'Finish A before D.',
+        todos: [step('A', []), { ...step('D', [0]), ...work }],
+      });
+      const [a, d] = opened.todos;
+      neoMoveTodo(store, store.getTodo(a.id)!, 'synthetic/first');
+      neoMoveTodo(store, store.getTodo(d.id)!, 'synthetic/second');
+      const parent = crypto.randomUUID();
+      store.askQuestion(
+        parent,
+        a.askId,
+        {
+          text: 'Which release?',
+          kind: 'reply',
+          options: null,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+          startTodos: null,
+        },
+        Date.now()
+      );
+      await invoke('neo.todo.remove', { todoId: a.id, reason: 'Cancelled by the human.' });
+      const child = store.getTodo(d.id)!.askId;
+      const card = store
+        .listQuestions(child)
+        .find((q) => q.state === 'open' && q.startTodos?.includes(d.id))!;
+      store.answerQuestion(card, [d.id], 'button', Date.now());
+      expect(await runner.start(d.id)).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('question_open'),
+      });
+      await runner.refresh(() => {});
+      expect(store.getTodo(d.id)?.state).toBe('todo');
+      expect(sent).toHaveLength(0);
+      store.answerQuestion(store.getQuestion(parent)!, 'Next one', 'button', Date.now());
+      await runner.refresh(() => {});
+      expect(store.getTodo(d.id)?.state).toBe('doing');
+    } finally {
+      db.close();
+    }
+  });
+
   const chainModes = [
     'approved',
     'legacy',
