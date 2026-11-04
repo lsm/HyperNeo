@@ -467,6 +467,7 @@ describe('withCodexDesktopIpc', () => {
           registry,
           'work.send',
           {
+            notice: true,
             ref: { adapter: driver.id, id },
             message: 'Identical input',
           },
@@ -758,6 +759,7 @@ describe('withCodexDesktopIpc', () => {
             ),
             'work.send',
             {
+              notice: true,
               ref: { adapter: driver.id, id: 'thread-1' },
               message: 'Existing worker input',
               todoId: 'open-todo',
@@ -945,6 +947,7 @@ describe('withCodexDesktopIpc', () => {
           registry,
           'work.send',
           {
+            notice: true,
             ref: { adapter: driver.id, id: 'thread-1' },
             message: 'Held worker input',
             todoId: 'open-todo',
@@ -1057,6 +1060,7 @@ describe('withCodexDesktopIpc', () => {
           registry,
           'work.send',
           {
+            notice: true,
             ref: { adapter: driver.id, id: 'thread-1' },
             message: 'Next queued task',
             mode: 'queue',
@@ -1312,6 +1316,7 @@ describe('withCodexDesktopIpc', () => {
           registry,
           'work.send',
           {
+            notice: true,
             ref: { adapter: driver.id, id: 'thread-1' },
             message: 'use the parser',
             mode: 'steer',

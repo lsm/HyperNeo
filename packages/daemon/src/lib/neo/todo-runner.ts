@@ -735,7 +735,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         })) as ReturnType<InstanceType<typeof neoTodoRunnerWrites.Repository>['blocker']>;
         if (receipt.changed) deps.changed();
       }
-      if (dispatch)
+      if (dispatch && (!('todoId' in dispatch) || dispatch.todoId === id))
         await deliverNeoTurnReport(
           ask,
           store.getTodo(todo.id) ?? todo,
@@ -979,6 +979,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         deps
           .invoke(caller(ask), 'work.send', {
             ref,
+            todoId: todo.id,
             message: neoTodoIdleReminder(todo, idleMinutes(incident, now)),
           })
           .catch(() => null),

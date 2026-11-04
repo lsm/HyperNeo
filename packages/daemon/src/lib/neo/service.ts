@@ -60,6 +60,7 @@ import {
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
 import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
+import { WorkDeliveryInputRepository } from '../../storage/repositories/work-delivery-input-repository.ts';
 import { createArtifactRefReader } from '../artifacts/read-operations.ts';
 import { readWorkerIdentity, sessionWorkerRef } from './worker-identity.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
@@ -906,17 +907,26 @@ export class NeoService {
     );
   }
 
-  async sendToRef(ref: WorkRef, key: string, text: string): Promise<boolean> {
+  async sendToRef(ref: WorkRef, key: string, text: string, todoId?: string): Promise<boolean> {
     const root = this.defaultSessionId();
     if (!root) return false;
     if (ref.adapter === 'hyperneo' && !ref.daemon && this.db.getSession(ref.id)) {
+      const inputs = new WorkDeliveryInputRepository(this.db.getDatabase());
+      const input = await inputs.accept(
+        todoId ?? null,
+        root,
+        { verb: 'send', ref },
+        text,
+        Date.now()
+      );
       await this.deliver(ref.id, key, text, root);
+      await inputs.recordOutcome(input, { ref }, Date.now());
       return true;
     }
     const sent = await invokeOperation(
       this.sessions.getOperationRegistry(),
       'work.send',
-      { ref, message: text },
+      { ref, message: text, ...(todoId ? { todoId } : { notice: true }) },
       driverWorkCaller({ originSessionId: root })
     );
     return sent.kind === 'completed' && (sent.value as { ok?: unknown } | null)?.ok === true;

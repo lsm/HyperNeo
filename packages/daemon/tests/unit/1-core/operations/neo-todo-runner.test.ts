@@ -333,7 +333,9 @@ describe('neo todo runner', () => {
         neo || ['closed-ask', 'agent-fallback'].includes(scenario) ? 0 : 1
       );
       if (neo)
-        expect(h.told.filter((note) => note.startsWith('Worker turn report'))).toHaveLength(1);
+        expect(h.told.filter((note) => note.startsWith('Worker turn report'))).toHaveLength(
+          scenario === 'sent-receipt' ? 1 : 0
+        );
     } finally {
       h.db.close();
     }

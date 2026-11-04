@@ -69,8 +69,13 @@ export function createCodingPack(deps: {
   const notificationContext = async (text: string) =>
     withCodingMergeContext(text, await deps.prLedger.policyContextCurrent(text));
   const prSweepDeps: CodingSweepDeps = {
-    tell: async (ref, key, text) =>
-      deps.prSweepDeps.tell(ref, key, await notificationContext(text)),
+    tell: async (ref, key, text, pr) =>
+      deps.prSweepDeps.tell(
+        ref,
+        key,
+        await notificationContext(text),
+        pr && (await deps.todoPrs.readHolder(pr, ref))
+      ),
     human: async (key, text) => (await deps.prSweepDeps.human?.(key, text)) ?? false,
     wake: async (key, text) => deps.prSweepDeps.wake(key, await notificationContext(text)),
   };

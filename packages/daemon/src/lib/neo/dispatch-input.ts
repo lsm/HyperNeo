@@ -28,7 +28,10 @@ export const dispatchNeoInput = (superpipe({})('neo.dispatch-input') as Pipeline
   )
   .pipe(
     async (target: Target, call: Call, invoke: Invoke, caller: OperationCaller) =>
-      readDriverOutcome(target, await invoke(caller, call.name, call.input)),
+      readDriverOutcome(
+        target,
+        await invoke({ ...caller, inputRecorded: true }, call.name, call.input)
+      ),
     ['target', 'call', 'invoke', 'caller'],
     'outcome'
   )

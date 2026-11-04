@@ -446,6 +446,28 @@ describe('codingTodoOwnPrs', () => {
   });
 });
 
+describe('CodingTodoPrRepository.holder', () => {
+  test('finds the open todo on this session that holds the PR, not one that merely shares it', () => {
+    const { db, repo, todo, todos } = setup(async () => []);
+    const worker = { adapter: 'codex-desktop', id: 'shared-thread' };
+    const url = 'https://github.com/lsm/HyperNeo/pull/9553';
+    const docs = todo(null);
+    const holder = todo(null);
+    for (const item of [docs, holder])
+      db.prepare('INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES (?, ?, ?)').run(
+        item.id,
+        JSON.stringify({ verb: 'send', ref: worker }),
+        JSON.stringify(worker)
+      );
+    repo.record(docs.id, [], 1);
+    repo.record(holder.id, [pr(9553, 'OPEN', { url })], 1);
+    expect(repo.holder('https://github.com/lsm/hyperneo/pull/9553', worker)).toBe(holder.id);
+    expect(repo.holder(url, { ...worker, id: 'other-thread' })).toBeUndefined();
+    todos.updateTodo(holder, { state: 'done' }, 2);
+    expect(repo.holder(url, worker)).toBeUndefined();
+  });
+});
+
 describe('planCodingTodoClaims', () => {
   test('claims branch PRs only when they were opened after the todo started', () => {
     expect(

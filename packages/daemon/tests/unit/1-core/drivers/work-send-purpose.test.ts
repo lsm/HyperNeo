@@ -11,7 +11,7 @@ const ref = { adapter: 'fixture', id: 'worker' };
 const neo: OperationCaller = { source: 'mcp', role: 'neo', sessionId: 'root' };
 const daemon: OperationCaller = { source: 'internal', role: 'neo' };
 
-function fixture() {
+function fixture(sendInputs?: unknown) {
   const delivered: string[] = [];
   const deliver = async (_ref: unknown, message: string) => {
     delivered.push(message);
@@ -29,6 +29,7 @@ function fixture() {
       adapters: () => [adapter],
       remote: { list: () => [], invoke: async () => ({}) },
       daemonName: 'fixture',
+      sendInputs,
     } as never)
   );
   return { delivered, registry };
@@ -65,5 +66,33 @@ describe('Neo and daemon sends say what they are', () => {
     );
     expect(reply).toMatchObject({ kind: 'completed', value: { ok: true } });
     expect(delivered).toEqual(['Hello']);
+  });
+
+  test('a daemon send is recorded with its todo and its delivery outcome', async () => {
+    const accepted: unknown[] = [];
+    const outcomes: unknown[] = [];
+    const { registry } = fixture({
+      accept: async (input: { todoId?: string }) => {
+        accepted.push(input.todoId ?? null);
+        return `input-${accepted.length}`;
+      },
+      recordOutcome: async (id: string, _ref: unknown, outcome: { ok: boolean }) => {
+        outcomes.push([id, outcome.ok]);
+      },
+    });
+    await invokeOperation(registry, 'work.send', { ref, message: 'Nudge', todoId: 't' }, daemon);
+    await invokeOperation(registry, 'work.send', { ref, message: 'FYI', notice: true }, daemon);
+    await invokeOperation(registry, 'work.send', { ref, message: 'Typed' }, { source: 'rpc' });
+    await invokeOperation(
+      registry,
+      'work.send',
+      { ref, message: 'Dispatched' },
+      { ...daemon, inputRecorded: true }
+    );
+    expect(accepted).toEqual(['t', null]);
+    expect(outcomes).toEqual([
+      ['input-1', true],
+      ['input-2', true],
+    ]);
   });
 });

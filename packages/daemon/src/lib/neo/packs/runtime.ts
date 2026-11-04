@@ -108,7 +108,7 @@ export function createNeoService(...args: NeoServiceArgs) {
               key,
               text
             ),
-          tell: (ref, key, text) => configured.sendToRef(ref, key, text),
+          tell: (ref, key, text, todoId) => configured.sendToRef(ref, key, text, todoId),
           wake: (key, text) => configured.wakeNeo(key, text),
         },
         projectRepos: () => configured.repo.allRepositories(),

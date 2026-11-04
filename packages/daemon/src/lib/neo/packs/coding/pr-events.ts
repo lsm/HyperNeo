@@ -7,7 +7,7 @@ import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { callCodingBranchDb } from './branch-facts-db.ts';
 import { codingUnownedWrites } from './unowned-db.ts';
 import { CodingPrLedgerRepository, type CodingPrTransition } from './pr-ledger.ts';
-import { CODING_MANUAL_MERGE_NEXT_STEP, type CodingSweepDeps } from './pr-sweep.ts';
+import { CODING_MANUAL_MERGE_NEXT_STEP, codingPrUrl, type CodingSweepDeps } from './pr-sweep.ts';
 import {
   codingUnownedPrKey,
   planCodingUnownedNotice,
@@ -195,7 +195,9 @@ export async function deliverCodingPrEvents(
         continue;
       }
       if (!owner) continue;
-      const told = event ? await deps.tell(owner, event.key, event.text).catch(() => false) : true;
+      const told = event
+        ? await deps.tell(owner, event.key, event.text, codingPrUrl(row)).catch(() => false)
+        : true;
       if (told) await repo.acceptEvent(row, owner);
       if (!event) continue;
       log.warn(

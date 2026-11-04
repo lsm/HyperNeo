@@ -54319,6 +54319,11 @@
             ],
             "type": "string"
           },
+          "notice": {
+            "const": true,
+            "description": "This send is a notice, not a piece of work. Neo sends need this or todoId.",
+            "type": "boolean"
+          },
           "ref": {
             "properties": {
               "adapter": {
@@ -55042,6 +55047,11 @@
               "queue"
             ],
             "type": "string"
+          },
+          "notice": {
+            "const": true,
+            "description": "This send is a notice, not a piece of work. Neo sends need this or todoId.",
+            "type": "boolean"
           },
           "ref": {
             "properties": {

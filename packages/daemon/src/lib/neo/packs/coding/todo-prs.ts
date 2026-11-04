@@ -5,6 +5,7 @@ import { CodingDeliveryFactsRepository } from './delivery-facts.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import type { NeoRefState, NeoRefStateReader } from './ask-prs.ts';
+import type { WorkRef } from '../../../drivers/types.ts';
 import type { NeoTodo, NeoTodoCheck } from '@hyperneo/shared/types/neo-ask';
 import { neoWorkPrVerdict, type NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
@@ -144,6 +145,26 @@ export class CodingTodoPrRepository {
       .prepare('SELECT prs_json AS prs FROM pack_coding_todo_prs WHERE todo_id = ?')
       .get(todoId) as { prs: string } | null;
     return row ? (JSON.parse(row.prs) as NeoWorkPr[]) : [];
+  }
+
+  holder(url: string, ref: WorkRef): string | undefined {
+    const key = codingPrKey(url);
+    const rows = this.db
+      .prepare(
+        `SELECT p.todo_id AS todoId, p.prs_json AS prs FROM pack_coding_todo_prs p
+           JOIN neo_todos t ON t.id = p.todo_id AND t.state IN ('todo', 'doing', 'blocked')
+           JOIN neo_todo_sessions s ON s.todo_id = p.todo_id
+          WHERE json_extract(s.ref, '$.adapter') = ? AND json_extract(s.ref, '$.id') = ?
+            AND json_extract(s.ref, '$.daemon') IS ?`
+      )
+      .all(ref.adapter, ref.id, ref.daemon ?? null) as { todoId: string; prs: string }[];
+    return rows.find((row) =>
+      (JSON.parse(row.prs) as NeoWorkPr[]).some((pr) => codingPrKey(pr.url) === key)
+    )?.todoId;
+  }
+
+  readHolder(url: string, ref: WorkRef): Promise<string | undefined> {
+    return gatewayFor(this.db).call(codingTodoPrReads, 'holder', url, ref);
   }
 
   isWaiting(todoId: string): boolean {
@@ -710,5 +731,5 @@ export const codingTodoPrReads = defineRepositoryOp(
   'coding.todoPrReads',
   'read',
   CodingTodoPrRepository,
-  ['window', 'isWaiting']
+  ['window', 'isWaiting', 'holder']
 );
