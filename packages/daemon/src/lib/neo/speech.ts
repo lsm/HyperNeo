@@ -239,8 +239,8 @@ export class NeoSpeech {
   async complete(sessionId: string, message: SDKMessage): Promise<void> {
     if (
       !this.listeners.has(sessionId) ||
-      this.isNeo(sessionId) ||
       !isSDKResultSuccess(message) ||
+      this.isNeo(sessionId) ||
       message.is_error ||
       ('parent_tool_use_id' in message && message.parent_tool_use_id != null)
     )
