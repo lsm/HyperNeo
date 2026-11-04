@@ -1,3 +1,4 @@
+import { runMigration474 } from './m474-trim-sdk-message-indexes.ts';
 import { runMigration473 } from './m473-drop-inbox-items.ts';
 import { runMigration472 } from './m472-drop-room-era-tables.ts';
 import { runMigration471 } from './m471-neo-peer-address.ts';
@@ -978,6 +979,7 @@ export function runMigrations(
   run(migrationMarkerKey(471), () => runMigration471(db));
   run(migrationMarkerKey(472), () => runMigration472(db));
   run(migrationMarkerKey(473), () => runMigration473(db));
+  run(migrationMarkerKey(474), () => runMigration474(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

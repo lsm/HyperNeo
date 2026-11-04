@@ -6,8 +6,6 @@ import { createTables, runMigrations } from '../../../packages/daemon/src/storag
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 
 const LIVE_STATS: [string, string][] = [
-  ['idx_sdk_messages_bg_task_time', '99652 243 49 27 1'],
-  ['idx_sdk_messages_bg_tool_time', '99652 243 49 23 1'],
   ['idx_sdk_messages_consumed_boundary', '4221 20 1 1'],
   ['idx_sdk_messages_consumed_input_time', '3836 26 26 26 1'],
   ['idx_sdk_messages_deferred_uuid', '0 0'],
@@ -16,7 +14,6 @@ const LIVE_STATS: [string, string][] = [
   ['idx_sdk_messages_input_kind_time', '99652 243 81 61 1'],
   ['idx_sdk_messages_open_action', '0 0 0 0'],
   ['idx_sdk_messages_parent_tool_use_id', '99652 243 122'],
-  ['idx_sdk_messages_renderable_terminal', '99652 243 162 122 1 1'],
   ['idx_sdk_messages_restart_prompt', '4236 20 20 20 20 20 1 1 1'],
   ['idx_sdk_messages_result_boundary', '3614 19 1'],
   ['idx_sdk_messages_result_time', '3613 19 19 19 1'],
@@ -29,7 +26,6 @@ const LIVE_STATS: [string, string][] = [
   ['idx_sdk_messages_session_window', '99652 243 122 1 1 1 1 1 1 1 1'],
   ['idx_sdk_messages_start_receipt', '4295 485 485 485 1 1 1 1'],
   ['idx_sdk_messages_status_projection', '99652 243 243 81 81 1 1 1'],
-  ['idx_sdk_messages_task_assistant', '34816 485 1'],
   ['idx_sdk_messages_task_id', '99652 485 1'],
   ['idx_sdk_messages_task_input', '3863 18 18 15 1 1'],
   ['idx_sdk_messages_task_session_turn', '99652 485 243 243'],
