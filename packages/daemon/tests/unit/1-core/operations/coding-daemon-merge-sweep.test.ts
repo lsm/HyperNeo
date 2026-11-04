@@ -295,7 +295,7 @@ describe('daemon merge sweep behavior', () => {
         ['gh', 'pr', 'merge', url, '--squash', '--match-head-commit', head],
       ]);
       expect(notices).toEqual([expect.stringContaining('Merge confirmed:')]);
-      expect(prs).toEqual([url]);
+      expect(prs).toEqual(owned ? [url] : []);
       expect(
         db.prepare('SELECT head,actor,merge_commit FROM pack_coding_daemon_merges').all()
       ).toEqual([{ head, actor: 'daemon:coding-sweep', merge_commit: 'c'.repeat(40) }]);
