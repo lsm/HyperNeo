@@ -102,6 +102,42 @@ afterEach(() => {
 });
 
 describe('desktop preview file tabs', () => {
+  it('shows an open work session as a tab after Your work, not as the right column', () => {
+    const onClose = vi.fn();
+    render(
+      <ArtifactPreviewPanel
+        fileTabs
+        work={{ id: 'neo-preview-work-panel', showTab: true, count: 2 }}
+        session={{
+          id: 'session-1',
+          title: 'Work chat',
+          selected: true,
+          onSelect: () => {},
+          onClose,
+          children: <p>Session body</p>,
+        }}
+      />
+    );
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['Your work · 2', 'Work chat']);
+    expect(tabs[1].getAttribute('aria-selected')).toBe('true');
+    const panel = screen.getByRole('tabpanel', { name: 'Work chat' });
+    expect(within(panel).getByText('Session body')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Close Work chat' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows no strip or panel when Your work is the only tab', () => {
+    render(
+      <ArtifactPreviewPanel
+        fileTabs
+        work={{ id: 'neo-preview-work-panel', showTab: true, count: 2 }}
+      />
+    );
+    expect(screen.queryByRole('tablist')).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   it('opens real cards into reusable tabs with distinct accessible panel IDs', async () => {
     render(
       <>
