@@ -75,6 +75,7 @@ export interface WorkVerbDeps {
   sendInputs?: {
     accept(input: SendInput, from: string): Promise<string>;
     recordOutcome(id: string, ref: WorkRef, outcome: SendResult): Promise<void>;
+    recordFailure(id: string, error: unknown): Promise<void>;
   };
   recordStarted?: (ref: WorkRef) => void;
   reportUncertain?: (report: WorkSendUncertainty) => Promise<void>;
@@ -274,6 +275,19 @@ const acceptSendInput = (
   caller: OperationCaller,
   deps: WorkVerbDeps
 ) => (recordsSend(input, caller) ? deps.sendInputs?.accept(input, from) : undefined);
+
+async function recordThrownSend<T>(
+  send: () => Promise<T>,
+  inputId: string | undefined,
+  deps: WorkVerbDeps
+): Promise<T> {
+  try {
+    return await send();
+  } catch (error) {
+    if (inputId) await deps.sendInputs?.recordFailure(inputId, error);
+    throw error;
+  }
+}
 
 async function recordSendOutcome<T extends QueuedResult>(
   inputId: string | undefined,
@@ -788,7 +802,18 @@ const runSendWork = (superpipe({})('send-work') as PipelineAPI)
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')
   .pipe(acceptSendInput, ['input', 'from', 'caller', 'deps'], 'inputId')
   .pipe(workReplyInput, ['input', 'from', 'caller', 'deps'], 'deliveryInput')
-  .pipe(sendWork, ['outcome', 'deliveryInput', 'from', 'caller', 'deps'], 'outcome')
+  .pipe(
+    (
+      route: Route<'send'>,
+      input: SendInput,
+      from: string,
+      caller: OperationCaller,
+      deps: WorkVerbDeps,
+      inputId: string | undefined
+    ) => recordThrownSend(() => sendWork(route, input, from, caller, deps), inputId, deps),
+    ['outcome', 'deliveryInput', 'from', 'caller', 'deps', 'inputId'],
+    'outcome'
+  )
   .pipe(recordSendOutcome, ['inputId', 'input', 'outcome', 'deps'], 'outcome')
   .pipe(reportUncertainWorkSend, ['outcome', 'input', 'from', 'deps'], 'outcome')
   .endAsync('outcome') as (
@@ -859,7 +884,18 @@ const runQueuedInput = (superpipe({})('change-queued-work-input') as PipelineAPI
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')
   .pipe(acceptSendInput, ['input', 'from', 'caller', 'deps'], 'inputId')
   .pipe(workReplyInput, ['input', 'from', 'caller', 'deps'], 'deliveryInput')
-  .pipe(changeQueuedInput, ['outcome', 'deliveryInput', 'from', 'caller', 'deps'], 'outcome')
+  .pipe(
+    (
+      route: Route<'queue' | 'withdraw'>,
+      input: QueuedInput,
+      from: string,
+      caller: OperationCaller,
+      deps: WorkVerbDeps,
+      inputId: string | undefined
+    ) => recordThrownSend(() => changeQueuedInput(route, input, from, caller, deps), inputId, deps),
+    ['outcome', 'deliveryInput', 'from', 'caller', 'deps', 'inputId'],
+    'outcome'
+  )
   .pipe(recordSendOutcome, ['inputId', 'input', 'outcome', 'deps'], 'outcome')
   .endAsync('outcome') as (
   input: QueuedInput,

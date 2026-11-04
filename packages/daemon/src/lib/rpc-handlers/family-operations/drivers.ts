@@ -639,6 +639,12 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
           readDriverOutcome({ verb: 'send', ref }, { kind: 'completed', value: outcome }),
           Date.now()
         ),
+      recordFailure: (id, error) =>
+        new WorkDeliveryInputRepository(db()).recordOutcome(
+          id,
+          { failure: String(error) },
+          Date.now()
+        ),
     } satisfies WorkVerbDeps['sendInputs'],
     recordStarted: (ref: StartedWork) => recordStartedWork(db(), ref),
     freeWorkers: (adapter: string) => readFreeWorkers(db(), adapter),
