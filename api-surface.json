@@ -31345,8 +31345,15 @@
             "type": "string"
           },
           "session": {
-            "maxLength": 500,
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "shortText": {
             "description": "What the human reads first; it must stand alone and summarize the message.",

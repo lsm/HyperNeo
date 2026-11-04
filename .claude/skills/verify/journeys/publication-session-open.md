@@ -9,16 +9,18 @@ NODE_PATH=<existing Playwright modules> VERIFY_BROWSER=<Chromium executable> TMP
 
 The helper owns an ephemeral daemon/frontend, synthetic HOME/DB and refusing gh.
 No model/provider or live daemon is used. It publishes through the real Neo MCP
-door: local worker, Neo, Space task-agent, Codex-qualified, Claude-qualified
-a link-less native session, and no-session replies. Existing
+door: local worker, Space task-agent, Codex-qualified, Claude-qualified
+a link-less native session, and no-session replies, plus Neo's own session and a
+stored row that already names it. Existing
 work.status metadata is scripted only for the two native adapters; local work
 uses the real driver. Native URL resolution uses the same card source reader.
 
 In desktop and touch layouts, light and dark, Open must appear once at each
 session-bound message's top-right, with the same work-card control/logo. It must
-open each exact local session pane, including Neo and Space task-agent sessions
+open each exact local session pane, including Space task-agent sessions
 that the worker inventory intentionally excludes, then return to Neo without
-losing the reply.
+losing the reply. A reply naming Neo's own session, published or already stored,
+must have no Open.
 Native links are captured at window.open to avoid launching human apps; do not
 claim actual native Desktop launch. A reply without session has no Open even if
 it has origins or work links. Retain screenshots and browser.json, inspect for

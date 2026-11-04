@@ -12,7 +12,7 @@ import type {
 } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { admitNeoPublication } from '../../lib/neo/publication.ts';
+import { admitNeoPublication, workerSession } from '../../lib/neo/publication.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { OperationCaller } from '../../lib/operations/registry.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
@@ -38,7 +38,12 @@ function decode(row: Row): NeoPublication {
   } = JSON.parse(row.payloadJson);
   const parsed = admitNeoPublication(message);
   if ('reason' in parsed) throw new Error('Invalid stored Neo publication');
-  return { ...parsed.value, sequence: row.sequence, createdAt: row.createdAt };
+  return {
+    ...parsed.value,
+    session: workerSession(parsed.value.session),
+    sequence: row.sequence,
+    createdAt: row.createdAt,
+  };
 }
 
 function hasTrigger(
