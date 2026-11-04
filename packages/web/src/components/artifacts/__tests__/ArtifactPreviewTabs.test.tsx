@@ -11,6 +11,9 @@ import {
 } from '../../../lib/artifact-preview-store.ts';
 import { ArtifactPreviewPanel } from '../ArtifactPreviewPanel.tsx';
 import { ArtifactCards } from '../ArtifactCards.tsx';
+import { artifactTabIds } from '../ArtifactPreviewTabs.tsx';
+import { artifactSessionTabIds } from '../ArtifactPreviewTabs.tsx';
+import { locale } from '../../../lib/i18n/index.ts';
 
 const request = vi.hoisted(() => vi.fn());
 vi.mock('../../../lib/connection-manager.ts', () => ({
@@ -204,6 +207,74 @@ describe('desktop preview file tabs', () => {
     await screen.findByRole('heading', { name: 'Document a' });
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a session tab usable when nothing else is open, after the workspace closes', () => {
+    render(
+      <ArtifactPreviewPanel
+        fileTabs
+        work={{ id: 'neo-preview-work-panel', showTab: true, count: 2 }}
+        session={{
+          id: 'session-1',
+          title: 'Work chat',
+          selected: false,
+          onSelect: () => {},
+          onClose: () => {},
+          children: <p>Session body</p>,
+        }}
+      />
+    );
+    expect(screen.getByRole('tab', { name: 'Work chat' }).getAttribute('aria-selected')).toBe(
+      'true'
+    );
+    expect(screen.getByText('Session body')).toBeTruthy();
+  });
+
+  it('leaves only the selected session tab in the tab order', async () => {
+    render(
+      <ArtifactPreviewPanel
+        fileTabs
+        work={{ id: 'neo-preview-work-panel', showTab: true, count: 2 }}
+        session={{
+          id: 'session-1',
+          title: 'Work chat',
+          selected: true,
+          onSelect: () => {},
+          onClose: () => {},
+          children: <p>Session body</p>,
+        }}
+      />
+    );
+    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a' }, title('a')));
+    await screen.findByRole('heading', { name: 'Document a' });
+    act(() => artifactPreviewWorkspace.select(null));
+    expect(document.getElementById(artifactTabIds('a').tab)?.getAttribute('tabindex')).toBe('-1');
+    expect(
+      document.getElementById(artifactSessionTabIds('session-1').tab)?.getAttribute('tabindex')
+    ).toBe('0');
+  });
+
+  it('names the session close control in the chosen locale', () => {
+    locale.value = 'zh-Hans';
+    try {
+      render(
+        <ArtifactPreviewPanel
+          fileTabs
+          work={{ id: 'neo-preview-work-panel', showTab: true, count: 2 }}
+          session={{
+            id: 'session-1',
+            title: 'Work chat',
+            selected: true,
+            onSelect: () => {},
+            onClose: () => {},
+            children: <p>Session body</p>,
+          }}
+        />
+      );
+      expect(screen.getByRole('button', { name: '关闭会话：Work chat' })).toBeTruthy();
+    } finally {
+      locale.value = 'en';
+    }
   });
 
   it('shows no strip or panel when Your work is the only tab', () => {
