@@ -244,6 +244,7 @@ describe('Neo desktop panes', () => {
         kind: 'reference',
         source: { kind: 'publication', id: 'synthetic-publication' },
         reference: '~/HyperNeo/synthetic.html',
+        file: { path: 'synthetic.html', headSha: 'a'.repeat(40) },
       });
     });
     act(() => {
