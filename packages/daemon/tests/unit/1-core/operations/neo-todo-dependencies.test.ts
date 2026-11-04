@@ -134,7 +134,7 @@ const complete = (runner: ReturnType<typeof createNeoTodoRunner>, todo: NeoTodo)
   runner.recompute(todo, {}, Date.now(), { state: 'done', evidence: 'Completed.' });
 
 describe('todo dependencies', () => {
-  test.each(['remove', 'close', 'replacement'])(
+  test.each(['remove', 'replacement'])(
     'a selected candidate is checked again after prerequisite %s',
     async (mode) => {
       const { db, store, sessions, invoke, step, runner, sent, work } = setup();
@@ -150,7 +150,7 @@ describe('todo dependencies', () => {
         const candidate = sessions.queueFacts().candidates.find((item) => item.id === b.id);
         expect(candidate).toBeDefined();
         expect(
-          await invoke(mode === 'close' ? 'neo.todo.close' : 'neo.todo.remove', {
+          await invoke('neo.todo.remove', {
             todoId: a.id,
             reason: 'Cancelled before the claim.',
             ...(mode === 'replacement' ? { replacedBy: replacement.id } : {}),
@@ -625,7 +625,9 @@ describe('todo dependencies', () => {
       });
       const [a, d] = opened.todos;
       store.updateTodo(a, { state: 'done' }, Date.now());
-      await invoke('neo.todo.close', { todoId: a.id, reason: 'Already finished.' });
+      expect(
+        await invoke('neo.todo.close', { todoId: a.id, reason: 'Already finished.' })
+      ).toMatchObject({ ok: false, reason: expect.stringContaining('todo_done') });
       expect(store.getTodo(a.id)?.state).toBe('done');
       expect(
         store

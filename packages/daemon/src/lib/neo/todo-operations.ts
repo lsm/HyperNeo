@@ -507,11 +507,12 @@ export function planNeoTodoClose(
   now = Date.now()
 ): Gate<TodoPlan> {
   if (todo.state === 'removed') return fail('todo_removed: this todo was removed.');
+  if (todo.state === 'done') return fail('todo_done: this todo is already done.');
   return {
     value: {
       todo,
       patch: {
-        state: todo.startedAt === null && todo.state !== 'done' ? 'removed' : 'done',
+        state: todo.startedAt === null ? 'removed' : 'done',
         reason: input.reason,
         evidence: input.reason,
         finishedAt: now,
