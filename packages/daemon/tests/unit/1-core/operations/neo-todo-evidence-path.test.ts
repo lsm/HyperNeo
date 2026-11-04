@@ -2,6 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { getDataDir } from '../../../../src/lib/data-dir.ts';
+import { workerWritableRoots } from '../../../../src/lib/drivers/worker-sandbox.ts';
+import { neoEvidenceRefusal } from '../../../../src/lib/neo/core-todo-checks.ts';
+import { todoEvidenceFile } from '../../../../src/lib/work-locations.ts';
 import {
   createNeoTodoOperations,
   type NeoTodoControls,
@@ -84,5 +87,16 @@ describe('neo.todo.add evidence paths', () => {
   test('a repo todo may name a path outside the user folder', async () => {
     const { add } = setup('lsm/hyperneo');
     expect((await add({ path: `${userFolder}-other/proof.md` })).ok).toBe(true);
+  });
+
+  test('an unchanged path on an existing todo keeps working', () => {
+    const check = { pack: 'core', kind: 'evidence', params: { path: `${userFolder}/old.md` } };
+    expect(neoEvidenceRefusal(check, 'lsm/hyperneo', userFolder, check)).toBeNull();
+    expect(neoEvidenceRefusal(check, 'lsm/hyperneo', userFolder, null)).toContain('Omit');
+  });
+
+  test('a sandboxed worker may write its assigned path', () => {
+    const allowed = workerWritableRoots('/repo');
+    expect(allowed.some((root) => todoEvidenceFile('todo').startsWith(`${root}/`))).toBe(true);
   });
 });

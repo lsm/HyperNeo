@@ -34,3 +34,9 @@ The synthetic data directory also contains a file pack named core. Startup must
 warn that the ID is reserved instead of silently discarding its instructions.
 The baseline fails on the missing warning; core check RPCs must still work after
 the loader refuses that colliding file pack.
+
+An evidence check may omit its path. On a repo ask the helper adds one, checks the
+daemon assigned `<dataDir>/work/evidence/<todoId>/result.md` and named it in doneWhen,
+which the worker brief carries, then finishes the todo from that file. It also checks
+that a repo todo naming the configured workspace root is refused on add and edit,
+while an existing todo keeps an unchanged path. No worker writes the file here.

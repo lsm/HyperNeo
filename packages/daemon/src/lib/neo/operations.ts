@@ -640,6 +640,7 @@ export function createNeoOperations(service: NeoService) {
     },
   };
   const todoControls: NeoTodoControls = {
+    userFolder: service.userFolder,
     resolveTarget: (ref) =>
       resolveNeoTodoTarget(ref, (name, input) =>
         invokeOperation(service.sessions.getOperationRegistry(), name, input, {
@@ -721,6 +722,7 @@ export function createNeoOperations(service: NeoService) {
       {
         gateway: mutationGateway,
         write: mutationGateway.run.bind(mutationGateway),
+        userFolder: service.userFolder,
         packs: () => service.installedPacks(),
         artifact: createArtifactRefReader(() => service.db.getDatabase()),
         stop: (todo) => service.todoRunner.stop(todo),

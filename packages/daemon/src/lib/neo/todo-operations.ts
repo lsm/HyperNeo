@@ -17,7 +17,10 @@ import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 import { type WorkRef, WorkRefSchema } from '../drivers/types.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import { todoEvidenceFile } from '../work-locations.ts';
+import { neoEvidenceRefusal, withAssignedEvidence } from './core-todo-checks.ts';
 import { NeoTodoTargetSchema } from './driver-work.ts';
+import { neoUserFolder } from './folder.ts';
 import { noNeoInputReads, resolveNeoInputAsk, type NeoInputReads } from './input-ask.ts';
 import type { NeoPack } from './pack-contract.ts';
 import {
@@ -46,6 +49,7 @@ export const TodoCheck = z.object({
 type Ran = Promise<{ ok: true; todo: NeoTodo; records?: string[] } | Rejection>;
 
 export interface NeoTodoControls {
+  userFolder?: string;
   resolveTarget(ref: WorkRef): Promise<Gate<WorkRef>>;
   refreshIdentity?(todoId: string): Promise<void>;
   start(todoId: string): Ran;
@@ -165,7 +169,7 @@ export function neoTodoPlaceRefusal(
 export async function addNeoTodo(
   todos: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
-  controls: Pick<NeoTodoControls, 'start' | 'resolveTarget'>,
+  controls: Pick<NeoTodoControls, 'start' | 'resolveTarget' | 'userFolder'>,
   ask: NeoAsk,
   input: z.infer<typeof NeoTodoDraftSchema>,
   packs: readonly NeoPack[],
@@ -181,18 +185,22 @@ export async function addNeoTodo(
 export async function recordNeoTodo(
   todos: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
-  controls: Pick<NeoTodoControls, 'start'>,
+  controls: Pick<NeoTodoControls, 'start' | 'userFolder'>,
   ask: NeoAsk,
   input: z.infer<typeof NeoTodoDraftSchema>,
   packs: readonly NeoPack[],
   split = false
 ): Promise<{ ok: true; todo?: NeoTodo; records?: string[] } | Rejection> {
-  const planned = planNeoTodoDraft(input, packs);
+  const id = crypto.randomUUID();
+  const check = withAssignedEvidence(input.check, todoEvidenceFile(id));
+  const planned = planNeoTodoDraft({ ...input, check }, packs);
   if ('reason' in planned) return planned.reason;
   const draft = planned.value;
   const repo = neoTodoRepo(draft, packs, ask);
   const placeless = neoTodoPlaceRefusal(draft.target, repo);
   if (placeless) return { ok: false, reason: placeless };
+  const misplaced = neoEvidenceRefusal(check, repo, controls.userFolder ?? neoUserFolder());
+  if (misplaced) return { ok: false, reason: misplaced };
   const home = neoTodoHome(todos, ask, repo, split || todos.listChildAsks(ask.id).length > 0);
   if (home.status !== 'open')
     return {
@@ -209,7 +217,6 @@ export async function recordNeoTodo(
     draft.start
   );
   if (refused) return { ok: false, reason: refused };
-  const id = crypto.randomUUID();
   const dependsOn = draft.after
     ? planNeoTodoDependencies(todos.listFamilyTodos(home.id), id, draft.after.map(String))
     : null;
@@ -762,7 +769,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.add',
       description:
-        'Add a todo to an open ask you own. For a human request, pass input (its [message id]) and the daemon picks the ask; never pick an ask yourself. askId alone is only for follow-up work with no human input; if both differ, the ask of the input wins and an ask_rebound record says so. A coding PR already tracked by another live todo on that ask is recorded without blocking; prefer continuing the original todo. neo.todo.edit addUrls only pins URLs to an existing PR-merge check. Pass title and a required check {pack, kind, params}; doneWhen is generated, never supplied. Use a completion check the installed pack supports; core.human_confirmed {questionId}, core.evidence {path: absolute file path}, or core.deployed {repo: lsm/HyperNeo, sha: full commit}. A pack may reject malformed checks or record bookkeeping conditions. Workers are long-lived sessions: name them for the matter, never a task title; use work.rename after starting if the session inherits this todo title. instruction is the task for a session and target says where it runs ({verb: start, adapter, place?} or {verb: send, ref}). Spell out the task: every step that needs work done gets its instruction and target when you add it; leave both out only for a step that just waits on its check, such as a merge or a deploy, since nothing runs a step without them. non-coding todos share one visible user folder across projects when place is omitted: ~/HyperNeo by default, or exactly the instance workspace path. A different place needs an exact path the user named in chat, even inside the workspace; never invent folders under home. Coding keeps its repository place. To give a running worker this task use target {verb: send, ref}; to attach work that is already doing it, add the todo without instruction or target and call neo.todo.bind {todoId, ref}; without them the daemon checks the todo itself. named records what the human named for it (engine, session, repository, folder). A session the human named is sent to only through the ref work.find {session} returns as an exact match. start:true starts it now; otherwise the daemon lists it, ticked, in the start question of the ask. priority (urgent, high, normal, low; default normal) orders waiting work, urgent first: set it from how urgent the human made it; it can change later with neo.todo.edit. Steps the human approved start themselves in order as worker slots free; do not start them yourself. A step added after the ask started still waits for its own start answer.',
+        'Add a todo to an open ask you own. For a human request, pass input (its [message id]) and the daemon picks the ask; never pick an ask yourself. askId alone is only for follow-up work with no human input; if both differ, the ask of the input wins and an ask_rebound record says so. A coding PR already tracked by another live todo on that ask is recorded without blocking; prefer continuing the original todo. neo.todo.edit addUrls only pins URLs to an existing PR-merge check. Pass title and a required check {pack, kind, params}; doneWhen is generated, never supplied. Use a completion check the installed pack supports; core.human_confirmed {questionId}, core.evidence {} (preferred: the daemon assigns the path and gives it to the worker; {path: absolute file path} only for a result the human should see), or core.deployed {repo: lsm/HyperNeo, sha: full commit}. A pack may reject malformed checks or record bookkeeping conditions. Workers are long-lived sessions: name them for the matter, never a task title; use work.rename after starting if the session inherits this todo title. instruction is the task for a session and target says where it runs ({verb: start, adapter, place?} or {verb: send, ref}). Spell out the task: every step that needs work done gets its instruction and target when you add it; leave both out only for a step that just waits on its check, such as a merge or a deploy, since nothing runs a step without them. non-coding todos share one visible user folder across projects when place is omitted: ~/HyperNeo by default, or exactly the instance workspace path. A different place needs an exact path the user named in chat, even inside the workspace; never invent folders under home. Coding keeps its repository place. To give a running worker this task use target {verb: send, ref}; to attach work that is already doing it, add the todo without instruction or target and call neo.todo.bind {todoId, ref}; without them the daemon checks the todo itself. named records what the human named for it (engine, session, repository, folder). A session the human named is sent to only through the ref work.find {session} returns as an exact match. start:true starts it now; otherwise the daemon lists it, ticked, in the start question of the ask. priority (urgent, high, normal, low; default normal) orders waiting work, urgent first: set it from how urgent the human made it; it can change later with neo.todo.edit. Steps the human approved start themselves in order as worker slots free; do not start them yourself. A step added after the ask started still waits for its own start answer.',
       inputSchema: Add,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

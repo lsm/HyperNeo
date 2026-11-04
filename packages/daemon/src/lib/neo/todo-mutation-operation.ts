@@ -12,6 +12,8 @@ import {
 import type { OperationCaller, OperationDefinition } from '../operations/registry.ts';
 import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 import type { NeoPack, NeoTodoCheckResult } from './pack-contract.ts';
+import { todoEvidenceFile } from '../work-locations.ts';
+import { neoEvidenceRefusal, withAssignedEvidence } from './core-todo-checks.ts';
 import { readNeoTodoCompletion } from './todo-completion.ts';
 import type { NeoTodoControls } from './todo-operations.ts';
 
@@ -24,6 +26,7 @@ interface Dependencies {
   write: RunDbOp;
   packs(): readonly NeoPack[];
   artifact: ArtifactRefReader;
+  userFolder: string;
   stop(todo: NeoTodo): Promise<string | null>;
   resolveTarget: NeoTodoControls['resolveTarget'];
   advance(): Promise<unknown>;
@@ -69,7 +72,15 @@ export function wireNeoTodoMutations(
     )
     .endAsync('outcome') as (result: Result) => Promise<Result>;
   const mutate = (superpipe({})('neo.todo.mutate-through-writer') as PipelineAPI)
-    .input(['request', 'caller'])
+    .input(['raw', 'caller'])
+    .pipe(
+      (raw: Input): Input =>
+        raw.kind === 'edit' && raw.check
+          ? { ...raw, check: withAssignedEvidence(raw.check, todoEvidenceFile(raw.todoId)) }
+          : raw,
+      'raw',
+      'request'
+    )
     .pipe(
       async (request: Input) => {
         if (request.kind !== 'edit' || request.target?.verb !== 'send') return { value: request };
@@ -102,6 +113,21 @@ export function wireNeoTodoMutations(
         return 'patch' in plan ? { value: plan } : { reason: plan };
       },
       ['input', 'registered'],
+      'result:outcome'
+    )
+    .pipe(
+      async (plan: Plan, input: Input) => {
+        if (input.kind !== 'edit' || !input.check) return { value: plan };
+        const current = await deps.gateway.call(neoTodoReads, 'getTodo', input.todoId);
+        const reason = neoEvidenceRefusal(
+          input.check,
+          plan.todo.repo,
+          deps.userFolder,
+          current?.check
+        );
+        return reason ? { reason: { ok: false as const, reason } } : { value: plan };
+      },
+      ['outcome', 'input'],
       'result:outcome'
     )
     .pipe(

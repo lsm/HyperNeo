@@ -1,5 +1,7 @@
 import { NEO_TODO_NOT_READY, neoTodoAfterRefusal, neoTodoReady } from './todo-dependencies.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import { todoEvidenceFile } from '../work-locations.ts';
+import { withAssignedEvidence } from './core-todo-checks.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
@@ -200,7 +202,12 @@ export function createNeoAskRecordOperations(
           };
         const refused = input.todos
           .filter((todo) => !recordedRow(todo))
-          .map((todo) => planNeoTodoDraft(todo, packs()))
+          .map((todo) =>
+            planNeoTodoDraft(
+              { ...todo, check: withAssignedEvidence(todo.check, todoEvidenceFile('pending')) },
+              packs()
+            )
+          )
           .find((planned) => 'reason' in planned);
         if (refused && 'reason' in refused) return refused.reason;
         const existing = priorAsk ? store.listFamilyTodos(priorAsk.id) : [];

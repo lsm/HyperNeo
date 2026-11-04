@@ -75,7 +75,7 @@ import { invokeOperation } from '../operations/invoke.ts';
 import { onHumanDevicesReset } from '../pairing/human-device-reset.ts';
 import type { SessionManager } from '../session/session-manager.ts';
 import { driverWorkCaller } from './driver-work.ts';
-import { neoFolderPath } from './folder.ts';
+import { neoFolderPath, neoUserFolder } from './folder.ts';
 import { openNeoDefaultSession } from './inbox.ts';
 import {
   effectiveNeoPreference,
@@ -147,7 +147,8 @@ export class NeoService {
     readonly sessions: SessionManager,
     hub: MessageHub,
     readonly events: InternalEventBus<DaemonInternalEventMap>,
-    readonly publishSettings?: (settings: GlobalSettings) => void
+    readonly publishSettings?: (settings: GlobalSettings) => void,
+    readonly userFolder = neoUserFolder()
   ) {
     this.runDbOp = gatewayFor(db.getDatabase()).run.bind(gatewayFor(db.getDatabase()));
     this.notifyChanged = () => {
