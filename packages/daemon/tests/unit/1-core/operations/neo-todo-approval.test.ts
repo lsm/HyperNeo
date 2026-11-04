@@ -290,6 +290,10 @@ describe('todo approval', () => {
       expect(
         await invoke('neo.todo.bind', { todoId: b.id, ref: { adapter: 'hyperneo', id: 'other' } })
       ).toMatchObject({ ok: false, reason: expect.stringContaining('not_approved') });
+      store.updateTodo(store.getTodo(b.id)!, { state: 'failed', reason: 'Check failed.' }, 2);
+      expect(
+        await invoke('neo.todo.bind', { todoId: b.id, ref: { adapter: 'hyperneo', id: 'other' } })
+      ).toMatchObject({ ok: false, reason: expect.stringContaining('not_approved') });
       expect(
         await invoke('neo.todo.bind', {
           todoId: check.id,
