@@ -1385,8 +1385,6 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           .catch((error) => warn('Worker human turn report pending', error));
       }
       for (const todo of await store.read('listCheckable')) {
-        if (todo.blockedBy === 'question')
-          await recompute(todo).catch((error) => warn('Todo question recovery pending', error));
         if (todo.blockedBy === 'needs-human')
           await deps
             .write(neoTodoRunnerWrites, { method: 'escalate', args: [todo.id, Date.now()] })
@@ -1394,6 +1392,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         await waitOnHuman(todo, Date.now()).catch((error) =>
           warn('Todo human wait pending', error)
         );
+        if (todo.blockedBy === 'question')
+          await recompute(todo).catch((error) => warn('Todo question recovery pending', error));
         await follow(todo, Date.now()).catch((error) => warn('Todo follow pending', error));
         await check(store.getTodo(todo.id) ?? todo, Date.now()).catch((error) =>
           warn('Todo check pending', error)

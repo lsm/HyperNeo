@@ -18,6 +18,7 @@ A real close RPC retires the sibling's legacy card and dispatches once without f
 Remove an unstarted prerequisite or pass its check: after authorizes the dependent without a Start answer.
 Unrelated independent work retains its Start card; units also cover implicit ordering after removal.
 Run chain-parent separately: a real parent decision holds its child until a public human answer, then one send.
+The follow-through unit contracts require a fresh reminder interval after a human answer.
 Scope regressions keep sibling and unrelated linked questions local. Move independent work by editing
 its check to an existing sibling repository; after refresh only the destination card lists it, with no dispatch.
 Preserve observed.json/proof.log outside the worktree; require wrapper exit 0 and clean shutdown.
