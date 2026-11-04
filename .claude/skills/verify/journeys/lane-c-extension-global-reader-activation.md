@@ -21,8 +21,8 @@ Refuse a read admission and separately lose an actual completed reply. Both must
 reject the whole list without retry or main fallback; an independent list recovers.
 
 Measure the owned store read/setup units plus the complete unchanged reader,
-lookup and JSON modules, the import and append-only smoke registration. No data
-exclusions. Pin public/framework identities with explicit transitive limits.
+lookup and JSON modules, the import and append-only smoke registration. The complete measured graph is 141 lines (75 store + 64 modules + 2
+import/registration), zero data exclusions. Pin public/framework identities with explicit transitive limits.
 Record native result JSON, wrapper exit status, clone bytes, round trips,
 health/loop lag, RSS and WAL before cleanup. Queue/SQL timing is unexposed;
 worker failures are synthetic error events, not OS kills. GUI, live deployment,
