@@ -27,14 +27,14 @@ export function neoTodoDependencyNodes(todos: readonly NeoTodo[]): DependencyNod
   });
 }
 
+const neoTodoFinished = (todo: NeoTodo | undefined) =>
+  todo?.state === 'done' || (todo?.state === 'closed_unverified' && todo.startedAt !== null);
+
 export function neoTodoReady(todos: readonly NeoTodo[], todoId: string): boolean {
   const node = neoTodoDependencyNodes(todos).find((item) => item.id === todoId);
-  return (node?.dependsOn ?? []).every((id) => {
-    const todo = todos.find((item) => item.id === id);
-    return (
-      todo?.state === 'done' || (todo?.state === 'closed_unverified' && todo.startedAt !== null)
-    );
-  });
+  return (node?.dependsOn ?? []).every((id) =>
+    neoTodoFinished(todos.find((item) => item.id === id))
+  );
 }
 
 export function neoTodoCancelledDependencies(todos: readonly NeoTodo[], todoId: string): NeoTodo[] {
@@ -70,18 +70,14 @@ export function neoTodoAfterRefusal(
 ): string | null {
   if (!after) return null;
   const live = new Map(
-    existing.filter((todo) => todo.state !== 'removed').map((todo) => [todo.id, todo.state])
+    existing.filter((todo) => todo.state !== 'removed').map((todo) => [todo.id, todo])
   );
   if (new Set(after).size !== after.length) return neoTodoDependencyRefusal('duplicate_dependency');
   if (
     after.some((ref) => (typeof ref === 'number' ? index === null || ref >= index : !live.has(ref)))
   )
     return neoTodoDependencyRefusal('dependency_not_found');
-  return start &&
-    after.some(
-      (ref) =>
-        typeof ref === 'number' || !['done', 'closed_unverified'].includes(live.get(ref) ?? '')
-    )
+  return start && after.some((ref) => typeof ref === 'number' || !neoTodoFinished(live.get(ref)))
     ? NEO_TODO_NOT_READY
     : null;
 }

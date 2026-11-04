@@ -979,6 +979,7 @@ export class NeoAskTodoRepository {
             todo.askId === askId &&
             ((isStartable(todo) && independent.has(todo.id)) ||
               (todo.startedAt === null &&
+                todo.blockedBy !== 'held' &&
                 !['done', 'closed_unverified', 'removed'].includes(todo.state) &&
                 neoTodoCancelledDependencies(family, todo.id).length > 0))
         )

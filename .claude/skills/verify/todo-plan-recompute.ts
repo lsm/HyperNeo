@@ -231,10 +231,10 @@ try {
   });
   if (mode.startsWith('chain-')) {
     const mcp = createOperationMcpHandler(() => app!.sessionManager.getOperationRegistry(), () => ({ sessionId: root, role: 'neo' }));
-    const call = async (name: string, input: unknown) => {
+    const call = async (name: string, input: unknown, accepted = true) => {
       const response = await mcp({ name, input });
       const result = JSON.parse(response.content[0].text);
-      assert(!response.isError && result.ok, JSON.stringify(result));
+      assert(!response.isError && result.ok === accepted, JSON.stringify(result));
       return result;
     };
     const target = (id = 'flow') => ({ verb: 'send', ref: { adapter: 'codex-desktop', id } });
@@ -287,7 +287,7 @@ try {
       if (mode === 'chain-cancel-implicit') {
         await call('neo.todo.hold', { todoId: b.id, reason: 'Human paused this work.' });
         store.updateTodo(a, { state: 'closed_unverified' }, Date.now());
-        const denied = await call('neo.todo.add', { askId: a.askId, ...step('cancelled-start'), after: [a.id], start: true });
+        const denied = await call('neo.todo.add', { askId: a.askId, ...step('cancelled-start'), after: [a.id], start: true }, false);
         assert.equal(denied.ok, false); assert.match(denied.reason, /not_ready/); assert.equal((await read(a.askId)).todos.length, 3);
       }
       await (mode === 'chain-check' ? complete(a.title) : call(mode === 'chain-cancel-close' ? 'neo.todo.close' : 'neo.todo.remove', { todoId: a.id, reason: 'No longer needed.', ...(mode === 'chain-cancel-replacement' ? { replacedBy: independent.id } : {}) }));

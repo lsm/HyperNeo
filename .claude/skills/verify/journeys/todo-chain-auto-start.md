@@ -13,6 +13,7 @@ Require retirement and one successor dispatch without a new predecessor write or
 Run chain-edges and chain-check separately: a close RPC releases the sibling's legacy card without full refresh.
 A passing check must release a prior cancellation card and dispatch its successor immediately, without refresh.
 Passing checks authorize dependents without a Start answer; cancellation never does. chain-edges must observe one cancellation card, zero premature sends, then public approval makes the dependent independent and dispatches once.
+chain-cancel-implicit also preserves an explicit hold until release and rejects start:true after a never-started legacy closed prerequisite without adding work.
 Run chain-cancel-implicit, chain-cancel-close, chain-cancel-replacement, and chain-cancel-decline separately through the same wrapper.
 Unit contracts cover explicit/implicit cancellation, middle-of-chain removal, prior approval, replacement, decline, close-before-start, and no duplicate cards. Run chain-parent: a real parent decision holds its child
 until a public human answer, then one dispatch; scope contracts keep sibling/unrelated linked questions local.
