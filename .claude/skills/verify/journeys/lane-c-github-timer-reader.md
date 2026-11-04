@@ -12,13 +12,16 @@ Drive `space.github.setPollingEnabled` and reject its unscoped timer SELECT on
 main. Public health readback runs separately with that trap disabled: its own
 reader family is not migrated here. Verify the mutation awaits the registered
 reader before acknowledgement/notification. No timer and a present session
-provider skip admission. Reader failure preserves the known write and timer,
+provider skip admission. An active orphan row retains the timer, preserving the
+existing unscoped active-row selection. Reader failure preserves the known write and timer,
 propagates to the caller, emits no callback notification and adds no replay.
 
 Hold an actual timer-reader reply, then commit a newer polling enable. Its
 capability acknowledgement waits on the existing effect queue. Health remains
 responsive; releasing the older reply leaves the newer timer active. Also stop
-and restart the extension while a reply is held: the captured-handle check must
+and restart the extension while a reply is held. Manager stop unregisters RPC
+handlers, so restore them on `app.messageHub` before starting the new lifetime.
+The captured-handle check must
 preserve the new lifetime's timer. No SQLite transaction spans these waits.
 
 Count complete read/query/mapper modules, new timer method, existing queue and

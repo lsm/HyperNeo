@@ -16,7 +16,8 @@ Admission rejection and an actual lost committed acknowledgement must never
 replay or rebuild a saved snapshot. Notification failure keeps its known commit;
 reordered receipts never overwrite a newer saved config. Auth, parameter and
 interval gates precede admission. Capability callback usage is now reader-backed under #9649, with its own
-ordered capability-effect proof. Timer callback reads remain tracked in #9438 and block #8714;
+ordered capability-effect proof. The polling RPC timer caller is reader-backed under #9651. Legacy watch/unwatch
+timer callbacks remain tracked in #9438 and block #8714;
 this writer journey does not prove their ownership.
 
 Retain `github-polling-wiring.json`, including latency/clone/RSS/WAL/loop metrics.

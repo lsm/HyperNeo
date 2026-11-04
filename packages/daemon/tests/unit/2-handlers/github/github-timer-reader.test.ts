@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { DbGateway, bindGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import type { DbOp } from '../../../../src/storage/db-gateway/db-op';
@@ -117,6 +122,28 @@ describe('Public polling timer callback reader wiring', () => {
         lightweight: true,
       })
     ).polling.active;
+  test('complete timer caller and auth fit the measured scope without caller exclusions', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'timer-reader-measure-'));
+    try {
+      const output = join(dir, 'boundary.json');
+      execFileSync(
+        process.execPath,
+        ['.claude/skills/verify/lane-c-github-timer-measure.cjs', output],
+        { cwd: fileURLToPath(new URL('../../../../../../', import.meta.url)) }
+      );
+      expect(JSON.parse(readFileSync(output, 'utf8'))).toMatchObject({
+        fullOwnedGraphLines: 199,
+        excludedLines: 0,
+        caller: {
+          name: 'space.github.setPollingEnabled',
+          lines: 27,
+          onlyAwaitedTimerCallChanged: true,
+        },
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   test('public polling disable awaits the reader and avoids the legacy main query', async () => {
     await request(true);
     expect(await active()).toBe(true);
@@ -141,6 +168,20 @@ describe('Public polling timer callback reader wiring', () => {
     ).options.sessionWatchRepos = () => [];
     await request(false);
     expect(gateway.reads).toBe(0);
+    expect(await active()).toBe(true);
+  });
+  test('an active orphan row keeps the timer through the public polling mutation', async () => {
+    await request(true);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'synthetic-orphan',
+      owner: 'other-owner',
+      repo: 'other-repo',
+      enabled: true,
+      pollingEnabled: true,
+      webhookEnabled: false,
+    });
+    await request(false);
+    expect(gateway.reads).toBe(1);
     expect(await active()).toBe(true);
   });
   test('reader failure preserves the known write and timer, then releases a later independent update', async () => {

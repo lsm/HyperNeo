@@ -41,6 +41,7 @@ describe('Public polling timer reader activation', () => {
         otherTimerCallersActivated: false,
         activeTimerBeforeMeasurement: true,
         publicRpcReadback: true,
+        activeOrphanKeepsTimer: true,
         newEnableWaitsForTimerDecision: true,
         replacedTimerSurvivesOldReply: true,
         failurePreservesKnownWriteAndTimerWithoutReplay: true,
