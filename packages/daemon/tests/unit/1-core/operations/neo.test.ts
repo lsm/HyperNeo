@@ -435,6 +435,7 @@ describe('Neo MVP', () => {
       'neo.session.mute',
       'neo.session.track',
       'neo.coding.merge.human',
+      'neo.coding.merge.retry',
       'neo.coding.write.plan',
       'neo.coding.pr.file',
       'neo.github.read',

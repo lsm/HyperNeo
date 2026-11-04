@@ -58,6 +58,9 @@ The retry-budget helper uses the real Neo mailbox with its processor stopped:
 after an explicit retry and another genuine three-failure stop, two distinct
 stopped reports must be queued for Neo. Repeated sweeps add neither duplicate
 report nor merge. This proves delivery acceptance, not model consumption.
+When adding a Neo operation, also run `tests/unit/1-core/operations/neo.test.ts`
+with the shared isolated unit setup. Its advertised-tool catalog must include the
+new tool while retaining the existing bound-session authorization assertions.
 
 The helper saves coding-daemon-merge-sweep.json and the exact CLI invocation log,
 stops its daemon and preserves evidence before the wrapper removes synthetic data.
