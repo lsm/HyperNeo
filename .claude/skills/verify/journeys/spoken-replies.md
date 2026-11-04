@@ -15,6 +15,26 @@ refusal, separately saved playing/played states, cancellation on disconnect,
 no reconnect replay and zero extra publications. All writes use the real writer
 worker. Inspect spoken-replies.json and the wrapper's exit status.
 
+Add `workers` after `verify` to exercise the composer's non-Neo session. The same
+authenticated WebSocket operation door enables listening for two synthetic
+worker sessions in turn. A synthetic successful SDK result goes through the
+production session event subscriber and existing speech/audio path: only the
+listened session emits say/40 PCM chunks/end, and its acknowledgment is saved.
+Require the first three sentences, a 240-character cap (focused suite), no code
+block or tool-progress speech, no duplicate result replay, stop on composer
+switch and no late speech from the old session. Retain session-speech.json.
+This proves real daemon/client delivery with a synthetic result, not provider
+wording, microphone routing, phone playback or a real model turn.
+
+iOS composer contract: `configureSpeech(sessionId: composerId, enabled: true,
+voice: voiceId)` calls `neo.speech.listen` with that sessionId, enabled, audio:true
+and voice; `listenSpeech(..., enabled:false)` stops it. Route the transcript with
+the same session target/send operation as typed input. Acknowledge `neo.speech`
+events with their own sessionId and id through `neo.speech.ack`; the events keep
+the existing say/audio/end/stop protocol. Neo retains explicit say/publication
+speech; workers receive a short daemon-spoken final result and no say tool.
+Enabling a new session replaces the old listener and cancels pending playback.
+
 Successful speech receipts must also carry the one-sentence reminder to add no
 assistant text this turn except a requested transcript/record or the required
 scheduled-wake summary; it must not repeat the spoken content. Rejected and
@@ -44,12 +64,11 @@ serial queue, with one upstream request at a time; terminal acknowledgments and
 disconnect abort it. No audio or credentials are persisted. Phone playback and
 buffering are separately proved by the native spoken-replies journey.
 
-The replay also sends real neo.message.send input through the RPC door and reads
-its stored SDK prompt: require [input: live_voice; speech: on] followed in that
-same text block by the human-approved speak-first instruction. Every live voice
-input with speech on carries it; typed, dictation and speech-off inputs do not.
-The focused intake suite checks that matrix. Preserve original human content and
-the existing system prompt; this is a per-input instruction, not a tool gate.
+The replay also sends real neo.message.send input through the authenticated RPC
+door and reads its stored SDK prompt: require [input: live_voice] while retaining
+the original human content. The focused intake suite checks the input-mode
+matrix. Voice is an input method; it does not inject a speak-first command.
+Preserve the existing Neo system prompt and its explicit speech behaviour.
 
 Production synthesis uses the operator-provided HYPERNEO_SPEECH_URL base, with
 /v1/audio/speech and /v1/audio/voices beneath it; the phone does not configure
