@@ -132,6 +132,7 @@ describe('todos given work later', () => {
   test('edit gives a waiting step its work and the queue picks it up', async () => {
     const { db, store, sessions, invoke, second } = await approvedPlan();
     try {
+      store.updateTodo(second, { approvedAt: 1 }, 1);
       const edited = await invoke('neo.todo.edit', { todoId: second.id, ...work });
       expect(edited.ok).toBe(true);
       expect(store.getTodo(second.id)?.instruction).toBe('Do B.');
@@ -188,6 +189,7 @@ describe('todos given work later', () => {
         'waiting',
         ask.id,
         {
+          approvedAt: 1,
           title: 'Waiting',
           doneWhen: 'Result verified',
           check: null,

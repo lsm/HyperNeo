@@ -27,10 +27,11 @@ import type {
   NeoTodoCheck,
 } from '@hyperneo/shared/types/neo-ask';
 import { neoStartQuestionTitle } from '../../lib/neo/start-question.ts';
+import { neoTodoAwaitsApproval, planNeoStartAnswer } from '../../lib/neo/todo-start-gate.ts';
 import type { Database } from '../sqlite-compat.ts';
 
 export type NeoTodoDraft = Pick<NeoTodo, 'title' | 'doneWhen' | 'check' | 'instruction' | 'named'> &
-  Partial<Pick<NeoTodo, 'priority' | 'dependsOn'>>;
+  Partial<Pick<NeoTodo, 'priority' | 'dependsOn' | 'approvedAt'>>;
 
 export type NeoTodoPatch = Partial<
   Pick<
@@ -52,10 +53,12 @@ export type NeoTodoPatch = Partial<
     | 'priority'
     | 'dependsOn'
     | 'instruction'
+    | 'approvedAt'
   >
 >;
 
 const TODO_COLUMNS: Record<keyof NeoTodoPatch, string> = {
+  approvedAt: 'approved_at',
   title: 'title',
   check: 'check_json',
   doneWhen: 'done_when',
@@ -97,7 +100,8 @@ const TODO_SELECT = `SELECT id, ask_id AS askId, position, title, done_when AS d
   check_json AS checkJson, instruction, named, repo, state, reason, blocked_reason AS blockedReason,
   next_action AS nextAction, blocked_by AS blockedBy, replaced_by AS replacedBy,
   added_after_start AS addedAfterStart, report, evidence, artifacts_json AS artifactsJson, priority, depends_on AS dependsOnJson, created_at AS createdAt,
-  updated_at AS updatedAt, started_at AS startedAt, finished_at AS finishedAt FROM neo_todos`;
+  updated_at AS updatedAt, started_at AS startedAt, finished_at AS finishedAt,
+  approved_at AS approvedAt FROM neo_todos`;
 
 export type NeoQuestionDraft = Pick<
   NeoQuestion,
@@ -194,9 +198,6 @@ const toTodo = ({
   named: parsed<Record<string, unknown>>(named),
   addedAfterStart: addedAfterStart === 1,
 });
-
-const isStartable = (todo: NeoTodo) =>
-  todo.state === 'todo' || (todo.state === 'blocked' && todo.blockedBy === 'question');
 
 export interface NeoCardReplyContext {
   conversationId: string;
@@ -595,9 +596,9 @@ export class NeoAskTodoRepository {
     this.db
       .prepare(
         `INSERT INTO neo_todos (id, ask_id, position, title, done_when, check_json, instruction, named,
-           repo, added_after_start, priority, depends_on, created_at, updated_at)
+           repo, added_after_start, priority, depends_on, approved_at, created_at, updated_at)
          VALUES (?, ?, (SELECT COALESCE(MAX(position) + 1, 0) FROM neo_todos WHERE ask_id = ?), ?, ?, ?, ?, ?, ?,
-           EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = ? AND started_at IS NOT NULL), ?, ?, ?, ?)`
+           EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = ? AND started_at IS NOT NULL), ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -612,6 +613,7 @@ export class NeoAskTodoRepository {
         askId,
         draft.priority ?? 'normal',
         draft.dependsOn ? JSON.stringify(draft.dependsOn) : null,
+        draft.approvedAt ?? null,
         now,
         now
       );
@@ -634,7 +636,7 @@ export class NeoAskTodoRepository {
         .run(askId, repo, todo.id);
       this.pruneQuestions(todo.askId, now);
       const moved = this.getTodo(todo.id)!;
-      if (askId !== todo.askId && moved.instruction && isStartable(moved))
+      if (askId !== todo.askId && moved.instruction && neoTodoAwaitsApproval(moved))
         this.joinStartQuestion(moved, now);
     })();
     this.db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ? AND repo IS NULL').run(repo, askId);
@@ -951,7 +953,7 @@ export class NeoAskTodoRepository {
       (question) => question.kind === 'start' && question.state === 'open'
     );
     const listed = (open?.startTodos ?? []).filter((id) =>
-      todos.some((item) => item.id === id && isStartable(item) && item.instruction)
+      todos.some((item) => item.id === id && neoTodoAwaitsApproval(item) && item.instruction)
     );
     const startTodos = [...new Set([...listed, todo.id])];
     const text = neoStartQuestionTitle(
@@ -1081,9 +1083,13 @@ export class NeoAskTodoRepository {
     this.touchAsk(askId, now);
   }
 
+  gateQuestions(ask: NeoAsk): NeoQuestion[] {
+    return this.listQuestionsForAsks(ask.parentId ? [ask.parentId, ask.id] : [ask.id]);
+  }
+
   private pruneQuestions(askId: string, now: number): void {
     const todos = this.listTodos(askId);
-    const startable = new Set(todos.filter(isStartable).map((todo) => todo.id));
+    const startable = new Set(todos.filter(neoTodoAwaitsApproval).map((todo) => todo.id));
     for (const question of this.listQuestions(askId)) {
       if (question.state !== 'open') continue;
       if (
@@ -1116,8 +1122,35 @@ export class NeoAskTodoRepository {
             ),
             question.id
           );
+      for (const id of question.startTodos.filter((id) => !kept.includes(id))) {
+        const todo = this.getTodo(id);
+        if (todo?.approvedAt && todo.blockedBy === 'question')
+          this.writeTodo(todo, { state: 'todo' }, now);
+      }
       this.questionsPruned?.();
     }
+  }
+
+  cardUnapprovedTodos(now: number): void {
+    for (const { id } of this.listOpenAsks()) {
+      const listed = this.listQuestions(id)
+        .filter((question) => question.kind === 'start' && question.state === 'open')
+        .flatMap((question) => question.startTodos ?? []);
+      for (const todo of this.listTodos(id)) {
+        if (!todo.instruction || !neoTodoAwaitsApproval(todo) || listed.includes(todo.id)) continue;
+        this.joinStartQuestion(todo, now);
+        if (todo.state === 'todo')
+          this.writeTodo(todo, { state: 'blocked', blockedBy: 'question' }, now);
+      }
+    }
+  }
+
+  approveTodo(todo: NeoTodo, now: number): NeoTodo {
+    return this.db.transaction(() => {
+      if (todo.approvedAt === null) this.writeTodo(todo, { approvedAt: now }, now);
+      this.pruneQuestions(todo.askId, now);
+      return this.getTodo(todo.id)!;
+    })();
   }
 
   private releaseStartTodos(
@@ -1134,20 +1167,17 @@ export class NeoAskTodoRepository {
     );
     for (const id of question?.startTodos ?? []) {
       const todo = this.getTodo(id);
-      if (todo?.state === 'blocked' && todo.blockedBy === 'question' && !waiting.has(id))
-        this.updateTodo(
-          todo,
-          ticked && !ticked.includes(id)
-            ? {
-                state: 'blocked',
-                blockedBy: 'held',
-                blockedReason: heldReason,
-                nextAction: 'The human releases it.',
-              }
-            : { state: 'todo' },
-          now
-        );
+      const patch =
+        todo && !waiting.has(id) ? planNeoStartAnswer(todo, ticked, heldReason, now) : null;
+      if (todo && patch) this.updateTodo(todo, patch, now);
     }
+    if (question && ticked?.length)
+      this.db
+        .prepare(
+          `UPDATE neo_todos SET approved_at = ? WHERE ask_id = ? AND approved_at IS NULL
+             AND instruction IS NULL AND started_at IS NULL`
+        )
+        .run(now, question.askId);
   }
 
   private changeQuestion(

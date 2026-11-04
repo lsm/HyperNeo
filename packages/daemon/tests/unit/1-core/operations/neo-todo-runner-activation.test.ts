@@ -70,7 +70,15 @@ describe('Runtime runner commits before external effects', () => {
     store.addTodo(
       'first',
       'ask',
-      { title: 'First', doneWhen: 'Observed', check: null, instruction: 'Continue', named: null },
+      {
+        approvedAt: 1,
+        dependsOn: [],
+        title: 'First',
+        doneWhen: 'Observed',
+        check: null,
+        instruction: 'Continue',
+        named: null,
+      },
       1
     );
     sessions.create('first', { verb: 'send', ref: { adapter: 'hyperneo', id: 'worker' } });

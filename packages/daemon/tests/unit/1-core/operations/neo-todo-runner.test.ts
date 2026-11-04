@@ -124,7 +124,15 @@ function setup(
     const todo = store.addTodo(
       crypto.randomUUID(),
       'ask',
-      { title: 'Rows', doneWhen: 'PR merged', check, instruction, named: null },
+      {
+        approvedAt: 1,
+        dependsOn: [],
+        title: 'Rows',
+        doneWhen: 'PR merged',
+        check,
+        instruction,
+        named: null,
+      },
       1
     );
     sessions.create(todo.id, {
@@ -455,6 +463,8 @@ describe('neo todo runner', () => {
           crypto.randomUUID(),
           'ask',
           {
+            approvedAt: 1,
+            dependsOn: [],
             title: 'Rows',
             doneWhen: 'PR merged',
             check: { pack: 'coding', kind: 'pr', params: {} },
@@ -1331,7 +1341,15 @@ describe('neo todo runner', () => {
     const todo = store.addTodo(
       'moving',
       'ask',
-      { title: 'Rows', doneWhen: 'PR merged', check: null, instruction: 'Go.', named: null },
+      {
+        approvedAt: 1,
+        dependsOn: [],
+        title: 'Rows',
+        doneWhen: 'PR merged',
+        check: null,
+        instruction: 'Go.',
+        named: null,
+      },
       1,
       'github.com/lsm/hyperneo'
     );
@@ -1395,7 +1413,15 @@ describe('neo todo runner', () => {
     const todo = store.addTodo(
       't',
       'ask',
-      { title: 'Rows', doneWhen: 'Done', check: null, instruction: 'Do', named: null },
+      {
+        approvedAt: 1,
+        dependsOn: [],
+        title: 'Rows',
+        doneWhen: 'Done',
+        check: null,
+        instruction: 'Do',
+        named: null,
+      },
       1
     );
     sessions.create(todo.id, { verb: 'send', ref });
@@ -1968,7 +1994,15 @@ describe('a todo sent to an existing session', () => {
       const todo = store.addTodo(
         id,
         'ask',
-        { title: id, doneWhen: 'Done', check: null, instruction: `Do ${id}`, named: null },
+        {
+          approvedAt: 1,
+          dependsOn: [],
+          title: id,
+          doneWhen: 'Done',
+          check: null,
+          instruction: `Do ${id}`,
+          named: null,
+        },
         1
       );
       sessions.create(todo.id, { verb: 'send', ref: claude });
@@ -2482,6 +2516,8 @@ describe('current explicit removal behavior before recompute', () => {
     try {
       const removed = h.add(),
         remaining = h.add();
+      for (const todo of [removed, remaining])
+        h.store.updateTodo(todo, { approvedAt: null }, Date.now());
       h.store.joinStartQuestion(removed, Date.now());
       h.store.joinStartQuestion(remaining, Date.now());
       const question = h.store.listQuestions('ask').find((question) => question.kind === 'start')!;

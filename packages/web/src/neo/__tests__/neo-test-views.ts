@@ -20,6 +20,7 @@ export function testTodo(id: string, patch: Partial<NeoTodoEntry> = {}): NeoTodo
     blockedBy: null,
     replacedBy: null,
     addedAfterStart: false,
+    approvedAt: null,
     report: null,
     evidence: null,
     createdAt: 1,

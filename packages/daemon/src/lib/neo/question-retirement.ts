@@ -22,6 +22,7 @@ export function questionCheckTodo(question: NeoQuestion, todo: NeoTodo | null): 
     dependsOn: null,
     replacedBy: null,
     addedAfterStart: false,
+    approvedAt: null,
     report: null,
     evidence: null,
     createdAt: question.createdAt,

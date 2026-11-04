@@ -133,7 +133,15 @@ function world(packs: NeoPack[] = []) {
     const todo = store.addTodo(
       crypto.randomUUID(),
       'ask',
-      { title: 'Rows', doneWhen: 'PR merged', check: null, instruction, named: null },
+      {
+        approvedAt: 1,
+        dependsOn: [],
+        title: 'Rows',
+        doneWhen: 'PR merged',
+        check: null,
+        instruction,
+        named: null,
+      },
       base
     );
     sessions.create(todo.id, {
@@ -149,7 +157,15 @@ function world(packs: NeoPack[] = []) {
     const todo = store.addTodo(
       crypto.randomUUID(),
       askId,
-      { title: 'Watch it', doneWhen: 'PR merged', check: null, instruction, named: null },
+      {
+        approvedAt: 1,
+        dependsOn: [],
+        title: 'Watch it',
+        doneWhen: 'PR merged',
+        check: null,
+        instruction,
+        named: null,
+      },
       base
     );
     sessions.create(todo.id, { verb: 'adopt', ref });

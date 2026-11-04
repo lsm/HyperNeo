@@ -1383,6 +1383,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         if (starting.has(todoId)) continue;
         await recoverStart(todoId).catch((error) => warn('Todo start recovery pending', error));
       }
+      await deps.write(neoTodoRunnerWrites, { method: 'cardUnapproved', args: [Date.now()] });
       const candidates = [];
       for (const { todoId, ref } of await sessions.read('awaitingReports')) {
         const todo = store.getTodo(todoId);
