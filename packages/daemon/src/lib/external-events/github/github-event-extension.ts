@@ -1,3 +1,4 @@
+import { gitHubPollingTimerReads } from '../../../storage/repositories/github-polling-usage-read.ts';
 import { gitHubPollingCapabilityReads } from '../../../storage/repositories/github-polling-usage-read.ts';
 import { gitHubPollingWrites } from '../../../storage/repositories/github-polling-enabled-write.ts';
 import { gatewayFor } from '../../../storage/db-gateway/db-gateway.ts';
@@ -666,7 +667,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         this.ensurePollingActive();
       } else {
         await this.disablePollingCapabilityIfUnused(context);
-        this.maybeStopPolling();
+        await this.stopIdlePollingOnReader();
       }
       context.onSourceConfigChanged({
         source: this.sourceId,
@@ -1910,6 +1911,17 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     if (this.stopped) return;
     if (this.pollTimer || this.getPollIntervalMs() <= 0) return;
     this.scheduleNextPoll();
+  }
+
+  private stopIdlePollingOnReader(): Promise<void> {
+    return this.runPollingCapabilityUpdate(async () => {
+      const timer = this.pollTimer;
+      if (!timer || this.options.sessionWatchRepos) return;
+      const inUse = await gatewayFor(this.db).run(gitHubPollingTimerReads, {});
+      if (inUse || this.pollTimer !== timer) return;
+      clearTimeout(timer);
+      this.pollTimer = null;
+    });
   }
 
   private maybeStopPolling(): void {

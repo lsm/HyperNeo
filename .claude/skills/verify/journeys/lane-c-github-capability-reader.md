@@ -9,8 +9,10 @@ measuring. Never touch live data, credentials or port 8399.
 Drive actual `space.github.setPollingEnabled` requests. Reject configured-row,
 Space-intent and session-scope capability SELECTs on the main connection. Verify
 global capability and saved config after public readback. The separate timer
-callback still has main reads: count/report those separately, never claim a full
-no-SQL-main result. Other read/public/runtime closure is not audited here.
+helper remains for watch/unwatch. The public polling timer caller is migrated
+separately under #9651; its Space-only proof is `lane-c-github-timer-reader.md`.
+The capability audit refreshes its sibling-code pin without changing the owned
+198-line capability subtree. Never claim a full no-SQL-main result. Other read/public/runtime closure is not audited here.
 
 Hold an actual native unused-reader reply, then enable polling with a newer RPC.
 Releasing the old reply must retain the newer capability and intent. Also hold
