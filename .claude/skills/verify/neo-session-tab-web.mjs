@@ -11,8 +11,10 @@ const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
 const result = { desktop: null, passed: false };
 try {
-  const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'en-US' })).newPage();
+  const width = Number(process.env.VERIFY_WIDTH ?? 1280);
+  const page = await (await browser.newContext({ viewport: { width, height: 900 }, locale: 'en-US' })).newPage();
   await page.goto(ready.url);
+  if (width < 1120) await page.getByRole('button', { name: /^Your work/ }).click();
   const opener = page.locator('article,section,div').filter({ hasText: 'Follow Local worker' }).getByRole('button', { name: /^Open/ }).last();
   await opener.waitFor();
   await opener.click();
@@ -21,8 +23,8 @@ try {
   assert.deepEqual(tabs.map((tab) => tab.id), ['artifact-preview-work-tab', 'artifact-session-tab-local-worker']);
   assert.deepEqual(tabs.map((tab) => tab.selected), [false, true]);
   assert.equal(chatInColumn, false);
-  await page.screenshot({ path: `${evidence}/session-tab-desktop.png` });
-  result.desktop = { tabs, chatInColumn, screenshot: `${evidence}/session-tab-desktop.png` };
+  await page.screenshot({ path: `${evidence}/session-tab-${width}.png` });
+  result.desktop = { width, tabs, chatInColumn, screenshot: `${evidence}/session-tab-${width}.png` };
   result.passed = true;
 } finally {
   await browser.close();
