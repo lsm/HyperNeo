@@ -289,9 +289,20 @@ try {
       const released = await read(b.askId);
       evidence.removed = released;
       assert.deepEqual(released.todos.filter((t: { id: string }) => t.id === a.id).map((t: { state: string; startedAt: number | null }) => [t.state, t.startedAt]), [[mode === 'chain-check' ? 'done' : 'removed', null]]);
-      assert.equal(released.todos.find((t: { id: string }) => t.id === b.id).state, 'doing');
+      if (mode === 'chain-edges') {
+        assert.equal(starts(), 2);
+        const cancelled = released.questions.find((q: { state: string; startTodos?: string[] }) => q.state === 'open' && q.startTodos?.includes(b.id));
+        assert(cancelled, 'cancelled prerequisites require a human decision');
+        assert.match(cancelled.text, /removed-first.*cancelled|cancelled.*removed-first/);
+        await refresh();
+        assert.equal((await read(b.askId)).questions.filter((q: { state: string; startTodos?: string[] }) => q.state === 'open' && q.startTodos?.includes(b.id)).length, 1);
+        assert.equal((await rpc('neo.question.answer', { questionId: cancelled.id, answer: [b.id] })).ok, true);
+      }
+      const approved = await read(b.askId);
+      evidence.cancelledApproved = approved;
+      assert.equal(approved.todos.find((t: { id: string }) => t.id === b.id).state, 'doing');
       assert.equal(released.todos.find((t: { id: string }) => t.id === independent.id).blockedBy, 'question');
-      assert.deepEqual(released.questions.filter((q: { state: string }) => q.state === 'open').map((q: { startTodos: string[] }) => q.startTodos), [[independent.id]]);
+      assert.deepEqual(approved.questions.filter((q: { state: string }) => q.state === 'open').map((q: { startTodos: string[] }) => q.startTodos), [[independent.id]]);
       assert.equal(starts(), 3);
       await refresh(); assert.equal(starts(), 3);
     } else {

@@ -224,36 +224,79 @@ describe('todo dependencies', () => {
     }
   );
 
-  test.each([false, true])(
-    'removing an unstarted predecessor releases its dependent but not independent work; explicit=%s',
-    async (explicit) => {
+  test.each(['explicit', 'implicit', 'approved', 'middle', 'replacement', 'close', 'decline'])(
+    'cancelled prerequisites need one human decision: %s',
+    async (mode) => {
       const { db, store, invoke, step, runner, sent, work } = setup();
       try {
         const opened = await invoke('neo.ask.open', {
           title: 'Cancelled prerequisite',
-          request: 'Complete the dependent if its prerequisite is closed.',
+          request: 'Complete A, B, then C.',
           todos: [
-            { ...step('Prerequisite', []), ...work },
-            { ...step('Dependent', explicit ? [0] : undefined), ...work },
-            { ...step('Independent', []), ...work },
+            { ...step('A', []), ...work, start: mode === 'approved' },
+            { ...step('B', mode === 'implicit' ? undefined : [0]), ...work },
+            { ...step('C', mode === 'implicit' ? undefined : [1]), ...work },
+            { ...step('Replacement', []), ...work },
           ],
         });
-        const [first, second, independent] = opened.todos;
-        expect(sent).toHaveLength(0);
+        const [a, b, c, replacement] = opened.todos;
+        if (mode === 'approved') await complete(runner, a);
+        const cancelled = ['approved', 'middle'].includes(mode) ? b : a;
+        const dependent = ['approved', 'middle'].includes(mode) ? c : b;
+        const before = sent.length;
         expect(
-          await invoke('neo.todo.remove', { todoId: first.id, reason: 'No longer needed.' })
+          await invoke(mode === 'close' ? 'neo.todo.close' : 'neo.todo.remove', {
+            todoId: cancelled.id,
+            reason: 'Cancelled by the human.',
+            ...(mode === 'replacement' ? { replacedBy: replacement.id } : {}),
+          })
         ).toMatchObject({ ok: true });
         await runner.refresh(() => {});
-        expect(store.getTodo(second.id)?.state).toBe('doing');
-        expect(store.getTodo(independent.id)).toMatchObject({
-          state: 'blocked',
-          blockedBy: 'question',
-        });
-        expect(store.listQuestions(first.askId).filter((q) => q.state === 'open')).toEqual([
-          expect.objectContaining({ startTodos: [independent.id] }),
-        ]);
         await runner.refresh(() => {});
-        expect(sent).toHaveLength(1);
+        expect(sent).toHaveLength(before);
+        expect(store.getTodo(dependent.id)?.state).not.toBe('doing');
+        const cards = store
+          .listQuestions(dependent.askId)
+          .filter((q) => q.state === 'open' && q.startTodos?.includes(dependent.id));
+        if (mode === 'replacement') {
+          expect(cards).toHaveLength(0);
+          await complete(runner, replacement);
+        } else {
+          expect(cards).toHaveLength(1);
+          expect(cards[0].text).toContain(cancelled.title);
+          expect(cards[0].text).toContain('cancelled');
+          store.answerQuestion(
+            cards[0],
+            mode === 'decline' ? [] : [dependent.id],
+            'button',
+            Date.now()
+          );
+          await runner.refresh(() => {});
+          expect(store.getTodo(dependent.id)).toMatchObject(
+            mode === 'decline' ? { state: 'removed' } : { dependsOn: [], state: 'doing' }
+          );
+          if (mode === 'decline') {
+            expect(sent).toHaveLength(before);
+            expect(
+              store
+                .listQuestions(c.askId)
+                .filter((q) => q.state === 'open' && q.startTodos?.includes(c.id))
+            ).toHaveLength(1);
+            return;
+          }
+        }
+        expect(sent).toHaveLength(before + 1);
+        if (dependent.id === b.id) {
+          expect(store.getTodo(c.id)?.state).not.toBe('doing');
+          await complete(runner, store.getTodo(b.id)!);
+          expect(store.getTodo(c.id)?.state).toBe('doing');
+        }
+        await runner.refresh(() => {});
+        expect(
+          store
+            .listQuestions(dependent.askId)
+            .filter((q) => q.state === 'open' && q.startTodos?.includes(dependent.id))
+        ).toHaveLength(0);
       } finally {
         db.close();
       }
