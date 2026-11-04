@@ -6,6 +6,7 @@ import {
   type StructuredLogEvent,
 } from '@hyperneo/shared';
 import { NeoSpeech } from '../../../../src/lib/neo/speech.ts';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
 import {
@@ -99,7 +100,8 @@ describe('spoken replies separate from publications', () => {
       }) as typeof fetch,
       async (_session, enabled) => {
         listeningStates.push(enabled);
-      }
+      },
+      (id) => !!mailbox.db.prepare('SELECT 1 FROM sessions WHERE id = ?').get(id)
     );
     registry = createOperationRegistry(speech.operations);
   });
@@ -545,5 +547,120 @@ describe('spoken replies separate from publications', () => {
     expect(
       await invokeOperation(registry, 'neo.speech.listen', { sessionId, enabled: true }, neo)
     ).toMatchObject({ kind: 'failed', code: 'forbidden' });
+  });
+
+  const finished = (id: string, text: string, extra = {}) =>
+    ({
+      type: 'result',
+      subtype: 'success',
+      uuid: id,
+      result: text,
+      is_error: false,
+      ...extra,
+    }) as SDKMessage;
+
+  test('a human hears the listened worker reply through the existing audio and acknowledgment path', async () => {
+    const worker = 'worker-session';
+    mailbox.db.prepare('INSERT INTO sessions(id) VALUES (?)').run(worker);
+    expect(await call('listen', { sessionId: worker, enabled: true, audio: true })).toMatchObject({
+      ok: true,
+    });
+    expect(listeningStates).toEqual([]);
+    const reply = finished(
+      'worker-result',
+      'The change is ready.\n```sh\nSECRET_TOOL_STEP\n```\nTests pass. You can review it. EXTRA_DETAIL'
+    );
+    await speech.complete(worker, reply);
+    const said = messages.find((item) => item.message.data.type === 'say')!;
+    expect(said.client).toBe('phone');
+    expect(said.message.data).toMatchObject({
+      sessionId: worker,
+      text: 'The change is ready. Tests pass. You can review it.',
+      format: 'pcm16',
+    });
+    await speech.complete(worker, reply);
+    expect(messages.filter((item) => item.message.data.type === 'say')).toHaveLength(1);
+    for (let i = 0; i < 100 && synthesis < 1; i++) await new Promise((done) => setTimeout(done, 1));
+    expect(synthesis).toBe(1);
+    audioController.enqueue(new Uint8Array([1, 0, 2, 0]));
+    audioController.close();
+    for (let i = 0; i < 100 && !messages.some((item) => item.message.data.type === 'end'); i++)
+      await new Promise((done) => setTimeout(done, 1));
+    expect(
+      messages
+        .filter((item) => ['audio', 'end'].includes(item.message.data.type))
+        .every((item) => item.client === 'phone' && item.message.data.sessionId === worker)
+    ).toBe(true);
+    expect(
+      await call('ack', { sessionId: worker, id: said.message.data.id, state: 'played' })
+    ).toMatchObject({ ok: true, state: 'played' });
+    expect(
+      await call(
+        'say',
+        { requestId: 'no-worker-tool', text: 'Do not speak this' },
+        { source: 'mcp', role: 'direct_task_worker', sessionId: worker }
+      )
+    ).toMatchObject({ ok: false });
+  });
+
+  test('switching the composer stops the old session and only the new session is spoken', async () => {
+    for (const id of ['worker-a', 'worker-b'])
+      mailbox.db.prepare('INSERT INTO sessions(id) VALUES (?)').run(id);
+    await listen();
+    await call('listen', { sessionId: 'worker-a', enabled: true });
+    expect(listeningStates).toEqual([true, false]);
+    await speech.complete('worker-a', finished('first', 'First reply.'));
+    const first = messages.find((item) => item.message.data.type === 'say')!;
+    await call('listen', { sessionId: 'worker-b', enabled: true });
+    expect(
+      messages
+        .filter((item) => item.message.data.type === 'stop')
+        .map((item) => item.message.data.sessionId)
+    ).toEqual([sessionId, 'worker-a']);
+    expect(
+      await call('ack', { sessionId: 'worker-a', id: first.message.data.id, state: 'played' })
+    ).toMatchObject({ state: 'cancelled' });
+    await call('listen', { sessionId: 'worker-a', enabled: false });
+    await speech.complete('worker-a', finished('late', 'Old session must be silent.'));
+    await speech.complete('worker-b', finished('second', 'Current reply.'));
+    expect(
+      messages
+        .filter((item) => item.message.data.type === 'say')
+        .map((item) => item.message.data.text)
+    ).toEqual(['First reply.', 'Current reply.']);
+  });
+
+  test('only final successful top-level worker results speak, without changing Neo speech', async () => {
+    const worker = 'worker-session';
+    mailbox.db.prepare('INSERT INTO sessions(id) VALUES (?)').run(worker);
+    expect(await call('listen', { sessionId: 'unknown', enabled: true })).toMatchObject({
+      ok: false,
+    });
+    await speech.complete(worker, finished('not-listened', 'No replay.'));
+    await listen();
+    await speech.complete(
+      sessionId,
+      finished('neo-final', 'Neo must keep explicit publication/say.')
+    );
+    await call('listen', { sessionId: worker, enabled: true });
+    for (const message of [
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'tool_use', name: 'Bash' },
+            { type: 'text', text: 'Tool progress' },
+          ],
+        },
+      },
+      finished('nested', 'Nested tool reply.', { parent_tool_use_id: 'tool' }),
+      finished('failed', 'Failed reply.', { is_error: true }),
+      { type: 'result', subtype: 'error_during_execution', errors: ['bad'] },
+    ])
+      await speech.complete(worker, message as SDKMessage);
+    expect(messages.filter((item) => item.message.data.type === 'say')).toEqual([]);
+    await speech.complete(worker, finished('long', '说'.repeat(1000)));
+    const text = messages.find((item) => item.message.data.type === 'say')!.message.data.text;
+    expect(Array.from(text).length).toBeLessThanOrEqual(240);
   });
 });
