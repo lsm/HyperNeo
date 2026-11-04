@@ -169,6 +169,10 @@ import { artifactIdentityWrites } from '../repositories/artifact-file-identity-w
 import { artifactFileRowWrites } from '../repositories/artifact-file-row-write.ts';
 import { globalExtensionConfigWrites } from '../repositories/global-extension-config-write.ts';
 import { globalExtensionConfigReads } from '../repositories/global-extension-config-read.ts';
+import {
+  spaceExtensionConfigReads,
+  enabledSpaceExtensionConfigReads,
+} from '../repositories/space-extension-config-read.ts';
 import { spaceExtensionConfigWrites } from '../repositories/space-extension-config-write.ts';
 import { gitHubSpaceEnabledWrites } from '../repositories/github-space-enabled-write.ts';
 import { gitHubFilterWrites } from '../repositories/github-filter-write.ts';
@@ -323,6 +327,8 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     artifactFileRowWrites,
     globalExtensionConfigWrites,
     globalExtensionConfigReads,
+    spaceExtensionConfigReads,
+    enabledSpaceExtensionConfigReads,
     spaceExtensionConfigWrites,
     gitHubSpaceEnabledWrites,
     gitHubFilterWrites,

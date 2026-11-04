@@ -107,7 +107,11 @@ export function createNeoQuestionAnswerDelivery(
           receipt = sent.success && sent.data.kind === 'accepted' ? sent.data.messageId : null;
           if (receipt === null && claimed) store.questionAnswers.retry(route.id, key);
         } else if (claimed) {
-          const result = await invoke(caller, 'work.send', { ref, message: text });
+          const result = await invoke(caller, 'work.send', {
+            ref,
+            message: text,
+            todoId: route.todoId,
+          });
           const value = result.kind === 'completed' ? result.value : null;
           const sent = Sent.safeParse(value);
           if (sent.success && !sent.data.value.unconfirmed) receipt = key;

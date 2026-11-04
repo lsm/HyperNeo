@@ -98,60 +98,7 @@ if [ "$READY" != "1" ]; then
 fi
 echo "[deno-smoke] HTTP GET / -> 200"
 
-if ! SMOKE_CREDENTIAL_FILE="$WORK_DIR/data/local-rpc.credential" SMOKE_WS_URL="ws://localhost:$PORT/ws" deno eval --config "$REPO_ROOT/packages/daemon/deno.json" '
-	const { default: WebSocket } = await import("npm:ws@8.21.3");
-	const credential = (await Deno.readTextFile(Deno.env.get("SMOKE_CREDENTIAL_FILE"))).trim();
-	const ws = new WebSocket(Deno.env.get("SMOKE_WS_URL"), { headers: { authorization: `Bearer ${credential}` } });
-	const timer = setTimeout(() => {
-		console.error("[deno-smoke] FAIL: /ws handshake timed out");
-		Deno.exit(1);
-	}, 15000);
-	ws.addEventListener("open", () => {
-		clearTimeout(timer);
-		console.log("[deno-smoke] WebSocket /ws handshake OPEN");
-		const id = crypto.randomUUID();
-		const rpcTimer = setTimeout(() => {
-			console.error("[deno-smoke] FAIL: system.health RPC timed out");
-			Deno.exit(1);
-		}, 15000);
-		ws.addEventListener("message", (event) => {
-			let msg;
-			try {
-				msg = JSON.parse(event.data);
-			} catch {
-				return;
-			}
-			if (msg.requestId !== id && msg.id !== id) return;
-			clearTimeout(rpcTimer);
-			if (msg.error) {
-				console.error(`[deno-smoke] FAIL: system.health errored: ${msg.error}`);
-				Deno.exit(1);
-			}
-			const data = msg.data ?? {};
-			if (data.status !== "ok") {
-				console.error(`[deno-smoke] FAIL: system.health returned unexpected payload: ${JSON.stringify(data).slice(0, 200)}`);
-				Deno.exit(1);
-			}
-			console.log("[deno-smoke] system.health RPC ok");
-			ws.close();
-			Deno.exit(0);
-		});
-		ws.send(JSON.stringify({
-			id,
-			type: "REQ",
-			sessionId: "global",
-			method: "system.health",
-			data: {},
-			timestamp: new Date().toISOString(),
-			version: "1.0.0",
-		}));
-	});
-	ws.addEventListener("error", () => {
-		clearTimeout(timer);
-		console.error("[deno-smoke] FAIL: /ws handshake errored");
-		Deno.exit(1);
-	});
-'; then
+if ! SMOKE_CREDENTIAL_FILE="$WORK_DIR/data/local-rpc.credential" SMOKE_WS_URL="ws://localhost:$PORT/ws" deno run -A --config "$REPO_ROOT/packages/daemon/deno.json" "$REPO_ROOT/packages/daemon/scripts/deno-health-probe.mjs"; then
 	dump_log
 	exit 1
 fi
@@ -828,7 +775,9 @@ env -i HOME="$WORK_DIR/artifact-row-command/home" PATH="$PATH" TMPDIR="$WORK_DIR
 env -i HOME="$WORK_DIR/artifact-git-row/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-git-row/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-git-row.ts" "$WORK_DIR/artifact-git-row"
 env -i HOME="$WORK_DIR/extension-global-sql-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-global-sql-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-global-sql-extract.ts" "$WORK_DIR/extension-global-sql-extract"
 env -i HOME="$WORK_DIR/extension-global-read-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-global-read-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-global-read-extract.ts" "$WORK_DIR/extension-global-read-extract"
+env -i HOME="$WORK_DIR/extension-space-read-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-space-read-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-space-read-extract.ts" "$WORK_DIR/extension-space-read-extract"
 env -i HOME="$WORK_DIR/extension-global-reader-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-global-reader-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-global-reader-command.ts" "$WORK_DIR/extension-global-reader-command"
+env -i HOME="$WORK_DIR/extension-space-reader-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-space-reader-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-space-reader-command.ts" "$WORK_DIR/extension-space-reader-command"
 env -i HOME="$WORK_DIR/extension-global-reader-activation/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-global-reader-activation/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-global-reader-activation.ts" "$WORK_DIR/extension-global-reader-activation"
 env -i HOME="$WORK_DIR/extension-global-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-global-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-global-command.ts" "$WORK_DIR/extension-global-command"
 env -i HOME="$WORK_DIR/extension-global-activation/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-global-activation/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-global-activation.ts" "$WORK_DIR/extension-global-activation"

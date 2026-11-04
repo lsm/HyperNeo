@@ -137,6 +137,21 @@ describe('Neo daemon notes', () => {
     expect((job.payload.message as { neoWakeEvent?: boolean }).neoWakeEvent).toBe(true);
   });
 
+  test('a failed local nudge is not left as an open input', async () => {
+    const ref = { adapter: 'hyperneo', id: rootId };
+    Object.assign(service, {
+      deliver: async () => {
+        throw new Error('mailbox refused');
+      },
+    });
+    await expect(service.sendToRef(ref, 'failed-nudge', 'PR requires action.')).rejects.toThrow(
+      'mailbox refused'
+    );
+    expect(
+      db.getDatabase().prepare('SELECT todo_id AS todoId, outcome FROM work_delivery_inputs').all()
+    ).toEqual([{ todoId: null, outcome: JSON.stringify({ failure: 'Error: mailbox refused' }) }]);
+  });
+
   test('a burst of 20 unstructured worker notes does not start Neo', async () => {
     for (let i = 0; i < 20; i++)
       await service.deliverForward(rootId, `chatty-${i}`, `chatty-${i}`, 'worker');
