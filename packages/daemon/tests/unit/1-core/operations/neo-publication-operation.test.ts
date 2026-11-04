@@ -270,6 +270,16 @@ describe('Neo publication without runtime input attribution', () => {
     expect(JSON.parse(rawPayload()).session).toBe(root.sessionId);
   });
 
+  test('a retry of a row that stored a Neo session is the same send', async () => {
+    await publish(draft, caller);
+    const stored = JSON.stringify({ ...JSON.parse(rawPayload()), session: root.sessionId });
+    mailbox.db.prepare('UPDATE neo_publications SET payload_json = ?').run(stored);
+
+    expect(await publish(draft, caller)).toMatchObject({ accepted: true, created: false });
+    expect(ledger.list(conversationId)).toHaveLength(1);
+    expect(rawPayload()).toBe(stored);
+  });
+
   test('rejects an unknown session without saving and accepts a corrected retry', async () => {
     expect(await publish({ ...draft, session: 'missing' }, caller)).toEqual({
       accepted: false,
