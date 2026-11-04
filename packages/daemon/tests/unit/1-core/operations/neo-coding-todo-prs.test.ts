@@ -13,6 +13,7 @@ import {
   createCodingTodoPack,
   planCodingTodoClaims,
 } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
+import { codingPrUrl } from '../../../../src/lib/neo/packs/coding/pr-sweep.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -447,6 +448,19 @@ describe('codingTodoOwnPrs', () => {
 });
 
 describe('CodingTodoPrRepository.holder', () => {
+  test('a PR url follows the configured GitHub host', () => {
+    const host = process.env.GH_HOST;
+    process.env.GH_HOST = 'github.example.test';
+    try {
+      expect(codingPrUrl({ repo: 'lsm/hyperneo', number: 9 })).toBe(
+        'https://github.example.test/lsm/hyperneo/pull/9'
+      );
+    } finally {
+      if (host === undefined) delete process.env.GH_HOST;
+      else process.env.GH_HOST = host;
+    }
+  });
+
   test('finds the open todo on this session that holds the PR, not one that merely shares it', () => {
     const { db, repo, todo, todos } = setup(async () => []);
     const worker = { adapter: 'codex-desktop', id: 'shared-thread' };
