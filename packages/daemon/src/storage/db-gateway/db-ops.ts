@@ -173,6 +173,11 @@ import { gitHubSpaceEnabledWrites } from '../repositories/github-space-enabled-w
 import { gitHubFilterWrites } from '../repositories/github-filter-write.ts';
 import { gitHubPollingWrites } from '../repositories/github-polling-enabled-write.ts';
 
+import {
+  gitHubPollingCapabilityReads,
+  gitHubPollingTimerReads,
+} from '../repositories/github-polling-usage-read.ts';
+
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
     historySnapshotReads,
@@ -320,5 +325,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     gitHubSpaceEnabledWrites,
     gitHubFilterWrites,
     gitHubPollingWrites,
+    gitHubPollingCapabilityReads,
+    gitHubPollingTimerReads,
   ].map((op) => [op.name, op])
 );
