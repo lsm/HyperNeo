@@ -23,6 +23,7 @@ const humanDefault=process.argv.includes('human-default')||humanOwner||humanUnco
 const ownerCi=process.argv.includes('owner-ci');
 const ciStartup=process.argv.includes('ci-startup-queued')||process.argv.includes('ci-startup-running');
 const ciRace=process.argv.includes('ci-merge-race');
+const ciRetry=process.argv.includes('ci-retry-budget');
 const pendingLedger=process.argv.includes('approved-no-checks')||ciStartup;
 const largeFiles=process.argv.includes('large-files');
 const allPaths=Array.from({length:171},(_,i)=>`src/file-${i}.ts`);
@@ -82,7 +83,18 @@ try{
  const pack=makePack();let preferences=await rpc('pack.preferences.list',{});let tick=Date.now();
  const runSweep=()=>pack.sweep!(tick+=61_000);
  const mergeCalls=()=>readFileSync(join(run,'evidence/gh.jsonl'),'utf8').trim().split('\n').filter(Boolean).map(line=>JSON.parse(line)).filter(args=>args[0]==='pr'&&args[1]==='merge');
- if(ciStartup||ciRace){
+ if(ciRetry){
+ for(let i=0;i<3;i++){const[receipt]=await ledger.write('daemonMerge',{kind:'begin',url,head,actor:'daemon:coding-sweep',at:tick+i});assert(receipt);await ledger.write('daemonMerge',{...receipt,kind:'failed',error:'The base branch policy prohibits the merge.',at:receipt.startedAt});await ledger.write('daemonMerge',{...receipt,kind:'void',at:receipt.startedAt});}
+ const historical=db.prepare('SELECT * FROM pack_coding_daemon_merge_failures ORDER BY started_at').all();assert.equal(historical.length,3);
+ const retry=pack.operations!.find(op=>op.name==='neo.coding.merge.retry');assert(retry,'Neo must have a gated path to accept a stopped report');
+ const input={url,head};const callsBefore=readFileSync(join(run,'evidence/gh.jsonl'),'utf8');assert.equal((await retry.execute(input,{role:'worker'} as never)).accepted,false);assert.equal(readFileSync(join(run,'evidence/gh.jsonl'),'utf8'),callsBefore);
+ assert.equal((await retry.execute({url,head:'b'.repeat(40)},{role:'neo'} as never)).accepted,false);
+ for(const extra of [{pr:{...pr,mergeStateStatus:'BLOCKED'},zeroRequired:true},{labels:[[{name:'human-merge'}]]},{fail:'/reviews'}]){publish({labels:[[]],...extra});assert.equal((await retry.execute(input,{role:'neo'} as never)).accepted,false);assert.equal((await ledger.write('daemonMerge',{kind:'failures',url,head}))[0].failures,3);}
+ publish({labels:[[]]});assert.equal((await retry.execute(input,{role:'neo'} as never)).accepted,true);assert.deepEqual(await ledger.write('daemonMerge',{kind:'failures',url,head}),[]);assert.deepEqual(db.prepare('SELECT * FROM pack_coding_daemon_merge_failures ORDER BY started_at').all(),historical);
+ const afterRetry=readFileSync(join(run,'evidence/gh.jsonl'),'utf8');assert.equal((await retry.execute(input,{role:'neo'} as never)).accepted,false);assert.equal(readFileSync(join(run,'evidence/gh.jsonl'),'utf8'),afterRetry);
+ rejectSignoff=false;publish({labels:[[]]});await runSweep();await runSweep();assert.equal(mergeCalls().length,1);assert.equal(notices.filter(text=>text.includes('Merge confirmed:')).length,1);assert.deepEqual(db.prepare('SELECT * FROM pack_coding_daemon_merge_failures ORDER BY started_at').all(),historical);
+ evidence.stoppedReportRetryFreshGated=true;evidence.historicalFailuresPreserved=true;evidence.readyCiMergedOnce=true;evidence.mergeCommands=mergeCalls();evidence.verified=true;
+ }else if(ciStartup||ciRace){
  rejectSignoff=false;
  const requiredDiagnostic=process.argv.includes('ci-startup-queued')?"no required checks reported on the 'refactor/space-optional-rpc' branch":"no required checks reported on the 'codex/neo-peer-message' branch";
  const mergeError='X Pull request is not mergeable: the base branch policy prohibits the merge.';
