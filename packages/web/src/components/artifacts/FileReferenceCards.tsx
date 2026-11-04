@@ -13,26 +13,44 @@ import { systemState } from '../../lib/state.ts';
 import { ownerPathLabel } from '../../lib/owner-path-label.ts';
 
 const fileReferences = (superpipe({})('public-file-reference-cards') as PipelineAPI)
-  .input(['text'])
-  .pipe(previewLinkedReferenceCandidates, 'text', 'candidates')
+  .input(['texts'])
+  .pipe(
+    (texts: readonly string[]) => {
+      const candidates = [
+        ...new Map(
+          texts.flatMap(previewLinkedReferenceCandidates).map((item) => [item.reference, item])
+        ).values(),
+      ];
+      return candidates.length <= 256 ? candidates : [];
+    },
+    'texts',
+    'candidates'
+  )
   .pipe(
     (candidates: PreviewReferenceCandidate[]) => candidates.filter((item) => item.kind === 'local'),
     'candidates',
     'files'
   )
-  .end('files') as (text: string) => Extract<PreviewReferenceCandidate, { kind: 'local' }>[];
+  .end('files') as (
+  texts: readonly string[]
+) => Extract<PreviewReferenceCandidate, { kind: 'local' }>[];
 
 export function FileReferenceCards({
   text,
+  details,
   source,
   ownerHome,
 }: {
   text: string;
+  details?: string;
   source: ArtifactPreviewSource;
   ownerHome?: string | null;
 }) {
   const home = ownerHome === undefined ? systemState.value?.homeDirectory : ownerHome;
-  const files = useMemo(() => fileReferences(text), [text]);
+  const files = useMemo(
+    () => fileReferences(details && details !== text ? [text, details] : [text]),
+    [text, details]
+  );
   if (!files.length) return null;
   return (
     <ul aria-label={t('artifact.fileReferences')} class="mt-3 flex flex-col items-start gap-1.5">
