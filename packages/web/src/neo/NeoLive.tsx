@@ -136,14 +136,14 @@ export function NeoLive() {
     setCardTarget(null);
     setCardUnavailable(false);
   }, [scenesOpen]);
-  const [chat, setChat] = useState<{ sessionId: string } | null>(null);
+  const [chat, setChat] = useState<{ sessionId: string; label?: string } | null>(null);
   const [sessionFocus, setSessionFocus] = useState(true);
   const closeChat = useCallback(() => setChat(null), []);
-  const openSession = (link: string) => {
+  const openSession = (link: string, label?: string) => {
     if (!link.startsWith('/session/')) return window.open(link, '_blank', 'noopener');
     artifactPreviewWorkspace.select(null);
     setSessionFocus(true);
-    setChat({ sessionId: link.slice('/session/'.length) });
+    setChat({ sessionId: link.slice('/session/'.length), label });
   };
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const dragDepth = useRef(0);
@@ -368,7 +368,11 @@ export function NeoLive() {
     }
   }, [previewOpen, previewDesktop]);
   const sessionSelected = sessionTab && sessionFocus && !previewTarget;
-  const previewWork = focusPreview && artifactPreviewStack.value.length === 0 && !sessionSelected;
+  const previewWork =
+    focusPreview &&
+    artifactPreviewStack.value.length === 0 &&
+    artifactPreviewWorkspace.state.value.open &&
+    !sessionSelected;
   const workHidden = focusPreview && (!roomy || expanded) && !previewWork;
   useLayoutEffect(() => {
     if (!workHidden && sceneSheet.current) sceneSheet.current.scrollTop = workScrollTop.current;
@@ -1063,7 +1067,9 @@ export function NeoLive() {
           <NeoSessionPane
             key={chat.sessionId}
             sessionId={chat.sessionId}
-            title={workerIdentity({ adapter: 'hyperneo', id: chat.sessionId }, null).label}
+            title={
+              chat.label ?? workerIdentity({ adapter: 'hyperneo', id: chat.sessionId }, null).label
+            }
             overlay={narrow || !publicConversation}
             onClose={closeChat}
           />
@@ -1190,7 +1196,9 @@ export function NeoLive() {
           sessionTab && chat
             ? {
                 id: chat.sessionId,
-                title: workerIdentity({ adapter: 'hyperneo', id: chat.sessionId }, null).label,
+                title:
+                  chat.label ??
+                  workerIdentity({ adapter: 'hyperneo', id: chat.sessionId }, null).label,
                 selected: sessionSelected,
                 onSelect: () => {
                   setSessionFocus(true);
@@ -1200,7 +1208,10 @@ export function NeoLive() {
                 children: (
                   <NeoSessionPane
                     sessionId={chat.sessionId}
-                    title={workerIdentity({ adapter: 'hyperneo', id: chat.sessionId }, null).label}
+                    title={
+                      chat.label ??
+                      workerIdentity({ adapter: 'hyperneo', id: chat.sessionId }, null).label
+                    }
                     overlay={false}
                     onClose={closeChat}
                   />
