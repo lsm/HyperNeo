@@ -218,7 +218,10 @@ export async function recordNeoTodo(
   const added = todos.addTodo(id, home.id, { ...draft, dependsOn, approvedAt }, now, repo);
 
   if (draft.target) sessions.create(added.id, draft.target);
-  if (draft.start) return { ...(await startNeoTodoWhenFree(todos, controls, added)), ...records };
+  if (draft.start) {
+    const approved = todos.approveTodo(added, now);
+    return { ...(await startNeoTodoWhenFree(todos, controls, approved)), ...records };
+  }
   if (added.instruction) joinNeoStartQuestion(todos, added);
   return { ok: true, todo: added, ...records };
 }

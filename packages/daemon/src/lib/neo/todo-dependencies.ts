@@ -60,9 +60,18 @@ export function neoTodoDependenciesAfterApproval(
   ];
 }
 
+function liveDependencyNodes(
+  todos: readonly NeoTodo[],
+  available: readonly NeoTodo[]
+): DependencyNode[] {
+  const live = new Set(available.map((todo) => todo.id));
+  return neoTodoDependencyNodes(todos)
+    .filter((node) => live.has(node.id))
+    .map((node) => ({ ...node, dependsOn: node.dependsOn?.filter((id) => live.has(id)) }));
+}
+
 export const planNeoTodoDependencies = (superpipe({})('neo.todo.plan-dependencies') as PipelineAPI)
   .input(['todos', 'todoId', 'after'])
-  .pipe(neoTodoDependencyNodes, 'todos', 'nodes')
   .pipe(requireDistinctDependencies, ['todoId', 'after'], 'result:dependencies')
   .pipe(
     (todos: readonly NeoTodo[]) => todos.filter((todo) => todo.state !== 'removed'),
@@ -70,6 +79,7 @@ export const planNeoTodoDependencies = (superpipe({})('neo.todo.plan-dependencie
     'available'
   )
   .pipe(requireExistingDependencies, ['available', 'after'], 'result:dependencies')
+  .pipe(liveDependencyNodes, ['todos', 'available'], 'nodes')
   .pipe(requireAcyclicDependencies, ['nodes', 'todoId', 'after'], 'result:dependencies')
   .pipe((after: readonly string[]) => [...after], 'after', 'dependencies')
   .end('dependencies') as (
