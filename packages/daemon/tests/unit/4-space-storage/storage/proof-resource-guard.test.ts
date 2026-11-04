@@ -33,6 +33,7 @@ test.each([
     const bin = join(directory, 'bin'),
       evidence = join(directory, 'evidence');
     mkdirSync(bin);
+    writeFileSync(join(bin, 'uname'), '#!/bin/sh\nprintf "%s\\n" Linux\n', { mode: 0o700 });
     writeFileSync(join(bin, 'memory_pressure'), `#!/bin/sh\necho '${input.pressure}'\n`, {
       mode: 0o700,
     });
