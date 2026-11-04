@@ -53,57 +53,6 @@ describe('Neo work todo reference', () => {
         ? { adapter: 'fixture', place, title: 'Synthetic', message: 'New work' }
         : { ref, message: 'New work' };
 
-    test.skipIf(name !== 'work.start')(
-      `${name} records a missing Neo MCP todo reference without blocking delivery`,
-      async () => {
-        const { registry, delivered } = fixture();
-        const call = createOperationMcpHandler(registry, () => neo);
-        const reply = await call({
-          name,
-          input: {
-            ...input,
-            message: 'todoId open-todo in prose is not a reference',
-            source: 'internal',
-          },
-        });
-        expect(JSON.parse(reply.content[0].text)).toMatchObject({
-          ok: true,
-          records: [expect.stringContaining('todo_required:')],
-        });
-        expect(reply.content[0].text).not.toContain('neo.todo.start');
-        expect(delivered).toHaveLength(1);
-      }
-    );
-
-    test.skipIf(name !== 'work.start')(
-      `${name} records an unknown, closed-ask or foreign todo`,
-      async () => {
-        for (const todoId of ['missing-todo', 'closed-ask-todo', 'foreign-todo']) {
-          const { registry, delivered } = fixture();
-          const reply = await invokeOperation(registry, name, { ...input, todoId }, neo);
-          expect(reply).toMatchObject({
-            kind: 'completed',
-            value: { ok: true, records: [expect.stringContaining('todo_required:')] },
-          });
-          expect(delivered).toHaveLength(1);
-        }
-      }
-    );
-
-    test.skipIf(name !== 'work.start')(
-      `${name} records a missing todo on a Neo RPC call`,
-      async () => {
-        const { registry, delivered } = fixture();
-        expect(
-          await invokeOperation(registry, name, input, { ...neo, source: 'rpc' })
-        ).toMatchObject({
-          kind: 'completed',
-          value: { ok: true, records: [expect.stringContaining('todo_required:')] },
-        });
-        expect(delivered).toHaveLength(1);
-      }
-    );
-
     test(`${name} accepts an open-ask reference and trusted internal dispatch`, async () => {
       const { registry, delivered } = fixture();
       for (const [caller, request] of [
@@ -124,6 +73,53 @@ describe('Neo work todo reference', () => {
       expect(tracked.kind === 'completed' && tracked.value).not.toHaveProperty('records');
     });
   }
+  describe('work.start', () => {
+    const name = 'work.start';
+    const input = { adapter: 'fixture', place, title: 'Synthetic', message: 'New work' };
+
+    test(`${name} records a missing Neo MCP todo reference without blocking delivery`, async () => {
+      const { registry, delivered } = fixture();
+      const call = createOperationMcpHandler(registry, () => neo);
+      const reply = await call({
+        name,
+        input: {
+          ...input,
+          message: 'todoId open-todo in prose is not a reference',
+          source: 'internal',
+        },
+      });
+      expect(JSON.parse(reply.content[0].text)).toMatchObject({
+        ok: true,
+        records: [expect.stringContaining('todo_required:')],
+      });
+      expect(reply.content[0].text).not.toContain('neo.todo.start');
+      expect(delivered).toHaveLength(1);
+    });
+
+    test(`${name} records an unknown, closed-ask or foreign todo`, async () => {
+      for (const todoId of ['missing-todo', 'closed-ask-todo', 'foreign-todo']) {
+        const { registry, delivered } = fixture();
+        const reply = await invokeOperation(registry, name, { ...input, todoId }, neo);
+        expect(reply).toMatchObject({
+          kind: 'completed',
+          value: { ok: true, records: [expect.stringContaining('todo_required:')] },
+        });
+        expect(delivered).toHaveLength(1);
+      }
+    });
+
+    test(`${name} records a missing todo on a Neo RPC call`, async () => {
+      const { registry, delivered } = fixture();
+      expect(await invokeOperation(registry, name, input, { ...neo, source: 'rpc' })).toMatchObject(
+        {
+          kind: 'completed',
+          value: { ok: true, records: [expect.stringContaining('todo_required:')] },
+        }
+      );
+      expect(delivered).toHaveLength(1);
+    });
+  });
+
   test.each(['steer', 'queue'] as const)(
     'work.send mode %s delivers for an open todo',
     async (mode) => {
