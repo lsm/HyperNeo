@@ -562,6 +562,59 @@ describe('todo dependencies', () => {
     }
   });
 
+  test('moving an unapproved step keeps it waiting for its Start answer', async () => {
+    const { db, store, invoke, step, sent, runner, work } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Moved unapproved step',
+        request: 'Three independent steps.',
+        todos: [
+          { ...step('A'), ...work },
+          { ...step('B', []), ...work },
+          { ...step('C', []), ...work },
+        ],
+      });
+      const [a, b, c] = opened.todos;
+      neoMoveTodo(store, store.getTodo(b.id)!, 'synthetic/first');
+      neoMoveTodo(store, store.getTodo(c.id)!, 'synthetic/second');
+      neoMoveTodo(store, store.getTodo(a.id)!, 'synthetic/second');
+      const moved = store.getTodo(a.id)!;
+      expect(moved).toMatchObject({ state: 'blocked', blockedBy: 'question' });
+      const card = store
+        .listQuestions(moved.askId)
+        .find((q) => q.state === 'open' && q.startTodos?.includes(a.id))!;
+      expect(card.startTodos).toContain(c.id);
+      store.answerQuestion(card, [c.id], 'button', Date.now());
+      await runner.refresh(() => {});
+      expect(store.getTodo(a.id)).toMatchObject({ state: 'blocked', blockedBy: 'held' });
+      expect(sent.filter((item) => JSON.stringify(item).includes(a.id))).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('an edit cannot turn a step awaiting its Start answer into a dependent', async () => {
+    const { db, store, invoke, step, sent, runner, work } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Unapproved step',
+        request: 'Two independent steps.',
+        todos: [step('X', []), { ...step('A', []), ...work }],
+      });
+      const [x, a] = opened.todos;
+      store.updateTodo(x, { state: 'done' }, Date.now());
+      expect(await invoke('neo.todo.edit', { todoId: a.id, after: [x.id] })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('awaiting_start'),
+      });
+      await runner.refresh(() => {});
+      expect(store.getTodo(a.id)).toMatchObject({ state: 'blocked', blockedBy: 'question' });
+      expect(sent).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+
   const chainModes = [
     'approved',
     'legacy',
