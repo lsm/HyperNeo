@@ -5,7 +5,7 @@ entry point with one new absolute evidence directory:
 
     bash scripts/bun-native-smoke.sh /absolute/fresh/evidence-directory
 
-The runner registers 63 helper identities in 87 proof cases: the initial three settings/provider
+The runner registers 84 helper identities in 108 proof cases: the initial three settings/provider
 proofs plus 31 workflow and job proofs for mailbox admission, parking, retries,
 polling recovery, reminders, schedules and workflow identity/configuration/pins.
 The reader batch adds 11 SDK/session transcript, snapshot, inventory, count,
@@ -14,6 +14,10 @@ message reads retain the legacy --defer-body-copy schedule.
 The orchestration batch adds 18 todo/ask/coding helpers. Its coding sweep retains
 all 25 variants from the legacy runner in their original order, each with its
 own evidence directory and synthetic GitHub CLI. No real PR is merged by a proof.
+The persistence batch adds 21 paired-device, human-reset, workspace and artifact
+helpers; retired local registration retains its verify mode. Keep the existing
+HTTP/WebSocket/CLI, committed-receipt, rollback, no-replay and Git byte/provenance
+assertions. Filesystem and policy callbacks remain unchanged on main.
 Helper identity coverage and mode-case coverage are distinct; count both.
 This remains partial coverage of the 117-helper inventory. Keep the Deno
 runner and required CI job enabled until every replacement proves parity.
@@ -31,7 +35,7 @@ Together they exercise both platform decisions without depending on the host.
 The native smoke fixture exercises the real shell entry point and wrapper with synthetic child executables: Linux
 portability, explicit Bun selection despite an inherited Deno choice, quoted
 paths, mode and directory arguments, Darwin resource refusal and early exit on
-early, matrix-interior or late failures. Pin the legacy-relative invocation order and modes.
+early, matrix-interior or late failures, including artifact publication. Pin the legacy-relative invocation order and modes.
 Keep failure status/evidence and prove later cases do not run, including the
 remaining variants after a failed sweep case.
 These fixture executables do not establish native helper parity.

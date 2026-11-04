@@ -95,6 +95,27 @@ const proofs = [
   ['task-schedule-delete-writer', 'verify'],
   ['task-schedule-pause-writer', 'verify'],
   ['workflow-options-contract', 'verify'],
+  ['lane-c-pairing-approve'],
+  ['lane-c-pairing-redeem'],
+  ['lane-c-pairing-code-create'],
+  ['lane-c-pairing-revoke-command'],
+  ['lane-c-connected-device-observer'],
+  ['lane-c-pairing-revoke-activation'],
+  ['lane-c-human-reset-command'],
+  ['lane-c-conversation-reservation-extract'],
+  ['lane-c-human-reset-receipts'],
+  ['lane-c-human-reset-coordinator'],
+  ['lane-c-human-reset-activation'],
+  ['lane-c-workspace-remove'],
+  ['lane-c-workspace-upsert'],
+  ['lane-c-workspace-add'],
+  ['lane-c-artifact-identity-extract'],
+  ['lane-c-artifact-identity-command'],
+  ['retire-local-register', 'verify'],
+  ['lane-c-artifact-reference-identity'],
+  ['lane-c-artifact-git-identity'],
+  ['lane-c-artifact-row-command'],
+  ['lane-c-artifact-git-row'],
 ] as const;
 const caseId = (name: string, args: readonly string[]) =>
   name === 'coding-daemon-merge-sweep' ? name + '-' + args[0] : name;
@@ -156,8 +177,8 @@ describe('Bun native proof matrix registration', () => {
     try {
       const result = f.invoke();
       expect(result.status).toBe(0);
-      expect(result.stdout).toContain('63 legacy helpers');
-      expect(result.stdout).toContain('87 proof cases');
+      expect(result.stdout).toContain('84 legacy helpers');
+      expect(result.stdout).toContain('108 proof cases');
       expect(f.sequence()).toEqual(cases);
       const homes = [];
       for (const [name, ...mode] of proofs) {
@@ -181,7 +202,7 @@ describe('Bun native proof matrix registration', () => {
         expect(existsSync(tmp)).toBe(false);
         expect(existsSync(data)).toBe(false);
       }
-      expect(new Set(homes).size).toBe(87);
+      expect(new Set(homes).size).toBe(108);
     } finally {
       f.cleanup();
     }
@@ -191,13 +212,14 @@ describe('Bun native proof matrix registration', () => {
     'lane-c-provider-rpc-writes',
     'coding-daemon-merge-sweep-human-new-head',
     'task-schedule-pause-writer',
+    'lane-c-artifact-row-command',
   ])('retains failure at %s and never runs later helpers', (failed) => {
     const f = fixture();
     try {
       writeFileSync(join(f.run, 'fail-helper'), failed + '\n');
       const result = f.invoke();
       expect(result.status).toBe(17);
-      expect(result.stdout).not.toContain('63 legacy helpers');
+      expect(result.stdout).not.toContain('84 legacy helpers');
       expect(JSON.parse(readFileSync(join(f.evidence, failed, 'run-status.json'), 'utf8'))).toEqual(
         { exitCode: 17 }
       );
