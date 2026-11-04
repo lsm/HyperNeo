@@ -116,6 +116,39 @@ const proofs = [
   ['lane-c-artifact-git-identity'],
   ['lane-c-artifact-row-command'],
   ['lane-c-artifact-git-row'],
+  ['lane-c-extension-global-sql-extract'],
+  ['lane-c-extension-global-read-extract'],
+  ['lane-c-extension-space-read-extract'],
+  ['lane-c-extension-global-reader-command'],
+  ['lane-c-extension-space-reader-command'],
+  ['lane-c-extension-global-reader-activation'],
+  ['lane-c-extension-global-command'],
+  ['lane-c-extension-global-activation'],
+  ['lane-c-extension-space-activation'],
+  ['lane-c-extension-space-sql-extract'],
+  ['lane-c-extension-space-command'],
+  ['lane-c-github-space-enabled-extract'],
+  ['lane-c-github-space-settings-read'],
+  ['lane-c-github-watched-repos-read'],
+  ['lane-c-github-watched-projection'],
+  ['lane-c-github-space-enabled-command'],
+  ['lane-c-github-space-enable-wiring'],
+  ['lane-c-github-filter-extract'],
+  ['lane-c-github-filter-command'],
+  ['lane-c-github-filter-wiring'],
+  ['lane-c-github-polling-intent-extract'],
+  ['lane-c-github-watched-lookups-extract'],
+  ['lane-c-github-cursor-persist-extract'],
+  ['lane-c-github-watched-update-extract'],
+  ['lane-c-github-watched-insert-extract'],
+  ['lane-c-github-watched-upsert-lift'],
+  ['lane-c-github-polling-command'],
+  ['lane-c-github-polling-read-extract'],
+  ['lane-c-github-polling-usage-read'],
+  ['lane-c-github-capability-reader'],
+  ['lane-c-github-timer-reader'],
+  ['lane-c-github-unwatch-timer'],
+  ['lane-c-github-watch-timer'],
 ] as const;
 const caseId = (name: string, args: readonly string[]) =>
   name === 'coding-daemon-merge-sweep' ? name + '-' + args[0] : name;
@@ -177,8 +210,8 @@ describe('Bun native proof matrix registration', () => {
     try {
       const result = f.invoke();
       expect(result.status).toBe(0);
-      expect(result.stdout).toContain('84 legacy helpers');
-      expect(result.stdout).toContain('108 proof cases');
+      expect(result.stdout).toContain('117 legacy helpers');
+      expect(result.stdout).toContain('141 proof cases');
       expect(f.sequence()).toEqual(cases);
       const homes = [];
       for (const [name, ...mode] of proofs) {
@@ -202,7 +235,7 @@ describe('Bun native proof matrix registration', () => {
         expect(existsSync(tmp)).toBe(false);
         expect(existsSync(data)).toBe(false);
       }
-      expect(new Set(homes).size).toBe(108);
+      expect(new Set(homes).size).toBe(141);
     } finally {
       f.cleanup();
     }
@@ -213,13 +246,14 @@ describe('Bun native proof matrix registration', () => {
     'coding-daemon-merge-sweep-human-new-head',
     'task-schedule-pause-writer',
     'lane-c-artifact-row-command',
+    'lane-c-github-unwatch-timer',
   ])('retains failure at %s and never runs later helpers', (failed) => {
     const f = fixture();
     try {
       writeFileSync(join(f.run, 'fail-helper'), failed + '\n');
       const result = f.invoke();
       expect(result.status).toBe(17);
-      expect(result.stdout).not.toContain('84 legacy helpers');
+      expect(result.stdout).not.toContain('117 legacy helpers');
       expect(JSON.parse(readFileSync(join(f.evidence, failed, 'run-status.json'), 'utf8'))).toEqual(
         { exitCode: 17 }
       );

@@ -56,10 +56,12 @@ import {
   artifactPreviewStack,
   artifactPreviewWorkspace,
   closeArtifactPreview,
+  openArtifactPreview,
   takeArtifactPreviewOpener,
   type ArtifactPreviewTarget,
 } from '../lib/artifact-preview-store.ts';
 import { artifactTabIds, artifactWorkTabId } from '../components/artifacts/ArtifactPreviewTabs.tsx';
+import { sessionTabKey } from '../lib/artifact-preview-workspace.ts';
 import { NeoPreviewResize } from './NeoPreviewResize.tsx';
 import { neoQuestionText } from './todo-status.ts';
 
@@ -100,6 +102,9 @@ async function findNeoWork(
   }
 }
 
+const sessionTitle = (sessionId: string) =>
+  workerIdentity({ adapter: 'hyperneo', id: sessionId }, null).label;
+
 export function NeoLive() {
   const neo = useNeo();
   const attachments = useNeoAttachments(neo.sessionId);
@@ -138,10 +143,13 @@ export function NeoLive() {
   }, [scenesOpen]);
   const [chat, setChat] = useState<{ sessionId: string } | null>(null);
   const closeChat = useCallback(() => setChat(null), []);
-  const openSession = (link: string) =>
-    link.startsWith('/session/')
-      ? setChat({ sessionId: link.slice('/session/'.length) })
-      : window.open(link, '_blank', 'noopener');
+  const openSession = (link: string) => {
+    if (!link.startsWith('/session/')) return window.open(link, '_blank', 'noopener');
+    const sessionId = link.slice('/session/'.length);
+    if (columns && previewDesktop)
+      openArtifactPreview({ kind: 'session', sessionId }, sessionTitle(sessionId));
+    else setChat({ sessionId });
+  };
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const dragDepth = useRef(0);
   const [draft, setDraft] = useState<string | undefined>(undefined);
@@ -454,6 +462,18 @@ export function NeoLive() {
         setScenesOpenState(true);
         closeArtifactPreview();
       }
+      const top = artifactPreviewStack.value.at(-1);
+      if (top?.kind === 'session' && !(columns && previewWidth)) {
+        setChat({ sessionId: top.sessionId });
+        for (const { sessionId } of artifactPreviewWorkspace.state.value.files)
+          if (sessionId !== undefined) artifactPreviewWorkspace.close(sessionTabKey(sessionId));
+      } else if (chat && columns && previewWidth) {
+        openArtifactPreview(
+          { kind: 'session', sessionId: chat.sessionId },
+          sessionTitle(chat.sessionId)
+        );
+        setChat(null);
+      }
       setNarrow(!desktop);
       setPreviewDesktop(previewWidth);
       setRoomy(window.matchMedia('(min-width: 1440px)').matches);
@@ -507,8 +527,9 @@ export function NeoLive() {
       element.scrollTop / Math.max(1, element.scrollHeight - element.clientHeight);
   }
 
+  const sessionShown = !!chat || previewTarget?.kind === 'session';
   useLayoutEffect(() => {
-    if (chat) {
+    if (sessionShown) {
       dragDepth.current = 0;
       setDragging(false);
       const block = (event: DragEvent) => {
@@ -559,7 +580,7 @@ export function NeoLive() {
       window.removeEventListener('dragleave', leave);
       window.removeEventListener('drop', drop);
     };
-  }, [neo.sessionId, ready, !!chat]);
+  }, [neo.sessionId, ready, sessionShown]);
 
   useLayoutEffect(() => {
     const element = footer.current;
@@ -620,7 +641,7 @@ export function NeoLive() {
     <div
       ref={shell}
       style={expandable ? { '--neo-preview-width': `${previewWidth}%` } : undefined}
-      class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${columns ? ' neo-has-scenes' : ''}${chat ? ' neo-has-session' : ''}${sheet && scenesOpen ? ' neo-sheet-open' : ''}${focusPreview ? ' neo-preview-focus' : ''}${previewWork ? ' neo-preview-work' : ''}${expanded ? ' neo-preview-expanded' : ''}`}
+      class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${columns ? ' neo-has-scenes' : ''}${sheet && scenesOpen ? ' neo-sheet-open' : ''}${focusPreview ? ' neo-preview-focus' : ''}${previewWork ? ' neo-preview-work' : ''}${expanded ? ' neo-preview-expanded' : ''}`}
     >
       {dragging && (
         <div
@@ -1055,8 +1076,7 @@ export function NeoLive() {
           <NeoSessionPane
             key={chat.sessionId}
             sessionId={chat.sessionId}
-            title={workerIdentity({ adapter: 'hyperneo', id: chat.sessionId }, null).label}
-            overlay={narrow || !publicConversation}
+            title={sessionTitle(chat.sessionId)}
             onClose={closeChat}
           />
         )}
@@ -1144,7 +1164,9 @@ export function NeoLive() {
           controls={
             previewTarget?.kind === 'artifact'
               ? artifactTabIds(previewTarget.artifactId).panel
-              : 'neo-preview-work-panel'
+              : previewTarget?.kind === 'session'
+                ? artifactTabIds(sessionTabKey(previewTarget.sessionId)).panel
+                : 'neo-preview-work-panel'
           }
           onChange={setPreviewSize}
         />
@@ -1168,15 +1190,10 @@ export function NeoLive() {
           expandable ? { expanded, toggle: () => setPreviewExpanded(!expanded) } : undefined
         }
         suspended={!!chat || referenceWork}
-        work={
-          columns
-            ? {
-                id: 'neo-preview-work-panel',
-                showTab: !roomy || previewWork || expanded,
-                count: workCount,
-              }
-            : undefined
-        }
+        work={columns ? { id: 'neo-preview-work-panel', count: workCount } : undefined}
+        renderSession={(sessionId) => (
+          <NeoSessionPane key={sessionId} sessionId={sessionId} title={sessionTitle(sessionId)} />
+        )}
         markdownClass="neo-message-assistant neo-markdown neo-markdown-assistant text-base leading-relaxed"
       />
     </div>

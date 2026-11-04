@@ -38,7 +38,7 @@ export function ArtifactPreviewTabs({
     observer.observe(node);
     return () => observer.disconnect();
   }, []);
-  const budget = Math.max(0, available - 8 - (work ? 84 : 0) - (reference ? 180 : 0));
+  const budget = Math.max(0, available - 8 - (work ? 100 : 0) - (reference ? 180 : 0));
   const count =
     files.length * 92 > budget ? Math.max(1, Math.floor((budget - 40) / 92)) : files.length;
   const indices = files.slice(0, count).map((_, index) => index);
@@ -104,7 +104,7 @@ export function ArtifactPreviewTabs({
             aria-controls={work.id}
             aria-selected={work.selected}
             tabIndex={work.selected || (!reference && !selectedId && !files.length) ? 0 : -1}
-            class={`h-8 w-20 shrink-0 truncate rounded-full px-2 text-xs hover:bg-surface-raised hover:text-fg ${work.selected ? 'bg-surface-raised text-fg' : 'text-fg-muted'}`}
+            class={`h-8 w-24 shrink-0 truncate rounded-full px-2 text-xs hover:bg-surface-raised hover:text-fg ${work.selected ? 'bg-surface-raised text-fg' : 'text-fg-muted'}`}
             onClick={() => {
               setMenuOpen(false);
               artifactPreviewWorkspace.select(null);

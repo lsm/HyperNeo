@@ -347,7 +347,7 @@ describe('Neo phone preview sheet', () => {
         <button>Open synthetic file</button>
         <ArtifactPreviewPanel
           fileTabs
-          work={{ id: 'phone-work', showTab: true, count: 2 }}
+          work={{ id: 'phone-work', count: 2 }}
           expansion={{ expanded: false, toggle: vi.fn() }}
         />
       </div>

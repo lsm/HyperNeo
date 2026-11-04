@@ -9,6 +9,7 @@ import { createLocalSocket, readLocalCredential } from '../../../packages/daemon
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
+import { legacyAttachmentFixture } from './legacy-attachment-fixture.ts';
 
 const [phase,readyPath,directory]=process.argv.slice(2),run=resolve(directory);
 assert(['before','after'].includes(phase));assert.equal(process.env.NODE_ENV,'test');assert.equal(process.env.HOME,join(run,'home'));assert.equal(process.env.HYPERNEO_DATA_DIR,join(run,'data'));
@@ -31,6 +32,7 @@ try{
   {adapter:'claude-desktop',id:'claude-worker',name:'Claude worker',provider:'Claude',link:'claude://claude.ai/epitaxy/synthetic-open-check'},
   {adapter:'copilot-cli',id:'copilot-worker',name:'Copilot worker',provider:'Copilot',link:'ghapp://synthetic-open-check'},
   {adapter:'hyperneo',id:'local-worker',name:'Local worker',provider:'Anthropic',link:'/session/local-worker'},
+  {adapter:'hyperneo',id:'second-worker',name:'Second worker',provider:'Anthropic',link:'/session/second-worker'},
  ];
  const links=new NeoTodoSessionRepository(db);
  for(const source of sessions){
@@ -53,13 +55,15 @@ try{
  const selected=store.addTodo('focused-start-todo','start-focus',{title:'Selected focused worker',doneWhen:'Observed result',check:null,instruction:null,named:null},now+3);links.bind(selected.id,{adapter:retained.adapter,id:retained.id},now+3);links.recordRef(selected.id,{adapter:retained.adapter,id:retained.id},now+3,retained.link);
  store.askQuestion('focused-start-question','start-focus',{kind:'start',text:'Start focused work?',options:null,multiple:false,noLabel:null,yesLabel:null,startTodos:[selected.id]},now+3);
  const entry=await hub.request<{ok:boolean;entry:{questions:{sourceSession?:unknown}[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId:'open-codex-worker'}});assert(entry.ok && entry.entry.questions[0].sourceSession);
+ writeFileSync(join(run,'workspace/report.md'),'# Synthetic report\nPreview body\n');
+ const preview=legacyAttachmentFixture(()=>db,join(run,'data')).execute({requestId:'open-controls-preview',context:{kind:'todo',id:'todo-local-worker'},path:'report.md',title:'Report'});assert(preview.accepted,JSON.stringify(preview));db.prepare(`UPDATE neo_questions SET artifacts_json=? WHERE id='question-local-worker'`).run(JSON.stringify([preview.artifact]));
  const dist=resolve('packages/web/dist');assert(existsSync(join(dist,'neo/index.html')));
  front=Bun.serve({hostname:'127.0.0.1',port:0,async fetch(request,server){
   const path=new URL(request.url).pathname;
   if(path==='/ws'){if(server.upgrade(request,{data:{connectionSessionId:'global',device:await app.authenticateUpgrade(request,'127.0.0.1')}}))return;return new Response('Upgrade failed',{status:500});}
   const file=Bun.file(join(dist,path==='/neo'?'neo/index.html':path));if(!await file.exists())return new Response('Not found',{status:404});return path==='/neo'?new Response(file,{headers:{'Set-Cookie':`hyperneo_device=${readLocalCredential()}; Path=/; HttpOnly; SameSite=Strict`}}):new Response(file);
  },websocket:createWebSocketHandlers(app.transport,app.sessionManager)});assert.notEqual(front.port,8399);
- writeFileSync(readyPath,JSON.stringify({phase,port:front.port,url:`http://127.0.0.1:${front.port}/neo`,run,pid:process.pid,sessions},null,2));
+ writeFileSync(readyPath,JSON.stringify({phase,port:front.port,url:`http://127.0.0.1:${front.port}/neo`,run,pid:process.pid,sessions,artifactId:preview.artifact.artifactId},null,2));
  console.log(`Ready for attended browser: http://127.0.0.1:${front.port}/neo`);
  let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});
  for(const signal of ['SIGUSR1','SIGINT','SIGTERM'] as const)process.once(signal,release);

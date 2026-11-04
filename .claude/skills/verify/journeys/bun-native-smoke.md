@@ -5,7 +5,7 @@ entry point with one new absolute evidence directory:
 
     bash scripts/bun-native-smoke.sh /absolute/fresh/evidence-directory
 
-The runner registers 84 helper identities in 108 proof cases: the initial three settings/provider
+The runner registers 117 helper identities in 141 proof cases: the initial three settings/provider
 proofs plus 31 workflow and job proofs for mailbox admission, parking, retries,
 polling recovery, reminders, schedules and workflow identity/configuration/pins.
 The reader batch adds 11 SDK/session transcript, snapshot, inventory, count,
@@ -19,8 +19,13 @@ helpers; retired local registration retains its verify mode. Keep the existing
 HTTP/WebSocket/CLI, committed-receipt, rollback, no-replay and Git byte/provenance
 assertions. Filesystem and policy callbacks remain unchanged on main.
 Helper identity coverage and mode-case coverage are distinct; count both.
-This remains partial coverage of the 117-helper inventory. Keep the Deno
-runner and required CI job enabled until every replacement proves parity.
+The final batch adds 33 extension-configuration and GitHub settings/reader
+helpers. Preserve their source filters, snapshots, cursors, caller clocks,
+rollback, receipt ordering, timer ownership and no-replay assertions. GitHub is
+synthetic throughout; no remote subscription or webhook is changed.
+This covers the 117-helper inventory and its legacy sweep modes, but not all
+inline boot/database probes. Keep the Deno runner and required CI job enabled
+until those contracts and the replacement CI gate also prove parity.
 
 The entry point forces Bun and calls proof-run.sh directly for each helper,
 preserving verify modes and deferred-body-copy arguments where required. Each case gets its own fresh
@@ -35,7 +40,7 @@ Together they exercise both platform decisions without depending on the host.
 The native smoke fixture exercises the real shell entry point and wrapper with synthetic child executables: Linux
 portability, explicit Bun selection despite an inherited Deno choice, quoted
 paths, mode and directory arguments, Darwin resource refusal and early exit on
-early, matrix-interior or late failures, including artifact publication. Pin the legacy-relative invocation order and modes.
+early, matrix-interior or late failures, including artifact publication and the penultimate unwatch-timer case. Pin the legacy-relative invocation order and modes.
 Keep failure status/evidence and prove later cases do not run, including the
 remaining variants after a failed sweep case.
 These fixture executables do not establish native helper parity.
@@ -61,5 +66,5 @@ the measured latency limit rather than claiming a faster write.
 
 Require each retained run-status.json to show exit 0, inspect the saved RPC
 receipts and wait for wrapper cleanup. Keep the parent log outside disposable
-data. GUI, real provider/network/keychain effects, the remaining native helpers
+data. GUI, real provider/network/keychain effects, the remaining inline native probes
 and eventual CI replacement are outside these batches.

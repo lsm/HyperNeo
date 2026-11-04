@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { artifactPreviewStack, previewWorkspace } from '../artifact-preview-store.ts';
+import { previewFileKey } from '../artifact-preview-workspace.ts';
 import type {
   PreviewWorkspaceEvent,
   PreviewWorkspaceState,
@@ -32,7 +33,17 @@ describe('previewWorkspace', () => {
     expect(before.files).toEqual([file('snapshot-1', 'Report')]);
   });
 
-  it('closes the active tab into its left predecessor, then the persistent Work tab', () => {
+  it('keeps a session tab apart from a file with the same id', () => {
+    const session = { sessionId: 'a', title: 'Worker' };
+    const state = previewWorkspace.step(open(previewWorkspace.empty(), 'a'), {
+      kind: 'open',
+      file: session,
+    });
+    expect(state.files).toHaveLength(2);
+    expect(state.selectedId).toBe(previewFileKey(session));
+  });
+
+  it('closes the active tab into its left predecessor, then Work, and empties on the last', () => {
     let state = open(open(open(previewWorkspace.empty(), 'a'), 'b'), 'c');
     state = previewWorkspace.step(state, { kind: 'select', key: 'b' });
     state = previewWorkspace.step(state, { kind: 'close', key: 'b' });
@@ -42,7 +53,7 @@ describe('previewWorkspace', () => {
     expect(state.selectedId).toBeNull();
     expect(ids(state)).toEqual(['c']);
     state = previewWorkspace.step(state, { kind: 'close', key: 'c' });
-    expect(state).toEqual({ open: true, selectedId: null, files: [] });
+    expect(state).toEqual(previewWorkspace.empty());
     expect(open(state, 'd').selectedId).toBe('d');
   });
 
