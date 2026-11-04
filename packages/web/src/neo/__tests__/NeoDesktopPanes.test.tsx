@@ -5,6 +5,10 @@ import { signal } from '@preact/signals';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectionState } from '../../lib/state.ts';
+import {
+  artifactPreviewWorkspace,
+  closeArtifactPreview,
+} from '../../lib/artifact-preview-store.ts';
 import { NeoLive } from '../NeoLive.tsx';
 import { testAskEntry, testTodo } from './neo-test-views.ts';
 import { locale } from '../../lib/i18n/index.ts';
@@ -186,6 +190,7 @@ describe('Neo desktop panes', () => {
   });
 
   it('opens a work chat as a preview tab beside Your work instead of taking the column', () => {
+    closeArtifactPreview();
     vi.stubGlobal('matchMedia', (query: string) => ({
       matches:
         query === '(min-width: 720px)' ||
@@ -221,6 +226,8 @@ describe('Neo desktop panes', () => {
     expect(within(panel).getByTestId('neo-chat-panel').dataset.sessionId).toBe('result-session');
     fireEvent.click(screen.getByRole('button', { name: 'Close chat' }));
     expect(screen.queryByTestId('neo-chat-panel')).toBeNull();
+    expect(artifactPreviewWorkspace.state.value.open).toBe(false);
+    expect(screen.queryByRole('tablist')).toBeNull();
   });
 
   it('uses the chat scroll owner only at the actual desktop boundary and preserves a reader position', () => {
