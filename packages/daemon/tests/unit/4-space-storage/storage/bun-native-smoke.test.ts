@@ -33,6 +33,17 @@ const proofs = [
   ['lane-c-github-poll-refresh-retry'],
   ['lane-c-github-poll-startup-degraded'],
   ['lane-c-github-poll-capability-failure'],
+  ['lane-b-transcript-session-reader', '--defer-body-copy'],
+  ['history-snapshot-reader'],
+  ['lane-b-session-list-reader'],
+  ['lane-b-session-list-live-reader'],
+  ['lane-b-health-session-count-reader'],
+  ['lane-b-projected-session-reader'],
+  ['lane-b-projected-system-broadcast-failure'],
+  ['lane-b-transcript-shutdown-order'],
+  ['lane-b-single-message-reader', '--defer-body-copy'],
+  ['lane-b-message-count-reader'],
+  ['lane-b-session-export-reader'],
   ['lane-b-session-schedule-create'],
   ['workflow-node-config-contract', 'verify'],
   ['workflow-existing-run-pin', 'verify'],
@@ -99,7 +110,7 @@ describe('Bun native smoke settings and workflow/job registration', () => {
     try {
       const result = f.invoke();
       expect(result.status).toBe(0);
-      expect(result.stdout).toContain('34 legacy helpers');
+      expect(result.stdout).toContain('45 legacy helpers');
       expect(f.sequence()).toEqual(helpers.map((name) => name + '.ts'));
       const homes = [];
       for (const [name, ...mode] of proofs) {
@@ -123,7 +134,7 @@ describe('Bun native smoke settings and workflow/job registration', () => {
         expect(existsSync(tmp)).toBe(false);
         expect(existsSync(data)).toBe(false);
       }
-      expect(new Set(homes).size).toBe(34);
+      expect(new Set(homes).size).toBe(45);
     } finally {
       f.cleanup();
     }
@@ -137,7 +148,7 @@ describe('Bun native smoke settings and workflow/job registration', () => {
         writeFileSync(join(f.run, 'fail-helper'), failed + '.ts\n');
         const result = f.invoke();
         expect(result.status).toBe(17);
-        expect(result.stdout).not.toContain('34 legacy helpers');
+        expect(result.stdout).not.toContain('45 legacy helpers');
         expect(
           JSON.parse(readFileSync(join(f.evidence, failed, 'run-status.json'), 'utf8'))
         ).toEqual({ exitCode: 17 });

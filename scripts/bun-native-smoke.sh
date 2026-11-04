@@ -32,6 +32,17 @@ bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-github-poll-refresh-writer" "$PROO
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-github-poll-refresh-retry" "$PROOFS/lane-c-github-poll-refresh-retry.ts"
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-github-poll-startup-degraded" "$PROOFS/lane-c-github-poll-startup-degraded.ts"
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-github-poll-capability-failure" "$PROOFS/lane-c-github-poll-capability-failure.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-b-transcript-session-reader" "$PROOFS/lane-b-transcript-session-reader.ts" --defer-body-copy
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/history-snapshot-reader" "$PROOFS/history-snapshot-reader.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-b-session-list-reader" "$PROOFS/lane-b-session-list-reader.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-b-session-list-live-reader" "$PROOFS/lane-b-session-list-live-reader.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-b-health-session-count-reader" "$PROOFS/lane-b-health-session-count-reader.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-b-projected-session-reader" "$PROOFS/lane-b-projected-session-reader.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-b-projected-system-broadcast-failure" "$PROOFS/lane-b-projected-system-broadcast-failure.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-b-transcript-shutdown-order" "$PROOFS/lane-b-transcript-shutdown-order.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-b-single-message-reader" "$PROOFS/lane-b-single-message-reader.ts" --defer-body-copy
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-b-message-count-reader" "$PROOFS/lane-b-message-count-reader.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-b-session-export-reader" "$PROOFS/lane-b-session-export-reader.ts"
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-b-session-schedule-create" "$PROOFS/lane-b-session-schedule-create.ts"
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/workflow-node-config-contract" "$PROOFS/workflow-node-config-contract.ts" verify
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/workflow-existing-run-pin" "$PROOFS/workflow-existing-run-pin.ts" verify
@@ -41,4 +52,4 @@ bash "$PROOFS/proof-run.sh" "$EVIDENCE/job-requeue-writer" "$PROOFS/job-requeue-
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/task-schedule-delete-writer" "$PROOFS/task-schedule-delete-writer.ts" verify
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/task-schedule-pause-writer" "$PROOFS/task-schedule-pause-writer.ts" verify
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/workflow-options-contract" "$PROOFS/workflow-options-contract.ts" verify
-echo 'Bun native smoke: settings and workflow/job batches passed (34 legacy helpers)'
+echo 'Bun native smoke: registered batches passed (45 legacy helpers)'
