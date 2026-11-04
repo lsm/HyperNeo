@@ -28,6 +28,11 @@ export function neoTodoReady(todos: readonly NeoTodo[], todoId: string): boolean
   );
 }
 
+export function neoTodoNextReady(askTodos: readonly NeoTodo[]): boolean {
+  const last = [...askTodos].sort((a, b) => b.position - a.position)[0];
+  return !last || neoTodoFinished(last);
+}
+
 export function neoTodoCancelledDependencies(todos: readonly NeoTodo[], todoId: string): NeoTodo[] {
   const node = neoTodoDependencyNodes(todos).find((item) => item.id === todoId);
   return todos.filter(

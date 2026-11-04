@@ -1,8 +1,10 @@
 import {
   NEO_TODO_CANCELLED_DEPENDENCY,
+  NEO_TODO_NOT_READY,
   neoTodoAfterRefusal,
   neoTodoCancelledDependencies,
   neoTodoDependencyRefusal,
+  neoTodoNextReady,
   planNeoTodoDependencies,
 } from './todo-dependencies.ts';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
@@ -211,6 +213,8 @@ export async function recordNeoTodo(
     draft.start
   );
   if (refused) return { ok: false, reason: refused };
+  if (draft.start && !draft.after && !neoTodoNextReady(todos.listTodos(home.id)))
+    return { ok: false, reason: NEO_TODO_NOT_READY };
   const id = crypto.randomUUID();
   const dependsOn = draft.after
     ? planNeoTodoDependencies(todos.listFamilyTodos(home.id), id, draft.after.map(String))
