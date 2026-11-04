@@ -5,17 +5,21 @@ entry point with one new absolute evidence directory:
 
     bash scripts/bun-native-smoke.sh /absolute/fresh/evidence-directory
 
-The runner registers 45 existing contracts: the initial three settings/provider
+The runner registers 63 helper identities in 87 proof cases: the initial three settings/provider
 proofs plus 31 workflow and job proofs for mailbox admission, parking, retries,
 polling recovery, reminders, schedules and workflow identity/configuration/pins.
 The reader batch adds 11 SDK/session transcript, snapshot, inventory, count,
 shutdown-marker, broadcast-failure and export contracts. Transcript and single
 message reads retain the legacy --defer-body-copy schedule.
+The orchestration batch adds 18 todo/ask/coding helpers. Its coding sweep retains
+all 25 variants from the legacy runner in their original order, each with its
+own evidence directory and synthetic GitHub CLI. No real PR is merged by a proof.
+Helper identity coverage and mode-case coverage are distinct; count both.
 This remains partial coverage of the 117-helper inventory. Keep the Deno
 runner and required CI job enabled until every replacement proves parity.
 
 The entry point forces Bun and calls proof-run.sh directly for each helper,
-preserving verify modes and deferred-body-copy arguments where required. Each helper gets its own fresh
+preserving verify modes and deferred-body-copy arguments where required. Each case gets its own fresh
 HOME/data/TMPDIR; retained logs, JSON and run-status.json survive cleanup.
 The wrapper checks resource thresholds on Darwin. Linux must not need macOS
 memory_pressure or /System/Volumes/Data to run this same entry point.
@@ -27,8 +31,9 @@ Together they exercise both platform decisions without depending on the host.
 The native smoke fixture exercises the real shell entry point and wrapper with synthetic child executables: Linux
 portability, explicit Bun selection despite an inherited Deno choice, quoted
 paths, mode and directory arguments, Darwin resource refusal and early exit on
-early or late helper failures. Pin the legacy-relative invocation order and modes.
-Keep failure status/evidence and prove later helpers do not run.
+early, matrix-interior or late failures. Pin the legacy-relative invocation order and modes.
+Keep failure status/evidence and prove later cases do not run, including the
+remaining variants after a failed sweep case.
 These fixture executables do not establish native helper parity.
 
 For native proof run the entry point with the real Bun binary, scrubbed parent
@@ -39,6 +44,9 @@ job claim/retry/rollback receipts, polling recovery and schedule/workflow RPC
 contracts. Reader proofs retain complete payloads, snapshots, cursors, counter
 deltas, held-WAL isolation, cold actors, source body hashes and recovery after
 native reader failure. Require startupBodyCopyComplete in the deferred cases.
+Core proofs preserve full Work cards, rollback, claim/recovery/settlement rules
+and no replay after unknown outcomes. Only synthetic work-driver and GitHub
+boundaries are used; real provider turns, worker stops and PR merges are excluded.
 Also run the transcript and single-message helpers in ordinary mode in separate
 fresh wrapper directories; preserve those additional receipts without replacing
 the legacy deferred-mode run. Neutral workflow characterization helpers intentionally retain their

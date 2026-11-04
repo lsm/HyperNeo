@@ -40,7 +40,27 @@ bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-b-health-session-count-reader" "$PRO
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-b-projected-session-reader" "$PROOFS/lane-b-projected-session-reader.ts"
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-b-projected-system-broadcast-failure" "$PROOFS/lane-b-projected-system-broadcast-failure.ts"
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-b-transcript-shutdown-order" "$PROOFS/lane-b-transcript-shutdown-order.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/todo-mutation-planning" "$PROOFS/todo-mutation-planning.ts" verify
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-b-single-message-reader" "$PROOFS/lane-b-single-message-reader.ts" --defer-body-copy
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/todo-mutation-commit" "$PROOFS/todo-mutation-commit.ts" verify
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/coding-daemon-merge-build" "$PROOFS/coding-daemon-merge-build.ts"
+for variant in enterprise policy-revoke merge-fails late-label per-pr retry-once legacy-open uncertain-error limit-gone external-owned zero-required no-checks human-default human-owner human-unconfigured approved-no-checks human-waiting-ci human-sibling-ci owner-ci human-new-head ci-startup-queued ci-startup-running ci-merge-race ci-retry-budget ci-stopped-ready; do
+  bash "$PROOFS/proof-run.sh" "$EVIDENCE/coding-daemon-merge-sweep-$variant" "$PROOFS/coding-daemon-merge-sweep.ts" "$variant"
+done
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/coding-signoff-scope" "$PROOFS/coding-signoff-scope.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/todo-remove-writer" "$PROOFS/todo-remove-writer.ts" verify
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/todo-mutation-activation" "$PROOFS/todo-mutation-activation.ts" verify
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/todo-runner-state" "$PROOFS/todo-runner-state.ts" verify
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/todo-runner-activation" "$PROOFS/todo-runner-activation.ts" verify
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/todo-start-recovery" "$PROOFS/todo-start-recovery.ts" verify
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/todo-start-recovery-activation" "$PROOFS/todo-start-recovery-activation.ts" verify
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/ask-settlement-build" "$PROOFS/ask-settlement-build.ts" verify
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/neo-track-admission-build" "$PROOFS/neo-track-admission-build.ts" verify
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/neo-track-admission-activation" "$PROOFS/neo-track-admission-activation.ts" verify
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/todo-add-build" "$PROOFS/todo-add-build.ts" verify
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/todo-stop-context" "$PROOFS/todo-stop-context.ts" verify
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/ask-settlement-activation" "$PROOFS/ask-settlement-activation.ts" verify
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/human-confirmed-todos" "$PROOFS/human-confirmed-todos.ts" verify
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-b-message-count-reader" "$PROOFS/lane-b-message-count-reader.ts"
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-b-session-export-reader" "$PROOFS/lane-b-session-export-reader.ts"
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-b-session-schedule-create" "$PROOFS/lane-b-session-schedule-create.ts"
@@ -52,4 +72,4 @@ bash "$PROOFS/proof-run.sh" "$EVIDENCE/job-requeue-writer" "$PROOFS/job-requeue-
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/task-schedule-delete-writer" "$PROOFS/task-schedule-delete-writer.ts" verify
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/task-schedule-pause-writer" "$PROOFS/task-schedule-pause-writer.ts" verify
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/workflow-options-contract" "$PROOFS/workflow-options-contract.ts" verify
-echo 'Bun native smoke: registered batches passed (45 legacy helpers)'
+echo 'Bun native smoke: registered batches passed (63 legacy helpers, 87 proof cases)'

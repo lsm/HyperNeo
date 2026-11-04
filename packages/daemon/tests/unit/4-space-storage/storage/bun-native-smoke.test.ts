@@ -41,7 +41,49 @@ const proofs = [
   ['lane-b-projected-session-reader'],
   ['lane-b-projected-system-broadcast-failure'],
   ['lane-b-transcript-shutdown-order'],
+  ['todo-mutation-planning', 'verify'],
   ['lane-b-single-message-reader', '--defer-body-copy'],
+  ['todo-mutation-commit', 'verify'],
+  ['coding-daemon-merge-build'],
+  ['coding-daemon-merge-sweep', 'enterprise'],
+  ['coding-daemon-merge-sweep', 'policy-revoke'],
+  ['coding-daemon-merge-sweep', 'merge-fails'],
+  ['coding-daemon-merge-sweep', 'late-label'],
+  ['coding-daemon-merge-sweep', 'per-pr'],
+  ['coding-daemon-merge-sweep', 'retry-once'],
+  ['coding-daemon-merge-sweep', 'legacy-open'],
+  ['coding-daemon-merge-sweep', 'uncertain-error'],
+  ['coding-daemon-merge-sweep', 'limit-gone'],
+  ['coding-daemon-merge-sweep', 'external-owned'],
+  ['coding-daemon-merge-sweep', 'zero-required'],
+  ['coding-daemon-merge-sweep', 'no-checks'],
+  ['coding-daemon-merge-sweep', 'human-default'],
+  ['coding-daemon-merge-sweep', 'human-owner'],
+  ['coding-daemon-merge-sweep', 'human-unconfigured'],
+  ['coding-daemon-merge-sweep', 'approved-no-checks'],
+  ['coding-daemon-merge-sweep', 'human-waiting-ci'],
+  ['coding-daemon-merge-sweep', 'human-sibling-ci'],
+  ['coding-daemon-merge-sweep', 'owner-ci'],
+  ['coding-daemon-merge-sweep', 'human-new-head'],
+  ['coding-daemon-merge-sweep', 'ci-startup-queued'],
+  ['coding-daemon-merge-sweep', 'ci-startup-running'],
+  ['coding-daemon-merge-sweep', 'ci-merge-race'],
+  ['coding-daemon-merge-sweep', 'ci-retry-budget'],
+  ['coding-daemon-merge-sweep', 'ci-stopped-ready'],
+  ['coding-signoff-scope'],
+  ['todo-remove-writer', 'verify'],
+  ['todo-mutation-activation', 'verify'],
+  ['todo-runner-state', 'verify'],
+  ['todo-runner-activation', 'verify'],
+  ['todo-start-recovery', 'verify'],
+  ['todo-start-recovery-activation', 'verify'],
+  ['ask-settlement-build', 'verify'],
+  ['neo-track-admission-build', 'verify'],
+  ['neo-track-admission-activation', 'verify'],
+  ['todo-add-build', 'verify'],
+  ['todo-stop-context', 'verify'],
+  ['ask-settlement-activation', 'verify'],
+  ['human-confirmed-todos', 'verify'],
   ['lane-b-message-count-reader'],
   ['lane-b-session-export-reader'],
   ['lane-b-session-schedule-create'],
@@ -54,7 +96,9 @@ const proofs = [
   ['task-schedule-pause-writer', 'verify'],
   ['workflow-options-contract', 'verify'],
 ] as const;
-const helpers = proofs.map(([name]) => name);
+const caseId = (name: string, args: readonly string[]) =>
+  name === 'coding-daemon-merge-sweep' ? name + '-' + args[0] : name;
+const cases = proofs.map(([name, ...args]) => caseId(name, args));
 
 const quote = (text: string) => "'" + text.replaceAll("'", "'\\''") + "'";
 
@@ -72,7 +116,9 @@ function fixture(platform = 'Linux') {
     'bun',
     'mkdir -p "$HOME/../evidence"\n' +
       'printf "%s\\n" "$HOME" "$TMPDIR" "$HYPERNEO_DATA_DIR" "$PWD" "$@" > "$HOME/../evidence/invocation.txt"\n' +
-      'basename "$1" >> ' +
+      'proof=$(basename "$1" .ts)\n' +
+      'if [ "$proof" = coding-daemon-merge-sweep ]; then proof="$proof-$2"; fi\n' +
+      'printf "%s\\n" "$proof" >> ' +
       quote(join(run, 'sequence')) +
       '\n' +
       'if [ -f ' +
@@ -81,7 +127,7 @@ function fixture(platform = 'Linux') {
       '  read -r failed < ' +
       quote(join(run, 'fail-helper')) +
       '\n' +
-      '  if [ "$(basename "$1")" = "$failed" ]; then exit 17; fi\nfi\n'
+      '  if [ "$proof" = "$failed" ]; then exit 17; fi\nfi\n'
   );
   const evidence = join(run, 'retained evidence');
   const invoke = (args = [evidence]) =>
@@ -104,17 +150,18 @@ function fixture(platform = 'Linux') {
   };
 }
 
-describe('Bun native smoke settings and workflow/job registration', () => {
+describe('Bun native proof matrix registration', () => {
   test('Linux forces Bun with legacy order, preserved modes and fresh data', () => {
     const f = fixture();
     try {
       const result = f.invoke();
       expect(result.status).toBe(0);
-      expect(result.stdout).toContain('45 legacy helpers');
-      expect(f.sequence()).toEqual(helpers.map((name) => name + '.ts'));
+      expect(result.stdout).toContain('63 legacy helpers');
+      expect(result.stdout).toContain('87 proof cases');
+      expect(f.sequence()).toEqual(cases);
       const homes = [];
       for (const [name, ...mode] of proofs) {
-        const dir = join(f.evidence, name);
+        const dir = join(f.evidence, caseId(name, mode));
         expect(JSON.parse(readFileSync(join(dir, 'run-status.json'), 'utf8'))).toEqual({
           exitCode: 0,
         });
@@ -134,35 +181,36 @@ describe('Bun native smoke settings and workflow/job registration', () => {
         expect(existsSync(tmp)).toBe(false);
         expect(existsSync(data)).toBe(false);
       }
-      expect(new Set(homes).size).toBe(45);
+      expect(new Set(homes).size).toBe(87);
     } finally {
       f.cleanup();
     }
   });
 
-  test.each(['lane-c-provider-rpc-writes', 'task-schedule-pause-writer'])(
-    'retains failure at %s and never runs later helpers',
-    (failed) => {
-      const f = fixture();
-      try {
-        writeFileSync(join(f.run, 'fail-helper'), failed + '.ts\n');
-        const result = f.invoke();
-        expect(result.status).toBe(17);
-        expect(result.stdout).not.toContain('45 legacy helpers');
-        expect(
-          JSON.parse(readFileSync(join(f.evidence, failed, 'run-status.json'), 'utf8'))
-        ).toEqual({ exitCode: 17 });
-        const index = helpers.findIndex((name) => name === failed);
-        expect(f.sequence()).toEqual(helpers.slice(0, index + 1).map((name) => name + '.ts'));
-        for (const name of helpers.slice(index + 1))
-          expect(existsSync(join(f.evidence, name))).toBe(false);
-        const [home] = readFileSync(join(f.evidence, failed, 'invocation.txt'), 'utf8').split('\n');
-        expect(existsSync(home)).toBe(false);
-      } finally {
-        f.cleanup();
-      }
+  test.each([
+    'lane-c-provider-rpc-writes',
+    'coding-daemon-merge-sweep-human-new-head',
+    'task-schedule-pause-writer',
+  ])('retains failure at %s and never runs later helpers', (failed) => {
+    const f = fixture();
+    try {
+      writeFileSync(join(f.run, 'fail-helper'), failed + '\n');
+      const result = f.invoke();
+      expect(result.status).toBe(17);
+      expect(result.stdout).not.toContain('63 legacy helpers');
+      expect(JSON.parse(readFileSync(join(f.evidence, failed, 'run-status.json'), 'utf8'))).toEqual(
+        { exitCode: 17 }
+      );
+      const index = cases.findIndex((name) => name === failed);
+      expect(f.sequence()).toEqual(cases.slice(0, index + 1));
+      for (const name of cases.slice(index + 1))
+        expect(existsSync(join(f.evidence, name))).toBe(false);
+      const [home] = readFileSync(join(f.evidence, failed, 'invocation.txt'), 'utf8').split('\n');
+      expect(existsSync(home)).toBe(false);
+    } finally {
+      f.cleanup();
     }
-  );
+  });
 
   test('Darwin still refuses a run below the real resource thresholds', () => {
     const f = fixture('Darwin');
@@ -170,7 +218,7 @@ describe('Bun native smoke settings and workflow/job registration', () => {
       const result = f.invoke();
       expect(result.status).toBe(78);
       expect(result.stdout).toContain('MEMORY_GUARD: less than 25% free');
-      expect(existsSync(join(f.evidence, helpers[0], 'invocation.txt'))).toBe(false);
+      expect(existsSync(join(f.evidence, cases[0], 'invocation.txt'))).toBe(false);
     } finally {
       f.cleanup();
     }
@@ -185,7 +233,7 @@ describe('Bun native smoke settings and workflow/job registration', () => {
       writeFileSync(join(f.evidence, 'keep'), 'untouched');
       expect(f.invoke().status).not.toBe(0);
       expect(readFileSync(join(f.evidence, 'keep'), 'utf8')).toBe('untouched');
-      expect(existsSync(join(f.evidence, helpers[0]))).toBe(false);
+      expect(existsSync(join(f.evidence, cases[0]))).toBe(false);
     } finally {
       f.cleanup();
     }
