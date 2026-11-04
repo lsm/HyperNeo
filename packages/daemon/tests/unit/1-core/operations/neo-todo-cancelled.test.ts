@@ -412,6 +412,47 @@ describe('cancelled prerequisites', () => {
     }
   });
 
+  test.each([
+    ['work', 'yes'],
+    ['work', 'no'],
+    ['check-only', 'yes'],
+    ['check-only', 'no'],
+  ] as const)('a check-blocked %s step still asks: %s', async (kind, answer) => {
+    const { db, store, invoke, step, runner, sent, work } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Check blocked',
+        request: 'A, then D.',
+        todos: [
+          step('A', []),
+          { ...step('D', [0]), ...(kind === 'work' ? work : {}), start: kind === 'work' },
+        ],
+      });
+      const [a, d] = opened.todos;
+      store.updateTodo(store.getTodo(d.id)!, { approvedAt: 1 }, 1);
+      store.updateTodo(
+        store.getTodo(d.id)!,
+        { state: 'blocked', blockedBy: 'check', blockedReason: 'Check is not met.' },
+        1
+      );
+      await invoke('neo.todo.remove', { todoId: a.id, reason: 'Cancelled by the human.' });
+      await runner.refresh(() => {});
+      const open = card(store, d)!;
+      expect(open.text).toContain('cancelled');
+      expect(sent).toHaveLength(0);
+      store.answerQuestion(open, answer === 'yes' ? [d.id] : [], 'button', Date.now());
+      await runner.refresh(() => {});
+      await runner.refresh(() => {});
+      expect(card(store, d)).toBeUndefined();
+      const after = store.getTodo(d.id)!;
+      if (answer === 'no') expect(after.state).toBe('removed');
+      else if (kind === 'work') expect(after.state).toBe('doing');
+      else expect(after).toMatchObject({ state: 'blocked', blockedBy: 'check', dependsOn: [] });
+    } finally {
+      db.close();
+    }
+  });
+
   test('approval follows a replaced replacement to the live step', async () => {
     const { db, store, invoke, step, runner, sent, work } = setup();
     try {
