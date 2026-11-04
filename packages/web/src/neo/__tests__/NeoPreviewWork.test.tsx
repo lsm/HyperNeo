@@ -477,6 +477,62 @@ describe('Neo preview Work layout', () => {
     expect(artifactPreviewWorkspace.state.value.open).toBe(false);
   });
 
+  const openWorker = () => {
+    fireEvent.click(screen.getByRole('button', { name: 'All · 1', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Todo worker' }));
+  };
+  const tabNames = () => screen.queryAllByRole('tab').map((tab) => tab.textContent);
+
+  it('opens a work session as a tab after Your work, beside previews', async () => {
+    mount(false, true);
+    expect(tabNames()).toEqual([]);
+    openWorker();
+    expect(tabNames()).toEqual(['Your work · 1', 'HyperNeo · worker']);
+    const session = screen.getByRole('tab', { name: 'HyperNeo · worker' });
+    expect(session.getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Close worker chat' })).toBeTruthy();
+    await open('a');
+    expect(tabNames()).toEqual(['Your work · 1', 'HyperNeo · worker', 'File a']);
+    fireEvent.click(screen.getByRole('tab', { name: 'HyperNeo · worker' }));
+    expect(screen.getByRole('tabpanel', { name: 'HyperNeo · worker' })).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(tabNames()).toHaveLength(3);
+    fireEvent.click(screen.getByRole('button', { name: 'Close HyperNeo · worker' }));
+    expect(tabNames()).toEqual(['Your work · 1', 'File a']);
+    expect(screen.getByRole('heading', { name: 'Document a' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Close File a' }));
+    await waitFor(() => expect(tabNames()).toEqual([]));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('shows Your work first at wide widths too', async () => {
+    viewport = 1500;
+    mount(false, true);
+    openWorker();
+    expect(tabNames()).toEqual(['Your work · 1', 'HyperNeo · worker']);
+  });
+
+  it('keeps a phone session full screen with no tab strip', () => {
+    viewport = 390;
+    mount(false, true);
+    fireEvent.click(screen.getByRole('button', { name: /^Your work/ }));
+    openWorker();
+    expect(screen.getByRole('button', { name: 'Close worker chat' })).toBeTruthy();
+    expect(tabNames()).toEqual([]);
+    expect(screen.queryByRole('dialog', { name: /worker/ })).toBeNull();
+  });
+
+  it('carries the open session across the phone boundary', () => {
+    mount(false, true);
+    openWorker();
+    act(() => resize(390));
+    expect(tabNames()).toEqual([]);
+    expect(screen.getByRole('button', { name: 'Close worker chat' })).toBeTruthy();
+    act(() => resize(1300));
+    expect(tabNames()).toEqual(['Your work · 1', 'HyperNeo · worker']);
+    expect(screen.getAllByRole('button', { name: 'Close worker chat' })).toHaveLength(1);
+  });
+
   it('hands keyboard focus between Work tab and the same external Work panel', async () => {
     mount();
     await open('a');
