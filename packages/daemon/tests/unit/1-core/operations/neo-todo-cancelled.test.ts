@@ -198,7 +198,6 @@ describe('cancelled prerequisites', () => {
     'replacement',
     'replacement-implicit',
     'cycle-replacement',
-    'close',
     'legacy-close',
     'decline',
     'held',
@@ -214,7 +213,7 @@ describe('cancelled prerequisites', () => {
           { ...step('A', []), ...work, start: mode.startsWith('approved') },
           { ...step('B', mode.endsWith('implicit') ? undefined : [0]), ...work, start: true },
           { ...step('C', mode.endsWith('implicit') ? undefined : [1]), ...work, start: true },
-          { ...step('Replacement', []), ...work, start: mode !== 'none' },
+          { ...step('Replacement', []), ...work, start: mode.startsWith('replacement') },
         ],
       });
       const [a, b, c, replacement] = opened.todos;
@@ -235,7 +234,7 @@ describe('cancelled prerequisites', () => {
         store.updateTodo(cancelled, { state: 'closed_unverified' }, Date.now());
       else
         expect(
-          await invoke(mode === 'close' ? 'neo.todo.close' : 'neo.todo.remove', {
+          await invoke('neo.todo.remove', {
             todoId: cancelled.id,
             reason: 'Cancelled by the human.',
             ...(mode.startsWith('replacement')

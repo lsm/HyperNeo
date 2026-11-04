@@ -26,8 +26,15 @@ import type {
   NeoTodo,
   NeoTodoCheck,
 } from '@hyperneo/shared/types/neo-ask';
-import { neoStartQuestionTitle } from '../../lib/neo/start-question.ts';
-import { neoTodoAwaitsApproval, planNeoStartAnswer } from '../../lib/neo/todo-start-gate.ts';
+import { neoTodoDependencyNodes } from '../../lib/neo/todo-dependencies.ts';
+import {
+  neoStartCardText,
+  neoTodoAwaitsApproval,
+  neoTodoOnStartCard,
+  neoTodosAwaitingCancellationCard,
+  planNeoStartAnswer,
+  planNeoStartCardPrune,
+} from '../../lib/neo/todo-start-gate.ts';
 import type { Database } from '../sqlite-compat.ts';
 
 export type NeoTodoDraft = Pick<NeoTodo, 'title' | 'doneWhen' | 'check' | 'instruction' | 'named'> &
@@ -627,13 +634,17 @@ export class NeoAskTodoRepository {
 
   moveTodo(todo: NeoTodo, askId: string, repo: string, now: number): NeoTodo {
     this.db.transaction(() => {
+      const node = neoTodoDependencyNodes(this.listFamilyTodos(todo.askId)).find(
+        (item) => item.id === todo.id
+      );
       this.db
         .prepare(
           `UPDATE neo_todos SET repo = ?2, position = CASE WHEN ask_id = ?1 THEN position
-             ELSE (SELECT COALESCE(MAX(position) + 1, 0) FROM neo_todos WHERE ask_id = ?1) END, ask_id = ?1
+             ELSE (SELECT COALESCE(MAX(position) + 1, 0) FROM neo_todos WHERE ask_id = ?1) END, ask_id = ?1,
+             depends_on = COALESCE(depends_on, ?4)
            WHERE id = ?3`
         )
-        .run(askId, repo, todo.id);
+        .run(askId, repo, todo.id, JSON.stringify(node?.dependsOn ?? []));
       this.pruneQuestions(todo.askId, now);
       const moved = this.getTodo(todo.id)!;
       if (askId !== todo.askId && moved.instruction && neoTodoAwaitsApproval(moved))
@@ -948,17 +959,17 @@ export class NeoAskTodoRepository {
   }
 
   joinStartQuestion(todo: NeoTodo, now: number): void {
-    const todos = this.listTodos(todo.askId);
+    const family = this.listFamilyTodos(todo.askId);
     const open = this.listQuestions(todo.askId).find(
       (question) => question.kind === 'start' && question.state === 'open'
     );
     const listed = (open?.startTodos ?? []).filter((id) =>
-      todos.some((item) => item.id === id && neoTodoAwaitsApproval(item) && item.instruction)
+      family.some(
+        (item) => item.id === id && item.askId === todo.askId && neoTodoOnStartCard(item, family)
+      )
     );
     const startTodos = [...new Set([...listed, todo.id])];
-    const text = neoStartQuestionTitle(
-      startTodos.map((id) => ({ title: todos.find((item) => item.id === id)?.title }))
-    );
+    const text = neoStartCardText(startTodos, family);
     if (open)
       this.extendStartQuestion(
         open.id,
@@ -1088,8 +1099,13 @@ export class NeoAskTodoRepository {
   }
 
   private pruneQuestions(askId: string, now: number): void {
+    const root = this.getAsk(askId)?.parentId ?? askId;
+    for (const id of [root, ...this.listChildAsks(root).map((ask) => ask.id)])
+      this.pruneAskQuestions(id, now);
+  }
+
+  private pruneAskQuestions(askId: string, now: number): void {
     const todos = this.listTodos(askId);
-    const startable = new Set(todos.filter(neoTodoAwaitsApproval).map((todo) => todo.id));
     for (const question of this.listQuestions(askId)) {
       if (question.state !== 'open') continue;
       if (
@@ -1102,10 +1118,10 @@ export class NeoAskTodoRepository {
           this.questionsPruned?.();
         continue;
       }
-      if (question.kind !== 'start' || question.state !== 'open' || !question.startTodos) continue;
-      const kept = question.startTodos.filter((id) => startable.has(id));
-      if (kept.length === question.startTodos.length) continue;
-      if (!kept.length)
+      if (question.kind !== 'start' || !question.startTodos) continue;
+      const plan = planNeoStartCardPrune(question, this.listFamilyTodos(askId));
+      if (!plan) continue;
+      if (!plan.kept.length)
         this.db
           .prepare(
             `UPDATE neo_questions SET start_todos = '[]', state = 'retired',
@@ -1115,19 +1131,23 @@ export class NeoAskTodoRepository {
       else
         this.db
           .prepare('UPDATE neo_questions SET start_todos = ?, text = ? WHERE id = ?')
-          .run(
-            JSON.stringify(kept),
-            neoStartQuestionTitle(
-              kept.map((id) => ({ title: todos.find((todo) => todo.id === id)?.title }))
-            ),
-            question.id
-          );
-      for (const id of question.startTodos.filter((id) => !kept.includes(id))) {
+          .run(JSON.stringify(plan.kept), plan.text, question.id);
+      for (const id of plan.dropped) {
         const todo = this.getTodo(id);
         if (todo?.approvedAt && todo.blockedBy === 'question')
           this.writeTodo(todo, { state: 'todo' }, now);
       }
       this.questionsPruned?.();
+    }
+    if (this.getAsk(askId)?.status !== 'open') return;
+    for (const todo of neoTodosAwaitingCancellationCard(
+      this.listFamilyTodos(askId),
+      askId,
+      this.listQuestions(askId)
+    )) {
+      this.joinStartQuestion(todo, now);
+      if (todo.state === 'todo')
+        this.writeTodo(todo, { state: 'blocked', blockedBy: 'question' }, now);
     }
   }
 
@@ -1157,7 +1177,7 @@ export class NeoAskTodoRepository {
     questionId: string,
     now: number,
     ticked?: readonly string[],
-    heldReason = 'Not ticked in the start answer.'
+    withdrawn?: string
   ): void {
     const question = this.getQuestion(questionId);
     const waiting = new Set(
@@ -1167,9 +1187,10 @@ export class NeoAskTodoRepository {
     );
     for (const id of question?.startTodos ?? []) {
       const todo = this.getTodo(id);
-      const patch =
-        todo && !waiting.has(id) ? planNeoStartAnswer(todo, ticked, heldReason, now) : null;
-      if (todo && patch) this.updateTodo(todo, patch, now);
+      if (!todo || waiting.has(id)) continue;
+      const family = this.listFamilyTodos(todo.askId);
+      const patch = planNeoStartAnswer(todo, family, ticked, withdrawn, now);
+      if (patch) this.updateTodo(todo, patch, now);
     }
     if (question && ticked?.length)
       this.db

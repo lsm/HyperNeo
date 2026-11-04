@@ -174,7 +174,9 @@ test.each(cases)(
         legacy.store.getQuestion('stale-start')
       );
       expect(writer.store.getAsk('ask')).toEqual(legacy.store.getAsk('ask'));
-      expect(writer.store.getTodo('next')?.state).toBe('todo');
+      expect(writer.store.getTodo('next')?.state).toBe(
+        input.state === 'removed' && !input.askClosed ? 'blocked' : 'todo'
+      );
     } finally {
       await legacy.close();
       await writer.close();

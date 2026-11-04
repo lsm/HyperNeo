@@ -263,6 +263,7 @@ describe('ordered ask progression from facts', () => {
     const f = fixture();
     f.add('first');
     f.add('next');
+    f.store.updateTodo(f.store.getTodo('first')!, { startedAt: 1 }, 1);
     await f.runner.recompute(f.store.getTodo('first')!, {
       state: 'closed_unverified',
       reason: 'Outcome not checked',
@@ -278,6 +279,7 @@ describe('ordered ask progression from facts', () => {
       const f = fixture();
       f.add('first', state);
       f.add('next');
+      f.store.updateTodo(f.store.getTodo('first')!, { startedAt: 1 }, 1);
       f.restart();
       await f.refresh();
       await f.refresh();
