@@ -407,7 +407,6 @@
 4	packages/daemon/tests/unit/2-handlers/github/github-self-echo.test.ts
 15	packages/daemon/tests/unit/2-handlers/github/github-service-polling.test.ts
 3215	packages/daemon/tests/unit/2-handlers/github/github-session-repo-watch.test.ts
-9	packages/daemon/tests/unit/2-handlers/github/inbox-manager.test.ts
 9	packages/daemon/tests/unit/2-handlers/github/polling-service.test.ts
 12	packages/daemon/tests/unit/2-handlers/github/security-agent.test.ts
 14	packages/daemon/tests/unit/2-handlers/github/webhook-admission-pipeline.test.ts
@@ -521,7 +520,6 @@
 109	packages/daemon/tests/unit/4-space-storage/storage/external-event-service.test.ts
 826	packages/daemon/tests/unit/4-space-storage/storage/external-event-store.test.ts
 13	packages/daemon/tests/unit/4-space-storage/storage/hidden-subtype-idle-detection.test.ts
-47	packages/daemon/tests/unit/4-space-storage/storage/inbox-item-repository.test.ts
 7	packages/daemon/tests/unit/4-space-storage/storage/ingest-external-event-pipeline.test.ts
 597	packages/daemon/tests/unit/4-space-storage/storage/job-queue-contention.test.ts
 516	packages/daemon/tests/unit/4-space-storage/storage/job-queue-processor-exempt-per-session.test.ts

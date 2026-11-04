@@ -22,11 +22,10 @@ describe('scope-config', () => {
         'spaces',
         'app_mcp_servers',
         'skills',
-        'inbox_items',
         'job_queue',
         'short_id_counters',
       ]);
-      expect(names).toHaveLength(7);
+      expect(names).toHaveLength(6);
     });
 
     it('space scope returns the correct set of tables', () => {
@@ -90,12 +89,6 @@ describe('scope-config', () => {
     it('app_mcp_servers blacklist excludes env', () => {
       const mcp = getScopeConfig('global').find((t) => t.tableName === 'app_mcp_servers')!;
       expect(mcp.blacklistedColumns).toEqual(['env']);
-    });
-
-    it('inbox_items blacklist excludes raw_event and security_check', () => {
-      const inbox = getScopeConfig('global').find((t) => t.tableName === 'inbox_items')!;
-      expect(inbox.blacklistedColumns).toContain('raw_event');
-      expect(inbox.blacklistedColumns).toContain('security_check');
     });
 
     it('space_workflows blacklist excludes config, gates, and channels', () => {

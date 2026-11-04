@@ -33,11 +33,6 @@ function makeDb(): Database {
   const sqlite = new SqliteDatabase(':memory:');
   return {
     getDatabase: () => sqlite,
-    countInboxItemsByStatus: mock(() => 0),
-    listPendingInboxItems: mock(() => []),
-    getInboxItem: mock(() => null),
-    createInboxItem: mock(() => ({})),
-    updateInboxItem: mock(() => null),
   } as unknown as Database;
 }
 
