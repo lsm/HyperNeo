@@ -1,0 +1,83 @@
+const fs = require('node:fs');
+const cp = require('node:child_process');
+const ts = require(process.cwd() + '/node_modules/typescript');
+const { createHash } = require('node:crypto');
+const root = 'packages/daemon/src/';
+const hash = text => createHash('sha256').update(text).digest('hex');
+const parse = (file, text) => ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+const lines = (sf, node) => sf.getLineAndCharacterOfPosition(node.end).line - sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
+function named(sf, name) {
+  let found;
+  function walk(node) {
+    if ((ts.isMethodDeclaration(node) || ts.isFunctionDeclaration(node)) && node.name?.getText(sf) === name) found = node;
+    if (!found) ts.forEachChild(node, walk);
+  }
+  walk(sf);
+  if (!found) throw Error('Missing root ' + name);
+  return found;
+}
+const dataSpecs = [
+  ['github-watched-repo-lookups.ts', 24, 'efd6b45d927224ce17fb9d819a4c8d325dcde4cacf1e7c7e75ca7238b18d46c4', 'Key/id SELECT, lower owner/repo and exact Space/id; existing mapper/null/errors'],
+  ['github-watched-repos-read.ts', 44, '4c5945ea131459249bb302cdb27ee6a014fc6aadd5d15f9d402b3226972e6a95', 'Ordered complete SELECT and flags/null/default/cursor mapper, no initialization'],
+  ['github-space-settings-read.ts', 26, '821cdbd20d30a954c0aa6c1c82ad8ff88e098abbd76e522e4072dce26d240681', 'Enabled/intent/filter defaults, no initialization'],
+  ['github-cursor-persist.ts', 8, '8ec4673c7f96429b885da9367af90c023bf161668f49607c799ea845658d3bae', 'Existing cursor JSON/time/ID bind order and caller rollback'],
+  ['github-watched-update-persist.ts', 64, 'c4a07d91b0c58eb2983c0c367c4e31b8943a8569ba48f6c2a9ccace218215e54', 'Exact UPDATE flags/null/COALESCE/binds, supplied time, caller transaction'],
+  ['github-watched-upsert-persist.ts', 40, 'c108d5f4cff7893041110ad4c28154c7922b8a6204388a68ab7ab9a0cf5addd9', 'Constructor-free UPSERT/UUID/clock/Space fallback and cursor policy'],
+  ['github-polling-enabled-write.ts', 66, '63c68646034af002fbd1e155e41e6092b61b840f5f59195c616829eb5a39869c', 'Serializable Space/enabled input; one existing gateway transaction; exact committed config receipt; no replay'],
+];
+const data = dataSpecs.map(([name, expectedLines, expectedHash, contract]) => {
+  const file = root + 'storage/repositories/' + name, text = fs.readFileSync(file, 'utf8');
+  const actualLines = text.trimEnd().split('\n').length;
+  if (actualLines !== expectedLines || hash(text) !== expectedHash) throw Error('Approved data module drift: ' + file);
+  return { file, lines: actualLines, sha256: expectedHash, contract, auditedStable: true };
+});
+const freshFiles = [
+  ['storage/repositories/github-watched-insert-persist.ts', 'Exact INSERT and supplied UUID/Space/time/defaults/caller transaction'],
+  ['storage/repositories/github-polling-intent-persist.ts', 'Exact intent UPSERT, enabled preservation and supplied time'],
+  ['storage/repositories/space-extension-config-persist.ts', 'Exact saved config JSON/key/creation time and caller transaction'],
+  ['lib/external-events/github/github-watched-projection.ts', 'Sanitized saved projection, configured-secret marker, no secret/cursor leak'],
+].map(([path, contract]) => {
+  const file = root + path, text = fs.readFileSync(file, 'utf8');
+  return { file, lines: text.trimEnd().split('\n').length, sha256: hash(text), contract };
+});
+const uuidFile = 'packages/shared/src/utils.ts', uuidText = fs.readFileSync(uuidFile, 'utf8');
+const uuidSf = parse(uuidFile, uuidText), uuid = named(uuidSf, 'generateUUID');
+const uuidRoot = { file: uuidFile, lines: lines(uuidSf, uuid), sha256: hash(uuid.getText(uuidSf)), fullModuleSha256: hash(uuidText), contract: 'Existing complete UUID leaf; shared barrel/runtime closure unclaimed' };
+const extension = root + 'lib/external-events/github/github-event-extension.ts';
+const source = fs.readFileSync(extension, 'utf8'), sf = parse(extension, source);
+let callback;
+function findCallback(node) {
+  if (ts.isCallExpression(node) && node.arguments[0]?.text === 'space.github.setPollingEnabled') callback = node.arguments[1];
+  ts.forEachChild(node, findCallback);
+}
+findCallback(sf);
+if (!callback) throw Error('Missing polling handler');
+let handler = callback.getText(sf), phase = 'wired';
+if (handler.includes('this.repo.upsertWatchedRepo')) {
+  phase = 'planned';
+  handler = handler.replace(/      const repos = this\.repo\.listWatchedRepos[\s\S]*?\n      if \(params\.enabled\)/, `      await gatewayFor(this.db).run(gitHubPollingWrites, {
+        spaceId: params.spaceId,
+        enabled: params.enabled,
+      });
+      if (params.enabled)`)
+    .replace(/        this\.repo\.setPollingIntent\(params\.spaceId, (?:true|false)\);\n/g, '')
+    .replace('      await this.persistSpaceConfig(context, params.spaceId);\n', '');
+}
+const auth = named(sf, 'assertRpcConfigEnabled');
+const handlerRoot = { file: extension, lines: handler.split('\n').length, sha256: hash(handler), phase, contract: 'Original auth/interval/response and callbacks; exactly one data-only writer call, no snapshot rebuild/replay' };
+const authorization = { file: extension, lines: lines(sf, auth), sha256: hash(auth.getText(sf)), contract: 'Existing RPC configuration admission before worker command' };
+const interfaceSpecs = [
+  [extension, ['enablePollingCapability', 'disablePollingCapabilityIfUnused', 'assertPollingIntervalEnabled', 'ensurePollingActive', 'maybeStopPolling', 'getPollIntervalMs', 'scheduleNextPoll']],
+  [root + 'lib/external-events/github/github-repository.ts', ['listAllPollingConfiguredRepos', 'countSpacesWithPollingIntent', 'listPollingRepos']],
+  [root + 'lib/external-events/extension-config-store.ts', ['getGlobalConfig', 'setGlobalConfig']],
+];
+const interfaces = interfaceSpecs.flatMap(([file, names]) => {
+  const text = fs.readFileSync(file, 'utf8'), sf = parse(file, text);
+  return names.map(name => { const node = named(sf, name); return { file, name, lines: lines(sf, node), sha256: hash(node.getText(sf)), pinnedNotAudited: true, contract: 'Unchanged capability/timer/interval or main-reader boundary; transitive effects and constructor not audited' }; });
+});
+const fresh = freshFiles.reduce((n, row) => n + row.lines, 0) + uuidRoot.lines + handlerRoot.lines + authorization.lines;
+const dataExcluded = data.reduce((n, row) => n + row.lines, 0);
+const interfaceLines = interfaces.reduce((n, row) => n + row.lines, 0);
+const report = { base: cp.execFileSync('git', ['rev-parse', 'origin/dev'], { encoding: 'utf8' }).trim(), phase, fresh, dataExcluded, ownedKnown: fresh + dataExcluded, interfaceLines, previousGrant: { fresh: 154, dataExcluded: 272, ownedKnown: 426, interfaceLines: 116 }, data, freshFiles, uuidRoot, handlerRoot, authorization, interfaces, auditLimit: 'Seven audited data exclusions only. Interface roots explicitly pinned-not-audited; no full public/shared barrel/runtime closure. Main callback reads still block #8714 and are tracked in #9438. Current 117 versus granted 116 interface lines needs coordinator reconciliation before implementation.' };
+fs.writeFileSync(process.argv[2], JSON.stringify(report, null, 2) + '\n');
+console.log(JSON.stringify({ phase, fresh, dataExcluded, ownedKnown: report.ownedKnown, interfaceLines }));
