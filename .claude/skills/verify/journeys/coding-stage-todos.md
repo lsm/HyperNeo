@@ -3,7 +3,9 @@
 Use shared isolation and cleanup in `../SKILL.md`. The helper starts one fresh
 synthetic daemon on an ephemeral loopback port and invokes the installed coding
 pack through real `neo.todo.add` and `neo.todo.edit` WebSocket RPC. No provider,
-model, browser, real GitHub, credentials or reserved port is used. Only
+model, browser, real GitHub, real credentials or reserved port is used.
+The RPC socket uses only the fresh daemon's owner-only local credential, as
+described in shared setup. Only
 `work.start` is replaced with a synthetic chooser that honors worker exclusions.
 
 ```bash

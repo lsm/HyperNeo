@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
@@ -32,7 +33,7 @@ try {
   world.bind(author.todo.id, 'author');
   const prior = await world.invoke('neo.todo.add', { askId: ask.id, ...world.draft('Earlier actor'), start: false });
   world.bind(prior.todo.id, 'prior');
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`, join(run, 'data/local-rpc.credential'));
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });
   const rpc = (input: unknown) => new Promise<{ ok: boolean; todo: { id: string; state: string; blockedBy: string | null; reason: string | null } }>((done, fail) => {
     const id = crypto.randomUUID();

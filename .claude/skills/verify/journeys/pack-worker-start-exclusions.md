@@ -13,7 +13,8 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
 The fixture installs the production core ask/todo operations and runner with a
 generic test pack in the daemon operation registry. It replaces worker dispatch
 with a synthetic candidate chooser; this is a hook construction proof, not the
-coding pack's public assignment wiring or a native worker reuse proof. The pack
+coding pack's public assignment wiring or a native worker reuse proof. Its
+socket uses only the fresh daemon's local credential from shared setup. The pack
 reads excluded workers from existing todo bindings; it writes no core state.
 
 Observe `pack-worker-start-exclusions.json`: the RPC adds work in the existing

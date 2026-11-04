@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
@@ -38,7 +39,7 @@ try {
   });
   const boundRegistry = createOperationRegistry(registry.entries.map(entry => entry.name === 'work.start' ? harness : entry));
   app.sessionManager.setOperationRegistryProvider(() => boundRegistry);
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`, join(run, 'data/local-rpc.credential'));
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC open failed')); });
   const rpc = (name: string, input: unknown) => new Promise<{ ok: boolean; reason?: string; todo?: { id: string; state: string; askId: string; evidence: string | null } }>((done, fail) => {
     const id = crypto.randomUUID(), timer = setTimeout(() => fail(new Error('RPC timeout')), 10000);
