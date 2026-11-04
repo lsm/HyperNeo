@@ -14,7 +14,8 @@ Timer usage checks active rows globally, including orphans. Results transfer onl
 booleans. Pure stage tests pin every early-exit arm and query precedence.
 
 Check a real public listConfig readback separately, with the main trap disabled:
-public callback/read activation is a later slice, not this construction claim.
+capability callback activation has its own #9649 journey, and timer activation
+is still separate. This construction proof makes neither activation claim.
 Verify query-only no-write/no-notification behavior, fresh reads after commits,
 health/read response while a competing writer holds its transaction, native
 deferred-snapshot consistency and reader failure without main fallback. A failed

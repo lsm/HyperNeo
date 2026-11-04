@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { DbGateway, bindGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import type { DbOp } from '../../../../src/storage/db-gateway/db-op';
@@ -17,7 +22,15 @@ class CapabilityGateway extends DbGateway {
   failNext = false;
   release?: () => void;
   afterWrite?: () => void;
+  holdGlobal = false;
+  releaseGlobal?: () => void;
   override async run<A, R>(op: DbOp<A, R>, args: A): Promise<R> {
+    if (op.name === 'extension.global.config.write' && this.holdGlobal) {
+      this.holdGlobal = false;
+      await new Promise<void>((resolve) => {
+        this.releaseGlobal = resolve;
+      });
+    }
     if (op.name === writeName) {
       this.writes++;
       const result = await super.run(op, args);
@@ -100,6 +113,7 @@ describe('GitHub capability callback reader wiring', () => {
   });
   afterEach(async () => {
     gateway.release?.();
+    gateway.releaseGlobal?.();
     releaseConfig?.();
     await Promise.allSettled([...pending]);
     vi.restoreAllMocks();
@@ -118,6 +132,26 @@ describe('GitHub capability callback reader wiring', () => {
     return promise;
   };
   const polling = async () => (await store.getGlobalConfig('github')).capabilities.polling;
+  test('counted activation and existing bounded config roots fit the cap without new exclusions', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'capability-measure-'));
+    try {
+      const output = join(dir, 'boundary.json');
+      execFileSync(
+        process.execPath,
+        ['.claude/skills/verify/lane-c-github-capability-measure.cjs', output],
+        { cwd: fileURLToPath(new URL('../../../../../../', import.meta.url)) }
+      );
+      expect(JSON.parse(readFileSync(output, 'utf8'))).toMatchObject({
+        fresh: 170,
+        bridgeLines: 22,
+        smokeLines: 1,
+        knownTotal: 193,
+        excludedDataLines: 0,
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   test('public disable uses the registered reader instead of main repository checks', async () => {
     await request(true);
     vi.spyOn(extension.repo, 'listAllPollingConfiguredRepos').mockImplementation(() => {
@@ -185,5 +219,22 @@ describe('GitHub capability callback reader wiring', () => {
     await older;
     expect(await polling()).toBe(false);
     expect(extension.repo.getPollingIntent(space)).toBe(false);
+  });
+  test('a newer enable waits for an admitted older capability write before reading global state', async () => {
+    await request(true);
+    gateway.holdGlobal = true;
+    const older = request(false);
+    await vi.waitFor(() => expect(gateway.releaseGlobal).toBeTypeOf('function'));
+    let settled = false;
+    const newer = request(true).then((result) => {
+      settled = true;
+      return result;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    gateway.releaseGlobal!();
+    await Promise.all([older, newer]);
+    expect(await polling()).toBe(true);
+    expect(extension.repo.getPollingIntent(space)).toBe(true);
   });
 });

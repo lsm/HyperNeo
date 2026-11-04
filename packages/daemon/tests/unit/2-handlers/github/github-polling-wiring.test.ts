@@ -203,7 +203,7 @@ describe('GitHub polling RPC writer wiring', () => {
         fresh: 154,
         dataExcluded: 272,
         ownedKnown: 426,
-        interfaceLines: 82,
+        interfaceLines: 85,
       });
       expect(measured.data).toHaveLength(7);
       expect(measured.interfaces).toHaveLength(12);

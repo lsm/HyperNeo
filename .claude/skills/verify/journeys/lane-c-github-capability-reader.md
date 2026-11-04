@@ -25,6 +25,10 @@ Count complete reader/query/mapper modules, both touched capability helpers and
 the epoch field. Count and pin the same existing global-config getter/setter
 interface roots separately as not audited transitively. No new dependency
 exclusions. Keep the scope at most 200 lines; timer wiring follows after merge.
+`lane-c-github-capability-measure.cjs` records 170 owned lines, the same 22
+config bridge lines and one smoke registration: 193 known, with no data exclusions.
+Refresh the two existing capability interface pins and contracts in the writer
+journey; the same twelve roots now total 85 lines. No new interface root is added.
 Record RPC/read latency, clone bytes, loop lag, RSS and WAL. Held requests are not
 latency-target passes; separate queue/SQL/clone timing is unavailable. Retain
 `github-capability-reader.json` before shared cleanup. GUI, real GitHub, deployment,

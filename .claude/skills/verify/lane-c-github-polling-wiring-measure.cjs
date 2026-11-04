@@ -73,14 +73,14 @@ const interfaceSpecs = [
 ];
 const interfaces = interfaceSpecs.flatMap(([file, names]) => {
   const text = fs.readFileSync(file, 'utf8'), sf = parse(file, text);
-  return names.map(name => { const node = named(sf, name); return { file, name, lines: lines(sf, node), sha256: hash(node.getText(sf)), pinnedNotAudited: true, contract: 'Capability/timer/interval or main-reader interface boundary; query wrappers delegate to exact SQL extracted under #9645, measured separately at 146 lines without exclusions; transitive effects and constructor not audited here' }; });
+  return names.map(name => { const node = named(sf, name); return { file, name, lines: lines(sf, node), sha256: hash(node.getText(sf)), pinnedNotAudited: true, contract: 'Capability helpers use the reader and local epoch under #9649; timer/interval and config interfaces remain bounded roots. Query wrappers delegate to exact SQL under #9645. Separate extraction/activation graphs are counted without exclusions; transitive effects and constructors not audited here' }; });
 });
 const fresh = freshFiles.reduce((n, row) => n + row.lines, 0) + uuidRoot.lines + handlerRoot.lines + authorization.lines;
 const dataExcluded = data.reduce((n, row) => n + row.lines, 0);
 const interfaceLines = interfaces.reduce((n, row) => n + row.lines, 0);
 const approvedInterfaceHashes = {
-  "enablePollingCapability": "4e420bfc4d7ff56a8f89ad1c73cf5ba41299f561473bff53338cb7f9fb6f767b",
-  "disablePollingCapabilityIfUnused": "ef314f86addab932a67ee75012aeabd188201fa52368037be7aae6e0a6fa0008",
+  "enablePollingCapability": "634bc670dc47f3823003554dbb11652a83b0bfcb7a24b9102ce2e6bfd2cfb071",
+  "disablePollingCapabilityIfUnused": "36098e2708b5f21701f1449df790f6f0a4f66e74b871c65f162167d1920afa16",
   "assertPollingIntervalEnabled": "a573480e0955085bea56fa5d99b98fd61b0b60ee3cba5f211b89c962aa6147a1",
   "ensurePollingActive": "b40fa77bfb50f6856fdbffbecba6650605de19a902eb79c3628c08f57bee6590",
   "maybeStopPolling": "7aa0c402af118228db9d0ff59350ed862dac15e895ea5b9fc1a738b6ca3bb88d",
@@ -96,6 +96,6 @@ for (const row of interfaces) {
   if (approvedInterfaceHashes[row.name] !== row.sha256) throw Error('Approved interface root drift: ' + row.name);
   row.hashVerified = true;
 }
-const report = { head: cp.execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), phase, fresh, dataExcluded, ownedKnown: fresh + dataExcluded, interfaceLines, previousGrant: { fresh: 154, dataExcluded: 272, ownedKnown: 426, interfaceLines: 116 }, data, freshFiles, uuidRoot, handlerRoot, authorization, interfaces, auditLimit: 'Seven audited data exclusions only. Interface roots explicitly pinned-not-audited; no full public/shared barrel/runtime closure. Main callback reads still block #8714 and are tracked in #9438. The same twelve interface roots now total 82 after the three exact query delegations extracted under #9645; their original measured total was 117 (correcting 116). The complete extracted helper/mapper/constructor graph is counted by its own 146-line extraction audit, with zero exclusions. Deliberate pin refresh; no additional root or data exclusion. Any unreviewed interface drift fails this measurement.' };
+const report = { head: cp.execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), phase, fresh, dataExcluded, ownedKnown: fresh + dataExcluded, interfaceLines, previousGrant: { fresh: 154, dataExcluded: 272, ownedKnown: 426, interfaceLines: 116 }, data, freshFiles, uuidRoot, handlerRoot, authorization, interfaces, auditLimit: 'Seven audited data exclusions only. Interface roots explicitly pinned-not-audited; no full public/shared barrel/runtime closure. Remaining timer callback and global config reads still block #8714; timer activation stays tracked in #9438. The same twelve interface roots now total 85 after the three exact query delegations extracted under #9645 and capability reader/epoch activation under #9649; their original measured total was 117 (correcting 116). The complete extracted helper/mapper/constructor graph is counted by its own 146-line extraction audit, with zero exclusions. Capability activation separately counts 170 owned lines plus the same 22 config bridge lines and one smoke registration (193 known, no exclusions). Deliberate pin refresh; no additional root or data exclusion. Any unreviewed interface drift fails this measurement.' };
 fs.writeFileSync(process.argv[2], JSON.stringify(report, null, 2) + '\n');
 console.log(JSON.stringify({ phase, fresh, dataExcluded, ownedKnown: report.ownedKnown, interfaceLines }));

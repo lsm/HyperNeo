@@ -1,3 +1,4 @@
+import { gitHubPollingCapabilityReads } from '../../../storage/repositories/github-polling-usage-read.ts';
 import { gitHubPollingWrites } from '../../../storage/repositories/github-polling-enabled-write.ts';
 import { gatewayFor } from '../../../storage/db-gateway/db-gateway.ts';
 import { gitHubSpaceEnabledWrites } from '../../../storage/repositories/github-space-enabled-write.ts';
@@ -292,6 +293,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
   readonly repo: GitHubEventExtensionRepository;
   private context?: ExternalEventExtensionContext;
+  private pollingConfigEpoch = 0;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private activePollCycle?: Promise<void>;
   private reconcileSweepPromise?: Promise<void>;
@@ -1865,8 +1867,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   }
 
   private async enablePollingCapability(context: ExternalEventExtensionContext): Promise<void> {
+    const epoch = ++this.pollingConfigEpoch;
     const global = await context.config.getGlobalConfig(this.sourceId);
-    if (global.capabilities.polling === true) return;
+    if (epoch !== this.pollingConfigEpoch || global.capabilities.polling === true) return;
     await context.config.setGlobalConfig(this.sourceId, {
       ...global,
       capabilities: { ...global.capabilities, polling: true },
@@ -1876,11 +1879,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private async disablePollingCapabilityIfUnused(
     context: ExternalEventExtensionContext
   ): Promise<void> {
-    if (this.repo.listAllPollingConfiguredRepos().length > 0) return;
-    if (this.repo.countSpacesWithPollingIntent() > 0) return;
-    if (this.repo.listPollingRepos(SESSION_EVENT_SCOPE).length > 0) return;
+    const epoch = ++this.pollingConfigEpoch;
+    const inUse = await gatewayFor(this.db).run(gitHubPollingCapabilityReads, {
+      sessionScope: SESSION_EVENT_SCOPE,
+    });
+    if (epoch !== this.pollingConfigEpoch || inUse) return;
     const global = await context.config.getGlobalConfig(this.sourceId);
-    if (global.capabilities.polling !== true) return;
+    if (epoch !== this.pollingConfigEpoch || global.capabilities.polling !== true) return;
     await context.config.setGlobalConfig(this.sourceId, {
       ...global,
       capabilities: { ...global.capabilities, polling: false },
