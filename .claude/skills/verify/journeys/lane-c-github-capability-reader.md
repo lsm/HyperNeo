@@ -15,18 +15,21 @@ no-SQL-main result. Other read/public/runtime closure is not audited here.
 Hold an actual native unused-reader reply, then enable polling with a newer RPC.
 Releasing the old reply must retain the newer capability and intent. Also hold
 the older enable operation's config getter after its writer reply; a newer
-disable must remain authoritative after that old getter returns. Epochs belong
-to the main capability-effect owner; no persisted duplicate facts or new policy.
+disable must remain authoritative after that old getter returns. Capability effects run in one main-owned queue: a newer data write can commit
+while its capability acknowledgement waits for an older effect. Hold an admitted
+older capability write after a newer data write has committed; the newer effect
+must wait before reading the global flag. Verify health while that queue waits.
+No SQLite transaction spans the wait. No persisted duplicate facts or new policy.
 Reader rejection propagates after its known write, with no fallback, notification
 or automatic replay. Preserve the command's configured/intent/session precedence
 and parsing errors; command contracts are pinned by the construction journey.
 
 Count complete reader/query/mapper modules, both touched capability helpers and
-the epoch field. Count and pin the same existing global-config getter/setter
+the queue owner and tail field. Count and pin the same existing global-config getter/setter
 interface roots separately as not audited transitively. No new dependency
 exclusions. Keep the scope at most 200 lines; timer wiring follows after merge.
-`lane-c-github-capability-measure.cjs` records 170 owned lines, the same 22
-config bridge lines and one smoke registration: 193 known, with no data exclusions.
+`lane-c-github-capability-measure.cjs` records 175 owned lines, the same 22
+config bridge lines and one smoke registration: 198 known, with no data exclusions.
 Refresh the two existing capability interface pins and contracts in the writer
 journey; the same twelve roots now total 85 lines. No new interface root is added.
 Record RPC/read latency, clone bytes, loop lag, RSS and WAL. Held requests are not

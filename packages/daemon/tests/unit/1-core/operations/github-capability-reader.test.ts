@@ -43,6 +43,8 @@ describe('GitHub capability callback reader activation', () => {
         staleUnusedReplyCannotDisableNewEnable: true,
         staleEnableGetterCannotOverwriteNewDisable: true,
         readerFailureDoesNotFallbackOrReplayKnownWrite: true,
+        inFlightCapabilityWriteCannotBeOvertaken: true,
+        effectQueueRecoversAfterRejectedRequest: true,
         mainSqlAttempts: 0,
       });
     } finally {

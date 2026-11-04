@@ -142,10 +142,10 @@ describe('GitHub capability callback reader wiring', () => {
         { cwd: fileURLToPath(new URL('../../../../../../', import.meta.url)) }
       );
       expect(JSON.parse(readFileSync(output, 'utf8'))).toMatchObject({
-        fresh: 170,
+        fresh: 175,
         bridgeLines: 22,
         smokeLines: 1,
-        knownTotal: 193,
+        knownTotal: 198,
         excludedDataLines: 0,
       });
     } finally {
@@ -180,6 +180,8 @@ describe('GitHub capability callback reader wiring', () => {
     expect(notices).toHaveLength(before);
     expect(await polling()).toBe(true);
     expect(extension.repo.getPollingIntent(space)).toBe(false);
+    await request(true);
+    expect(await polling()).toBe(true);
   });
   test('an older unused reply cannot disable polling enabled by a newer request', async () => {
     await request(true);
@@ -189,9 +191,15 @@ describe('GitHub capability callback reader wiring', () => {
     await vi.waitFor(() => expect(gateway.release).toBeTypeOf('function'));
     expect(notices).toHaveLength(before);
     expect(await polling()).toBe(true);
-    await request(true);
+    let settled = false;
+    const newer = request(true).then((result) => {
+      settled = true;
+      return result;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
     gateway.release!();
-    await older;
+    await Promise.all([older, newer]);
     expect(await polling()).toBe(true);
     expect(extension.repo.getPollingIntent(space)).toBe(true);
   });
@@ -214,9 +222,15 @@ describe('GitHub capability callback reader wiring', () => {
     });
     const older = request(true);
     await vi.waitFor(() => expect(releaseConfig).toBeTypeOf('function'));
-    await request(false);
+    let settled = false;
+    const newer = request(false).then((result) => {
+      settled = true;
+      return result;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
     releaseConfig!();
-    await older;
+    await Promise.all([older, newer]);
     expect(await polling()).toBe(false);
     expect(extension.repo.getPollingIntent(space)).toBe(false);
   });
@@ -236,5 +250,20 @@ describe('GitHub capability callback reader wiring', () => {
     await Promise.all([older, newer]);
     expect(await polling()).toBe(true);
     expect(extension.repo.getPollingIntent(space)).toBe(true);
+  });
+  test('a failed capability config write rejects once and releases the next independent update', async () => {
+    await request(true);
+    const before = notices.length,
+      writes = gateway.writes;
+    const set = vi
+      .spyOn(store, 'setGlobalConfig')
+      .mockRejectedValueOnce(new Error('synthetic config write rejected'));
+    await expect(request(false)).rejects.toThrow('synthetic config write rejected');
+    expect(gateway.writes).toBe(writes + 1);
+    expect(notices).toHaveLength(before);
+    set.mockRestore();
+    await request(false);
+    expect(gateway.writes).toBe(writes + 2);
+    expect(await polling()).toBe(false);
   });
 });

@@ -16,7 +16,7 @@ Admission rejection and an actual lost committed acknowledgement must never
 replay or rebuild a saved snapshot. Notification failure keeps its known commit;
 reordered receipts never overwrite a newer saved config. Auth, parameter and
 interval gates precede admission. Capability callback usage is now reader-backed under #9649, with its own
-epoch-fence proof. Timer callback reads remain tracked in #9438 and block #8714;
+ordered capability-effect proof. Timer callback reads remain tracked in #9438 and block #8714;
 this writer journey does not prove their ownership.
 
 Retain `github-polling-wiring.json`, including latency/clone/RSS/WAL/loop metrics.
@@ -35,12 +35,12 @@ It verifies the seven approved full-module data hashes and records fresh owned
 units and unchanged interface roots. Interface roots are pinned, not audited.
 The same twelve interface roots remain pinned. Their original total was 117,
 correcting the earlier 116 arithmetic. The three query methods now delegate to
-verbatim extracted SQL under #9645, and the capability helpers gain the reader/epoch fence under #9649, so the
+verbatim extracted SQL under #9645, and the capability helpers gain the reader and effect queue under #9649, so the
 current interface total is 85.
 That extraction counts its complete helper/mapper/constructor graph separately
 at 146 lines with zero exclusions. The capability activation separately counts
-170 owned lines, the same 22 config bridge lines and one smoke registration
-(193 known); no new data exclusion or root was added.
+175 owned lines, the same 22 config bridge lines and one smoke registration
+(198 known); no new data exclusion or root was added.
 Refresh the hash and interface contract together with its tests and remeasure
 the graph when deliberately changing an interface. Any further exclusion needs
 a coordinator decision; this measurement never grants one.

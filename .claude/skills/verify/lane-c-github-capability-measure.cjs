@@ -16,9 +16,9 @@ function units(file) {
   walk(sf);
   return rows;
 }
-const selectedNames = ['enablePollingCapability', 'disablePollingCapabilityIfUnused', 'pollingConfigEpoch'];
+const selectedNames = ['enablePollingCapability', 'disablePollingCapabilityIfUnused', 'pollingCapabilityTail', 'runPollingCapabilityUpdate'];
 const all = units(extension), selected = all.filter(row => selectedNames.includes(row.name));
-if (selected.length !== 3) throw Error('Missing capability owner/epoch');
+if (selected.length !== 4) throw Error('Missing capability effect owner/queue');
 const untouched = all.filter(row => !selectedNames.includes(row.name)).map(row => [row.name, row.sha256]);
 if (hash(JSON.stringify(untouched)) !== 'bb3ebef239bab13fe0c6ede0d2a161da12361ee3fec1f3ada5dec2f79b2da95c') throw Error('Other extension code changed');
 const specs = [
@@ -41,6 +41,6 @@ const knownTotal = fresh + bridgeLines + smokeLines;
 if (knownTotal > 200) throw Error('Capability reader wiring exceeds 200 lines');
 const smoke = fs.readFileSync('scripts/deno-smoke.sh', 'utf8').split('\n').filter(line => line.includes('lane-c-github-capability-reader.ts'));
 if (smoke.length !== smokeLines) throw Error('Missing/duplicate native smoke registration');
-const report = { head: cp.execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), selected, data, bridges, fresh, bridgeLines, smokeLines, knownTotal, excludedDataLines: 0, contract: 'Capability usage moves to existing read-only worker pipeline; main owns global config effects, guarded by a local capability epoch across read/config awaits. Existing source/scope/error behavior remains; no read fallback or write replay.', auditLimit: 'Same existing get/set config interface roots counted and pinned-not-audited, no full public/framework/transitive closure. Timer callback and global-config reads remain main-side; no startup/shutdown or final #8714 claim. Epoch covers these extension-owned capability helpers, not unrelated config writers.' };
+const report = { head: cp.execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), selected, data, bridges, fresh, bridgeLines, smokeLines, knownTotal, excludedDataLines: 0, contract: 'Capability usage moves to existing read-only worker pipeline; main owns global config effects, serialized by the local capability effect queue across read/config awaits. Existing source/scope/error behavior remains; no read fallback or write replay.', auditLimit: 'Same existing get/set config interface roots counted and pinned-not-audited, no full public/framework/transitive closure. Timer callback and global-config reads remain main-side; no startup/shutdown or final #8714 claim. Queue covers these extension-owned capability helpers, not unrelated config writers.' };
 fs.writeFileSync(process.argv[2], JSON.stringify(report, null, 2) + '\n');
 console.log(JSON.stringify({ fresh, bridgeLines, smokeLines, knownTotal, excludedDataLines: 0 }));
