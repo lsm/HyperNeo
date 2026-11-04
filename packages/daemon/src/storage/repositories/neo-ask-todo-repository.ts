@@ -752,7 +752,8 @@ export class NeoAskTodoRepository {
     todo: NeoTodo,
     change: NeoTodoPatch,
     now: number,
-    claim = false
+    claim = false,
+    prune = true
   ): NeoTodo | null {
     if (!Object.keys(change).length) return this.getTodo(todo.id);
     const patch: NeoTodoPatch =
@@ -781,7 +782,7 @@ export class NeoAskTodoRepository {
         if (current.state !== 'todo' || current.instruction?.trim() || !current.check)
           new NeoTodoSessionRepository(this.db, this.changes).cancelCheckOnlyReminder(todo.id);
       }
-      if (result.changes && patch.state) this.pruneQuestions(todo.askId, now);
+      if (result.changes && patch.state && prune) this.pruneQuestions(todo.askId, now);
       return result.changes;
     })();
     if (!changed) return null;
@@ -1190,7 +1191,7 @@ export class NeoAskTodoRepository {
       if (!todo || waiting.has(id)) continue;
       const family = this.listFamilyTodos(todo.askId);
       const patch = planNeoStartAnswer(todo, family, ticked, withdrawn, now);
-      if (patch) this.updateTodo(todo, patch, now);
+      if (patch) this.writeTodo(todo, patch, now, false, false);
     }
     if (question && ticked?.length)
       this.db
@@ -1199,6 +1200,7 @@ export class NeoAskTodoRepository {
              AND instruction IS NULL AND started_at IS NULL`
         )
         .run(now, question.askId);
+    if (question) this.pruneQuestions(question.askId, now);
   }
 
   private changeQuestion(
