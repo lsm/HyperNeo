@@ -19,7 +19,8 @@ changes and restore their old values/list after rollback. Unit cases also cover
 noncanonical legacy enabled flags on a permissive fixture. Store validation must
 reject before any query. Preserve exact SQL bytes, argument/query AST, row mapper,
 JSON parser, validation, writers and DDL; measure complete owned modules/read
-setup under 200 lines with zero data exclusions. Caller/framework identity pins
+setup: 168 lines (55 store + 108 complete modules + 4 import + 1 smoke),
+zero data exclusions. Caller/framework identity pins
 are not a full public/plugin/runtime transitive audit.
 
 Retain JSON, wrapper exit status, RPC latency, RSS and WAL before closing all
