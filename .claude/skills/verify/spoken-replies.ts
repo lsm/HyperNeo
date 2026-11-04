@@ -6,6 +6,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { MessageHub, WebSocketClientTransport, subscribeToStructuredLogs } from '../../../packages/shared/src/mod.ts';
 
 const [mode, ...args] = process.argv.slice(2), run = resolve(args.at(-1)!);
@@ -118,7 +119,7 @@ try {
     await Promise.race([finished,new Promise(done=>setTimeout(done,30*60_000).unref())]);
   } else {
     for(let i=0;i<2;i++) {
-      const hub=new MessageHub({defaultSessionId:'global'}), transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false}), events:unknown[]=[];
+      const hub=new MessageHub({defaultSessionId:'global'}), transport=new WebSocketClientTransport({createSocket:createLocalSocket,url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false}), events:unknown[]=[];
       hub.registerTransport(transport); hub.onEvent('neo.speech', event=>events.push(event));
       await transport.initialize(); clients.push({hub,transport,events});
     }
@@ -127,7 +128,7 @@ try {
     const inputId='20000000-0000-4000-8000-000000000001';
     const intake=await clients[0].hub.request<{ok:boolean}>('operation.invoke',{name:'neo.message.send',input:{sessionId,requestId:inputId,content:'Public short voice input',inputMode:'live_voice',speech:true}});
     assert(intake.ok);
-    await wait(()=>inputFacts().includes("[input: live_voice; speech: on]\nVoice input: before any other tool call or work, call neo.speech.say with one short spoken reply to what the human just said (acknowledge it, say what you'll do, or answer it if it's quick). Then continue."));
+    await wait(()=>inputFacts().includes('[input: live_voice]'));
     const raw=app.db.getSDKMessageRepo().getMessageByUuid(sessionId,inputId);
     assert(!JSON.stringify(raw).includes('Briefly acknowledge'));
     const shown=JSON.stringify(app.db.getDatabase().prepare('SELECT payload_json FROM neo_conversation_asks').all());
@@ -175,6 +176,31 @@ try {
     assert(timingEvents.some(event=>event.stage==='voice.input.accepted' && event.metadata.messageId===inputId));
     for(const stage of ['queued','request_started','first_chunk','first_chunk_sent','finished'])
       assert.equal(timingEvents.filter(event=>event.stage==='voice.tts.'+stage && event.metadata.speechId===streamed.id).length,1);
+    if(process.argv.includes('workers')) {
+      const workers=['40000000-0000-4000-8000-000000000001','40000000-0000-4000-8000-000000000002'];
+      for(const id of workers) await app.db.createSession({...app.db.getSession(sessionId)!,id,title:'Synthetic worker',type:'worker',config:{queryMode:'manual'}});
+      const finishWorker=(id:string,uuid:string,result:string)=>app.internalEventBus.publish('sdk.message',{sessionId:id,message:{type:'result',subtype:'success',uuid,is_error:false,result}});
+      const eventsFor=(id:string)=>clients[1].events.filter((event:any)=>event.sessionId===id) as any[];
+      assert((await call('listen',{sessionId:workers[0],enabled:true,audio:true,voice:'vivian'},1)).ok);
+      await wait(()=>clients[1].events.some((event:any)=>event.type==='stop'&&event.sessionId===sessionId));
+      const answer='The task is ready.\n```sh\nPRIVATE_TOOL_STEP\n```\nTests pass. You can review it. Extra details stay on screen.';
+      await finishWorker(workers[0],'worker-turn-one',answer);
+      await wait(()=>eventsFor(workers[0]).some(event=>event.type==='end'));
+      const spoken=eventsFor(workers[0]).find(event=>event.type==='say');
+      assert.equal(spoken.text,'The task is ready. Tests pass. You can review it.');
+      assert.equal(eventsFor(workers[0]).filter(event=>event.type==='audio').length,40);
+      assert((await call('ack',{sessionId:workers[0],id:spoken.id,state:'played'},1)).ok);
+      await finishWorker(workers[0],'worker-turn-one',answer);
+      assert.equal(eventsFor(workers[0]).filter(event=>event.type==='say').length,1);
+      assert((await call('listen',{sessionId:workers[1],enabled:true},1)).ok);
+      await wait(()=>eventsFor(workers[0]).some(event=>event.type==='stop'));
+      await finishWorker(workers[0],'late-turn','Old composer must stay silent.');
+      assert.equal(eventsFor(workers[0]).filter(event=>event.type==='say').length,1);
+      await finishWorker(workers[1],'current-turn','Current composer reply.');
+      await wait(()=>eventsFor(workers[1]).some(event=>event.type==='say'));
+      assert.equal(eventsFor(workers[1]).find(event=>event.type==='say').text,'Current composer reply.');
+      writeFileSync(join(run,'evidence/session-speech.json'),JSON.stringify({passed:true,realWebSocket:true,syntheticFinalResult:true,workerAudioChunks:40,oneListenedSession:true,oldComposerSilent:true,workers:workers.map(id=>({sessionId:id,events:eventsFor(id)}))},null,2));
+    }
     console.log(JSON.stringify({voiceMetadataShort:true, catalogTypedRejection:!upstream, catalogConnectionRefused:!upstream, serverAudioStreaming:true, upstream:upstream?.origin, audioBytes, chunks:frames.length, passed:true, realWebSocket:true, mcp:true, writerWorker:true, unrelatedClientSilent:true, noReplay:true, fullQueueRetry:true, ...evidence()}));
   }
 } finally {

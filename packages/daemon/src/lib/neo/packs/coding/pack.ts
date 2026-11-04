@@ -1,5 +1,6 @@
 import { withCodingWorkerStartBrief } from './worker-worktree-brief.ts';
 import { createCodingHumanMergeOperation } from './human-merge-operation.ts';
+import { createCodingRetryMergeOperation } from './retry-merge-operation.ts';
 import { createCodingDaemonMergeSweep } from './daemon-merge-sweep.ts';
 import { checkCodingPrApproved } from './pr-approved.ts';
 import { withCodingMergeContext } from './merge-context.ts';
@@ -94,6 +95,7 @@ export function createCodingPack(deps: {
     prepareMerge: prepareCodingMerge,
     operations: [
       createCodingHumanMergeOperation(),
+      createCodingRetryMergeOperation(deps.database, deps.prLedger),
       createCodingWritePlanOperation(deps.database),
       createCodingPrFileOperation(deps.database),
       createCodingGithubReadOperation({

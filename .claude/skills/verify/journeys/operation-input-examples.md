@@ -8,6 +8,8 @@ The real daemon MCP invoke handler must reject all fixtures with invalid_input.
 Each message retains the original error and appends exactly one JSON input
 which passes that operation's actual schema. In particular, a todo instruction
 without its target stays invalid and includes a correct todo.add example.
+An empty neo.coding.merge.retry input must include a valid PR URL and full SHA
+example, without running the retry or changing a merge budget.
 observed.json saves every fixture and tool result. The shared wrapper retains
 evidence and deletes the temporary daemon database and HOME.
 
