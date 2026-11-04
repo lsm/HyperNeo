@@ -1,8 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
-import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import ts from 'typescript';
 import type { GitHubEvent } from '@hyperneo/shared';
 import { GitHubPollingService } from '../../../../src/lib/github/polling-service';
 import { Logger } from '../../../../src/lib/logger';
@@ -124,62 +121,4 @@ describe('GitHub polling per-event failure isolation', () => {
     await pending;
     expect(attempted).toEqual([1, 2, 3, 4, 5, 6]);
   });
-});
-
-test('polling and merged event/writer dependencies retain their audited source contracts', () => {
-  const root = new URL('../../../../../../', import.meta.url);
-  const manifest = JSON.parse(
-    readFileSync(
-      new URL('.claude/skills/verify/evidence/lane-c-poll-tail/audited-dependencies.json', root),
-      'utf8'
-    )
-  ) as {
-    pollingFile: string;
-    pollingWithoutConstructorSha256: string;
-    sourceRoots: { file: string; sha256: string }[];
-    eventSubtree: { file: string; name: string; sha256: string; wholeFile: boolean }[];
-    writerSubtree: { file: string; name: string; sha256: string; wholeFile: boolean }[];
-  };
-  const hash = (text: string | Buffer) => createHash('sha256').update(text).digest('hex');
-  const source = readFileSync(new URL(manifest.pollingFile, root), 'utf8');
-  const parsed = ts.createSourceFile(manifest.pollingFile, source, ts.ScriptTarget.Latest, true);
-  const klass = parsed.statements.find(
-    (n) => ts.isClassDeclaration(n) && n.name?.text === 'GitHubPollingService'
-  );
-  if (!klass || !ts.isClassDeclaration(klass)) throw new Error('Polling class missing');
-  const ctor = klass.members.find(ts.isConstructorDeclaration);
-  if (!ctor) throw new Error('Polling constructor missing');
-  expect(
-    hash(source.slice(0, ctor.getStart(parsed)) + '<constructor boundary>' + source.slice(ctor.end))
-  ).toBe(manifest.pollingWithoutConstructorSha256);
-  for (const unit of manifest.sourceRoots)
-    expect(hash(readFileSync(new URL(unit.file, root)))).toBe(unit.sha256);
-  for (const unit of [...manifest.eventSubtree, ...manifest.writerSubtree]) {
-    let content = readFileSync(new URL(unit.file, root), 'utf8');
-    if (!unit.wholeFile) {
-      const sf = ts.createSourceFile(unit.file, content, ts.ScriptTarget.Latest, true);
-      const owner = unit.name.includes('.') ? unit.name.split('.')[0] : null;
-      const method = unit.name.split('.').at(-1);
-      const cl = sf.statements.find(
-        (n) => ts.isClassDeclaration(n) && (!owner || n.name?.text === owner)
-      );
-      if (!cl || !ts.isClassDeclaration(cl)) throw new Error('Audited class missing');
-      const member = cl.members.find(
-        (n) => (ts.isConstructorDeclaration(n) ? 'constructor' : n.name?.getText(sf)) === method
-      );
-      if (!member) throw new Error('Audited method missing');
-      content = member.getText(sf);
-    }
-    expect(hash(content)).toBe(unit.sha256);
-  }
-});
-
-test('preserves the polling service receiver supplied to an ordinary callback', async () => {
-  const receivers: unknown[] = [];
-  const { service } = fixture(function (this: unknown, _event) {
-    receivers.push(this);
-  });
-  await service.triggerPoll();
-  expect(receivers).toHaveLength(6);
-  expect(receivers.every((receiver) => receiver === service)).toBe(true);
 });

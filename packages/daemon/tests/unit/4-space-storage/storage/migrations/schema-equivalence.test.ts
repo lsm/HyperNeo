@@ -7,6 +7,7 @@ import {
   runMigrations,
 } from '../../../../../src/storage/schema/index.ts';
 import { runMigration472 } from '../../../../../src/storage/schema/m472-drop-room-era-tables.ts';
+import { runMigration473 } from '../../../../../src/storage/schema/m473-drop-inbox-items.ts';
 import { humanSessionColumnsPredicate } from '../../../../../src/storage/schema/session-counters.ts';
 import spaceBaselineSchema from '../../../../../src/storage/schema/baseline-space-v041.json' with {
   type: 'json',
@@ -80,7 +81,7 @@ function insertSession(db: Database, id: string, type: string): void {
 }
 
 describe('database schema equivalence', () => {
-  test('the direct baseline is the frozen v0.41.0 schema, less migration 472, before migration 239', () => {
+  test('the direct baseline is the frozen v0.41.0 schema, less migrations 472 and 473, before migration 239', () => {
     const fresh = new Database(':memory:');
     const baseline = new Database(':memory:');
     try {
@@ -88,6 +89,7 @@ describe('database schema equivalence', () => {
         readFileSync(new URL('./fixtures/schema-baseline/v0.41.0.sql', import.meta.url), 'utf8')
       );
       runMigration472(baseline);
+      runMigration473(baseline);
       const shadows = new Set(
         (baseline.prepare('PRAGMA table_list').all() as { name: string; type: string }[])
           .filter(({ type }) => type === 'shadow')

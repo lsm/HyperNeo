@@ -1,7 +1,5 @@
 export type {
   GitHubEvent,
-  InboxItem,
-  InboxItemStatus,
   SecurityCheckResult,
   RoutingResult,
   FilterResult,

@@ -53,32 +53,10 @@ export interface GitHubFilterConfig {
   events: GitHubEventFilter;
 }
 
-export type InboxItemStatus = 'pending' | 'routed' | 'dismissed' | 'blocked';
-
 export interface SecurityCheckResult {
   passed: boolean;
   reason?: string;
   injectionRisk: 'none' | 'low' | 'medium' | 'high';
-}
-
-export interface InboxItem {
-  id: string;
-  source: 'github_issue' | 'github_comment' | 'github_pr';
-  repository: string;
-  issueNumber: number;
-  commentId?: string;
-  title: string;
-  body: string;
-  author: string;
-  authorPermission?: string;
-  labels: string[];
-  status: InboxItemStatus;
-  routedToRoomId?: string;
-  routedAt?: number;
-  securityCheck: SecurityCheckResult;
-  rawEvent: unknown;
-  receivedAt: number;
-  updatedAt: number;
 }
 
 export interface RepositoryMapping {
@@ -88,7 +66,7 @@ export interface RepositoryMapping {
   issueNumbers?: number[];
 }
 
-export type RoutingDecision = 'inbox' | 'reject';
+export type RoutingDecision = 'accept' | 'reject';
 
 export interface RoutingResult {
   decision: RoutingDecision;

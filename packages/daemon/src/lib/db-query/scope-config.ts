@@ -28,7 +28,6 @@ const COLUMN_BLACKLISTS: Record<string, string[]> = {
   sessions: ['config', 'session_context'],
   spaces: ['config'],
   app_mcp_servers: ['env'],
-  inbox_items: ['raw_event', 'security_check'],
   job_queue: ['payload'],
   space_long_horizon_agents: ['session_id'],
   space_workflows: ['config', 'gates', 'channels', 'hooks'],
@@ -59,11 +58,6 @@ const GLOBAL_SCOPE_TABLES: ScopeTableConfig[] = [
     blacklistedColumns: [],
     description:
       'Available skills (plugins, MCP servers, built-ins) with config, enablement, and validation status.',
-  },
-  {
-    tableName: 'inbox_items',
-    blacklistedColumns: COLUMN_BLACKLISTS.inbox_items,
-    description: 'Incoming GitHub events (issues, comments, PRs) routed through the inbox system.',
   },
   {
     tableName: 'job_queue',
