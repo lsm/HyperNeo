@@ -91,6 +91,21 @@ describe('Neo and daemon sends say what they are', () => {
     }
   );
 
+  test('a send cannot be both a notice and a todo', async () => {
+    const { registry, delivered } = fixture();
+    const reply = await invokeOperation(
+      registry,
+      'work.send',
+      { ref, message: 'Hi', todoId: 'open-todo', notice: true },
+      neo
+    );
+    expect(reply).toMatchObject({
+      kind: 'completed',
+      value: { ok: false, reason: 'todo_required', notSent: true },
+    });
+    expect(delivered).toEqual([]);
+  });
+
   test('a daemon send is recorded with its todo and its delivery outcome', async () => {
     const accepted: unknown[] = [];
     const outcomes: unknown[] = [];
