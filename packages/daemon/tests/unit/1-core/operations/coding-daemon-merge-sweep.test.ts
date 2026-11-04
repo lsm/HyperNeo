@@ -282,7 +282,8 @@ describe('daemon merge sweep behavior', () => {
         };
       };
       const run = sweep(noRequired, {
-        tell: async (_owner, _key, text) => {
+        tell: async (_owner, _key, text, pr) => {
+          expect(text).toContain(pr);
           notices.push(text);
           return true;
         },
