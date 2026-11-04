@@ -1,3 +1,8 @@
+import {
+  countGitHubSpacesWithPollingIntent,
+  listGitHubPollingRepos,
+  listGitHubPollingConfiguredRepos,
+} from '../../../storage/repositories/github-polling-repos-read.ts';
 import { upsertGitHubWatchedRepo } from '../../../storage/repositories/github-watched-upsert-persist.ts';
 import { persistGitHubPollCursorJson } from '../../../storage/repositories/github-cursor-persist.ts';
 import {
@@ -170,14 +175,7 @@ export class GitHubEventExtensionRepository {
   }
 
   countSpacesWithPollingIntent(): number {
-    const row = this.db
-      .prepare(
-        `SELECT COUNT(*) AS count FROM space_github_source_settings s
-         JOIN spaces sp ON sp.id = s.space_id
-         WHERE s.polling_intent = 1`
-      )
-      .get() as { count: number } | undefined;
-    return row?.count ?? 0;
+    return countGitHubSpacesWithPollingIntent(this.db);
   }
 
   countAllAutoRegisteredHookRefs(): number {
@@ -218,39 +216,11 @@ export class GitHubEventExtensionRepository {
   }
 
   listPollingRepos(spaceId?: string): GitHubWatchedRepo[] {
-    const rows = spaceId
-      ? (this.db
-          .prepare(
-            `SELECT * FROM space_github_watched_repos WHERE space_id = ? AND enabled = 1 AND polling_enabled = 1 ORDER BY owner, repo`
-          )
-          .all(spaceId) as Record<string, unknown>[])
-      : (this.db
-          .prepare(
-            `SELECT * FROM space_github_watched_repos WHERE enabled = 1 AND polling_enabled = 1 ORDER BY space_id, owner, repo`
-          )
-          .all() as Record<string, unknown>[]);
-    return rows.map((r) => this.rowToRepo(r));
+    return listGitHubPollingRepos(this.db, spaceId);
   }
 
   listAllPollingConfiguredRepos(spaceId?: string): GitHubWatchedRepo[] {
-    const rows = spaceId
-      ? (this.db
-          .prepare(
-            `SELECT r.* FROM space_github_watched_repos r
-             JOIN spaces sp ON sp.id = r.space_id
-             WHERE r.space_id = ? AND r.polling_enabled = 1
-             ORDER BY r.owner, r.repo`
-          )
-          .all(spaceId) as Record<string, unknown>[])
-      : (this.db
-          .prepare(
-            `SELECT r.* FROM space_github_watched_repos r
-             JOIN spaces sp ON sp.id = r.space_id
-             WHERE r.polling_enabled = 1
-             ORDER BY r.space_id, r.owner, r.repo`
-          )
-          .all() as Record<string, unknown>[]);
-    return rows.map((r) => this.rowToRepo(r));
+    return listGitHubPollingConfiguredRepos(this.db, spaceId);
   }
 
   getWatchedRepo(spaceId: string, owner: string, repo: string): GitHubWatchedRepo | null {

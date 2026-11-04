@@ -14,6 +14,7 @@ try {
   assert(existsSync(file), 'Constructor-free GitHub polling reads are unavailable');
   const { countGitHubSpacesWithPollingIntent, listGitHubPollingRepos, listGitHubPollingConfiguredRepos } = await import(file.href);
   const { Database } = await import('../../../packages/daemon/src/storage/sqlite-compat.ts');
+  const { SESSION_EVENT_SCOPE } = await import('../../../packages/daemon/src/lib/external-events/session-external-event-store.ts');
   const { createWatchedTable, insertWatchedRow } = await import('../../../packages/daemon/tests/unit/helpers/github-watched-read-fixture.ts');
   db = new Database(':memory:');
   db.exec("CREATE TABLE spaces(id TEXT PRIMARY KEY); INSERT INTO spaces VALUES('synthetic-space'); CREATE TABLE space_github_source_settings(space_id TEXT,enabled INTEGER,polling_intent INTEGER); INSERT INTO space_github_source_settings VALUES('synthetic-space',0,1),('orphan',1,1)");
@@ -21,16 +22,19 @@ try {
   insertWatchedRow(db, { id: 'active', owner: 'Z' });
   insertWatchedRow(db, { id: 'disabled', owner: 'A', enabled: 0 });
   insertWatchedRow(db, { id: 'orphan', space_id: 'orphan' });
+  insertWatchedRow(db, { id: 'session', space_id: SESSION_EVENT_SCOPE });
   const schema = db.prepare('SELECT name,sql FROM sqlite_master ORDER BY name').all();
   const rows = db.prepare('SELECT * FROM space_github_watched_repos ORDER BY id').all();
   db.exec('PRAGMA query_only=ON');
   assert.equal(countGitHubSpacesWithPollingIntent(db), 1);
-  assert.deepEqual(listGitHubPollingRepos(db).map(r => r.id), ['orphan', 'active']);
+  assert.deepEqual(listGitHubPollingRepos(db).map(r => r.id), ['orphan', 'session', 'active']);
   assert.deepEqual(listGitHubPollingConfiguredRepos(db).map(r => r.id), ['disabled', 'active']);
   assert.deepEqual(listGitHubPollingRepos(db, 'synthetic-space').map(r => r.id), ['active']);
   assert.deepEqual(listGitHubPollingRepos(db, ''), listGitHubPollingRepos(db));
   assert.deepEqual(listGitHubPollingConfiguredRepos(db, ''), listGitHubPollingConfiguredRepos(db));
   assert.deepEqual(listGitHubPollingConfiguredRepos(db, 'orphan'), []);
+  assert.deepEqual(listGitHubPollingRepos(db, SESSION_EVENT_SCOPE).map(r => r.id), ['session']);
+  assert.deepEqual(listGitHubPollingConfiguredRepos(db, SESSION_EVENT_SCOPE), []);
   assert.deepEqual(listGitHubPollingRepos(db, 'missing'), []);
   assert.deepEqual(db.prepare('SELECT * FROM space_github_watched_repos ORDER BY id').all(), rows);
   assert.deepEqual(db.prepare('SELECT name,sql FROM sqlite_master ORDER BY name').all(), schema);

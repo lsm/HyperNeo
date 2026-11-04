@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { vi } from 'vitest';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { SESSION_EVENT_SCOPE } from '../../../../src/lib/external-events/session-external-event-store';
 import {
   GitHubEventExtensionRepository,
   type GitHubWatchedRepo,
@@ -36,7 +41,7 @@ describe('GitHub polling query extraction', () => {
       ['not-polling', 'a-space', 1, 0, 'B'],
       ['other', 'z-space', 1, 1, 'A'],
       ['orphan', 'orphan-space', 1, 1, 'A'],
-      ['session', 'session-scope', 1, 1, 'A'],
+      ['session', SESSION_EVENT_SCOPE, 1, 1, 'A'],
     ] as const)
       insertWatchedRow(db, { id, space_id: space, owner, enabled, polling_enabled: polling });
     db.exec(
@@ -60,8 +65,30 @@ describe('GitHub polling query extraction', () => {
       'session',
       'other',
     ]);
-    expect(repo.listPollingRepos('session-scope').map((r) => r.id)).toEqual(['session']);
-    expect(repo.listAllPollingConfiguredRepos('session-scope')).toEqual([]);
+    expect(repo.listPollingRepos(SESSION_EVENT_SCOPE).map((r) => r.id)).toEqual(['session']);
+    expect(repo.listAllPollingConfiguredRepos(SESSION_EVENT_SCOPE)).toEqual([]);
+  });
+  test('extracted query bodies retain exact SQL ASTs within the fully counted boundary', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'polling-read-measure-'));
+    try {
+      const root = fileURLToPath(new URL('../../../../../../', import.meta.url));
+      const output = join(dir, 'measure.json');
+      execFileSync(
+        process.execPath,
+        ['.claude/skills/verify/lane-c-github-polling-read-measure.cjs', output],
+        { cwd: root }
+      );
+      expect(JSON.parse(readFileSync(output, 'utf8'))).toMatchObject({
+        fullOwnedGraphLines: 146,
+        excludedLines: 0,
+        netPrepare: 0,
+        netRun: 0,
+        completeHelper: { lines: 53 },
+        completeMapper: { lines: 44 },
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
   test('constructor-free helpers retain complete query-only rows and filter semantics', async () => {
     const r = await readers();
@@ -72,7 +99,7 @@ describe('GitHub polling query extraction', () => {
       throw new Error('Read must not initialize or read a clock');
     });
     expect(r.countGitHubSpacesWithPollingIntent(db)).toBe(2);
-    for (const space of [undefined, '', 'a-space', 'z-space', 'session-scope', 'missing']) {
+    for (const space of [undefined, '', 'a-space', 'z-space', SESSION_EVENT_SCOPE, 'missing']) {
       expect(r.listGitHubPollingRepos(db, space)).toEqual(repo.listPollingRepos(space));
       expect(r.listGitHubPollingConfiguredRepos(db, space)).toEqual(
         repo.listAllPollingConfiguredRepos(space)

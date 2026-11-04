@@ -32,10 +32,14 @@ node .claude/skills/verify/lane-c-github-polling-wiring-measure.cjs /absolute/me
 
 It verifies the seven approved full-module data hashes and records fresh owned
 units and unchanged interface roots. Interface roots are pinned, not audited.
-All twelve interface roots must remain byte-identical to the approved command
-base. Their measured total is 117, correcting the earlier 116 arithmetic without
-adding an excluded root. Actual drift needs a new coordinator decision; this
-measurement never grants itself an exclusion.
+The same twelve interface roots remain pinned. Their original total was 117,
+correcting the earlier 116 arithmetic. The three query methods now delegate to
+verbatim extracted SQL under #9645, so the refreshed interface total is 82.
+That extraction counts its complete helper/mapper/constructor graph separately
+at 146 lines with zero exclusions; no new data exclusion or root was added.
+Refresh the hash and interface contract together with its tests and remeasure
+the graph when deliberately changing an interface. Any further exclusion needs
+a coordinator decision; this measurement never grants one.
 
 Run the repository's full `bun run check` separately. The supplementary full
 TypeScript 6 solution audit is `bun node_modules/typescript/bin/tsc --build
