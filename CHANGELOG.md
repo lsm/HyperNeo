@@ -4,6 +4,32 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.54.0] - 2026-11-04
+
+### Before upgrading
+
+- WebSocket clients now require paired credentials (#9582). Pair every existing push relay **before upgrading** with `hyperneo pair --kind relay`; otherwise its pushes stop. Updating the daemon does not pair a relay automatically.
+
+### Neo and workers
+
+- Listen to the active composer's session and speak brief worker replies, while preserving Neo's explicit speech (#9638, #9563, #9554).
+- Invite paired Neo contacts and exchange text with them (#9612, #9619, #9625).
+- Report local worker-client health, reuse workers by resolved configuration and reconcile answers by exact input identity (#9550, #9522, #9235).
+- Preserve merge retry budgets while CI is pending; hand zero-check PRs to the human by default unless explicitly opted in (#9627, #9603).
+
+### Files and architecture
+
+- Keep file references live, recognize paths beside Chinese text, preserve question quotes and limit Open to worker sessions (#9566, #9644, #9541, #9636).
+- Separate Space extensions from daemon/web core and move GitHub polling decisions onto DB workers (#9578, #9580, #9584, #9608, #9656, #9658).
+- Upgrade Claude Agent SDK to 0.3.316 (#9552).
+
+### API compatibility
+
+- Compared with v0.53.0, phone-used operations have **0 breaking, 1 risky, 2 safe** changes. Seven phone push payloads gain their first recorded schemas; historical payload compatibility is not asserted.
+- Risky: `artifact.reference.resolve` adds `{accepted:false, reason:"client_upgrade_required", detail:string}`. Phone source checks `accepted` before decoding and treats unknown refusal reasons as `ArtifactRefused`; current file cards call `file.reference.read` instead.
+- Non-phone breaking: `artifact.file.register` is removed. `work.start` input `message` now has explicit `maxLength:100000`; the old source enforced a 20000-character body limit through a refinement, so this is not simply a shorter input limit. Neither operation is called by the audited phone sources.
+- Another non-phone risk: `work.read` can return `claude-desktop` and `copilot-cli` adapters. The full API report is included with release evidence.
+
 ## [0.53.0] - 2026-11-02
 
 ### Google connections

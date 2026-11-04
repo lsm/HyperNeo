@@ -17,6 +17,8 @@ The helper installs the binary in its fresh HOME/.local/bin, runs away from the
 checkout, binds ephemeral non-8399 ports and blocks credential/app discovery tools.
 It uses no real keys. The synthetic loopback provider credential is registered
 through RPC and retained only in the isolated database, never exported to the daemon.
+The RPC socket reads only the isolated data directory's owner credential; anonymous
+WebSockets are refused. The browser obtains its own loopback cookie from /ws.
 Real SDK download uses public npm. Pairing codes and client credentials stay in memory.
 
 steps.json and daemon.log must show installation version/hash, healthy exact-commit

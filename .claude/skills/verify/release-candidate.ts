@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
@@ -98,7 +99,7 @@ try {
     throw new Error(`${label} timed out`);
   };
   await wait('first start', async () => { try { return (await fetch(`http://127.0.0.1:${port}/neo`)).ok; } catch { return false; } });
-  socket = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  socket = createLocalSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise<void>((done, fail) => { socket!.onopen = () => done(); socket!.onerror = () => fail(new Error('WebSocket failed')); });
   const rpc = (method: string, data: unknown = {}) => new Promise<any>((done, fail) => {
     const id = crypto.randomUUID();
