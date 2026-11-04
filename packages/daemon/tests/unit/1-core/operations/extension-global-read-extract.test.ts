@@ -40,6 +40,8 @@ describe('Global extension configuration lookup extraction', () => {
         mainThreadMovementClaim: false,
         workerActivation: false,
         publicListCharacterized: true,
+        publicGetterNowReaderBacked: true,
+        publicMainReads: 0,
         suppliedConnectionAndRollbackPreserved: true,
         validationBeforeLookupPreserved: true,
       });

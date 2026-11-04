@@ -12,7 +12,8 @@ failure before constructing and registering the command. Its only argument is
 source data; it returns the complete cloneable configuration using the merged
 lookup and JSON modules. Self-check cached/new main SELECT traps and reject
 that SQL throughout direct reader jobs. Public list/write/health comparisons run
-with that trap disabled: the public getter is intentionally not wired here.
+with that trap disabled: this journey isolates the direct-command contract;
+the separate activation journey guards the public getter.
 
 Read valid nested/Unicode data, synthetic secret references, missing defaults,
 malformed/non-object JSON and independent sources. With a competing uncommitted
@@ -31,5 +32,6 @@ Construction does not activate the public getter or move constructor DDL.
 Keep evidence JSON, wrapper status, round-trip/clone bytes, loop/health/RSS/WAL
 metrics before cleanup. Internal queue/SQL timing is unexposed. Worker failures
 are synthetic error events, not OS kills; cancellation, GUI, live deployment and
-full startup/shutdown ownership are unverified. Public getter wiring follows
-only after this PR merges. Final #8714 remains incomplete.
+full startup/shutdown ownership are unverified. Public getter wiring now has its own guarded public-RPC journey
+`lane-c-extension-global-reader-activation.md`; this construction journey retains
+its narrower direct-command claim. Final #8714 remains incomplete.

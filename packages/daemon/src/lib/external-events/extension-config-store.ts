@@ -1,4 +1,4 @@
-import { lookupGlobalExtensionConfig } from '../../storage/repositories/global-extension-config-lookup.ts';
+import { globalExtensionConfigReads } from '../../storage/repositories/global-extension-config-read.ts';
 import { parseJsonRecord } from '../../storage/repositories/extension-config-json.ts';
 import { spaceExtensionConfigWrites } from '../../storage/repositories/space-extension-config-write.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
@@ -29,7 +29,7 @@ export class ExternalEventExtensionConfigStore
 
   async getGlobalConfig(source: string): Promise<ExternalEventExtensionConfig> {
     validateSourceId(source);
-    return lookupGlobalExtensionConfig(this.db, source);
+    return gatewayFor(this.db).run(globalExtensionConfigReads, { source });
   }
 
   async getSpaceConfig(
