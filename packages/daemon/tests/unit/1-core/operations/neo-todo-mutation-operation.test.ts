@@ -59,6 +59,7 @@ describe('Writer-backed todo operation activation', () => {
         },
         1
       );
+    store.updateTodo(store.getTodo('first')!, { startedAt: 1 }, 1);
     const stop = async () => {
       order.push('stop');
       duringStop();

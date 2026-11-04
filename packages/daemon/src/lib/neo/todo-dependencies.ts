@@ -9,21 +9,40 @@ import {
 } from '../work-queue/dependency-plan.ts';
 
 export function neoTodoDependencyNodes(todos: readonly NeoTodo[]): DependencyNode[] {
-  const live = todos.filter((todo) => todo.state !== 'removed');
-  return live.map((todo) => {
-    if (todo.dependsOn) return { id: todo.id, dependsOn: todo.dependsOn };
-    const previous = live
+  const replacement = (id: string, seen = new Set<string>()): string => {
+    const todo = todos.find((item) => item.id === id);
+    if (seen.has(id) || todo?.state !== 'removed' || !todo.replacedBy) return id;
+    seen.add(id);
+    return todos.some((item) => item.id === todo.replacedBy)
+      ? replacement(todo.replacedBy, seen)
+      : id;
+  };
+  return todos.map((todo) => {
+    if (todo.dependsOn)
+      return { id: todo.id, dependsOn: todo.dependsOn.map((id) => replacement(id)) };
+    const previous = todos
       .filter((other) => other.askId === todo.askId && other.position < todo.position)
       .sort((a, b) => b.position - a.position)[0];
-    return { id: todo.id, dependsOn: previous ? [previous.id] : [] };
+    return { id: todo.id, dependsOn: previous ? [replacement(previous.id)] : [] };
   });
 }
 
 export function neoTodoReady(todos: readonly NeoTodo[], todoId: string): boolean {
-  const states = new Map(todos.map((todo) => [todo.id, todo.state]));
   const node = neoTodoDependencyNodes(todos).find((item) => item.id === todoId);
-  return (node?.dependsOn ?? []).every((id) =>
-    ['done', 'closed_unverified', 'removed'].includes(states.get(id) ?? '')
+  return (node?.dependsOn ?? []).every((id) => {
+    const todo = todos.find((item) => item.id === id);
+    return (
+      todo?.state === 'done' || (todo?.state === 'closed_unverified' && todo.startedAt !== null)
+    );
+  });
+}
+
+export function neoTodoCancelledDependencies(todos: readonly NeoTodo[], todoId: string): NeoTodo[] {
+  const node = neoTodoDependencyNodes(todos).find((item) => item.id === todoId);
+  return todos.filter(
+    (todo) =>
+      node?.dependsOn?.includes(todo.id) &&
+      (todo.state === 'removed' || (todo.state === 'closed_unverified' && todo.startedAt === null))
   );
 }
 

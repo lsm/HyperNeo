@@ -258,17 +258,18 @@ describe('ordered ask progression from facts', () => {
     expect(f.starts).toHaveLength(1);
   });
 
-  test('an unverified close advances the recorded next step without calling it done', async () => {
+  test('an unverified close after work advances the recorded next step without calling it done', async () => {
     const f = fixture();
     f.add('first');
     f.add('next');
+    await f.runner.start('first');
     await f.runner.recompute(f.store.getTodo('first')!, {
       state: 'closed_unverified',
       reason: 'Outcome not checked',
     });
     expect(f.store.getTodo('first')?.state).toBe('closed_unverified');
     expect(f.store.getTodo('next')?.state).toBe('doing');
-    expect(f.starts).toHaveLength(1);
+    expect(f.starts).toHaveLength(2);
   });
 
   test.each(['done', 'closed_unverified'] as const)(
@@ -276,6 +277,8 @@ describe('ordered ask progression from facts', () => {
     async (state) => {
       const f = fixture();
       f.add('first', state);
+      if (state === 'closed_unverified')
+        f.store.updateTodo(f.store.getTodo('first')!, { startedAt: 1 }, 2);
       f.add('next');
       f.restart();
       await f.refresh();

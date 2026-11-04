@@ -243,10 +243,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       const asked = store.listQuestionsForAsks(ask.parentId ? [ask.parentId, ask.id] : [ask.id]);
       const family = store.listFamilyTodos(ask.id);
       if (
-        !family.some(
-          (todo) =>
-            todo.startedAt !== null || ['done', 'closed_unverified', 'removed'].includes(todo.state)
-        ) &&
+        !family.some((todo) => todo.startedAt !== null || todo.state === 'done') &&
         !asked.some((question) => question.kind === 'start' && question.state === 'answered')
       )
         return [];

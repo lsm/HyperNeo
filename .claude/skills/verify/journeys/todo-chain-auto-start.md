@@ -11,8 +11,9 @@ Independent start:false asks; explicit holds stop work. Real edits/additions rel
 Persist a done predecessor and checkless descendants, reseed the stale card, restart and refresh.
 Require retirement and one successor dispatch without a new predecessor write or checker.
 Run chain-edges and chain-check separately: a close RPC releases the sibling's legacy card without full refresh.
-Removed prerequisites and passing checks authorize dependents without a Start answer; unrelated independents still ask.
-Unit contracts cover implicit removal ordering. Run chain-parent: a real parent decision holds its child
+Passing checks authorize dependents without a Start answer; cancellation never does. chain-edges must observe one cancellation card, zero premature sends, then public approval makes the dependent independent and dispatches once.
+Run chain-cancel-implicit, chain-cancel-close, chain-cancel-replacement, and chain-cancel-decline separately through the same wrapper.
+Unit contracts cover explicit/implicit cancellation, middle-of-chain removal, prior approval, replacement, decline, close-before-start, and no duplicate cards. Run chain-parent: a real parent decision holds its child
 until a public human answer, then one dispatch; scope contracts keep sibling/unrelated linked questions local.
 Follow-through contracts require a fresh reminder interval after a human answer.
 Move independent work by editing its check to a sibling repository: only the destination card lists it; no dispatch.

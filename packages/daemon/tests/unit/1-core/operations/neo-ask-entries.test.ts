@@ -317,7 +317,13 @@ describe('projectNeoAskEntries todo order and done todos', () => {
       request: 'Sort the sidebar',
       createdAt: 1,
     });
-    const draft = { doneWhen: 'Merged', check: null, instruction: null, named: null };
+    const draft = {
+      doneWhen: 'Merged',
+      check: null,
+      instruction: null,
+      named: null,
+      dependsOn: [],
+    };
     states.forEach((state, index) => {
       const row = store.addTodo(`t${index}`, 'ask', { ...draft, title: `T${index}` }, 1);
       if (state !== 'todo')

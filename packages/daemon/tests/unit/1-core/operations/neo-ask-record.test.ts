@@ -422,6 +422,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
     });
     expect(stopped).toHaveLength(2);
     expect(store.getQuestion('q')?.state).toBe('retired');
+    expect(store.listQuestions(opened.ask.id).filter((q) => q.state === 'open')).toHaveLength(0);
     expect(store.listTodos(opened.ask.id).map((todo) => [todo.state, todo.reason])).toEqual([
       ['removed', 'The ask was settled dropped.'],
       ['removed', 'The ask was settled dropped.'],

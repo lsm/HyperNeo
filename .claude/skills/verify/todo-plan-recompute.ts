@@ -13,7 +13,7 @@ import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/r
 
 const [mode, directory] = process.argv.slice(2),
   run = resolve(directory);
-assert(['before', 'verify', 'chain-before', 'chain-verify', 'chain-edges', 'chain-parent', 'chain-check'].includes(mode));
+assert(['before', 'verify', 'chain-before', 'chain-verify', 'chain-edges', 'chain-parent', 'chain-check', 'chain-cancel-implicit', 'chain-cancel-close', 'chain-cancel-replacement', 'chain-cancel-decline'].includes(mode));
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -261,7 +261,7 @@ try {
       assert.equal(advanced.todos.find((t: { id: string }) => t.id === second.id).state, 'doing');
       assert.equal(starts(), 2);
       await refresh(); assert.equal(starts(), 2);
-    } else if (mode === 'chain-edges' || mode === 'chain-check') {
+    } else if (mode === 'chain-edges' || mode === 'chain-check' || mode.startsWith('chain-cancel-')) {
       const split = await call('neo.ask.open', { title: 'Split approved plan', request: 'Complete both repositories.', todos: [
         { ...step('split-first'), named: { repository: 'synthetic/first' }, start: true },
         { ...step('split-second'), named: { repository: 'synthetic/second' }, after: [0] },
@@ -280,31 +280,37 @@ try {
       await complete(second.title);
       const removed = await call('neo.ask.open', { title: 'Removed prerequisite', request: 'Complete the approved dependent.', todos: [
         { ...step('removed-first'), after: [] },
-        { ...step('removed-second'), after: [0] },
+        { ...step('removed-second'), ...(mode === 'chain-cancel-implicit' ? {} : { after: [0] }) },
         { ...step('removed-independent'), after: [] },
       ] });
       const [a, b, independent] = removed.todos;
-      await (mode === 'chain-check' ? complete(a.title) : call('neo.todo.remove', { todoId: a.id, reason: 'No longer needed.' }));
+      await (mode === 'chain-check' ? complete(a.title) : call(mode === 'chain-cancel-close' ? 'neo.todo.close' : 'neo.todo.remove', { todoId: a.id, reason: 'No longer needed.', ...(mode === 'chain-cancel-replacement' ? { replacedBy: independent.id } : {}) }));
       await refresh();
       const released = await read(b.askId);
       evidence.removed = released;
       assert.deepEqual(released.todos.filter((t: { id: string }) => t.id === a.id).map((t: { state: string; startedAt: number | null }) => [t.state, t.startedAt]), [[mode === 'chain-check' ? 'done' : 'removed', null]]);
-      if (mode === 'chain-edges') {
+      if (mode === 'chain-cancel-replacement') {
+        assert.equal(starts(), 2);
+        assert(!released.questions.some((q: { state: string; startTodos?: string[] }) => q.state === 'open' && q.startTodos?.includes(b.id)));
+        await complete(independent.title);
+      } else if (mode !== 'chain-check') {
         assert.equal(starts(), 2);
         const cancelled = released.questions.find((q: { state: string; startTodos?: string[] }) => q.state === 'open' && q.startTodos?.includes(b.id));
         assert(cancelled, 'cancelled prerequisites require a human decision');
         assert.match(cancelled.text, /removed-first.*cancelled|cancelled.*removed-first/);
         await refresh();
         assert.equal((await read(b.askId)).questions.filter((q: { state: string; startTodos?: string[] }) => q.state === 'open' && q.startTodos?.includes(b.id)).length, 1);
-        assert.equal((await rpc('neo.question.answer', { questionId: cancelled.id, answer: [b.id] })).ok, true);
+        assert.equal((await rpc('neo.question.answer', { questionId: cancelled.id, answer: mode === 'chain-cancel-decline' ? [] : [b.id] })).ok, true);
       }
       const approved = await read(b.askId);
       evidence.cancelledApproved = approved;
-      assert.equal(approved.todos.find((t: { id: string }) => t.id === b.id).state, 'doing');
-      assert.equal(released.todos.find((t: { id: string }) => t.id === independent.id).blockedBy, 'question');
-      assert.deepEqual(approved.questions.filter((q: { state: string }) => q.state === 'open').map((q: { startTodos: string[] }) => q.startTodos), [[independent.id]]);
-      assert.equal(starts(), 3);
-      await refresh(); assert.equal(starts(), 3);
+      const next = approved.todos.find((t: { id: string }) => t.id === b.id);
+      assert.equal(next.state, mode === 'chain-cancel-decline' ? 'removed' : 'doing');
+      if (mode !== 'chain-check' && mode !== 'chain-cancel-replacement' && mode !== 'chain-cancel-decline') assert.deepEqual(next.dependsOn, []);
+      assert.equal(approved.questions.filter((q: { state: string; startTodos?: string[] }) => q.state === 'open' && q.startTodos?.includes(b.id)).length, 0);
+      const expected = mode === 'chain-cancel-decline' ? 2 : 3;
+      assert.equal(starts(), expected);
+      await refresh(); assert.equal(starts(), expected);
     } else {
     const opened = await chain('approved');
     const [first, second, third] = opened.todos;

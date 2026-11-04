@@ -1,4 +1,7 @@
-import { neoTodoDependencyNodes } from '../../lib/neo/todo-dependencies.ts';
+import {
+  neoTodoCancelledDependencies,
+  neoTodoDependencyNodes,
+} from '../../lib/neo/todo-dependencies.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import { enqueueMailboxEntry } from '../../lib/mailbox/enqueue.ts';
 import { createMailboxEntry } from '../../lib/mailbox/entry.ts';
@@ -755,7 +758,8 @@ export class NeoAskTodoRepository {
     todo: NeoTodo,
     change: NeoTodoPatch,
     now: number,
-    claim = false
+    claim = false,
+    prune = true
   ): NeoTodo | null {
     if (!Object.keys(change).length) return this.getTodo(todo.id);
     const patch: NeoTodoPatch =
@@ -784,7 +788,7 @@ export class NeoAskTodoRepository {
         if (current.state !== 'todo' || current.instruction?.trim() || !current.check)
           new NeoTodoSessionRepository(this.db, this.changes).cancelCheckOnlyReminder(todo.id);
       }
-      if (result.changes && patch.state) this.pruneQuestions(todo.askId, now);
+      if (result.changes && patch.state && prune) this.pruneQuestions(todo.askId, now);
       return result.changes;
     })();
     if (!changed) return null;
@@ -970,13 +974,34 @@ export class NeoAskTodoRepository {
     );
     return new Set(
       family
-        .filter((todo) => todo.askId === askId && isStartable(todo) && independent.has(todo.id))
+        .filter(
+          (todo) =>
+            todo.askId === askId &&
+            ((isStartable(todo) && independent.has(todo.id)) ||
+              (todo.startedAt === null &&
+                !['done', 'closed_unverified', 'removed'].includes(todo.state) &&
+                neoTodoCancelledDependencies(family, todo.id).length > 0))
+        )
         .map((todo) => todo.id)
     );
   }
 
-  joinStartQuestion(todo: NeoTodo, now: number): boolean {
-    this.pruneQuestions(todo.askId, now);
+  private startQuestionText(ids: readonly string[], family: readonly NeoTodo[]): string {
+    return [
+      neoStartQuestionTitle(ids.map((id) => family.find((todo) => todo.id === id) ?? {})),
+      ...ids.flatMap((id) => {
+        const cancelled = neoTodoCancelledDependencies(family, id);
+        return cancelled.length
+          ? [
+              `Prerequisite ${cancelled.map((todo) => `"${todo.title}"`).join(', ')} was cancelled. Go ahead with "${family.find((todo) => todo.id === id)?.title}" independently? Select it to continue; leave it unticked to remove it.`,
+            ]
+          : [];
+      }),
+    ].join('\n');
+  }
+
+  joinStartQuestion(todo: NeoTodo, now: number, prune = true): boolean {
+    if (prune) this.pruneQuestions(todo.askId, now);
     const startable = this.startQuestionTodos(todo.askId);
     if (!startable.has(todo.id)) return false;
     const todos = this.listTodos(todo.askId);
@@ -984,12 +1009,10 @@ export class NeoAskTodoRepository {
       (question) => question.kind === 'start' && question.state === 'open'
     );
     const listed = (open?.startTodos ?? []).filter((id) =>
-      todos.some((item) => item.id === id && startable.has(item.id) && item.instruction)
+      todos.some((item) => item.id === id && startable.has(item.id))
     );
     const startTodos = [...new Set([...listed, todo.id])];
-    const text = neoStartQuestionTitle(
-      startTodos.map((id) => ({ title: todos.find((item) => item.id === id)?.title }))
-    );
+    const text = this.startQuestionText(startTodos, this.listFamilyTodos(todo.askId));
     if (open)
       this.extendStartQuestion(
         open.id,
@@ -1138,7 +1161,13 @@ export class NeoAskTodoRepository {
       }
       if (question.kind !== 'start' || question.state !== 'open' || !question.startTodos) continue;
       const kept = question.startTodos.filter((id) => startable.has(id));
-      if (kept.length === question.startTodos.length) continue;
+      if (
+        kept.length === question.startTodos.length &&
+        !kept.some((id) => neoTodoCancelledDependencies(this.listFamilyTodos(askId), id).length)
+      )
+        continue;
+      const text = this.startQuestionText(kept, this.listFamilyTodos(askId));
+      if (kept.length === question.startTodos.length && text === question.text) continue;
       if (!kept.length)
         this.db
           .prepare(
@@ -1149,18 +1178,22 @@ export class NeoAskTodoRepository {
       else
         this.db
           .prepare('UPDATE neo_questions SET start_todos = ?, text = ? WHERE id = ?')
-          .run(
-            JSON.stringify(kept),
-            neoStartQuestionTitle(
-              kept.map((id) => ({ title: todos.find((todo) => todo.id === id)?.title }))
-            ),
-            question.id
-          );
+          .run(JSON.stringify(kept), text, question.id);
       for (const id of question.startTodos.filter((id) => !kept.includes(id))) {
         const todo = this.getTodo(id);
         if (todo?.blockedBy === 'question') this.updateTodo(todo, {}, now);
       }
       this.questionsPruned?.();
+    }
+    if (this.getAsk(askId)?.status !== 'open') return;
+    for (const todo of todos.filter((item) => startable.has(item.id))) {
+      if (
+        !neoTodoCancelledDependencies(this.listFamilyTodos(askId), todo.id).length ||
+        this.listQuestions(askId).some((q) => q.state === 'open' && q.startTodos?.includes(todo.id))
+      )
+        continue;
+      this.joinStartQuestion(todo, now, false);
+      this.updateTodo(todo, { state: 'blocked', blockedBy: 'question' }, now);
     }
   }
 
@@ -1178,8 +1211,24 @@ export class NeoAskTodoRepository {
     );
     for (const id of question?.startTodos ?? []) {
       const todo = this.getTodo(id);
-      if (todo?.state === 'blocked' && todo.blockedBy === 'question' && !waiting.has(id))
-        this.updateTodo(
+      if (todo?.state === 'blocked' && todo.blockedBy === 'question' && !waiting.has(id)) {
+        if (ticked && neoTodoCancelledDependencies(this.listFamilyTodos(todo.askId), id).length) {
+          this.writeTodo(
+            todo,
+            ticked.includes(id)
+              ? { state: 'todo', dependsOn: [] }
+              : {
+                  state: 'removed',
+                  reason: 'The human declined after a prerequisite was cancelled.',
+                  finishedAt: now,
+                },
+            now,
+            false,
+            false
+          );
+          continue;
+        }
+        this.writeTodo(
           todo,
           ticked && !ticked.includes(id)
             ? {
@@ -1189,9 +1238,13 @@ export class NeoAskTodoRepository {
                 nextAction: 'The human releases it.',
               }
             : { state: 'todo' },
-          now
+          now,
+          false,
+          false
         );
+      }
     }
+    if (question) this.pruneQuestions(question.askId, now);
   }
 
   private changeQuestion(

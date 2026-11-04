@@ -98,6 +98,7 @@ describe('Atomic todo mutation commits', () => {
   });
 
   test('re-reads the current check instead of accepting a stale external completion', async () => {
+    store.updateTodo(store.getTodo('first')!, { startedAt: 1 }, 1);
     const previous = store.getTodo('first')!.check;
     store.updateTodo(
       store.getTodo('first')!,
@@ -137,6 +138,7 @@ describe('Atomic todo mutation commits', () => {
   });
 
   test('a passed current check completes and prunes the start card atomically', async () => {
+    store.updateTodo(store.getTodo('first')!, { startedAt: 1 }, 1);
     store.askQuestion(
       'start',
       'ask',

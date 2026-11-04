@@ -220,6 +220,7 @@ describe('neo.todo operations', () => {
       askId: 'ask',
       title: 'New',
       doneWhen: 'x',
+      after: [],
     });
     if (!old.ok || !next.ok) throw new Error('add failed');
     const removed = await call('neo.todo.remove', {
@@ -240,7 +241,7 @@ describe('neo.todo operations', () => {
   });
 
   test('closes a todo done with the reason and stops its session', async () => {
-    const { call, stopped } = setup();
+    const { call, repo, stopped } = setup();
     const added = await call('neo.todo.add', {
       check: pendingTodoCheck,
       askId: 'ask',
@@ -248,6 +249,7 @@ describe('neo.todo operations', () => {
       doneWhen: 'Merged',
     });
     if (!added.ok) throw new Error(added.reason);
+    repo.updateTodo(added.todo, { startedAt: 1 }, 1);
     const closed = await call('neo.todo.close', {
       todoId: added.todo.id,
       reason: 'Verified on device',
@@ -274,6 +276,7 @@ describe('neo.todo operations', () => {
       doneWhen: 'Merged',
     });
     if (!added.ok) throw new Error(added.reason);
+    repo.updateTodo(added.todo, { startedAt: 1 }, 1);
     const card = repo.askQuestion(
       'card-1',
       'ask',
@@ -313,6 +316,7 @@ describe('neo.todo operations', () => {
       doneWhen: 'Merged',
     });
     if (!added.ok) throw new Error(added.reason);
+    repo.updateTodo(added.todo, { startedAt: 1 }, 1);
     duringStop.value = (todo) => {
       repo.askQuestion(
         'card-late',
@@ -347,6 +351,7 @@ describe('neo.todo operations', () => {
       doneWhen: 'Merged',
     });
     if (!added.ok) throw new Error(added.reason);
+    repo.updateTodo(added.todo, { startedAt: 1 }, 1);
     const card = repo.askQuestion(
       'card-1',
       'ask',
@@ -381,6 +386,7 @@ describe('neo.todo operations', () => {
       doneWhen: 'Merged',
     });
     if (!added.ok) throw new Error(added.reason);
+    repo.updateTodo(added.todo, { startedAt: 1 }, 1);
     stopFails.value = true;
     expect(await call('neo.todo.close', { todoId: added.todo.id, reason: 'x' })).toEqual({
       ok: false,
@@ -463,6 +469,7 @@ describe('neo.todo operations', () => {
       askId: 'ask',
       title: 'Deploy',
       doneWhen: 'Live',
+      after: [],
       instruction: 'Deploy it',
       target,
     });

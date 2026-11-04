@@ -124,8 +124,8 @@ describe('one completion rule for Neo todos', () => {
     async (judged) => {
       const { db, store, states, runner, call } = setup(undefined, judged);
       db.prepare(
-        `INSERT INTO neo_todos (id, ask_id, position, title, done_when, check_json, state, created_at, updated_at)
-       VALUES ('t', 'ask', 0, 'Land both', 'Both merged', ?, 'doing', 1, 1)`
+        `INSERT INTO neo_todos (id, ask_id, position, title, done_when, check_json, state, started_at, created_at, updated_at)
+       VALUES ('t', 'ask', 0, 'Land both', 'Both merged', ?, 'doing', 1, 1, 1)`
       ).run(
         JSON.stringify({ pack: 'coding', kind: 'pr_opened', params: { urls: [url(1), url(2)] } })
       );
@@ -177,6 +177,7 @@ describe('one completion rule for Neo todos', () => {
       },
       1
     );
+    store.updateTodo(todo, { startedAt: 1 }, 1);
     states.set(2, 'CLOSED');
     const reason = '#2 closed without merging and no pull request replaced it';
     expect(await call('neo.todo.close', { todoId: todo.id, reason: 'done' })).toEqual({
@@ -201,6 +202,7 @@ describe('one completion rule for Neo todos', () => {
       { title: 'Deploy', doneWhen: 'Running', check: null, instruction: null, named: null },
       1
     );
+    store.updateTodo(todo, { startedAt: 1 }, 1);
     expect(await readNeoTodoCompletion([coding], todo)).toBeNull();
     expect(requireNeoTodoMayFinish({ todo }, null)).toEqual({ value: { todo } });
     expect(await call('neo.todo.close', { todoId: todo.id, reason: 'Running' })).toMatchObject({
@@ -242,6 +244,7 @@ describe('coding todo PR ownership through add and edit', () => {
         records: [expect.stringContaining('pr_merged_needs_urls:')],
       });
       if (!added.ok) throw new Error(added.reason);
+      store.updateTodo(added.todo, { startedAt: 1 }, 1);
       await runner.checkNow([added.todo.id], () => {});
       expect(store.getTodo(added.todo.id)?.state).not.toBe('done');
       expect(
@@ -374,6 +377,7 @@ describe('coding todo PR ownership through add and edit', () => {
     const { db, store, call, runner, states } = setup();
     try {
       store.addTodo('same', 'ask', draft([url(1)]), 1);
+      store.updateTodo(store.getTodo('same')!, { startedAt: 1 }, 1);
       const results = await Promise.all([
         call('neo.todo.edit', {
           todoId: 'same',
@@ -407,6 +411,7 @@ describe('coding todo PR ownership through add and edit', () => {
       const { db, store, call, runner, states } = setup();
       try {
         store.addTodo('same', 'ask', draft([url(1)]), 1);
+        if (path === 'close') store.updateTodo(store.getTodo('same')!, { startedAt: 1 }, 1);
         const pending =
           path === 'sweep'
             ? runner.checkNow(['same'], () => {})
@@ -451,6 +456,7 @@ describe('coding todo PR ownership through add and edit', () => {
     });
     try {
       store.addTodo('same', 'ask', draft([url(1)]), 1);
+      store.updateTodo(store.getTodo('same')!, { startedAt: 1 }, 1);
       const closing = call('neo.todo.close', { todoId: 'same', reason: 'First merged' });
       await stopping;
       expect(await call('neo.todo.edit', { todoId: 'same', addUrls: [url(2)] })).toMatchObject({
@@ -481,6 +487,8 @@ describe('coding todo PR ownership through add and edit', () => {
       });
       try {
         h.store.addTodo('same', 'ask', draft([url(1)]), 1);
+        if (name === 'neo.todo.close')
+          h.store.updateTodo(h.store.getTodo('same')!, { startedAt: 1 }, 1);
         expect(await h.call(name, { todoId: 'same', reason: 'Requested change' })).toMatchObject({
           ok: true,
           todo: {

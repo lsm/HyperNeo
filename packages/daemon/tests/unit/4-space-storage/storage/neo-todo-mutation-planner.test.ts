@@ -210,6 +210,7 @@ describe('Read-only todo mutation plans', () => {
   test.each(['edit', 'close'])(
     'a %s completion plan refuses an unanswered todo card',
     async (kind) => {
+      if (kind === 'close') store.updateTodo(store.getTodo('first')!, { startedAt: 1 }, 1);
       store.askQuestion(
         'reply',
         'ask',
@@ -237,6 +238,8 @@ describe('Read-only todo mutation plans', () => {
   );
 
   test('close and remove only propose their changes', async () => {
+    store.updateTodo(store.getTodo('first')!, { startedAt: 1 }, 1);
+    store.updateTodo(store.getTodo('peer')!, { dependsOn: [] }, 1);
     expect(await plan({ kind: 'close', todoId: 'first', reason: 'Finished' })).toMatchObject({
       ok: true,
       patch: { state: 'done' },
