@@ -23,7 +23,7 @@ Refuse admission and lose an actual completed read reply. Both errors propagate
 without main fallback or automatic retry; a later independent read recovers.
 
 Count the complete new command and unchanged query/JSON modules plus the two
-append-only registry lines and one smoke line; no data exclusions or shared/core
+append-only registry lines and one smoke line: 67 owned lines, no data exclusions or shared/core
 change beyond those registrations. Pin their full hashes and the untouched
 public getter/caller/framework roots, without claiming full transitive closure.
 Construction does not activate the public getter or move constructor DDL.

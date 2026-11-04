@@ -27,6 +27,7 @@ with no exclusions. Keep it under 200 lines.
 
 Retain JSON, wrapper status and public latency/RSS/WAL evidence before cleanup.
 No worker fault, queue/clone timings, GUI, real provider, live deployment or full
-boot/drain proof is claimed. Build the reader command and activate it only in
-later gated PRs. Constructor DDL and all config reads remain on main here;
+boot/drain proof is claimed. The reader command is constructed separately by
+`lane-c-extension-global-reader-command.md`; public getter activation remains
+a later gated PR. Constructor DDL and public config reads remain on main here;
 final #8714 stays open.
