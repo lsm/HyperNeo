@@ -12,7 +12,7 @@ const original = readFileSync(
   new URL('./fixtures/deno-health-inline.txt', import.meta.url),
   'utf8'
 );
-const extracted = join(root, 'scripts/deno-health-probe.mjs');
+const extracted = join(root, 'packages/daemon/scripts/deno-health-probe.mjs');
 
 describe('extracted authenticated health probe', () => {
   test('preserves the inline program with formatting as the only change', () => {
@@ -148,7 +148,7 @@ describe('extracted authenticated health probe', () => {
       '-A',
       '--config',
       '/synthetic repo/packages/daemon/deno.json',
-      '/synthetic repo/scripts/deno-health-probe.mjs',
+      '/synthetic repo/packages/daemon/scripts/deno-health-probe.mjs',
     ]);
   });
 });
