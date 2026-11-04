@@ -72,4 +72,25 @@ bash "$PROOFS/proof-run.sh" "$EVIDENCE/job-requeue-writer" "$PROOFS/job-requeue-
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/task-schedule-delete-writer" "$PROOFS/task-schedule-delete-writer.ts" verify
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/task-schedule-pause-writer" "$PROOFS/task-schedule-pause-writer.ts" verify
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/workflow-options-contract" "$PROOFS/workflow-options-contract.ts" verify
-echo 'Bun native smoke: registered batches passed (63 legacy helpers, 87 proof cases)'
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-pairing-approve" "$PROOFS/lane-c-pairing-approve.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-pairing-redeem" "$PROOFS/lane-c-pairing-redeem.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-pairing-code-create" "$PROOFS/lane-c-pairing-code-create.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-pairing-revoke-command" "$PROOFS/lane-c-pairing-revoke-command.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-connected-device-observer" "$PROOFS/lane-c-connected-device-observer.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-pairing-revoke-activation" "$PROOFS/lane-c-pairing-revoke-activation.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-human-reset-command" "$PROOFS/lane-c-human-reset-command.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-conversation-reservation-extract" "$PROOFS/lane-c-conversation-reservation-extract.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-human-reset-receipts" "$PROOFS/lane-c-human-reset-receipts.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-human-reset-coordinator" "$PROOFS/lane-c-human-reset-coordinator.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-human-reset-activation" "$PROOFS/lane-c-human-reset-activation.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-workspace-remove" "$PROOFS/lane-c-workspace-remove.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-workspace-upsert" "$PROOFS/lane-c-workspace-upsert.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-workspace-add" "$PROOFS/lane-c-workspace-add.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-artifact-identity-extract" "$PROOFS/lane-c-artifact-identity-extract.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-artifact-identity-command" "$PROOFS/lane-c-artifact-identity-command.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/retire-local-register" "$PROOFS/retire-local-register.ts" verify
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-artifact-reference-identity" "$PROOFS/lane-c-artifact-reference-identity.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-artifact-git-identity" "$PROOFS/lane-c-artifact-git-identity.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-artifact-row-command" "$PROOFS/lane-c-artifact-row-command.ts"
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-artifact-git-row" "$PROOFS/lane-c-artifact-git-row.ts"
+echo 'Bun native smoke: registered batches passed (84 legacy helpers, 108 proof cases)'
