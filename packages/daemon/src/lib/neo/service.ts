@@ -919,7 +919,12 @@ export class NeoService {
         text,
         Date.now()
       );
-      await this.deliver(ref.id, key, text, root);
+      try {
+        await this.deliver(ref.id, key, text, root);
+      } catch (error) {
+        await inputs.recordOutcome(input, { failure: String(error) }, Date.now());
+        throw error;
+      }
       await inputs.recordOutcome(input, { ref }, Date.now());
       return true;
     }

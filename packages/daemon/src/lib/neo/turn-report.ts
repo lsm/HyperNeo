@@ -12,6 +12,7 @@ type Turn = {
   senderMachine?: string;
   message: string;
   humanInput?: string;
+  notice?: boolean;
 };
 type Tell = NeoTodoRunnerDeps['tell'];
 
@@ -36,7 +37,8 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
       const focused = ask.focusedSession;
       const statusOnly =
         focused?.adapter === ref.adapter && focused.id === ref.id && focused.daemon === ref.daemon;
-      const context = `todo ${todo.id}, dispatch ${dispatchId}, status ${live?.status ?? 'unknown'}`;
+      const owner = turn.notice ? 'a notice, no todo' : `todo ${todo.id}`;
+      const context = `${owner}, dispatch ${dispatchId}, status ${live?.status ?? 'unknown'}`;
       if (turn.humanInput !== undefined)
         return `The human worked directly in ${ref.adapter}:${ref.id} (ask ${ask.title}, todo ${todo.id}).\n\nThe human said: ${turn.humanInput}\n\nThe worker replied: ${turn.message || 'worker ended its turn with no reply'}\n\nWorker status: ${live?.status ?? 'unknown'}${live?.waitingFor ? `; waiting for: ${live.waitingFor}` : ''}`;
       const prefix = statusOnly
@@ -46,7 +48,7 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
         prefix,
         live?.waitingFor ? `Waiting for: ${live.waitingFor}` : '',
         turn.message || 'worker ended its turn with no reply',
-        !statusOnly && todo.blockedBy === 'needs-human'
+        !statusOnly && !turn.notice && todo.blockedBy === 'needs-human'
           ? 'If you can answer this, reply to the worker and continue the todo; if only the human can decide, ask them with neo.question.ask (yesno or choice with options) linked to this todo.'
           : '',
       ]

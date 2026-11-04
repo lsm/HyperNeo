@@ -158,9 +158,10 @@ export class CodingTodoPrRepository {
             AND json_extract(s.ref, '$.daemon') IS ?`
       )
       .all(ref.adapter, ref.id, ref.daemon ?? null) as { todoId: string; prs: string }[];
-    return rows.find((row) =>
+    const holders = rows.filter((row) =>
       (JSON.parse(row.prs) as NeoWorkPr[]).some((pr) => codingPrKey(pr.url) === key)
-    )?.todoId;
+    );
+    return holders.length === 1 ? holders[0].todoId : undefined;
   }
 
   readHolder(url: string, ref: WorkRef): Promise<string | undefined> {

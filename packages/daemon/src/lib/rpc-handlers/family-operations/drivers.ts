@@ -617,7 +617,12 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       const store = new NeoAskTodoRepository(db());
       const todo = store.getTodo(todoId);
       const ask = todo ? store.getAsk(todo.askId) : null;
-      return ask?.status === 'open' && ask.sessionId === sessionId;
+      return (
+        !!todo &&
+        ['todo', 'doing', 'blocked'].includes(todo.state) &&
+        ask?.status === 'open' &&
+        ask.sessionId === sessionId
+      );
     },
     sendInputs: {
       accept: (input, from) =>

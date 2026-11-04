@@ -110,7 +110,7 @@ export function createNeoQuestionAnswerDelivery(
           const result = await invoke(caller, 'work.send', {
             ref,
             message: text,
-            ...(route.todoId ? { todoId: route.todoId } : { notice: true }),
+            todoId: route.todoId,
           });
           const value = result.kind === 'completed' ? result.value : null;
           const sent = Sent.safeParse(value);

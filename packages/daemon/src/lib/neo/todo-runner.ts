@@ -735,14 +735,15 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         })) as ReturnType<InstanceType<typeof neoTodoRunnerWrites.Repository>['blocker']>;
         if (receipt.changed) deps.changed();
       }
-      if (dispatch && (!('todoId' in dispatch) || dispatch.todoId === id))
+      const notice = dispatch && 'todoId' in dispatch && dispatch.todoId === null;
+      if (dispatch && (notice || !('todoId' in dispatch) || dispatch.todoId === id))
         await deliverNeoTurnReport(
           ask,
           store.getTodo(todo.id) ?? todo,
           dispatch.id,
           ref,
           readDriverLive(outcome),
-          turn,
+          notice ? { ...turn, notice } : turn,
           deps.tell,
           sessions.turnReports
         );
