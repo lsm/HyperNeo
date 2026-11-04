@@ -58,6 +58,13 @@ The retry-budget helper uses the real Neo mailbox with its processor stopped:
 after an explicit retry and another genuine three-failure stop, two distinct
 stopped reports must be queued for Neo. Repeated sweeps add neither duplicate
 report nor merge. This proves delivery acceptance, not model consumption.
+Add `ci-stopped-ready` for an owned, budget-exhausted PR whose CI later turns
+green. A fresh-gate read failure must send no ready cue. After every gate passes,
+the real Neo mailbox must receive one actionable `neo.coding.merge.retry` cue,
+including after pack recreation. The stopped budget remains closed until Neo
+acknowledges it; the worker receives no manual-merge instruction. That explicit
+acknowledgement then permits exactly one daemon merge. Earlier stop delivery is
+not treated as notice of the later green transition.
 When adding a Neo operation, also run `tests/unit/1-core/operations/neo.test.ts`
 with the shared isolated unit setup. Its advertised-tool catalog must include the
 new tool while retaining the existing bound-session authorization assertions.

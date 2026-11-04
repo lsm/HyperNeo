@@ -33,6 +33,7 @@ failed attempts per head and tells Neo the last error; resolve it before reopeni
 After resolving a stopped report, Neo may call neo.coding.merge.retry with its URL
 and exact head. It accepts the report and reopens the budget only after every fresh
 merge gate passes, preserves historical failures, and leaves merging to the daemon.
+When a stopped PR later passes fresh gates, Neo receives a new ready cue; it does not reopen the budget itself.
 Retry-limit reports remain pending until Neo accepts them, even if the PR closes
 or repository policy changes. Human policy and sign-off still require the human. With zero required checks and no configured review-bot gate, work is handed to the human for manual merge, including owner-execution repositories. Never ask workers to merge these PRs. Only the exact repository setting `allowNoChecksMerge:true` opts into zero-check merging; its default is false and global values do not authorize it. Human handoff notices are published directly and do not complete pr_merged checks.
 When the human wants to merge a PR themselves, call neo.coding.merge.human with
