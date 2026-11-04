@@ -34,10 +34,11 @@ node .claude/skills/verify/lane-c-github-polling-wiring-measure.cjs /absolute/me
 
 It verifies the seven approved full-module data hashes and records fresh owned
 units and unchanged interface roots. Interface roots are pinned, not audited.
-The same twelve interface roots remain pinned. Their original total was 117,
+Eleven interface roots remain pinned after deleting the retired six-line timer
+helper under #9657; no replacement root or exclusion is added. Their original total was 117,
 correcting the earlier 116 arithmetic. The three query methods now delegate to
 verbatim extracted SQL under #9645, and the capability helpers gain the reader and effect queue under #9649, so the
-current interface total is 85.
+current interface total is 79 (previously 85 before that deletion).
 That extraction counts its complete helper/mapper/constructor graph separately
 at 146 lines with zero exclusions. The capability activation separately counts
 175 owned lines, the same 22 config bridge lines and one smoke registration
