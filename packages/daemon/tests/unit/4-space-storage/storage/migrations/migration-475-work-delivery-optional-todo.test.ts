@@ -57,6 +57,12 @@ describe('migration 475: optional todo on work delivery inputs', () => {
 
     expect(db.prepare('SELECT id FROM work_delivery_inputs').all()).toEqual([{ id: 'kept' }]);
     expect(
+      db
+        .prepare(`SELECT "notnull" AS required FROM pragma_table_info('work_delivery_inputs')
+          WHERE name = 'todo_id'`)
+        .get()
+    ).toEqual({ required: 1 });
+    expect(
       db.prepare(`SELECT 1 FROM sqlite_schema WHERE name = 'work_delivery_inputs_next'`).get()
     ).toBeNull();
   });
