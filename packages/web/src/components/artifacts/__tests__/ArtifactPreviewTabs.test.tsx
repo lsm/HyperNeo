@@ -127,6 +127,38 @@ describe('desktop preview file tabs', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps the session mounted behind a file tab, and Escape closes only the session', async () => {
+    const onClose = vi.fn();
+    render(
+      <ArtifactPreviewPanel
+        fileTabs
+        work={{ id: 'neo-preview-work-panel', showTab: true, count: 2 }}
+        session={{
+          id: 'session-1',
+          title: 'Work chat',
+          selected: true,
+          onSelect: () => {},
+          onClose,
+          children: <input aria-label="Session draft" />,
+        }}
+      />
+    );
+    fireEvent.input(screen.getByRole('textbox', { name: 'Session draft' }), {
+      target: { value: 'kept' },
+    });
+    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a' }, title('a')));
+    await screen.findByRole('heading', { name: 'Document a' });
+    const draft = screen.getByLabelText('Session draft') as HTMLInputElement;
+    expect(draft.value).toBe('kept');
+    expect(screen.getByRole('tab', { name: 'Work chat' }).getAttribute('aria-selected')).toBe(
+      'false'
+    );
+    act(() => artifactPreviewWorkspace.select(null));
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(artifactPreviewWorkspace.state.value.files.length).toBe(1);
+  });
+
   it('shows no strip or panel when Your work is the only tab', () => {
     render(
       <ArtifactPreviewPanel
