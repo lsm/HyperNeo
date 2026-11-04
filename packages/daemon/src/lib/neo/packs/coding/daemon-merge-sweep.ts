@@ -96,8 +96,8 @@ export function createCodingDaemonMergeSweep(
       failure.notifiedAt === null &&
       (await delivery
         .wake(
-          `coding-daemon-retry-limit:${url}:${head}`,
-          `Daemon merge stopped after ${failure.failures} failed attempts: ${url} head ${head}. Last error: ${failure.error}. Inspect GitHub and resolve the failure before manual action.`
+          `coding-daemon-retry-limit:${url}:${head}:${failure.startedAt}`,
+          `Daemon merge stopped after ${failure.failures} failed attempts: ${url} head ${head}. Last error: ${failure.error}. Resolve the failure, then use neo.coding.merge.retry on this exact head once fresh gates pass.`
         )
         .catch(() => false))
     )
@@ -114,6 +114,10 @@ export function createCodingDaemonMergeSweep(
     if (!pr.ok && error)
       await record({ ...receipt, kind: 'uncertain', at: receipt.startedAt, error });
     if (error) log.warn('Daemon merge held', { url: receipt.url, reason: error });
+    if (outcome.kind === 'not_ready') {
+      await record({ ...receipt, kind: 'void', at: receipt.startedAt });
+      return;
+    }
     if (outcome.kind === 'retry') {
       if (!error) log.warn('Daemon merge held', { url: receipt.url, reason: outcome.error });
       await record({ ...receipt, kind: 'failed', at: receipt.startedAt, error: outcome.error });

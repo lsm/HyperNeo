@@ -56,7 +56,7 @@ try {
   assert.equal((await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'repo', key: repo }, key: 'mergeBy', value: 'daemon' })).ok, true);
   assert.equal((await rpc('pack.preferences.get', { pack: 'coding', scope: { kind: 'repo', key: repo }, key: 'mergeBy' })).preference.value, 'daemon');
   const head = 'a'.repeat(40);
-  const facts = { ok: true as const, head, state: 'OPEN', draft: false, mergeable: 'MERGEABLE', requiredCi: { head, green: true, count: 1 }, threads: { head, unresolved: 0 }, reviews: [{ login: 'hyperneo-ai-test', head, state: 'APPROVED' }], files: ['src/app.ts'], labels: [] as string[] };
+  const facts = { ok: true as const, head, state: 'OPEN', draft: false, mergeable: 'MERGEABLE', passingCommitStatus: true, requiredCi: { head, green: true, count: 1 }, threads: { head, unresolved: 0 }, reviews: [{ login: 'hyperneo-ai-test', head, state: 'APPROVED' }], files: ['src/app.ts'], labels: [] as string[] };
   const decisions = {
     unowned: pack.decideMerge(facts, ledger.policy(repo)),
     owner: pack.decideMerge(facts, { ...ledger.policy(repo), mergeBy: 'owner' }),

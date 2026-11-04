@@ -44,3 +44,5 @@ file lists must keep signoff pending, covered by synthetic ledger unit tests.
 The pure gate fixtures record requiredCi.count=1 as well as their observed head
 and passing result. A missing count is unreadable under the zero-check policy;
 these synthetic nonzero fixtures must not rely on an omitted value being green.
+They also record passingCommitStatus=true: automatic admission requires GitHub's
+CLEAN/HAS_HOOKS status even when the required-check list is empty.

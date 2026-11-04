@@ -19,6 +19,7 @@ const facts = {
   state: 'OPEN',
   draft: false,
   mergeable: 'MERGEABLE',
+  passingCommitStatus: true,
   requiredCi: { head, green: true, count: 0 },
   threads: { head, unresolved: 0 },
   reviews: [],
