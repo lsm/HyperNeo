@@ -883,28 +883,30 @@ async function setupSpaceServices(
     detach: async (sessionId) => {
       await deps.db.detachSessionFromParent(sessionId);
     },
-    agentOwning: (sessionId) => {
-      const id = spaceAgentRepo.getBySessionId(sessionId)?.id;
-      return id ? longHorizonAgentRepo.getById(id) : null;
+    agents: {
+      agentOwning: (sessionId) => {
+        const id = spaceAgentRepo.getBySessionId(sessionId)?.id;
+        return id ? longHorizonAgentRepo.getById(id) : null;
+      },
+      listAgents: (spaceId) => longHorizonAgentRepo.listBySpaceId(spaceId),
+      nameAgent: nameClonedAgent,
+      createAgent: (params) => {
+        const agent = longHorizonAgentRepo.create(params);
+        const created = spaceAgentRepo.getById(agent.id);
+        if (created) {
+          deps.internalEventBus
+            .publish('spaceAgentV2.created', {
+              sessionId: `space:${agent.spaceId}`,
+              spaceId: agent.spaceId,
+              agent: created,
+            })
+            .catch(() => {});
+          void publishUnifiedAgentCreated(deps.internalEventBus, agent).catch(() => {});
+        }
+        return agent;
+      },
+      stampProvenance,
     },
-    listAgents: (spaceId) => longHorizonAgentRepo.listBySpaceId(spaceId),
-    nameAgent: nameClonedAgent,
-    createAgent: (params) => {
-      const agent = longHorizonAgentRepo.create(params);
-      const created = spaceAgentRepo.getById(agent.id);
-      if (created) {
-        deps.internalEventBus
-          .publish('spaceAgentV2.created', {
-            sessionId: `space:${agent.spaceId}`,
-            spaceId: agent.spaceId,
-            agent: created,
-          })
-          .catch(() => {});
-        void publishUnifiedAgentCreated(deps.internalEventBus, agent).catch(() => {});
-      }
-      return agent;
-    },
-    stampProvenance,
     ...cloneLifecycle,
   });
   spaceAgentV2Deps.resolveClones = resolveClones;

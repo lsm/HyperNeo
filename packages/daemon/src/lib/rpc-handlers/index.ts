@@ -77,7 +77,8 @@ import type { Config } from '../../config.ts';
 import type { Database } from '../../storage/database.ts';
 import type { ReactiveDatabase, TableChangeEvent } from '../../storage/reactive-database.ts';
 
-import { setupSessionHandlers } from './session-handlers.ts';
+import { createCloneLifecycleEffects, setupSessionHandlers } from './session-handlers.ts';
+import { createResolveClones } from '../session/clone-cascade.ts';
 import { setupMessageHandlers } from './message-handlers.ts';
 import { setupSystemHandlers } from './system-handlers.ts';
 import { setupAuthHandlers } from './auth-handlers.ts';
@@ -412,7 +413,18 @@ export async function setupRPCHandlers<SpaceServices = never>(
           ? { kind: 'resolved', sessionId, created: false }
           : { kind: 'unresolved', reason: 'Session not found' };
       },
-      resolveClones: space?.resolveClones,
+      resolveClones:
+        space?.resolveClones ??
+        createResolveClones({
+          listChildren: (parentId) => deps.db.listChildSessions(parentId),
+          detach: (sessionId) => deps.db.detachSessionFromParent(sessionId),
+          ...createCloneLifecycleEffects(
+            deps.sessionManager,
+            undefined,
+            deps.internalEventBus,
+            (id) => deps.db.getSession(id)
+          ),
+        }),
       listClones: (parentId) => deps.db.listChildSessions(parentId),
       primaryAgentFor: (sessionId) => space?.primaryAgentFor(sessionId) ?? null,
     }

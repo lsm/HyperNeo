@@ -129,12 +129,12 @@ function agentPrimarySessionRefusal(
 
 export function createCloneLifecycleEffects(
   sessionManager: Pick<SessionManager, 'archiveSessionResources' | 'deleteSessionResources'>,
-  spaceManager: SessionSpaceMembership,
+  spaceManager: SessionSpaceMembership | undefined,
   internalEventBus: Pick<InternalEventBus<DaemonInternalEventMap>, 'publish'>,
   getSession: (sessionId: string) => Session | null
 ): Pick<CloneCascadeDependencies, 'archiveChild' | 'deleteChild'> {
   const evict = async (sessionId: string, spaceId: string | undefined) => {
-    if (!spaceId) return;
+    if (!spaceId || !spaceManager) return;
     try {
       const space = await spaceManager.removeSession(spaceId, sessionId);
       await internalEventBus.publish('space.updated', { sessionId: 'global', spaceId, space });
