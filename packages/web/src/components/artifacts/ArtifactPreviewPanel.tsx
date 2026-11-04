@@ -1,4 +1,5 @@
 import { generateUUID } from '@hyperneo/shared/utils';
+import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { ArtifactFileMetadata } from '@hyperneo/shared/types/artifact-file';
 import { t } from '../../lib/i18n/index.ts';
@@ -21,6 +22,7 @@ import {
   artifactWorkTabId,
   artifactReferenceTabId,
   artifactReferencePanelId,
+  artifactSessionTabIds,
 } from './ArtifactPreviewTabs.tsx';
 
 const rememberMetadata = (metadata: ArtifactFileMetadata) =>
@@ -30,13 +32,22 @@ export function ArtifactPreviewPanel({
   markdownClass,
   fileTabs = false,
   work,
+  session,
   suspended = false,
   expansion,
   onAskFile,
 }: {
   markdownClass?: string;
   fileTabs?: boolean;
-  work?: { id: string; showTab: boolean; count: number };
+  work?: { id: string; showTab: boolean; count: number; onSelect?: () => void };
+  session?: {
+    id: string;
+    title: string;
+    selected: boolean;
+    onSelect: () => void;
+    onClose: () => void;
+    children: ComponentChildren;
+  };
   suspended?: boolean;
   expansion?: { expanded: boolean; toggle: () => void };
   onAskFile?: (path: string) => void;
@@ -61,10 +72,12 @@ export function ArtifactPreviewPanel({
       : top && isLiveReference(top)
         ? previewFileKey({ reference: top, title: '' })
         : null;
-  const workActive = tabbed && !!work && artifactPreviewWorkspace.state.value.open && !top;
-  const open = !!top || workActive;
+  const sessionActive = tabbed && !!session?.selected && !top;
+  const workActive =
+    tabbed && !!work && artifactPreviewWorkspace.state.value.open && !top && !sessionActive;
+  const open = !!top || workActive || sessionActive;
   const reference = tabbed && top?.kind === 'reference' && !isLiveReference(top) ? top : undefined;
-  const showWork = tabbed && work?.showTab;
+  const showWork = tabbed && work && (work.showTab || !!session);
   const focusEntry = workActive ? artifactWorkTabId : tabbed && selectedId ? open : stack[0];
   const dialog = useRef<HTMLDivElement>(null);
   const touch = useRef<{ x: number; y: number } | null>(null);
@@ -123,7 +136,7 @@ export function ArtifactPreviewPanel({
     dialog.current?.focus({ preventScroll: true });
   }, [focusEntry]);
 
-  if (!top && !workActive) return null;
+  if (!top && !workActive && !session) return null;
   return (
     <>
       <button
@@ -139,13 +152,15 @@ export function ArtifactPreviewPanel({
         style={suspended ? { display: 'none' } : undefined}
         role="dialog"
         aria-labelledby={
-          workActive
-            ? artifactWorkTabId
-            : reference
-              ? artifactReferenceTabId
-              : tabbed && selectedId
-                ? artifactTabIds(selectedId).tab
-                : 'artifact-preview-title'
+          sessionActive && session
+            ? artifactSessionTabIds(session.id).tab
+            : workActive
+              ? artifactWorkTabId
+              : reference
+                ? artifactReferenceTabId
+                : tabbed && selectedId
+                  ? artifactTabIds(selectedId).tab
+                  : 'artifact-preview-title'
         }
         aria-owns={workActive ? work?.id : undefined}
         tabIndex={-1}
@@ -266,7 +281,7 @@ export function ArtifactPreviewPanel({
             </svg>
           </button>
         )}
-        {tabbed && (selectedId || workActive || showWork || reference) && (
+        {tabbed && (selectedId || workActive || showWork || reference || session) && (
           <div class={`flex shrink-0 px-3 py-3 ${expansion ? 'pr-24' : 'pr-14'}`}>
             <ArtifactPreviewTabs
               files={files}
@@ -274,7 +289,23 @@ export function ArtifactPreviewPanel({
               reference={reference?.file?.path ?? reference?.reference}
               work={
                 showWork && work
-                  ? { id: work.id, count: work.count, selected: workActive }
+                  ? {
+                      id: work.id,
+                      count: work.count,
+                      selected: workActive,
+                      onSelect: work.onSelect,
+                    }
+                  : undefined
+              }
+              session={
+                tabbed && session
+                  ? {
+                      id: session.id,
+                      title: session.title,
+                      selected: sessionActive,
+                      onSelect: session.onSelect,
+                      onClose: session.onClose,
+                    }
                   : undefined
               }
             />
@@ -312,6 +343,16 @@ export function ArtifactPreviewPanel({
               )}
             </div>
           ))}
+        {sessionActive && session && (
+          <div
+            id={artifactSessionTabIds(session.id).panel}
+            role="tabpanel"
+            aria-labelledby={artifactSessionTabIds(session.id).tab}
+            class="flex min-h-0 flex-1 flex-col"
+          >
+            {session.children}
+          </div>
+        )}
         {!tabbed && top?.kind === 'artifact' ? (
           <ArtifactPreview
             key={stack.length}

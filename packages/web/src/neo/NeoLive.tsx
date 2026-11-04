@@ -137,11 +137,14 @@ export function NeoLive() {
     setCardUnavailable(false);
   }, [scenesOpen]);
   const [chat, setChat] = useState<{ sessionId: string } | null>(null);
+  const [sessionFocus, setSessionFocus] = useState(true);
   const closeChat = useCallback(() => setChat(null), []);
-  const openSession = (link: string) =>
-    link.startsWith('/session/')
-      ? setChat({ sessionId: link.slice('/session/'.length) })
-      : window.open(link, '_blank', 'noopener');
+  const openSession = (link: string) => {
+    if (!link.startsWith('/session/')) return window.open(link, '_blank', 'noopener');
+    artifactPreviewWorkspace.select(null);
+    setSessionFocus(true);
+    setChat({ sessionId: link.slice('/session/'.length) });
+  };
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const dragDepth = useRef(0);
   const [draft, setDraft] = useState<string | undefined>(undefined);
@@ -287,19 +290,23 @@ export function NeoLive() {
   });
   const workCount = sceneGroups.reduce((total, group) => total + group.entries.length, 0);
   const columns = !!publicConversation;
+  const sessionTab = !!chat && columns && previewDesktop;
+  const chatOverlay = !!chat && !sessionTab;
   const previewOpen =
-    artifactPreviewStack.value.length > 0 || artifactPreviewWorkspace.state.value.open;
+    artifactPreviewStack.value.length > 0 ||
+    artifactPreviewWorkspace.state.value.open ||
+    sessionTab;
   const referenceWork =
     scenesOpen &&
     !roomy &&
     previewDesktop &&
     workReference?.kind === 'reference' &&
     workReference === artifactPreviewStack.value.at(-1);
-  const focusPreview = columns && !chat && previewDesktop && previewOpen && !referenceWork;
+  const focusPreview = columns && !chatOverlay && previewDesktop && previewOpen && !referenceWork;
   const previewTarget = artifactPreviewStack.value.at(-1);
   const previewCandidate = useNeoPreviewCandidate(
     neo.sessionId,
-    !chat && !referenceWork && previewTarget?.kind === 'artifact'
+    !chatOverlay && !referenceWork && previewTarget?.kind === 'artifact'
       ? previewTarget.artifactId
       : undefined
   );
@@ -360,7 +367,8 @@ export function NeoLive() {
       setPreviewSize(null);
     }
   }, [previewOpen, previewDesktop]);
-  const previewWork = focusPreview && artifactPreviewStack.value.length === 0;
+  const sessionSelected = sessionTab && sessionFocus && !previewTarget;
+  const previewWork = focusPreview && artifactPreviewStack.value.length === 0 && !sessionSelected;
   const workHidden = focusPreview && (!roomy || expanded) && !previewWork;
   useLayoutEffect(() => {
     if (!workHidden && sceneSheet.current) sceneSheet.current.scrollTop = workScrollTop.current;
@@ -376,7 +384,7 @@ export function NeoLive() {
   );
   const sheet = !!publicConversation && ((narrow && !focusPreview) || referenceWork);
   useNeoSheetSwipe({
-    enabled: sheet && !chat,
+    enabled: sheet && !chatOverlay,
     open: scenesOpen,
     setOpen: setScenesOpen,
     surface: shell,
@@ -459,7 +467,7 @@ export function NeoLive() {
       setRoomy(window.matchMedia('(min-width: 1440px)').matches);
       const previous = scroll.current;
       scroll.current =
-        columns && (desktop || (previewWidth && previewOpen && !chat && !referenceWork))
+        columns && (desktop || (previewWidth && previewOpen && !chatOverlay && !referenceWork))
           ? rail.current
           : mainScroll.current;
       if (nearBottom.current && scroll.current)
@@ -620,7 +628,7 @@ export function NeoLive() {
     <div
       ref={shell}
       style={expandable ? { '--neo-preview-width': `${previewWidth}%` } : undefined}
-      class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${columns ? ' neo-has-scenes' : ''}${chat ? ' neo-has-session' : ''}${sheet && scenesOpen ? ' neo-sheet-open' : ''}${focusPreview ? ' neo-preview-focus' : ''}${previewWork ? ' neo-preview-work' : ''}${expanded ? ' neo-preview-expanded' : ''}`}
+      class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${columns ? ' neo-has-scenes' : ''}${chatOverlay ? ' neo-has-session' : ''}${sheet && scenesOpen ? ' neo-sheet-open' : ''}${focusPreview ? ' neo-preview-focus' : ''}${previewWork ? ' neo-preview-work' : ''}${expanded ? ' neo-preview-expanded' : ''}`}
     >
       {dragging && (
         <div
@@ -924,8 +932,8 @@ export function NeoLive() {
             }
           }}
           aria-label={t('live.scenes')}
-          aria-hidden={(sheet && !scenesOpen) || chat ? true : undefined}
-          inert={(sheet && !scenesOpen) || !!chat}
+          aria-hidden={(sheet && !scenesOpen) || chatOverlay ? true : undefined}
+          inert={(sheet && !scenesOpen) || chatOverlay}
         >
           {sheet && (
             <div class="sticky top-0 z-10 -mx-5 mb-2 flex items-center justify-between bg-[var(--neo-background)] px-5 py-3">
@@ -1051,7 +1059,7 @@ export function NeoLive() {
             </Button>
           )}
         </div>
-        {chat && (
+        {chatOverlay && (
           <NeoSessionPane
             key={chat.sessionId}
             sessionId={chat.sessionId}
@@ -1152,7 +1160,7 @@ export function NeoLive() {
       <ArtifactPreviewPanel
         fileTabs
         onAskFile={
-          !chat && ready && recoveryReady && draftLoadState === 'ready'
+          !chatOverlay && ready && recoveryReady && draftLoadState === 'ready'
             ? (path) => {
                 const reference = framedDraft ? previewContext : undefined;
                 setRestoredPreview({ scope: neo.sessionId!, reference, pinned: true });
@@ -1167,13 +1175,36 @@ export function NeoLive() {
         expansion={
           expandable ? { expanded, toggle: () => setPreviewExpanded(!expanded) } : undefined
         }
-        suspended={!!chat || referenceWork}
+        suspended={chatOverlay || referenceWork}
         work={
           columns
             ? {
                 id: 'neo-preview-work-panel',
                 showTab: !roomy || previewWork || expanded,
                 count: workCount,
+                onSelect: () => setSessionFocus(false),
+              }
+            : undefined
+        }
+        session={
+          sessionTab && chat
+            ? {
+                id: chat.sessionId,
+                title: workerIdentity({ adapter: 'hyperneo', id: chat.sessionId }, null).label,
+                selected: sessionSelected,
+                onSelect: () => {
+                  setSessionFocus(true);
+                  artifactPreviewWorkspace.select(null);
+                },
+                onClose: closeChat,
+                children: (
+                  <NeoSessionPane
+                    sessionId={chat.sessionId}
+                    title={workerIdentity({ adapter: 'hyperneo', id: chat.sessionId }, null).label}
+                    overlay={false}
+                    onClose={closeChat}
+                  />
+                ),
               }
             : undefined
         }

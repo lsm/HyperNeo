@@ -9,6 +9,10 @@ export const artifactTabIds = (id: string) => ({
   panel: `artifact-panel-${id}`,
   title: `artifact-title-${id}`,
 });
+export const artifactSessionTabIds = (id: string) => ({
+  tab: `artifact-session-tab-${id}`,
+  panel: `artifact-session-panel-${id}`,
+});
 export const artifactWorkTabId = 'artifact-preview-work-tab';
 export const artifactReferenceTabId = 'artifact-preview-reference-tab';
 export const artifactReferencePanelId = 'artifact-preview-reference-panel';
@@ -17,11 +21,19 @@ export function ArtifactPreviewTabs({
   files,
   selectedId,
   work,
+  session,
   reference,
 }: {
   files: readonly PreviewWorkspaceFile[];
   selectedId: string | null;
-  work?: { id: string; count: number; selected: boolean };
+  work?: { id: string; count: number; selected: boolean; onSelect?: () => void };
+  session?: {
+    id: string;
+    title: string;
+    selected: boolean;
+    onSelect: () => void;
+    onClose: () => void;
+  };
   reference?: string;
 }) {
   const root = useRef<HTMLDivElement>(null);
@@ -38,7 +50,10 @@ export function ArtifactPreviewTabs({
     observer.observe(node);
     return () => observer.disconnect();
   }, []);
-  const budget = Math.max(0, available - 8 - (work ? 84 : 0) - (reference ? 180 : 0));
+  const budget = Math.max(
+    0,
+    available - 8 - (work ? 84 : 0) - (session ? 180 : 0) - (reference ? 180 : 0)
+  );
   const count =
     files.length * 92 > budget ? Math.max(1, Math.floor((budget - 40) / 92)) : files.length;
   const indices = files.slice(0, count).map((_, index) => index);
@@ -103,11 +118,14 @@ export function ArtifactPreviewTabs({
             id={artifactWorkTabId}
             aria-controls={work.id}
             aria-selected={work.selected}
-            tabIndex={work.selected || (!reference && !selectedId && !files.length) ? 0 : -1}
+            tabIndex={
+              work.selected || (!reference && !selectedId && !session && !files.length) ? 0 : -1
+            }
             class={`h-8 w-20 shrink-0 truncate rounded-full px-2 text-xs hover:bg-surface-raised hover:text-fg ${work.selected ? 'bg-surface-raised text-fg' : 'text-fg-muted'}`}
             onClick={() => {
               setMenuOpen(false);
               artifactPreviewWorkspace.select(null);
+              work.onSelect?.();
             }}
             onKeyDown={(event) => {
               const panel = document.getElementById(work.id);
@@ -119,6 +137,34 @@ export function ArtifactPreviewTabs({
           >
             {t('live.work')} · {work.count}
           </button>
+        )}
+        {session && (
+          <div
+            class={`group flex min-w-0 max-w-44 shrink-0 items-center rounded-full hover:bg-surface-raised hover:text-fg ${session.selected ? 'bg-surface-raised text-fg' : 'text-fg-muted'}`}
+          >
+            <button
+              type="button"
+              role="tab"
+              id={artifactSessionTabIds(session.id).tab}
+              aria-controls={artifactSessionTabIds(session.id).panel}
+              aria-selected={session.selected}
+              tabIndex={session.selected ? 0 : -1}
+              title={session.title}
+              class="min-w-0 flex-1 truncate rounded-full px-3 py-1.5 text-left text-xs"
+              onClick={session.onSelect}
+            >
+              {session.title}
+            </button>
+            <button
+              type="button"
+              aria-label={t('artifact.closeFile', { name: session.title })}
+              tabIndex={session.selected ? 0 : -1}
+              class={`mr-1 h-6 w-6 shrink-0 rounded-full text-xs hover:bg-fill-strong group-hover:opacity-100 group-focus-within:opacity-100 ${session.selected ? 'opacity-100' : 'opacity-0'}`}
+              onClick={session.onClose}
+            >
+              ×
+            </button>
+          </div>
         )}
         {shown.map((file) => (
           <div

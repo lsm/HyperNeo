@@ -185,6 +185,43 @@ describe('Neo desktop panes', () => {
     expect(within(list).getByRole('article', { name: 'Fictional proposal' })).toBeTruthy();
   });
 
+  it('opens a work chat as a preview tab beside Your work instead of taking the column', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches:
+        query === '(min-width: 720px)' ||
+        (query === '(min-width: 1120px)' && window.innerWidth >= 1120),
+    }));
+    const { container, model } = mount();
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [
+            testAskEntry('result', 'Fictional result', {
+              state: 'done',
+              doneCount: 1,
+              todos: [testTodo('result', { state: 'done', link: '/session/result-session' })],
+            }),
+          ],
+        },
+      };
+    });
+    fireEvent.click(
+      within(screen.getByRole('article', { name: 'Fictional result' })).getByRole('button', {
+        name: '全部 · 1',
+      })
+    );
+    fireEvent.click(screen.getByRole('button', { name: '打开 Todo result' }));
+    expect(container.querySelector('main [data-testid="neo-chat-panel"]')).toBeNull();
+    const tab = screen.getByRole('tab', { selected: true });
+    expect(tab.id).toBe('artifact-session-tab-result-session');
+    const panel = screen.getByRole('tabpanel', { name: tab.textContent ?? '' });
+    expect(within(panel).getByTestId('neo-chat-panel').dataset.sessionId).toBe('result-session');
+    fireEvent.click(screen.getByRole('button', { name: 'Close chat' }));
+    expect(screen.queryByTestId('neo-chat-panel')).toBeNull();
+  });
+
   it('uses the chat scroll owner only at the actual desktop boundary and preserves a reader position', () => {
     const { container, model } = mount();
     const main = container.querySelector('main')!;

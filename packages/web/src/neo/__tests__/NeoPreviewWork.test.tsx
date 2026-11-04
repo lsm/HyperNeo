@@ -282,7 +282,7 @@ describe('Neo preview Work layout', () => {
     ).toBe('false');
   });
 
-  it('retains expansion while worker chat temporarily suspends the workspace', async () => {
+  it('keeps an expanded preview while a worker chat opens as its tab', async () => {
     mount(false, true);
     await open('a');
     fireEvent.click(screen.getByRole('button', { name: 'Expand preview' }));
@@ -290,10 +290,12 @@ describe('Neo preview Work layout', () => {
     fireEvent.click(screen.getByRole('button', { name: 'All · 1', exact: true }));
     fireEvent.click(screen.getByRole('button', { name: 'Open Todo worker' }));
     expect(screen.queryByRole('dialog', { name: 'Existing task' })).toBeNull();
+    expect(screen.getByRole('tab', { selected: true }).id).toBe('artifact-session-tab-worker');
     expect(
-      screen.queryByRole('button', { name: /Expand preview|Restore side by side/ })
-    ).toBeNull();
+      screen.getByRole('button', { name: 'Restore side by side' }).getAttribute('aria-pressed')
+    ).toBe('true');
     fireEvent.click(screen.getByRole('button', { name: 'Close worker chat' }));
+    expect(screen.queryByRole('tab', { name: /artifact-session-tab/ })).toBeNull();
     expect(
       screen.getByRole('button', { name: 'Restore side by side' }).getAttribute('aria-pressed')
     ).toBe('true');
@@ -313,19 +315,17 @@ describe('Neo preview Work layout', () => {
     const chat = screen.getByRole('button', { name: 'Close worker chat' });
     chat.focus();
     expect(vi.mocked(history.back).mock.calls.length).toBe(backs);
-    expect(screen.queryByRole('dialog')).toBeNull();
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(artifactPreviewWorkspace.state.value.open).toBe(true);
-    fireEvent.popState(window);
-    expect(artifactPreviewWorkspace.state.value.open).toBe(true);
-    fireEvent.click(chat);
     expect(screen.getByRole('dialog')).toBe(preview);
+    expect(screen.getByRole('tab', { selected: true }).id).toBe('artifact-session-tab-worker');
     expect(pushed.mock.calls.length).toBe(opens);
-    expect(vi.mocked(history.back).mock.calls.length).toBe(backs);
-    expect(document.activeElement).not.toBe(preview);
+    fireEvent.click(screen.getByRole('tab', { name: 'Your work · 1' }));
     expect(screen.getByRole('tab', { name: 'Your work · 1' }).getAttribute('aria-selected')).toBe(
       'true'
     );
+    expect(artifactPreviewWorkspace.state.value.open).toBe(true);
+    fireEvent.click(chat);
+    expect(screen.queryByRole('tab', { name: /artifact-session-tab/ })).toBeNull();
+    expect(vi.mocked(history.back).mock.calls.length).toBe(backs);
     fireEvent.popState(window);
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
