@@ -90,7 +90,8 @@ test('the Codex worker sandbox keeps the shared worktrees root read-only', () =>
   expect(set.HYPERNEO_EVIDENCE.startsWith(join(dataDir, 'work', 'evidence'))).toBe(true);
   expect(set.HYPERNEO_BUILDS.startsWith(join(dataDir, 'work', 'builds'))).toBe(true);
   expect(set.TMPDIR.startsWith(join(dataDir, 'work', 'scratch'))).toBe(true);
-  for (const path of [set.HYPERNEO_EVIDENCE, set.HYPERNEO_BUILDS, set.TMPDIR, set.XDG_CACHE_HOME]) {
+  const evidenceRoot = join(dataDir, 'work', 'evidence');
+  for (const path of [evidenceRoot, set.HYPERNEO_BUILDS, set.TMPDIR, set.XDG_CACHE_HOME]) {
     expect(profile[path]).toBe('write');
   }
   expect(profile[set.HYPERNEO_WORKTREES]).not.toBe('write');
