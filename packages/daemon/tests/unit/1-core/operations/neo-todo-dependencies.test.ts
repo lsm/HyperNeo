@@ -615,6 +615,30 @@ describe('todo dependencies', () => {
     }
   });
 
+  test('closing a finished check-only step does not cancel it', async () => {
+    const { db, store, invoke, step, runner, work } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Finished check',
+        request: 'Check A, then D.',
+        todos: [step('A', []), { ...step('D', [0]), ...work }],
+      });
+      const [a, d] = opened.todos;
+      store.updateTodo(a, { state: 'done' }, Date.now());
+      await invoke('neo.todo.close', { todoId: a.id, reason: 'Already finished.' });
+      expect(store.getTodo(a.id)?.state).toBe('done');
+      expect(
+        store
+          .listQuestions(d.askId)
+          .filter((q) => q.state === 'open' && q.startTodos?.includes(d.id))
+      ).toHaveLength(0);
+      await runner.refresh(() => {});
+      expect(store.getTodo(d.id)?.blockedBy).not.toBe('question');
+    } finally {
+      db.close();
+    }
+  });
+
   const chainModes = [
     'approved',
     'legacy',
