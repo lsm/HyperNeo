@@ -517,7 +517,7 @@ describe('Neo preview Work layout', () => {
       'File a',
     ]);
     act(() => resize(1300));
-    expect(tabNames()).toEqual(['Your work · 1', 'File a', 'Second']);
+    expect(tabNames()).toEqual(['Your work · 1', 'File a', 'HyperNeo · second']);
   });
 
   it('carries the open session across the phone boundary', () => {

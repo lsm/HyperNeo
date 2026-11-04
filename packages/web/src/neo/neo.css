@@ -446,9 +446,6 @@
   .neo-public-layout.neo-has-scenes {
     --neo-chat-width: 58%;
   }
-  .neo-public-layout.neo-has-scenes.neo-has-session {
-    --neo-chat-width: 45%;
-  }
   .neo-public-layout .neo-chat-rail,
   .neo-public-layout .neo-composer-rail {
     width: 100%;

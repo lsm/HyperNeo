@@ -21,7 +21,8 @@ Phase `after` checks, at 1280px and 1600px: no tabs with only Your work; Open ad
 work plus the session; a typed draft survives switching tabs; opening the same session
 again adds no tab; closing the last tab removes the bar; a session and a preview share
 the strip and switch both ways. At 390px the session is full screen with no tabs and
-Back returns. Resizing 1280 → 390 → 1280 keeps the session open each way. It then runs
+Back returns. Resizing 1280 → 390 → 1280 keeps the session open each way, and with two
+session tabs the selected one stays on screen. It then runs
 `verifyOpenControls` at desktop and touch, so Open and leaving a session still work.
 
 Inspect the saved `after-*.png` and `after-phone-session.png`. Helpers that enter a

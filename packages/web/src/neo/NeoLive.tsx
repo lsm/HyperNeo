@@ -465,7 +465,8 @@ export function NeoLive() {
       const top = artifactPreviewStack.value.at(-1);
       if (top?.kind === 'session' && !(columns && previewWidth)) {
         setChat({ sessionId: top.sessionId });
-        artifactPreviewWorkspace.close(sessionTabKey(top.sessionId));
+        for (const { sessionId } of artifactPreviewWorkspace.state.value.files)
+          if (sessionId !== undefined) artifactPreviewWorkspace.close(sessionTabKey(sessionId));
       } else if (chat && columns && previewWidth) {
         openArtifactPreview(
           { kind: 'session', sessionId: chat.sessionId },

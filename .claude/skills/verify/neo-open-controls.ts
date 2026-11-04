@@ -32,6 +32,7 @@ try{
   {adapter:'claude-desktop',id:'claude-worker',name:'Claude worker',provider:'Claude',link:'claude://claude.ai/epitaxy/synthetic-open-check'},
   {adapter:'copilot-cli',id:'copilot-worker',name:'Copilot worker',provider:'Copilot',link:'ghapp://synthetic-open-check'},
   {adapter:'hyperneo',id:'local-worker',name:'Local worker',provider:'Anthropic',link:'/session/local-worker'},
+  {adapter:'hyperneo',id:'second-worker',name:'Second worker',provider:'Anthropic',link:'/session/second-worker'},
  ];
  const links=new NeoTodoSessionRepository(db);
  for(const source of sessions){

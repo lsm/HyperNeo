@@ -118,6 +118,17 @@ const after = async () => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.getByRole('tab', { name: /local.worker/i }).waitFor();
     observed.push({ resize: 'tab to overlay and back' });
+
+    await page.getByRole('tab', { name: /^Your work/ }).click();
+    await page.locator('[data-ask="open-second-worker"]:visible [data-ask-todo] button[aria-label^="Open "]').click();
+    await page.getByRole('tab', { name: /second.worker/i }).waitFor();
+    assert.equal((await tabNames(page)).length, 3);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.locator('.neo-session-pane').getByRole('heading', { name: /second.worker/i }).waitFor();
+    assert.deepEqual(await tabNames(page), []);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.getByRole('tab', { name: /second.worker/i }).waitFor();
+    observed.push({ resize: 'selected session survives with two session tabs' });
   });
 
   for (const [width, height, touch] of [[1280, 900, false], [390, 844, true]])
