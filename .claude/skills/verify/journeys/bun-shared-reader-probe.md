@@ -25,7 +25,9 @@ before a close error is not success. Inspect the proof log for background
 database-close errors.
 
 The schema initializer, body-copy wait and SQLite compatibility layer are
-existing dependencies, not new ownership or performance claims. This slice
-constructs the helper only; the Bun native entry point and required CI do not
-call it yet. Deno coverage and historical bindings stay unchanged. Registration,
-the remaining inline writer contracts and CI replacement follow separately.
+existing dependencies, not new ownership or performance claims. The Bun native
+entry point now calls this probe after its 141 legacy cases through proof-run.sh.
+Require final-probe failure to retain its status/evidence and withhold the runner
+success marker. Required CI wiring, the remaining inline writer contracts and
+CI replacement follow separately; Deno coverage and historical bindings stay
+unchanged.
