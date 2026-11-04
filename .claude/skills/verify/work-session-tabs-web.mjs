@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { verifyOpenControls } from './neo-open-controls-web.mjs';
 
 const fixture = JSON.parse(readFileSync(process.argv[2], 'utf8'));
 const { phase, run, url, artifactId } = fixture;
@@ -60,13 +61,13 @@ const after = async () => {
       await shot(page, `${width}-work-only`);
 
       await openWorker(page);
-      const session = page.getByRole('tab', { name: /Local worker/ });
+      const session = page.getByRole('tab', { name: /local.worker/i });
       await session.waitFor();
       let names = await tabNames(page);
       assert.match(names[0], /^Your work/);
       assert.equal(names.length, 2);
       assert.equal(await session.getAttribute('aria-selected'), 'true');
-      await page.locator('.neo-session-pane textarea').waitFor();
+      await page.getByText('Opening chat').waitFor({ state: 'detached' });
       await shot(page, `${width}-session-tab`);
 
       await page.locator('.neo-session-pane textarea').fill('Draft kept across tabs');
@@ -76,7 +77,7 @@ const after = async () => {
       assert.equal((await tabNames(page)).length, 2);
       assert.equal(await page.locator('.neo-session-pane textarea').inputValue(), 'Draft kept across tabs');
 
-      await page.getByRole('button', { name: /^Close .*Local worker/ }).click();
+      await page.getByRole('button', { name: /^Close .*local.worker/i }).click();
       await page.getByRole('tab').first().waitFor({ state: 'detached' });
       assert.deepEqual(await tabNames(page), []);
       await shot(page, `${width}-closed`);
@@ -89,7 +90,7 @@ const after = async () => {
       await shot(page, `${width}-session-and-preview`);
       await page.getByRole('tab', { name: 'Report' }).click();
       await page.getByRole('heading', { name: 'Synthetic report' }).waitFor();
-      await page.getByRole('tab', { name: /Local worker/ }).click();
+      await page.getByRole('tab', { name: /local.worker/i }).click();
       await page.locator('.neo-session-pane:visible').waitFor();
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       observed.push({ width, tabs: names });
@@ -115,9 +116,14 @@ const after = async () => {
     await page.getByRole('button', { name: 'Back to Neo', exact: true }).waitFor();
     assert.deepEqual(await tabNames(page), []);
     await page.setViewportSize({ width: 1280, height: 900 });
-    await page.getByRole('tab', { name: /Local worker/ }).waitFor();
+    await page.getByRole('tab', { name: /local.worker/i }).waitFor();
     observed.push({ resize: 'tab to overlay and back' });
   });
+
+  for (const [width, height, touch] of [[1280, 900, false], [390, 844, true]])
+    await scene(width, height, touch, async page => {
+      observed.push(await verifyOpenControls(page, fixture, { theme: 'light', touch, evidence }));
+    });
   return { passed: true };
 };
 

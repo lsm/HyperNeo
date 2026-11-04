@@ -65,7 +65,7 @@ describe('preview workspace navigation', () => {
     expect(artifactPreviewStack.value).toEqual([target('c')]);
     artifactPreviewWorkspace.close('c');
     expect(artifactPreviewWorkspace.state.value).toEqual({
-      open: true,
+      open: false,
       files: [],
       selectedId: null,
     });

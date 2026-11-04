@@ -269,7 +269,7 @@ describe('Neo artifact taps', () => {
               })
             )}
           />
-          <ArtifactPreviewPanel fileTabs work={{ id: 'work', showTab: true, count: 1 }} />
+          <ArtifactPreviewPanel fileTabs work={{ id: 'work', count: 1 }} />
         </>
       );
       if (!code) fireEvent.click(await screen.findByRole('button', { name: /more/i }));

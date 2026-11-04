@@ -282,7 +282,7 @@ describe('Neo preview Work layout', () => {
     ).toBe('false');
   });
 
-  it('retains expansion while worker chat temporarily suspends the workspace', async () => {
+  it('keeps expansion while a session tab opens and closes', async () => {
     mount(false, true);
     await open('a');
     fireEvent.click(screen.getByRole('button', { name: 'Expand preview' }));
@@ -290,16 +290,13 @@ describe('Neo preview Work layout', () => {
     fireEvent.click(screen.getByRole('button', { name: 'All · 1', exact: true }));
     fireEvent.click(screen.getByRole('button', { name: 'Open Todo worker' }));
     expect(screen.queryByRole('dialog', { name: 'Existing task' })).toBeNull();
-    expect(
-      screen.queryByRole('button', { name: /Expand preview|Restore side by side/ })
-    ).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Close worker chat' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close HyperNeo · worker' }));
     expect(
       screen.getByRole('button', { name: 'Restore side by side' }).getAttribute('aria-pressed')
     ).toBe('true');
   });
 
-  it('retains a Work workspace across worker chat without history cleanup or refocus', async () => {
+  it('reuses the open panel and its history entry for a session tab', async () => {
     mount(false, true);
     const pushed = vi.spyOn(history, 'pushState');
     await open('a');
@@ -310,22 +307,9 @@ describe('Neo preview Work layout', () => {
     fireEvent.click(screen.getByRole('button', { name: 'All · 1', exact: true }));
     fireEvent.click(screen.getByRole('button', { name: 'Open Todo worker' }));
     expect(screen.queryByRole('dialog', { name: 'Existing task' })).toBeNull();
-    const chat = screen.getByRole('button', { name: 'Close worker chat' });
-    chat.focus();
-    expect(vi.mocked(history.back).mock.calls.length).toBe(backs);
-    expect(screen.queryByRole('dialog')).toBeNull();
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(artifactPreviewWorkspace.state.value.open).toBe(true);
-    fireEvent.popState(window);
-    expect(artifactPreviewWorkspace.state.value.open).toBe(true);
-    fireEvent.click(chat);
     expect(screen.getByRole('dialog')).toBe(preview);
     expect(pushed.mock.calls.length).toBe(opens);
     expect(vi.mocked(history.back).mock.calls.length).toBe(backs);
-    expect(document.activeElement).not.toBe(preview);
-    expect(screen.getByRole('tab', { name: 'Your work · 1' }).getAttribute('aria-selected')).toBe(
-      'true'
-    );
     fireEvent.popState(window);
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
@@ -400,10 +384,7 @@ describe('Neo preview Work layout', () => {
             ([, { name, input }]) => name === 'artifact.file.read' && input.artifactId === 'a'
           )
         ).toHaveLength(1);
-      } else
-        expect(
-          screen.getByRole('tab', { name: 'Your work · 1' }).getAttribute('aria-selected')
-        ).toBe('true');
+      } else expect(screen.queryByRole('tab')).toBeNull();
     }
   );
 
@@ -434,7 +415,8 @@ describe('Neo preview Work layout', () => {
     work.scrollTop = 0;
     fireEvent.scroll(work);
     resize(1500);
-    await waitFor(() => expect(screen.queryByRole('tab', { name: /Your work/ })).toBeNull());
+    await waitFor(() => expect(work.hidden).toBe(false));
+    expect(screen.getByRole('tab', { name: /Your work/ })).toBeTruthy();
     expect(screen.getByRole('region', { name: 'Work scenes' })).toBe(work);
     expect(work.hidden).toBe(false);
     expect(work.scrollTop).toBe(73);
@@ -452,12 +434,12 @@ describe('Neo preview Work layout', () => {
     expect((draft as HTMLTextAreaElement).value).toBe('Keep this discussion draft');
   });
 
-  it('keeps Work available after closing the first active file and the last file', async () => {
+  it('falls back to Work after the first file and leaves no tabs after the last', async () => {
     viewport = 1500;
     mount();
     await open('a');
     await open('b');
-    expect(screen.queryByRole('tab', { name: /Your work/ })).toBeNull();
+    expect(screen.queryAllByRole('tab')[0].textContent).toBe('Your work · 1');
     fireEvent.click(screen.getByRole('tab', { name: 'File a' }));
     fireEvent.click(screen.getByRole('button', { name: 'Close File a' }));
     const work = await screen.findByRole('tab', { name: 'Your work · 1' });
@@ -467,13 +449,8 @@ describe('Neo preview Work layout', () => {
     expect(screen.getByRole('dialog').getAttribute('aria-owns')).toBe('neo-preview-work-panel');
     fireEvent.click(screen.getByRole('tab', { name: 'File b' }));
     fireEvent.click(screen.getByRole('button', { name: 'Close File b' }));
-    expect(screen.getByRole('tab', { name: 'Your work · 1' }).getAttribute('aria-selected')).toBe(
-      'true'
-    );
-    expect(screen.queryByRole('button', { name: 'Close Work' })).toBeNull();
-    expect(artifactPreviewWorkspace.state.value.files).toEqual([]);
-    fireEvent.click(screen.getByRole('button', { name: 'Close preview' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.queryByRole('tab')).toBeNull();
     expect(artifactPreviewWorkspace.state.value.open).toBe(false);
   });
 
@@ -499,7 +476,10 @@ describe('Neo preview Work layout', () => {
     expect(tabNames()).toHaveLength(3);
     fireEvent.click(screen.getByRole('button', { name: 'Close HyperNeo · worker' }));
     expect(tabNames()).toEqual(['Your work · 1', 'File a']);
-    expect(screen.getByRole('heading', { name: 'Document a' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Your work · 1' }).getAttribute('aria-selected')).toBe(
+      'true'
+    );
+    fireEvent.click(screen.getByRole('tab', { name: 'File a' }));
     fireEvent.click(screen.getByRole('button', { name: 'Close File a' }));
     await waitFor(() => expect(tabNames()).toEqual([]));
     expect(screen.queryByRole('dialog')).toBeNull();

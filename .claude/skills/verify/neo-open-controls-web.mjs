@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { leaveSession, sessionTitle } from './session-pane-web.mjs';
 
 export async function verifyOpenControls(page, fixture, { theme, touch = false, evidence }) {
   const use = control => touch ? control.tap() : control.click();
@@ -50,8 +51,8 @@ export async function verifyOpenControls(page, fixture, { theme, touch = false, 
   await page.evaluate(async()=>{await Promise.all(document.getAnimations().filter(a=>a.effect?.getComputedTiming().iterations!==Infinity).map(a=>a.finished));});
   await retired.screenshot({path:`${evidence}/${theme}-${touch?'touch':'desktop'}-${id}.png`,scale:'css'});
   await use(retainedOpen);
-  await page.locator('.neo-session-pane').getByRole('heading',{name:/Local worker/}).waitFor();
-  await use(page.locator('.neo-session-pane').getByRole('button',{name:'Back to Neo',exact:true}));
+  await sessionTitle(page, {name:/Local worker/}).waitFor();
+  await leaveSession(page);
   await retainedOpen.waitFor();
   const title=await retired.locator('h3').innerText();
   await use(retired.getByRole('button',{name:/^All · /}));
@@ -65,8 +66,8 @@ export async function verifyOpenControls(page, fixture, { theme, touch = false, 
   for(const control of [local.locator('[data-question-source] button'),local.locator('[data-ask-todo] button[aria-label^="Open "]')]) {
     await use(control);
     const pane=page.locator('.neo-session-pane');
-    await pane.getByRole('heading',{name:/Local worker/}).waitFor();
-    await use(pane.getByRole('button',{name:'Back to Neo',exact:true}));
+    await sessionTitle(page, {name:/Local worker/}).waitFor();
+    await leaveSession(page);
     await local.getByRole('button',{name:'Continue',exact:true}).waitFor();
   }
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));

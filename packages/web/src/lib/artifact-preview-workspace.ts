@@ -2,14 +2,20 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { ArtifactPreviewTarget } from './artifact-preview-store.ts';
 
 export type PreviewWorkspaceFile = { readonly title: string } & (
-  | { readonly artifactId: string; readonly reference?: never }
+  | { readonly artifactId: string; readonly reference?: never; readonly sessionId?: never }
   | {
       readonly reference: Extract<ArtifactPreviewTarget, { kind: 'reference' }>;
       readonly artifactId?: never;
+      readonly sessionId?: never;
     }
+  | { readonly sessionId: string; readonly artifactId?: never; readonly reference?: never }
 );
+export const sessionTabKey = (sessionId: string) => `session:${sessionId}`;
 export const previewFileKey = (file: PreviewWorkspaceFile): string =>
-  file.artifactId ?? `reference:${encodeURIComponent(JSON.stringify(file.reference))}`;
+  file.artifactId ??
+  (file.sessionId
+    ? sessionTabKey(file.sessionId)
+    : `reference:${encodeURIComponent(JSON.stringify(file.reference))}`);
 export type PreviewWorkspaceState = {
   readonly open: boolean;
   readonly files: readonly PreviewWorkspaceFile[];
@@ -81,6 +87,7 @@ function applyWorkspacePlan(
         : { open: true, files, selectedId: previewFileKey(plan.file) };
     }
     case 'close':
+      if (state.files.length === 1) return emptyWorkspace();
       return {
         ...state,
         files: state.files.filter((_, index) => index !== plan.index),

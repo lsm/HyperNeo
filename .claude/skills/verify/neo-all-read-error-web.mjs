@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { leaveSession, sessionTitle } from './session-pane-web.mjs';
 import { randomUUID } from 'node:crypto';
 
 export async function verifyAllReadError(page, fixture, { phase, evidence, touch = false }) {
@@ -39,11 +40,11 @@ export async function verifyAllSession(page, fixture, { phase, evidence, touch =
   await dialog.locator('[data-todo-state="done"]').nth(19).waitFor();
   await use(dialog.getByRole('button', { name: '5 done — show more', exact: true }));
   await use(dialog.getByRole('button', { name: 'Open Completed All step 25', exact: true }));
-  await page.locator('.neo-session-pane').getByRole('heading', { name: /Synthetic All worker/ }).waitFor();
+  await sessionTitle(page, { name: /Synthetic All worker/ }).waitFor();
   assert.equal(await dialog.count(), phase === 'before' ? 1 : 0);
   await page.evaluate(async () => Promise.all(document.getAnimations().filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity).map(animation => animation.finished)));
   await page.screenshot({ path: `${evidence}/${touch ? 'mobile' : 'desktop'}-all-session-${phase}.png`, scale: 'css' });
   if (phase === 'before') await use(dialog.getByRole('button', { name: 'Close modal', exact: true }));
-  await use(page.locator('.neo-session-pane').getByRole('button', { name: 'Back to Neo', exact: true }));
+  await leaveSession(page);
   return { touch, dialogRemainsOverSession: phase === 'before', sessionNavigation: true };
 }

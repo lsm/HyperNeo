@@ -184,7 +184,7 @@ describe('desktop preview file tabs', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close Report A' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(artifactPreviewWorkspace.state.value).toEqual({
-      open: true,
+      open: false,
       files: [],
       selectedId: null,
     });

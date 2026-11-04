@@ -20,6 +20,7 @@ export type ArtifactPreviewContext = { kind: 'todo' | 'ask'; id: string };
 
 export type ArtifactPreviewTarget =
   | { kind: 'artifact'; artifactId: string }
+  | { kind: 'session'; sessionId: string }
   | {
       kind: 'reference';
       source: ArtifactPreviewSource;
@@ -43,6 +44,12 @@ function writePreviewStack(stack: readonly ArtifactPreviewTarget[], title?: stri
         kind: 'open',
         file: { artifactId: top.artifactId, title: title ?? known?.title ?? '' },
       });
+    } else if (top.kind === 'session') {
+      const known = workspaceState.value.files.find((file) => file.sessionId === top.sessionId);
+      workspaceState.value = previewWorkspace.step(workspaceState.value, {
+        kind: 'open',
+        file: { sessionId: top.sessionId, title: title ?? known?.title ?? '' },
+      });
     } else if (isLiveReference(top)) {
       workspaceState.value = previewWorkspace.step(workspaceState.value, {
         kind: 'open',
@@ -53,6 +60,13 @@ function writePreviewStack(stack: readonly ArtifactPreviewTarget[], title?: stri
       });
     }
   });
+}
+
+function fileTarget(file: PreviewWorkspaceFile): ArtifactPreviewTarget {
+  if (file.reference) return file.reference;
+  return file.sessionId !== undefined
+    ? { kind: 'session', sessionId: file.sessionId }
+    : { kind: 'artifact', artifactId: file.artifactId };
 }
 
 function navigateWorkspace(event: PreviewWorkspaceEvent & { kind: 'select' | 'close' | 'update' }) {
@@ -66,9 +80,7 @@ function navigateWorkspace(event: PreviewWorkspaceEvent & { kind: 'select' | 'cl
       (event.kind === 'close' && before.selectedId !== after.selectedId)
     ) {
       const file = after.files.find((item) => previewFileKey(item) === after.selectedId);
-      artifactPreviewStack.value = file
-        ? [file.reference ?? { kind: 'artifact', artifactId: file.artifactId }]
-        : [];
+      artifactPreviewStack.value = file ? [fileTarget(file)] : [];
     }
   });
 }

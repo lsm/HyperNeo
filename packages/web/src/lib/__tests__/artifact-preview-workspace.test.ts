@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { artifactPreviewStack, previewWorkspace } from '../artifact-preview-store.ts';
+import { previewFileKey } from '../artifact-preview-workspace.ts';
 import type {
   PreviewWorkspaceEvent,
   PreviewWorkspaceState,
@@ -30,6 +31,16 @@ describe('previewWorkspace', () => {
     expect(ids(after)).toEqual(['snapshot-1', 'snapshot-2']);
     expect(after.selectedId).toBe('snapshot-2');
     expect(before.files).toEqual([file('snapshot-1', 'Report')]);
+  });
+
+  it('keeps a session tab apart from a file with the same id', () => {
+    const session = { sessionId: 'a', title: 'Worker' };
+    const state = previewWorkspace.step(open(previewWorkspace.empty(), 'a'), {
+      kind: 'open',
+      file: session,
+    });
+    expect(state.files).toHaveLength(2);
+    expect(state.selectedId).toBe(previewFileKey(session));
   });
 
   it('closes the active tab into its left predecessor, then Work, and empties on the last', () => {

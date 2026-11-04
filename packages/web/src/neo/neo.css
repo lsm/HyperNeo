@@ -486,18 +486,6 @@
     grid-column: 2;
     grid-row: 1;
   }
-  .neo-public-layout.neo-has-scenes.neo-has-session .neo-scene-list {
-    visibility: hidden;
-  }
-  .neo-public-layout.neo-has-scenes .neo-session-pane {
-    position: static;
-    grid-column: 2;
-    grid-row: 1;
-    min-width: 0;
-    min-height: 0;
-    height: 100%;
-    border-left: 1px solid var(--line);
-  }
   .neo-public-layout.neo-has-scenes .neo-composer-dock {
     width: var(--neo-chat-width);
     right: auto;
@@ -598,6 +586,13 @@
   box-shadow: 0 -8px 32px rgb(0 0 0 / 0.15);
   animation: artifact-sheet-enter 180ms ease-out;
 }
+.artifact-preview-panel .neo-session-pane {
+  position: static;
+  flex: 1;
+  min-height: 0;
+  background: transparent;
+  animation: none;
+}
 .artifact-preview-panel section > header {
   padding-right: 44px;
 }
@@ -664,9 +659,6 @@
   }
   .neo-has-scenes:has(> .artifact-preview-panel) > .neo-composer-dock {
     width: calc((100% - var(--artifact-preview-width)) * 0.58);
-  }
-  .neo-has-scenes.neo-has-session:has(> .artifact-preview-panel) > .neo-composer-dock {
-    width: calc((100% - var(--artifact-preview-width)) * 0.45);
   }
   .artifact-preview-panel {
     position: absolute;
