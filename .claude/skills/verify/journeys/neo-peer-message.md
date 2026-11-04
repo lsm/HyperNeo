@@ -15,6 +15,7 @@ the same request before and after simulated consumption: no second message.
 A scripted Neo consumes that exact system envelope and publishes a named
 explanation; read it through the real public publication reader. This is scripted
 Neo behavior, not a claim about real-model reasoning or natural-language intent.
+The consumed peer system input cannot authorize sending or contact management.
 Foreign fields cannot target sessions or approvals. After receiver removal,
 new delivery is refused. Existing pairing, vault-failure and owner-RPC boundary
 assertions still run. Both children must exit cleanly before wrapper cleanup.

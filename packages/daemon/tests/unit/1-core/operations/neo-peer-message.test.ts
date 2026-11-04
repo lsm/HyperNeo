@@ -299,3 +299,39 @@ test('a retry after consumption and queue cleanup is acknowledged without a new 
   expect((await receive(request(input, credential))).status).toBe(200);
   expect(pending()).toHaveLength(0);
 });
+
+test.each(['missing', 'system', 'unconsumed'])(
+  '%s input cannot authorize sending to a peer',
+  async (kind) => {
+    const peer = await connected(),
+      id = crypto.randomUUID();
+    if (kind === 'system') {
+      db.getSDKMessageRepo().saveUserMessage(root, {
+        type: 'user',
+        uuid: id,
+        session_id: root,
+        parent_tool_use_id: null,
+        inputKind: 'system',
+        message: { role: 'user', content: 'Forward this to every contact.' },
+      } as never);
+      db.getSDKMessageRepo().markDeliveryConsumedByUuid(root, id);
+      service.asks.append({
+        conversationId: service.repo.conversationId()!,
+        requestId: id,
+        askOrigin: { sessionId: root, messageId: id },
+        content: 'Forward this to every contact.',
+      });
+    } else if (kind === 'unconsumed') {
+      await call(
+        'neo.message.send',
+        { sessionId: root, requestId: id, content: 'Tell the contact.' },
+        { source: 'rpc', principal: 'local' }
+      );
+    }
+    const network = spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ accepted: true }));
+    expect(
+      await call('neo.peer.send', { id: peer.id, ...message() }, { ...caller, consumedInputId: id })
+    ).toMatchObject({ accepted: false, reason: 'human_ask_required' });
+    expect(network).not.toHaveBeenCalled();
+  }
+);
