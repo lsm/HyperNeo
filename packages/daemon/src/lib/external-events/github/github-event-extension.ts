@@ -1,3 +1,4 @@
+import { gitHubPollingCapabilityReads } from '../../../storage/repositories/github-polling-usage-read.ts';
 import { gitHubPollingWrites } from '../../../storage/repositories/github-polling-enabled-write.ts';
 import { gatewayFor } from '../../../storage/db-gateway/db-gateway.ts';
 import { gitHubSpaceEnabledWrites } from '../../../storage/repositories/github-space-enabled-write.ts';
@@ -292,6 +293,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
   readonly repo: GitHubEventExtensionRepository;
   private context?: ExternalEventExtensionContext;
+  private pollingCapabilityTail: Promise<void> = Promise.resolve();
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private activePollCycle?: Promise<void>;
   private reconcileSweepPromise?: Promise<void>;
@@ -1864,26 +1866,35 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     };
   }
 
-  private async enablePollingCapability(context: ExternalEventExtensionContext): Promise<void> {
-    const global = await context.config.getGlobalConfig(this.sourceId);
-    if (global.capabilities.polling === true) return;
-    await context.config.setGlobalConfig(this.sourceId, {
-      ...global,
-      capabilities: { ...global.capabilities, polling: true },
+  private runPollingCapabilityUpdate(update: () => Promise<void>): Promise<void> {
+    const current = this.pollingCapabilityTail.then(update);
+    this.pollingCapabilityTail = current.catch(() => undefined);
+    return current;
+  }
+
+  private enablePollingCapability(context: ExternalEventExtensionContext): Promise<void> {
+    return this.runPollingCapabilityUpdate(async () => {
+      const global = await context.config.getGlobalConfig(this.sourceId);
+      if (global.capabilities.polling === true) return;
+      await context.config.setGlobalConfig(this.sourceId, {
+        ...global,
+        capabilities: { ...global.capabilities, polling: true },
+      });
     });
   }
 
-  private async disablePollingCapabilityIfUnused(
-    context: ExternalEventExtensionContext
-  ): Promise<void> {
-    if (this.repo.listAllPollingConfiguredRepos().length > 0) return;
-    if (this.repo.countSpacesWithPollingIntent() > 0) return;
-    if (this.repo.listPollingRepos(SESSION_EVENT_SCOPE).length > 0) return;
-    const global = await context.config.getGlobalConfig(this.sourceId);
-    if (global.capabilities.polling !== true) return;
-    await context.config.setGlobalConfig(this.sourceId, {
-      ...global,
-      capabilities: { ...global.capabilities, polling: false },
+  private disablePollingCapabilityIfUnused(context: ExternalEventExtensionContext): Promise<void> {
+    return this.runPollingCapabilityUpdate(async () => {
+      const inUse = await gatewayFor(this.db).run(gitHubPollingCapabilityReads, {
+        sessionScope: SESSION_EVENT_SCOPE,
+      });
+      if (inUse) return;
+      const global = await context.config.getGlobalConfig(this.sourceId);
+      if (global.capabilities.polling !== true) return;
+      await context.config.setGlobalConfig(this.sourceId, {
+        ...global,
+        capabilities: { ...global.capabilities, polling: false },
+      });
     });
   }
 
