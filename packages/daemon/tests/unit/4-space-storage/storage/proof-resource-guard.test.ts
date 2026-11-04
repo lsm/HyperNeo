@@ -27,12 +27,13 @@ test.each([
     status: 79,
     message: 'DISK_GUARD',
   },
-])('proof wrapper refuses $name before creating a daemon run', (input) => {
+])('proof wrapper on Darwin refuses $name before creating a daemon run', (input) => {
   const directory = mkdtempSync(join(tmpdir(), 'proof-resource-guard-'));
   try {
     const bin = join(directory, 'bin'),
       evidence = join(directory, 'evidence');
     mkdirSync(bin);
+    writeFileSync(join(bin, 'uname'), '#!/bin/sh\nprintf "%s\\n" Darwin\n', { mode: 0o700 });
     writeFileSync(join(bin, 'memory_pressure'), `#!/bin/sh\necho '${input.pressure}'\n`, {
       mode: 0o700,
     });
