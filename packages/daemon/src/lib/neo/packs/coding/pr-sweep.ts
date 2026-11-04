@@ -122,7 +122,7 @@ export class CodingPrSweepRepository {
 }
 
 export const codingPrUrl = (row: { repo: string; number: number }) =>
-  `https://github.com/${row.repo}/pull/${row.number}`;
+  `https://${process.env.GH_HOST ?? 'github.com'}/${row.repo}/pull/${row.number}`;
 
 export async function sweepCodingPrs(
   repo: CodingPrSweepRepository,

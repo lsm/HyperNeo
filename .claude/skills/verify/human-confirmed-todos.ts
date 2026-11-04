@@ -93,7 +93,7 @@ try {
     let view: { todos: NeoTodo[] };
     do {
       view = (await rpc('neo.ask.read', { askId })).entry as { todos: NeoTodo[] };
-      if (view.todos.find(todo => todo.id === next)?.state === 'doing') break;
+      if (view.todos.find(todo => todo.id === next)?.state === 'doing' && dispatches.includes(next)) break;
       assert(Date.now() < deadline, 'Answer must finish the queued todo and start its successor without a scheduled refresh');
       await new Promise(done => setTimeout(done, 10));
     } while (true);
