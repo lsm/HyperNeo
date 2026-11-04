@@ -75,7 +75,30 @@ export function planNeoStartCardPrune(
   const unchanged =
     kept.length === listed.length &&
     (text === question.text || !kept.some((id) => neoTodoCancelledDependencies(family, id).length));
-  return unchanged ? null : { kept, text, released: listed.filter((id) => !kept.includes(id)) };
+  const stillListable = (id: string) => {
+    const home = family.find((todo) => todo.id === id)?.askId;
+    return !!home && neoStartCardTodos(family, home).has(id);
+  };
+  return unchanged
+    ? null
+    : {
+        kept,
+        text,
+        released: listed.filter((id) => !kept.includes(id) && !stillListable(id)),
+      };
+}
+
+export function neoTodoAwaitsStartAnswer(
+  todo: NeoTodo,
+  family: readonly NeoTodo[],
+  questions: readonly NeoQuestion[]
+): boolean {
+  return (
+    !neoTodoDependencyNodes(family).find((node) => node.id === todo.id)?.dependsOn?.length &&
+    questions.some(
+      (q) => q.kind === 'start' && q.state === 'open' && q.startTodos?.includes(todo.id)
+    )
+  );
 }
 
 export function neoTodosAwaitingCancellationCard(

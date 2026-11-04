@@ -1,7 +1,4 @@
-import {
-  neoTodoCancelledDependencies,
-  neoTodoDependencyNodes,
-} from '../../lib/neo/todo-dependencies.ts';
+import { neoTodoDependencyNodes } from '../../lib/neo/todo-dependencies.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import { enqueueMailboxEntry } from '../../lib/mailbox/enqueue.ts';
 import { createMailboxEntry } from '../../lib/mailbox/entry.ts';
@@ -634,16 +631,17 @@ export class NeoAskTodoRepository {
 
   moveTodo(todo: NeoTodo, askId: string, repo: string, now: number): NeoTodo {
     this.db.transaction(() => {
-      const cancelled = neoTodoCancelledDependencies(this.listFamilyTodos(todo.askId), todo.id);
-      if (!todo.dependsOn && cancelled.length)
-        this.updateTodo(todo, { dependsOn: cancelled.map((item) => item.id) }, now);
+      const node = neoTodoDependencyNodes(this.listFamilyTodos(todo.askId)).find(
+        (item) => item.id === todo.id
+      );
       this.db
         .prepare(
           `UPDATE neo_todos SET repo = ?2, position = CASE WHEN ask_id = ?1 THEN position
-             ELSE (SELECT COALESCE(MAX(position) + 1, 0) FROM neo_todos WHERE ask_id = ?1) END, ask_id = ?1
+             ELSE (SELECT COALESCE(MAX(position) + 1, 0) FROM neo_todos WHERE ask_id = ?1) END, ask_id = ?1,
+             depends_on = COALESCE(depends_on, ?4)
            WHERE id = ?3`
         )
-        .run(askId, repo, todo.id);
+        .run(askId, repo, todo.id, JSON.stringify(node?.dependsOn ?? []));
       this.pruneQuestions(todo.askId, now);
       const moved = this.getTodo(todo.id)!;
       if (askId !== todo.askId && moved.instruction && neoTodoStartable(moved))
