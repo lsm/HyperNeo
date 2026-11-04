@@ -141,7 +141,12 @@ export function NeoLive() {
   const closeChat = useCallback(() => setChat(null), []);
   const openSession = (link: string, label?: string) => {
     if (!link.startsWith('/session/')) return window.open(link, '_blank', 'noopener');
-    if (columns && previewDesktop) artifactPreviewWorkspace.select(null);
+    if (
+      columns &&
+      previewDesktop &&
+      (artifactPreviewWorkspace.state.value.open || artifactPreviewStack.value.length)
+    )
+      artifactPreviewWorkspace.select(null);
     setSessionFocus(true);
     setChat({ sessionId: link.slice('/session/'.length), label });
   };
@@ -632,7 +637,7 @@ export function NeoLive() {
     <div
       ref={shell}
       style={expandable ? { '--neo-preview-width': `${previewWidth}%` } : undefined}
-      class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${columns ? ' neo-has-scenes' : ''}${chatOverlay ? ' neo-has-session' : ''}${sheet && scenesOpen ? ' neo-sheet-open' : ''}${focusPreview ? ' neo-preview-focus' : ''}${previewWork ? ' neo-preview-work' : ''}${expanded ? ' neo-preview-expanded' : ''}`}
+      class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${columns ? ' neo-has-scenes' : ''}${sheet && scenesOpen ? ' neo-sheet-open' : ''}${focusPreview ? ' neo-preview-focus' : ''}${previewWork ? ' neo-preview-work' : ''}${expanded ? ' neo-preview-expanded' : ''}`}
     >
       {dragging && (
         <div
