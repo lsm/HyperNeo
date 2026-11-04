@@ -22,7 +22,8 @@ including the Space readers sharing the moved parser. Pin exact SQL and query
 AST, row/parser bodies, unchanged validators, writers, DDL and public/framework
 roots; no data exclusions or public/runtime transitive closure claim. Refresh
 prior bounded config-interface pins for the smaller delegation root, not a new
-audit of its transitive implementation. Keep the owned graph under 200 lines.
+audit of its transitive implementation. The complete selected owned graph is 126 lines including imports/smoke,
+with no exclusions. Keep it under 200 lines.
 
 Retain JSON, wrapper status and public latency/RSS/WAL evidence before cleanup.
 No worker fault, queue/clone timings, GUI, real provider, live deployment or full

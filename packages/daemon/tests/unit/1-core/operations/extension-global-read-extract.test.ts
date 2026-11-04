@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-describe('Global extension configuration SQL extraction', () => {
-  test('real GitHub Space enable and disable preserve persisted configuration', () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), 'extension-space-sql-')));
+describe('Global extension configuration lookup extraction', () => {
+  test('public extension list preserves configurations through the extracted lookup', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'extension-global-read-')));
     try {
       execFileSync(
         'bun',
