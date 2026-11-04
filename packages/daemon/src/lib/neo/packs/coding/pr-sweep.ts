@@ -29,7 +29,7 @@ export type CodingSweepRow = {
 
 export type CodingSweepDeps = {
   human?(key: string, text: string): Promise<boolean>;
-  tell(ref: WorkRef, key: string, text: string): Promise<boolean>;
+  tell(ref: WorkRef, key: string, text: string, pr?: string): Promise<boolean>;
   wake(key: string, text: string): Promise<boolean>;
 };
 
@@ -121,6 +121,9 @@ export class CodingPrSweepRepository {
   }
 }
 
+export const codingPrUrl = (row: { repo: string; number: number }) =>
+  `https://${process.env.GH_HOST ?? 'github.com'}/${row.repo}/pull/${row.number}`;
+
 export async function sweepCodingPrs(
   repo: CodingPrSweepRepository,
   deps: CodingSweepDeps,
@@ -132,7 +135,9 @@ export async function sweepCodingPrs(
     const key = `neo-pr-sweep:${row.repo}#${row.number}:${row.head}:${row.state}:${nudge.nudges}`;
     const told =
       nudge.kind === 'remind' &&
-      (await deps.tell(row.owner!, key, codingPrNudgeText(row, now)).catch(() => false));
+      (await deps
+        .tell(row.owner!, key, codingPrNudgeText(row, now), codingPrUrl(row))
+        .catch(() => false));
     if (nudge.kind === 'remind')
       log.warn(`PR sweep ${key} to ${owned(row.owner!)}: ${told ? 'told' : 'not told'}`);
     if (told) {

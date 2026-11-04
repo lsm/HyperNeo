@@ -72,6 +72,11 @@ export interface WorkVerbDeps {
   freeWorkers?: (adapter: string) => ReadonlySet<string>;
   markUnusable?: (ref: WorkRef) => void;
   isOpenTodo?: (todoId: string, sessionId: string) => boolean;
+  sendInputs?: {
+    accept(input: SendInput, from: string): Promise<string>;
+    recordOutcome(id: string, ref: WorkRef, outcome: SendResult): Promise<void>;
+    recordFailure(id: string, error: unknown): Promise<void>;
+  };
   recordStarted?: (ref: WorkRef) => void;
   reportUncertain?: (report: WorkSendUncertainty) => Promise<void>;
   startPlace?: (input: StartDraft, caller: OperationCaller) => Gate<StartInput>;
@@ -124,9 +129,11 @@ export const SendWorkInputSchema = z.object({
     .trim()
     .min(1)
     .optional()
-    .describe(
-      'Todo reference for bookkeeping, including follow-ups; missing or stale references are recorded without blocking.'
-    ),
+    .describe('The open todo this send belongs to. A Neo send needs this or notice.'),
+  notice: z
+    .literal(true)
+    .optional()
+    .describe('This send is a notice, not a piece of work. Neo sends need this or todoId.'),
   ref: WorkRefSchema,
   message: MessageSchema,
   mode: z.enum(['auto', 'steer', 'queue']).optional(),
@@ -230,6 +237,66 @@ function neoTodoRecords(
     : [
         'todo_required: this work has no todo belonging to an open ask owned by this session. Recorded without blocking delivery. Use neo.todo.add or reference an open todoId to track it.',
       ];
+}
+
+function requireSendPurpose<Value>(
+  input: QueuedInput,
+  caller: OperationCaller,
+  route: Value,
+  deps: WorkVerbDeps
+): Gate<Value> {
+  const named =
+    'message' in input &&
+    !!input.todoId &&
+    (caller.source === 'internal' ||
+      (!!caller.sessionId && deps.isOpenTodo?.(input.todoId, caller.sessionId)));
+  return 'message' in input &&
+    caller.role === 'neo' &&
+    !caller.inputRecorded &&
+    (input.notice ? !!input.todoId : !named)
+    ? {
+        reason: {
+          ok: false,
+          reason: 'todo_required',
+          detail:
+            'A Neo send must name an open todo of this session or set notice: true, not both.',
+          notSent: true,
+        },
+      }
+    : { value: route };
+}
+
+const recordsSend = (input: QueuedInput, caller: OperationCaller): input is SendInput =>
+  'message' in input && caller.role === 'neo' && !caller.inputRecorded;
+
+const acceptSendInput = (
+  input: QueuedInput,
+  from: string,
+  caller: OperationCaller,
+  deps: WorkVerbDeps
+) => (recordsSend(input, caller) ? deps.sendInputs?.accept(input, from) : undefined);
+
+async function recordThrownSend<T>(
+  send: () => Promise<T>,
+  inputId: string | undefined,
+  deps: WorkVerbDeps
+): Promise<T> {
+  try {
+    return await send();
+  } catch (error) {
+    if (inputId) await deps.sendInputs?.recordFailure(inputId, error);
+    throw error;
+  }
+}
+
+async function recordSendOutcome<T extends QueuedResult>(
+  inputId: string | undefined,
+  input: QueuedInput,
+  outcome: T,
+  deps: WorkVerbDeps
+): Promise<T> {
+  if (inputId) await deps.sendInputs?.recordOutcome(inputId, input.ref, outcome as SendResult);
+  return outcome;
 }
 
 function withTodoRecords<T>(outcome: Result<T>, records: string[]): Result<T> {
@@ -729,14 +796,26 @@ const runStartWork = (superpipe({})('start-work') as PipelineAPI)
 
 const runSendWork = (superpipe({})('send-work') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
-  .pipe(neoTodoRecords, ['input', 'caller', 'deps'], 'records')
   .pipe(routeSend, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
+  .pipe(requireSendPurpose, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')
+  .pipe(acceptSendInput, ['input', 'from', 'caller', 'deps'], 'inputId')
   .pipe(workReplyInput, ['input', 'from', 'caller', 'deps'], 'deliveryInput')
-  .pipe(sendWork, ['outcome', 'deliveryInput', 'from', 'caller', 'deps'], 'outcome')
+  .pipe(
+    (
+      route: Route<'send'>,
+      input: SendInput,
+      from: string,
+      caller: OperationCaller,
+      deps: WorkVerbDeps,
+      inputId: string | undefined
+    ) => recordThrownSend(() => sendWork(route, input, from, caller, deps), inputId, deps),
+    ['outcome', 'deliveryInput', 'from', 'caller', 'deps', 'inputId'],
+    'outcome'
+  )
+  .pipe(recordSendOutcome, ['inputId', 'input', 'outcome', 'deps'], 'outcome')
   .pipe(reportUncertainWorkSend, ['outcome', 'input', 'from', 'deps'], 'outcome')
-  .pipe(withTodoRecords, ['outcome', 'records'], 'outcome')
   .endAsync('outcome') as (
   input: SendInput,
   caller: OperationCaller,
@@ -799,13 +878,25 @@ async function changeQueuedInput(
 }
 const runQueuedInput = (superpipe({})('change-queued-work-input') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
-  .pipe(neoTodoRecords, ['input', 'caller', 'deps'], 'records')
   .pipe(routeQueuedInput, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
+  .pipe(requireSendPurpose, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')
+  .pipe(acceptSendInput, ['input', 'from', 'caller', 'deps'], 'inputId')
   .pipe(workReplyInput, ['input', 'from', 'caller', 'deps'], 'deliveryInput')
-  .pipe(changeQueuedInput, ['outcome', 'deliveryInput', 'from', 'caller', 'deps'], 'outcome')
-  .pipe(withTodoRecords, ['outcome', 'records'], 'outcome')
+  .pipe(
+    (
+      route: Route<'queue' | 'withdraw'>,
+      input: QueuedInput,
+      from: string,
+      caller: OperationCaller,
+      deps: WorkVerbDeps,
+      inputId: string | undefined
+    ) => recordThrownSend(() => changeQueuedInput(route, input, from, caller, deps), inputId, deps),
+    ['outcome', 'deliveryInput', 'from', 'caller', 'deps', 'inputId'],
+    'outcome'
+  )
+  .pipe(recordSendOutcome, ['inputId', 'input', 'outcome', 'deps'], 'outcome')
   .endAsync('outcome') as (
   input: QueuedInput,
   caller: OperationCaller,
@@ -919,7 +1010,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.send',
       description:
-        'Send a message to existing work by the ref from work.find, work.start or work.status. Missing or stale todoId is recorded without blocking otherwise permitted work; the receipt includes records. For Codex, choose mode steer for instant feedback or a change of direction; it returns not_delivered with a reason if steering is unavailable, never queues. Choose mode queue for the next task after the current turn. Copilot strict steer is unsupported: immediate input can fall back to a later turn. Copilot auto and queue enqueue input; delivered false plus receipt/queuedSubmissionId means accepted and waiting for consumption. Use receipt-bound work.status for its reply. Default mode auto preserves each adapter’s normal send behavior; on Codex it delivers through the Desktop owner client when Desktop is running and queues input for the next idle turn otherwise. Explicit steer and queue require those capabilities on the target adapter; otherwise they return unsupported without sending. HyperNeo sessions and Space agents support auto, not explicit steer; use auto for those targets. Other adapters retain their own steer and queue delivery semantics. Explicit Codex steer uses Desktop ownership when Desktop is running and the app-server otherwise. Automatic Codex sends deliver through the Codex Desktop owner client (owner discovery, then follower steer or turn start) whenever Desktop is running, and never resume the app-server writer then; explicit queue instead runs Desktop owner discovery and returns busy only when Desktop owns the thread, because steering into or starting the owner’s turn would not be queueing. When Desktop is not running both check loaded threads and resume saved unloaded threads before settings or native queue submission; already loaded threads are not resumed and no turn/start is issued. Queue acceptance returns queuedSubmissionId; delivered stays false unless a fresh matching input with a receipt is observed in the transcript. An uncertain steer is not retried or also queued. delivered false normally means accepted and queued behind the current turn; with unconfirmed true, only the transport write succeeded and peer acceptance is unknown. Claude UUIDs registered with Desktop reuse its existing confirmed send path, including stopped sessions. Plain CLI inputs match a verified receiver permission class; unknown modes refuse without sending. A held receipt waits for receive-side approval, not idle, and expiry is not delivery; do not auto-resend. Claude Desktop desktopUI is ui-unconfirmed when no supported live render/read acknowledgment exists; delivered, confirmedAt, links and Remote Control never confirm Desktop rendering or reading. Optional receipt contains opaque executionId and inputId for that submission, scoped to the requested work ref and its daemon; it is not proof of completion or result attribution. ok false reports a failed or uncertain send. notSent true proves no input was accepted, through no dispatch or an explicit precondition refusal; otherwise reconcile work.status before retrying. Reasons include not_found, not_open (archived or ended work), not_delivered, claude_cli_login_expired (tell the user to run `claude auth login`; retrying will not help), unsupported or unreachable. Only Neo or the user can change work on another daemon; other agents get unsupported.',
+        'Send a message to existing work by the ref from work.find, work.start or work.status. A Neo send must name an open todo of this session or set notice: true, otherwise it is refused unsent with todo_required. For Codex, choose mode steer for instant feedback or a change of direction; it returns not_delivered with a reason if steering is unavailable, never queues. Choose mode queue for the next task after the current turn. Copilot strict steer is unsupported: immediate input can fall back to a later turn. Copilot auto and queue enqueue input; delivered false plus receipt/queuedSubmissionId means accepted and waiting for consumption. Use receipt-bound work.status for its reply. Default mode auto preserves each adapter’s normal send behavior; on Codex it delivers through the Desktop owner client when Desktop is running and queues input for the next idle turn otherwise. Explicit steer and queue require those capabilities on the target adapter; otherwise they return unsupported without sending. HyperNeo sessions and Space agents support auto, not explicit steer; use auto for those targets. Other adapters retain their own steer and queue delivery semantics. Explicit Codex steer uses Desktop ownership when Desktop is running and the app-server otherwise. Automatic Codex sends deliver through the Codex Desktop owner client (owner discovery, then follower steer or turn start) whenever Desktop is running, and never resume the app-server writer then; explicit queue instead runs Desktop owner discovery and returns busy only when Desktop owns the thread, because steering into or starting the owner’s turn would not be queueing. When Desktop is not running both check loaded threads and resume saved unloaded threads before settings or native queue submission; already loaded threads are not resumed and no turn/start is issued. Queue acceptance returns queuedSubmissionId; delivered stays false unless a fresh matching input with a receipt is observed in the transcript. An uncertain steer is not retried or also queued. delivered false normally means accepted and queued behind the current turn; with unconfirmed true, only the transport write succeeded and peer acceptance is unknown. Claude UUIDs registered with Desktop reuse its existing confirmed send path, including stopped sessions. Plain CLI inputs match a verified receiver permission class; unknown modes refuse without sending. A held receipt waits for receive-side approval, not idle, and expiry is not delivery; do not auto-resend. Claude Desktop desktopUI is ui-unconfirmed when no supported live render/read acknowledgment exists; delivered, confirmedAt, links and Remote Control never confirm Desktop rendering or reading. Optional receipt contains opaque executionId and inputId for that submission, scoped to the requested work ref and its daemon; it is not proof of completion or result attribution. ok false reports a failed or uncertain send. notSent true proves no input was accepted, through no dispatch or an explicit precondition refusal; otherwise reconcile work.status before retrying. Reasons include not_found, not_open (archived or ended work), not_delivered, claude_cli_login_expired (tell the user to run `claude auth login`; retrying will not help), unsupported or unreachable. Only Neo or the user can change work on another daemon; other agents get unsupported.',
       inputSchema: SendWorkInputSchema,
       resultSchema: SendWorkResultSchema,
       policy: { safetyClass: 'mutate' },
@@ -928,7 +1019,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.queue',
       description:
-        'Queue next-turn peer input by ref. Missing or stale todoId is recorded without blocking otherwise permitted work; the receipt includes records. Returns an opaque queuedSubmissionId when supported; delivered false/unconfirmed does not prove execution. Only Neo or the user can change work on another daemon. Unsupported adapters return a factual rejection with no fallback.',
+        'Queue next-turn peer input by ref. A Neo send must name an open todo of this session or set notice: true, otherwise it is refused unsent with todo_required. Returns an opaque queuedSubmissionId when supported; delivered false/unconfirmed does not prove execution. Only Neo or the user can change work on another daemon. Unsupported adapters return a factual rejection with no fallback.',
       inputSchema: SendWorkInputSchema,
       resultSchema: SendWorkResultSchema,
       policy: { safetyClass: 'mutate' },

@@ -341,7 +341,9 @@ describe('neo todo runner', () => {
         neo || ['closed-ask', 'agent-fallback'].includes(scenario) ? 0 : 1
       );
       if (neo)
-        expect(h.told.filter((note) => note.startsWith('Worker turn report'))).toHaveLength(1);
+        expect(h.told.filter((note) => note.startsWith('Worker turn report'))).toHaveLength(
+          scenario === 'sent-receipt' ? 1 : 0
+        );
     } finally {
       h.db.close();
     }
@@ -1130,6 +1132,108 @@ describe('neo todo runner', () => {
       }
     }
   );
+
+  test('a turn started by another todo nudge neither reports nor blocks on this todo', async () => {
+    const h = setup(false);
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      const other = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      await h.runner.start(todo.id);
+      const worker = { adapter: 'codex-desktop', id: 'shared-thread' };
+      const nudgedAt = Date.now() + 10;
+      h.sessions.recordRef(todo.id, worker, nudgedAt);
+      const own = await h.sessions.inputs.accept(
+        todo.id,
+        'neo',
+        { verb: 'send', ref: worker },
+        'Docs PR',
+        nudgedAt - 5
+      );
+      await h.sessions.inputs.recordOutcome(own, { ref: worker }, nudgedAt - 5);
+      const nudge = await h.sessions.inputs.accept(
+        other.id,
+        'neo',
+        { verb: 'send', ref: worker },
+        'lsm/hyperneo#9553 has been waiting on requested changes for 20 min.',
+        nudgedAt
+      );
+      await h.sessions.inputs.recordOutcome(nudge, { ref: worker }, nudgedAt);
+      const before = h.store.getTodo(todo.id)!;
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: nudgedAt + 100,
+          turnEnds: [
+            {
+              id: 'nudged-turn',
+              startedAt: nudgedAt,
+              at: nudgedAt + 100,
+              message: 'Reproduced the finding.\n\nBlocked (needs_human): clarify the approval.',
+            },
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      expect(h.store.getTodo(todo.id)).toMatchObject({
+        state: before.state,
+        report: before.report,
+      });
+      expect(h.told.filter((text) => text.startsWith('Worker turn report'))).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a turn started by a notice reaches Neo once, attached to no todo', async () => {
+    const h = setup(false);
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      const other = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      await h.runner.start(todo.id);
+      await h.runner.start(other.id);
+      const worker = { adapter: 'codex-desktop', id: 'shared-thread' };
+      const nudgedAt = Date.now() + 10;
+      h.sessions.recordRef(todo.id, worker, nudgedAt);
+      h.sessions.recordRef(other.id, worker, nudgedAt);
+      const nudge = await h.sessions.inputs.accept(
+        null,
+        'neo',
+        { verb: 'send', ref: worker },
+        'lsm/hyperneo#1 has failing CI.',
+        nudgedAt
+      );
+      await h.sessions.inputs.recordOutcome(nudge, { ref: worker }, nudgedAt);
+      const before = h.store.getTodo(todo.id)!;
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: nudgedAt + 100,
+          turnEnds: [
+            {
+              id: 'notice-turn',
+              startedAt: nudgedAt,
+              at: nudgedAt + 100,
+              message: 'Blocked (needs_human): which CI fix do you want?',
+            },
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      await h.runner.refresh(() => {});
+      const reports = h.told.filter((text) => text.includes('which CI fix do you want?'));
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).not.toContain(todo.id);
+      expect(reports[0]).not.toContain(other.id);
+      expect(h.store.getTodo(todo.id)).toMatchObject({
+        state: before.state,
+        report: before.report,
+      });
+    } finally {
+      h.db.close();
+    }
+  });
 
   test.each(['earlier', 'later', 'other-sender', 'other-recipient', 'unknown-start'])(
     'does not silence a new worker report for an unrelated send: %s',

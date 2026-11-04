@@ -7,7 +7,7 @@ type Target = Extract<NeoDriverTarget, { verb: 'start' | 'send' }>;
 type Outcome = ReturnType<typeof readDriverOutcome>;
 type InputRow = {
   id: string;
-  todoId: string;
+  todoId: string | null;
   originSessionId: string;
   target: string;
   message: string;
@@ -36,7 +36,7 @@ export const acceptWorkDeliveryInput = defineDbOp({
     db: Database,
     input: {
       id: string;
-      todoId: string;
+      todoId: string | null;
       originSessionId: string;
       target: Target;
       message: string;
@@ -74,7 +74,7 @@ export class WorkDeliveryInputRepository {
   constructor(private readonly db: Database) {}
 
   async accept(
-    todoId: string,
+    todoId: string | null,
     originSessionId: string,
     target: Target,
     message: string,

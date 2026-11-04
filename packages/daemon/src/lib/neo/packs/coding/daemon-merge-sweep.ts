@@ -84,7 +84,7 @@ export function createCodingDaemonMergeSweep(
     const text = receipt.mergeCommit
       ? `Merge confirmed: ${receipt.url} head ${receipt.head}, commit ${receipt.mergeCommit}. Receipt executor ${receipt.actor}; confirmation sweep ${new Date(receipt.mergedAt!).toISOString()}.`
       : `Daemon merge held: ${receipt.url} head ${receipt.head}. No merge confirmed; automatic retries are held. Inspect GitHub/auth status and the receipt before manual action.`;
-    const told = owner && (await delivery.tell(owner, key, text).catch(() => false));
+    const told = owner && (await delivery.tell(owner, key, text, receipt.url).catch(() => false));
     const notified = told || (await delivery.wake(key, text).catch(() => false));
     if (notified)
       await record({ ...receipt, kind: receipt.mergeCommit ? 'notified' : 'held', at: now });
