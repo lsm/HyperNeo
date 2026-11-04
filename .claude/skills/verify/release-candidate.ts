@@ -157,6 +157,9 @@ try {
   steps.embeddings = { pass: true, excerpts: logs.split('\n').filter(line => line.includes('Embeddings ready') || line.includes('Embedding asset checksum verified')) }; save();
   if (process.env.VERIFY_NODE) {
     const browserPair = JSON.parse(await cli(['pair', '--name', 'RC isolated browser']));
+    assert.equal(browserPair.approval, 'pending');
+    const allowed = await op('device.pair.approve', { codeId: browserPair.codeId });
+    assert.equal(allowed.ok, true);
     execFileSync(process.env.VERIFY_NODE, ['.claude/skills/verify/release-candidate-web.mjs', String(port), run], {
       env: { PATH: process.env.PATH, HOME: env.HOME, TMPDIR: env.TMPDIR, NODE_ENV: 'test', NODE_PATH: process.env.NODE_PATH, VERIFY_BROWSER: process.env.VERIFY_BROWSER },
       input: JSON.stringify({ code: browserPair.code }),
