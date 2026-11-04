@@ -252,13 +252,13 @@ function requireSendPurpose<Value>(
   return 'message' in input &&
     caller.role === 'neo' &&
     !caller.inputRecorded &&
-    !input.notice &&
-    !named
+    (input.notice ? !!input.todoId : !named)
     ? {
         reason: {
           ok: false,
           reason: 'todo_required',
-          detail: 'A Neo send must name an open todo of this session or set notice: true.',
+          detail:
+            'A Neo send must name an open todo of this session or set notice: true, not both.',
           notSent: true,
         },
       }
