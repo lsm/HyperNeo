@@ -310,6 +310,22 @@ export function requireTargetSession(
     : { value: input };
 }
 
+export function requireNeoProjectTarget(
+  input: SendInput,
+  caller: OperationCaller,
+  inNeoProject: (sessionId: string) => boolean
+): { value: SendInput } | { reason: SendResult } {
+  return caller.role === 'neo' && !inNeoProject(input.sessionId)
+    ? {
+        reason: {
+          kind: 'rejected',
+          reason:
+            'work_send_required: Neo reaches a session outside its project with work.send and a todoId or notice:true',
+        },
+      }
+    : { value: input };
+}
+
 function admitOperationMessage(
   input: SendRequest,
   caller: OperationCaller
@@ -503,6 +519,7 @@ const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
     'limit',
     'sent',
     'report',
+    'inNeoProject',
   ])
   .pipe(admitOperationMessage, ['input', 'caller'], 'result:receipt')
   .pipe(selectSendOrigin, ['input', 'caller'], 'origin')
@@ -511,6 +528,7 @@ const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
   .pipe(resolveMessageTarget, ['receipt', 'resolveAgent'], 'result:receipt')
   .pipe(forwardRemoteMessage, ['receipt', 'origin', 'forwardRemote'], 'result:receipt')
   .pipe(requireTargetSession, ['receipt', 'sessionStatus'], 'result:receipt')
+  .pipe(requireNeoProjectTarget, ['receipt', 'caller', 'inNeoProject'], 'result:receipt')
   .pipe(admitSessionSend, ['receipt', 'origin', 'limit'], 'result:receipt')
   .pipe((admitted: SendInput) => admitted, 'receipt', 'admitted')
   .pipe(prepareHandoff, ['receipt', 'caller', 'origin', 'limit'], 'result:receipt')
@@ -548,7 +566,8 @@ const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
   sessionTitle: SessionTitleRead,
   limit: SessionSendLimiter,
   sent: SessionSentObserver,
-  report: SessionReportHandler
+  report: SessionReportHandler,
+  inNeoProject: (sessionId: string) => boolean
 ) => Promise<SendResult>;
 
 export function createSendMessageOperation(
@@ -559,7 +578,8 @@ export function createSendMessageOperation(
   sessionTitle: SessionTitleRead = () => null,
   sent: SessionSentObserver = () => {},
   isNeo: (sessionId: string) => boolean = () => false,
-  report: SessionReportHandler = async () => null
+  report: SessionReportHandler = async () => null,
+  inNeoProject: (sessionId: string) => boolean = () => true
 ) {
   const ordinaryLimit = createSessionSendLimiter();
   const limit: SessionSendLimiter = {
@@ -594,7 +614,8 @@ export function createSendMessageOperation(
         sessionTitle,
         limit,
         sent,
-        report
+        report,
+        inNeoProject
       ),
   });
 }

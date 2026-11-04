@@ -1,7 +1,6 @@
 import { expect, test } from 'bun:test';
 import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations.ts';
 import type { WorkAdapter } from '../../../../src/lib/drivers/types.ts';
-import { createSendMessageOperation } from '../../../../src/lib/messaging/message-send.ts';
 import { createNeoQuestionAnswerDelivery } from '../../../../src/lib/neo/question-answer-delivery.ts';
 import { createNeoWorkerQuestionWriter } from '../../../../src/lib/neo/question-operations.ts';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
@@ -74,26 +73,19 @@ test('a HyperNeo worker holding two todos reports an answered turn only to that 
       value: { delivered: true, receipt: { executionId: ref.id, inputId: 'answer-input' } },
     }),
   } as unknown as WorkAdapter;
-  const registry = createOperationRegistry([
-    createSendMessageOperation(new JobQueueRepository(db), () => 'active'),
-    ...createWorkVerbOperations({
+  const registry = createOperationRegistry(
+    createWorkVerbOperations({
       adapters: () => [adapter],
       remote: { list: () => [], invoke: async () => ({}) },
       daemonName: 'fixture',
-      sendInputs: {
-        accept: (input: { todoId?: string; message: string }, from: string) =>
-          sessions.inputs.accept(
-            input.todoId ?? null,
-            from,
-            { verb: 'send', ref },
-            input.message,
-            Date.now()
-          ),
+      workInputs: {
+        accept: (todoId: string | null, from: string, target: never, message: string) =>
+          sessions.inputs.accept(todoId, from, target, message, Date.now()),
         recordOutcome: (id: string) => sessions.inputs.recordOutcome(id, { ref }, Date.now()),
         recordFailure: async () => {},
       },
-    } as never),
-  ]);
+    } as never)
+  );
   const turnAt = Date.now() + 1_000;
   const invoke: Parameters<typeof createNeoTodoRunner>[0]['invoke'] = async (
     caller,

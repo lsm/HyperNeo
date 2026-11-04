@@ -196,7 +196,9 @@ export async function deliverCodingPrEvents(
       }
       if (!owner) continue;
       const told = event
-        ? await deps.tell(owner, event.key, event.text, codingPrUrl(row)).catch(() => false)
+        ? await deps
+            .tell(owner, event.key, event.text, codingPrUrl(deps.host, row))
+            .catch(() => false)
         : true;
       if (told) await repo.acceptEvent(row, owner);
       if (!event) continue;

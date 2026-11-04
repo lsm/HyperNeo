@@ -4,6 +4,7 @@ import type { Database } from '../../../src/storage/sqlite-compat.ts';
 import type { WorkRef } from '../../../src/lib/drivers/types.ts';
 import type { NeoPack } from '../../../src/lib/neo/pack-contract.ts';
 import type { OperationOutcome } from '../../../src/lib/operations/invoke.ts';
+import { recordedWorkInvoke } from './recorded-work-invoke.ts';
 import { createNeoTodoRunner } from '../../../src/lib/neo/todo-runner.ts';
 import { createNeoTodoOperations } from '../../../src/lib/neo/todo-operations.ts';
 import { createNeoAskRecordOperations } from '../../../src/lib/neo/ask-record-operations.ts';
@@ -55,7 +56,7 @@ export function packWorkerStartFixture(
     limits: () => ({ running: 99, perGroup: 99 }),
     tell: async () => {},
     changed: () => {},
-    invoke: async (_caller, name, input) => {
+    invoke: recordedWorkInvoke(sessions.inputs, async (_caller, name, input) => {
       calls.push({ name, input });
       if (options.invoke) return options.invoke(name, input);
       const excluded = (input.excludeRefs ?? []) as WorkRef[];
@@ -68,7 +69,7 @@ export function packWorkerStartFixture(
         kind: 'completed',
         value: { ok: true, value: { ref, status: 'running', lastActivityAt: Date.now() } },
       };
-    },
+    }),
   });
   const controls = { ...runner, resolveTarget: async (ref: WorkRef) => ({ value: ref }) };
   const operations = [

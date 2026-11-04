@@ -552,7 +552,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       db,
       machine,
       searchChats: ownChats,
-      handoff: (sessionId, message, from, messageUuid, deliveryMode) =>
+      handoff: (sessionId, message, from, messageUuid, deliveryMode, once) =>
         handoffPromptToMailbox({
           to: renderAddress({ kind: 'session', sessionId }),
           message: {
@@ -563,6 +563,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
           origin: from,
           messageUuid,
           deliveryMode,
+          once,
           jobQueue: context.deps.jobQueue,
         }),
       sessions: hyperneoSessionControl(context),
@@ -624,19 +625,13 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
         ask.sessionId === sessionId
       );
     },
-    sendInputs: {
-      accept: (input, from) =>
-        new WorkDeliveryInputRepository(db()).accept(
-          input.todoId ?? null,
-          from,
-          { verb: 'send', ref: input.ref },
-          input.message,
-          Date.now()
-        ),
-      recordOutcome: (id, ref, outcome) =>
+    workInputs: {
+      accept: (todoId, from, target, message) =>
+        new WorkDeliveryInputRepository(db()).accept(todoId, from, target, message, Date.now()),
+      recordOutcome: (id, target, outcome) =>
         new WorkDeliveryInputRepository(db()).recordOutcome(
           id,
-          readDriverOutcome({ verb: 'send', ref }, { kind: 'completed', value: outcome }),
+          readDriverOutcome(target, { kind: 'completed', value: outcome }),
           Date.now()
         ),
       recordFailure: (id, error) =>
@@ -645,7 +640,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
           { failure: String(error) },
           Date.now()
         ),
-    } satisfies WorkVerbDeps['sendInputs'],
+    } satisfies WorkVerbDeps['workInputs'],
     recordStarted: (ref: StartedWork) => recordStartedWork(db(), ref),
     freeWorkers: (adapter: string) => readFreeWorkers(db(), adapter),
     markUnusable: (ref: StartedWork) => markWorkUnusable(db(), ref),

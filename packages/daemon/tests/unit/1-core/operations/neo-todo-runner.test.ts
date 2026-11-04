@@ -22,6 +22,7 @@ import {
   planNeoTodoSettled,
   requireNeoTodoStartable,
 } from '../../../../src/lib/neo/todo-runner.ts';
+import { recordedWorkInvoke } from '../../helpers/recorded-work-invoke.ts';
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
@@ -99,7 +100,7 @@ function setup(
     write: gatewayFor(db).run.bind(gatewayFor(db)),
     store,
     sessions,
-    invoke: async (_caller, name, input) => {
+    invoke: recordedWorkInvoke(sessions.inputs, async (_caller, name, input) => {
       await beforeInvoke?.(name);
       calls.push({ name, input });
       if (name === 'work.start')
@@ -110,7 +111,7 @@ function setup(
       if (name === 'work.send')
         return completed(sendResult ?? { ok: true, value: { delivered: true, receipt } });
       return completed(status);
-    },
+    }),
     packs: () => packs,
     tell: async (_ask, _todo, note, key) => {
       beforeTell?.();
@@ -776,46 +777,6 @@ describe('neo todo runner', () => {
         model: null,
         effort: null,
       });
-    } finally {
-      h.db.close();
-    }
-  });
-
-  test('refuses the external effect if accepting its durable input fails', async () => {
-    const h = setup();
-    try {
-      const todo = h.add();
-      h.db.exec(
-        "CREATE TRIGGER reject_input BEFORE INSERT ON work_delivery_inputs BEGIN SELECT RAISE(ABORT, 'synthetic storage refusal'); END"
-      );
-      await expect(h.runner.start(todo.id)).rejects.toThrow('synthetic storage refusal');
-      expect(
-        h.calls.filter((call) => call.name === 'work.start' || call.name === 'work.send')
-      ).toEqual([]);
-      expect(h.sessions.inputs.list(todo.id)).toEqual([]);
-    } finally {
-      h.db.close();
-    }
-  });
-
-  test('a dispatch exception retains an unresolved input with its original deadline', async () => {
-    const h = setup(null, ':memory:', (name) => {
-      if (name === 'work.start') throw new Error('synthetic lost reply');
-    });
-    try {
-      const todo = h.add();
-      await expect(h.runner.start(todo.id)).rejects.toThrow('synthetic lost reply');
-      const inputs = h.sessions.inputs.list(todo.id);
-      expect(inputs).toHaveLength(1);
-      expect(inputs[0]).toMatchObject({
-        todoId: todo.id,
-        originSessionId: 'neo',
-        outcome: null,
-        observedAt: null,
-      });
-      expect(h.sessions.inputs.due(inputs[0].deadlineAt - 1)).toEqual([]);
-      expect(h.sessions.inputs.due(inputs[0].deadlineAt)).toEqual(inputs);
-      expect(h.sessions.inputs.due(inputs[0].deadlineAt + 100000)).toEqual(inputs);
     } finally {
       h.db.close();
     }
@@ -2983,8 +2944,7 @@ describe('worker blocker ownership', () => {
       await createNeoQuestionAnswerDelivery(
         h.store,
         h.sessions,
-        async () =>
-          completed({ kind: 'accepted', mailboxId: 'answer-mailbox', messageId: 'answer-message' }),
+        async () => completed({ ok: true, value: { delivered: true } }),
         async () => {},
         h.runner.recompute,
         (error) => {
@@ -3081,8 +3041,7 @@ describe('worker blocker ownership', () => {
       await createNeoQuestionAnswerDelivery(
         h.store,
         h.sessions,
-        async () =>
-          completed({ kind: 'accepted', mailboxId: 'answer-mailbox', messageId: 'answer-message' }),
+        async () => completed({ ok: true, value: { delivered: true } }),
         async () => {},
         h.runner.recompute,
         (error) => {

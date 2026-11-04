@@ -24,14 +24,27 @@ describe('Neo daemon notes', () => {
   let workerStatus: string;
   let turnEnds: { id: string; at: number; message: string; notify?: false }[];
   let reopen: () => void;
+  let sends: unknown[];
 
   beforeEach(async () => {
     db = await createTestDb();
     events = new InternalEventBus<DaemonInternalEventMap>();
     await db.createSession({ ...createTestSession(rootId), workspacePath: null });
     turnEnds = [];
+    sends = [];
     workerStatus = 'running';
     const registry = createOperationRegistry([
+      defineOperation({
+        name: 'work.send',
+        description: 'Synthetic worker send',
+        inputSchema: z.unknown(),
+        resultSchema: z.unknown(),
+        policy: { safetyClass: 'write' },
+        execute: async (input) => {
+          sends.push(input);
+          return { ok: true, value: { delivered: true } };
+        },
+      }),
       defineOperation({
         name: 'work.status',
         description: 'Synthetic worker status',
@@ -122,14 +135,8 @@ describe('Neo daemon notes', () => {
     );
   });
 
-  test.each(['wakeNeo', 'sendToRef'])('%s keeps structured PR events immediate', async (path) => {
-    if (path === 'wakeNeo') await service.wakeNeo('structured-pr', 'PR requires action.');
-    else
-      await service.sendToRef(
-        { adapter: 'hyperneo', id: rootId },
-        'structured-pr',
-        'PR requires action.'
-      );
+  test('wakeNeo keeps structured PR events immediate', async () => {
+    await service.wakeNeo('structured-pr', 'PR requires action.');
     expect(queued('structured-pr')).toEqual(['immediate']);
     const job = db
       .getJobQueueRepo()
@@ -137,19 +144,15 @@ describe('Neo daemon notes', () => {
     expect((job.payload.message as { neoWakeEvent?: boolean }).neoWakeEvent).toBe(true);
   });
 
-  test('a failed local nudge is not left as an open input', async () => {
+  test('sendToRef reaches a local HyperNeo worker through work.send', async () => {
     const ref = { adapter: 'hyperneo', id: rootId };
-    Object.assign(service, {
-      deliver: async () => {
-        throw new Error('mailbox refused');
-      },
-    });
-    await expect(service.sendToRef(ref, 'failed-nudge', 'PR requires action.')).rejects.toThrow(
-      'mailbox refused'
-    );
-    expect(
-      db.getDatabase().prepare('SELECT todo_id AS todoId, outcome FROM work_delivery_inputs').all()
-    ).toEqual([{ todoId: null, outcome: JSON.stringify({ failure: 'Error: mailbox refused' }) }]);
+    expect(await service.sendToRef(ref, 'nudge-key', 'PR requires action.', 'todo')).toBe(true);
+    expect(await service.sendToRef(ref, 'notice-key', 'FYI')).toBe(true);
+    expect(sends).toEqual([
+      { ref, message: 'PR requires action.', idempotencyKey: 'nudge-key', todoId: 'todo' },
+      { ref, message: 'FYI', idempotencyKey: 'notice-key', notice: true },
+    ]);
+    expect(queued('nudge-key')).toEqual([]);
   });
 
   test('a burst of 20 unstructured worker notes does not start Neo', async () => {

@@ -16,6 +16,7 @@ import {
   type OperationCaller,
   type OperationDefinition,
 } from '../operations/registry.ts';
+import type { NeoDriverTarget } from '../neo/driver-work.ts';
 import type { RemoteDaemons } from './find-operation.ts';
 import { stampWork } from './places.ts';
 import { workStartConfiguration } from './start-configuration.ts';
@@ -72,9 +73,14 @@ export interface WorkVerbDeps {
   freeWorkers?: (adapter: string) => ReadonlySet<string>;
   markUnusable?: (ref: WorkRef) => void;
   isOpenTodo?: (todoId: string, sessionId: string) => boolean;
-  sendInputs?: {
-    accept(input: SendInput, from: string): Promise<string>;
-    recordOutcome(id: string, ref: WorkRef, outcome: SendResult): Promise<void>;
+  workInputs?: {
+    accept(
+      todoId: string | null,
+      from: string,
+      target: WorkTarget,
+      message: string
+    ): Promise<string>;
+    recordOutcome(id: string, target: WorkTarget, outcome: StartResult | SendResult): Promise<void>;
     recordFailure(id: string, error: unknown): Promise<void>;
   };
   recordStarted?: (ref: WorkRef) => void;
@@ -137,6 +143,12 @@ export const SendWorkInputSchema = z.object({
   ref: WorkRefSchema,
   message: MessageSchema,
   mode: z.enum(['auto', 'steer', 'queue']).optional(),
+  idempotencyKey: z
+    .string()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe('A repeat with the same key does not reach a HyperNeo session twice.'),
   from: ForwardedOriginSchema,
 });
 export const WorkRefInputSchema = z.object({ ref: WorkRefSchema });
@@ -217,6 +229,7 @@ type StartInput = StartDraft & { place: z.infer<typeof PlaceSchema> } & Pick<
     'inPlace' | 'prepareFolder'
   >;
 type SendInput = z.infer<typeof SendWorkInputSchema>;
+type WorkTarget = Extract<NeoDriverTarget, { verb: 'start' | 'send' }>;
 type RefInput = z.infer<typeof WorkRefInputSchema>;
 type StatusInput = z.infer<typeof WorkStatusInputSchema>;
 type StartResult = z.infer<typeof StartWorkResultSchema>;
@@ -250,10 +263,7 @@ function requireSendPurpose<Value>(
     !!input.todoId &&
     (caller.source === 'internal' ||
       (!!caller.sessionId && deps.isOpenTodo?.(input.todoId, caller.sessionId)));
-  return 'message' in input &&
-    caller.role === 'neo' &&
-    !caller.inputRecorded &&
-    (input.notice ? !!input.todoId : !named)
+  return 'message' in input && caller.role === 'neo' && (input.notice ? !!input.todoId : !named)
     ? {
         reason: {
           ok: false,
@@ -266,36 +276,59 @@ function requireSendPurpose<Value>(
     : { value: route };
 }
 
-const recordsSend = (input: QueuedInput, caller: OperationCaller): input is SendInput =>
-  'message' in input && caller.role === 'neo' && !caller.inputRecorded;
+const workTarget = (input: StartInput | SendInput): WorkTarget =>
+  'ref' in input
+    ? { verb: 'send', ref: input.ref }
+    : {
+        verb: 'start',
+        adapter: input.adapter,
+        place: input.place,
+        ...(input.createFolder === undefined ? {} : { createFolder: input.createFolder }),
+        ...(input.model === undefined ? {} : { model: input.model }),
+        ...(input.effort === undefined ? {} : { effort: input.effort }),
+      };
 
-const acceptSendInput = (
-  input: QueuedInput,
+const acceptWorkInput = (
+  input: StartInput | QueuedInput,
   from: string,
   caller: OperationCaller,
-  deps: WorkVerbDeps
-) => (recordsSend(input, caller) ? deps.sendInputs?.accept(input, from) : undefined);
+  deps: WorkVerbDeps,
+  records: string[] = []
+) =>
+  'message' in input && caller.role === 'neo'
+    ? deps.workInputs?.accept(
+        records.length ? null : (input.todoId ?? null),
+        from,
+        workTarget(input),
+        input.message
+      )
+    : undefined;
 
-async function recordThrownSend<T>(
-  send: () => Promise<T>,
+async function recordThrownWork<T>(
+  work: () => Promise<T>,
   inputId: string | undefined,
   deps: WorkVerbDeps
 ): Promise<T> {
   try {
-    return await send();
+    return await work();
   } catch (error) {
-    if (inputId) await deps.sendInputs?.recordFailure(inputId, error);
+    if (inputId) await deps.workInputs?.recordFailure(inputId, error);
     throw error;
   }
 }
 
-async function recordSendOutcome<T extends QueuedResult>(
+async function recordWorkOutcome<T extends StartResult | QueuedResult>(
   inputId: string | undefined,
-  input: QueuedInput,
+  input: StartInput | QueuedInput,
   outcome: T,
   deps: WorkVerbDeps
 ): Promise<T> {
-  if (inputId) await deps.sendInputs?.recordOutcome(inputId, input.ref, outcome as SendResult);
+  if (inputId)
+    await deps.workInputs?.recordOutcome(
+      inputId,
+      workTarget(input as StartInput | SendInput),
+      outcome as StartResult | SendResult
+    );
   return outcome;
 }
 
@@ -616,7 +649,9 @@ export async function sendWork(
   caller: OperationCaller,
   deps: WorkVerbDeps
 ): Promise<SendResult> {
-  if ('local' in route) return route.local(input.ref, input.message, { from, caller });
+  const idempotency = input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {};
+  if ('local' in route)
+    return route.local(input.ref, input.message, { from, caller, ...idempotency });
   const result = await forwardWork(
     route.daemon,
     'work.send',
@@ -624,6 +659,7 @@ export async function sendWork(
       ref: localRef(input.ref),
       message: input.message,
       ...(input.mode ? { mode: input.mode } : {}),
+      ...idempotency,
       from: qualifyRemoteOrigin(from, deps.daemonName),
     },
     SendWorkResultSchema,
@@ -772,20 +808,28 @@ const runStartWork = (superpipe({})('start-work') as PipelineAPI)
     'result:outcome'
   )
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')
+  .pipe(acceptWorkInput, ['input', 'from', 'caller', 'deps', 'records'], 'inputId')
   .pipe(workReplyInput, ['input', 'from', 'caller', 'deps'], 'deliveryInput')
-  .pipe(reuseIdleWorker, ['outcome', 'deliveryInput', 'from', 'caller', 'deps'], 'reused')
   .pipe(
     (
-      reused: StartResult | null,
       route: Route<'start'>,
       input: StartInput,
       from: string,
       caller: OperationCaller,
-      deps: WorkVerbDeps
-    ) => reused ?? startWork(route, input, from, caller, deps),
-    ['reused', 'outcome', 'deliveryInput', 'from', 'caller', 'deps'],
+      deps: WorkVerbDeps,
+      inputId: string | undefined
+    ) =>
+      recordThrownWork(
+        async () =>
+          (await reuseIdleWorker(route, input, from, caller, deps)) ??
+          startWork(route, input, from, caller, deps),
+        inputId,
+        deps
+      ),
+    ['outcome', 'deliveryInput', 'from', 'caller', 'deps', 'inputId'],
     'outcome'
   )
+  .pipe(recordWorkOutcome, ['inputId', 'input', 'outcome', 'deps'], 'outcome')
   .pipe(presentWorkIdentity, 'outcome', 'outcome')
   .pipe(withTodoRecords, ['outcome', 'records'], 'outcome')
   .endAsync('outcome') as (
@@ -800,7 +844,7 @@ const runSendWork = (superpipe({})('send-work') as PipelineAPI)
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
   .pipe(requireSendPurpose, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')
-  .pipe(acceptSendInput, ['input', 'from', 'caller', 'deps'], 'inputId')
+  .pipe(acceptWorkInput, ['input', 'from', 'caller', 'deps'], 'inputId')
   .pipe(workReplyInput, ['input', 'from', 'caller', 'deps'], 'deliveryInput')
   .pipe(
     (
@@ -810,11 +854,11 @@ const runSendWork = (superpipe({})('send-work') as PipelineAPI)
       caller: OperationCaller,
       deps: WorkVerbDeps,
       inputId: string | undefined
-    ) => recordThrownSend(() => sendWork(route, input, from, caller, deps), inputId, deps),
+    ) => recordThrownWork(() => sendWork(route, input, from, caller, deps), inputId, deps),
     ['outcome', 'deliveryInput', 'from', 'caller', 'deps', 'inputId'],
     'outcome'
   )
-  .pipe(recordSendOutcome, ['inputId', 'input', 'outcome', 'deps'], 'outcome')
+  .pipe(recordWorkOutcome, ['inputId', 'input', 'outcome', 'deps'], 'outcome')
   .pipe(reportUncertainWorkSend, ['outcome', 'input', 'from', 'deps'], 'outcome')
   .endAsync('outcome') as (
   input: SendInput,
@@ -845,6 +889,9 @@ async function changeQueuedInput(
     return route.local(input.ref, 'message' in input ? input.message : input.queuedSubmissionId, {
       from,
       caller,
+      ...('idempotencyKey' in input && input.idempotencyKey
+        ? { idempotencyKey: input.idempotencyKey }
+        : {}),
     });
   const forwarded = {
     ...input,
@@ -882,7 +929,7 @@ const runQueuedInput = (superpipe({})('change-queued-work-input') as PipelineAPI
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
   .pipe(requireSendPurpose, ['input', 'caller', 'outcome', 'deps'], 'result:outcome')
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')
-  .pipe(acceptSendInput, ['input', 'from', 'caller', 'deps'], 'inputId')
+  .pipe(acceptWorkInput, ['input', 'from', 'caller', 'deps'], 'inputId')
   .pipe(workReplyInput, ['input', 'from', 'caller', 'deps'], 'deliveryInput')
   .pipe(
     (
@@ -892,11 +939,11 @@ const runQueuedInput = (superpipe({})('change-queued-work-input') as PipelineAPI
       caller: OperationCaller,
       deps: WorkVerbDeps,
       inputId: string | undefined
-    ) => recordThrownSend(() => changeQueuedInput(route, input, from, caller, deps), inputId, deps),
+    ) => recordThrownWork(() => changeQueuedInput(route, input, from, caller, deps), inputId, deps),
     ['outcome', 'deliveryInput', 'from', 'caller', 'deps', 'inputId'],
     'outcome'
   )
-  .pipe(recordSendOutcome, ['inputId', 'input', 'outcome', 'deps'], 'outcome')
+  .pipe(recordWorkOutcome, ['inputId', 'input', 'outcome', 'deps'], 'outcome')
   .endAsync('outcome') as (
   input: QueuedInput,
   caller: OperationCaller,

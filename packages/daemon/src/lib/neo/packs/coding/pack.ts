@@ -52,7 +52,7 @@ export function createCodingPack(deps: {
   prLedger: CodingPrLedgerRepository;
   prSweep: CodingPrSweepRepository;
   prEvents: CodingPrEventRepository;
-  prSweepDeps: CodingSweepDeps;
+  prSweepDeps: Omit<CodingSweepDeps, 'host'>;
   projectRepos: () => string[];
   readLedgerRepo?: CodingLedgerRead;
   readClaudeOwners?: ReturnType<typeof createCodingClaudeOwnerReader>;
@@ -69,6 +69,7 @@ export function createCodingPack(deps: {
   const notificationContext = async (text: string) =>
     withCodingMergeContext(text, await deps.prLedger.policyContextCurrent(text));
   const prSweepDeps: CodingSweepDeps = {
+    host: process.env.GH_HOST ?? 'github.com',
     tell: async (ref, key, text, pr) =>
       deps.prSweepDeps.tell(
         ref,
