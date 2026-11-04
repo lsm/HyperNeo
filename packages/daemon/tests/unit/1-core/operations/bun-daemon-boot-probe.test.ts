@@ -37,7 +37,7 @@ describe('Bun daemon boot probe construction', () => {
             NODE_ENV: 'test',
             HYPERNEO_DATA_DIR: join(run, 'data'),
           },
-          timeout: 30000,
+          timeout: 60000,
           stdio: 'pipe',
         }
       );
@@ -63,7 +63,7 @@ describe('Bun daemon boot probe construction', () => {
     } finally {
       rmSync(run, { recursive: true, force: true });
     }
-  }, 60000);
+  }, 90000);
   test('external cancellation returns 143 and waits for its owned daemon child', async () => {
     const run = realpathSync(mkdtempSync(join(tmpdir(), 'bun-boot-cancel-')));
     const parent = spawn(
@@ -91,7 +91,7 @@ describe('Bun daemon boot probe construction', () => {
     });
     result.catch(() => undefined);
     const until = async (ready: () => boolean) => {
-      const end = Date.now() + 10000;
+      const end = Date.now() + 30000;
       while (!ready()) {
         if (Date.now() > end) throw new Error('Owned cancellation fixture timed out');
         await new Promise((done) => setTimeout(done, 5));
@@ -113,7 +113,7 @@ describe('Bun daemon boot probe construction', () => {
       await stopOwnedProbe(parent, result);
       rmSync(run, { recursive: true, force: true });
     }
-  }, 60000);
+  }, 90000);
   test('startup-wait cleanup lets the probe stop and reap its daemon before data removal', async () => {
     const run = realpathSync(mkdtempSync(join(tmpdir(), 'bun-boot-timeout-')));
     const ready = join(run, 'daemon-ready'),

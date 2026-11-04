@@ -22,7 +22,10 @@ If a test times out waiting for readiness, forward TERM to its probe and await
 the probe's close before removing data. Never SIGKILL only that parent. The
 startup-wait regression uses a delayed synthetic child to prove this cleanup
 without waiting for a slow machine or leaving an orphan. Test deadlines must
-allow the probe's startup and child-cleanup deadlines to finish.
+allow the probe's startup and child-cleanup deadlines to finish. The unit runner's
+probe process has a 60-second outer cap and its test has 90 seconds, leaving time to
+reap the child after cancellation. Cancellation readiness allows the same
+30-second startup window as the probe; its test also allows 90 seconds.
 
 This is a construction proof on POSIX source startup/shutdown. Native Windows
 signal behavior, GUI, compiled binaries and model/provider behavior are separate
