@@ -156,9 +156,11 @@ try {
   await wait('embedding worker load', () => logs.includes('Embeddings ready'), 360000);
   steps.embeddings = { pass: true, excerpts: logs.split('\n').filter(line => line.includes('Embeddings ready') || line.includes('Embedding asset checksum verified')) }; save();
   if (process.env.VERIFY_NODE) {
+    const browserPair = JSON.parse(await cli(['pair', '--name', 'RC isolated browser']));
     execFileSync(process.env.VERIFY_NODE, ['.claude/skills/verify/release-candidate-web.mjs', String(port), run], {
       env: { PATH: process.env.PATH, HOME: env.HOME, TMPDIR: env.TMPDIR, NODE_ENV: 'test', NODE_PATH: process.env.NODE_PATH, VERIFY_BROWSER: process.env.VERIFY_BROWSER },
-      stdio: 'inherit',
+      input: JSON.stringify({ code: browserPair.code }),
+      stdio: ['pipe', 'inherit', 'inherit'],
     });
     steps.browser = { pass: true, evidence: 'browser.json and neo-chat.png / life-admin.png' }; save();
   }
