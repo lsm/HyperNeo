@@ -15,9 +15,7 @@ export interface ClonesRejection {
   clones: CloneSummary[];
 }
 
-export interface CloneCascadeDependencies {
-  readonly listChildren: (parentId: string) => Session[];
-  readonly detach: (sessionId: string) => Promise<void>;
+export interface CloneAgentDependencies {
   readonly agentOwning: (sessionId: string) => SpaceLongHorizonAgent | null;
   readonly listAgents: (spaceId: string) => SpaceLongHorizonAgent[];
   readonly nameAgent: (
@@ -44,6 +42,12 @@ export interface CloneCascadeDependencies {
     sessionId: string,
     provenance: NonNullable<SessionMetadata['promptProvenance']>
   ) => Promise<void>;
+}
+
+export interface CloneCascadeDependencies {
+  readonly listChildren: (parentId: string) => Session[];
+  readonly detach: (sessionId: string) => Promise<void>;
+  readonly agents?: CloneAgentDependencies;
   readonly archiveChild: (sessionId: string) => Promise<void>;
   readonly deleteChild: (sessionId: string) => Promise<void>;
 }
@@ -82,11 +86,15 @@ export async function applyCloneChoice(
     }
     return true;
   }
-  const owner = deps.agentOwning(parentId);
+  const agents = deps.agents;
+  const owner = agents?.agentOwning(parentId);
   for (const child of children) {
-    if (owner) {
-      const { handle, displayName } = deps.nameAgent(deps.listAgents(owner.spaceId), child.title);
-      const agent = deps.createAgent({
+    if (agents && owner) {
+      const { handle, displayName } = agents.nameAgent(
+        agents.listAgents(owner.spaceId),
+        child.title
+      );
+      const agent = agents.createAgent({
         spaceId: owner.spaceId,
         handle,
         displayName,
@@ -99,7 +107,7 @@ export async function applyCloneChoice(
         settingSources: owner.settingSources,
         toolPermissions: owner.toolPermissions,
       });
-      await deps.stampProvenance(child.id, {
+      await agents.stampProvenance(child.id, {
         source: 'flattened_clone',
         hash: agent.id,
         agentId: agent.id,

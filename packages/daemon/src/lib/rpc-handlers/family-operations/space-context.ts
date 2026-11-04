@@ -32,9 +32,11 @@ import type { TaskAgentManager } from '../../space/runtime/task-agent-manager.ts
 import type { SpaceTaskManager } from '../../tasks/task-manager.ts';
 import type { CodingArtifactProfile } from '../../workflows/coding-artifact-profile.ts';
 import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
+import type { SpaceManager } from '../../space/managers/space-manager.ts';
 import type { FamilyOperationContext } from './context.ts';
 
 export interface SpaceFamilyContext extends FamilyOperationContext {
+  readonly spaceManager: SpaceManager;
   readonly spaceRuntimeService: SpaceRuntimeService;
   readonly taskAgentManager: TaskAgentManager;
   readonly spaceTaskManagerFactory: (spaceId: string) => SpaceTaskManager;

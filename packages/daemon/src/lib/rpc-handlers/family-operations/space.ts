@@ -3,7 +3,7 @@ import { resolveSessionSpaceId } from '../../space/runtime/space-caller-scope.ts
 import { resolveSpaceMcpSessionPolicy } from '../../space/runtime/space-mcp-session-policy.ts';
 import { registerAgentOperations } from './agents.ts';
 import { registerArtifactOperations } from './artifacts.ts';
-import type { SessionSpacePort } from './context.ts';
+import type { FamilyOperationContext, SessionSpacePort } from './context.ts';
 import { registerEvolutionOperations } from './evolution.ts';
 import { registerExternalEventOperations } from './external-events.ts';
 import { registerGoalOperations } from './goals.ts';
@@ -13,7 +13,9 @@ import type { SpaceFamilyContext } from './space-context.ts';
 import { registerSpaceOperations } from './spaces.ts';
 import { registerWorkflowOperations } from './workflows.ts';
 
-export function createSessionSpacePort(context: SpaceFamilyContext): SessionSpacePort {
+export function createSessionSpacePort(
+  context: Omit<SpaceFamilyContext, Exclude<keyof FamilyOperationContext, 'deps'>>
+): SessionSpacePort {
   const scopeDeps = {
     getSession: (sessionId: string) => context.deps.db.getSession(sessionId),
     taskRepo: context.spaceTaskRepo,
@@ -25,8 +27,8 @@ export function createSessionSpacePort(context: SpaceFamilyContext): SessionSpac
   return {
     sessionSpaceId: (session) => resolveSessionSpaceId(session, scopeDeps),
     resolveRole: (session) => resolveSpaceMcpSessionPolicy(session, scopeDeps).role,
-    getSpace: (spaceId) => context.deps.spaceManager.getSpace(spaceId),
-    addSession: (spaceId, sessionId) => context.deps.spaceManager.addSession(spaceId, sessionId),
+    getSpace: (spaceId) => context.spaceManager.getSpace(spaceId),
+    addSession: (spaceId, sessionId) => context.spaceManager.addSession(spaceId, sessionId),
     attachTools: (sessionId) => context.spaceRuntimeService.reattachMemberSpaceTools(sessionId),
     liveSession: (sessionId) => context.taskAgentManager?.getCachedAgentSessionById(sessionId),
     isRuntimeSettingsPreparing: (sessionId) =>
