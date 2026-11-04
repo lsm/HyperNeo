@@ -36,7 +36,7 @@ export function workerSandboxOn(requested?: boolean) {
 
 export function workerWritableRoots(root: string) {
   const locations = workerWorkLocations(root);
-  return [locations.evidenceRoot, locations.builds, locations.scratch, locations.cache];
+  return [locations.evidence, locations.builds, locations.scratch, locations.cache];
 }
 
 export function workerSandboxPaths(root: string) {

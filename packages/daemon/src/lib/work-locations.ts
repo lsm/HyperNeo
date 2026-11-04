@@ -4,7 +4,6 @@ import { getDataDir } from './data-dir.ts';
 
 interface WorkerWorkLocations {
   worktrees: string;
-  evidenceRoot: string;
   evidence: string;
   builds: string;
   scratch: string;
@@ -20,11 +19,9 @@ export function workerWorkLocations(root: string): WorkerWorkLocations {
   const dataDir = getDataDir();
   const key = `hn-${createHash('sha256').update(root).digest('hex').slice(0, 12)}`;
   const scratch = join(dataDir, 'work', 'scratch', key);
-  const evidenceRoot = evidenceDir();
   return {
     worktrees: join(dataDir, 'worktrees'),
-    evidenceRoot,
-    evidence: join(evidenceRoot, key),
+    evidence: join(evidenceDir(), key),
     builds: join(dataDir, 'work', 'builds', key),
     scratch,
     cache: join(scratch, 'cache'),

@@ -95,8 +95,8 @@ describe('neo.todo.add evidence paths', () => {
     expect(neoEvidenceRefusal(check, 'lsm/hyperneo', userFolder, null)).toContain('Omit');
   });
 
-  test('a sandboxed worker may write its assigned path', () => {
+  test('a sandboxed worker cannot write another todo evidence', () => {
     const allowed = workerWritableRoots('/repo');
-    expect(allowed.some((root) => todoEvidenceFile('todo').startsWith(`${root}/`))).toBe(true);
+    expect(allowed.some((root) => todoEvidenceFile('todo').startsWith(`${root}/`))).toBe(false);
   });
 });

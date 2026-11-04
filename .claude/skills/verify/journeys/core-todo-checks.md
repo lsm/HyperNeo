@@ -39,4 +39,4 @@ An evidence check may omit its path. On a repo ask the helper adds one, checks t
 daemon assigned `<dataDir>/work/evidence/<todoId>/result.md` and named it in doneWhen,
 which the worker brief carries, then finishes the todo from that file. It also checks
 that a repo todo naming the configured workspace root is refused on add and edit,
-while an existing todo keeps an unchanged path. No worker writes the file here.
+while an existing todo keeps an unchanged path. No worker writes the file here. A sandboxed worker cannot write an assigned path: sandbox writes stay per worktree so one worker cannot forge another todo's evidence, and such a todo blocks instead.
