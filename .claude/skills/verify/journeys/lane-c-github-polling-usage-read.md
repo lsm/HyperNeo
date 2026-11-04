@@ -20,8 +20,9 @@ health/read response while a competing writer holds its transaction, native
 deferred-snapshot consistency and reader failure without main fallback. A failed
 reader may be read again explicitly; it must never replay a write.
 
-Measure the complete new command plus complete 53-line query and 44-line mapper
-modules, with no exclusions. Only append registrations to the shared op/smoke
+Measure with `lane-c-github-polling-usage-measure.cjs`: the complete 47-line command,
+53-line query and 44-line mapper total 144, or 152 with the shared registrations,
+with no exclusions. Only append registrations to the shared op/smoke
 lists; no gateway, app, service or lifecycle changes. Keep named direct pipelines
 and all timers/resources in the owning shell. Record latency, clone bytes, RSS,
 WAL and maximum loop lag; separate queue/SQL/clone timings remain unexposed.

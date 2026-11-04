@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { vi } from 'vitest';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
@@ -51,6 +55,24 @@ describe('GitHub polling usage read commands', () => {
     expect(r.hasPollingIntent(1)).toBe(true);
     expect(r.continueWhileUnused(false)).toEqual({ value: false });
     expect(r.continueWhileUnused(true)).toEqual({ reason: true });
+  });
+  test('complete read command and dependency graph stays within the measured cap', () => {
+    const temporary = mkdtempSync(join(tmpdir(), 'polling-usage-measure-'));
+    try {
+      const output = join(temporary, 'measure.json');
+      execFileSync(
+        process.execPath,
+        ['.claude/skills/verify/lane-c-github-polling-usage-measure.cjs', output],
+        { cwd: fileURLToPath(new URL('../../../../../../', import.meta.url)) }
+      );
+      expect(JSON.parse(readFileSync(output, 'utf8'))).toMatchObject({
+        fullOwnedGraphLines: 144,
+        knownTotal: 152,
+        excludedLines: 0,
+      });
+    } finally {
+      rmSync(temporary, { recursive: true, force: true });
+    }
   });
   test('both registered operations remain query-only and return booleans without notifications', async () => {
     const r = await readers(),
