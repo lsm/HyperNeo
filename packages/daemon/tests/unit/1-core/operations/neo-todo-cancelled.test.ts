@@ -338,6 +338,33 @@ describe('cancelled prerequisites', () => {
     }
   });
 
+  test('approval follows a replaced replacement to the live step', async () => {
+    const { db, store, invoke, step, runner, sent, work } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Replacement chain',
+        request: 'A, then D; B and then C replace A.',
+        todos: [
+          step('A', []),
+          { ...step('D', [0]), ...work, start: true },
+          step('B', []),
+          step('C', []),
+        ],
+      });
+      const [a, d, b, c] = opened.todos;
+      await invoke('neo.todo.remove', { todoId: a.id, reason: 'Replaced.', replacedBy: b.id });
+      await invoke('neo.todo.remove', { todoId: b.id, reason: 'Replaced.', replacedBy: c.id });
+      const answer = card(store, d)!;
+      expect(answer.text).toContain('It will wait for "C"');
+      store.answerQuestion(answer, [d.id], 'button', Date.now());
+      await runner.refresh(() => {});
+      expect(store.getTodo(d.id)).toMatchObject({ state: 'todo', dependsOn: [c.id] });
+      expect(sent).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+
   test('approval never waits on a replacement that waits for the dependent', async () => {
     const { db, store, invoke, step, runner, work } = setup();
     try {
