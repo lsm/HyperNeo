@@ -7,7 +7,7 @@ import { neoSessionTrackWrites } from '../../storage/repositories/neo-session-tr
 import { createNeoQuestionAnswerDelivery } from './question-answer-delivery.ts';
 import { wakeFailedHyperneoSession } from './query-failure.ts';
 import type { UUID } from 'node:crypto';
-import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import {
   NeoSessionMessageRepository,
   WORKER_BATCH_SENDER,
@@ -212,7 +212,8 @@ export class NeoService {
             origin: 'system',
             delivery: { origin: 'space_inject', injectedMidTurn: true },
           });
-      }
+      },
+      (id) => !!this.db.getSession(id)
     );
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
@@ -288,6 +289,16 @@ export class NeoService {
       notify: notifyPublication,
       artifact: createArtifactRefReader(() => this.db.getDatabase()),
     });
+    const offSpeech = events.subscribe(
+      'sdk.message',
+      ({ sessionId, message }) =>
+        sessionId
+          ? this.speech
+              .complete(sessionId, message as SDKMessage)
+              .catch((error) => this.log.warn('Session speech delivery failed', error))
+          : undefined,
+      { subscriberName: 'session-spoken-replies' }
+    );
     const offUpdated = events.subscribe(
       'session.updated',
       async ({ sessionId, processingState, session }) => {
@@ -337,6 +348,7 @@ export class NeoService {
     );
     const offHumanReset = onHumanDevicesReset(this.notifyPublicationsChanged);
     this.unsubscribe = () => {
+      offSpeech();
       offHumanReset();
       offQueryFailure();
       offUpdated();

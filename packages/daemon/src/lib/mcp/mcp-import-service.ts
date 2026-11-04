@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, isAbsolute, join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type {
   AppMcpServer,
@@ -8,8 +8,7 @@ import type {
   UpdateAppMcpServerRequest,
 } from '@hyperneo/shared';
 import type { Database } from '../../storage/database.ts';
-import { SpaceRepository } from '../../storage/repositories/space-repository.ts';
-import { SpaceWorkspaceRepository } from '../../storage/repositories/space-workspace-repository.ts';
+import { extensionWorkspaceSources } from '../../storage/schema/extensions.ts';
 import { writeToolDefaults } from '../tools/write-tool-defaults.ts';
 import type { ToolDefaultMutation } from '../../storage/repositories/tool-default-transition.ts';
 import { Logger } from '../logger.ts';
@@ -399,32 +398,8 @@ export class McpImportService {
     const rawDb = this.db.getDatabase?.();
     if (!rawDb) return [];
 
-    const spaceRepo = new SpaceRepository(rawDb);
-    const workspaceRepo = new SpaceWorkspaceRepository(rawDb);
-    const seen = new Set<string>();
-    const out: McpImportSource[] = [];
-
-    for (const space of spaceRepo.listSpaces(true)) {
-      for (const ws of workspaceRepo.listBySpace(space.id)) {
-        if (!ws.path) continue;
-        try {
-          const abs = resolve(ws.path);
-          if (seen.has(abs)) continue;
-          seen.add(abs);
-          const label = ws.label?.trim() || basename(abs);
-          out.push({ path: abs, label });
-        } catch {}
-      }
-
-      if (space.workspacePath) {
-        try {
-          const abs = resolve(space.workspacePath);
-          if (seen.has(abs)) continue;
-          seen.add(abs);
-          out.push({ path: abs, label: basename(abs) });
-        } catch {}
-      }
-    }
+    const out: McpImportSource[] = extensionWorkspaceSources(rawDb);
+    const seen = new Set(out.map((source) => source.path));
 
     const historyRepo = this.db.workspaceHistory;
     if (historyRepo) {

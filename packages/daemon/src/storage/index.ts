@@ -12,7 +12,6 @@ import type {
   Session,
   GlobalToolsConfig,
   GlobalSettings,
-  InboxItem,
   MessageOrigin,
   HyperNeoActionMessage,
   ChatMessage,
@@ -45,10 +44,6 @@ import {
 } from './repositories/sdk-message-repository.ts';
 import type { SdkMessageWriteMethod } from './repositories/sdk-message-writes.ts';
 import { SettingsRepository } from './repositories/settings-repository.ts';
-import {
-  InboxItemRepository,
-  type CreateInboxItemParams,
-} from './repositories/inbox-item-repository.ts';
 import { JobQueueRepository } from './repositories/job-queue-repository.ts';
 import { AppMcpServerRepository } from './repositories/app-mcp-server-repository.ts';
 import { SpaceTaskRepository } from './repositories/space-task-repository.ts';
@@ -76,10 +71,6 @@ import type { ReactiveDatabase } from './reactive-database.ts';
 
 export type { SendStatus } from './repositories/sdk-message-repository.ts';
 export type { SQLiteValue } from './types.ts';
-export type {
-  CreateInboxItemParams,
-  InboxItemFilter,
-} from './repositories/inbox-item-repository.ts';
 export type { Job, EnqueueParams } from './repositories/job-queue-repository.ts';
 export { JobQueueProcessor } from './job-queue-processor.ts';
 export type {
@@ -122,7 +113,6 @@ export class Database {
   private sessionRepo!: SessionRepository;
   private sdkMessageRepo!: SDKMessageRepository;
   private settingsRepo!: SettingsRepository;
-  private inboxItemRepo!: InboxItemRepository;
   private jobQueueRepo!: JobQueueRepository;
   private appMcpServerRepo!: AppMcpServerRepository;
   private spaceTaskRepo!: SpaceTaskRepository;
@@ -184,7 +174,6 @@ export class Database {
     this.sessionRepo = new SessionRepository(db);
     this.sdkMessageRepo = new SDKMessageRepository(db, reactiveDb);
     this.settingsRepo = new SettingsRepository(db);
-    this.inboxItemRepo = new InboxItemRepository(db);
     this.spaceTaskRepo = new SpaceTaskRepository(db, reactiveDb);
     this.nodeExecutionRepo = new NodeExecutionRepository(db, reactiveDb);
     this.longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
@@ -663,14 +652,6 @@ export class Database {
 
   updateGlobalSettings(updates: Partial<GlobalSettings>): GlobalSettings {
     return this.settingsRepo.updateGlobalSettings(updates);
-  }
-
-  createInboxItem(params: CreateInboxItemParams): InboxItem {
-    return this.inboxItemRepo.createItem(params);
-  }
-
-  countInboxItemsByStatus(status: 'pending' | 'routed' | 'dismissed' | 'blocked'): number {
-    return this.inboxItemRepo.countByStatus(status);
   }
 
   getDatabase(): BunDatabase {

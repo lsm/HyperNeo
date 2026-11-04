@@ -617,13 +617,13 @@ describe('db-query integration', () => {
   });
 
   describe('cross-scope join prevention', () => {
-    it('space scope: JOIN with inbox_items (a global-scoped table) is rejected', async () => {
+    it('space scope: JOIN with skills (a global-scoped table) is rejected', async () => {
       const handlers = createDbQueryToolHandlers(
         { dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-int-1' },
         db
       );
       const result = await handlers.db_query({
-        sql: 'SELECT space_tasks.id FROM space_tasks JOIN inbox_items ON space_tasks.id = inbox_items.id',
+        sql: 'SELECT space_tasks.id FROM space_tasks JOIN skills ON space_tasks.id = skills.id',
       });
 
       expect(result.isError).toBe(true);

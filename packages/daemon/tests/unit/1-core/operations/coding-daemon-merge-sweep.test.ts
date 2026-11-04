@@ -193,6 +193,33 @@ afterEach(() => {
   db.close();
 });
 describe('daemon merge sweep behavior', () => {
+  test('accepting a stopped budget preserves failures and still caps the next budget', async () => {
+    for (let episode = 0; episode < 2; episode++) {
+      for (let i = 0; i < 3; i++) {
+        const [receipt] = await reserve(episode * 10 + i);
+        expect(receipt).toBeDefined();
+        await ledger.write('daemonMerge', {
+          ...receipt,
+          kind: 'failed',
+          error: 'Refused',
+          at: receipt.startedAt,
+        });
+        await ledger.write('daemonMerge', { ...receipt, kind: 'void', at: receipt.startedAt });
+      }
+      expect(await reserve(episode * 10 + 3)).toEqual([]);
+      if (episode === 0) {
+        await ledger.write('daemonMerge', { kind: 'retry', url, head, at: 0 });
+        expect(await ledger.write('daemonMerge', { kind: 'failures', url, head })).toEqual([]);
+        await ledger.write('daemonMerge', { kind: 'retry', url, head, at: 1000 });
+      }
+    }
+    expect((await ledger.write('daemonMerge', { kind: 'failures', url, head }))[0].failures).toBe(
+      3
+    );
+    expect(db.prepare('SELECT count(*) AS n FROM pack_coding_daemon_merge_failures').get()).toEqual(
+      { n: 6 }
+    );
+  });
   test.each([false, true])(
     'complete 171-file scope holds only for a protected tail path=%s',
     async (protectedTail) => {

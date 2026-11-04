@@ -662,7 +662,7 @@ function PublicEntry({
                 </div>
               )}
               {referenceSource && (
-                <FileReferenceCards source={referenceSource} text={[text, full].join('\n')} />
+                <FileReferenceCards source={referenceSource} text={text} details={full} />
               )}
               {publication && <ArtifactCards artifacts={publication.artifacts} />}
               {publication && links.length > 0 && (

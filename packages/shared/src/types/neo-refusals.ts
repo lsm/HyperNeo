@@ -6,11 +6,11 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
   invalid_speech_backend:
     'The daemon speech backend URL is invalid or unsupported. Ask the operator to configure a valid HTTPS base URL; loopback HTTP is supported for local services.',
   neo_speech_not_available:
-    'Spoken replies require a bound Neo session and an opted-in human client. Continue with a screen reply if unavailable.',
+    'Listening and playback receipts require a readable session and its connected human client. Only a bound Neo session may call neo.speech.say.',
   speech_receipt_mismatch:
     'The speech receipt belongs to a different request or client. Reuse a requestId only for identical speech and acknowledge only speech delivered to this client.',
   voice_replies_off:
-    'No connected human client has enabled spoken replies for this Neo session. Reply on screen instead.',
+    'No connected human client is listening to this session. Reply on screen instead.',
   speech_queue_full:
     'The connected client already has four utterances awaiting playback. Keep the remaining answer on screen instead of retrying in a loop.',
   speech_client_disconnected:

@@ -365,6 +365,20 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   const dispatch = async ({ todo, ask, target }: Startable) => {
     const status = target.verb === 'send' ? await refreshIdentity(todo.id, target.ref, ask) : null;
     const prepare = deps.packs().find((pack) => pack.id === todo.check?.pack);
+    const exclusions =
+      target.verb === 'start' ? await prepare?.workerStartExclusions?.(todo) : undefined;
+    if (exclusions && 'reason' in exclusions) {
+      const now = Date.now();
+      return {
+        ok: true as const,
+        todo: await finish(
+          todo,
+          ask,
+          planNeoTodoFailure(todo, `Could not start: ${exclusions.reason}`, now),
+          now
+        ),
+      };
+    }
     const card = neoTodoCard(todo, ask, prepare?.workerRules);
     card.instruction = workerBrief(
       todo,
@@ -397,6 +411,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     if (target.verb === 'start') {
       call.input.todoId = todo.id;
       call.input.provenance = true;
+      if (exclusions) call.input.excludeRefs = exclusions.value;
     }
     const message = String(call.input.message);
     const probe =

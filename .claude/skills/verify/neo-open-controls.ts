@@ -5,6 +5,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
+import { createLocalSocket, readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
@@ -15,7 +16,7 @@ for(const path of ['workspace','bin','evidence'])mkdirSync(join(run,path),{recur
 writeFileSync(join(run,'bin/gh'),'#!/bin/sh\nexit 1\n',{mode:0o700});
 const network=globalThis.fetch;globalThis.fetch=(()=>{throw new Error('External HTTP disabled');}) as typeof fetch;
 const app=await createDaemonApp({config:{...getConfig({port:0,host:'127.0.0.1',dbPath:join(run,'data/daemon.db')}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});assert.notEqual(app.server.port,8399);
-const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`});hub.registerTransport(transport);
+const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,createSocket:(url)=>createLocalSocket(url)});hub.registerTransport(transport);
 let front:ReturnType<typeof Bun.serve>|undefined;
 const evidence:Record<string,unknown>={phase,passed:false,syntheticOnly:true};
 try{
@@ -56,7 +57,7 @@ try{
  front=Bun.serve({hostname:'127.0.0.1',port:0,async fetch(request,server){
   const path=new URL(request.url).pathname;
   if(path==='/ws'){if(server.upgrade(request,{data:{connectionSessionId:'global',device:await app.authenticateUpgrade(request,'127.0.0.1')}}))return;return new Response('Upgrade failed',{status:500});}
-  const file=Bun.file(join(dist,path==='/neo'?'neo/index.html':path));return await file.exists()?new Response(file):new Response('Not found',{status:404});
+  const file=Bun.file(join(dist,path==='/neo'?'neo/index.html':path));if(!await file.exists())return new Response('Not found',{status:404});return path==='/neo'?new Response(file,{headers:{'Set-Cookie':`hyperneo_device=${readLocalCredential()}; Path=/; HttpOnly; SameSite=Strict`}}):new Response(file);
  },websocket:createWebSocketHandlers(app.transport,app.sessionManager)});assert.notEqual(front.port,8399);
  writeFileSync(readyPath,JSON.stringify({phase,port:front.port,url:`http://127.0.0.1:${front.port}/neo`,run,pid:process.pid,sessions},null,2));
  console.log(`Ready for attended browser: http://127.0.0.1:${front.port}/neo`);

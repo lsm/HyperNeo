@@ -79,6 +79,9 @@ export const NeoPublicationObject = z
   })
   .strict();
 
+export const workerSession = (session?: string | null) =>
+  session && !session.startsWith('neo:') ? session : undefined;
+
 export function publicationTextRule(
   value: { verbatim?: true; shortText?: string; cardReply?: unknown },
   ctx: z.RefinementCtx

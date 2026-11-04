@@ -165,7 +165,6 @@ import { humanDeviceResetWrites } from '../repositories/human-device-reset-write
 import { humanDeviceResetReads } from '../repositories/human-device-reset-read.ts';
 import { workspaceHistoryRemoveWrites } from '../repositories/workspace-history-remove-write.ts';
 import { workspaceHistoryUpsertWrites } from '../repositories/workspace-history-upsert-write.ts';
-import { inboxCreateWrites } from '../repositories/inbox-create-write.ts';
 import { artifactIdentityWrites } from '../repositories/artifact-file-identity-write.ts';
 import { artifactFileRowWrites } from '../repositories/artifact-file-row-write.ts';
 import { globalExtensionConfigWrites } from '../repositories/global-extension-config-write.ts';
@@ -173,6 +172,11 @@ import { spaceExtensionConfigWrites } from '../repositories/space-extension-conf
 import { gitHubSpaceEnabledWrites } from '../repositories/github-space-enabled-write.ts';
 import { gitHubFilterWrites } from '../repositories/github-filter-write.ts';
 import { gitHubPollingWrites } from '../repositories/github-polling-enabled-write.ts';
+
+import {
+  gitHubPollingCapabilityReads,
+  gitHubPollingTimerReads,
+} from '../repositories/github-polling-usage-read.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
   [
@@ -314,7 +318,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     humanDeviceResetReads,
     workspaceHistoryRemoveWrites,
     workspaceHistoryUpsertWrites,
-    inboxCreateWrites,
     artifactIdentityWrites,
     artifactFileRowWrites,
     globalExtensionConfigWrites,
@@ -322,5 +325,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     gitHubSpaceEnabledWrites,
     gitHubFilterWrites,
     gitHubPollingWrites,
+    gitHubPollingCapabilityReads,
+    gitHubPollingTimerReads,
   ].map((op) => [op.name, op])
 );

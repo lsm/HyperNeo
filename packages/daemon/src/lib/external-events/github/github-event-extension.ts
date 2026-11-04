@@ -1,3 +1,6 @@
+import { gitHubPollingTimerReads } from '../../../storage/repositories/github-polling-usage-read.ts';
+import { gitHubPollingCapabilityReads } from '../../../storage/repositories/github-polling-usage-read.ts';
+import { gitHubPollingWrites } from '../../../storage/repositories/github-polling-enabled-write.ts';
 import { gatewayFor } from '../../../storage/db-gateway/db-gateway.ts';
 import { gitHubSpaceEnabledWrites } from '../../../storage/repositories/github-space-enabled-write.ts';
 import { gitHubFilterWrites } from '../../../storage/repositories/github-filter-write.ts';
@@ -291,6 +294,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
   readonly repo: GitHubEventExtensionRepository;
   private context?: ExternalEventExtensionContext;
+  private pollingCapabilityTail: Promise<void> = Promise.resolve();
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private activePollCycle?: Promise<void>;
   private reconcileSweepPromise?: Promise<void>;
@@ -479,7 +483,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         }
         await this.persistSpaceConfig(context, watchedRepo.spaceId);
         await this.disablePollingCapabilityIfUnused(context);
-        this.maybeStopPolling();
+        await this.stopIdlePollingOnReader();
       }
       context.onSourceConfigChanged({
         source: this.sourceId,
@@ -559,7 +563,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       });
       await this.persistSpaceConfig(context, params.spaceId);
       await this.disablePollingCapabilityIfUnused(context);
-      this.maybeStopPolling();
+      await this.stopIdlePollingOnReader();
       context.onSourceConfigChanged({
         source: this.sourceId,
         spaceId: params.spaceId,
@@ -654,28 +658,17 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (params.enabled) {
         this.assertPollingIntervalEnabled();
       }
-      const repos = this.repo.listWatchedRepos(params.spaceId);
-      for (const repo of repos) {
-        if (params.enabled && repo.webhookEnabled && repo.webhookSecret) {
-          continue;
-        }
-        this.repo.upsertWatchedRepo({
-          spaceId: repo.spaceId,
-          owner: repo.owner,
-          repo: repo.repo,
-          pollingEnabled: params.enabled,
-        });
-      }
+      await gatewayFor(this.db).run(gitHubPollingWrites, {
+        spaceId: params.spaceId,
+        enabled: params.enabled,
+      });
       if (params.enabled) {
-        this.repo.setPollingIntent(params.spaceId, true);
         await this.enablePollingCapability(context);
         this.ensurePollingActive();
       } else {
-        this.repo.setPollingIntent(params.spaceId, false);
         await this.disablePollingCapabilityIfUnused(context);
-        this.maybeStopPolling();
+        await this.stopIdlePollingOnReader();
       }
-      await this.persistSpaceConfig(context, params.spaceId);
       context.onSourceConfigChanged({
         source: this.sourceId,
         spaceId: params.spaceId,
@@ -1874,26 +1867,35 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     };
   }
 
-  private async enablePollingCapability(context: ExternalEventExtensionContext): Promise<void> {
-    const global = await context.config.getGlobalConfig(this.sourceId);
-    if (global.capabilities.polling === true) return;
-    await context.config.setGlobalConfig(this.sourceId, {
-      ...global,
-      capabilities: { ...global.capabilities, polling: true },
+  private runPollingCapabilityUpdate(update: () => Promise<void>): Promise<void> {
+    const current = this.pollingCapabilityTail.then(update);
+    this.pollingCapabilityTail = current.catch(() => undefined);
+    return current;
+  }
+
+  private enablePollingCapability(context: ExternalEventExtensionContext): Promise<void> {
+    return this.runPollingCapabilityUpdate(async () => {
+      const global = await context.config.getGlobalConfig(this.sourceId);
+      if (global.capabilities.polling === true) return;
+      await context.config.setGlobalConfig(this.sourceId, {
+        ...global,
+        capabilities: { ...global.capabilities, polling: true },
+      });
     });
   }
 
-  private async disablePollingCapabilityIfUnused(
-    context: ExternalEventExtensionContext
-  ): Promise<void> {
-    if (this.repo.listAllPollingConfiguredRepos().length > 0) return;
-    if (this.repo.countSpacesWithPollingIntent() > 0) return;
-    if (this.repo.listPollingRepos(SESSION_EVENT_SCOPE).length > 0) return;
-    const global = await context.config.getGlobalConfig(this.sourceId);
-    if (global.capabilities.polling !== true) return;
-    await context.config.setGlobalConfig(this.sourceId, {
-      ...global,
-      capabilities: { ...global.capabilities, polling: false },
+  private disablePollingCapabilityIfUnused(context: ExternalEventExtensionContext): Promise<void> {
+    return this.runPollingCapabilityUpdate(async () => {
+      const inUse = await gatewayFor(this.db).run(gitHubPollingCapabilityReads, {
+        sessionScope: SESSION_EVENT_SCOPE,
+      });
+      if (inUse) return;
+      const global = await context.config.getGlobalConfig(this.sourceId);
+      if (global.capabilities.polling !== true) return;
+      await context.config.setGlobalConfig(this.sourceId, {
+        ...global,
+        capabilities: { ...global.capabilities, polling: false },
+      });
     });
   }
 
@@ -1911,11 +1913,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     this.scheduleNextPoll();
   }
 
-  private maybeStopPolling(): void {
-    if (!this.pollTimer) return;
-    if (this.options.sessionWatchRepos || this.repo.listPollingRepos().length > 0) return;
-    clearTimeout(this.pollTimer);
-    this.pollTimer = null;
+  private stopIdlePollingOnReader(): Promise<void> {
+    return this.runPollingCapabilityUpdate(async () => {
+      const timer = this.pollTimer;
+      if (!timer || this.options.sessionWatchRepos) return;
+      const inUse = await gatewayFor(this.db).run(gitHubPollingTimerReads, {});
+      if (inUse || this.pollTimer !== timer) return;
+      clearTimeout(timer);
+      this.pollTimer = null;
+    });
   }
 
   private resetRateLimitObservation(): void {

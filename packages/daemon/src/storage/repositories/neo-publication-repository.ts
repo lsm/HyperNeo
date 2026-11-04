@@ -12,7 +12,7 @@ import type {
 } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { admitNeoPublication } from '../../lib/neo/publication.ts';
+import { admitNeoPublication, workerSession } from '../../lib/neo/publication.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { OperationCaller } from '../../lib/operations/registry.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
@@ -38,7 +38,17 @@ function decode(row: Row): NeoPublication {
   } = JSON.parse(row.payloadJson);
   const parsed = admitNeoPublication(message);
   if ('reason' in parsed) throw new Error('Invalid stored Neo publication');
-  return { ...parsed.value, sequence: row.sequence, createdAt: row.createdAt };
+  return {
+    ...parsed.value,
+    session: workerSession(parsed.value.session),
+    sequence: row.sequence,
+    createdAt: row.createdAt,
+  };
+}
+
+function withoutNeoSession(payloadJson: string): string {
+  const { session, ...stored } = JSON.parse(payloadJson) as NeoPublicationInput;
+  return workerSession(session) ? payloadJson : JSON.stringify(stored);
 }
 
 function hasTrigger(
@@ -169,11 +179,11 @@ function appendImmutable(
           ...original,
           shortText: first.shortText,
           fullText: first.fullText,
-          session: first.session,
+          session: workerSession(first.session),
           awaiting: first.awaiting,
         }
       : null;
-    return row.payloadJson === payload ||
+    return withoutNeoSession(row.payloadJson) === payload ||
       (initial && JSON.stringify(admitNeoPublication(initial)) === JSON.stringify({ value: input }))
       ? { accepted: true, created: !!inserted, publication: decode(row) }
       : { accepted: false, reason: 'publication_conflict' };

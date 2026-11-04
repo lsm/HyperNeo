@@ -11,6 +11,7 @@ export type CodingDaemonMergeFacts =
       state: string;
       draft: boolean;
       mergeable: string;
+      passingCommitStatus: boolean;
       requiredCi: { head: string; green: boolean; count: number };
       threads: { head: string; unresolved: number };
       reviews: readonly { login: string; type?: string; head: string; state: string }[];
@@ -47,6 +48,8 @@ const requireCi = (facts: Facts): Gate =>
   facts.requiredCi.head === facts.head && facts.requiredCi.green
     ? { value: facts }
     : skip('required_ci_not_green_on_head');
+const requireCommitReady = (facts: Facts): Gate =>
+  facts.passingCommitStatus ? { value: facts } : skip('github_merge_not_ready');
 const requireReview = (facts: Facts, policy: CodingMergePolicy): Gate => {
   const latest = facts.reviews
     .filter(
@@ -86,6 +89,7 @@ export const decideCodingDaemonMerge = (superpipe({})('coding.decide-daemon-merg
   .pipe(requireDaemon, ['decision', 'policy'], 'result:decision')
   .pipe(requireOpen, 'decision', 'result:decision')
   .pipe(requireCi, 'decision', 'result:decision')
+  .pipe(requireCommitReady, 'decision', 'result:decision')
   .pipe(requireReview, ['decision', 'policy'], 'result:decision')
   .pipe(requireResolved, 'decision', 'result:decision')
   .pipe(requireNoSignoff, ['decision', 'policy'], 'result:decision')

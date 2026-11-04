@@ -19,11 +19,10 @@ import { readLiveClaudeSessions } from '../drivers/claude-desktop-adapter.ts';
 import { spawnProcess } from '../runtime-spawn/index.ts';
 import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
 import { join, resolve } from 'node:path';
-import { collectFamilyOperations } from './family-operations/index.ts';
-import { collectSpaceFamilyOperations, createSessionSpacePort } from './family-operations/space.ts';
-import type { SpaceFamilyContext } from './family-operations/space-context.ts';
+import { collectFamilyOperations, type FamilyOperationContext } from './family-operations/index.ts';
+import type { SpaceRpc, SpaceRpcFactory } from './space-rpc.ts';
+import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
 import { createNeoService, neoPacksExtension } from '../neo/packs/runtime.ts';
-import { completeSpaceSetup, setupSpaceServices, setupSpaceTaskAgents } from './space-setup.ts';
 import type { OperationRegistry } from '../operations/registry.ts';
 import { createDaemonExtensionsOperation, type DaemonExtensions } from '../extensions/contract.ts';
 import {
@@ -79,7 +78,8 @@ import type { Config } from '../../config.ts';
 import type { Database } from '../../storage/database.ts';
 import type { ReactiveDatabase, TableChangeEvent } from '../../storage/reactive-database.ts';
 
-import { setupSessionHandlers } from './session-handlers.ts';
+import { createCloneLifecycleEffects, setupSessionHandlers } from './session-handlers.ts';
+import { createResolveClones } from '../session/clone-cascade.ts';
 import { setupMessageHandlers } from './message-handlers.ts';
 import { setupSystemHandlers } from './system-handlers.ts';
 import { setupAuthHandlers } from './auth-handlers.ts';
@@ -94,16 +94,8 @@ import type { GitHubService } from '../github/github-service.ts';
 import { Logger } from '../logger.ts';
 import { setupDialogHandlers } from './dialog-handlers.ts';
 import { setupQuestionHandlers } from './question-handlers.ts';
-import { ensureSession } from '../session-resolution/ensure-session.ts';
-import { TaskAgentManager } from '../space/runtime/task-agent-manager.ts';
-import { SpaceWorktreeManager } from '../workspaces/worktree-manager.ts';
-import type { SpaceManager } from '../space/managers/space-manager.ts';
-import { GoalAutomationService } from '../goals/automation-service.ts';
-import { archiveAgentSessions } from './space-agent-v2-handlers.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
-import { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
-import { SpaceAgentInactivityWatchdogService } from '../agents/inactivity-watchdog-service.ts';
 import { setupLiveQueryHandlers } from './live-query-handlers.ts';
 import { readLiveSessionList } from '../../storage/repositories/session-list-live-read.ts';
 import { setupReferenceHandlers } from './reference-handlers.ts';
@@ -111,14 +103,12 @@ import { FileIndex } from '../file-index.ts';
 import { LiveQueryEngine } from '../../storage/live-query.ts';
 import type { McpImportService } from '../mcp/index.ts';
 import { registerAppMcpHandlers, setupAppMcpHandlers } from './app-mcp-handlers.ts';
-import { setupSpaceMcpHandlers } from './space-mcp-handlers.ts';
 import { registerSkillHandlers } from './skill-handlers.ts';
 import type { SkillsManager } from '../skills-manager.ts';
 import { setupWorkspaceHandlers } from './workspace-handlers.ts';
 import { setupGitHandlers } from './git-handlers.ts';
 import { WorkspaceHistoryRepository } from '../../storage/repositories/workspace-history-repository.ts';
 import { setupAgentMemoryHandlers } from './agent-memory-handlers.ts';
-import { SpaceGoalService } from '../goals/service.ts';
 import { ExternalEventExtensionConfigStore } from '../external-events/extension-config-store.ts';
 import {
   isHttpExtension,
@@ -134,14 +124,6 @@ const EXTERNAL_EVENT_DELIVERY_STATES: ExternalEventDeliveryState[] = [
   'delivered',
   'failed',
 ];
-
-import { validateGoalAutomationSelfNagPolicy } from '../evolution/evolution-policy-validation.ts';
-export { validateGoalAutomationSelfNagPolicy };
-import {
-  readSelfNagScheduleScopeId,
-  syncGoalAutomationSelfNagScheduleForScope,
-} from '../goals/automation-schedule-sync.ts';
-export { readSelfNagScheduleScopeId, syncGoalAutomationSelfNagScheduleForScope };
 
 export interface RPCHandlerDependencies {
   extensions: DaemonExtensions;
@@ -162,7 +144,6 @@ export interface RPCHandlerDependencies {
   externalEventExtensionContext: ExternalEventExtensionContext;
   db: Database;
   gitHubService?: GitHubService;
-  spaceManager: SpaceManager;
   jobQueue: JobQueueRepository;
   jobProcessor: JobQueueProcessor;
   purgeClaudeFeed?: (sessionIds: string[]) => Promise<void>;
@@ -266,15 +247,9 @@ export function setupExternalEventExtensionHandlers(deps: RPCHandlerDependencies
 
 export type RPCHandlerCleanup = () => void | Promise<void>;
 
-export interface RPCHandlerSetupResult {
+export interface RPCHandlerSetupResult<SpaceServices> {
   cleanup: RPCHandlerCleanup;
-  spaceRuntimeService: SpaceRuntimeService;
-  taskAgentManager: TaskAgentManager;
-  spaceWorktreeManager: SpaceWorktreeManager;
-  spaceGoalService: SpaceGoalService;
-  goalAutomationService: GoalAutomationService;
-  spaceAgentInactivityWatchdog: SpaceAgentInactivityWatchdogService;
-  cancelInactivityWatchdog: () => void;
+  space?: SpaceServices;
   sessionScheduler: SessionScheduler;
   handlePeerMessage: (req: Request) => Promise<Response>;
   prepareNeoInput: ReturnType<typeof createNeoService>['speech']['prepareInput'];
@@ -282,16 +257,17 @@ export interface RPCHandlerSetupResult {
   wakePollingConcern: (key: string, text: string) => Promise<boolean>;
 }
 
-export async function setupRPCHandlers(
-  deps: RPCHandlerDependencies
-): Promise<RPCHandlerSetupResult> {
-  let taskAgentManager: TaskAgentManager;
+export async function setupRPCHandlers<SpaceServices = never>(
+  deps: RPCHandlerDependencies,
+  spaceRpc?: SpaceRpcFactory<SpaceServices>
+): Promise<RPCHandlerSetupResult<SpaceServices>> {
+  let space: SpaceRpc<SpaceServices> | undefined;
   const persistToolPreferences: SessionToolPreferenceWriter = (id, request, tools) =>
     createSessionToolPreferenceWriter(deps.db, async () => {
       const stored = deps.db.getSession(id);
       if (!stored) return;
       const live = new Set([
-        taskAgentManager?.getCachedAgentSessionById(id),
+        space?.sessionSpace.liveSession(id),
         deps.sessionManager.getCachedSession(id),
       ]);
       for (const session of live)
@@ -308,8 +284,7 @@ export async function setupRPCHandlers(
       });
       if (request.kind === 'skills')
         await (
-          taskAgentManager?.getCachedAgentSessionById(id) ??
-          deps.sessionManager.getCachedSession(id)
+          space?.sessionSpace.liveSession(id) ?? deps.sessionManager.getCachedSession(id)
         )?.refreshToolsContextUsage();
     })(id, request, tools);
   const preferenceWrites = new Map<string, Promise<unknown>>();
@@ -400,13 +375,6 @@ export async function setupRPCHandlers(
 
   setupAppMcpHandlers(deps.messageHub, deps.internalEventBus, deps.db, writeToolPreferences);
 
-  setupSpaceMcpHandlers(
-    deps.messageHub,
-    deps.internalEventBus,
-    deps.db,
-    deps.spaceManager,
-    deps.mcpImportService
-  );
   setupAgentMemoryHandlers(deps.messageHub, { memoryRepo: deps.db.agentMemory });
   setupExternalEventExtensionHandlers(deps);
 
@@ -427,73 +395,42 @@ export async function setupRPCHandlers(
     (sessionId) => !!neoCoordinatorBinding(deps.db, sessionId)
   );
 
-  let spaceOperationRegistryProvider: () => OperationRegistry;
-  const spaceServices = await setupSpaceServices(deps, {
-    spaceOperationRegistryProvider: () => spaceOperationRegistryProvider(),
-  });
-  const {
-    stopInactivityRunNow,
-    cancelInactivityWatchdog: cancelSpaceInactivityWatchdog,
-    spaceTaskRepo,
-    spaceWorkflowRunRepo,
-    artifactRepo,
-    channelCycleRepo,
-    taskScheduleRepo,
-    scheduleService,
-    spaceGoalRepo,
-    spaceGoalEventRepo,
-    longHorizonAgentRepo,
-    evolutionScopeService,
-    spaceAgentRepo,
-    spaceAgentGoalScopeRepo,
-    spaceGoalService,
-    goalAutomationService,
-    spaceWorkflowRepo,
-    spaceAgentTemplateRepo,
-    spaceWorkflowManager,
-    spaceTaskManagerFactory,
-    nodeExecutionRepo,
-    replyRoutingRegistry,
-    artifactProfile,
-    evolutionEpisodeService,
-    spaceAgentInactivityConfigRepo,
-    spaceAgentInactivityClaimRepo,
-    spaceAgentReminderRepo,
-    spaceAgentSubscriptionRepo,
-    spaceSessionEventSubscriptionRepo,
-    spaceRuntimeService,
-    spaceAgentInactivityWatchdog,
-    spaceAgentTemplateManager,
-    spaceAgentV2Deps,
-    resolveClones,
-    spaceWorktreeManager,
-  } = spaceServices;
-
-  setupSessionHandlers(
-    deps.messageHub,
-    deps.sessionManager,
-    deps.internalEventBus,
-    deps.spaceManager,
-    spaceRuntimeService,
-    {
-      writeToolPreferences,
-      ensureSession: (target) => ensureSession(target, spaceAgents.sessionResolutionDeps()),
-      resolveClones,
-      listClones: (parentId) => deps.db.listChildSessions(parentId),
-      primaryAgentFor: (sessionId) => {
-        const agent = spaceAgentRepo.getBySessionId(sessionId);
-        return agent ? { id: agent.id, displayName: agent.displayName } : null;
-      },
-    }
-  );
-
-  const spaceAgents = setupSpaceTaskAgents(deps, spaceServices, {
+  space = await spaceRpc?.(deps, {
     readGithubPr: (url, workspacePath) => neoService.readConnectorPr(url, workspacePath),
     readGithubReviewThreads: (url, workspacePath) =>
       neoService.readReviewThreads(url, workspacePath),
   });
-  taskAgentManager = spaceAgents.taskAgentManager;
-  const { directTaskExecutionRepo, directTaskWorkerResolver } = spaceAgents;
+  setupSessionHandlers(
+    deps.messageHub,
+    deps.sessionManager,
+    deps.internalEventBus,
+    space?.membership,
+    undefined,
+    {
+      writeToolPreferences,
+      ensureSession: async (target) => {
+        if (space) return space.ensureSession(target);
+        const sessionId = target.kind === 'session' ? target.sessionId : null;
+        return sessionId && (await deps.sessionManager.getSessionAsync(sessionId))
+          ? { kind: 'resolved', sessionId, created: false }
+          : { kind: 'unresolved', reason: 'Session not found' };
+      },
+      resolveClones:
+        space?.resolveClones ??
+        createResolveClones({
+          listChildren: (parentId) => deps.db.listChildSessions(parentId),
+          detach: (sessionId) => deps.db.detachSessionFromParent(sessionId),
+          ...createCloneLifecycleEffects(
+            deps.sessionManager,
+            undefined,
+            deps.internalEventBus,
+            (id) => deps.db.getSession(id)
+          ),
+        }),
+      listClones: (parentId) => deps.db.listChildSessions(parentId),
+      primaryAgentFor: (sessionId) => space?.primaryAgentFor(sessionId) ?? null,
+    }
+  );
 
   const claudeInbox = createClaudeInboxDriver({
     name: claudeInboxName(resolve(deps.config.dbPath)),
@@ -521,7 +458,7 @@ export async function setupRPCHandlers(
   });
   const sessionScheduler = new SessionScheduler(deps.db.getDatabase(), deps.jobQueue);
   const driverCleanup: (() => Promise<void>)[] = [];
-  const familyContext: SpaceFamilyContext = {
+  const familyContext: FamilyOperationContext = {
     driverCleanup,
     sessionScheduler,
     neoPacks: () => neoService.packs(),
@@ -529,43 +466,7 @@ export async function setupRPCHandlers(
     claudeDesktopMods,
     claudeInbox,
     deps,
-    spaceRuntimeService,
-    taskAgentManager,
-    spaceTaskManagerFactory,
-    spaceTaskRepo,
-    nodeExecutionRepo,
-    longHorizonAgentRepo,
-    spaceAgentRepo,
-    spaceAgentGoalScopeRepo,
-    spaceAgentTemplateRepo,
-    spaceAgentTemplateManager,
-    spaceAgentReminderRepo,
-    spaceAgentSubscriptionRepo,
-    spaceSessionEventSubscriptionRepo,
-    hasDirectWorkerProvenance: (sessionId: string) =>
-      directTaskExecutionRepo.hasSessionProvenance(sessionId),
-    resolveDirectWorker: directTaskWorkerResolver,
-    spaceAgentInactivityConfigRepo,
-    spaceAgentInactivityClaimRepo,
-    spaceGoalService,
-    spaceGoalRepo,
-    spaceGoalEventRepo,
-    goalAutomationService,
-    evolutionScopeService,
-    evolutionEpisodeService,
-    scheduleService,
-    taskScheduleRepo,
-    spaceWorkflowRepo,
-    spaceWorkflowRunRepo,
-    spaceWorkflowManager,
-    artifactRepo,
-    artifactProfile,
-    channelCycleRepo,
-    replyRoutingRegistry,
-    archiveAgentSessions: (agent) =>
-      agent.sessionId
-        ? archiveAgentSessions(spaceAgentV2Deps, agent.sessionId)
-        : Promise.resolve({ ok: true }),
+    sessionSpace: space?.sessionSpace,
   };
   const neoService = createNeoService(
     deps.db,
@@ -583,9 +484,8 @@ export async function setupRPCHandlers(
     })
   );
   const neoHome = new NeoHomeRepository(neoFolderPath(), neoService.repo);
-  const boundFamilyContext: SpaceFamilyContext = {
+  const boundFamilyContext: FamilyOperationContext = {
     ...familyContext,
-    sessionSpace: createSessionSpacePort(familyContext),
     driverHealthNotice: async (id, text) => {
       const root = neoService.repo.defaultBinding()?.sessionId;
       if (!root) return false;
@@ -600,10 +500,10 @@ export async function setupRPCHandlers(
       write: persistToolPreferences,
       exclusive: exclusiveToolPreferences,
       getLiveSession: (id) =>
-        taskAgentManager?.getCachedAgentSessionById(id) ?? deps.sessionManager.getCachedSession(id),
+        space?.sessionSpace.liveSession(id) ?? deps.sessionManager.getCachedSession(id),
     }),
     ...collectFamilyOperations(boundFamilyContext),
-    ...collectSpaceFamilyOperations(boundFamilyContext),
+    ...(space?.familyOperations(boundFamilyContext) ?? []),
     ...deps.extensions.operations(),
     createDaemonExtensionsOperation(deps.extensions),
     ...createNeoOperations(neoService),
@@ -652,14 +552,22 @@ export async function setupRPCHandlers(
     await progressRefresh;
   });
 
-  spaceOperationRegistryProvider = completeSpaceSetup(
-    deps,
-    spaceServices,
-    spaceAgents,
-    familyOperations,
-    neoService.handleWorkerQuestion,
-    (prUrl) => neoService.readPrState(prUrl)
-  );
+  if (space)
+    space.complete(familyOperations, neoService.handleWorkerQuestion, (prUrl) =>
+      neoService.readPrState(prUrl)
+    );
+  else {
+    let registry: OperationRegistry | undefined;
+    deps.sessionManager.setDefaultOperationRegistryProvider(
+      () =>
+        (registry ??= createDatabaseOperationCatalog(
+          deps.db,
+          deps.jobQueue,
+          { workerReport: neoService.handleWorkerQuestion },
+          familyOperations
+        ))
+    );
+  }
 
   if (process.env.NODE_ENV !== 'test') {
     const neoFolder = ensureNeoProject(deps.db.workspaceHistory);
@@ -740,19 +648,12 @@ export async function setupRPCHandlers(
         }
       } finally {
         await neoService.dispose();
-        await stopInactivityRunNow();
+        await space?.stop();
         unsubLiveQuery();
-        await spaceRuntimeService.stop();
         fileIndex.dispose();
       }
     },
-    spaceRuntimeService,
-    taskAgentManager,
-    spaceWorktreeManager,
-    spaceGoalService,
-    goalAutomationService,
-    spaceAgentInactivityWatchdog,
-    cancelInactivityWatchdog: cancelSpaceInactivityWatchdog,
+    space: space?.services,
     sessionScheduler,
     wakePollingConcern: (key: string, text: string) => neoService.wakeNeo(key, text),
     notifyScheduleIdle: neoService.notifyScheduleIdle,

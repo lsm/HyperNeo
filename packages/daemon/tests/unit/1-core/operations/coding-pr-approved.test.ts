@@ -416,6 +416,7 @@ test.each(
             state: 'OPEN',
             draft: false,
             mergeable: 'MERGEABLE',
+            passingCommitStatus: true,
             requiredCi: { count: 1, head: headA, green: true },
             threads: { head: headA, unresolved: 0 },
             files: [],

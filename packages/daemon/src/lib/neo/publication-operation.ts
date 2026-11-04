@@ -13,6 +13,7 @@ import {
   NeoPublicationObject,
   NeoPublicationResultSchema,
   publicationTextRule,
+  workerSession,
 } from './publication.ts';
 
 const Draft = NeoPublicationObject.omit({
@@ -32,6 +33,7 @@ const Draft = NeoPublicationObject.omit({
   .extend({
     requestId: z.string().min(1).max(160),
     spoken: z.string().trim().min(1).max(500).optional(),
+    session: NeoPublicationObject.shape.session.nullable(),
     links: z
       .array(
         NeoPublicationObject.shape.links.unwrap().element.extend({ kind: z.literal('project') })
@@ -155,8 +157,9 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     )
     .pipe(
       async (draft: Draft, proof: Proof, caller: OperationCaller) => {
+        const worker = workerSession(draft.session);
         const prior =
-          draft.session === undefined
+          worker === undefined
             ? runtime.publication(
                 proof.root.sessionId.slice(4),
                 neoDerivedId(
@@ -169,17 +172,17 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
               )
             : null;
         if (prior) return { value: { ...proof, session: prior.session } };
-        const session = draft.session ?? runtime.sourceSession(caller.sessionId!);
+        const session = worker ?? workerSession(runtime.sourceSession(caller.sessionId!));
         const status = session ? await runtime.lookupSession(session) : 'not_found';
-        return draft.session && status !== 'found'
+        return worker && status !== 'found'
           ? {
               reason: {
                 accepted: false,
                 reason: status === 'not_found' ? 'unknown_session' : 'session_lookup_failed',
                 detail:
                   status === 'not_found'
-                    ? `Unknown session: ${draft.session}`
-                    : `Session lookup failed: ${draft.session}. Retry the same requestId without changing the session id.`,
+                    ? `Unknown session: ${worker}`
+                    : `Session lookup failed: ${worker}. Retry the same requestId without changing the session id.`,
               },
             }
           : { value: { ...proof, session: status === 'found' ? session : undefined } };
@@ -229,6 +232,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
         const { requestId, spoken: _spoken, ...message } = draft;
         return runtime.append({
           ...message,
+          session: message.session ?? undefined,
           publicationId: neoDerivedId(
             JSON.stringify(['neo.publication.publish', proof.binding.sessionId, requestId])
           ),
@@ -279,7 +283,7 @@ export function createNeoPublicationOperation(
   return defineOperation({
     name: 'neo.publication.publish',
     description:
-      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. When the latest listening fact is yes, include optional spoken: one or two natural lines consistent with the text, at most 500 characters. Publication is saved first, speech is delivered to the current listener, then clients are notified of the text. No listener silently drops spoken; speech is not stored in publication history. Retries never replay speech. The receipt reports listening and spokenDelivered. If a fresh receipt says listening yes but you supplied no spoken, follow its guidance to call neo.speech.say once; never re-publish the text. Pass verbatim: true to send the message as one field: the full content in fullText with no shortText; a request with both verbatim and shortText is rejected. Optional replyTo lists the received human message ids this publication answers; when omitted, the human inputs whose turn produced this publication are recorded as answered when they are known. Unknown, foreign, queued and non-human reply ids are omitted. When a reply is about one session the human may want to open, pass session: its exact session id rather than promising a link in text. Unknown session ids reject the publication without saving; correct the id and retry the same requestId. session_lookup_failed means the lookup is unavailable: retry the same requestId and session id. If session is omitted, the daemon fills it only for an unambiguous recorded sender of the current inputs. Only project links are accepted; an unknown project id rejects the entire publication without saving. Correct the link and retry with the same requestId. Unavailable artifact references are omitted. For a working document or evidence file, put its absolute path on the owning daemon in the text and say in one sentence what it is. Preview only files on this daemon. Remote files return owner_unavailable; identify their owner rather than re-publishing their paths as local. Existing saved attachments and fixed-head Git references remain supported in artifacts.',
+      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. session is the worker session this message is about; omit it otherwise. When the latest listening fact is yes, include optional spoken: one or two natural lines consistent with the text, at most 500 characters. Publication is saved first, speech is delivered to the current listener, then clients are notified of the text. No listener silently drops spoken; speech is not stored in publication history. Retries never replay speech. The receipt reports listening and spokenDelivered. If a fresh receipt says listening yes but you supplied no spoken, follow its guidance to call neo.speech.say once; never re-publish the text. Pass verbatim: true to send the message as one field: the full content in fullText with no shortText; a request with both verbatim and shortText is rejected. Optional replyTo lists the received human message ids this publication answers; when omitted, the human inputs whose turn produced this publication are recorded as answered when they are known. Unknown, foreign, queued and non-human reply ids are omitted. When a reply is about one session the human may want to open, pass session: its exact session id rather than promising a link in text. Unknown session ids reject the publication without saving; correct the id and retry the same requestId. session_lookup_failed means the lookup is unavailable: retry the same requestId and session id. If session is omitted, the daemon fills it only for an unambiguous recorded sender of the current inputs. Only project links are accepted; an unknown project id rejects the entire publication without saving. Correct the link and retry with the same requestId. Unavailable artifact references are omitted. For a working document or evidence file, put its absolute path on the owning daemon in the text and say in one sentence what it is. Preview only files on this daemon. Remote files return owner_unavailable; identify their owner rather than re-publishing their paths as local. Existing saved attachments and fixed-head Git references remain supported in artifacts.',
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
     resultSchema: Result,
