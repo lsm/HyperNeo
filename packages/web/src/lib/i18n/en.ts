@@ -317,6 +317,7 @@ export const en = {
   'artifact.resize': 'Adjust preview width',
   'artifact.width': '{width}% preview width',
   'artifact.closeFile': 'Close {name}',
+  'artifact.closeSession': 'Close {name}',
   'artifact.moreFiles': 'Other files ({count})',
   'artifact.dismiss': 'Dismiss preview',
   'artifact.back': 'Back',

@@ -72,9 +72,9 @@ export function ArtifactPreviewPanel({
       : top && isLiveReference(top)
         ? previewFileKey({ reference: top, title: '' })
         : null;
-  const sessionActive = tabbed && !!session?.selected && !top;
   const workActive =
-    tabbed && !!work && artifactPreviewWorkspace.state.value.open && !top && !sessionActive;
+    tabbed && !!work && artifactPreviewWorkspace.state.value.open && !top && !session?.selected;
+  const sessionActive = tabbed && !!session && !top && (session.selected || !workActive);
   const open = !!top || workActive || sessionActive;
   const reference = tabbed && top?.kind === 'reference' && !isLiveReference(top) ? top : undefined;
   const showWork = tabbed && work && (work.showTab || !!session);

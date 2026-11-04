@@ -157,7 +157,7 @@ export function ArtifactPreviewTabs({
             </button>
             <button
               type="button"
-              aria-label={t('artifact.closeFile', { name: session.title })}
+              aria-label={t('artifact.closeSession', { name: session.title })}
               tabIndex={session.selected ? 0 : -1}
               class={`mr-1 h-6 w-6 shrink-0 rounded-full text-xs hover:bg-fill-strong group-hover:opacity-100 group-focus-within:opacity-100 ${session.selected ? 'opacity-100' : 'opacity-0'}`}
               onClick={session.onClose}
@@ -181,6 +181,7 @@ export function ArtifactPreviewTabs({
               tabIndex={
                 !reference &&
                 !work?.selected &&
+                !session?.selected &&
                 previewFileKey(file) ===
                   (selectedId ?? (shown[0] ? previewFileKey(shown[0]) : null))
                   ? 0
