@@ -40,7 +40,13 @@ describe('isSessionAlive', () => {
 });
 
 describe('planSilentSend', () => {
-  const silent = { status: 'processing' as const, lastOutputAt: 5, sentAt: 10, resends: 0 };
+  const silent = {
+    status: 'processing' as const,
+    openTools: 0,
+    lastOutputAt: 5,
+    sentAt: 10,
+    resends: 0,
+  };
 
   test('resends a swallowed message, then says so plainly', () => {
     expect(planSilentSend(silent)).toBe('resend');
@@ -52,6 +58,7 @@ describe('planSilentSend', () => {
     expect(planSilentSend({ ...silent, lastOutputAt: 10 })).toBe('resend');
     expect(planSilentSend({ ...silent, status: 'idle' })).toBe('answered');
     expect(planSilentSend({ ...silent, status: 'interrupted' })).toBe('answered');
+    expect(planSilentSend({ ...silent, openTools: 1 })).toBe('answered');
   });
 });
 
@@ -171,6 +178,38 @@ describe('human send recovery wiring', () => {
       await new Promise((resolve) => setTimeout(resolve, 30));
       expect(await recovery.prepare('s')).toBe('wait');
       expect(calls).toEqual(['reopen m', 'hold']);
+      expect(await recovery.prepare('s')).toBe('deliver');
+    } finally {
+      recovery.stop();
+      delete process.env.HYPERNEO_HUMAN_SEND_SILENCE_MS;
+    }
+  });
+
+  test('a silent send that cannot be reopened tells the human at once', async () => {
+    process.env.HYPERNEO_HUMAN_SEND_SILENCE_MS = '5';
+    const calls: string[] = [];
+    const recovery = createHumanSendRecovery({
+      getSession: async () =>
+        ({
+          humanSendFacts: async () => ({
+            status: 'processing',
+            held: false,
+            openTools: 0,
+            lastActivityAt: Date.now(),
+          }),
+          lastSdkOutputAt: () => 0,
+          showNotice: async (text: string) => {
+            calls.push(text);
+          },
+        }) as unknown as HumanSendSession,
+      refreshCredentials: async () => {},
+      wakeParked: async () => {},
+      reopen: async () => false,
+    });
+    try {
+      recovery.watch('s', 'm');
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(calls).toEqual([HUMAN_SEND_GAVE_UP_NOTICE]);
       expect(await recovery.prepare('s')).toBe('deliver');
     } finally {
       recovery.stop();

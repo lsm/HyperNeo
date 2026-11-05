@@ -1,7 +1,8 @@
-import type { AgentProcessingState } from '@hyperneo/shared';
+import { type AgentProcessingState, createLogger } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 
 const DEFAULT_HUMAN_SEND_SILENCE_MS = 60_000;
+const log = createLogger('hyperneo:daemon:human-send-recovery');
 export const HUMAN_SEND_RESEND_LIMIT = 3;
 export const HUMAN_SEND_GAVE_UP_NOTICE =
   "The model provider isn't answering. Your message was not lost; send it again to retry.";
@@ -32,12 +33,13 @@ export type SilentSendPlan = 'answered' | 'resend' | 'give_up';
 
 export function planSilentSend(input: {
   status: AgentProcessingState['status'];
+  openTools: number;
   lastOutputAt: number;
   sentAt: number;
   resends: number;
 }): SilentSendPlan {
   const running = input.status === 'processing' || input.status === 'queued';
-  if (!running || input.lastOutputAt > input.sentAt) return 'answered';
+  if (!running || input.openTools > 0 || input.lastOutputAt > input.sentAt) return 'answered';
   return input.resends < HUMAN_SEND_RESEND_LIMIT ? 'resend' : 'give_up';
 }
 
@@ -133,8 +135,10 @@ export function createHumanSendRecovery(deps: HumanSendRecoveryDeps) {
     if (!session) return;
     const id = key(sessionId, messageUuid);
     const count = resends.get(id) ?? 0;
+    const { status, openTools } = await session.humanSendFacts();
     const plan = planSilentSend({
-      status: (await session.humanSendFacts()).status,
+      status,
+      openTools,
       lastOutputAt: session.lastSdkOutputAt(),
       sentAt,
       resends: count,
@@ -142,11 +146,11 @@ export function createHumanSendRecovery(deps: HumanSendRecoveryDeps) {
     if (plan === 'resend') {
       resends.set(id, count + 1);
       silent.add(sessionId);
-      await deps.reopen(sessionId, messageUuid);
-      return;
+      if (await deps.reopen(sessionId, messageUuid)) return;
+      silent.delete(sessionId);
     }
     resends.delete(id);
-    if (plan === 'give_up') await session.showNotice(HUMAN_SEND_GAVE_UP_NOTICE);
+    if (plan !== 'answered') await session.showNotice(HUMAN_SEND_GAVE_UP_NOTICE);
   }
 
   function watch(sessionId: string, messageUuid: string): void {
@@ -154,7 +158,9 @@ export function createHumanSendRecovery(deps: HumanSendRecoveryDeps) {
     lastSentAt.set(sessionId, sentAt);
     const timer = setTimeout(() => {
       timers.delete(timer);
-      void checkSilence(sessionId, messageUuid, sentAt).catch(() => {});
+      void checkSilence(sessionId, messageUuid, sentAt).catch((error: unknown) =>
+        log.error(`Checking a silent human send failed: ${String(error)}`)
+      );
     }, getHumanSendSilenceMs());
     timer.unref?.();
     timers.add(timer);
