@@ -1555,7 +1555,7 @@ export class QueryRunner {
       const routeDecision = decideQueryRetry({ errorSignal: retrySignal, env: retryEnv });
       if (episode?.failed) {
         const terminal = new QueryFailureCapError(
-          `Query stopped after ${episode.failures} failures: ${episode.error}. Use Retry to recover.`
+          `Query stopped after ${episode.failures} failures: ${episode.error}. Send a message to recover.`
         );
         messageQueue.clear(terminal);
         await errorManager.handleError(

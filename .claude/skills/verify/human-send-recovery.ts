@@ -48,7 +48,7 @@ const serveModel = (port: number) => Bun.serve({ hostname: '127.0.0.1', port, id
   if (hang && text.includes(hang.marker) && Date.now() < hang.until) return never();
   if (mode === 'hang') return never();
   if (mode === '401') return Response.json({ type: 'error', error: { type: 'authentication_error', message: 'OAuth token has expired' } }, { status: 401 });
-  if (mode === '429') return Response.json({ type: 'error', error: { type: 'rate_limit_error', message: 'Usage limit reached' } }, { status: 429 });
+  if (mode === '429') return Response.json({ type: 'error', error: { type: 'rate_limit_error', message: 'Usage limit reached' } }, { status: 429, headers: { 'x-should-retry': 'false' } });
   served.push(text);
   return sse('Synthetic reply.');
 } });
