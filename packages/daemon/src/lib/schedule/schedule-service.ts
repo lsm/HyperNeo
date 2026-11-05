@@ -11,7 +11,7 @@ import type {
 import type { TaskScheduleRepository } from '../../storage/repositories/task-schedule-repository.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
-import { getNextRunAt } from './cron-utils.ts';
+import { getNextRunAt } from '../scheduler/cron-utils.ts';
 import {
   computeInitialNextRun,
   computeResumeNextRun,
