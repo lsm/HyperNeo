@@ -12,7 +12,7 @@ import type {
   ExportedHandoffTransition,
   SpaceExportBundle,
 } from '@hyperneo/shared';
-import { validateSlug } from './slug.ts';
+import { validateSlug } from '../agents/slug.ts';
 
 const _workflowConditionSchema = z
   .object({

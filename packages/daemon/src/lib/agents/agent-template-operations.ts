@@ -17,7 +17,7 @@ import {
   type OperationDefinition,
 } from '../operations/registry.ts';
 import { getNextRunAt, isValidCronExpression } from '../scheduler/cron-utils.ts';
-import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../space/slug.ts';
+import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from './slug.ts';
 import {
   decideAutonomyAdmission,
   resolveEffectiveAutonomyLevel,

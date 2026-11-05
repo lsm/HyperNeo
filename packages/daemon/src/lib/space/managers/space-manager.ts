@@ -25,7 +25,7 @@ import {
   type WorkspaceValidationIo,
 } from '../../workspaces/validation-pipeline.ts';
 import { Logger } from '../../logger.ts';
-import { slugify, validateSlug } from '../slug.ts';
+import { slugify, validateSlug } from '../../agents/slug.ts';
 import type { Space, CreateSpaceParams, UpdateSpaceParams } from '@hyperneo/shared';
 
 const execAsync = promisify(exec);
