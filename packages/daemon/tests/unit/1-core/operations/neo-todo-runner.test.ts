@@ -3261,6 +3261,7 @@ describe('held sends', () => {
     });
     try {
       const todo = h.add();
+      h.store.updateTodo(todo, { state: 'blocked', blockedBy: 'check' }, 1);
       await h.sessions.held.hold(held(todo.id, 'a'), 1);
       h.sessions.recordRef(todo.id, { adapter: 'hyperneo', id: 'fresh' }, 2);
       h.setStatus({ ok: true, value: { status: 'done', lastActivityAt: 3 } });

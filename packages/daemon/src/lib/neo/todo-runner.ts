@@ -1046,7 +1046,6 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           );
         if (sent && 'delivery' in sent && sent.delivery?.held)
           return sessions.held.setSending(held.key, null);
-        await sessions.held.remove(held.key);
         if (owner && action in HELD_SEND_NOTES)
           await deps.tell(
             owner.ask,
@@ -1061,6 +1060,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
             `A held send for this todo could not reach its worker: ${sent.failure}`,
             `held-send-failed:${held.key}`
           );
+        await sessions.held.remove(held.key);
       },
       ['action', 'held', 'owner'],
       'released'
