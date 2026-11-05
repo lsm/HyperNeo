@@ -12,7 +12,9 @@ import { AnthropicProvider } from '../../../packages/daemon/src/lib/providers/an
 import { createLocalSocket, readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 
-process.env.HYPERNEO_HUMAN_SEND_SILENCE_MS = '4000';
+process.env.HYPERNEO_HUMAN_SEND_SILENCE_MS = '2000';
+process.env.HYPERNEO_SDK_STREAM_SILENCE_TIMEOUT_MS = '6000';
+process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = '3000';
 const run = resolve(process.argv.at(-1) ?? '');
 assert(process.env.NODE_ENV === 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -26,6 +28,7 @@ process.env.PATH = `${run}/bin:${process.env.PATH}`;
 type Mode = 'ok' | 'hang' | '401' | '429';
 let mode: Mode = 'ok';
 let hang: { marker: string; until: number } | null = null;
+let slow: { marker: string; ms: number } | null = null;
 const served: string[] = [];
 const seen: string[] = [];
 const sse = (text: string) => {
@@ -46,6 +49,7 @@ const serveModel = (port: number) => Bun.serve({ hostname: '127.0.0.1', port, id
   const text = await request.text();
   seen.push(text);
   if (hang && text.includes(hang.marker) && Date.now() < hang.until) return never();
+  if (slow && text.includes(slow.marker)) await Bun.sleep(slow.ms);
   if (mode === 'hang') return never();
   if (mode === '401') return Response.json({ type: 'error', error: { type: 'authentication_error', message: 'OAuth token has expired' } }, { status: 401 });
   if (mode === '429') return Response.json({ type: 'error', error: { type: 'rate_limit_error', message: 'Usage limit reached' } }, { status: 429, headers: { 'x-should-retry': 'false' } });
@@ -154,17 +158,26 @@ const cases: Record<string, (marker: string) => Promise<Record<string, unknown>>
   },
   async hung_process(marker) {
     mode = 'hang';
-    await systemTurn(`${marker} earlier work`);
+    const startedAt = Date.now();
+    await systemTurn(`earlier work before ${marker.slice(-8).split('').reverse().join('')}`);
     await until(() => live().getProcessingState().status === 'processing', 15_000, 'turn running');
-    await Bun.sleep(5_000);
+    await Bun.sleep(6_500);
     mode = 'ok';
     await send(marker);
-    await until(() => served.some((body) => body.includes(`neo-human ${marker}`) || body.includes(marker)), 25_000, 'model answered after the hang');
+    await answered(marker, 40_000);
+    return { answeredAfterMs: Date.now() - startedAt };
+  },
+  async slow_first_token_is_not_killed(marker) {
+    const first = live();
+    slow = { marker, ms: 4_000 };
+    await send(marker);
     await answered(marker);
+    slow = null;
+    assert.equal(live(), first, 'a healthy slow turn must keep its session');
     return {};
   },
   async swallowed_message(marker) {
-    hang = { marker, until: Date.now() + 4_200 };
+    hang = { marker, until: Date.now() + 6_200 };
     await send(marker);
     await answered(marker, 30_000);
     return { requestsSeen: seen.filter((body) => body.includes(marker)).length };
@@ -190,11 +203,10 @@ const cases: Record<string, (marker: string) => Promise<Record<string, unknown>>
       return id === 'anthropic' ? { type: 'oauth', accessToken: 'fake', refreshToken: 'fake', expiresAt: expired ? Date.now() - 1000 : Date.now() + 3_600_000 } : getCredentials.call(this, id);
     } as typeof getCredentials;
     ProviderCredentialManager.prototype.storeOAuthTokens = async function () {} as typeof storeOAuthTokens;
-    AnthropicProvider.prototype.getAuthStatus = async function () { return { ...await getAuthStatus.call(this), needsRefresh: expired || undefined }; };
+    AnthropicProvider.prototype.getAuthStatus = async function () { return { ...await getAuthStatus.call(this), expiresAt: expired ? Date.now() - 1000 : Date.now() + 3_600_000 }; };
     AnthropicProvider.prototype.refreshToken = async function () { refreshes += 1; expired = false; mode = 'ok'; return true; };
     try {
       mode = '401';
-      await latch();
       await send(marker);
       await answered(marker);
       return { refreshes };

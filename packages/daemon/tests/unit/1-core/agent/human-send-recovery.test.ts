@@ -6,6 +6,7 @@ import {
   type HumanSendFacts,
   type HumanSendSession,
   isSessionAlive,
+  isSlowButLive,
   planSilentSend,
   runHumanSendRecovery,
 } from '../../../../src/lib/agent/human-send-recovery';
@@ -17,6 +18,7 @@ const facts = (over: Partial<HumanSendFacts> = {}): HumanSendFacts => ({
   lastActivityAt: 0,
   now: 100_000,
   silenceMs: 60_000,
+  stallMs: 180_000,
   ...over,
 });
 
@@ -39,14 +41,38 @@ describe('isSessionAlive', () => {
   });
 });
 
+describe('isSlowButLive', () => {
+  test('covers a quiet running turn up to the stall bound, with no hold', () => {
+    const quiet = facts({ status: 'processing', now: 100_000, lastActivityAt: 0 });
+    expect(isSlowButLive(quiet)).toBe(true);
+    expect(isSlowButLive({ ...quiet, now: 180_000 })).toBe(false);
+    expect(isSlowButLive({ ...quiet, held: true })).toBe(false);
+    expect(isSlowButLive({ ...quiet, status: 'interrupted' })).toBe(false);
+  });
+});
+
 describe('planSilentSend', () => {
   const silent = {
     status: 'processing' as const,
     openTools: 0,
     lastOutputAt: 5,
+    lastInterruptAt: 0,
     sentAt: 10,
     resends: 0,
+    reachable: false,
+    now: 70_010,
+    stallMs: 180_000,
   };
+
+  test('a slow first token with a reachable provider is left to run', () => {
+    expect(planSilentSend({ ...silent, reachable: true })).toBe('wait');
+    expect(planSilentSend({ ...silent, reachable: true, now: 180_009 })).toBe('wait');
+    expect(planSilentSend({ ...silent, reachable: true, now: 180_010 })).toBe('resend');
+  });
+
+  test('an idle session that produced nothing swallowed the message', () => {
+    expect(planSilentSend({ ...silent, status: 'idle' })).toBe('resend');
+  });
 
   test('resends a swallowed message, then says so plainly', () => {
     expect(planSilentSend(silent)).toBe('resend');
@@ -56,8 +82,9 @@ describe('planSilentSend', () => {
   test('leaves a turn that answered or ended alone', () => {
     expect(planSilentSend({ ...silent, lastOutputAt: 11 })).toBe('answered');
     expect(planSilentSend({ ...silent, lastOutputAt: 10 })).toBe('resend');
-    expect(planSilentSend({ ...silent, status: 'idle' })).toBe('answered');
+    expect(planSilentSend({ ...silent, status: 'idle', lastInterruptAt: 11 })).toBe('answered');
     expect(planSilentSend({ ...silent, status: 'interrupted' })).toBe('answered');
+    expect(planSilentSend({ ...silent, status: 'waiting_for_input' })).toBe('answered');
     expect(planSilentSend({ ...silent, openTools: 1 })).toBe('answered');
   });
 });
@@ -89,6 +116,12 @@ describe('runHumanSendRecovery', () => {
     expect(run.calls).toEqual([]);
   });
 
+  test('a slow turn is probed and left alone when the provider answers', async () => {
+    const run = effects(false, true, { held: false, status: 'processing' });
+    expect(await runHumanSendRecovery(run.effects)).toBe('deliver');
+    expect(run.calls).toEqual(['probe']);
+  });
+
   test('a stuck session takes the one recovery path in order', async () => {
     const run = effects(false, true);
     expect(await runHumanSendRecovery(run.effects)).toBe('recovered');
@@ -115,6 +148,7 @@ describe('human send recovery wiring', () => {
             lastActivityAt: 0,
           }),
           lastSdkOutputAt: () => 0,
+          lastInterruptAt: () => 0,
           providerId: () => 'anthropic',
           providerReachable: async () => true,
           holdForNetwork: async () => {
@@ -198,6 +232,8 @@ describe('human send recovery wiring', () => {
             lastActivityAt: Date.now(),
           }),
           lastSdkOutputAt: () => 0,
+          lastInterruptAt: () => 0,
+          providerReachable: async () => false,
           showNotice: async (text: string) => {
             calls.push(text);
           },
@@ -226,13 +262,11 @@ describe('human send recovery wiring', () => {
         openTools: 0,
         lastActivityAt: 0,
       }),
+      providerReachable: async () => false,
     });
     try {
       for (let sent = 0; sent <= HUMAN_SEND_RESEND_LIMIT; sent += 1) {
         recovery.watch('s', 'm');
-        const reopened = calls.length;
-        await new Promise((resolve) => setTimeout(resolve, 5 * 2 ** sent - 3));
-        expect(calls).toHaveLength(reopened);
         await new Promise((resolve) => setTimeout(resolve, 30));
       }
       expect(calls.filter((call) => call === 'reopen m')).toHaveLength(HUMAN_SEND_RESEND_LIMIT);

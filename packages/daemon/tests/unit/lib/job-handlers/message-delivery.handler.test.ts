@@ -330,6 +330,17 @@ describe('createMessageDeliveryHandler', () => {
       expect(jobQueue.requeueParked).not.toHaveBeenCalled();
     });
 
+    it('watches a human message a retried job finds consumed', async () => {
+      const watched: string[] = [];
+      const { handler, session, job } = makeHarness({
+        getMessageContent: () => ({ content: 'hi', sendStatus: 'consumed', inputKind: 'human' }),
+        watchHumanSend: (_sessionId, uuid) => watched.push(uuid),
+      });
+      expect(await handler(job, {})).toEqual({ outcome: 'completed' });
+      expect(watched).toEqual(['uuid-1']);
+      expect(session.driveCalls).toBe(0);
+    });
+
     it('a system message keeps its gates and never starts recovery', async () => {
       const prepared: string[] = [];
       const { handler, session, job } = makeHarness({

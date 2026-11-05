@@ -1,5 +1,6 @@
 import { type AgentProcessingState, createLogger } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { getStreamSilenceTimeoutMs } from './stream-silence-watch.ts';
 
 const DEFAULT_HUMAN_SEND_SILENCE_MS = 60_000;
 const log = createLogger('hyperneo:daemon:human-send-recovery');
@@ -19,6 +20,7 @@ export interface HumanSendFacts {
   lastActivityAt: number;
   now: number;
   silenceMs: number;
+  stallMs: number;
 }
 
 export function isSessionAlive(facts: HumanSendFacts): boolean {
@@ -29,17 +31,39 @@ export function isSessionAlive(facts: HumanSendFacts): boolean {
   return facts.openTools > 0 || facts.now - facts.lastActivityAt < facts.silenceMs;
 }
 
-export type SilentSendPlan = 'answered' | 'resend' | 'give_up';
+export const isSlowButLive = (facts: HumanSendFacts): boolean =>
+  facts.status === 'processing' && !facts.held && facts.now - facts.lastActivityAt < facts.stallMs;
 
-export function planSilentSend(input: {
+export type SilentSendPlan = 'answered' | 'wait' | 'resend' | 'give_up';
+
+interface SilentSendFacts {
   status: AgentProcessingState['status'];
   openTools: number;
   lastOutputAt: number;
+  lastInterruptAt: number;
   sentAt: number;
-  resends: number;
-}): SilentSendPlan {
-  const running = input.status === 'processing' || input.status === 'queued';
-  if (!running || input.openTools > 0 || input.lastOutputAt > input.sentAt) return 'answered';
+}
+
+const SETTLED_STATUSES: ReadonlySet<string> = new Set([
+  'waiting_for_input',
+  'rate_limit_cooldown',
+  'interrupted',
+]);
+
+export function isQuietTurn(input: SilentSendFacts): boolean {
+  return (
+    !SETTLED_STATUSES.has(input.status) &&
+    input.openTools === 0 &&
+    input.lastOutputAt <= input.sentAt &&
+    input.lastInterruptAt < input.sentAt
+  );
+}
+
+export function planSilentSend(
+  input: SilentSendFacts & { resends: number; reachable: boolean; now: number; stallMs: number }
+): SilentSendPlan {
+  if (!isQuietTurn(input)) return 'answered';
+  if (input.reachable && input.now - input.sentAt < input.stallMs) return 'wait';
   return input.resends < HUMAN_SEND_RESEND_LIMIT ? 'resend' : 'give_up';
 }
 
@@ -59,6 +83,8 @@ const gateNotAlive = (facts: HumanSendFacts) =>
 const probe = (effects: RecoveryEffects) => effects.reachable();
 const gateReachable = (reachable: boolean) =>
   reachable ? { value: 'recover' as const } : { reason: 'wait' as const };
+const gateNotSlow = (facts: HumanSendFacts) =>
+  isSlowButLive(facts) ? { reason: 'deliver' as const } : { value: 'recover' as const };
 const refresh = (effects: RecoveryEffects) => effects.refresh();
 const rebuild = (effects: RecoveryEffects) => effects.rebuild();
 const wake = (effects: RecoveryEffects) => effects.wake();
@@ -70,6 +96,7 @@ export const runHumanSendRecovery = (superpipe({})('human-send-recovery') as Pip
   .pipe(gateNotAlive, 'facts', 'result:route')
   .pipe(probe, 'effects', 'reachable')
   .pipe(gateReachable, 'reachable', 'result:route')
+  .pipe(gateNotSlow, 'facts', 'result:route')
   .pipe(refresh, 'effects', 'refreshed')
   .pipe(rebuild, 'effects', 'rebuilt')
   .pipe(wake, 'effects', 'woken')
@@ -77,8 +104,9 @@ export const runHumanSendRecovery = (superpipe({})('human-send-recovery') as Pip
   .endAsync('route') as (effects: RecoveryEffects) => Promise<HumanSendRoute>;
 
 export interface HumanSendSession {
-  humanSendFacts(): Promise<Omit<HumanSendFacts, 'now' | 'silenceMs'>>;
+  humanSendFacts(): Promise<Omit<HumanSendFacts, 'now' | 'silenceMs' | 'stallMs'>>;
   lastSdkOutputAt(): number;
+  lastInterruptAt(): number;
   providerId(): string;
   providerReachable(): Promise<boolean>;
   holdForNetwork(): Promise<void>;
@@ -116,6 +144,7 @@ export function createHumanSendRecovery(deps: HumanSendRecoveryDeps) {
           lastActivityAt: Math.max(facts.lastActivityAt, lastSentAt.get(sessionId) ?? 0),
           now: Date.now(),
           silenceMs: getHumanSendSilenceMs(),
+          stallMs: getStreamSilenceTimeoutMs(),
         };
       },
       reachable: () => session.providerReachable(),
@@ -136,13 +165,26 @@ export function createHumanSendRecovery(deps: HumanSendRecoveryDeps) {
     const id = key(sessionId, messageUuid);
     const count = resends.get(id) ?? 0;
     const { status, openTools } = await session.humanSendFacts();
-    const plan = planSilentSend({
+    const turn = {
       status,
       openTools,
       lastOutputAt: session.lastSdkOutputAt(),
+      lastInterruptAt: session.lastInterruptAt(),
       sentAt,
+    };
+    const now = Date.now();
+    const stallMs = getStreamSilenceTimeoutMs();
+    const plan = planSilentSend({
+      ...turn,
       resends: count,
+      reachable: isQuietTurn(turn) ? await session.providerReachable() : true,
+      now,
+      stallMs,
     });
+    if (plan === 'wait') {
+      arm(sessionId, messageUuid, sentAt, sentAt + stallMs - now);
+      return;
+    }
     if (plan === 'resend') {
       resends.set(id, count + 1);
       silent.add(sessionId);
@@ -153,18 +195,21 @@ export function createHumanSendRecovery(deps: HumanSendRecoveryDeps) {
     if (plan !== 'answered') await session.showNotice(HUMAN_SEND_GAVE_UP_NOTICE);
   }
 
-  function watch(sessionId: string, messageUuid: string): void {
-    const sentAt = Date.now();
-    lastSentAt.set(sessionId, sentAt);
-    const window = getHumanSendSilenceMs() * 2 ** (resends.get(key(sessionId, messageUuid)) ?? 0);
+  function arm(sessionId: string, messageUuid: string, sentAt: number, delayMs: number): void {
     const timer = setTimeout(() => {
       timers.delete(timer);
       void checkSilence(sessionId, messageUuid, sentAt).catch((error: unknown) =>
         log.error(`Checking a silent human send failed: ${String(error)}`)
       );
-    }, window);
+    }, delayMs);
     timer.unref?.();
     timers.add(timer);
+  }
+
+  function watch(sessionId: string, messageUuid: string): void {
+    const sentAt = Date.now();
+    lastSentAt.set(sessionId, sentAt);
+    arm(sessionId, messageUuid, sentAt, getHumanSendSilenceMs());
   }
 
   function stop(): void {

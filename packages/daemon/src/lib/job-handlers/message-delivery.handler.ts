@@ -123,6 +123,8 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     const { sendStatus } = loaded;
 
     if (sendStatus === 'consumed') {
+      if (loaded.inputKind === 'human')
+        deps.watchHumanSend?.(payload.sessionId, payload.messageUuid);
       return { outcome: 'completed' };
     }
     if (sendStatus === 'deferred' || sendStatus === 'failed') {

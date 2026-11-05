@@ -399,6 +399,7 @@ export class AgentSession
   private rateLimitWatchdog: RateLimitWatchdog;
   private networkPause: NetworkOutagePause;
   private authRejected = false;
+  private interruptedAt = 0;
 
   queryObject: QueryLike | null = null;
   private queryPromiseValue: Promise<void> | null = null;
@@ -1139,6 +1140,7 @@ export class AgentSession
     skipDeferredReplay?: boolean;
   }): Promise<void> {
     this.interruptRequests += 1;
+    this.interruptedAt = Date.now();
     try {
       this.rateLimitWatchdog.cancel();
       this.networkPause.stop();
@@ -1198,12 +1200,16 @@ export class AgentSession
       held:
         latched ||
         this.authRejected ||
-        !!auth?.needsRefresh ||
+        (typeof auth?.expiresAt === 'number' && auth.expiresAt <= Date.now()) ||
         this.networkPause.isActive() ||
         this.rateLimitWatchdog.isRecoveryPending(),
       openTools: stream?.openTools.length ?? 0,
       lastActivityAt: stream?.lastActivityAt ?? Date.now(),
     };
+  }
+
+  lastInterruptAt(): number {
+    return this.interruptedAt;
   }
 
   lastSdkOutputAt(): number {

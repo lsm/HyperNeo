@@ -10,7 +10,8 @@ TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh <fresh-abs-dir> \
 
 The helper owns a loopback model on an ephemeral port, the daemon and a static
 web listener. It uses `NODE_ENV=test`, its own HOME and DB, and no provider key.
-`--only=<case,case>` narrows the run. The silence window is 4 seconds here.
+`--only=<case,case>` narrows the run. The silence window is 2 seconds and the
+stall bound 6 seconds here.
 
 Each case starts from a stuck state with the model available again and sends
 exactly one `neo.message.send`. The model must answer that message.
@@ -19,6 +20,8 @@ exactly one `neo.message.send`. The model must answer that message.
   its session object
 - `failure_latch`, `network_pause`, `restored_rate_limit_cooldown`
 - `hung_process`: a turn is silent past the window before the message arrives
+- `slow_first_token_is_not_killed`: a reply slower than the silence window but
+  inside the stall bound finishes on the same session object
 - `swallowed_message`: the process takes the message and never answers, so the
   watchdog recovers it
 - `parked_deliveries`: system deliveries parked behind a latch run right after
