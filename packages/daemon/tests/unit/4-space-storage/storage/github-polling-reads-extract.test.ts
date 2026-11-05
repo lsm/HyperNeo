@@ -79,7 +79,7 @@ describe('GitHub polling query extraction', () => {
         { cwd: root }
       );
       expect(JSON.parse(readFileSync(output, 'utf8'))).toMatchObject({
-        fullOwnedGraphLines: 146,
+        fullOwnedGraphLines: 147,
         excludedLines: 0,
         netPrepare: 0,
         netRun: 0,
