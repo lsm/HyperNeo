@@ -11,7 +11,7 @@ import { neoTodoRunnerWrites } from '../../storage/repositories/neo-todo-runner-
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import type { PendingWorkSend } from '../../storage/repositories/work-held-send-repository.ts';
 import type { Place, WorkRef } from '../drivers/types.ts';
-import { type HeldWorkSend, isBusyWork } from '../drivers/work-operations.ts';
+import type { HeldWorkSend } from '../drivers/work-operations.ts';
 import { withWorkerProvenance } from '../drivers/worker-provenance.ts';
 import { workerSandboxOn } from '../drivers/worker-sandbox.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
@@ -79,6 +79,8 @@ export interface NeoTodoRunnerDeps {
   limits(): { running: number; perGroup: number };
 }
 
+const HELD_SEND_READY = ['done', 'failed', 'stopped', 'not_found', 'not_open'];
+
 export function decideHeldSend(
   open: boolean,
   moved: boolean,
@@ -88,7 +90,7 @@ export function decideHeldSend(
   if (!open) return 'drop';
   if (moved) return 'moved';
   if (sending) return 'uncertain';
-  return isBusyWork(status) || status === 'needs_you' ? 'wait' : 'send';
+  return status && HELD_SEND_READY.includes(status) ? 'send' : 'wait';
 }
 
 const HELD_SEND_NOTES: Record<string, string> = {
@@ -1000,22 +1002,26 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'owner'
     )
     .pipe(
-      async (owner: { ask: NeoAsk } | null, { ref }: HeldWorkSend) =>
-        owner && readDriverLive(await deps.invoke(caller(owner.ask), 'work.status', { ref })),
+      async (owner: { ask: NeoAsk } | null, { ref }: HeldWorkSend) => {
+        const read = owner && (await deps.invoke(caller(owner.ask), 'work.status', { ref }));
+        if (!read) return undefined;
+        const refused = read.kind === 'completed' && (read.value as { reason?: string } | null);
+        return readDriverLive(read)?.status ?? (refused ? refused.reason : undefined);
+      },
       ['owner', 'held'],
-      'live'
+      'status'
     )
     .pipe(
-      (owner: object | null, held: PendingWorkSend, live: { status: string } | null) => {
+      (owner: object | null, held: PendingWorkSend, status: string | undefined) => {
         const current = sessions.readRef(held.todoId);
         const moved =
           !!current &&
           (current.id !== held.ref.id ||
             current.adapter !== held.ref.adapter ||
             current.daemon !== held.ref.daemon);
-        return decideHeldSend(!!owner, moved, held.sending, live?.status);
+        return decideHeldSend(!!owner, moved, held.sending, status);
       },
-      ['owner', 'held', 'live'],
+      ['owner', 'held', 'status'],
       'action'
     )
     .pipe(

@@ -285,8 +285,7 @@ const isTodoSend = (
 ): input is SendInput & { todoId: string } =>
   caller.role === 'neo' && 'message' in input && !!input.todoId;
 
-export const isBusyWork = (status: string | undefined) =>
-  status === 'running' || status === 'queued';
+const isBusyWork = (status: string) => status === 'running' || status === 'queued';
 
 async function readTodoWorker(input: QueuedInput, caller: OperationCaller, deps: WorkVerbDeps) {
   const route = isTodoSend(input, caller) && deps.heldSends ? routeStatus(input, deps) : null;
