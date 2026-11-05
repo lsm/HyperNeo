@@ -102,6 +102,7 @@ import {
   recordWorkDeliveryOutcome,
 } from '../repositories/work-delivery-input-repository.ts';
 import {
+  fenceWorkWorker,
   holdWorkSend,
   removeWorkSend,
   setWorkSendSending,
@@ -274,6 +275,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     sentDuringTurn,
     acceptWorkDeliveryInput,
     recordWorkDeliveryOutcome,
+    fenceWorkWorker,
     holdWorkSend,
     removeWorkSend,
     setWorkSendSending,

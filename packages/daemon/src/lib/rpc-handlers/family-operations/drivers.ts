@@ -628,6 +628,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     },
     heldSends: {
       hold: (send) => new WorkHeldSendRepository(db()).hold(send, Date.now()),
+      fence: (ref, fence) => new WorkHeldSendRepository(db()).fence(ref, fence),
+      fenceOf: (ref) => new WorkHeldSendRepository(db()).fenceOf(ref),
     } satisfies WorkVerbDeps['heldSends'],
     workInputs: {
       accept: (todoId, from, target, message) =>

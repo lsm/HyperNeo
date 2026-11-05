@@ -4,8 +4,9 @@ import { defineDbOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 
 type HeldSendId = Pick<HeldWorkSend, 'key' | 'ref'>;
+type WorkerRef = HeldWorkSend['ref'];
 
-const storedRef = ({ adapter, daemon, id }: HeldWorkSend['ref']) =>
+const storedRef = ({ adapter, daemon, id }: WorkerRef) =>
   JSON.stringify({ adapter, id, ...(daemon ? { daemon } : {}) });
 
 export const holdWorkSend = defineDbOp({
@@ -37,6 +38,22 @@ export const setWorkSendSending = defineDbOp({
   },
 });
 
+type WorkerFence = { since: number; submission?: string };
+
+export const fenceWorkWorker = defineDbOp({
+  name: 'work.heldSend.fence',
+  mode: 'write',
+  run: (db: Database, { ref, fence }: { ref: WorkerRef; fence: WorkerFence | null }): void => {
+    if (!fence) {
+      db.prepare('DELETE FROM work_send_fences WHERE ref = ?').run(storedRef(ref));
+      return;
+    }
+    db.prepare(
+      'INSERT OR REPLACE INTO work_send_fences (ref, since, submission) VALUES (?, ?, ?)'
+    ).run(storedRef(ref), fence.since, fence.submission ?? null);
+  },
+});
+
 export type PendingWorkSend = HeldWorkSend & { sending: boolean };
 
 export class WorkHeldSendRepository {
@@ -52,6 +69,17 @@ export class WorkHeldSendRepository {
 
   setSending({ key, ref }: HeldSendId, at: number | null): Promise<void> {
     return gatewayFor(this.db).run(setWorkSendSending, { key, ref, at });
+  }
+
+  fence(ref: WorkerRef, fence: WorkerFence | null): Promise<void> {
+    return gatewayFor(this.db).run(fenceWorkWorker, { ref, fence });
+  }
+
+  fenceOf(ref: WorkerRef): WorkerFence | null {
+    const row = this.db
+      .prepare('SELECT since, submission FROM work_send_fences WHERE ref = ?')
+      .get(storedRef(ref)) as { since: number; submission: string | null } | null;
+    return row && { since: row.since, ...(row.submission ? { submission: row.submission } : {}) };
   }
 
   nextPerWorker(): PendingWorkSend[] {

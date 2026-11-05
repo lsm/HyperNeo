@@ -73,7 +73,11 @@ export interface WorkVerbDeps {
   freeWorkers?: (adapter: string) => ReadonlySet<string>;
   markUnusable?: (ref: WorkRef) => void;
   isOpenTodo?: (todoId: string, sessionId: string) => boolean;
-  heldSends?: { hold(send: HeldWorkSend): Promise<void> };
+  heldSends?: {
+    hold(send: HeldWorkSend): Promise<void>;
+    fence(ref: WorkRef, fence: { since: number; submission?: string } | null): Promise<void>;
+    fenceOf(ref: WorkRef): { since: number; submission?: string } | null;
+  };
   workInputs?: {
     accept(
       todoId: string | null,
@@ -288,16 +292,15 @@ const isTodoSend = (
 const isBusyWork = (status: string) => status === 'running' || status === 'queued';
 
 const sendingTo = new Map<string, { input: QueuedInput; since: number }>();
-const queuedBehind = new Map<string, { since: number; submission?: string }>();
 const workerKey = ({ adapter, daemon, id }: WorkRef) => `${adapter}:${daemon ?? ''}:${id}`;
 
-async function trackTodoSend(input: SendInput, sent: Promise<SendResult>) {
+async function trackTodoSend(input: SendInput, sent: Promise<SendResult>, deps: WorkVerbDeps) {
   const target = workerKey(input.ref);
   try {
     const reply = await sent;
     const mine = sendingTo.get(target);
     if (mine?.input === input && reply.ok && !reply.value.delivered)
-      queuedBehind.set(target, {
+      await deps.heldSends?.fence(input.ref, {
         since: mine.since,
         submission: reply.value.queuedSubmissionId,
       });
@@ -309,24 +312,21 @@ async function trackTodoSend(input: SendInput, sent: Promise<SendResult>) {
 
 async function trackWithdrawal(
   input: z.infer<typeof WithdrawWorkInputSchema>,
-  withdrawal: Promise<z.infer<typeof WithdrawWorkResultSchema>>
+  withdrawal: Promise<z.infer<typeof WithdrawWorkResultSchema>>,
+  deps: WorkVerbDeps
 ) {
   const reply = await withdrawal;
-  const target = workerKey(input.ref);
-  if (
-    reply.ok &&
-    reply.value.withdrawn &&
-    queuedBehind.get(target)?.submission === input.queuedSubmissionId
-  )
-    queuedBehind.delete(target);
+  const fence = deps.heldSends?.fenceOf(input.ref);
+  if (reply.ok && reply.value.withdrawn && fence?.submission === input.queuedSubmissionId)
+    await deps.heldSends?.fence(input.ref, null);
   return reply;
 }
 
-function waitsBehindQueued(target: string, lastActivityAt: number) {
-  const fence = queuedBehind.get(target);
+async function waitsBehindQueued(ref: WorkRef, lastActivityAt: number, deps: WorkVerbDeps) {
+  const fence = deps.heldSends?.fenceOf(ref);
   if (!fence) return false;
   if (lastActivityAt === fence.since) return true;
-  queuedBehind.delete(target);
+  await deps.heldSends?.fence(ref, null);
   return false;
 }
 
@@ -352,7 +352,8 @@ async function holdTodoSend<Value>(
   if (!worker.ok) return { reason: { ...worker, notSent: true } };
   const target = workerKey(input.ref);
   const { status, lastActivityAt } = worker.value;
-  if (!isBusyWork(status) && !sendingTo.has(target) && !waitsBehindQueued(target, lastActivityAt)) {
+  const fenced = await waitsBehindQueued(input.ref, lastActivityAt, deps);
+  if (!isBusyWork(status) && !sendingTo.has(target) && !fenced) {
     sendingTo.set(target, { input, since: lastActivityAt });
     return { value: route };
   }
@@ -1154,7 +1155,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
       inputSchema: SendWorkInputSchema,
       resultSchema: SendWorkResultSchema,
       policy: { safetyClass: 'mutate' },
-      execute: (input, caller) => trackTodoSend(input, runSendWork(input, caller, deps)),
+      execute: (input, caller) => trackTodoSend(input, runSendWork(input, caller, deps), deps),
     }),
     defineOperation({
       name: 'work.queue',
@@ -1164,7 +1165,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
       resultSchema: SendWorkResultSchema,
       policy: { safetyClass: 'mutate' },
       execute: (input, caller) =>
-        trackTodoSend(input, runQueuedInput(input, caller, deps) as Promise<SendResult>),
+        trackTodoSend(input, runQueuedInput(input, caller, deps) as Promise<SendResult>, deps),
     }),
     defineOperation({
       name: 'work.withdraw',
@@ -1176,7 +1177,8 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
       execute: (input, caller) =>
         trackWithdrawal(
           input,
-          runQueuedInput(input, caller, deps) as Promise<z.infer<typeof WithdrawWorkResultSchema>>
+          runQueuedInput(input, caller, deps) as Promise<z.infer<typeof WithdrawWorkResultSchema>>,
+          deps
         ),
     }),
     defineOperation({

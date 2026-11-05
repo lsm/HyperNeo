@@ -10,4 +10,9 @@ export function runMigration477(db: Database): void {
     sending_at INTEGER,
     PRIMARY KEY (key, ref)
   )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS work_send_fences (
+    ref TEXT PRIMARY KEY CHECK (json_valid(ref)),
+    since INTEGER NOT NULL,
+    submission TEXT
+  )`);
 }

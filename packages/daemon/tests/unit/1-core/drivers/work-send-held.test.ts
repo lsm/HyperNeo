@@ -22,6 +22,7 @@ function fixture(
   let delivery: object = { delivered: true, steeredIntoTurnId: '019f2a51-running-turn' };
   let activity = 1;
   const held: unknown[] = [];
+  const fences = new Map<string, { since: number; submission?: string }>();
   const steer = async (_ref: unknown, message: string) => {
     reached.push(message);
     await sending;
@@ -49,7 +50,14 @@ function fixture(
       adapters: () => [adapter],
       remote: { list: () => [], invoke: async () => ({}) },
       daemonName: 'fixture',
-      heldSends: { hold: async (send: unknown) => void held.push(send) },
+      heldSends: {
+        hold: async (send: unknown) => void held.push(send),
+        fence: async (target: unknown, fence: { since: number } | null) =>
+          void (fence
+            ? fences.set(JSON.stringify(target), fence)
+            : fences.delete(JSON.stringify(target))),
+        fenceOf: (target: unknown) => fences.get(JSON.stringify(target)) ?? null,
+      },
     } as never)
   );
   return {

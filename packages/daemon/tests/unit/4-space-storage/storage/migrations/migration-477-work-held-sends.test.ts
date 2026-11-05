@@ -21,6 +21,21 @@ describe('migration 477: held work sends', () => {
     db.close();
   });
 
+  test('a fence outlives its repository and lifts once', async () => {
+    const db = new Database(':memory:');
+    runMigration477(db);
+    const worker = { adapter: 'codex-desktop', id: 'a' };
+    await new WorkHeldSendRepository(db).fence(worker, { since: 5, submission: 'q' });
+    const reopened = new WorkHeldSendRepository(db);
+    expect(reopened.fenceOf({ id: 'a', adapter: 'codex-desktop' })).toEqual({
+      since: 5,
+      submission: 'q',
+    });
+    await reopened.fence(worker, null);
+    expect(reopened.fenceOf(worker)).toBeNull();
+    db.close();
+  });
+
   test('one key held for two workers stays two sends', async () => {
     const db = new Database(':memory:');
     runMigration477(db);
