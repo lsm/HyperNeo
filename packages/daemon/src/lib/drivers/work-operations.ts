@@ -65,6 +65,14 @@ export interface WorkSendUncertainty {
   lastCompletion?: number;
 }
 
+const WORKER_BUSY_DETAIL = {
+  message:
+    'This worker is busy with other work. The todo waits in the queue with its reason, and this message goes when the worker is free; do not send it again.',
+  instruction:
+    'This worker is busy with other work. The todo waits in the queue with its reason, and its existing instruction goes when the worker is free. Your message text was not kept.',
+  none: 'This worker is busy with other work, and this todo is not waiting to start, so it cannot queue here. Nothing was queued or sent.',
+};
+
 export interface WorkVerbDeps {
   adapters(): readonly WorkAdapter[];
   health?: () => Record<string, DriverHealth> | Promise<Record<string, DriverHealth>>;
@@ -75,7 +83,7 @@ export interface WorkVerbDeps {
   isOpenTodo?: (todoId: string, sessionId: string) => boolean;
   todoWorker?: {
     on(todoId: string, ref: WorkRef): boolean;
-    wait(todoId: string, ref: WorkRef, message: string): Promise<void>;
+    wait(todoId: string, ref: WorkRef, message: string): Promise<keyof typeof WORKER_BUSY_DETAIL>;
   };
   workInputs?: {
     accept(
@@ -297,14 +305,8 @@ async function requireFreeWorker<Value>(
   if ('reason' in status) return { value: route };
   const worker = await readWorkStatus(status.value, { ref: input.ref }, deps);
   if (!worker.ok || !isBusyWork(worker.value.status)) return { value: route };
-  await queue.wait(todoId, input.ref, (input as SendInput).message);
-  return {
-    reason: reject(
-      'worker_busy',
-      'This worker is busy with other work. The todo waits in the queue with its reason and goes when the worker is free; do not send it again.',
-      true
-    ),
-  };
+  const queued = await queue.wait(todoId, input.ref, (input as SendInput).message);
+  return { reason: reject('worker_busy', WORKER_BUSY_DETAIL[queued], true) };
 }
 
 const workTarget = (input: StartInput | SendInput): WorkTarget =>

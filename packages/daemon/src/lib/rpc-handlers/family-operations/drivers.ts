@@ -629,9 +629,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     },
     todoWorker: {
       on: (todoId, ref) => new NeoTodoSessionRepository(db()).isOnWorker(todoId, ref),
-      wait: async (todoId, ref, message) => {
-        await new NeoTodoSessionRepository(db()).write('queueOn', todoId, ref, message);
-      },
+      wait: (todoId, ref, message) =>
+        new NeoTodoSessionRepository(db()).write('queueOn', todoId, ref, message),
     } satisfies WorkVerbDeps['todoWorker'],
     workInputs: {
       accept: (todoId, from, target, message) =>

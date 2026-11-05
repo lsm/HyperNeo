@@ -381,15 +381,17 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     );
   }
 
-  queueOn(todoId: string, ref: WorkRef, message: string): void {
+  queueOn(todoId: string, ref: WorkRef, message: string): 'message' | 'instruction' | 'none' {
     const store = new NeoAskTodoRepository(this.db);
     const todo = store.getTodo(todoId);
-    if (todo?.state !== 'todo' || todo.startedAt !== null) return;
+    if (todo?.state !== 'todo' || todo.startedAt !== null) return 'none';
     this.db
       .prepare(`INSERT INTO neo_todo_sessions (todo_id, target) VALUES (?, ?)
         ON CONFLICT(todo_id) DO UPDATE SET target = excluded.target`)
       .run(todoId, JSON.stringify({ verb: 'send', ref }));
-    if (!todo.instruction) store.updateTodo(todo, { instruction: message }, Date.now());
+    if (todo.instruction) return 'instruction';
+    store.updateTodo(todo, { instruction: message }, Date.now());
+    return 'message';
   }
 
   create(todoId: string, target: NeoDriverTarget): void {
