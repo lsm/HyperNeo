@@ -230,6 +230,9 @@ describe('human send recovery wiring', () => {
     try {
       for (let sent = 0; sent <= HUMAN_SEND_RESEND_LIMIT; sent += 1) {
         recovery.watch('s', 'm');
+        const reopened = calls.length;
+        await new Promise((resolve) => setTimeout(resolve, 5 * 2 ** sent - 3));
+        expect(calls).toHaveLength(reopened);
         await new Promise((resolve) => setTimeout(resolve, 30));
       }
       expect(calls.filter((call) => call === 'reopen m')).toHaveLength(HUMAN_SEND_RESEND_LIMIT);

@@ -156,12 +156,13 @@ export function createHumanSendRecovery(deps: HumanSendRecoveryDeps) {
   function watch(sessionId: string, messageUuid: string): void {
     const sentAt = Date.now();
     lastSentAt.set(sessionId, sentAt);
+    const window = getHumanSendSilenceMs() * 2 ** (resends.get(key(sessionId, messageUuid)) ?? 0);
     const timer = setTimeout(() => {
       timers.delete(timer);
       void checkSilence(sessionId, messageUuid, sentAt).catch((error: unknown) =>
         log.error(`Checking a silent human send failed: ${String(error)}`)
       );
-    }, getHumanSendSilenceMs());
+    }, window);
     timer.unref?.();
     timers.add(timer);
   }

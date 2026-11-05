@@ -65,9 +65,13 @@ export class OAuthRefreshScheduler {
     }
   }
 
-  async tick(): Promise<void> {
+  tick(): Promise<void> {
+    return this.inTurn(() => this.runTick());
+  }
+
+  private async inTurn(work: () => Promise<void>): Promise<void> {
     const prior = this.activeTick ?? Promise.resolve();
-    const promise = prior.catch(() => {}).then(() => this.runTick());
+    const promise = prior.catch(() => {}).then(work);
     this.activeTick = promise;
     try {
       await promise;
@@ -78,9 +82,11 @@ export class OAuthRefreshScheduler {
     }
   }
 
-  async refreshNow(providerId: string): Promise<void> {
+  refreshNow(providerId: string): Promise<void> {
     const provider = this.registry.get(providerId);
-    if (provider) await this.refreshProviderIfNeeded(provider, true);
+    return provider
+      ? this.inTurn(() => this.refreshProviderIfNeeded(provider, true))
+      : Promise.resolve();
   }
 
   private async runTick(): Promise<void> {
