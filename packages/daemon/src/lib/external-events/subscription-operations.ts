@@ -6,7 +6,6 @@ import {
   type OperationCaller,
   type OperationDefinition,
 } from '../operations/registry.ts';
-import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
 import type { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
 import type { SpaceSessionEventSubscriptionRepository } from '../../storage/repositories/space-session-event-subscription-repository.ts';
 import {
@@ -32,8 +31,9 @@ export interface SubscriptionSlot extends Omit<WorkerNodeSlot, 'taskId'> {
 }
 
 type RunOutcome = { success: boolean; error?: string };
-type ListOutcome = ReturnType<SpaceRuntimeService['listSubscriptions']>;
-type SubscriptionList = Extract<ListOutcome, { success: true }>['result'];
+type ListOutcome =
+  | { success: true; result: z.infer<typeof SubscriptionListSchema> }
+  | { success: false; error: string };
 
 export interface SubscriptionDependencies extends AgentSubscriptionDependencies {
   registerSubscription: (slot: SubscriptionSlot, topicPattern: string) => RunOutcome;
@@ -193,7 +193,7 @@ const SubscriptionListSchema = z.object({
     persistedNotActive: z.number(),
     orphanActive: z.number(),
   }),
-}) satisfies z.ZodType<SubscriptionList>;
+});
 
 export function isUnscopedSessionCaller(
   input: { spaceId?: string; subject?: Subject },

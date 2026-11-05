@@ -8,7 +8,6 @@ import {
   type OperationCaller,
   type OperationDefinition,
 } from '../operations/registry.ts';
-import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
 import {
   admitEventCallerSpace,
   AGENT_EVENT_ROLES,
@@ -27,8 +26,11 @@ export type AgentSubscriptionRepo = Pick<
 
 export interface AgentSubscriptionDependencies extends EventCallerDependencies {
   subscriptionRepo: AgentSubscriptionRepo;
-  refreshSubscription: SpaceRuntimeService['refreshLongHorizonSubscription'];
-  removeSubscription: SpaceRuntimeService['removeLongHorizonSubscription'];
+  refreshSubscription: (
+    spaceId: string,
+    subscriptionId: string
+  ) => { success: boolean; error?: string };
+  removeSubscription: (spaceId: string, subscriptionId: string) => void;
   auditLogRepo?: Pick<McpAuditLogRepository, 'createEntry'>;
 }
 
