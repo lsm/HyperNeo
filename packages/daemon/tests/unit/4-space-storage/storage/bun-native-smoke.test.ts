@@ -149,6 +149,7 @@ const proofs = [
   ['lane-c-github-timer-reader'],
   ['lane-c-github-unwatch-timer'],
   ['lane-c-github-watch-timer'],
+  ['bun-shared-reader-probe'],
 ] as const;
 const caseId = (name: string, args: readonly string[]) =>
   name === 'coding-daemon-merge-sweep' ? name + '-' + args[0] : name;
@@ -211,7 +212,7 @@ describe('Bun native proof matrix registration', () => {
       const result = f.invoke();
       expect(result.status).toBe(0);
       expect(result.stdout).toContain('117 legacy helpers');
-      expect(result.stdout).toContain('141 proof cases');
+      expect(result.stdout).toContain('142 proof cases');
       expect(f.sequence()).toEqual(cases);
       const homes = [];
       for (const [name, ...mode] of proofs) {
@@ -226,7 +227,13 @@ describe('Bun native proof matrix registration', () => {
           .trimEnd()
           .split('\n');
         homes.push(home);
-        expect(helper).toBe(join(root, '.claude/skills/verify', name + '.ts'));
+        expect(helper).toBe(
+          join(
+            root,
+            name === 'bun-shared-reader-probe' ? 'scripts' : '.claude/skills/verify',
+            name + '.ts'
+          )
+        );
         expect(cwd + '/').toBe(root);
         expect(home).toBe(data.replace(/data$/, 'home'));
         expect(tmp).toBe(data.replace(/data$/, 'tmp'));
@@ -235,7 +242,7 @@ describe('Bun native proof matrix registration', () => {
         expect(existsSync(tmp)).toBe(false);
         expect(existsSync(data)).toBe(false);
       }
-      expect(new Set(homes).size).toBe(141);
+      expect(new Set(homes).size).toBe(142);
     } finally {
       f.cleanup();
     }
@@ -247,6 +254,7 @@ describe('Bun native proof matrix registration', () => {
     'task-schedule-pause-writer',
     'lane-c-artifact-row-command',
     'lane-c-github-unwatch-timer',
+    'bun-shared-reader-probe',
   ])('retains failure at %s and never runs later helpers', (failed) => {
     const f = fixture();
     try {

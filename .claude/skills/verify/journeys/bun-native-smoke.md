@@ -5,7 +5,7 @@ entry point with one new absolute evidence directory:
 
     bash scripts/bun-native-smoke.sh /absolute/fresh/evidence-directory
 
-The runner registers 117 helper identities in 141 proof cases: the initial three settings/provider
+The runner retains 117 legacy helper identities in 141 legacy mode cases: the initial three settings/provider
 proofs plus 31 workflow and job proofs for mailbox admission, parking, retries,
 polling recovery, reminders, schedules and workflow identity/configuration/pins.
 The reader batch adds 11 SDK/session transcript, snapshot, inventory, count,
@@ -23,6 +23,10 @@ The final batch adds 33 extension-configuration and GitHub settings/reader
 helpers. Preserve their source filters, snapshots, cursors, caller clocks,
 rollback, receipt ordering, timer ownership and no-replay assertions. GitHub is
 synthetic throughout; no remote subscription or webhook is changed.
+After those cases, the standalone Bun shared-reader probe adds one inline-contract
+replacement case, for 142 total. Require its complete turn text/count, Codex
+snapshot and queued-error isolation flags plus reader/database closure. See
+[bun-shared-reader-probe.md](bun-shared-reader-probe.md) for that contract.
 This covers the 117-helper inventory and its legacy sweep modes, but not all
 inline boot/database probes. Keep the Deno runner and required CI job enabled
 until those contracts and the replacement CI gate also prove parity.
@@ -40,7 +44,7 @@ Together they exercise both platform decisions without depending on the host.
 The native smoke fixture exercises the real shell entry point and wrapper with synthetic child executables: Linux
 portability, explicit Bun selection despite an inherited Deno choice, quoted
 paths, mode and directory arguments, Darwin resource refusal and early exit on
-early, matrix-interior or late failures, including artifact publication and the penultimate unwatch-timer case. Pin the legacy-relative invocation order and modes.
+early, matrix-interior or late failures, including artifact publication, unwatch timer and the final shared-reader probe. Pin the legacy-relative invocation order and modes.
 Keep failure status/evidence and prove later cases do not run, including the
 remaining variants after a failed sweep case.
 These fixture executables do not establish native helper parity.
