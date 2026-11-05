@@ -118,7 +118,7 @@ Each PR is about 100–200 production lines, merges from fresh `dev`, and is dep
 Blockers and risks:
 - **Maturity.** oapx is 0.1.0-alpha.20/21 with no v0.1 tag; the schema can change. Pin one binary version and the client to that commit; bump deliberately.
 - **Restarts lose sessions.** There is no `transcript-load` or reattach yet, so a hub or daemon restart costs live context. The seeded reopen softens this but does not restore it exactly.
-- **Packaging.** oapx is a separate Zig binary for each OS and architecture. It has to be downloaded and checksummed at first use, or bundled in the npm package and the Tauri app. The Deno daemon path needs the same spawn support (`lib/runtime-spawn/`).
+- **Packaging.** oapx is a separate Zig binary for each OS and architecture. It has to be downloaded and checksummed at first use, or bundled in the npm package and the Tauri app.
 - **Local security.** The hub has no authentication; it relies on a loopback bind plus Host checks. Any local process can drive it. We bind a random port and never expose it.
 - **Shared state.** oapx defaults to `~/.oapx`, which is shared with the human's TUI. The daemon must give it its own state dir. Native harnesses still need their own logins, so a hub entry forwards only that harness's config-dir variable and nothing else.
 - **Copilot and Devin adapters.** oapx's catalog pins adapters for Claude Code, Codex, Pi, ACP, Hermes, DeepSeek and OpenCode. Copilot has no adapter of its own, and Devin depends on its ACP agent. Both need confirming in the OAP protocol-gap inventory before their steps.

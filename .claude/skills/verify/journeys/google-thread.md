@@ -4,10 +4,9 @@
 bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/google-thread.ts
 ```
 
-Repeat with `VERIFY_PROOF_RUNTIME=deno` and pinned Deno on PATH. The shared wrapper
-provides fresh test HOME/data/database and scrubs credentials. The helper starts
-one isolated daemon and fake Google HTTP server on free loopback ports. Synthetic
-account grants are fixtures; no real accounts, keys, model or external service.
+The shared wrapper provides fresh test HOME/data/database and scrubs credentials. The
+helper starts one isolated daemon and fake Google HTTP server on free loopback ports.
+Synthetic account grants are fixtures; no real accounts, keys, model or external service.
 
 Inspect `google-thread.json`. The real default operation registry/MCP adapter
 must return metadata by default, with no body or attachment request. Explicit

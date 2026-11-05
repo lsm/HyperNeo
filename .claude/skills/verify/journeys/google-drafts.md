@@ -4,11 +4,10 @@
 bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/google-drafts.ts
 ```
 
-Repeat with `VERIFY_PROOF_RUNTIME=deno` and pinned Deno on PATH. Python 3 is
-required for its independent standard-library MIME parser. The helper invokes it
-in isolated mode with MIME on stdin; no files or credentials are imported.
-The shared wrapper supplies fresh test HOME/data/database and scrubbed credentials.
-One isolated daemon and fake Google HTTP server use free loopback ports.
+Python 3 is required for its independent standard-library MIME parser. The helper invokes
+it in isolated mode with MIME on stdin; no files or credentials are imported. The shared
+wrapper supplies fresh test HOME/data/database and scrubbed credentials. One isolated
+daemon and fake Google HTTP server use free loopback ports.
 
 Check `google-drafts.json` and the synthetic `.eml` files. Through the real default
 registry/MCP adapter, create a draft with To/Cc/Bcc, a long Unicode subject, UTF-8

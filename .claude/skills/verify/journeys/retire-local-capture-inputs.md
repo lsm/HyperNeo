@@ -25,15 +25,12 @@ TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/new/git-rp
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/new/current-legacy .claude/skills/verify/retire-local-tap.ts verify
 ```
 
-Require exit 0 and preserve JSON plus original logs. Byte durability includes
-actual owned-child crash/recovery, no corrupt/excess-link overwrite, quota and
-failure reservations, and caller-buffer mutation isolation. The real daemon
-Git proof checks pinned source/read bytes, commit admission and revocation.
-The current/legacy proof reads A then B then missing, with saved bytes still A
-and no additional rows/blobs. No mock provider or production account is needed.
-Repeat the Git proof with VERIFY_PROOF_RUNTIME=deno and pinned Deno: its known
-native descriptor limitation remains fail-closed; a refusal is not a claim of
-successful Deno byte preview. Stop owned clients/daemons and retain evidence
+Require exit 0 and preserve JSON plus original logs. Byte durability includes actual
+owned-child crash/recovery, no corrupt/excess-link overwrite, quota and failure
+reservations, and caller-buffer mutation isolation. The real daemon Git proof checks
+pinned source/read bytes, commit admission and revocation. The current/legacy proof reads
+A then B then missing, with saved bytes still A and no additional rows/blobs. No mock
+provider or production account is needed. Stop owned clients/daemons and retain evidence
 before temporary data is removed.
 
 After merge, run authorized idle-deploy and owner build readback, then repeat

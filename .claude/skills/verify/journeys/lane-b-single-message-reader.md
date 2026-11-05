@@ -1,19 +1,14 @@
 # Full transcript message hydration uses a reader snapshot
 
-Run `lane-b-single-message-reader.ts` through `proof-run.sh` in a fresh synthetic
-source daemon. Run the same helper with cached Deno for its native-worker smoke.
-No provider turn, model mock, real credential or external HTTP is needed.
+Run `lane-b-single-message-reader.ts` through `proof-run.sh` in a fresh synthetic source
+daemon. No provider turn, model mock, real credential or external HTTP is needed.
 
-The helper waits for the real startup SDK body-copy completion marker before
-acquiring its competing writer and measuring reader SQL. This keeps asynchronous
-startup migration outside the reader-only assertions without bypassing migration.
-It uses SKILL.md's shared `waitForSdkBodyCopy` setup alongside the transcript proofs.
-Pass `--defer-body-copy` through proof-run.sh to hold startup copying until after
-fixture seeding. That controlled schedule previously reproduced the Deno CI race
-with one main-SQL attempt; it must now pass with zero attempts and
-`startupBodyCopyComplete: true`. Run both ordinary and deferred modes with the
-pinned Deno runtime. The deadline reports a failed migration instead of hanging.
-The Deno CI smoke always runs the deferred schedule.
+The helper waits for the real startup SDK body-copy completion marker before acquiring its
+competing writer and measuring reader SQL. This keeps asynchronous startup migration
+outside the reader-only assertions without bypassing migration. It uses SKILL.md's shared
+`waitForSdkBodyCopy` setup alongside the transcript proofs. Pass `--defer-body-copy`
+through proof-run.sh to hold startup copying until after fixture seeding. The deadline
+reports a failed migration instead of hanging.
 
 This is the actual `message.sdkMessage` WebSocket RPC used by thinned-message
 hydration and full tool output. Seed the body through the production writer,

@@ -194,7 +194,10 @@ vi.mock('../../lib/toast.ts', () => ({
 }));
 
 import { ContextPanel } from '../ContextPanel';
-import { registerWebExtension } from '../../lib/web-extensions';
+import { declareExtensionNav, registerWebExtension } from '../../lib/web-extensions';
+import { spaceNav } from '../../lib/space-nav';
+
+declareExtensionNav(spaceNav);
 
 describe('ContextPanel', () => {
   beforeEach(async () => {

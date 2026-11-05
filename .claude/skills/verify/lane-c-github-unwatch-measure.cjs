@@ -42,10 +42,9 @@ const data = specs.map(([name, expectedLines, expected]) => {
   if (actualLines !== expectedLines || hash(body) !== expected) throw Error('Counted data module drift: ' + name);
   return { file: path, lines: actualLines, sha256: expected, counted: true };
 });
-const importLines = 1, smokeLines = 1;
+const importLines = 1, smokeLines = 0;
 const fullOwnedGraphLines = selected.concat(data, [caller]).reduce((n, row) => n + row.lines, importLines + smokeLines);
 if (fullOwnedGraphLines > 200) throw Error('Public unwatch timer slice exceeds 200 lines');
-if (fs.readFileSync('scripts/deno-smoke.sh', 'utf8').split('\n').filter(line => line.includes('lane-c-github-unwatch-timer.ts')).length !== 1) throw Error('Missing/duplicate native registration');
 const report = { head: cp.execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), selected, caller, data, importLines, smokeLines, fullOwnedGraphLines, excludedLines: 0, contract: 'One public timer call site awaits the registered reader in the existing effect queue; captured handle prevents clearing another lifetime. No timer/provider skips admission, errors propagate after known writes, no fallback/replay.', auditLimit: 'Sibling #9657 refreshes only the retired six-line helper deletion pin, with selected roots and data exclusions unchanged. Sibling #9655 refreshes only the watchRepo callback pin: approved fresh167/excluded97/known264, no changes to this owned graph. Complete selected unwatch caller/auth, timer owner and reader/query/mapper counted. The retired synchronous helper is deleted; the unwatch deletion/webhook/config subtree is unchanged and not re-audited. Existing writer/capability subtrees retain separate audits; no full public/framework/runtime closure, background polling reader or #9438/#8714 completion claim.' };
 fs.writeFileSync(process.argv[2], JSON.stringify(report, null, 2) + '\n');
 console.log(JSON.stringify({ fullOwnedGraphLines, excludedLines: 0 }));

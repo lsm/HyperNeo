@@ -146,7 +146,7 @@ describe('Public unwatch timer callback reader wiring', () => {
         { cwd: fileURLToPath(new URL('../../../../../../', import.meta.url)) }
       );
       expect(JSON.parse(readFileSync(output, 'utf8'))).toMatchObject({
-        fullOwnedGraphLines: 199,
+        fullOwnedGraphLines: 198,
         excludedLines: 0,
         caller: {
           name: 'space.github.unwatchRepo',

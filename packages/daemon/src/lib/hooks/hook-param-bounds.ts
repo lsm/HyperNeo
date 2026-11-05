@@ -1,13 +1,10 @@
 import { SaveArtifactSchema } from '../artifacts/node-artifacts.ts';
-import {
-  CreateStandaloneTaskSchema,
-  SendMessageSchema,
-} from '../space/actions/node-agent-schemas.ts';
+import { CreateStandaloneTaskSchema, SendMessageSchema } from './node-agent-schemas.ts';
 import {
   ApproveTaskSchema,
   MarkCompleteSchema,
   SubmitForApprovalSchema,
-} from '../space/actions/task-agent-schemas.ts';
+} from './task-agent-schemas.ts';
 
 const MAX_ARTIFACT_DATA_BYTES = 16_384;
 

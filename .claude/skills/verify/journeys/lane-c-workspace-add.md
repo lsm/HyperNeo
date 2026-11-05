@@ -1,10 +1,9 @@
 # Activate workspace.add history writes
 
-Run proof-run.sh with lane-c-workspace-add.ts on Bun and native cached Deno
-(VERIFY_PROOF_RUNTIME=deno). The shared wrapper checks resources, scrubs the
-environment, creates fresh HOME/data and ephemeral listeners, saves evidence and
-removes owned data. No model, provider, live daemon, credentials or MCP process
-is used. The synthetic MCP command is imported disabled and never executed.
+Run proof-run.sh with lane-c-workspace-add.ts on Bun. The shared wrapper checks resources,
+scrubs the environment, creates fresh HOME/data and ephemeral listeners, saves evidence
+and removes owned data. No model, provider, live daemon, credentials or MCP process is
+used. The synthetic MCP command is imported disabled and never executed.
 
 Before the fix require real workspace.add to fail because INSERT reaches main.
 Self-check cached/new SQL guards, then refuse history INSERT and single-path

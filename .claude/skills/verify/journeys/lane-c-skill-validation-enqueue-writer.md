@@ -1,10 +1,10 @@
 # Skill validation admission through the writer
 
-Run lane-c-skill-validation-enqueue-writer.ts with Bun and Deno in a fresh synthetic
-run under env -i, NODE_ENV=test, disposable HOME/data and an ephemeral daemon port.
-The helper stops/drains only its owned processors and defers unrelated jobs.
-No model, credentials, native agent, remote skill install, GitHub or UI is involved.
-The plugin fixture is a readable directory inside the owned run.
+Run lane-c-skill-validation-enqueue-writer.ts with Bun in a fresh synthetic run under env
+-i, NODE_ENV=test, disposable HOME/data and an ephemeral daemon port. The helper
+stops/drains only its owned processors and defers unrelated jobs. No model, credentials,
+native agent, remote skill install, GitHub or UI is involved. The plugin fixture is a
+readable directory inside the owned run.
 
 Refuse all job_queue insertion SQL on the main connection. The real skill.create
 RPC must persist a disabled synthetic plugin skill and return only after its

@@ -1,9 +1,8 @@
 # Construct the Space extension configuration command
 
-Use proof-run.sh with lane-c-extension-space-command.ts on Bun and cached Deno
-(VERIFY_PROOF_RUNTIME=deno). Shared setup owns a fresh HOME/data and ephemeral
-listener, scrubs credentials, saves evidence and deletes owned data. No provider,
-HTTP mock, GitHub access or live daemon/8399 is used.
+Use proof-run.sh with lane-c-extension-space-command.ts on Bun. Shared setup owns a fresh
+HOME/data and ephemeral listener, scrubs credentials, saves evidence and deletes owned
+data. No provider, HTTP mock, GitHub access or live daemon/8399 is used.
 
 Commit the failing native unregistered-command proof first while the merged SQL
 helper characterization passes. Construct only a typed writer accepting validated

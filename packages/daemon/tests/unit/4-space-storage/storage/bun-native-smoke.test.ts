@@ -173,7 +173,6 @@ function fixture(platform = 'Linux') {
     writeFileSync(join(bin, name), '#!/bin/sh\nset -eu\n' + body, { mode: 0o755 });
   script('uname', 'printf "%s\\n" ' + quote(platform) + '\n');
   script('memory_pressure', 'printf "%s\\n" "System-wide memory free percentage: 0%"\n');
-  script('deno', 'exit 99\n');
   script(
     'bun',
     'mkdir -p "$HOME/../evidence"\n' +
@@ -198,7 +197,7 @@ function fixture(platform = 'Linux') {
       env: {
         PATH: bin + ':' + process.env.PATH,
         TMPDIR: join(run, 'tmp'),
-        VERIFY_PROOF_RUNTIME: 'deno',
+        VERIFY_PROOF_RUNTIME: 'node',
       },
       encoding: 'utf8',
     });

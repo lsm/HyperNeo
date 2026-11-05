@@ -22,6 +22,5 @@ health `ok`; an operation outside the door allowlist stays refused. `result.json
 retains those observations plus the final 0600 mode. The helper exits nonzero on
 any missing observation or mismatch and stops its own daemon on exit.
 
-The focused session-door suite also checks umask restoration when bind fails.
-This journey observes the permission boundary, not a login as a second OS user.
-Deno execution is a separate check when that runtime is installed.
+The focused session-door suite also checks umask restoration when bind fails. This journey
+observes the permission boundary, not a login as a second OS user.

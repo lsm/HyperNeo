@@ -1,10 +1,10 @@
 # Watch timer reader activation
 
 Use the shared isolation/resource setup in `../SKILL.md` with
-`lane-c-github-watch-timer.ts` through `proof-run.sh` under Bun and Deno.
-The helper owns a synthetic daemon on an ephemeral port, a refusing GitHub/HTTP
-stub and a Space-only extension with optional session provider absent. Remote
-webhook ownership is disabled in the seeded row. Never touch port 8399.
+`lane-c-github-watch-timer.ts` through `proof-run.sh` under Bun. The helper owns a
+synthetic daemon on an ephemeral port, a refusing GitHub/HTTP stub and a Space-only
+extension with optional session provider absent. Remote webhook ownership is disabled in
+the seeded row. Never touch port 8399.
 
 Start the actual extension and verify an active timer through public health.
 Call `space.github.watchRepo` to disable polling on its existing watch and trap
@@ -13,15 +13,15 @@ false polling intent and saved snapshot. Existing watch validation/webhook and
 mutation/config effects stay main-side unchanged; only the timer decision moves.
 Health readback runs outside the timer trap because its own readers are separate.
 
-Retain another active orphan row to prove the unscoped timer selection. Hold an
-actual native reader reply while a newer enable commits; health stays responsive
-and the effect queue orders acknowledgement. A stop/restart while a reply is held
-must preserve the replacement timer; restore RPC handlers removed by manager stop.
-Compare stored row scalar values rather than SQL-adapter object prototypes
-(Deno returns null-prototype rows). Inject one reader error: the watch RPC rejects after its known upsert/snapshot,
-adds no upsert replay or notification, and preserves the timer. A later explicit
-request succeeds independently. Focused tests cover no-timer/session-provider
-admission skips and query/mapper interfaces, including malformed cursor errors.
+Retain another active orphan row to prove the unscoped timer selection. Hold an actual
+native reader reply while a newer enable commits; health stays responsive and the effect
+queue orders acknowledgement. A stop/restart while a reply is held must preserve the
+replacement timer; restore RPC handlers removed by manager stop. Compare stored row scalar
+values rather than SQL-adapter object prototypes. Inject one reader error: the watch RPC
+rejects after its known upsert/snapshot, adds no upsert replay or notification, and
+preserves the timer. A later explicit request succeeds independently. Focused tests cover
+no-timer/session-provider admission skips and query/mapper interfaces, including malformed
+cursor errors.
 
 The approved boundary is fresh 167 / excluded 97 / known 264 lines. Count the
 complete 92-line watch callback, auth gate, timer owner/queue/fields, the full

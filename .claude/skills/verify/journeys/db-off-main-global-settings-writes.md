@@ -25,12 +25,11 @@ the old full-row rollback loss. A main-connection writer lock must keep the RPC 
 The deliberately held write is expected to exceed the 250 ms affected-latency
 target; evidence records that failure explicitly.
 
-Evidence is saved in `evidence/global-settings-writer.json`. The helper closes
-its socket and daemon in finally. This slice routes the settings RPC persistence
-and rollback only; provider/endpoint synchronization and legacy synchronous
-settings callers remain separate slices. It does not establish disk causation,
-large-body performance, worker-death behavior, or queue/clone/SQL timing. Run this same helper with Deno 2.9.4 as well; the
-required Deno boot CI must also pass before merge.
+Evidence is saved in `evidence/global-settings-writer.json`. The helper closes its socket
+and daemon in finally. This slice routes the settings RPC persistence and rollback only;
+provider/endpoint synchronization and legacy synchronous settings callers remain separate
+slices. It does not establish disk causation, large-body performance, worker-death
+behavior, or queue/clone/SQL timing.
 
 The coexistence regression in `global-settings-write-coexistence.test.ts` uses
 two real WAL connections and injects a competing commit immediately before the

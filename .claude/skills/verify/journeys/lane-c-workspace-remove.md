@@ -1,19 +1,16 @@
 # Remove workspace history through the DB writer
 
-Use proof-run.sh with lane-c-workspace-remove.ts on Bun and cached native Deno
-(VERIFY_PROOF_RUNTIME=deno). The wrapper checks resources, scrubs credentials,
-uses disposable HOME/data and ephemeral listeners, saves evidence and deletes
-the synthetic daemon data after cleanup. No provider turn, HTTP mock, live daemon,
-real credentials or existing workspace is involved. Record actual runtimes;
-local Bun 1.4.3 does not establish pinned native Bun 1.4.2 coverage.
+The wrapper checks resources, scrubs credentials, uses disposable HOME/data and ephemeral
+listeners, saves evidence and deletes the synthetic daemon data after cleanup. No provider
+turn, HTTP mock, live daemon, real credentials or existing workspace is involved. Record
+actual runtimes; local Bun 1.4.3 does not establish pinned native Bun 1.4.2 coverage.
 
-Commit the failing proof first: real workspace.remove reaches a denied main
-DELETE. The change is a thin data-only writer bridge around the existing remove
-transaction, plus one awaited RPC call. Keep both deletes and membership cascades
-inside one immediate writer transaction. Only the path crosses the boundary;
-no callbacks, filesystem access or network run inside it. Register the unique op
-and one self-contained Deno smoke line append-only. No shared core wiring changes.
-Measure the entire changed business call graph and production diff below 200.
+Commit the failing proof first: real workspace.remove reaches a denied main DELETE. The
+change is a thin data-only writer bridge around the existing remove transaction, plus one
+awaited RPC call. Keep both deletes and membership cascades inside one immediate writer
+transaction. Only the path crosses the boundary; no callbacks, filesystem access or
+network run inside it. No shared core wiring changes. Measure the entire changed business
+call graph and production diff below 200.
 
 Self-check cached/new main SQL guards for DELETE workspace_history/projects, then
 keep them denied. Seed only synthetic history/project rows and owned directories.

@@ -5,7 +5,7 @@ See [ADRs](docs/adr/) and [architecture](docs/architecture/) for design and layo
 
 ## Runtime and setup
 
-- Use release runtime Bun 1.4.2 or daemon Deno 2.9.x, not Node ([runtimes](docs/supported-runtimes.md)).
+- Use Bun 1.4.2 for the daemon and native proof jobs ([runtimes](docs/supported-runtimes.md)).
 - Pin exact dependency versions; no `^` or `~`.
 - Run `bun install --frozen-lockfile` in fresh worktrees before committing.
 - Always pass a unique `DB_PATH` from a worktree; the DB has a PID lock.
@@ -18,7 +18,6 @@ See [ADRs](docs/adr/) and [architecture](docs/architecture/) for design and layo
 
 ```bash
 make dev PORT=8484 DB_PATH=/tmp/hyperneo-$(basename $PWD).db
-cd packages/daemon && DB_PATH=/tmp/hyperneo-deno-$(basename $(git rev-parse --show-toplevel)).db bun run dev:deno
 
 bun run check
 bun run lint:fix && bun run format

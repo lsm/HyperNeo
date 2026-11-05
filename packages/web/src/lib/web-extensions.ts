@@ -19,6 +19,23 @@ export interface ShellExtension {
   sessionRenamed(sessionId: string, title: string): void;
 }
 
+export interface ExtensionNavTab {
+  id: string;
+  label: string;
+  icon: ComponentType;
+  active: boolean;
+  open(): void;
+}
+
+export interface ExtensionNav {
+  extension: keyof WebExtensions;
+  section: string;
+  label: string;
+  icon: ComponentType;
+  open(): void;
+  contextTabs(): { label: string; tabs: ExtensionNavTab[] } | null;
+}
+
 export interface SpaceWebExtension {
   shell: ShellExtension;
   store: {
@@ -62,6 +79,15 @@ interface WebExtensions {
 type WebExtensionLoaders = { [K in keyof WebExtensions]: () => Promise<WebExtensions[K]> };
 
 const registered = signal<{ [K in keyof WebExtensions]?: WebExtensions[K] | null }>({});
+const declaredNav = signal<ExtensionNav[]>([]);
+
+export function declareExtensionNav(nav: ExtensionNav): void {
+  declaredNav.value = [...declaredNav.value.filter((entry) => entry !== nav), nav];
+}
+
+export function extensionNav(): ExtensionNav[] {
+  return declaredNav.value.filter((nav) => registered.value[nav.extension] !== null);
+}
 
 export function registerWebExtension<K extends keyof WebExtensions>(
   id: K,

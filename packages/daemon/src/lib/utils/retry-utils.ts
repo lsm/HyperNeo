@@ -1,8 +1,11 @@
 import { sleep } from './sleep.ts';
-import { MAX_NETWORK_RETRIES, NETWORK_RETRY_DELAYS_MS } from '../space/runtime/constants.ts';
 import { Logger } from '../logger.ts';
 
 const log = new Logger('retry-utils');
+
+export const MAX_NETWORK_RETRIES = 3;
+
+export const NETWORK_RETRY_DELAYS_MS: readonly number[] = [5_000, 10_000, 20_000] as const;
 
 export interface RetryOptions {
   maxRetries?: number;

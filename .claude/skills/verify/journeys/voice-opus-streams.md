@@ -21,15 +21,10 @@ covered. The abandoned Opus stream must retain its ASR until 119 seconds, close
 by 121 seconds and refuse resume. Wrapper and daemon must exit 0 and remove
 all disposable data; pairing secrets must be absent from retained logs.
 
-`opus-quick` skips only the real-time expiry check and is not full grace proof.
-To exercise the real Deno daemon, leave the test controller on Bun and use mode
-`opus-deno` with pinned Deno on PATH. The helper starts daemon/main.ts from its
-workspace. Running the controller itself on Deno is unsupported: its Node child
-process adapter reported signal status despite the shutdown-complete marker.
-The proof still requires the daemon's actual exit code 0 and no signal.
-To exercise a
-Bun-compiled daemon, pass its absolute binary path between mode and the run
-argument (the wrapper appends the run), for example:
+`opus-quick` skips only the real-time expiry check and is not full grace proof. The helper
+starts daemon/main.ts from its workspace. The proof still requires the daemon's actual
+exit code 0 and no signal. To exercise a Bun-compiled daemon, pass its absolute binary
+path between mode and the run argument (the wrapper appends the run), for example:
 
 ```sh
 bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence .claude/skills/verify/voice-resumable-streams.ts opus-quick /absolute/hyperneod

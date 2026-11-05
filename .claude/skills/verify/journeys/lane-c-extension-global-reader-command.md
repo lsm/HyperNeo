@@ -1,10 +1,10 @@
 # Construct the global extension configuration reader
 
 Use shared isolation/resource setup in `../SKILL.md` with
-`lane-c-extension-global-reader-command.ts` through `proof-run.sh` under Bun and
-Deno. It owns a synthetic daemon, ephemeral listener, refusing GitHub/HTTP stub,
-canonical config rows and extensions that never start providers. Never use the
-live daemon/8399, real credentials or a model turn.
+`lane-c-extension-global-reader-command.ts` through `proof-run.sh` under Bun. It owns a
+synthetic daemon, ephemeral listener, refusing GitHub/HTTP stub, canonical config rows and
+extensions that never start providers. Never use the live daemon/8399, real credentials or
+a model turn.
 
 First characterize the real extension-list RPC. The baseline then posts the
 new read operation to the actual worker and fails as unregistered. Commit that

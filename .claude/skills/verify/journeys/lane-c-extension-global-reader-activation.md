@@ -1,9 +1,9 @@
 # Activate the public global extension configuration reader
 
 Use shared isolation/resource setup in `../SKILL.md` with
-`lane-c-extension-global-reader-activation.ts` through `proof-run.sh` on Bun and
-Deno. It owns fresh HOME/data, an ephemeral daemon and refusing GitHub/HTTP stubs.
-Synthetic extensions never start providers. Never use the live daemon/8399.
+`lane-c-extension-global-reader-activation.ts` through `proof-run.sh` on Bun. It owns
+fresh HOME/data, an ephemeral daemon and refusing GitHub/HTTP stubs. Synthetic extensions
+never start providers. Never use the live daemon/8399.
 
 Self-check cached/new main SELECT traps after startup/body-copy and seeding.
 First show the merged standalone reader works with that SQL denied; then call

@@ -1,12 +1,12 @@
 # Public polling timer reader activation
 
 Use shared setup in `../SKILL.md` and run `proof-run.sh` with
-`lane-c-github-timer-reader.ts` under Bun and Deno. The fixture configures the
-optional session-watch provider as absent, starts the real registered extension
-through its manager/context and verifies an active timer through the real
-`space.github.health` RPC. This exercises Space-only polling; the normal app's
-present session provider intentionally keeps its timer. All HOME/data, ports,
-credentials and GitHub/HTTP stubs are synthetic and owned. Never use port 8399.
+`lane-c-github-timer-reader.ts` under Bun. The fixture configures the optional
+session-watch provider as absent, starts the real registered extension through its
+manager/context and verifies an active timer through the real `space.github.health` RPC.
+This exercises Space-only polling; the normal app's present session provider intentionally
+keeps its timer. All HOME/data, ports, credentials and GitHub/HTTP stubs are synthetic and
+owned. Never use port 8399.
 
 Drive `space.github.setPollingEnabled` and reject its unscoped timer SELECT on
 main. Public health readback runs separately with that trap disabled: its own

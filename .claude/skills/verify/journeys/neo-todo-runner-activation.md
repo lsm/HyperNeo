@@ -28,12 +28,10 @@ The real Neo service must commit the claim before the scripted driver sees
 it, and must not use either legacy main-thread claim/recompute method.
 No provider, browser, real worker or external service participates.
 
-Unit regressions additionally hold a committed claim's return while recovery
-runs: recovery must not mark that active start interrupted. A stale completion
-queued behind a changed check must not finish the todo. Run the affected
-runner, completion, issue-check and bookkeeping suites and the full check.
-The required Deno smoke runs this same helper; local Deno proof is unverified
-when that runtime is unavailable.
+Unit regressions additionally hold a committed claim's return while recovery runs:
+recovery must not mark that active start interrupted. A stale completion queued behind a
+changed check must not finish the todo. Run the affected runner, completion, issue-check
+and bookkeeping suites and the full check.
 
 The helper closes its transport and daemon in finally, writes
 `todo-runner-activation.json`, and the wrapper saves evidence before removing

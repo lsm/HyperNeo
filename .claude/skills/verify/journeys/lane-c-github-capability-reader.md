@@ -1,10 +1,10 @@
 # GitHub capability callback reader activation
 
 Use shared setup in `../SKILL.md` and run `proof-run.sh` with
-`lane-c-github-capability-reader.ts` under Bun and Deno. The helper owns a fresh
-synthetic daemon, authenticated WebSocket, refusing GitHub/HTTP stubs and an
-ephemeral listener. Stop processors and finish startup body copying before
-measuring. Never touch live data, credentials or port 8399.
+`lane-c-github-capability-reader.ts` under Bun. The helper owns a fresh synthetic daemon,
+authenticated WebSocket, refusing GitHub/HTTP stubs and an ephemeral listener. Stop
+processors and finish startup body copying before measuring. Never touch live data,
+credentials or port 8399.
 
 Drive actual `space.github.setPollingEnabled` requests. Reject configured-row,
 Space-intent and session-scope capability SELECTs on the main connection. Verify

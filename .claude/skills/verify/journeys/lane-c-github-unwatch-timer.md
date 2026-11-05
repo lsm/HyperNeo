@@ -1,10 +1,9 @@
 # Unwatch timer reader activation
 
-Follow shared isolation and resource checks in `../SKILL.md`. Run
-`proof-run.sh` with `lane-c-github-unwatch-timer.ts` under Bun and Deno.
-It owns a fresh synthetic daemon, ephemeral listener, refusing GitHub/HTTP
-stubs and Space-only polling (optional session-watch provider absent).
-The seeded watch has remote webhook ownership disabled, so unwatch never
+Follow shared isolation and resource checks in `../SKILL.md`. Run `proof-run.sh` with
+`lane-c-github-unwatch-timer.ts` under Bun. It owns a fresh synthetic daemon, ephemeral
+listener, refusing GitHub/HTTP stubs and Space-only polling (optional session-watch
+provider absent). The seeded watch has remote webhook ownership disabled, so unwatch never
 requires GitHub credentials or a remote deletion. Never use port 8399.
 
 Start the actual extension through its manager and confirm its timer is active

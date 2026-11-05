@@ -33,6 +33,5 @@ health is expected to remain responsive under the held writer lock too.
 The wrapper saves JSON and logs before deleting each run's temporary data.
 
 Run runner, coding-todo-PR and todo-gateway tests. Async false must permit the
-20/40/60-minute ladder; a pending result must be awaited, and true must skip
-later pack hooks. Cached missing, OPEN and MERGED PR cases keep their verdicts.
-Deno smoke exercises the registered reader predicate against cached PR states.
+20/40/60-minute ladder; a pending result must be awaited, and true must skip later pack
+hooks. Cached missing, OPEN and MERGED PR cases keep their verdicts.

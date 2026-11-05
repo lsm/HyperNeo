@@ -1,8 +1,8 @@
 # Persisted rate-limit retry releases deliveries on the writer
 
-Run `lane-b-rate-limit-retry.ts` with Bun or Deno under a scrubbed environment,
-NODE_ENV=test, HOME=<run>/home and HYPERNEO_DATA_DIR=<run>/data. Use a fresh run.
-No provider, model, HTTP mock, UI, real credentials or live restart is needed.
+Run `lane-b-rate-limit-retry.ts` with Bun under a scrubbed environment, NODE_ENV=test,
+HOME=<run>/home and HYPERNEO_DATA_DIR=<run>/data. Use a fresh run. No provider, model,
+HTTP mock, UI, real credentials or live restart is needed.
 
 The helper seeds one synthetic manual session through the database facade,
 closes the fixture writer, and starts a real daemon on an ephemeral non-8399

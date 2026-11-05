@@ -25,11 +25,10 @@ the retained log for database-close errors; a flag before a cleanup failure is
 not a pass. Close the gateway before the database and let the wrapper remove
 synthetic data after process exit.
 
-The Bun native entry point invokes this probe through proof-run.sh before outbox.
-Its failure must retain its status/evidence and withhold the runner's success
-marker. The runner fixture covers its failure and fresh-data cleanup.
-This covers receipt assertions from the legacy inline writer block, not its separate lock-holder schedule,
-outbox, todo or subsequent progress/needs-you contracts. Existing schema,
+The Bun native entry point invokes this probe through proof-run.sh before outbox. Its
+failure must retain its status/evidence and withhold the runner's success marker. The
+runner fixture covers its failure and fresh-data cleanup. This covers receipt
+assertions from the legacy inline writer block, not its separate lock-holder
+schedule, outbox, todo or subsequent progress/needs-you contracts. Existing schema,
 SQLite and gateway modules are reused without a new transitive ownership or
-performance audit. Keep the Deno runner and required CI enabled until all
-remaining inline contracts and the replacement CI gate prove parity.
+performance audit.

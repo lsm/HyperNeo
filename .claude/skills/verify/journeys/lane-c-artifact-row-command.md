@@ -1,9 +1,9 @@
 # Build immutable artifact row publication writer
 
-Run proof-run.sh with lane-c-artifact-row-command.ts on Bun and native cached
-Deno (VERIFY_PROOF_RUNTIME=deno). Shared setup checks resources, scrubs credentials,
-owns fresh HOME/data and ephemeral listeners, retains evidence and removes data.
-No provider turn, capture, GitHub, real credentials or live daemon/8399 is used.
+Run proof-run.sh with lane-c-artifact-row-command.ts on Bun. Shared setup checks
+resources, scrubs credentials, owns fresh HOME/data and ephemeral listeners, retains
+evidence and removes data. No provider turn, capture, GitHub, real credentials or live
+daemon/8399 is used.
 
 Commit failing registered-writer and native gateway reproductions first. The new
 command takes only the existing save arguments: caller context, IDs, fingerprint,

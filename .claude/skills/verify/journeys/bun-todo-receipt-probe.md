@@ -35,10 +35,8 @@ for database-close errors. Close the gateway before the database, then let the
 wrapper remove synthetic data after process exit; a flag before cleanup failure
 is not success.
 
-The Bun native entry point calls this probe through proof-run.sh before claim
-lock coverage. Failure must retain its status/evidence and suppress the runner
-success marker. The runner fixture covers its failure and temporary-data
-cleanup. Later progress/needs-you contracts, active runtime adapters and
-replacement CI gates remain separate. Existing schema/SQLite/gateway/repository
-code is reused without a full transitive ownership/performance audit. Keep the
-Deno runner and required CI enabled until all remaining contracts prove parity.
+The Bun native entry point calls this probe through proof-run.sh before claim lock
+coverage. Failure must retain its status/evidence and suppress the runner success
+marker. The runner fixture covers its failure and temporary-data cleanup. Existing
+schema/SQLite/gateway/repository code is reused without a full transitive
+ownership/performance audit.

@@ -1,8 +1,8 @@
 # Saved GitHub watched repository projection
 
-Run proof-run.sh with lane-c-github-watched-projection.ts under Bun and cached
-Deno (VERIFY_PROOF_RUNTIME=deno). Shared setup owns fresh HOME/data, scrubbed
-environment, ephemeral listeners, evidence retention and synthetic data cleanup.
+Run proof-run.sh with lane-c-github-watched-projection.ts under Bun. Shared setup owns
+fresh HOME/data, scrubbed environment, ephemeral listeners, evidence retention and
+synthetic data cleanup.
 
 The unchanged watched-read journey imports the earlier settings and real Space
 RPC fixture. Capture the actual listWatchedRepos and listConfig replies before

@@ -7,16 +7,12 @@ refuses to start below 25% free memory or 25 GiB free disk:
 ```sh
 python3 .claude/skills/verify/coding-merge-db-run.py bun before
 python3 .claude/skills/verify/coding-merge-db-run.py bun verify
-python3 .claude/skills/verify/coding-merge-db-run.py deno before --executable "$DENO"
-python3 .claude/skills/verify/coding-merge-db-run.py deno verify --executable "$DENO"
 ```
 
-`DENO` names an existing Deno 2.9.4 executable; cached modules only are allowed.
-No install occurs. Each run owns fresh HOME, TMPDIR and DB directories, an
-unoccupied ephemeral non-8399 daemon, and a refusing synthetic gh. It uses no
-model turn, provider, credentials, existing database, simulator or UI. Save
-raw JSON and request records before the runner immediately removes the complete
-temporary daemon directory. `run.json` records both resource guards and cleanup.
+No install occurs. Each run owns fresh HOME, TMPDIR and DB directories, an unoccupied
+ephemeral non-8399 daemon, and a refusing synthetic gh. It uses no model turn, provider,
+credentials, existing database, simulator or UI. Save raw JSON and request records before
+the runner immediately removes the complete temporary daemon directory.
 
 Before mode temporarily restores only `merge-facts.ts` and `pr-state-reader.ts`
 from the pinned origin/dev revision, then restores the draft in finally. Do not
@@ -55,10 +51,8 @@ records elapsed calls and argument/reply sizes; queue, SQL and cloning time are
 not separately attributed. Other SQL in smoke and worker completion remains
 outside this slice; this proves no whole-daemon absence of main SQL.
 
-Two observable regressions were committed before the fix: main-instance refresh
-coverage, and an explicit setter against a read-only main connection despite a
-bound writer. Remove the exhausted synchronous setter, await fixture writes, and
-retain the identity, revision, refusal and freshness expectations. Focused tests
-also cover forced-demand coalescing, bounded retries, rollback, winning receipts
-and the PR-state reader snapshot. See `observed.json` and the four raw runtime
-comparisons for results and limits.
+Two observable regressions were committed before the fix: main-instance refresh coverage,
+and an explicit setter against a read-only main connection despite a bound writer. Remove
+the exhausted synchronous setter, await fixture writes, and retain the identity, revision,
+refusal and freshness expectations. Focused tests also cover forced-demand coalescing,
+bounded retries, rollback, winning receipts and the PR-state reader snapshot.
