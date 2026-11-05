@@ -23,7 +23,7 @@ import {
   resolveEffectiveAutonomyLevel,
   SESSION_WRITE_AUTONOMY_LEVEL,
 } from '../space/tools/tool-admission-gates.ts';
-import type { ToolResult } from '../space/tools/tool-result.ts';
+import type { ToolResult } from '../tools/tool-result.ts';
 import {
   type AgentTemplateHandlerDeps,
   type CreateAgentFromTemplateArgs,

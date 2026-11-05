@@ -15,8 +15,8 @@ import { isReservedAgentHandle } from '../messaging/agent-handle.ts';
 import { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
-import { jsonResult } from '../space/tools/tool-result.ts';
-import type { ToolResult } from '../space/tools/tool-result.ts';
+import { jsonResult } from '../tools/tool-result.ts';
+import type { ToolResult } from '../tools/tool-result.ts';
 import {
   getLongHorizonAgentTemplate,
   getLongHorizonAgentTemplates,
