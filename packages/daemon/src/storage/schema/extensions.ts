@@ -48,6 +48,10 @@ export function extensionWorkspaceSources(db: BunDatabase): { path: string; labe
   );
 }
 
+export function isSpaceEnabled(): boolean {
+  return process.env.HYPERNEO_SPACE !== 'off';
+}
+
 export function schemaTableExists(db: BunDatabase, table: string): boolean {
   return !!db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table);
 }

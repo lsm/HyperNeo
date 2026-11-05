@@ -1,4 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  AgentMemoryRepository,
+  type AgentMemoryEmbedder,
+} from '../../../../src/storage/repositories/agent-memory-repository.ts';
 import { DaemonInventoryRepository } from '../../../../src/storage/repositories/daemon-inventory-repository.ts';
 import {
   countGitHubSpacesWithPollingIntent,
@@ -61,6 +65,16 @@ describe('core reads with Space tables absent', () => {
       ['evolution_scope', 0],
     ]);
     expect(repo.readSession('worker')).toMatchObject({ id: 'worker', scopeOwned: 0 });
+    bare.close();
+  });
+
+  it('AgentMemoryRepository skips the embedding backfill', () => {
+    const embedder = { model: 'm', dimensions: 1 } as AgentMemoryEmbedder;
+    const bare = new Database(':memory:');
+    const repo = new AgentMemoryRepository(bare, undefined, embedder);
+    const prepare = vi.spyOn(bare, 'prepare');
+    repo.backfillPendingEmbeddings();
+    expect(prepare.mock.calls.flat().join(' ')).not.toContain('memory_vectors');
     bare.close();
   });
 
