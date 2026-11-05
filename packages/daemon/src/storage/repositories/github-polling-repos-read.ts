@@ -1,8 +1,10 @@
 import type { Database } from '../sqlite-compat.ts';
+import { schemaTableExists } from '../schema/extensions.ts';
 import type { GitHubWatchedRepo } from '../../lib/external-events/github/github-repository.ts';
 import { mapGitHubWatchedRepo } from './github-watched-repos-read.ts';
 
 export function countGitHubSpacesWithPollingIntent(db: Database): number {
+  if (!schemaTableExists(db, 'spaces')) return 0;
   const row = db
     .prepare(
       `SELECT COUNT(*) AS count FROM space_github_source_settings s
@@ -32,6 +34,7 @@ export function listGitHubPollingConfiguredRepos(
   db: Database,
   spaceId?: string
 ): GitHubWatchedRepo[] {
+  if (!schemaTableExists(db, 'spaces')) return [];
   const rows = spaceId
     ? (db
         .prepare(

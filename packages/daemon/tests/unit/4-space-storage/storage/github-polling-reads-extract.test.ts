@@ -79,11 +79,11 @@ describe('GitHub polling query extraction', () => {
         { cwd: root }
       );
       expect(JSON.parse(readFileSync(output, 'utf8'))).toMatchObject({
-        fullOwnedGraphLines: 147,
+        fullOwnedGraphLines: 150,
         excludedLines: 0,
         netPrepare: 0,
         netRun: 0,
-        completeHelper: { lines: 53 },
+        completeHelper: { lines: 56 },
         completeMapper: { lines: 44 },
       });
     } finally {
@@ -129,9 +129,9 @@ describe('GitHub polling query extraction', () => {
       empty = new Database(':memory:');
     try {
       empty.exec('PRAGMA query_only=ON');
-      expect(() => r.countGitHubSpacesWithPollingIntent(empty)).toThrow(/no such table/);
+      expect(r.countGitHubSpacesWithPollingIntent(empty)).toBe(0);
       expect(() => r.listGitHubPollingRepos(empty)).toThrow(/no such table/);
-      expect(() => r.listGitHubPollingConfiguredRepos(empty)).toThrow(/no such table/);
+      expect(r.listGitHubPollingConfiguredRepos(empty)).toEqual([]);
       expect(empty.prepare('SELECT name FROM sqlite_master').all()).toEqual([]);
     } finally {
       empty.close();

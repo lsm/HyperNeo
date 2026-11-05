@@ -66,8 +66,8 @@ describe('GitHub polling usage read commands', () => {
         { cwd: fileURLToPath(new URL('../../../../../../', import.meta.url)) }
       );
       expect(JSON.parse(readFileSync(output, 'utf8'))).toMatchObject({
-        fullOwnedGraphLines: 144,
-        knownTotal: 152,
+        fullOwnedGraphLines: 147,
+        knownTotal: 155,
         excludedLines: 0,
       });
     } finally {
