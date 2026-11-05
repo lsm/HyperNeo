@@ -774,7 +774,11 @@ export class QueryRunner {
     const silenceThresholdMs = getStreamSilenceTimeoutMs();
     const openToolStallMs = getOpenToolStallTimeoutMs();
     let lastStall: { silentMs: number; openToolCount: number } | null = null;
-    this.streamSilence = { lastActivityAt: Date.now(), openTools: [] };
+    this.streamSilence = {
+      lastActivityAt: Date.now(),
+      lastOutputAt: this.streamSilence.lastOutputAt,
+      openTools: [],
+    };
 
     let processExitInfo: SdkStartExitInfo = { code: null, signal: null };
     let processExited = false;

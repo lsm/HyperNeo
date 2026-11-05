@@ -54,6 +54,7 @@ describe('isSlowButLive', () => {
 describe('planSilentSend', () => {
   const silent = {
     status: 'processing' as const,
+    held: false,
     openTools: 0,
     lastOutputAt: 5,
     lastInterruptAt: 0,
@@ -86,6 +87,7 @@ describe('planSilentSend', () => {
     expect(planSilentSend({ ...silent, status: 'interrupted' })).toBe('answered');
     expect(planSilentSend({ ...silent, status: 'waiting_for_input' })).toBe('answered');
     expect(planSilentSend({ ...silent, openTools: 1 })).toBe('answered');
+    expect(planSilentSend({ ...silent, status: 'idle', held: true })).toBe('answered');
   });
 });
 

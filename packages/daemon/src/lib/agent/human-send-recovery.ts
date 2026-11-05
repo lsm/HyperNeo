@@ -38,6 +38,7 @@ export type SilentSendPlan = 'answered' | 'wait' | 'resend' | 'give_up';
 
 interface SilentSendFacts {
   status: AgentProcessingState['status'];
+  held: boolean;
   openTools: number;
   lastOutputAt: number;
   lastInterruptAt: number;
@@ -53,6 +54,7 @@ const SETTLED_STATUSES: ReadonlySet<string> = new Set([
 export function isQuietTurn(input: SilentSendFacts): boolean {
   return (
     !SETTLED_STATUSES.has(input.status) &&
+    !input.held &&
     input.openTools === 0 &&
     input.lastOutputAt <= input.sentAt &&
     input.lastInterruptAt < input.sentAt
@@ -164,9 +166,10 @@ export function createHumanSendRecovery(deps: HumanSendRecoveryDeps) {
     if (!session) return;
     const id = key(sessionId, messageUuid);
     const count = resends.get(id) ?? 0;
-    const { status, openTools } = await session.humanSendFacts();
+    const { status, held, openTools } = await session.humanSendFacts();
     const turn = {
       status,
+      held,
       openTools,
       lastOutputAt: session.lastSdkOutputAt(),
       lastInterruptAt: session.lastInterruptAt(),
