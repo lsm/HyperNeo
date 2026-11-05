@@ -11,7 +11,7 @@ import {
 } from '../../storage/repositories/session-schedule-repository.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import { SESSION_SCHEDULE_FIRE } from '../job-queue-constants.ts';
-import { isValidCronExpression } from '../schedule/cron-utils.ts';
+import { isValidCronExpression } from './cron-utils.ts';
 import { nextScheduleRun, requireNextRun } from './session-schedule-cadence.ts';
 
 export interface ScheduleSource {

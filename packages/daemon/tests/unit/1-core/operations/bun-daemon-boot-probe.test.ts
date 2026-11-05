@@ -65,6 +65,43 @@ describe('Bun daemon boot probe construction', () => {
       rmSync(run, { recursive: true, force: true });
     }
   }, 90000);
+  test('daemon boots on a fresh database with Space off and creates no Space-extension tables', () => {
+    const run = realpathSync(mkdtempSync(join(tmpdir(), 'bun-boot-space-off-')));
+    try {
+      execFileSync(
+        'bun',
+        [
+          fileURLToPath(
+            new URL('../../../../../../scripts/bun-daemon-boot-probe.ts', import.meta.url)
+          ),
+          run,
+        ],
+        {
+          env: {
+            PATH: process.env.PATH,
+            HOME: join(run, 'home'),
+            TMPDIR: run,
+            NODE_ENV: 'test',
+            HYPERNEO_DATA_DIR: join(run, 'data'),
+            HYPERNEO_SPACE: 'off',
+          },
+          timeout: 60000,
+          stdio: 'pipe',
+        }
+      );
+      const evidence = JSON.parse(readFileSync(join(run, 'evidence/bun-daemon-boot.json'), 'utf8'));
+      expect(evidence).toMatchObject({
+        pass: true,
+        health: 'ok',
+        liveEmpty: true,
+        spaceTables: 0,
+        noMissingTables: true,
+        gracefulShutdown: true,
+      });
+    } finally {
+      rmSync(run, { recursive: true, force: true });
+    }
+  }, 90000);
   test('rejects a subscribe acknowledgement released before its held snapshot', async () => {
     const run = realpathSync(mkdtempSync(join(tmpdir(), 'bun-boot-order-')));
     const parent = spawn(

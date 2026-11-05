@@ -5,9 +5,27 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Database } from '../packages/daemon/src/storage/sqlite-compat.ts';
 import { createLocalSocket } from '../packages/daemon/src/lib/pairing/local-credential.ts';
+import { SPACE_SCHEMA } from '../packages/daemon/src/storage/schema/space-schema.ts';
 import { MessageHub, WebSocketClientTransport } from '../packages/shared/src/mod.ts';
 
 const run = resolve(process.argv[2] ?? '');
+const spaceOff = process.env.HYPERNEO_SPACE === 'off';
+const tableNames = (db: Database) =>
+  (
+    db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+      .all() as { name: string }[]
+  ).map((row) => row.name);
+const spaceTableNames = () => {
+  const db = new Database(':memory:');
+  try {
+    for (const statement of SPACE_SCHEMA.baseline?.statements ?? []) db.exec(statement);
+    SPACE_SCHEMA.tables?.(db);
+    return new Set(tableNames(db));
+  } finally {
+    db.close();
+  }
+};
 assert(process.versions.bun, 'Use Bun for this probe');
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -40,6 +58,7 @@ const child = spawn(
       HYPERNEO_DATA_DIR: join(run, 'data'),
       HYPERNEO_WORKSPACE_PATH: join(run, 'workspace'),
       LOG_LEVEL: 'warn',
+      ...(spaceOff ? { HYPERNEO_SPACE: 'off' } : {}),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   }
@@ -148,8 +167,21 @@ try {
     );
     assert(tables > 80);
     evidence.tables = tables;
+    if (spaceOff) {
+      const space = spaceTableNames();
+      assert(space.size > 50, 'Space table list is too small to prove absence');
+      assert.deepEqual(
+        tableNames(db).filter((name) => space.has(name)),
+        []
+      );
+      evidence.spaceTables = 0;
+    }
   } finally {
     db.close();
+  }
+  if (spaceOff) {
+    assert.doesNotMatch(log, /no such table/);
+    evidence.noMissingTables = true;
   }
   await transport.close();
   transport = undefined;
