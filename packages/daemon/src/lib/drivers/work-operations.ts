@@ -287,13 +287,15 @@ const isTodoSend = (
 
 const isBusyWork = (status: string) => status === 'running' || status === 'queued';
 
-async function readTodoWorker(input: QueuedInput, caller: OperationCaller, deps: WorkVerbDeps) {
+async function readTodoWorker(
+  input: QueuedInput,
+  caller: OperationCaller,
+  deps: WorkVerbDeps
+): Promise<StatusResult | null> {
   const hasTurns = input.ref.adapter !== 'space';
-  const route =
-    hasTurns && isTodoSend(input, caller) && deps.heldSends ? routeStatus(input, deps) : null;
-  return route && !('reason' in route)
-    ? readWorkStatus(route.value, { ref: input.ref }, deps)
-    : null;
+  if (!hasTurns || !isTodoSend(input, caller) || !deps.heldSends) return null;
+  const route = routeStatus(input, deps);
+  return 'reason' in route ? route.reason : readWorkStatus(route.value, { ref: input.ref }, deps);
 }
 
 async function holdTodoSend<Value>(
