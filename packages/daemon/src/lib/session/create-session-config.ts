@@ -92,6 +92,8 @@ export class UnsupportedSessionConfigFieldsError extends Error {
 }
 
 export function stripRejectedSessionConfig(config: SessionConfig): SessionConfig {
+  if (config.executable !== undefined && !['bun', 'node'].includes(config.executable))
+    throw new Error(`Unsupported stored SDK executable: ${String(config.executable)}`);
   const stored = REJECTED_FIELDS.filter((field) => config[field] !== undefined);
   if (stored.length === 0) return config;
 
