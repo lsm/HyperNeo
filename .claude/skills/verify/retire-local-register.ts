@@ -1,3 +1,4 @@
+process.env.HYPERNEO_SPACE ??= 'on';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, unlinkSync } from 'node:fs';

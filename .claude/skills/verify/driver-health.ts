@@ -1,3 +1,4 @@
+process.env.HYPERNEO_SPACE ??= 'on';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';

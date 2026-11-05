@@ -1,3 +1,4 @@
+process.env.HYPERNEO_SPACE ??= 'on';
 import assert from 'node:assert/strict';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';

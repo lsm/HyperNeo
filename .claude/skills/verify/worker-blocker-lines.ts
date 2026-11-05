@@ -1,3 +1,4 @@
+process.env.HYPERNEO_SPACE ??= 'on';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';

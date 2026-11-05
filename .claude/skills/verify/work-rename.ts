@@ -1,3 +1,4 @@
+process.env.HYPERNEO_SPACE ??= 'on';
 import { strict as assert } from 'node:assert';
 import { mkdirSync, existsSync, writeFileSync } from 'node:fs';
 import { createServer as createHttpServer } from 'node:http';
