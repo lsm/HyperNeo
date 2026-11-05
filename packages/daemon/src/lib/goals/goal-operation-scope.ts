@@ -6,8 +6,8 @@ import type {
   OperationCallerRole,
   OperationPolicy,
 } from '../operations/registry.ts';
-import { resolveSessionSpaceId } from '../space/runtime/space-caller-scope.ts';
-import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
+import { resolveSessionSpaceId } from '../session-resolution/space-caller-scope.ts';
+import type { SpaceMcpSessionPolicyContext } from '../session-resolution/space-mcp-session-policy.ts';
 import type { SpaceGoalMutationContext } from './service.ts';
 
 export const GOAL_REJECTION_REASONS = [

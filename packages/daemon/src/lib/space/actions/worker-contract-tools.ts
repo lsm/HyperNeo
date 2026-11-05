@@ -4,7 +4,7 @@ import {
   SPACE_CONTRACT_TOOL_DOOR,
   SPACE_CONTRACT_TOOL_SUGGESTED,
 } from '@hyperneo/prompts';
-import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
+import type { SpaceMcpSessionRole } from '../../session-resolution/space-mcp-session-policy.ts';
 import { GENERAL_HOT_ACTIONS, ROLE_HOT_ACTIONS } from './description-generator.ts';
 
 export const WORKER_NODE_HOT_FILL = [

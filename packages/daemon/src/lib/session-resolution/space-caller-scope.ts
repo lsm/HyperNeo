@@ -1,5 +1,5 @@
 import type { Session } from '@hyperneo/shared';
-import type { CallerScope, CallerScopeResolver } from '../../operations/caller.ts';
+import type { CallerScope, CallerScopeResolver } from '../operations/caller.ts';
 import {
   resolveSpaceMcpSessionPolicy,
   resolveWorkflowExecution,

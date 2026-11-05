@@ -3,7 +3,7 @@ import { createWorkflowTaskRecoveryExecutor } from '../../tasks/recovery-executo
 import { recoverTaskExecution } from '../../tasks/recover-task-execution.ts';
 import { createCompletionGateBindings } from '../../tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../../workflows/post-approval-router.ts';
-import { createSpaceCallerScopeResolver } from '../runtime/space-caller-scope.ts';
+import { createSpaceCallerScopeResolver } from '../../session-resolution/space-caller-scope.ts';
 import { createSpaceScopeResolver } from '../runtime/space-scope-resolver.ts';
 import { createDatabaseDirectTaskWorkerResolver } from '../../tasks/direct-task-worker-identity.ts';
 import { generateUUID } from '@hyperneo/shared';
