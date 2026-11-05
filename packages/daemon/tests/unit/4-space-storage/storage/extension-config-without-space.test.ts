@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store.ts';
 import { GitHubEventExtensionRepository } from '../../../../src/lib/external-events/github/github-repository.ts';
+import { runMigration128 } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 describe('external event config with Space tables absent', () => {
@@ -29,6 +30,20 @@ describe('external event config with Space tables absent', () => {
     expect(await store.getSpaceConfig('sessions', 'github')).toBeNull();
     expect(await store.listEnabledSpaces('github')).toEqual([]);
     expect(tables()).toEqual(['space_github_watched_repos']);
+  });
+
+  it('drops Space writes when migration 128 left the table with a dangling foreign key', async () => {
+    db.exec('PRAGMA foreign_keys = ON');
+    runMigration128(db);
+    const store = new ExternalEventExtensionConfigStore(db);
+    await store.setSpaceConfig('sessions', 'github', {
+      spaceId: 'sessions',
+      source: 'github',
+      enabled: true,
+      settings: {},
+    });
+    expect(await store.getSpaceConfig('sessions', 'github')).toBeNull();
+    expect(tables()).toContain('space_external_event_source_configs');
   });
 
   it('skips the polling intent backfill that joins spaces', () => {

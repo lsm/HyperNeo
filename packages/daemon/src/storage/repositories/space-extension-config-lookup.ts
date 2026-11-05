@@ -3,7 +3,7 @@ import type { SpaceExternalEventSourceConfig } from '../../lib/external-events/t
 import { schemaTableExists } from '../schema/extensions.ts';
 import { parseJsonRecord } from './extension-config-json.ts';
 
-export const SPACE_CONFIG_TABLE = 'space_external_event_source_configs';
+const SPACE_CONFIG_TABLE = 'space_external_event_source_configs';
 
 interface SpaceConfigRow {
   space_id: string;

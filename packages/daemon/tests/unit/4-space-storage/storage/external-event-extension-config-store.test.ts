@@ -9,6 +9,7 @@ let store: ExternalEventExtensionConfigStore;
 
 beforeEach(() => {
   db = new Database(':memory:');
+  db.exec('CREATE TABLE spaces (id TEXT PRIMARY KEY)');
   store = createExternalEventConfigStore(db);
 });
 
