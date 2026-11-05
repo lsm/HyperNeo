@@ -15,12 +15,14 @@ function fixture(
   status: string,
   statusReply?: unknown,
   adapterId = 'codex-desktop',
-  capabilities = ['find', 'send', 'steer', 'queue', 'status']
+  capabilities = ['find', 'send', 'steer', 'queue', 'status'],
+  sending: Promise<void> = Promise.resolve()
 ) {
   const reached: string[] = [];
   const held: unknown[] = [];
   const steer = async (_ref: unknown, message: string) => {
     reached.push(message);
+    await sending;
     return {
       ok: true as const,
       value: { delivered: true, steeredIntoTurnId: '019f2a51-running-turn' },
@@ -111,6 +113,26 @@ describe('a todo send to a busy worker waits in HyperNeo', () => {
     });
     expect(reached).toEqual([]);
     expect(held).toEqual([]);
+  });
+
+  test('a todo send in flight holds the next one to that worker', async () => {
+    let finish = () => {};
+    const sending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const { registry, reached, held } = fixture('done', undefined, undefined, undefined, sending);
+    const send = (todoId: string) =>
+      invokeOperation(registry, 'work.send', { ref, message: todoId, todoId }, neo);
+    const first = send('todo-a');
+    const second = await send('todo-b');
+    finish();
+    await first;
+    expect(second).toMatchObject({ value: { ok: true, value: { held: true } } });
+    expect(held).toHaveLength(1);
+    await send('todo-c');
+    expect(reached).toHaveLength(2);
+    expect(reached[0]).toStartWith('todo-a');
+    expect(reached[1]).toStartWith('todo-c');
   });
 
   test('a worker whose status cannot be read gets no todo send', async () => {
