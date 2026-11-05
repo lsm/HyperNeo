@@ -3,11 +3,9 @@ import { isSessionCommand } from './src/session-cli-commands.ts';
 if (process.argv[2] === '--hyperneo-acp-mcp-proxy') {
   const { startAcpMcpProxy } = await import('@hyperneo/daemon/lib/acp/mcp-proxy-entry');
   startAcpMcpProxy(process.argv.slice(3));
-} else if (process.argv[2] === '--hyperneo-copilot-runtime-check') {
-  const { runCopilotRuntimeCheck } = await import(
-    '@hyperneo/daemon/lib/providers/anthropic-copilot/runtime-check'
-  );
-  await runCopilotRuntimeCheck();
+} else if (process.argv[2] === '--hyperneo-sdk-runtime-check') {
+  const { runSdkRuntimeCheck } = await import('@hyperneo/daemon/lib/agent/sdk-runtime-check');
+  await runSdkRuntimeCheck();
   process.exit(0);
 } else if (isSessionCommand(process.argv[2])) {
   const { runSessionCommand } = await import('./src/session-cli.ts');

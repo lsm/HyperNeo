@@ -616,7 +616,7 @@ jobs:
       contains(fromJSON('["success", "skipped"]'), needs.test-daemon-online.result) &&
       contains(fromJSON('["success", "skipped"]'), needs.test-daemon-shared-unit.result) &&
       contains(fromJSON('["success", "skipped"]'), needs.test-web.result)
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v6
@@ -648,8 +648,8 @@ jobs:
         env:
           GLM_API_KEY: smoke-test
 
-      - name: Start the Copilot client from a folder with no node_modules
-        run: bun scripts/copilot-runtime-check.ts dist/bin/hyperneo-linux-x64
+      - name: Start Claude and Copilot from a folder with no node_modules
+        run: bun scripts/sdk-runtime-check.ts dist/bin/hyperneo-linux-x64 --network
 
       - name: Compiled CLI device commands
         run: |

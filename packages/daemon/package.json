@@ -23,7 +23,7 @@
     "./lib/internal-query-bus": "./src/lib/internal-query-bus.ts",
     "./lib/acp/mcp-proxy-entry": "./src/lib/acp/mcp-proxy-entry.ts",
     "./lib/drivers/copilot-worker": "./src/lib/drivers/copilot-worker.ts",
-    "./lib/providers/anthropic-copilot/runtime-check": "./src/lib/providers/anthropic-copilot/runtime-check.ts"
+    "./lib/agent/sdk-runtime-check": "./src/lib/agent/sdk-runtime-check.ts"
   },
   "scripts": {
     "dev": "bun run --watch main.ts",

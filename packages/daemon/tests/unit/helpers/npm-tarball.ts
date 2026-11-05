@@ -33,7 +33,8 @@ export function integrityOf(tarball: Buffer): string {
 export function installFakeCurl(
   directory: string,
   tarball: Buffer,
-  integrity = integrityOf(tarball)
+  integrity = integrityOf(tarball),
+  downloadExit = 0
 ): { log: string; path: string } {
   const tarballPath = join(directory, 'fixture.tgz');
   const log = join(directory, 'curl.log');
@@ -42,12 +43,14 @@ export function installFakeCurl(
   writeFileSync(
     script,
     `#!/bin/sh
-if [ "$1" = "-sf" ]; then
+if [ "$7" != "-fL" ] && [ "$8" != "-fL" ]; then
   printf '{"dist":{"tarball":"https://registry.test/fixture.tgz","integrity":"${integrity}"}}'
   exit 0
 fi
-echo download >> "${log}"
-cp "${tarballPath}" "$3"
+echo "$*" >> "${log}"
+while [ "$1" != "-o" ]; do shift; done
+cp "${tarballPath}" "$2"
+exit ${downloadExit}
 `
   );
   chmodSync(script, 0o755);
