@@ -13,6 +13,7 @@ import type {
   SpaceExportBundle,
 } from '@hyperneo/shared';
 import { validateSlug } from '../agents/slug.ts';
+import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../workflows/agent-slot-limits.ts';
 
 const _workflowConditionSchema = z
   .object({
@@ -51,8 +52,6 @@ const declarativeToolGuardSchema = z.object({
   decision: z.literal('deny'),
   reason: z.string().min(1),
 });
-
-export const MAX_AGENT_SLOT_EVENT_INTERESTS = 10;
 
 const eventInterestTopicFromSchema = z.object({
   source: z.literal('primaryLink'),
