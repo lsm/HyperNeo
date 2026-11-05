@@ -55,7 +55,7 @@ import {
 } from './lib/internal-command-bus.ts';
 import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus.ts';
 import { setupRPCHandlers } from './lib/rpc-handlers/index.ts';
-import { createSpaceRpc } from './lib/rpc-handlers/space-setup.ts';
+import { createSpaceRpc } from './lib/space/rpc/space-setup.ts';
 import { DaemonExtensions } from './lib/extensions/contract.ts';
 import { isSpaceEnabled, registerSchemaExtension } from './storage/schema/extensions.ts';
 import { SPACE_SCHEMA } from './storage/schema/space-schema.ts';
