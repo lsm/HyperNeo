@@ -2419,6 +2419,23 @@ describe('stopped worker ladder', () => {
     }
   );
 
+  test('a reminder held because the worker just turned busy is withdrawn, not counted', async () => {
+    const h = await stopped(null);
+    try {
+      const remove = vi.spyOn(h.sessions.held, 'remove');
+      h.setSend({ ok: true, value: { delivered: false, held: true } });
+      await h.at(20);
+      const [reminder] = h.calls.filter((call) => call.name === 'work.send');
+      expect(remove).toHaveBeenCalledWith(reminder.input.idempotencyKey);
+      h.setSend({ ok: true, value: { delivered: true } });
+      await h.at(21);
+      expect(h.sends()).toHaveLength(2);
+    } finally {
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
+
   test('an unreachable worker is reminded once, then the todo stalls instead of being reminded again', async () => {
     const h = await stopped(null);
     try {
@@ -3216,6 +3233,22 @@ describe('held sends', () => {
       h.setSend({ ok: true, value: { delivered: false, held: true } });
       await h.runner.refresh(() => {});
       expect(h.sessions.held.nextPerWorker()[0]?.sending).toBe(false);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a held send to a worker the todo has left is dropped, and Neo is told', async () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      await h.sessions.held.hold(held(todo.id, 'a'), 1);
+      h.sessions.recordRef(todo.id, { adapter: 'hyperneo', id: 'fresh' }, 2);
+      h.setStatus({ ok: true, value: { status: 'done', lastActivityAt: 3 } });
+      await h.runner.refresh(() => {});
+      expect(sends(h)).toEqual([]);
+      expect(h.told.join()).toContain('moved to another worker');
+      expect(h.sessions.held.nextPerWorker()).toEqual([]);
     } finally {
       h.db.close();
     }
