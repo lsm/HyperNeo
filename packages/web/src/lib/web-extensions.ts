@@ -1,10 +1,4 @@
-import type {
-  MessageHub,
-  Space,
-  SpaceLongHorizonAgent,
-  SpaceTask,
-  SpaceTaskActivityMember,
-} from '@hyperneo/shared';
+import type { MessageHub, Space, SpaceLongHorizonAgent, SpaceTask } from '@hyperneo/shared';
 import type { ComponentChild, ComponentType } from 'preact';
 import { type ReadonlySignal, signal } from '@preact/signals';
 import { invokeOperation } from './operations';
@@ -53,15 +47,7 @@ export interface SpaceWebExtension {
     spacesWithTasks: ReadonlySignal<SpaceWithTaskList[]>;
     tasks: ReadonlySignal<SpaceTask[]>;
     agents: ReadonlySignal<SpaceLongHorizonAgent[]>;
-    taskActivity: ReadonlySignal<Map<string, SpaceTaskActivityMember[]>>;
     initGlobalList(): Promise<void>;
-    activateTaskNodeAgent(
-      taskId: string,
-      agentName: string,
-      message?: string,
-      workflowNodeId?: string,
-      clientMessageId?: string
-    ): Promise<{ sessionId: string | null }>;
   };
   SpaceIsland: ComponentType<{
     spaceId: string;
