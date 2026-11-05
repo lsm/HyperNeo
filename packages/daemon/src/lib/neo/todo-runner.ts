@@ -12,8 +12,12 @@ import type {
   NeoAskTodoRepository,
   NeoTodoPatch,
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
-import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
+import {
+  neoWorkerKey,
+  type NeoTodoSessionRepository,
+} from '../../storage/repositories/neo-todo-session-repository.ts';
 import type { Place, WorkRef } from '../drivers/types.ts';
+import { isBusyWork } from '../drivers/work-operations.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import {
@@ -38,6 +42,8 @@ import type { NeoPack, NeoTodoCheckResult, NeoTodoJudgement } from './pack-contr
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
 import { sameNeoTodoCheck } from './todo-completion.ts';
 import { neoMoveTodo, neoTodoRepo } from './todo-repo.ts';
+import { planNudge } from './nudge.ts';
+import { isNeoTodoWorkerWait, planNeoTodoWaits } from './todo-worker-wait.ts';
 import { planNeoTurnReportSweep } from './turn-report-sweep.ts';
 import { neoTurnOrigin } from './turn-origin.ts';
 import { deliverNeoTurnReport } from './turn-report.ts';
@@ -462,8 +468,89 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     return { ok: true as const, todo: committed.todo ?? todo };
   };
 
+  type QueueFacts = ReturnType<NeoTodoSessionRepository['queueFacts']>;
+  const readBusyWorkers = async ({
+    candidates,
+  }: {
+    candidates: readonly { id: string; worker: string | null; ref: WorkRef | null }[];
+  }) => {
+    const targets = new Map(
+      candidates.flatMap((row) => (row.ref && row.worker ? [[row.worker, row]] : []))
+    );
+    const busy: string[] = [];
+    for (const [worker, { id, ref }] of targets) {
+      const ask = store.getAsk(store.getTodo(id)?.askId ?? '');
+      if (!ask || !ref || ref.adapter === 'space') continue;
+      const live = readDriverLive(await deps.invoke(caller(ask), 'work.status', { ref }));
+      if (isBusyWork(live?.status)) busy.push(worker);
+    }
+    return busy;
+  };
+
+  const recordWaits = async (
+    { waits }: Pick<ReturnType<typeof planNeoTodoWaits>, 'waits'>,
+    now: number
+  ): Promise<void> => {
+    for (const { id, reason } of waits) {
+      const todo = store.getTodo(id);
+      const ask = todo && store.getAsk(todo.askId);
+      if (!todo || !ask) continue;
+      const waited = isNeoTodoWorkerWait(todo.reason);
+      if (reason && !waited) restartLadder(id, now);
+      if (reason !== todo.reason && (reason || waited)) {
+        store.updateTodo(todo, { reason }, now);
+        deps.changed();
+      }
+      const incident = reason && sessions.readNudge(id);
+      const plan = incident ? planNudge(incident, now) : null;
+      if (!incident || !reason || !plan) continue;
+      sessions.recordNudge(id, { ...incident, nudges: plan.nudges });
+      if (plan.kind === 'escalate')
+        await deps.tell(
+          ask,
+          todo,
+          neoTodoStallNote(todo, reason),
+          `neo-todo-stall:${id}:${incident.since}`
+        );
+    }
+  };
+
+  const readQueue = (superpipe({})('neo.todo.read-queue') as PipelineAPI)
+    .input(['now'])
+    .pipe(() => sessions.read('queueFacts'), 'now', 'facts')
+    .pipe(readBusyWorkers, 'facts', 'busy')
+    .pipe(planNeoTodoWaits, ['facts', 'busy'], 'plan')
+    .pipe(recordWaits, ['plan', 'now'], 'recorded')
+    .pipe(
+      ({ candidates }: QueueFacts, { running }: ReturnType<typeof planNeoTodoWaits>) => ({
+        candidates,
+        running,
+      }),
+      ['facts', 'plan'],
+      'queue'
+    )
+    .endAsync('queue') as (now: number) => Promise<Pick<QueueFacts, 'candidates' | 'running'>>;
+
+  const awaitFreeWorker = async (todoId: string) => {
+    const todo = store.getTodo(todoId);
+    const target = sessions.get(todoId);
+    if (todo?.state !== 'todo' || todo.startedAt !== null || target?.verb !== 'send')
+      return { value: null };
+    const worker = neoWorkerKey(target.ref);
+    const facts = await sessions.read('queueFacts');
+    const candidate = { id: todoId, worker, ref: target.ref };
+    const busy = await readBusyWorkers({ candidates: [candidate] });
+    if (!busy.length) {
+      await recordWaits({ waits: [{ id: todoId, reason: null }] }, Date.now());
+      return { value: null };
+    }
+    await recordWaits(planNeoTodoWaits({ ...facts, candidates: [candidate] }, busy), Date.now());
+    return { reason: { ok: true as const, todo: store.getTodo(todoId) ?? todo } };
+  };
+
   const claimAndDispatch = (superpipe({})('neo.todo.start') as PipelineAPI)
     .input(['todoId'])
+    .pipe(awaitFreeWorker, 'todoId', 'result:outcome')
     .pipe(
       (todoId: string) =>
         deps.write(neoTodoRunnerWrites, { method: 'claim', args: [todoId, Date.now()] }),
@@ -492,6 +579,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   const queue = createWorkQueue<NudgeClaim>(
     {
       queue: () => sessions.read('queueFacts'),
+      waiting: () => readQueue(Date.now()),
       claim: (todoId, now, move) => nudge(todoId, now, move),
       act: (claim, now) => act(claim, now),
       start: (todoId) => start(todoId),

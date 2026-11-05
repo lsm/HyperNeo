@@ -273,12 +273,18 @@ describe('SpaceGoals', () => {
     fireEvent.click(screen.getByRole('button', { name: /Second goal/ }));
     expect(currentSpaceGoalIdSignal.value).toBe('goal-2');
     expect(rightPanelTargetSignal.value).toEqual({
-      type: 'goal',
-      spaceId: 'space-1',
-      goalId: 'goal-2',
+      type: 'extension',
+      panel: 'goal',
+      owner: 'space-1',
+      item: 'goal-2',
     });
 
-    rightPanelTargetSignal.value = { type: 'goal', spaceId: 'space-1', goalId: 'goal-2' };
+    rightPanelTargetSignal.value = {
+      type: 'extension',
+      panel: 'goal',
+      owner: 'space-1',
+      item: 'goal-2',
+    };
     unmount();
 
     expect(currentSpaceGoalIdSignal.value).toBeNull();

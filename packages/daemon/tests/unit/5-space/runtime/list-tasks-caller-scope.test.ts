@@ -6,7 +6,7 @@ import {
   listScopedTasks,
   type TaskReadAdmission,
 } from '../../../../src/lib/tasks/scoped-task-reads';
-import { resolveSessionCallerScope } from '../../../../src/lib/space/runtime/space-caller-scope';
+import { resolveSessionCallerScope } from '../../../../src/lib/session-resolution/space-caller-scope';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';

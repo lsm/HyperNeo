@@ -287,7 +287,7 @@ test('a queued confirmation starts its successor exactly once when the answer ar
           value: {
             delivered: true,
             ref: input.ref,
-            status: 'running',
+            status: name === 'work.status' ? 'done' : 'running',
             lastActivityAt: 1,
           },
         },

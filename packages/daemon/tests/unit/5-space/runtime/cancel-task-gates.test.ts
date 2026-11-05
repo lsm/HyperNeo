@@ -9,7 +9,7 @@ import {
   requireManagedCancellation,
 } from '../../../../src/lib/tasks/cancel-task';
 import type { DirectTaskAttempt } from '../../../../src/storage/repositories/direct-task-execution-repository';
-import type { SpaceMcpSessionPolicyContext } from '../../../../src/lib/space/runtime/space-mcp-session-policy';
+import type { SpaceMcpSessionPolicyContext } from '../../../../src/lib/session-resolution/space-mcp-session-policy';
 import type { CancellationRoute } from '../../../../src/lib/tasks/cancel-route';
 
 const policy = {} as SpaceMcpSessionPolicyContext;

@@ -1,6 +1,6 @@
 import type { OperationDefinition } from '../../operations/registry.ts';
-import { resolveSessionSpaceId } from '../../space/runtime/space-caller-scope.ts';
-import { resolveSpaceMcpSessionPolicy } from '../../space/runtime/space-mcp-session-policy.ts';
+import { resolveSessionSpaceId } from '../../session-resolution/space-caller-scope.ts';
+import { resolveSpaceMcpSessionPolicy } from '../../session-resolution/space-mcp-session-policy.ts';
 import { registerAgentOperations } from './agents.ts';
 import { registerArtifactOperations } from './artifacts.ts';
 import { registerAuditOperations } from './audit.ts';

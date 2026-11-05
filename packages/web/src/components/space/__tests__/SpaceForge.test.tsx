@@ -167,9 +167,10 @@ describe('SpaceForge', () => {
     fireEvent.click(screen.getByRole('button', { name: /Second scope/ }));
     expect(currentSpaceScopeIdSignal.value).toBe('scope-2');
     expect(rightPanelTargetSignal.value).toEqual({
-      type: 'scope',
-      spaceId: 'space-1',
-      scopeId: 'scope-2',
+      type: 'extension',
+      panel: 'scope',
+      owner: 'space-1',
+      item: 'scope-2',
     });
 
     unmount();

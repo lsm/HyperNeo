@@ -19,6 +19,7 @@ import {
 import { mirrorNeoWorkspaceProjectsAsync } from '../../neo/project-mirror-async.ts';
 import { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../storage/repositories/neo-ask-todo-repository.ts';
+import { NeoTodoSessionRepository } from '../../../storage/repositories/neo-todo-session-repository.ts';
 import { WorkDeliveryInputRepository } from '../../../storage/repositories/work-delivery-input-repository.ts';
 import { readDriverOutcome } from '../../neo/driver-work.ts';
 import { existsSync, mkdirSync, statSync } from 'node:fs';
@@ -626,6 +627,11 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
         ask.sessionId === sessionId
       );
     },
+    todoWorker: {
+      on: (todoId, ref) => new NeoTodoSessionRepository(db()).sendsNow(todoId, ref),
+      wait: (todoId, ref, message) =>
+        new NeoTodoSessionRepository(db()).write('queueOn', todoId, ref, message),
+    } satisfies WorkVerbDeps['todoWorker'],
     workInputs: {
       accept: (todoId, from, target, message) =>
         new WorkDeliveryInputRepository(db()).accept(todoId, from, target, message, Date.now()),

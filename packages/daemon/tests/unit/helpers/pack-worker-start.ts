@@ -67,7 +67,7 @@ export function packWorkerStartFixture(
         )!;
       return {
         kind: 'completed',
-        value: { ok: true, value: { ref, status: 'running', lastActivityAt: Date.now() } },
+        value: { ok: true, value: { ref, status: 'done', lastActivityAt: Date.now() } },
       };
     }),
   });

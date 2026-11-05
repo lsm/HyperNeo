@@ -104,6 +104,7 @@ export const WorkRejectionSchema = z.enum([
   ...workStartConfiguration.refusalSchema.options,
   ...workStartPreparation.refusalSchema.options,
   'unknown_adapter',
+  'worker_busy',
   'unsupported',
   'not_supported',
   'not_found',
