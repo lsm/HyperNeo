@@ -82,7 +82,7 @@ try {
       instruction: 'Record a synthetic successor dispatch; delete nothing.', named: null,
       check: { pack: 'core', kind: 'evidence', params: { path: join(run, next) } } }, 3);
     sessions.create(next, { verb: 'send', ref: { adapter: 'hyperneo', id: next } });
-    store.updateTodo(approval, { state }, 4);
+    store.updateTodo(approval, { state, ...(state === 'closed_unverified' ? { startedAt: 4 } : {}) }, 4);
     assert.equal(store.getTodo(id)?.state, state);
     const receipt = chat
       ? await rpc('neo.message.send', { sessionId: owner, requestId: crypto.randomUUID(), content: answer,

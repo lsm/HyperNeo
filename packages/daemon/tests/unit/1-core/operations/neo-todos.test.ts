@@ -220,6 +220,7 @@ describe('neo.todo operations', () => {
       askId: 'ask',
       title: 'New',
       doneWhen: 'x',
+      after: [],
     });
     if (!old.ok || !next.ok) throw new Error('add failed');
     const removed = await call('neo.todo.remove', {
@@ -432,6 +433,7 @@ describe('neo.todo operations', () => {
       doneWhen: 'Live',
       instruction: 'Deploy it',
       target,
+      after: [],
     });
     if (!deploy.ok) throw new Error(deploy.reason);
     expect(repo.listQuestions('ask')).toMatchObject([
@@ -464,6 +466,7 @@ describe('neo.todo operations', () => {
       doneWhen: 'Live',
       instruction: 'Deploy it',
       target,
+      after: [],
     });
     if (!deploy.ok) throw new Error(deploy.reason);
     expect(repo.listQuestions('ask')).toMatchObject([

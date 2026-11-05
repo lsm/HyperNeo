@@ -1,5 +1,7 @@
 import {
   neoTodoDependencyRefusal,
+  NEO_TODO_CANCELLED_DEPENDENCY,
+  neoTodoCancelledDependencies,
   planNeoTodoDependencies,
 } from '../../lib/neo/todo-dependencies.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -163,11 +165,10 @@ class NeoTodoMutationPlanner {
         (plan: Plan) => {
           const after = plan.patch.dependsOn;
           if (!after) return { value: plan };
-          const dependsOn = planNeoTodoDependencies(
-            todos.listFamilyTodos(plan.todo.askId),
-            plan.todo.id,
-            after
-          );
+          const family = todos.listFamilyTodos(plan.todo.askId);
+          if (neoTodoCancelledDependencies(family, plan.todo.id).length)
+            return { reason: { ok: false as const, reason: NEO_TODO_CANCELLED_DEPENDENCY } };
+          const dependsOn = planNeoTodoDependencies(family, plan.todo.id, after);
           return typeof dependsOn === 'string'
             ? { reason: { ok: false as const, reason: neoTodoDependencyRefusal(dependsOn) } }
             : { value: { ...plan, patch: { ...plan.patch, dependsOn } } };
