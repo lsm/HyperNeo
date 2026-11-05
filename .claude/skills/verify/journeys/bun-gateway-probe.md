@@ -22,8 +22,10 @@ failure. Close the gateway before the database; let the wrapper retain evidence
 and remove synthetic data after the process exits. A result flag before a
 cleanup error is not a pass; inspect retained logs for database-close errors.
 
-This is construction only. Native runner wiring, other inline writer/todo
-contracts and replacement CI gates follow separately. Keep the Deno runner,
-required CI and historical evidence/bindings unchanged. Existing migration,
+The Bun native entry point now calls this probe after its 141 legacy cases and
+the shared-reader case. Final-probe failure must retain status/evidence and
+withhold the runner success marker. Other inline writer/todo contracts and
+replacement CI gates follow separately. Keep the Deno runner, required CI and
+historical evidence/bindings unchanged. Existing migration,
 SQLite and gateway code are reused, not edited or claimed as a new transitive
 ownership/performance audit.
