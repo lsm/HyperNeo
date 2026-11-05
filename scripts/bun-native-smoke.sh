@@ -130,4 +130,5 @@ bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-github-watch-timer" "$PROOFS/lane-
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/bun-shared-reader-probe" "$REPO_ROOT/scripts/bun-shared-reader-probe.ts"
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/bun-gateway-probe" "$REPO_ROOT/scripts/bun-gateway-probe.ts"
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/bun-event-job-probe" "$REPO_ROOT/scripts/bun-event-job-probe.ts"
-echo 'Bun native smoke: registered batches passed (117 legacy helpers, 145 proof cases)'
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/bun-outbox-probe" "$REPO_ROOT/scripts/bun-outbox-probe.ts"
+echo 'Bun native smoke: registered batches passed (117 legacy helpers, 146 proof cases)'
