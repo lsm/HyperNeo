@@ -79,9 +79,10 @@ describe('RightPanelToggle', () => {
 
     fireEvent.click(screen.getByRole('button'));
     expect(rightPanelTargetSignal.value).toEqual({
-      type: 'goal',
-      spaceId: 'space-1',
-      goalId: 'goal-1',
+      type: 'extension',
+      panel: 'goal',
+      owner: 'space-1',
+      item: 'goal-1',
     });
 
     fireEvent.click(screen.getByRole('button'));
@@ -96,9 +97,10 @@ describe('RightPanelToggle', () => {
 
     fireEvent.click(screen.getByRole('button'));
     expect(rightPanelTargetSignal.value).toEqual({
-      type: 'goal',
-      spaceId: 'space-1',
-      goalId: 'goal-1',
+      type: 'extension',
+      panel: 'goal',
+      owner: 'space-1',
+      item: 'goal-1',
     });
   });
 
@@ -109,9 +111,10 @@ describe('RightPanelToggle', () => {
 
     fireEvent.click(screen.getByRole('button'));
     expect(rightPanelTargetSignal.value).toEqual({
-      type: 'scope',
-      spaceId: 'space-1',
-      scopeId: 'scope-1',
+      type: 'extension',
+      panel: 'scope',
+      owner: 'space-1',
+      item: 'scope-1',
     });
   });
 
@@ -126,7 +129,12 @@ describe('RightPanelToggle', () => {
   it('passes the route space id to goal panel navigation while keeping canonical targets', () => {
     currentSpaceIdSignal.value = 'space-slug';
     currentSpaceCanonicalIdSignal.value = 'space-1';
-    rightPanelTargetSignal.value = { type: 'goal', spaceId: 'space-1', goalId: 'goal-1' };
+    rightPanelTargetSignal.value = {
+      type: 'extension',
+      panel: 'goal',
+      owner: 'space-1',
+      item: 'goal-1',
+    };
 
     render(<RightPanel />);
 
@@ -137,16 +145,22 @@ describe('RightPanelToggle', () => {
 
   it('retargets an open goal panel when the selected goal changes', async () => {
     currentSpaceGoalIdSignal.value = 'goal-1';
-    rightPanelTargetSignal.value = { type: 'goal', spaceId: 'space-1', goalId: 'goal-1' };
+    rightPanelTargetSignal.value = {
+      type: 'extension',
+      panel: 'goal',
+      owner: 'space-1',
+      item: 'goal-1',
+    };
     render(<RightPanelToggle />);
 
     currentSpaceGoalIdSignal.value = 'goal-2';
 
     await waitFor(() =>
       expect(rightPanelTargetSignal.value).toEqual({
-        type: 'goal',
-        spaceId: 'space-1',
-        goalId: 'goal-2',
+        type: 'extension',
+        panel: 'goal',
+        owner: 'space-1',
+        item: 'goal-2',
       })
     );
   });
@@ -154,23 +168,34 @@ describe('RightPanelToggle', () => {
   it('retargets an open scope panel when the selected scope changes', async () => {
     currentSpaceViewModeSignal.value = 'forge';
     currentSpaceScopeIdSignal.value = 'scope-1';
-    rightPanelTargetSignal.value = { type: 'scope', spaceId: 'space-1', scopeId: 'scope-1' };
+    rightPanelTargetSignal.value = {
+      type: 'extension',
+      panel: 'scope',
+      owner: 'space-1',
+      item: 'scope-1',
+    };
     render(<RightPanelToggle />);
 
     currentSpaceScopeIdSignal.value = 'scope-2';
 
     await waitFor(() =>
       expect(rightPanelTargetSignal.value).toEqual({
-        type: 'scope',
-        spaceId: 'space-1',
-        scopeId: 'scope-2',
+        type: 'extension',
+        panel: 'scope',
+        owner: 'space-1',
+        item: 'scope-2',
       })
     );
   });
 
   it('clears an open goal panel when navigating away from the Goals view', async () => {
     currentSpaceGoalIdSignal.value = 'goal-1';
-    rightPanelTargetSignal.value = { type: 'goal', spaceId: 'space-1', goalId: 'goal-1' };
+    rightPanelTargetSignal.value = {
+      type: 'extension',
+      panel: 'goal',
+      owner: 'space-1',
+      item: 'goal-1',
+    };
     render(<RightPanelToggle />);
 
     currentSpaceViewModeSignal.value = 'tasks';

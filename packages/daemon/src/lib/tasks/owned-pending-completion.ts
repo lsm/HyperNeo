@@ -15,8 +15,8 @@ import {
   resolveSpaceMcpSessionPolicy,
   type SpaceMcpSessionPolicyContext,
   type SpaceMcpSessionRole,
-} from '../space/runtime/space-mcp-session-policy.ts';
-import { resolveSessionSpaceId } from '../space/runtime/space-caller-scope.ts';
+} from '../session-resolution/space-mcp-session-policy.ts';
+import { resolveSessionSpaceId } from '../session-resolution/space-caller-scope.ts';
 import {
   decideAutonomyAdmission,
   HUMAN_ONLY_AUTONOMY_LEVEL,

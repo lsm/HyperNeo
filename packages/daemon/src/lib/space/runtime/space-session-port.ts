@@ -5,7 +5,7 @@ import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositor
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { Database } from '../../../storage/sqlite-compat.ts';
 import { createDirectQueryStartGuard } from '../../tasks/direct-query-start-guard.ts';
-import { resolveSpaceMcpSessionPolicy } from './space-mcp-session-policy.ts';
+import { resolveSpaceMcpSessionPolicy } from '../../session-resolution/space-mcp-session-policy.ts';
 
 export function createSpaceSessionPort(
   db: Database,

@@ -9,7 +9,7 @@ import {
   type OperationCaller,
   type OperationDefinition,
 } from '../operations/registry.ts';
-import { resolveWorkflowExecution } from '../space/runtime/space-mcp-session-policy.ts';
+import { resolveWorkflowExecution } from '../session-resolution/space-mcp-session-policy.ts';
 import type { ToolResult } from '../tools/tool-result.ts';
 import {
   ListArtifactsSchema,

@@ -2,7 +2,7 @@ import type { SpaceGoal } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import { hasSpaceAuthority } from '../space/runtime/space-mcp-session-policy.ts';
+import { hasSpaceAuthority } from '../session-resolution/space-mcp-session-policy.ts';
 import {
   admitGoalSpace,
   GOAL_WRITE_POLICY,

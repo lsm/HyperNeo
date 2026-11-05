@@ -102,7 +102,7 @@ import {
   FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
   resolveSpaceMcpSessionPolicy,
   type SpaceMcpSessionPolicy,
-} from './space-mcp-session-policy.ts';
+} from '../../session-resolution/space-mcp-session-policy.ts';
 import { SpaceRuntime } from './space-runtime.ts';
 import type { TaskAgentManager } from './task-agent-manager.ts';
 import { canTransition as canTransitionRunStatus } from '../../workflows/run-status-machine.ts';

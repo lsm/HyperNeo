@@ -10,7 +10,7 @@ import {
 } from '../../../../src/lib/agent/query-options-builder.ts';
 import { operationsCapabilityContribution } from '../../../../src/lib/operations/door-briefing.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
-import { resolveSpaceMcpSessionPolicy } from '../../../../src/lib/space/runtime/space-mcp-session-policy.ts';
+import { resolveSpaceMcpSessionPolicy } from '../../../../src/lib/session-resolution/space-mcp-session-policy.ts';
 import {
   SpaceRuntimeService,
   type SpaceRuntimeServiceConfig,
