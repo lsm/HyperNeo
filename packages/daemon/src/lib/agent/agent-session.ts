@@ -167,6 +167,7 @@ import {
   getModelInfo,
   resolveModelAlias,
   resolveSessionContextModelInfo,
+  refreshModels,
 } from '../model-service.ts';
 import { getProviderService } from '../provider-service.ts';
 import {
@@ -178,7 +179,8 @@ import {
   claimProviderFailureNotice,
   recordClassifiedProviderFailure,
 } from '../providers/provider-failure-store.ts';
-import { resolveAvailableQueryProvider } from '../providers/registry.ts';
+import { type ProviderRegistry, resolveAvailableQueryProvider } from '../providers/registry.ts';
+import { NO_PROVIDER_RETRY_MS, planSessionProvider } from '../session/session-provider-plan.ts';
 import {
   AskUserQuestionHandler,
   type AskUserQuestionHandlerContext,
@@ -1545,6 +1547,7 @@ export class AgentSession
       : this.modelSwitchHandler.switchModel(newModel, newProvider);
   }
 
+  private providerWaitAnnounced = false;
   private modelSwitchBusy = false;
   private modelSwitchChain: Promise<unknown> = Promise.resolve();
 
@@ -2707,6 +2710,45 @@ export class AgentSession
     });
   }
 
+  private async applySessionProviderPlan(
+    registry: ProviderRegistry,
+    pinned: string | undefined
+  ): Promise<DeliveryOutcome | null> {
+    const plan = await planSessionProvider(
+      {
+        wanted: pinned ?? 'anthropic',
+        pinned: pinned !== undefined,
+        model: this.session.config.model || 'sonnet',
+        settings: this.db.getGlobalSettings(),
+      },
+      registry.getAll()
+    );
+    if (plan.kind === 'wait') {
+      if (!this.providerWaitAnnounced) {
+        this.providerWaitAnnounced = true;
+        await this.queryRunner.displayErrorAsAssistantMessage(plan.notice, { markAsError: false });
+      }
+      return {
+        outcome: 'blocked',
+        retryAt: Date.now() + NO_PROVIDER_RETRY_MS,
+        reason: 'no_provider',
+      };
+    }
+    await refreshModels(undefined, { allowPartial: true });
+    const moved = await this.modelSwitchHandler.switchModel(
+      plan.model,
+      plan.provider,
+      false,
+      undefined,
+      true
+    );
+    if (!moved.success) throw new MessageDeliveryTerminalTurnError(moved.error ?? plan.provider);
+    this.providerWaitAnnounced = false;
+    if (plan.notice)
+      await this.queryRunner.displayErrorAsAssistantMessage(plan.notice, { markAsError: false });
+    return null;
+  }
+
   private async admitDelivery(args: {
     messageUuid: string;
     content: string | MessageContent[];
@@ -2739,18 +2781,10 @@ export class AgentSession
               pinned
             );
             if (!provider) {
-              const providerId = pinned ?? 'anthropic';
-              const message = `Provider '${providerId}' is not registered. Log in or add an API key for it under Providers, or switch this session to another provider.`;
-              await this.errorManager.handleError(
-                this.session.id,
-                new Error(
-                  `Provider '${providerId}' is not registered; cannot prepare environment for session '${this.session.id}'`
-                ),
-                ErrorCategory.MODEL,
-                message,
-                this.stateManager.getState()
-              );
-              throw new MessageDeliveryTerminalTurnError(message);
+              const blocked = await this.applySessionProviderPlan(registry, pinned);
+              if (blocked) return blocked;
+            } else {
+              this.providerWaitAnnounced = false;
             }
           }
           if (this.isCleaningUp()) return { outcome: 'aborted' };

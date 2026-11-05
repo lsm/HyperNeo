@@ -16,6 +16,7 @@ import type {
 } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { z } from 'zod';
+import { NO_PROVIDER_NOTICE } from '../../../../src/lib/session/session-provider-plan.ts';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import {
   initializeProviders,
@@ -6424,66 +6425,22 @@ describe('AgentSession', () => {
       }
     });
 
-    it('rejects with a terminal error when the session provider is not registered', async () => {
-      const db = await createTestDb();
-      try {
-        const session = createTestSession(sessionId);
-        session.config = {
-          ...session.config,
-          provider: 'custom:removed' as Session['config']['provider'],
-        };
-        await db.createSession(session);
-        db.getSDKMessageRepo().saveUserMessage(
-          sessionId,
-          {
-            type: 'user',
-            uuid: steerUuid,
-            message: { role: 'user', content: steerContent },
-          } as unknown as SDKMessage,
-          'enqueued'
-        );
-        const bus = await createTestInternalEventBus();
-        const agentSession = new AgentSession(
-          db.getSession(sessionId) ?? session,
-          db,
-          {} as MessageHub,
-          bus,
-          mock(async () => 'test-api-key'),
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          { autoReplayPendingMessages: false }
-        );
-        agentSession.queryPromise = new Promise<void>(() => {});
-        const delivery = agentSession.driveDeliveryTurn(
-          steerUuid,
-          steerContent,
-          null,
-          false,
-          () => true
-        );
-        await expect(delivery).rejects.toBeInstanceOf(MessageDeliveryTerminalTurnError);
-        await expect(delivery).rejects.toThrow("Provider 'custom:removed' is not registered");
-      } finally {
-        db.close();
-      }
-    });
-
-    it('fails each delivery once and tells the user every time when an unpinned session has no registered provider', async () => {
+    it.each([
+      ['a pinned', { provider: 'custom:removed' as Session['config']['provider'] }],
+      ['an unpinned', { model: 'model-no-provider-owns' }],
+    ])('keeps %s session waiting and says why once when no provider is on', async (_, config) => {
       const db = await createTestDb();
       const registry = initializeProviders();
       await waitForOptionalProviderRegistration(registry);
-      const copilot = registry.get('anthropic-copilot');
-      const copilotAvailability = copilot
-        ? spyOn(copilot, 'isAvailable').mockImplementation(async () => false)
-        : undefined;
+      const availability = registry
+        .getAll()
+        .map((provider) => spyOn(provider, 'isAvailable').mockImplementation(async () => false));
       const anthropic = registry.get('anthropic');
       markBuiltInProviderDisabled('anthropic');
       registry.unregister('anthropic');
       try {
         const session = createTestSession(sessionId);
-        session.config = { ...session.config, model: 'model-no-provider-owns' };
+        session.config = { ...session.config, ...config };
         await db.createSession(session);
         db.getSDKMessageRepo().saveUserMessage(
           sessionId,
@@ -6495,10 +6452,6 @@ describe('AgentSession', () => {
           'enqueued'
         );
         const bus = await createTestInternalEventBus();
-        const shown: string[] = [];
-        bus.subscribe('session.error', (event) => void shown.push(event.error), {
-          subscriberName: 'missing-provider-test',
-        });
         const agentSession = new AgentSession(
           db.getSession(sessionId) ?? session,
           db,
@@ -6512,25 +6465,23 @@ describe('AgentSession', () => {
           { autoReplayPendingMessages: false }
         );
         agentSession.queryPromise = new Promise<void>(() => {});
-        for (let attempt = 0; attempt < 4; attempt++) {
-          const delivery = agentSession.driveDeliveryTurn(
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const outcome = await agentSession.driveDeliveryTurn(
             steerUuid,
             steerContent,
             null,
             false,
             () => true
           );
-          await expect(delivery).rejects.toBeInstanceOf(MessageDeliveryTerminalTurnError);
-          await expect(delivery).rejects.toThrow("Provider 'anthropic' is not registered");
+          expect(outcome).toMatchObject({ outcome: 'blocked', reason: 'no_provider' });
         }
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        expect(shown).toEqual(
-          Array(4).fill(
-            "Provider 'anthropic' is not registered. Log in or add an API key for it under Providers, or switch this session to another provider."
-          )
-        );
+        const notices = db
+          .getSDKMessageRepo()
+          .getSDKMessages(sessionId)
+          .messages.filter((message) => JSON.stringify(message).includes(NO_PROVIDER_NOTICE));
+        expect(notices).toHaveLength(1);
       } finally {
-        copilotAvailability?.mockRestore();
+        for (const spy of availability) spy.mockRestore();
         markBuiltInProviderEnabled('anthropic');
         if (anthropic) registry.register(anthropic);
         db.close();

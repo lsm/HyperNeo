@@ -14,19 +14,26 @@ sqlite3 "$DB" "PRAGMA busy_timeout=5000; INSERT INTO sessions (id,type,config,$C
   SELECT '$S','space_chat',json_set(config,'$.provider','anthropic','$.model','sonnet'),$COLS FROM sessions LIMIT 1" > /dev/null
 
 if [ "$MODE" = other-on ]; then
-  bun "$RPC" rpc:providers.create "{\"params\":{\"providerId\":\"custom:mock\",\"displayName\":\"Mock\",\"kind\":\"custom_endpoint\",\"authType\":\"api_key\",\"isEnabled\":true,\"isDefault\":false,\"sortOrder\":1,\"baseUrl\":\"http://127.0.0.1:$VERIFY_MOCK_PORT\",\"customEndpointConfigJson\":\"{\\\"id\\\":\\\"mock\\\",\\\"name\\\":\\\"Mock\\\",\\\"baseUrl\\\":\\\"http://127.0.0.1:$VERIFY_MOCK_PORT\\\",\\\"protocol\\\":\\\"anthropic\\\",\\\"models\\\":[{\\\"id\\\":\\\"mock-model\\\",\\\"name\\\":\\\"Mock model\\\"}]}\"},\"credentials\":{\"apiKey\":\"synthetic-test-key\"}}" > "$RUN/evidence/provider-create.json"
+  bun "$(dirname "$0")/provider-off-endpoint.ts" > "$RUN/endpoint-port" &
+  ENDPOINT=$!
+  trap 'kill "$ENDPOINT"' EXIT
+  until [ -s "$RUN/endpoint-port" ]; do sleep 0.2; done
+  PORT=$(cat "$RUN/endpoint-port")
+  bun "$RPC" rpc:providers.create "{\"params\":{\"providerId\":\"custom:mock\",\"displayName\":\"Mock\",\"kind\":\"custom_endpoint\",\"authType\":\"api_key\",\"isEnabled\":true,\"isDefault\":false,\"sortOrder\":1,\"baseUrl\":\"http://127.0.0.1:$PORT\",\"customEndpointConfigJson\":\"{\\\"id\\\":\\\"mock\\\",\\\"name\\\":\\\"Mock\\\",\\\"baseUrl\\\":\\\"http://127.0.0.1:$PORT\\\",\\\"type\\\":\\\"anthropic-messages\\\",\\\"models\\\":[{\\\"id\\\":\\\"mock-model\\\",\\\"name\\\":\\\"Mock model\\\"}]}\"},\"credentials\":{\"apiKey\":\"synthetic-test-key\"}}" > "$RUN/evidence/provider-create.json"
 fi
 
+SENDS=()
 for i in 1 2 3 4 5 6; do
   bun "$RPC" rpc:message.send "{\"sessionId\":\"$S\",\"content\":\"queued $i\"}" > /dev/null &
+  SENDS+=($!)
 done
-wait
+wait "${SENDS[@]}"
 sleep 12
 {
   echo "session: $(sql "SELECT json_extract(config,'$.provider'), json_extract(config,'$.model') FROM sessions WHERE id='$S'")"
-  echo "jobs: $(sql "SELECT status, count(*) FROM job_queue WHERE queue='message_delivery' AND json_extract(payload,'$.sessionId')='$S' GROUP BY 1")"
+  echo "jobs: $(sql "SELECT status, count(*), substr(error,1,160) FROM job_queue WHERE queue='message_delivery' AND json_extract(payload,'$.sessionId')='$S' GROUP BY 1,3")"
   echo "messages: $(sql "SELECT send_status, count(*) FROM sdk_messages WHERE session_id='$S' AND message_type='user' GROUP BY 1")"
-  echo "notices: $(sql "SELECT count(*) FROM sdk_messages WHERE session_id='$S' AND message_type='assistant' AND sdk_message LIKE '%provider%'")"
+  echo "notices: $(sql "SELECT count(*) FROM sdk_messages WHERE session_id='$S' AND message_type='assistant' AND (sdk_message LIKE '%logged in yet%' OR sdk_message LIKE '%which is off%')")"
   echo "internal errors: $(grep -c 'is not registered; cannot prepare' "$RUN/daemon.log" || true)"
 } | tee "$EVIDENCE"
 if [ "$MODE" = none ]; then
