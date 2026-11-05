@@ -27,8 +27,16 @@ vi.mock('../NeoConversation.tsx', () => ({
 }));
 vi.mock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
 vi.mock('../NeoSessionPane.tsx', () => ({
-  NeoSessionPane: ({ sessionId, onClose }: { sessionId: string; onClose: () => void }) => (
-    <div data-testid="neo-chat-panel" data-session-id={sessionId}>
+  NeoSessionPane: ({
+    sessionId,
+    title,
+    onClose,
+  }: {
+    sessionId: string;
+    title: string;
+    onClose: () => void;
+  }) => (
+    <div data-testid="neo-chat-panel" data-session-id={sessionId} data-title={title}>
       <button type="button" onClick={onClose}>
         Close chat
       </button>
@@ -216,6 +224,7 @@ describe('Neo desktop panes', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: '打开 Todo result' }));
     expect(screen.getByRole('tab', { selected: true }).textContent).toBe('Todo result');
+    expect(screen.getByTestId('neo-chat-panel').dataset.title).toBe('Todo result');
   });
 
   it('uses the chat scroll owner only at the actual desktop boundary and preserves a reader position', () => {

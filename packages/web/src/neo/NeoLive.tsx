@@ -1197,7 +1197,15 @@ export function NeoLive() {
         suspended={!!chat || referenceWork}
         work={columns ? { id: 'neo-preview-work-panel', count: workCount } : undefined}
         renderSession={(sessionId) => (
-          <NeoSessionPane key={sessionId} sessionId={sessionId} title={sessionTitle(sessionId)} />
+          <NeoSessionPane
+            key={sessionId}
+            sessionId={sessionId}
+            title={
+              artifactPreviewWorkspace.state.value.files.find(
+                (file) => file.sessionId === sessionId
+              )?.title ?? sessionTitle(sessionId)
+            }
+          />
         )}
         markdownClass="neo-message-assistant neo-markdown neo-markdown-assistant text-base leading-relaxed"
       />
