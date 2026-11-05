@@ -155,6 +155,7 @@ const proofs = [
   ['bun-event-job-probe'],
   ['bun-outbox-probe'],
   ['bun-todo-receipt-probe'],
+  ['bun-claim-lock-probe'],
 ] as const;
 const caseId = (name: string, args: readonly string[]) =>
   name === 'coding-daemon-merge-sweep' ? name + '-' + args[0] : name;
@@ -217,7 +218,7 @@ describe('Bun native proof matrix registration', () => {
       const result = f.invoke();
       expect(result.status).toBe(0);
       expect(result.stdout).toContain('117 legacy helpers');
-      expect(result.stdout).toContain('147 proof cases');
+      expect(result.stdout).toContain('148 proof cases');
       expect(f.sequence()).toEqual(cases);
       const homes = [];
       for (const [name, ...mode] of proofs) {
@@ -242,6 +243,7 @@ describe('Bun native proof matrix registration', () => {
               'bun-event-job-probe',
               'bun-outbox-probe',
               'bun-todo-receipt-probe',
+              'bun-claim-lock-probe',
             ].includes(name)
               ? 'scripts'
               : '.claude/skills/verify',
@@ -256,7 +258,7 @@ describe('Bun native proof matrix registration', () => {
         expect(existsSync(tmp)).toBe(false);
         expect(existsSync(data)).toBe(false);
       }
-      expect(new Set(homes).size).toBe(147);
+      expect(new Set(homes).size).toBe(148);
     } finally {
       f.cleanup();
     }
@@ -274,6 +276,7 @@ describe('Bun native proof matrix registration', () => {
     'bun-event-job-probe',
     'bun-outbox-probe',
     'bun-todo-receipt-probe',
+    'bun-claim-lock-probe',
   ])('retains failure at %s and never runs later helpers', (failed) => {
     const f = fixture();
     try {
