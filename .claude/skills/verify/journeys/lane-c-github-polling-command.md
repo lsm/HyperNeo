@@ -1,9 +1,9 @@
 # Atomic GitHub polling writer construction
 
-Run proof-run.sh with lane-c-github-polling-command.ts under Bun and cached Deno
-(VERIFY_PROOF_RUNTIME=deno). Shared setup owns scrubbed HOME/data, free ephemeral
-ports, retained evidence and cleanup. No provider/model turn; refuse external
-HTTP/gh. Never touch the live daemon, port8399, credentials or deployment.
+Run proof-run.sh with lane-c-github-polling-command.ts under Bun. Shared setup owns
+scrubbed HOME/data, free ephemeral ports, retained evidence and cleanup. No provider/model
+turn; refuse external HTTP/gh. Never touch the live daemon, port8399, credentials or
+deployment.
 
 Start real app, stop processors, finish real SDK body copying. Seed synthetic
 Spaces, normal/disabled/webhook-secret rows through watchRepo, distinct source

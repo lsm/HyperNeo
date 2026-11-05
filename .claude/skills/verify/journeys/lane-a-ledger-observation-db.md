@@ -5,16 +5,14 @@ Use shared isolation and the resource guard in SKILL.md; heavy jobs run serially
 ```sh
 python3 .claude/skills/verify/lane-a-ledger-observation-db-run.py bun before
 python3 .claude/skills/verify/lane-a-ledger-observation-db-run.py bun verify
-python3 .claude/skills/verify/lane-a-ledger-observation-db-run.py deno verify --executable "$DENO"
 ```
 
-DENO names an existing runtime with cached imports. Every run owns a fresh
-synthetic HOME/data/TMPDIR, daemon and ephemeral non-8399 listener. HTTP is refused.
-A gh fixture answers only synthetic REST/GraphQL reads and logs its requests.
-No credentials, live daemon/data, model or GUI is involved. The runner retains
-proof evidence before removing temporary daemon data. Before mode restores the
-old ledger implementation from origin/dev, then restores the draft in finally;
-do not edit concurrently. Commit failing evidence before the fix.
+Every run owns a fresh synthetic HOME/data/TMPDIR, daemon and ephemeral non-8399 listener.
+HTTP is refused. A gh fixture answers only synthetic REST/GraphQL reads and logs its
+requests. No credentials, live daemon/data, model or GUI is involved. The runner retains
+proof evidence before removing temporary daemon data. Before mode restores the old ledger
+implementation from origin/dev, then restores the draft in finally; do not edit
+concurrently. Commit failing evidence before the fix.
 
 Real persisted daemon jobs invoke reconcileCodingPrLedger with its production
 collector and synthetic GitHub responses. A trigger rejects PR insertion after a
@@ -47,21 +45,14 @@ and a main connection that refuses SQL. Competing observations produce one state
 transition; unwatching during collection rejects the response without updating
 coverage or stored PR state.
 
-The original `bun-verify` directory is the deliberately failing pre-fix run,
-committed in the regression commit despite its mode name. It records 53 target
-main SQL statements and coverage advancing after rejected PR persistence.
-`deno-verify` is an inconclusive fixture launch failure: its synthetic gh used
-Deno as a bare shebang interpreter. The corrected fixture uses existing Bun for
-only that stub; the daemon and worker proof still runs under the selected runtime.
-`observed.json.proofBinding.runs` identifies the final passing Bun and Deno pair.
+The original `bun-verify` directory is the deliberately failing pre-fix run, committed in
+the regression commit despite its mode name. It records 53 target main SQL statements and
+coverage advancing after rejected PR persistence. The corrected fixture uses existing Bun
+for only that stub; the daemon and worker proof still runs under the selected runtime.
 
 After the bound proof commit, change only this journey and its evidence directory.
 Check the committed application trees, helper blobs, run heads and post-proof
 change list before pushing:
-
-```sh
-bun --no-install --no-env-file .claude/skills/verify/lane-a-ledger-observation-proof-binding.ts HEAD
-```
 
 No health/affected RPC latency, RSS or WAL benchmark is claimed. Gateway command
 durations and JSON byte sizes do not separately measure queue, SQL or clone time.

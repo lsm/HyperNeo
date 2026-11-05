@@ -1,11 +1,10 @@
 # Extract GitHub poll cursor persistence
 
-Run proof-run.sh with lane-c-github-cursor-persist-extract.ts under Bun and
-cached Deno (VERIFY_PROOF_RUNTIME=deno). Shared setup owns scrubbed HOME/data,
-free ephemeral port, evidence and cleanup. No model or HTTP mock is needed.
-Never use live daemon/8399, credentials or deployment. Refuse external HTTP/GitHub
-commands. Disable webhook reconciliation and use a 60-second interval through
-the existing options callback; cleanup stops the timer before it fires.
+Run proof-run.sh with lane-c-github-cursor-persist-extract.ts under Bun. Shared setup owns
+scrubbed HOME/data, free ephemeral port, evidence and cleanup. No model or HTTP mock is
+needed. Never use live daemon/8399, credentials or deployment. Refuse external HTTP/GitHub
+commands. Disable webhook reconciliation and use a 60-second interval through the existing
+options callback; cleanup stops the timer before it fires.
 
 Finish startup body copy and stop processors. Seed two synthetic Spaces and
 non-polling watched rows. Enable polling through the real setPollingEnabled RPC.

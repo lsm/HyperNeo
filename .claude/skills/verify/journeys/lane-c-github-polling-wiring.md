@@ -1,10 +1,10 @@
 # Public GitHub polling writer wiring
 
 Use shared setup in `../SKILL.md`. Run `proof-run.sh` with
-`lane-c-github-polling-wiring.ts` in fresh synthetic Bun and Deno daemons. The
-helper registers the real Space schema, authenticates its socket using only the
-fresh daemon's local credential, stubs external HTTP/gh and owns all processors,
-locks and timers. No real provider, token, live daemon or reserved port is used.
+`lane-c-github-polling-wiring.ts` in fresh synthetic Bun daemons. The helper registers the
+real Space schema, authenticates its socket using only the fresh daemon's local
+credential, stubs external HTTP/gh and owns all processors, locks and timers. No real
+provider, token, live daemon or reserved port is used.
 
 The public `space.github.setPollingEnabled` RPC must fail on the baseline with
 `Target GitHub SQL reached main`. After activation, require no target writes on
@@ -27,10 +27,6 @@ The wrapper's exit code is authoritative. Real GitHub, deployment, native agents
 UI, full main-thread-I/O elimination and complete transitive closure are unverified.
 
 Run the repeatable boundary measurement before changing application code:
-
-```bash
-node .claude/skills/verify/lane-c-github-polling-wiring-measure.cjs /absolute/measurement.json
-```
 
 It verifies the seven approved full-module data hashes and records fresh owned
 units and unchanged interface roots. Interface roots are pinned, not audited.

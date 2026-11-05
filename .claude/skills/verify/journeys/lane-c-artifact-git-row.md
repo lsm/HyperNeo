@@ -1,10 +1,10 @@
 # Source-bound Git artifact row publication activation
 
-Use proof-run.sh with lane-c-artifact-git-row.ts on native Bun and cached Deno
-(VERIFY_PROOF_RUNTIME=deno). Shared setup checks resources, scrubs credentials,
-owns fresh HOME/data and ephemeral listeners, retains evidence and removes data.
-The Python gh stub answers only exact synthetic commit/tree/blob fixtures and
-refuses every other call. Never use external GitHub, credentials or the live daemon.
+Use proof-run.sh with lane-c-artifact-git-row.ts on native Bun. Shared setup checks
+resources, scrubs credentials, owns fresh HOME/data and ephemeral listeners, retains
+evidence and removes data. The Python gh stub answers only exact synthetic
+commit/tree/blob fixtures and refuses every other call. Never use external GitHub,
+credentials or the live daemon.
 
 Commit the failing real artifact.reference.resolve Git RPC proof first. Self-check
 the cached main INSERT trap, then require zero main publication INSERTs. Bun proves
@@ -27,11 +27,6 @@ publication returns after release. The earlier core constructor transaction #934
 is outside this late boundary; do not claim full RPC ownership or universal latency.
 Remove the fixture responses and explicitly retry offline: no lookup/publication,
 same receipt and complete bytes. Foreign/non-source references refuse before lookup.
-
-Deno retains its existing safe_open_unavailable first refusal and explicit duplicate
-artifact_blob_conflict refusal; assert no row command or immutable row. Successful
-Deno capture/publication/bytes and its late reply/lock fences remain unverified;
-the merged construction journey tests the native Deno writer separately.
 
 Measure the complete local Git module including nested gates/closures/lane state
 to <=200. Pin merged row/identity writers, the unchanged 130-line reference resolver,

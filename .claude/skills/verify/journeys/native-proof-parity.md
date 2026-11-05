@@ -7,8 +7,6 @@ port is needed.
 
 Run:
 
-    bun scripts/check-native-proof-parity.ts
-
 Before construction it fails because the checker is unavailable; commit that
 failure and its tests first. After construction it must report all 117 ordered
 helper commands pinned.
@@ -32,6 +30,5 @@ later extraction changes setup, re-audit and update the source hash explicitly.
 Do not refresh a hash to bless missing coverage or relabel old runtime evidence.
 Retire this legacy binding only after the replacement manifest proves parity.
 
-The Deno smoke runner, CI job and all existing proof executions stay unchanged
-in this pin slice. This verifies inventory preservation, not that any helper
-has been migrated to Bun; Bun probe construction and extraction are later PRs.
+This verifies inventory preservation, not that any helper has been migrated to Bun; Bun
+probe construction and extraction are later PRs.

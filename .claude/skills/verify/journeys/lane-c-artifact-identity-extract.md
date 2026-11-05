@@ -1,12 +1,11 @@
 # Extract artifact file identity SQL
 
-Use proof-run.sh with lane-c-artifact-identity-extract.ts on Bun and native cached
-Deno (VERIFY_PROOF_RUNTIME=deno). Shared setup checks resources, scrubs credentials,
-creates fresh HOME/data and ephemeral listeners, saves evidence and removes data.
-No provider/model, native agent, real credential, GitHub or live daemon is used.
-These are historical extraction contracts: direct default constructor/helper
-execution stays on its supplied connection. Current reference RPC identity is
-worker-backed; use the reference-identity journey to prove that activation.
+Use proof-run.sh with lane-c-artifact-identity-extract.ts on Bun. Shared setup checks
+resources, scrubs credentials, creates fresh HOME/data and ephemeral listeners, saves
+evidence and removes data. No provider/model, native agent, real credential, GitHub or
+live daemon is used. These are historical extraction contracts: direct default
+constructor/helper execution stays on its supplied connection. Current reference RPC
+identity is worker-backed; use the reference-identity journey to prove that activation.
 The original extraction measurement/evidence is historical; use the current
 identity/reference measurement for the evolved layout.
 
@@ -29,9 +28,9 @@ identity SQL on main; the explicitly invoked direct legacy helper executes its
 INSERT/read there. Positive direct-helper counts characterize that legacy path
 and must not be claimed as a complete off-main pass. Save SQL hashes, timing and RSS/WAL without UUIDs or private paths.
 
-Run the focused SQL/constructor contracts, strict checker, source/diff measurement
-and repository checks. Net prepare/run counts must be zero and receipt/save method
-bodies byte-identical. Append only this journey's Deno smoke line. Close scratch
-DBs, socket, processors and app before data cleanup. Full capture/FS/ownership/source
-graph, successful snapshot publication, native Bun 1.4.2 when another Bun is installed,
-browser and Neo-owned deployment smoke remain unverified by this helper extraction.
+Run the focused SQL/constructor contracts, strict checker, source/diff measurement and
+repository checks. Net prepare/run counts must be zero and receipt/save method bodies
+byte-identical. Close scratch DBs, socket, processors and app before data cleanup. Full
+capture/FS/ownership/source graph, successful snapshot publication, native Bun 1.4.2 when
+another Bun is installed, browser and Neo-owned deployment smoke remain unverified by this
+helper extraction.

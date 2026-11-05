@@ -32,8 +32,6 @@ health and the public card must still answer. Report affected duration against
 250 ms separately from health and max loop lag. The held write necessarily
 misses that target. RSS/WAL are end samples; phase timings and peaks are unverified.
 
-Run focused add/PR-admission regressions and full repository checks. Deno smoke
-registers the same helper; local Deno is unverified if unavailable. Retain
-todo-add-build.json, proof.log and wrapper exit status. Require exit zero and
-clean worker/daemon shutdown; a PASS assertion before a shutdown failure does
-not count. The wrapper removes temporary HOME and database after saving evidence.
+Run focused add/PR-admission regressions and full repository checks. Require exit zero and
+clean worker/daemon shutdown; a PASS assertion before a shutdown failure does not count.
+The wrapper removes temporary HOME and database after saving evidence.

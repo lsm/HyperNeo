@@ -1,10 +1,10 @@
 # Extract polling capability queries
 
 Use shared setup in `../SKILL.md`. Run `proof-run.sh` with
-`lane-c-github-polling-read-extract.ts` under Bun and Deno. The helper first runs
-the actual polling writer RPC journey, including enable/disable, saved config,
-held writer health, rollback and no replay. It retains that journey's evidence
-and closes its owned daemon before checking the extracted reader contracts.
+`lane-c-github-polling-read-extract.ts` under Bun. The helper first runs the actual
+polling writer RPC journey, including enable/disable, saved config, held writer health,
+rollback and no replay. It retains that journey's evidence and closes its owned daemon
+before checking the extracted reader contracts.
 
 On query-only native SQLite with no repository construction, preserve complete
 rows, owner/repo ordering, empty/all/Space filters, orphan and session selection,

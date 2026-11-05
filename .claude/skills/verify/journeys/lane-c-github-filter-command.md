@@ -1,9 +1,9 @@
 # Atomic GitHub filter preference writer construction
 
-Run proof-run.sh with lane-c-github-filter-command.ts under Bun and cached
-Deno (VERIFY_PROOF_RUNTIME=deno). Shared setup owns synthetic HOME/data, scrubbed
-environment, free ports, saved evidence and owned data cleanup. Give each seeded
-Space a unique synthetic workspace directory; the real schema enforces it.
+Run proof-run.sh with lane-c-github-filter-command.ts under Bun. Shared setup owns
+synthetic HOME/data, scrubbed environment, free ports, saved evidence and owned data
+cleanup. Give each seeded Space a unique synthetic workspace directory; the real schema
+enforces it.
 
 Start the real app, stop captured processors and finish SDK body copying. Enable
 only GitHub RPC configuration with polling/webhooks off. Seed two watched rows

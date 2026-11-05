@@ -67,7 +67,7 @@ describe('GitHub polling usage read commands', () => {
       );
       expect(JSON.parse(readFileSync(output, 'utf8'))).toMatchObject({
         fullOwnedGraphLines: 147,
-        knownTotal: 155,
+        knownTotal: 154,
         excludedLines: 0,
       });
     } finally {

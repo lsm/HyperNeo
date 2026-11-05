@@ -1,9 +1,9 @@
 # Extract GitHub Space enable persistence
 
-Use proof-run.sh with lane-c-github-space-enabled-extract.ts on Bun and cached
-Deno (VERIFY_PROOF_RUNTIME=deno). Shared setup owns fresh HOME/data/ephemeral
-listeners, scrubbed credentials, evidence retention and immediate data cleanup.
-No provider turn, HTTP mock, GitHub access or live daemon/8399 is used.
+Use proof-run.sh with lane-c-github-space-enabled-extract.ts on Bun. Shared setup owns
+fresh HOME/data/ephemeral listeners, scrubbed credentials, evidence retention and
+immediate data cleanup. No provider turn, HTTP mock, GitHub access or live daemon/8399 is
+used.
 
 Enable the actual GitHub extension RPC capability with polling/webhooks off. Seed
 a synthetic Space and add synthetic watched repositories through the real RPC,

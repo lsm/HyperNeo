@@ -10,9 +10,8 @@ fresh evidence directory. Its 12-second fake token response must still complete
 within the exchange's 15-second bound, without the callback resetting at Bun's
 default 10-second HTTP idle timeout.
 
-Use `VERIFY_PROOF_RUNTIME=deno` with pinned Deno 2.9.4 on PATH for the second
-runtime. The shared isolated setup supplies fresh HOME/data/database and test mode.
-No model, credentials, real Google endpoint or GUI is used.
+The shared isolated setup supplies fresh HOME/data/database and test mode. No model,
+credentials, real Google endpoint or GUI is used.
 
 The helper boots a test daemon and fake Google consent/token/JWKS server. Actual
 HTTP follows the fake consent redirect to the production loopback listener. Wrong

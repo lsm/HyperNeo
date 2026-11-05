@@ -7,17 +7,13 @@ before every proof:
 ```sh
 python3 .claude/skills/verify/coding-ref-db-run.py bun before
 python3 .claude/skills/verify/coding-ref-db-run.py bun verify
-python3 .claude/skills/verify/coding-ref-db-run.py deno before --executable "$DENO"
-python3 .claude/skills/verify/coding-ref-db-run.py deno verify --executable "$DENO"
 ```
 
-Set `DENO` to an existing Deno 2.9.4 executable; no runtime or dependency install
-is attempted. Deno uses cached modules only. Each proof owns a fresh synthetic
-HOME, TMPDIR and DB, an ephemeral non-8399 daemon, and a refusing fake gh.
-Evidence JSON and synthetic gh records are copied into a uniquely named folder
-under `evidence/coding-ref-db/`. The daemon closes before the runner immediately
-removes its complete temporary directory. No model, provider, UI, real GitHub,
-credentials or existing database is used.
+Each proof owns a fresh synthetic HOME, TMPDIR and DB, an ephemeral non-8399 daemon, and a
+refusing fake gh. Evidence JSON and synthetic gh records are copied into a uniquely named
+folder under `evidence/coding-ref-db/`. The daemon closes before the runner immediately
+removes its complete temporary directory. No model, provider, UI, real GitHub, credentials
+or existing database is used.
 
 The real `neo.github.read` WebSocket operation receives five concurrent PR
 reads and two concurrent issue reads. Acquisition coalesces to one lookup for
@@ -41,9 +37,5 @@ collector waits and real `system.health` answers. Health must remain below
 300 ms, so affected read RPCs miss 250 ms; the held writer also misses that
 latency target. Evidence records both limitations, not a full latency pass.
 
-The optional `--section` runner flag additionally exercises a shared issue read
-and `neo.project.section`. Bun passes this probe. Deno fails identically before
-and after migration because NUL-containing workspace aliases are returned
-truncated despite their complete stored bytes; see #8792 and the retained
-`deno-before` / `deno-verify` diagnostic folders. The common reference proof uses
-public issue consumers on both runtimes, and does not claim Deno section support.
+The optional `--section` runner flag additionally exercises a shared issue read and
+`neo.project.section`. Bun passes this probe.

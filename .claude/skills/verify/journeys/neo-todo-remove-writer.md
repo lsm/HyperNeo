@@ -29,9 +29,7 @@ and writing a full report during stop must produce replacement_missing,
 remove without a stale link and preserve the concurrent report in the receipt
 and opened card. This is distinct from replacing the worker session reference.
 
-Required Deno smoke runs both helpers. Repeat locally with
-VERIFY_PROOF_RUNTIME=deno when Deno is installed. The wrapper saves evidence
-JSON/logs and removes synthetic daemon data after each helper cleans up.
-No real worker stop delivery, provider turn, GUI layout, credentials or external
-GitHub request is exercised; label those unverified. No new production wiring
-is needed for this journey.
+The wrapper saves evidence JSON/logs and removes synthetic daemon data after each helper
+cleans up. No real worker stop delivery, provider turn, GUI layout, credentials or
+external GitHub request is exercised; label those unverified. No new production wiring is
+needed for this journey.

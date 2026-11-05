@@ -6,13 +6,11 @@ GitHub and external HTTP are refused. No simulator or credentials are used.
 
 ```sh
 python3 .claude/skills/verify/lane-a-publication-page-db-run.py bun verify
-python3 .claude/skills/verify/lane-a-publication-page-db-run.py deno verify --executable "$DENO"
 ```
 
-DENO names an existing cached runtime. The runner preserves evidence and removes
-all synthetic daemon data, including failed runs. It runs the checked-out code;
-reproduce the original failure from the regression commit in its own worktree.
-Before mode does not replace source files.
+The runner preserves evidence and removes all synthetic daemon data, including failed
+runs. It runs the checked-out code; reproduce the original failure from the regression
+commit in its own worktree. Before mode does not replace source files.
 
 The public WebSocket publication.read RPC first encounters a corrupt stored row
 while the legacy public-conversation identity is uninitialized. Decoding must
@@ -32,26 +30,10 @@ commit boundary. No external effects occur in it. Timings/JSON byte sizes do
 not isolate queue, SQL or clone cost. No full conversation/GUI, latency, RSS,
 WAL or whole-daemon SQL absence claim is made.
 
-The `bun-verify` directory is the pre-fix RPC failure committed before the fix;
-its five target SQL statements include the partial identity insertion. The first
-fixed run `bun-verify-1` passed rollback but stopped on the fixture's refusal
-assertion: MCP adds explanatory text after `human_only`. It is retained as
-incomplete. The corrected assertion checks the reason key and preserves the full
-reply; `observed.json.proofBinding.runs` names the final passing pair.
-
-The current application commit and complete packages/scripts trees, helper blobs
-and successful run heads are bound in observed.json. After that commit, change
-only this journey and its evidence folder. Audit before pushing:
-
-```sh
-bun --no-install --no-env-file .claude/skills/verify/lane-a-publication-page-proof-binding.ts HEAD
-```
-
-The final pair was refreshed after adopting the existing typed repository command
-interface and merging dev with the stage-target reader. The shared registry keeps
-both append-only entries; operations.ts did not conflict and retains only its
-granted call-site change. No SQL baseline change was made. Previous passing
-bindings remain historical; only proofBinding identifies the final candidate.
+The `bun-verify` directory is the pre-fix RPC failure committed before the fix; its five
+target SQL statements include the partial identity insertion. The first fixed run
+`bun-verify-1` passed rollback but stopped on the fixture's refusal assertion: MCP adds
+explanatory text after `human_only`. It is retained as incomplete.
 
 The latest binding was refreshed after merging dev with the inventory readers
 and turn-vector writer. Only the first registry import conflicted; both imports
@@ -67,9 +49,9 @@ merged cleanly; its net diff remains the granted factory call. The final pair wa
 rerun on the merged application commit. The old publication head's approval/CI
 cannot authorize this changed head; fresh gates are required.
 
-The review correction changes only the admission-order test: its defaultBinding
-spy observes the repository prototype, including fresh writer command instances.
-An allowed-reader positive control first failed in all four caller cases with the
-old instance spy, then passed with the prototype spy. The failing test was
-committed before the correction. Fresh Bun/Deno proofs were bound again because
-the complete packages tree includes tests; production behavior is unchanged.
+The review correction changes only the admission-order test: its defaultBinding spy
+observes the repository prototype, including fresh writer command instances. An
+allowed-reader positive control first failed in all four caller cases with the old
+instance spy, then passed with the prototype spy. The failing test was committed before
+the correction. Fresh Bun proofs were bound again because the complete packages tree
+includes tests; production behavior is unchanged.

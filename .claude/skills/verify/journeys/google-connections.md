@@ -5,10 +5,8 @@ bash .claude/skills/verify/proof-run.sh /absolute/evidence/google-connections \
   .claude/skills/verify/google-connections.ts
 ```
 
-Repeat with `VERIFY_PROOF_RUNTIME=deno` and pinned Deno 2.9.4 on PATH for the
-second supported runtime. The shared setup supplies fresh HOME/data/database,
-test mode and no credentials; all network targets except the fake Google server
-are refused. No model or GUI runs.
+The shared setup supplies fresh HOME/data/database, test mode and no credentials; all
+network targets except the fake Google server are refused. No model or GUI runs.
 
 The helper calls the production management operations through the real WebSocket
 door, injecting only the fake Google transport and synthetic encrypted-store key.

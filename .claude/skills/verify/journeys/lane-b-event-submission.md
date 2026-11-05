@@ -25,8 +25,7 @@ submission latency, body bytes/hash, health and the forbidden main-SQL count in
 `evidence/event-submission.json`. The pre-fix helper fails after two blocked main
 SQL attempts. All resources close in finally.
 
-The self-contained Deno smoke block runs the same proof in CI. Unit tests retain
-replay after job consumption, destination identity, delivery-mode replay, both
-insert rollback paths and worker failure without fallback. This proof observes
-submission and queued status; it does not execute the delivery consumer or model,
+Unit tests retain replay after job consumption, destination identity, delivery-mode
+replay, both insert rollback paths and worker failure without fallback. This proof
+observes submission and queued status; it does not execute the delivery consumer or model,
 port subscription/routing reads, or establish contention, clone/RSS/loop-lag targets.

@@ -6,9 +6,8 @@ Run from a checkout with dependencies installed:
 bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/google-search.ts
 ```
 
-Repeat with `VERIFY_PROOF_RUNTIME=deno` and the pinned Deno executable on PATH.
-The shared wrapper supplies a fresh test HOME/data/database and scrubs credentials.
-No real Google login, keychain, account, model or external service is used.
+The shared wrapper supplies a fresh test HOME/data/database and scrubs credentials. No
+real Google login, keychain, account, model or external service is used.
 
 The helper starts an isolated daemon and fake Google HTTP server on free loopback
 ports. Synthetic grants seed two named accounts. The daemon's default operation

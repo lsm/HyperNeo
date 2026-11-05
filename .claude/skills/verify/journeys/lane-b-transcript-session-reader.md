@@ -1,9 +1,8 @@
 # Transcript existence gate uses the page reader
 
-Run `lane-b-transcript-session-reader.ts` through `proof-run.sh` in a fresh
-synthetic daemon. The helper takes the wrapper's run directory as its last
-argument. Use the same helper with Deno's native worker for the runtime smoke.
-No provider turn, model mock, real credentials or external HTTP is needed.
+Run `lane-b-transcript-session-reader.ts` through `proof-run.sh` in a fresh synthetic
+daemon. The helper takes the wrapper's run directory as its last argument. No provider
+turn, model mock, real credentials or external HTTP is needed.
 
 Run normal and `--defer-body-copy` schedules. Deferred mode holds the real startup
 copy until fixtures are seeded. The shared setup in SKILL.md waits for its actual

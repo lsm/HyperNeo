@@ -1,9 +1,7 @@
 # Activate pairing revocation on the writer
 
-Run lane-c-pairing-revoke-activation.ts via proof-run.sh with Bun and then Deno.
-Use separate evidence folders and the existing pinned Deno executable. The wrapper
-supplies fresh HOME/data and removes all temporary daemon data after saving JSON.
-No credentials, provider request, live daemon, busy listener or port 8399 is used.
+The wrapper supplies fresh HOME/data and removes all temporary daemon data after saving
+JSON. No credentials, provider request, live daemon, busy listener or port 8399 is used.
 Record actual runtime versions; local Bun 1.4.3 is a deviation from the repository's
 pinned 1.4.2 and does not establish pinned native-daemon coverage.
 

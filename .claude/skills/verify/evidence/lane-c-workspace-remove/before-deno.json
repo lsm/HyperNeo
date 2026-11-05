@@ -1,6 +1,0 @@
-{
-  "mainGuardSelfCheckPassed": true,
-  "removalFailure": "MessageHubResponseError: workspace-removal SQL reached main",
-  "mainSqlAttempts": 1,
-  "workerMetrics": []
-}

@@ -8,17 +8,14 @@ space, and refuses to run under
 ```sh
 python3 .claude/skills/verify/coding-poll-db-run.py bun before
 python3 .claude/skills/verify/coding-poll-db-run.py bun verify
-python3 .claude/skills/verify/coding-poll-db-run.py deno before --executable "$DENO"
-python3 .claude/skills/verify/coding-poll-db-run.py deno verify --executable "$DENO"
 ```
 
-`DENO` names an existing Deno 2.9.4 executable; cached modules only are allowed.
-No install or simulator is used. Each run owns fresh HOME, TMPDIR and DB paths,
-an ephemeral non-8399 daemon, a refusing synthetic gh and tiny local Git fixtures.
-The Git fixture rewrites only synthetic repository URLs to its own local bare
-origin. No provider/model turn, real HTTP, existing database or credential is
-used. Save raw JSON and request records before the runner immediately removes
-the entire temporary daemon directory. `run.json` records guards and cleanup.
+No install or simulator is used. Each run owns fresh HOME, TMPDIR and DB paths, an
+ephemeral non-8399 daemon, a refusing synthetic gh and tiny local Git fixtures. The Git
+fixture rewrites only synthetic repository URLs to its own local bare origin. No
+provider/model turn, real HTTP, existing database or credential is used. Save raw JSON and
+request records before the runner immediately removes the entire temporary daemon
+directory.
 
 Before mode temporarily restores only `poll-facts.ts` and `poll-http.ts` from
 the pinned origin/dev revision, then restores the draft in finally. Do not run
@@ -58,32 +55,18 @@ cleanup against read-only main despite a bound writer. Focused tests preserve
 ETag binding, cycle/credential isolation, sanitized metadata, partial and failed
 coverage, late-response fencing, bounded retries, cleanup rollback and retention.
 
-The synchronous record primitive remains used by the production connector PR
-and review-thread adapters; those migrations are later lane-A slices. It is not
-an exhausted compatibility setter. `observed.json` summarizes the four retained
-runs; raw evidence is the source for each measurement.
+The synchronous record primitive remains used by the production connector PR and
+review-thread adapters; those migrations are later lane-A slices. It is not an exhausted
+compatibility setter.
 
-
-The review follow-up adds a failing evidence-contract test before refreshing the
-proofs. The latest runs listed in `observed.json.proofBinding.runs` both identify
-the committed `testedCodeCommit` in their `run.json.head`. Their complete
-application trees and proof-helper blobs are recorded in the same binding.
-The original `regressionCommit` continues to name the historical failing
-production test; the proof payload's `head` names the synthetic Git fixture.
-Neither is an application proof-head field.
+ The review follow-up adds a failing evidence-contract test before refreshing the proofs.
+Their complete application trees and proof-helper blobs are recorded in the same binding.
+The original `regressionCommit` continues to name the historical failing production test;
+the proof payload's `head` names the synthetic Git fixture. Neither is an application
+proof-head field.
 
 After the proof commit, change only this journey and the retained evidence folder.
 Run the explicit audit before pushing the candidate:
-
-```sh
-bun --no-install --no-env-file .claude/skills/verify/coding-poll-proof-binding.ts HEAD
-```
-
-It checks ancestry, the recorded trees and helper blobs, both runtime proof
-receipts and the complete post-proof change list. The evidence-contract unit
-test checks the retained historical pair without binding future PRs to this
-application tree. A later production/helper change requires a new committed
-proof head and fresh runs before this PR can claim that head is verified.
 
 
 Run the focused regression set with the CI runner as well as Bun:
@@ -96,11 +79,3 @@ bash ../../.claude/skills/verify/resource-check.sh && \
   tests/unit/1-core/operations/coding-poll-proof-evidence.test.ts \
   tests/unit/1-core/operations/neo-ledger-poll-http.test.ts
 ```
-
-The CI follow-up reproduces the retry fixture's fourth counted attempt under
-Node/Vitest before fixing it. Fault injection now tracks synchronous wrapper
-nesting, so only outer writes count and receive busy faults in both runners.
-The three-attempt bound, single acquisition, single observation and exhaustion
-assertions remain. No production code changed in this follow-up. Both runtime
-proofs were refreshed from the committed fixture fix; the previous binding is
-retained in `proofBindingHistory`.

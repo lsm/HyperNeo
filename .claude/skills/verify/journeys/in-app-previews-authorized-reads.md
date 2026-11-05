@@ -53,12 +53,11 @@ read-rpc-restart.json and doctor output under evidence/. For a separate native
 proof, create a fresh run/home and invoke preview-reads.ts with that temp HOME and
 NODE_ENV=test; keep read-evidence.json and its synthetic fixtures.
 
-Run actual MarkdownRenderer tests headlessly in happy-dom and build web for
-compatibility. No viewer or unattended GUI is introduced. No new migration, source
-path reader, unauthenticated download URL, provider/credential or live DB is used.
-All byte reads use anchored no-follow stored descriptors and whole-file integrity;
-there is no integrity cache, so each chunk currently hashes the complete snapshot.
-Unsupported native platforms fail closed; no successful Deno byte read is claimed.
-References/IDs confer no access; connection authentication and current persisted
-parent bindings remain required. This is an iOS prerequisite contract, not an iOS
-client implementation or a new HTML execution design.
+Run actual MarkdownRenderer tests headlessly in happy-dom and build web for compatibility.
+No viewer or unattended GUI is introduced. No new migration, source path reader,
+unauthenticated download URL, provider/credential or live DB is used. All byte reads use
+anchored no-follow stored descriptors and whole-file integrity; there is no integrity
+cache, so each chunk currently hashes the complete snapshot. References/IDs confer no
+access; connection authentication and current persisted parent bindings remain required.
+This is an iOS prerequisite contract, not an iOS client implementation or a new HTML
+execution design.

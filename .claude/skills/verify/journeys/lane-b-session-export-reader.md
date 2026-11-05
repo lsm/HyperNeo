@@ -1,9 +1,8 @@
 # Session exports read a complete snapshot off main
 
-Run `lane-b-session-export-reader.ts` through `proof-run.sh`, then repeat with
-`VERIFY_PROOF_RUNTIME=deno` and the cached Deno runtime on PATH. This owns a fresh
-synthetic daemon on an ephemeral non-8399 port, with disposable HOME/data and
-external HTTP refused. No provider turn, credentials or model mock is needed.
+This owns a fresh synthetic daemon on an ephemeral non-8399 port, with disposable
+HOME/data and external HTTP refused. No provider turn, credentials or model mock is
+needed.
 
 Seed consumed, failed and pending user inputs, a full ordinary reply over 16 KiB,
 a parent/child tool exchange, hidden metadata, an ordinary result and another

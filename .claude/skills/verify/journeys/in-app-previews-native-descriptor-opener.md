@@ -18,14 +18,12 @@ env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin" \
   NODE_ENV=test bun .claude/skills/verify/preview-safe-open.ts "$RUN"
 ```
 
-`safe-open-evidence.json` records runtime/platform, successes and refusals. Keep
-its synthetic fixtures. Repeat the existing isolated daemon capture/restart and
-headless Markdown component journeys for compatibility. The descriptor callback
-is internal and does not grant artifact access. There is no path-reader fallback;
-raw source registration stays unwired until complete hash capture and authorized
-registry receipts exist (slices 5–7). This slice reuses the Bun native ACP backend
-on macOS/Linux. No successful Deno/native Windows opener is claimed: an unavailable
-backend returns `safe_open_unavailable`, and no source consumer runs. A backend
-must independently pass these same proofs before enabling it on another runtime.
-No live DB, provider, credentials, source mutation or unattended GUI is involved;
-rename/symlink races operate only on newly created synthetic fixtures.
+`safe-open-evidence.json` records runtime/platform, successes and refusals. Keep its
+synthetic fixtures. Repeat the existing isolated daemon capture/restart and headless
+Markdown component journeys for compatibility. The descriptor callback is internal and
+does not grant artifact access. There is no path-reader fallback; raw source registration
+stays unwired until complete hash capture and authorized registry receipts exist (slices
+5–7). This slice reuses the Bun native ACP backend on macOS/Linux. A backend must
+independently pass these same proofs before enabling it on another runtime. No live DB,
+provider, credentials, source mutation or unattended GUI is involved; rename/symlink races
+operate only on newly created synthetic fixtures.

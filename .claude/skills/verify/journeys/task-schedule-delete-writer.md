@@ -12,11 +12,10 @@ the other Space's schedule/job. A SQL trigger then rejects a schedule deletion:
 the RPC must fail and both the original active schedule and its pending job
 must survive together.
 
-Commit this failing reproduction before the fix. The baseline loses the pending
-job when deletion fails; the writer transaction must roll it back. Main-connection
-instrumentation must also capture zero schedule/job DELETEs during the RPCs.
-Repeat under supported Deno with VERIFY_PROOF_RUNTIME=deno. The wrapper preserves
-RPC replies and captured SQL and removes its isolated daemon data.
+Commit this failing reproduction before the fix. The baseline loses the pending job when
+deletion fails; the writer transaction must roll it back. Main-connection instrumentation
+must also capture zero schedule/job DELETEs during the RPCs. The wrapper preserves RPC
+replies and captured SQL and removes its isolated daemon data.
 
 Run schedule-service, task-schedule-repository and fire-handler suites for existing
 pending-job comparison and lifecycle behavior. This covers taskSchedule.delete

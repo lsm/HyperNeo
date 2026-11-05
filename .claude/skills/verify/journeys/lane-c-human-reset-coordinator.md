@@ -1,10 +1,9 @@
 # Build lifetime-owned human-reset notification recovery
 
-Run proof-run.sh with lane-c-human-reset-coordinator.ts on Bun and cached native
-Deno (VERIFY_PROOF_RUNTIME=deno). The wrapper checks resources, scrubs credentials,
-uses a disposable HOME/data and ephemeral ports, saves evidence, then removes data.
-No provider/model turn or HTTP mock is needed. Record actual versions; local Bun
-1.4.3 does not establish pinned native Bun 1.4.2 coverage. Never touch the live daemon.
+The wrapper checks resources, scrubs credentials, uses a disposable HOME/data and
+ephemeral ports, saves evidence, then removes data. No provider/model turn or HTTP mock is
+needed. Record actual versions; local Bun 1.4.3 does not establish pinned native Bun 1.4.2
+coverage. Never touch the live daemon.
 
 Commit the failing construction proof first: the coordinator is absent while
 the merged reset/receipt dependency contracts pass. The coordinator is a main-side

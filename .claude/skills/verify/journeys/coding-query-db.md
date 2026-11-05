@@ -6,17 +6,13 @@ free data-volume space and refuses to run below 25 GiB:
 ```sh
 python3 .claude/skills/verify/coding-query-db-run.py bun before
 python3 .claude/skills/verify/coding-query-db-run.py bun verify
-python3 .claude/skills/verify/coding-query-db-run.py deno before --executable "$DENO"
-python3 .claude/skills/verify/coding-query-db-run.py deno verify --executable "$DENO"
 ```
 
-`DENO` names an existing Deno 2.9.4 executable; Deno uses cached modules only.
-No runtime or dependency installation occurs. Every invocation creates its own
-synthetic HOME, TMPDIR and DB, starts an ephemeral non-8399 daemon, refuses real
-HTTP, and uses a gh stub that refuses unsupported requests. It uses no model,
-provider, credentials, existing database, UI or real GitHub request. Save the
-raw JSON and request records before the runner immediately removes the entire
-temporary daemon directory. `run.json` records available space and cleanup.
+No runtime or dependency installation occurs. Every invocation creates its own synthetic
+HOME, TMPDIR and DB, starts an ephemeral non-8399 daemon, refuses real HTTP, and uses a gh
+stub that refuses unsupported requests. It uses no model, provider, credentials, existing
+database, UI or real GitHub request. Save the raw JSON and request records before the
+runner immediately removes the entire temporary daemon directory.
 
 Before mode temporarily restores only `query-facts.ts` from the pinned
 origin/dev revision, then restores the draft in finally. Do not run before
@@ -46,8 +42,7 @@ and held writer miss the 250 ms affected-operation target; retain those misses.
 Gateway evidence includes elapsed calls and serialized argument/reply sizes;
 it does not separately attribute worker queue, SQL or cloning time.
 
-The failing regression commit precedes the fix. Focused unit cases also cover
-case/alias coverage, all query dimensions, changed and failed views, bounded
-busy retries, rollback on rejected persistence, one-winner admission and rolling
-interval fencing. The existing ledger tests are unchanged. See `observed.json`
-and each run's raw evidence for measurements and limits.
+The failing regression commit precedes the fix. Focused unit cases also cover case/alias
+coverage, all query dimensions, changed and failed views, bounded busy retries, rollback
+on rejected persistence, one-winner admission and rolling interval fencing. The existing
+ledger tests are unchanged.
