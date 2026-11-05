@@ -1,3 +1,4 @@
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import { enqueueMailboxEntry } from '../../lib/mailbox/enqueue.ts';
 import { createMailboxEntry } from '../../lib/mailbox/entry.ts';
@@ -32,8 +33,9 @@ import {
   neoTodoAwaitsApproval,
   neoTodoOnStartCard,
   neoTodosAwaitingCancellationCard,
-  planNeoStartAnswer,
-  planNeoStartCardPrune,
+  planNeoQuestionPrune,
+  planNeoStartRelease,
+  type NeoQuestionPrune,
 } from '../../lib/neo/todo-start-gate.ts';
 import type { Database } from '../sqlite-compat.ts';
 
@@ -1013,10 +1015,12 @@ export class NeoAskTodoRepository {
         'open'
       );
       if (answered) {
-        this.releaseStartTodos(
+        NeoAskTodoRepository.releaseStartTodos(
+          this,
           question.id,
           now,
-          question.kind === 'start' ? [answer].flat().map(String) : undefined
+          question.kind === 'start' ? [answer].flat().map(String) : undefined,
+          undefined
         );
         if (answer === 'yes') {
           applyPackPreferenceAnswer(this.db, question.id);
@@ -1068,7 +1072,14 @@ export class NeoAskTodoRepository {
         { state: 'retired', retired_reason: reason, replaced_by: replacedBy },
         'open'
       );
-      if (retired) this.releaseStartTodos(question.id, now, [], 'Start question withdrawn.');
+      if (retired)
+        NeoAskTodoRepository.releaseStartTodos(
+          this,
+          question.id,
+          now,
+          [],
+          'Start question withdrawn.'
+        );
       return retired;
     })();
     if (!changed) return null;
@@ -1102,54 +1113,86 @@ export class NeoAskTodoRepository {
   private pruneQuestions(askId: string, now: number): void {
     const root = this.getAsk(askId)?.parentId ?? askId;
     for (const id of [root, ...this.listChildAsks(root).map((ask) => ask.id)])
-      this.pruneAskQuestions(id, now);
+      NeoAskTodoRepository.pruneAskQuestions(this, id, now);
   }
 
-  private pruneAskQuestions(askId: string, now: number): void {
-    const todos = this.listTodos(askId);
-    for (const question of this.listQuestions(askId)) {
-      if (question.state !== 'open') continue;
-      if (
-        question.todoId &&
-        !todos.some(
-          (todo) => todo.id === question.todoId && !['done', 'removed'].includes(todo.state)
-        )
-      ) {
-        if (this.retireQuestion(question, 'todo no longer active', null, now))
-          this.questionsPruned?.();
-        continue;
-      }
-      if (question.kind !== 'start' || !question.startTodos) continue;
-      const plan = planNeoStartCardPrune(question, this.listFamilyTodos(askId));
-      if (!plan) continue;
-      if (!plan.kept.length)
-        this.db
-          .prepare(
-            `UPDATE neo_questions SET start_todos = '[]', state = 'retired',
-               retired_reason = 'nothing left to start' WHERE id = ?`
-          )
-          .run(question.id);
-      else
-        this.db
-          .prepare('UPDATE neo_questions SET start_todos = ?, text = ? WHERE id = ?')
-          .run(JSON.stringify(plan.kept), plan.text, question.id);
-      for (const id of plan.dropped) {
-        const todo = this.getTodo(id);
-        if (todo?.approvedAt && todo.blockedBy === 'question')
-          this.writeTodo(todo, { state: 'todo' }, now);
-      }
-      this.questionsPruned?.();
-    }
-    if (this.getAsk(askId)?.status !== 'open') return;
-    for (const todo of neoTodosAwaitingCancellationCard(
-      this.listFamilyTodos(askId),
-      askId,
-      this.listQuestions(askId)
-    )) {
-      this.joinStartQuestion(todo, now);
-      if (todo.state === 'todo')
-        this.writeTodo(todo, { state: 'blocked', blockedBy: 'question' }, now);
-    }
+  private static readonly pruneOpenQuestion = (
+    superpipe({})('neo.question.prune-open') as PipelineAPI
+  )
+    .input(['store', 'question', 'now'])
+    .pipe(
+      (store: NeoAskTodoRepository, question: NeoQuestion) => store.listFamilyTodos(question.askId),
+      ['store', 'question'],
+      'family'
+    )
+    .pipe(planNeoQuestionPrune, ['question', 'family'], 'result:plan')
+    .pipe(
+      (store: NeoAskTodoRepository, question: NeoQuestion, plan: NeoQuestionPrune, now: number) => {
+        const changed =
+          plan.retire !== undefined
+            ? store.retireQuestion(question, plan.retire, null, now)
+            : store.rewriteStartCard(question, plan, now);
+        if (changed) store.questionsPruned?.();
+      },
+      ['store', 'question', 'plan', 'now'],
+      'pruned'
+    )
+    .end('pruned') as (store: NeoAskTodoRepository, question: NeoQuestion, now: number) => void;
+
+  private static readonly pruneAskQuestions = (
+    superpipe({})('neo.question.prune-ask') as PipelineAPI
+  )
+    .input(['store', 'askId', 'now'])
+    .pipe(
+      (store: NeoAskTodoRepository, askId: string, now: number) => {
+        for (const question of store.listQuestions(askId))
+          if (question.state === 'open')
+            NeoAskTodoRepository.pruneOpenQuestion(store, question, now);
+      },
+      ['store', 'askId', 'now'],
+      'pruned'
+    )
+    .pipe(
+      (store: NeoAskTodoRepository, askId: string) => store.getAsk(askId),
+      ['store', 'askId'],
+      'ask'
+    )
+    .pipe(
+      (store: NeoAskTodoRepository, askId: string) => store.listFamilyTodos(askId),
+      ['store', 'askId'],
+      'family'
+    )
+    .pipe(
+      (store: NeoAskTodoRepository, askId: string) => store.listQuestions(askId),
+      ['store', 'askId'],
+      'questions'
+    )
+    .pipe(neoTodosAwaitingCancellationCard, ['family', 'ask', 'questions'], 'awaiting')
+    .pipe(
+      (store: NeoAskTodoRepository, awaiting: readonly NeoTodo[], now: number) => {
+        for (const todo of awaiting) {
+          store.joinStartQuestion(todo, now);
+          if (todo.state === 'todo')
+            store.writeTodo(todo, { state: 'blocked', blockedBy: 'question' }, now);
+        }
+      },
+      ['store', 'awaiting', 'now'],
+      'carded'
+    )
+    .end('carded') as (store: NeoAskTodoRepository, askId: string, now: number) => void;
+
+  private rewriteStartCard(
+    question: NeoQuestion,
+    plan: Exclude<NeoQuestionPrune, { retire: string }>,
+    now: number
+  ): boolean {
+    this.db
+      .prepare(
+        'UPDATE neo_questions SET start_todos = ?, text = ?, state = ?, retired_reason = ? WHERE id = ?'
+      )
+      .run(JSON.stringify(plan.kept), plan.text, plan.state, plan.retiredReason, question.id);
+    for (const todo of plan.released) this.writeTodo(todo, { state: 'todo' }, now);
+    return true;
   }
 
   cardUnapprovedTodos(now: number): void {
@@ -1174,34 +1217,67 @@ export class NeoAskTodoRepository {
     })();
   }
 
-  private releaseStartTodos(
+  private static readonly releaseStartTodos = (
+    superpipe({})('neo.question.release-start') as PipelineAPI
+  )
+    .input(['store', 'questionId', 'now', 'ticked', 'withdrawn'])
+    .pipe(
+      (store: NeoAskTodoRepository, questionId: string) => store.getQuestion(questionId)!,
+      ['store', 'questionId'],
+      'question'
+    )
+    .pipe(
+      (store: NeoAskTodoRepository, question: NeoQuestion) => store.listFamilyTodos(question.askId),
+      ['store', 'question'],
+      'family'
+    )
+    .pipe(
+      (store: NeoAskTodoRepository, question: NeoQuestion) => store.listQuestions(question.askId),
+      ['store', 'question'],
+      'questions'
+    )
+    .pipe(
+      planNeoStartRelease,
+      ['question', 'family', 'questions', 'ticked', 'withdrawn', 'now'],
+      'writes'
+    )
+    .pipe(
+      (
+        store: NeoAskTodoRepository,
+        writes: ReturnType<typeof planNeoStartRelease>,
+        now: number
+      ) => {
+        for (const { todo, patch } of writes) store.writeTodo(todo, patch, now, false, false);
+      },
+      ['store', 'writes', 'now'],
+      'written'
+    )
+    .pipe(
+      (
+        store: NeoAskTodoRepository,
+        question: NeoQuestion,
+        ticked: readonly string[] | undefined,
+        now: number
+      ) => {
+        if (ticked?.length)
+          store.db
+            .prepare(
+              `UPDATE neo_todos SET approved_at = ? WHERE ask_id = ? AND approved_at IS NULL
+                 AND instruction IS NULL AND started_at IS NULL`
+            )
+            .run(now, question.askId);
+        store.pruneQuestions(question.askId, now);
+      },
+      ['store', 'question', 'ticked', 'now'],
+      'released'
+    )
+    .end('released') as (
+    store: NeoAskTodoRepository,
     questionId: string,
     now: number,
-    ticked?: readonly string[],
-    withdrawn?: string
-  ): void {
-    const question = this.getQuestion(questionId);
-    const waiting = new Set(
-      (question ? this.listQuestions(question.askId) : [])
-        .filter((other) => other.kind === 'start' && other.state === 'open')
-        .flatMap((other) => other.startTodos ?? [])
-    );
-    for (const id of question?.startTodos ?? []) {
-      const todo = this.getTodo(id);
-      if (!todo || waiting.has(id)) continue;
-      const family = this.listFamilyTodos(todo.askId);
-      const patch = planNeoStartAnswer(todo, family, ticked, withdrawn, now);
-      if (patch) this.writeTodo(todo, patch, now, false, false);
-    }
-    if (question && ticked?.length)
-      this.db
-        .prepare(
-          `UPDATE neo_todos SET approved_at = ? WHERE ask_id = ? AND approved_at IS NULL
-             AND instruction IS NULL AND started_at IS NULL`
-        )
-        .run(now, question.askId);
-    if (question) this.pruneQuestions(question.askId, now);
-  }
+    ticked: readonly string[] | undefined,
+    withdrawn: string | undefined
+  ) => void;
 
   private changeQuestion(
     id: string,
