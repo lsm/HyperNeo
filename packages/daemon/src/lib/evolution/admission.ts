@@ -1,8 +1,8 @@
 import type { Session } from '@hyperneo/shared';
 import { z } from 'zod';
 import type { OperationCaller } from '../operations/registry.ts';
-import { resolveSessionSpaceId } from '../space/runtime/space-caller-scope.ts';
-import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
+import { resolveSessionSpaceId } from '../session-resolution/space-caller-scope.ts';
+import type { SpaceMcpSessionPolicyContext } from '../session-resolution/space-mcp-session-policy.ts';
 
 export type EvolutionDenial<Reason extends string> = {
   accepted: false;

@@ -8,7 +8,7 @@ import {
 import type { TransitionStandaloneTaskInput } from '../../storage/tasks/transition-task.ts';
 import { readTaskCore } from '../../storage/tasks/task-reader.ts';
 import type { OperationDefinition } from '../operations/registry.ts';
-import { FAIL_CLOSED_LONG_HORIZON_AGENT_REPO } from '../space/runtime/space-mcp-session-policy.ts';
+import { FAIL_CLOSED_LONG_HORIZON_AGENT_REPO } from '../session-resolution/space-mcp-session-policy.ts';
 import {
   createAgentReferenceLookups,
   createAgentSessionResolver,

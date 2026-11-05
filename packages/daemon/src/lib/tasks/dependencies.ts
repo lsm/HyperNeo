@@ -2,7 +2,7 @@ import type { Session, SpaceTask, UpdateSpaceTaskParams } from '@hyperneo/shared
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import type { SpaceTaskManager } from './task-manager.ts';
-import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
+import type { SpaceMcpSessionPolicyContext } from '../session-resolution/space-mcp-session-policy.ts';
 
 export interface SpaceTaskDependencyDependencies extends SpaceMcpSessionPolicyContext {
   db: Database;

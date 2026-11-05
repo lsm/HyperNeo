@@ -9,7 +9,7 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import { TaskWithSpaceFieldsSchema } from './get-operation.ts';
 import { type SpaceTaskManager, StaleTaskGuardError } from './task-manager.ts';
 import type { SpaceWorkflowManager } from '../workflows/workflow-manager.ts';
-import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
+import type { SpaceMcpSessionPolicyContext } from '../session-resolution/space-mcp-session-policy.ts';
 import { admitSpaceTaskMutation, resolveSpaceTaskOwner } from './metadata.ts';
 
 const log = new Logger('SetPreferredWorkflow');

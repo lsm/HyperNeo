@@ -2,7 +2,7 @@ import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-l
 import { Logger } from '../../logger.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
 import { createScheduleOperations } from '../../schedule/operations.ts';
-import { resolveSessionSpaceId } from '../../space/runtime/space-caller-scope.ts';
+import { resolveSessionSpaceId } from '../../session-resolution/space-caller-scope.ts';
 import type { SpaceFamilyContext } from './space-context.ts';
 
 const log = new Logger('schedule-operations');
