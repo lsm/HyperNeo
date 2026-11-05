@@ -12,7 +12,15 @@ import type { SpaceViewMode } from './signals';
 
 export type SpaceWithTaskList = Space & { tasks: SpaceTask[] };
 
+export interface ShellExtension {
+  activeChannel(): string | null;
+  rejoinChannel(): void;
+  refresh(): Promise<void>;
+  sessionRenamed(sessionId: string, title: string): void;
+}
+
 export interface SpaceWebExtension {
+  shell: ShellExtension;
   store: {
     spaceId: ReadonlySignal<string | null>;
     space: ReadonlySignal<Space | null>;
@@ -21,9 +29,6 @@ export interface SpaceWebExtension {
     agents: ReadonlySignal<SpaceLongHorizonAgent[]>;
     taskActivity: ReadonlySignal<Map<string, SpaceTaskActivityMember[]>>;
     initGlobalList(): Promise<void>;
-    refresh(): Promise<void>;
-    rejoinChannel(): void;
-    updateSession(sessionId: string, patch: { title: string }): void;
     activateTaskNodeAgent(
       taskId: string,
       agentName: string,
@@ -67,6 +72,12 @@ export function registerWebExtension<K extends keyof WebExtensions>(
 
 export function webExtension<K extends keyof WebExtensions>(id: K): WebExtensions[K] | undefined {
   return registered.value[id] ?? undefined;
+}
+
+export function shellExtensions(): ShellExtension[] {
+  return Object.values(registered.value).flatMap((extension) =>
+    extension ? [extension.shell] : []
+  );
 }
 
 export function webExtensionDeclined(id: keyof WebExtensions): boolean {

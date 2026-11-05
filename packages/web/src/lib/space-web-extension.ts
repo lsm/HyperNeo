@@ -8,6 +8,15 @@ import { spaceStore } from './space-store.ts';
 import type { SpaceWebExtension } from './web-extensions.ts';
 
 export const spaceWebExtension: SpaceWebExtension = {
+  shell: {
+    activeChannel: () => {
+      const spaceId = spaceStore.spaceId.value;
+      return spaceId ? `space:${spaceId}` : null;
+    },
+    rejoinChannel: () => spaceStore.rejoinChannel(),
+    refresh: () => spaceStore.refresh(),
+    sessionRenamed: (sessionId, title) => spaceStore.updateSession(sessionId, { title }),
+  },
   store: spaceStore,
   SpaceIsland: lazy(() => import('../islands/SpaceIsland.tsx')),
   SpaceDetailPanel,

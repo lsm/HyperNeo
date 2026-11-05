@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   checkResumeHealth,
   rejoinGlobalChannel,
-  rejoinActiveSpace,
+  rejoinExtensionChannels,
   refreshResumeStores,
   runConnectionResume,
   type ConnectionResumeEffects,
@@ -26,7 +26,7 @@ function fixture() {
     joinChannel: async (channel) => {
       calls.push(`join:${channel}`);
     },
-    getActiveSpaceId: () => 'space-1',
+    extensionChannels: () => ['space:space-1'],
     refreshSessions: async () => {
       calls.push('sessions');
     },
@@ -36,13 +36,18 @@ function fixture() {
     refreshGlobal: async () => {
       calls.push('global');
     },
-    refreshSpace: async () => {
+    refreshExtensions: async () => {
       calls.push('space');
     },
   };
   return { effects, calls };
 }
-const refreshMethods = ['refreshSessions', 'refreshApp', 'refreshGlobal', 'refreshSpace'] as const;
+const refreshMethods = [
+  'refreshSessions',
+  'refreshApp',
+  'refreshGlobal',
+  'refreshExtensions',
+] as const;
 const refreshCalls = ['sessions', 'app', 'global', 'space'];
 
 describe('connection resume stages', () => {
@@ -59,8 +64,8 @@ describe('connection resume stages', () => {
 
   it.each([null, '', 'space-2'])('reads active space %s at invocation', async (spaceId) => {
     const { effects, calls } = fixture();
-    effects.getActiveSpaceId = () => spaceId;
-    await rejoinActiveSpace(effects);
+    effects.extensionChannels = () => (spaceId ? [`space:${spaceId}`] : []);
+    await rejoinExtensionChannels(effects);
     expect(calls).toEqual(spaceId ? [`join:space:${spaceId}`] : []);
   });
 
@@ -82,7 +87,7 @@ describe('runConnectionResume', () => {
       calls.push('health');
       return health.promise;
     };
-    effects.getActiveSpaceId = () => activeSpace;
+    effects.extensionChannels = () => [`space:${activeSpace}`];
     effects.joinChannel = (channel) => {
       calls.push(`join:${channel}`);
       return channel === 'global' ? global.promise : space.promise;
@@ -145,7 +150,7 @@ describe('runConnectionResume', () => {
 
   it('omits the space join when no space is selected', async () => {
     const { effects, calls } = fixture();
-    effects.getActiveSpaceId = () => null;
+    effects.extensionChannels = () => [];
     await runConnectionResume(effects);
     expect(calls).toEqual(['health', 'join:global', ...refreshCalls]);
   });
