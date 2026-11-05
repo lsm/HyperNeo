@@ -32,7 +32,8 @@ rollback, receipt ordering, timer ownership and no-replay assertions. GitHub is
 synthetic throughout; no remote subscription or webhook is changed.
 After those cases, the standalone Bun shared-reader and gateway probes add two
 inline-contract replacement cases. Event/job, outbox and todo receipts follow,
-with claim lock coverage last. With boot first, there are 148 total. Require event/job's duplicate event identity,
+then claim lock and todo incidents. With boot first and todo incidents last,
+there are 149 total. Require event/job's duplicate event identity,
 retained feed body, distinct cleanup cutoffs/failed-job payload, full single-claim
 payload and resource closure; see [bun-event-job-probe.md](bun-event-job-probe.md).
 For the shared reader, require complete turn
@@ -53,6 +54,9 @@ initialization or startup write ownership.
 The claim lock probe requires real SQLite lock ownership, a claim pending
 through barrier release, the holder's commit, a complete single claim and
 resource closure. See [bun-claim-lock-probe.md](bun-claim-lock-probe.md).
+The todo incident probe requires complete progress commit/rollback, one winning
+concurrent needs-you claim, refusal rollback, closed-todo refusal and resource
+closure. See [bun-todo-incident-probe.md](bun-todo-incident-probe.md).
 This covers the 117-helper inventory and its legacy sweep modes, but not all
 inline boot/database probes. Keep the Deno runner and required CI job enabled
 until those contracts and the replacement CI gate also prove parity.
@@ -70,9 +74,9 @@ Together they exercise both platform decisions without depending on the host.
 The native smoke fixture exercises the real shell entry point and wrapper with synthetic child executables: Linux
 portability, explicit Bun selection despite an inherited Deno choice, quoted
 paths, mode and directory arguments, Darwin resource refusal and early exit on
-early, matrix-interior or late failures, including the first boot case, artifact publication, unwatch timer, shared-reader, gateway, event/job, outbox and todo receipt probes, and final claim lock probe. Pin the legacy-relative invocation order and modes.
+early, matrix-interior or late failures, including the first boot case, artifact publication, unwatch timer, shared-reader, gateway, event/job, outbox, todo receipt and claim lock probes, and final todo incident probe. Pin the legacy-relative invocation order and modes.
 Keep failure status/evidence and prove later cases do not run, including the
-remaining variants after a failed sweep case. A final claim lock failure must also
+remaining variants after a failed sweep case. A final todo incident failure must also
 retain its evidence/status and suppress the runner success marker.
 These fixture executables do not establish native helper parity.
 
