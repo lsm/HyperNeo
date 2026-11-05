@@ -198,6 +198,7 @@ describe('a todo send to a busy worker waits in HyperNeo', () => {
 
   test.each([
     ['an idle worker', { todoId: 'todo-b' }, neo, 'done'],
+    ['a worker waiting for its answer', { todoId: 'todo-b' }, neo, 'needs_you'],
     ['a notice', { notice: true }, neo, 'running'],
     ['a person', {}, human, 'running'],
   ] as const)('%s is not held', async (_name, purpose, caller, status) => {
