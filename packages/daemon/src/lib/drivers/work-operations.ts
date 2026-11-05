@@ -288,7 +288,7 @@ const isTodoSend = (
 const isBusyWork = (status: string) => status === 'running' || status === 'queued';
 
 const sendingTo = new Map<string, { input: QueuedInput; since: number }>();
-const queuedBehind = new Map<string, number>();
+const queuedBehind = new Map<string, { since: number; submission?: string }>();
 const workerKey = ({ adapter, daemon, id }: WorkRef) => `${adapter}:${daemon ?? ''}:${id}`;
 
 async function trackTodoSend(input: SendInput, sent: Promise<SendResult>) {
@@ -297,17 +297,35 @@ async function trackTodoSend(input: SendInput, sent: Promise<SendResult>) {
     const reply = await sent;
     const mine = sendingTo.get(target);
     if (mine?.input === input && reply.ok && !reply.value.delivered)
-      queuedBehind.set(target, mine.since);
+      queuedBehind.set(target, {
+        since: mine.since,
+        submission: reply.value.queuedSubmissionId,
+      });
     return reply;
   } finally {
     if (sendingTo.get(target)?.input === input) sendingTo.delete(target);
   }
 }
 
+async function trackWithdrawal(
+  input: z.infer<typeof WithdrawWorkInputSchema>,
+  withdrawal: Promise<z.infer<typeof WithdrawWorkResultSchema>>
+) {
+  const reply = await withdrawal;
+  const target = workerKey(input.ref);
+  if (
+    reply.ok &&
+    reply.value.withdrawn &&
+    queuedBehind.get(target)?.submission === input.queuedSubmissionId
+  )
+    queuedBehind.delete(target);
+  return reply;
+}
+
 function waitsBehindQueued(target: string, lastActivityAt: number) {
-  const since = queuedBehind.get(target);
-  if (since === undefined) return false;
-  if (lastActivityAt === since) return true;
+  const fence = queuedBehind.get(target);
+  if (!fence) return false;
+  if (lastActivityAt === fence.since) return true;
   queuedBehind.delete(target);
   return false;
 }
@@ -1155,12 +1173,11 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
       inputSchema: WithdrawWorkInputSchema,
       resultSchema: WithdrawWorkResultSchema,
       policy: { safetyClass: 'mutate' },
-      execute: (input, caller) => {
-        queuedBehind.delete(workerKey(input.ref));
-        return runQueuedInput(input, caller, deps) as Promise<
-          z.infer<typeof WithdrawWorkResultSchema>
-        >;
-      },
+      execute: (input, caller) =>
+        trackWithdrawal(
+          input,
+          runQueuedInput(input, caller, deps) as Promise<z.infer<typeof WithdrawWorkResultSchema>>
+        ),
     }),
     defineOperation({
       name: 'work.status',
