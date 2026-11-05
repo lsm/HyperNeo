@@ -48,7 +48,7 @@ function setup(flag = '', options: { timeoutMs?: number } = { timeoutMs: 5000 })
     { mode: 0o700 }
   );
   const deps = {
-    cliPath,
+    resolveCliPath: async () => cliPath,
     directory: join(run, 'owned'),
     machine: 'test',
     homeDir: join(run, 'home'),

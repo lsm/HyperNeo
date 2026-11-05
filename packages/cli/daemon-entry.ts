@@ -3,6 +3,10 @@ export {};
 if (process.argv[2] === '--hyperneo-acp-mcp-proxy') {
   const { startAcpMcpProxy } = await import('@hyperneo/daemon/lib/acp/mcp-proxy-entry');
   startAcpMcpProxy(process.argv.slice(3));
+} else if (process.argv[2] === '--hyperneo-sdk-runtime-check') {
+  const { runSdkRuntimeCheck } = await import('@hyperneo/daemon/lib/agent/sdk-runtime-check');
+  await runSdkRuntimeCheck();
+  process.exit(0);
 } else {
   const [{ parseDaemonArgs, getDaemonHelpText }, { version }] = await Promise.all([
     import('./src/daemon-cli.ts'),

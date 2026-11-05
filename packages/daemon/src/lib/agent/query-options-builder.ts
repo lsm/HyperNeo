@@ -89,7 +89,7 @@ import {
   resolveConfig,
 } from './output-limiter-hook.ts';
 import type { QuestionInputOriginSource } from './question-input-origin.ts';
-import { awaitSDKCliPath, isRunningUnderBun } from './sdk-cli-resolver.js';
+import { awaitSDKCliPathForQuery, isRunningUnderBun } from './sdk-cli-resolver.js';
 import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
 
 const log = new Logger('QueryOptionsBuilder');
@@ -1200,7 +1200,7 @@ export class QueryOptionsBuilder {
       return config.pathToClaudeCodeExecutable;
     }
 
-    return awaitSDKCliPath();
+    return awaitSDKCliPathForQuery();
   }
 
   private getOverrideDisabledSkillIds(): Set<string> {

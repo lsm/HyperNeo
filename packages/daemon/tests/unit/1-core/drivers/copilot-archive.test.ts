@@ -28,7 +28,7 @@ function setup(flag = '') {
     { mode: 0o700 }
   );
   const deps = {
-    cliPath,
+    resolveCliPath: async () => cliPath,
     directory: join(run, 'owned'),
     machine: 'test',
     homeDir: join(run, 'home'),

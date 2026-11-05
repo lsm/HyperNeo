@@ -31,7 +31,7 @@ type Record = {
 };
 type Gate<T> = { value: T } | { reason: ReturnType<typeof reject> };
 interface Deps extends StartFolderDeps {
-  cliPath: string;
+  resolveCliPath: () => Promise<string>;
   directory: string;
   machine: string;
   env: NodeJS.ProcessEnv;
@@ -67,7 +67,7 @@ export function createCopilotAdapter(
         if (!fs.existsSync(inputPath(record.work.ref.id, id)))
           write(inputPath(record.work.ref.id, id), input);
     const worker = await openCopilotWorker({
-      cliPath: deps.cliPath,
+      cliPath: await deps.resolveCliPath(),
       expectedVersion: COPILOT_CLI_VERSION,
       sessionId: record.work.ref.id,
       cwd: record.directory,

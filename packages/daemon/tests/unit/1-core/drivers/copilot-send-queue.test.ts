@@ -32,7 +32,7 @@ function setup() {
     );
   install();
   const deps = {
-    cliPath,
+    resolveCliPath: async () => cliPath,
     directory: join(run, 'owned'),
     machine: 'test',
     homeDir: join(run, 'home'),

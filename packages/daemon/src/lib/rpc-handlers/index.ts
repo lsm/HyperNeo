@@ -107,7 +107,6 @@ import type { SkillsManager } from '../skills-manager.ts';
 import { setupWorkspaceHandlers } from './workspace-handlers.ts';
 import { setupGitHandlers } from './git-handlers.ts';
 import { WorkspaceHistoryRepository } from '../../storage/repositories/workspace-history-repository.ts';
-import { setupAgentMemoryHandlers } from './agent-memory-handlers.ts';
 import { ExternalEventExtensionConfigStore } from '../external-events/extension-config-store.ts';
 import {
   isHttpExtension,
@@ -338,7 +337,6 @@ export async function setupRPCHandlers<SpaceServices = never>(
 
   setupAppMcpHandlers(deps.messageHub, deps.internalEventBus, deps.db, writeToolPreferences);
 
-  setupAgentMemoryHandlers(deps.messageHub, { memoryRepo: deps.db.agentMemory });
   setupExternalEventExtensionHandlers(deps);
 
   registerSkillHandlers(deps.messageHub, deps.skillsManager, deps.internalEventBus, undefined);
