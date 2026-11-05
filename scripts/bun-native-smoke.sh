@@ -131,4 +131,5 @@ bash "$PROOFS/proof-run.sh" "$EVIDENCE/bun-shared-reader-probe" "$REPO_ROOT/scri
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/bun-gateway-probe" "$REPO_ROOT/scripts/bun-gateway-probe.ts"
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/bun-event-job-probe" "$REPO_ROOT/scripts/bun-event-job-probe.ts"
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/bun-outbox-probe" "$REPO_ROOT/scripts/bun-outbox-probe.ts"
-echo 'Bun native smoke: registered batches passed (117 legacy helpers, 146 proof cases)'
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/bun-todo-receipt-probe" "$REPO_ROOT/scripts/bun-todo-receipt-probe.ts"
+echo 'Bun native smoke: registered batches passed (117 legacy helpers, 147 proof cases)'

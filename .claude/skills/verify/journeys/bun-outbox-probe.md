@@ -24,9 +24,9 @@ the gateway before the database, inspect retained logs for database-close errors
 and let the wrapper remove synthetic data after the process exits. A flag before
 a cleanup failure is not success.
 
-The Bun native entry point now calls this probe last through proof-run.sh. Its
+The Bun native entry point calls this probe through proof-run.sh before todo receipts. Its
 failure must retain its evidence/status and suppress the smoke success marker;
-the runner fixture checks final-case failure and temporary-data cleanup.
+the runner fixture checks its failure and temporary-data cleanup.
 This does not cover lock-holder, todo or later progress/needs-you inline contracts.
 Existing schema, SQLite and gateway code are reused, without a new transitive
 ownership or performance audit. Keep the Deno runner and required CI enabled

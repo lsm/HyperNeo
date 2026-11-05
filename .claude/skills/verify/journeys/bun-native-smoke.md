@@ -31,8 +31,8 @@ helpers. Preserve their source filters, snapshots, cursors, caller clocks,
 rollback, receipt ordering, timer ownership and no-replay assertions. GitHub is
 synthetic throughout; no remote subscription or webhook is changed.
 After those cases, the standalone Bun shared-reader and gateway probes add two
-inline-contract replacement cases. The event/job probe follows them, then the
-outbox probe runs last; with boot first, there are 146 total. Require event/job's duplicate event identity,
+inline-contract replacement cases. Event/job and outbox follow, with the todo
+receipt probe last; with boot first, there are 147 total. Require event/job's duplicate event identity,
 retained feed body, distinct cleanup cutoffs/failed-job payload, full single-claim
 payload and resource closure; see [bun-event-job-probe.md](bun-event-job-probe.md).
 For the shared reader, require complete turn
@@ -45,6 +45,11 @@ unknown-read registration error and gateway/database closure; see
 The outbox probe requires its matching mailbox report, exact command/prompt,
 acknowledgement and committed journal sequence, plus resource closure; see
 [bun-outbox-probe.md](bun-outbox-probe.md).
+The todo receipt probe requires recovery/window/live-status results, complete
+dispatch receipts, trigger-refusal rollback and Map snapshot transport; see
+[bun-todo-receipt-probe.md](bun-todo-receipt-probe.md). Preserve its normal
+turn-report cutoff bootstrap prerequisite; this does not prove cold reader
+initialization or startup write ownership.
 This covers the 117-helper inventory and its legacy sweep modes, but not all
 inline boot/database probes. Keep the Deno runner and required CI job enabled
 until those contracts and the replacement CI gate also prove parity.
@@ -62,9 +67,9 @@ Together they exercise both platform decisions without depending on the host.
 The native smoke fixture exercises the real shell entry point and wrapper with synthetic child executables: Linux
 portability, explicit Bun selection despite an inherited Deno choice, quoted
 paths, mode and directory arguments, Darwin resource refusal and early exit on
-early, matrix-interior or late failures, including the first boot case, artifact publication, unwatch timer, shared-reader, gateway and event/job probes, and final outbox probe. Pin the legacy-relative invocation order and modes.
+early, matrix-interior or late failures, including the first boot case, artifact publication, unwatch timer, shared-reader, gateway, event/job and outbox probes, and final todo receipt probe. Pin the legacy-relative invocation order and modes.
 Keep failure status/evidence and prove later cases do not run, including the
-remaining variants after a failed sweep case. A final outbox failure must also
+remaining variants after a failed sweep case. A final todo receipt failure must also
 retain its evidence/status and suppress the runner success marker.
 These fixture executables do not establish native helper parity.
 
