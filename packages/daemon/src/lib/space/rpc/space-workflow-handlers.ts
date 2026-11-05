@@ -7,17 +7,17 @@ import type {
   SpaceWorkflow,
   SpaceWorkflowSyncDiff,
 } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
-import type { SpaceManager } from '../space/managers/space-manager.ts';
-import type { SpaceWorkflowManager } from '../workflows/workflow-manager.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
+import type { SpaceManager } from '../managers/space-manager.ts';
+import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
 import {
   getBuiltInWorkflows,
   resolveBuiltInWorkflowTemplate,
-} from '../workflows/built-in-workflows.ts';
-import { seedBuiltInWorkflows } from '../workflows/seed-built-in-workflows.ts';
-import { computeWorkflowHash } from '../workflows/template-hash.ts';
-import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
-import { Logger } from '../logger.ts';
+} from '../../workflows/built-in-workflows.ts';
+import { seedBuiltInWorkflows } from '../../workflows/seed-built-in-workflows.ts';
+import { computeWorkflowHash } from '../../workflows/template-hash.ts';
+import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
+import { Logger } from '../../logger.ts';
 
 const log = new Logger('space-workflow-handlers');
 

@@ -1,32 +1,32 @@
 import type { MessageHub, SessionMetadata, SpaceAgent, SpaceAgentTemplate } from '@hyperneo/shared';
-import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
-import type { SpaceAgentReminderRepository } from '../../storage/repositories/space-agent-reminder-repository.ts';
-import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
-import type { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository.ts';
+import type { SpaceAgentReminderRepository } from '../../../storage/repositories/space-agent-reminder-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import {
   validateAgentModel,
   validateAgentModelPool,
   validateSpaceAgentTools,
-} from '../agents/validation.ts';
+} from '../../agents/validation.ts';
 import {
   type BindableSession,
   buildCreateSpaceAgentPipeline,
   type CreateSpaceAgentInput,
   isCreateSpaceAgentRejection,
-} from '../agents/create-agent-pipeline.ts';
+} from '../../agents/create-agent-pipeline.ts';
 import {
   buildUpdateSpaceAgentPipeline,
   type UpdateSpaceAgentInput,
-} from '../agents/update-agent-pipeline.ts';
-import { resolveEffectiveSpaceAgentTemplate } from '../agents/template-manager.ts';
+} from '../../agents/update-agent-pipeline.ts';
+import { resolveEffectiveSpaceAgentTemplate } from '../../agents/template-manager.ts';
 import type { WorktreeCommitStatus, WorktreeMetadata } from '@hyperneo/shared';
-import { isCloneChoice, type ResolveClones } from '../session/clone-cascade.ts';
+import { isCloneChoice, type ResolveClones } from '../../session/clone-cascade.ts';
 import {
   publishUnifiedAgentCreated,
   publishUnifiedAgentDeleted,
   publishUnifiedAgentUpdated,
-} from '../agents/unified-agent-events.ts';
+} from '../../agents/unified-agent-events.ts';
 
 const METHOD_PREFIX = 'spaceAgentV2';
 

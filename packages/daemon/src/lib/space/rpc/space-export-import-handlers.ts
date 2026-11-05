@@ -11,30 +11,30 @@ import type {
   WorkflowNodeInput,
 } from '@hyperneo/shared';
 import { generateUUID, modelPoolEntryKey } from '@hyperneo/shared';
-import { getProviderRegistry, providerMayOfferModel } from '../providers/registry.js';
-import { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
-import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
-import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
-import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
-import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
-import { Logger } from '../logger.ts';
+import { getProviderRegistry, providerMayOfferModel } from '../../providers/registry.js';
+import { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
+import { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository.ts';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
+import { Logger } from '../../logger.ts';
 import {
   getLongHorizonAgentTemplate,
   isRelocationMarkerLabel,
   normalizeLegacyWorkerTemplateKey,
   RELOCATED_FROM_LABEL_PREFIX,
-} from '../agents/long-horizon-templates.ts';
+} from '../../agents/long-horizon-templates.ts';
 import {
   publishSpaceAgentV2Mirror,
   publishUnifiedAgentCreated,
   publishUnifiedAgentUpdated,
-} from '../agents/unified-agent-events.ts';
-import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
-import { exportBundle, normalizeOverride, validateExportBundle } from '../space/export-format.ts';
-import type { SpaceManager } from '../space/managers/space-manager.ts';
-import type { SpaceWorkflowManager } from '../workflows/workflow-manager.ts';
-import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../agents/slug.ts';
+} from '../../agents/unified-agent-events.ts';
+import { isRunnableUnifiedAgent } from '../../agents/worker-long-horizon-mapper.ts';
+import { exportBundle, normalizeOverride, validateExportBundle } from '../export-format.ts';
+import type { SpaceManager } from '../managers/space-manager.ts';
+import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
+import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../../agents/slug.ts';
 
 const log = new Logger('space-export-import-handlers');
 const RESERVED_AGENT_HANDLE_SET = new Set<string>(RESERVED_SPACE_AGENT_HANDLES);
