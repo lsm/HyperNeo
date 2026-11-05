@@ -20,7 +20,7 @@ export interface SDKRuntimeConfigContext {
   readonly queryObject: QueryLike | null;
   readonly firstMessageReceived: boolean;
 
-  restartQuery(): Promise<void>;
+  restartQuery(): Promise<{ blocked: boolean }>;
 }
 
 interface ConfigUpdateResult {
