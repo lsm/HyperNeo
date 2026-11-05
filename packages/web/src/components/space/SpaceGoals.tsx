@@ -14,6 +14,11 @@ import {
 } from './goal-display-utils';
 import { SpaceGoalDialog } from './SpaceGoalDialog';
 
+function isGoalPanelOpen(): boolean {
+  const target = rightPanelTargetSignal.value;
+  return target?.type === 'extension' && target.panel === 'goal';
+}
+
 interface SpaceGoalsProps {
   spaceId: string;
   navigationSpaceId?: string;
@@ -476,7 +481,7 @@ export function SpaceGoals({ spaceId, navigationSpaceId: _navigationSpaceId }: S
   useEffect(() => {
     return () => {
       currentSpaceGoalIdSignal.value = null;
-      if (rightPanelTargetSignal.value?.type === 'goal') rightPanelTargetSignal.value = null;
+      if (isGoalPanelOpen()) rightPanelTargetSignal.value = null;
     };
   }, [spaceId]);
 
@@ -496,7 +501,12 @@ export function SpaceGoals({ spaceId, navigationSpaceId: _navigationSpaceId }: S
 
   const openGoal = (goalId: string) => {
     currentSpaceGoalIdSignal.value = goalId;
-    rightPanelTargetSignal.value = { type: 'goal', spaceId, goalId };
+    rightPanelTargetSignal.value = {
+      type: 'extension',
+      panel: 'goal',
+      owner: spaceId,
+      item: goalId,
+    };
   };
 
   return (
