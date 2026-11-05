@@ -3153,6 +3153,22 @@ describe('a todo for a busy worker', () => {
     }
   });
 
+  test('a todo counts as on its worker only while it is open there', () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      h.sessions.recordRef(todo.id, ref, 1);
+      const doing = h.store.updateTodo(todo, { state: 'doing', startedAt: 1 }, 1);
+      expect(h.sessions.isOnWorker(doing.id, ref)).toBe(true);
+      const blocked = h.store.updateTodo(doing, { state: 'blocked', blockedBy: 'check' }, 2);
+      expect(h.sessions.isOnWorker(blocked.id, ref)).toBe(true);
+      h.store.updateTodo(blocked, { state: 'failed', finishedAt: 3 }, 3);
+      expect(h.sessions.isOnWorker(todo.id, ref)).toBe(false);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('a direct start waits too', async () => {
     const h = setup();
     try {
