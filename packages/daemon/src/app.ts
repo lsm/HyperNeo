@@ -60,6 +60,7 @@ import { DaemonExtensions } from './lib/extensions/contract.ts';
 import { registerSchemaExtension } from './storage/schema/extensions.ts';
 import { SPACE_SCHEMA } from './storage/schema/space-schema.ts';
 import { createSpaceDaemonExtension } from './lib/space/daemon-extension.ts';
+import { createSpaceExternalEvents } from './lib/space/external-event-wiring.ts';
 import { contributeDefaultOperations } from './lib/operations/database-catalog.ts';
 import { createSpaceDefaultOperations } from './lib/tasks/catalog-operations.ts';
 import { connectedDeviceReads } from './storage/repositories/connected-device-read.ts';
@@ -106,11 +107,7 @@ import { createNeoReadCheckoutSync } from './lib/neo/read-checkout-sync.ts';
 import { CodingPollFactsRepository } from './lib/neo/packs/coding/poll-facts.ts';
 import { pullRequestNumbersOfTopics } from './lib/github/parse-pr-url.ts';
 import { readDaemonGithubToken } from './lib/github/runtime-token.ts';
-import { composeLongHorizonSubscriptionPattern } from './lib/external-events/long-horizon-subscription-pattern.ts';
 import { SessionEventSubscriptionRepository } from './storage/repositories/session-event-subscription-repository.ts';
-import { SpaceAgentSubscriptionRepository } from './storage/repositories/space-agent-subscription-repository.ts';
-import { SpaceSessionEventSubscriptionRepository } from './storage/repositories/space-session-event-subscription-repository.ts';
-import { SpaceWorkflowEventSubscriptionRepository } from './storage/repositories/space-workflow-event-subscription-repository.ts';
 import {
   initializeProviders,
   waitForOptionalProviderRegistration,
@@ -153,7 +150,6 @@ import {
 } from './lib/event-loop-stall-marker.ts';
 import { WorkflowHookRuntimeService } from './lib/workflows/hook-runtime-service.ts';
 import { WorkflowHookStateRepository } from './storage/repositories/workflow-hook-state-repository.ts';
-import { SpaceAgentRepository } from './storage/repositories/space-agent-repository.ts';
 import { SpaceManager } from './lib/space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service.ts';
 import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager.ts';
@@ -903,8 +899,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const fileIndex = new FileIndex(config.workspaceRoot);
     void fileIndex.init();
 
-    const externalEventStore = new ExternalEventStore(db.getDatabase(), reactiveDb);
-    const externalEventService = new ExternalEventService(externalEventStore, internalEventBus);
+    const spaceExternalEvents = createSpaceExternalEvents(
+      db.getDatabase(),
+      reactiveDb,
+      internalEventBus
+    );
+    const { store: externalEventStore, service: externalEventService } = spaceExternalEvents;
     const sessionExternalEventStore = new SessionExternalEventStore(db.getDatabase());
     const sessionExternalEventService = new ExternalEventService(
       sessionExternalEventStore,
@@ -912,16 +912,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       (event) => db.gateway.run(ingestSessionEvent, event)
     );
     const sessionEventSubscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
-    const spaceSessionEventSubscriptions = new SpaceSessionEventSubscriptionRepository(
-      db.getDatabase()
-    );
-    const spaceWorkflowEventSubscriptions = new SpaceWorkflowEventSubscriptionRepository(
-      db.getDatabase()
-    );
-    const spaceAgentSubscriptions = new SpaceAgentSubscriptionRepository(
-      db.getDatabase(),
-      new SpaceAgentRepository(db.getDatabase())
-    );
     const sessionEventRouteDeps: SessionEventRouteDeps = {
       readEvent: (eventId) => sessionExternalEventStore.getById(eventId),
       listSubscriptions: () => sessionEventSubscriptions.listAll(),
@@ -1047,28 +1037,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           pullRequestNumbersOfTopics(
             watched.spaceId === SESSION_EVENT_SCOPE
               ? sessionEventSubscriptions.listAll().map((subscription) => subscription.topic)
-              : [
-                  ...spaceSessionEventSubscriptions
-                    .listBySpace(watched.spaceId)
-                    .map((subscription) => subscription.topic),
-                  ...spaceWorkflowEventSubscriptions
-                    .listBySpace(watched.spaceId)
-                    .map((subscription) => subscription.topic),
-                  ...spaceAgentSubscriptions
-                    .listActiveSubscriptionsBySpace(watched.spaceId)
-                    .flatMap((subscription) => {
-                      try {
-                        return [
-                          composeLongHorizonSubscriptionPattern(
-                            subscription.source,
-                            subscription.topic
-                          ),
-                        ];
-                      } catch {
-                        return [];
-                      }
-                    }),
-                ],
+              : spaceExternalEvents.subscribedTopics(watched.spaceId),
             watched.owner,
             watched.repo
           ),
