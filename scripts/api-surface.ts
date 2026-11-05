@@ -218,6 +218,7 @@ export async function generateApiSurface(root = resolve(import.meta.dir, '..')):
         HYPERNEO_DATA_DIR: join(run, 'data'),
         TMPDIR: join(run, 'tmp'),
         NODE_ENV: 'test',
+        HYPERNEO_SPACE: 'on',
         LOG_LEVEL: 'error',
         PATH: `${join(run, 'bin')}:${process.env.PATH ?? ''}`,
       },

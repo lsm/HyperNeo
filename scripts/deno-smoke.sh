@@ -67,11 +67,11 @@ if [ -n "$DENO_SMOKE_BIN" ]; then
 fi
 
 if [ -n "$DENO_SMOKE_BIN" ]; then
-	env -i PATH="$PATH" NODE_ENV=test HOME="$WORK_DIR/home" HYPERNEO_DATA_DIR="$WORK_DIR/data" HYPERNEO_WORKSPACE_PATH="$WORK_DIR" HYPERNEO_PORT="$PORT" DB_PATH="$DB_PATH" \
+	env -i HYPERNEO_SPACE=on PATH="$PATH" NODE_ENV=test HOME="$WORK_DIR/home" HYPERNEO_DATA_DIR="$WORK_DIR/data" HYPERNEO_WORKSPACE_PATH="$WORK_DIR" HYPERNEO_PORT="$PORT" DB_PATH="$DB_PATH" \
 		"$DENO_SMOKE_BIN" > "$LOG_FILE" 2>&1 &
 else
 	cd "$REPO_ROOT/packages/daemon"
-	env -i PATH="$PATH" NODE_ENV=test HOME="$WORK_DIR/home" HYPERNEO_DATA_DIR="$WORK_DIR/data" HYPERNEO_WORKSPACE_PATH="$WORK_DIR" HYPERNEO_PORT="$PORT" DB_PATH="$DB_PATH" \
+	env -i HYPERNEO_SPACE=on PATH="$PATH" NODE_ENV=test HOME="$WORK_DIR/home" HYPERNEO_DATA_DIR="$WORK_DIR/data" HYPERNEO_WORKSPACE_PATH="$WORK_DIR" HYPERNEO_PORT="$PORT" DB_PATH="$DB_PATH" \
 		deno run -A main.ts > "$LOG_FILE" 2>&1 &
 fi
 DAEMON_PID=$!
@@ -428,382 +428,382 @@ fi
 
 NEO_SETTINGS_RUN="$WORK_DIR/neo-settings-writer"
 mkdir -p "$NEO_SETTINGS_RUN/home" "$NEO_SETTINGS_RUN/tmp"
-env -i HOME="$NEO_SETTINGS_RUN/home" PATH="$PATH" TMPDIR="$NEO_SETTINGS_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$NEO_SETTINGS_RUN/home" PATH="$PATH" TMPDIR="$NEO_SETTINGS_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$NEO_SETTINGS_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/neo-settings-writer.ts" verify "$NEO_SETTINGS_RUN"
 
 CLEANUP_ENQUEUE_RUN="$WORK_DIR/cleanup-enqueue"
 mkdir -p "$CLEANUP_ENQUEUE_RUN/home"
-env -i HOME="$CLEANUP_ENQUEUE_RUN/home" PATH="$PATH" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$CLEANUP_ENQUEUE_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$CLEANUP_ENQUEUE_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-cleanup-enqueue.ts" "$CLEANUP_ENQUEUE_RUN"
 
 WORKFLOW_IDENTITY_CONTRACT_RUN="$WORK_DIR/workflow-identity-contract"
 mkdir -p "$WORKFLOW_IDENTITY_CONTRACT_RUN/home"
-env -i HOME="$WORKFLOW_IDENTITY_CONTRACT_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_IDENTITY_CONTRACT_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-identity-contract.ts" verify "$WORKFLOW_IDENTITY_CONTRACT_RUN"
+env -i HYPERNEO_SPACE=on HOME="$WORKFLOW_IDENTITY_CONTRACT_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_IDENTITY_CONTRACT_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-identity-contract.ts" verify "$WORKFLOW_IDENTITY_CONTRACT_RUN"
 MAILBOX_ADMISSION_RUN="$WORK_DIR/mailbox-admission"
 mkdir -p "$MAILBOX_ADMISSION_RUN/home"
-env -i HOME="$MAILBOX_ADMISSION_RUN/home" PATH="$PATH" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$MAILBOX_ADMISSION_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$MAILBOX_ADMISSION_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-mailbox-admission.ts" "$MAILBOX_ADMISSION_RUN"
 
 EVENT_SUBMISSION_RUN="$WORK_DIR/event-submission"
 mkdir -p "$EVENT_SUBMISSION_RUN/home"
-env -i HOME="$EVENT_SUBMISSION_RUN/home" PATH="$PATH" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$EVENT_SUBMISSION_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$EVENT_SUBMISSION_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-event-submission.ts" "$EVENT_SUBMISSION_RUN"
 
 DELIVERY_PARKING_RUN="$WORK_DIR/delivery-parking"
 mkdir -p "$DELIVERY_PARKING_RUN/home"
-env -i HOME="$DELIVERY_PARKING_RUN/home" PATH="$PATH" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$DELIVERY_PARKING_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$DELIVERY_PARKING_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-delivery-parking.ts" "$DELIVERY_PARKING_RUN"
 
 AGENT_REMINDER_DELETE_RUN="$WORK_DIR/agent-reminder-delete-writer"
 mkdir -p "$AGENT_REMINDER_DELETE_RUN/home"
-env -i HOME="$AGENT_REMINDER_DELETE_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$AGENT_REMINDER_DELETE_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/agent-reminder-delete-writer.ts" verify "$AGENT_REMINDER_DELETE_RUN"
+env -i HYPERNEO_SPACE=on HOME="$AGENT_REMINDER_DELETE_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$AGENT_REMINDER_DELETE_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/agent-reminder-delete-writer.ts" verify "$AGENT_REMINDER_DELETE_RUN"
 WORKFLOW_DELETE_WRITER_RUN="$WORK_DIR/workflow-delete-writer"
 mkdir -p "$WORKFLOW_DELETE_WRITER_RUN/home"
-env -i HOME="$WORKFLOW_DELETE_WRITER_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_DELETE_WRITER_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-delete-writer.ts" verify "$WORKFLOW_DELETE_WRITER_RUN"
+env -i HYPERNEO_SPACE=on HOME="$WORKFLOW_DELETE_WRITER_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_DELETE_WRITER_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-delete-writer.ts" verify "$WORKFLOW_DELETE_WRITER_RUN"
 RATE_LIMIT_CANCEL_RUN="$WORK_DIR/rate-limit-cancel"
 mkdir -p "$RATE_LIMIT_CANCEL_RUN/home"
-env -i HOME="$RATE_LIMIT_CANCEL_RUN/home" PATH="$PATH" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$RATE_LIMIT_CANCEL_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$RATE_LIMIT_CANCEL_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-rate-limit-cancel.ts" "$RATE_LIMIT_CANCEL_RUN"
 
 OWNED_WITHDRAWAL_RUN="$WORK_DIR/owned-withdrawal"
 mkdir -p "$OWNED_WITHDRAWAL_RUN/home"
-env -i HOME="$OWNED_WITHDRAWAL_RUN/home" PATH="$PATH" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$OWNED_WITHDRAWAL_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$OWNED_WITHDRAWAL_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-owned-input-withdrawal.ts" "$OWNED_WITHDRAWAL_RUN"
 
 RATE_LIMIT_RETRY_RUN="$WORK_DIR/rate-limit-retry"
 mkdir -p "$RATE_LIMIT_RETRY_RUN/home"
-env -i HOME="$RATE_LIMIT_RETRY_RUN/home" PATH="$PATH" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$RATE_LIMIT_RETRY_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$RATE_LIMIT_RETRY_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-rate-limit-retry.ts" "$RATE_LIMIT_RETRY_RUN"
 
 PROVIDER_RPC_WRITES_RUN="$WORK_DIR/provider-rpc-writes"
 mkdir -p "$PROVIDER_RPC_WRITES_RUN/home"
-env -i HOME="$PROVIDER_RPC_WRITES_RUN/home" PATH="$PATH" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$PROVIDER_RPC_WRITES_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$PROVIDER_RPC_WRITES_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-provider-rpc-writes.ts" "$PROVIDER_RPC_WRITES_RUN"
 
 CREDENTIAL_STORE_WRITES_RUN="$WORK_DIR/credential-store-writes"
 mkdir -p "$CREDENTIAL_STORE_WRITES_RUN/home"
-env -i HOME="$CREDENTIAL_STORE_WRITES_RUN/home" PATH="$PATH" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$CREDENTIAL_STORE_WRITES_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$CREDENTIAL_STORE_WRITES_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-credential-store-writes.ts" "$CREDENTIAL_STORE_WRITES_RUN"
 
 SESSION_DELIVERY_ENQUEUE_RUN="$WORK_DIR/session-delivery-enqueue"
 mkdir -p "$SESSION_DELIVERY_ENQUEUE_RUN/home"
-env -i HOME="$SESSION_DELIVERY_ENQUEUE_RUN/home" PATH="$PATH" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$SESSION_DELIVERY_ENQUEUE_RUN/home" PATH="$PATH" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$SESSION_DELIVERY_ENQUEUE_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-delivery-enqueue.ts" "$SESSION_DELIVERY_ENQUEUE_RUN"
 
 STALE_RECLAIM_RUN="$WORK_DIR/stale-reclaim-writer"
 mkdir -p "$STALE_RECLAIM_RUN/home" "$STALE_RECLAIM_RUN/tmp"
-env -i HOME="$STALE_RECLAIM_RUN/home" PATH="$PATH" TMPDIR="$STALE_RECLAIM_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$STALE_RECLAIM_RUN/home" PATH="$PATH" TMPDIR="$STALE_RECLAIM_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$STALE_RECLAIM_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-stale-reclaim-writer.ts" "$STALE_RECLAIM_RUN"
 
 OUTCOME_PARKING_RUN="$WORK_DIR/direct-outcome-parking-writer"
 mkdir -p "$OUTCOME_PARKING_RUN/home"
-env -i HOME="$OUTCOME_PARKING_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$OUTCOME_PARKING_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/direct-outcome-parking-writer.ts" verify "$OUTCOME_PARKING_RUN"
+env -i HYPERNEO_SPACE=on HOME="$OUTCOME_PARKING_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$OUTCOME_PARKING_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/direct-outcome-parking-writer.ts" verify "$OUTCOME_PARKING_RUN"
 MAILBOX_EXPIRY_RUN="$WORK_DIR/mailbox-expiry-writer"
 mkdir -p "$MAILBOX_EXPIRY_RUN/home" "$MAILBOX_EXPIRY_RUN/tmp"
-env -i HOME="$MAILBOX_EXPIRY_RUN/home" PATH="$PATH" TMPDIR="$MAILBOX_EXPIRY_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$MAILBOX_EXPIRY_RUN/home" PATH="$PATH" TMPDIR="$MAILBOX_EXPIRY_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$MAILBOX_EXPIRY_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-mailbox-expiry-writer.ts" "$MAILBOX_EXPIRY_RUN"
 
 GITHUB_POLL_SUCCESSOR_RUN="$WORK_DIR/github-poll-successor-writer"
 mkdir -p "$GITHUB_POLL_SUCCESSOR_RUN/home" "$GITHUB_POLL_SUCCESSOR_RUN/tmp"
-env -i HOME="$GITHUB_POLL_SUCCESSOR_RUN/home" PATH="$PATH" TMPDIR="$GITHUB_POLL_SUCCESSOR_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$GITHUB_POLL_SUCCESSOR_RUN/home" PATH="$PATH" TMPDIR="$GITHUB_POLL_SUCCESSOR_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$GITHUB_POLL_SUCCESSOR_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-github-poll-successor-writer.ts" "$GITHUB_POLL_SUCCESSOR_RUN"
 
 NATIVE_FEED_ENQUEUE_RUN="$WORK_DIR/native-feed-enqueue-writer"
 mkdir -p "$NATIVE_FEED_ENQUEUE_RUN/home" "$NATIVE_FEED_ENQUEUE_RUN/tmp"
-env -i HOME="$NATIVE_FEED_ENQUEUE_RUN/home" PATH="$PATH" TMPDIR="$NATIVE_FEED_ENQUEUE_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$NATIVE_FEED_ENQUEUE_RUN/home" PATH="$PATH" TMPDIR="$NATIVE_FEED_ENQUEUE_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$NATIVE_FEED_ENQUEUE_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-native-feed-enqueue-writer.ts" "$NATIVE_FEED_ENQUEUE_RUN"
 
 SESSION_TITLE_ENQUEUE_RUN="$WORK_DIR/session-title-enqueue-writer"
 mkdir -p "$SESSION_TITLE_ENQUEUE_RUN/home" "$SESSION_TITLE_ENQUEUE_RUN/tmp"
-env -i HOME="$SESSION_TITLE_ENQUEUE_RUN/home" PATH="$PATH" TMPDIR="$SESSION_TITLE_ENQUEUE_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$SESSION_TITLE_ENQUEUE_RUN/home" PATH="$PATH" TMPDIR="$SESSION_TITLE_ENQUEUE_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$SESSION_TITLE_ENQUEUE_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-title-enqueue-writer.ts" "$SESSION_TITLE_ENQUEUE_RUN"
 
 SKILL_VALIDATION_ENQUEUE_RUN="$WORK_DIR/skill-validation-enqueue-writer"
 mkdir -p "$SKILL_VALIDATION_ENQUEUE_RUN/home" "$SKILL_VALIDATION_ENQUEUE_RUN/tmp"
-env -i HOME="$SKILL_VALIDATION_ENQUEUE_RUN/home" PATH="$PATH" TMPDIR="$SKILL_VALIDATION_ENQUEUE_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$SKILL_VALIDATION_ENQUEUE_RUN/home" PATH="$PATH" TMPDIR="$SKILL_VALIDATION_ENQUEUE_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$SKILL_VALIDATION_ENQUEUE_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-skill-validation-enqueue-writer.ts" "$SKILL_VALIDATION_ENQUEUE_RUN"
 
 GITHUB_POLL_REFRESH_RUN="$WORK_DIR/github-poll-refresh-writer"
 mkdir -p "$GITHUB_POLL_REFRESH_RUN/home" "$GITHUB_POLL_REFRESH_RUN/tmp"
-env -i HOME="$GITHUB_POLL_REFRESH_RUN/home" PATH="$PATH" TMPDIR="$GITHUB_POLL_REFRESH_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$GITHUB_POLL_REFRESH_RUN/home" PATH="$PATH" TMPDIR="$GITHUB_POLL_REFRESH_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$GITHUB_POLL_REFRESH_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-poll-refresh-writer.ts" "$GITHUB_POLL_REFRESH_RUN"
 
 GITHUB_POLL_REFRESH_RETRY_RUN="$WORK_DIR/github-poll-refresh-retry"
 mkdir -p "$GITHUB_POLL_REFRESH_RETRY_RUN/home" "$GITHUB_POLL_REFRESH_RETRY_RUN/tmp"
-env -i HOME="$GITHUB_POLL_REFRESH_RETRY_RUN/home" PATH="$PATH" TMPDIR="$GITHUB_POLL_REFRESH_RETRY_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$GITHUB_POLL_REFRESH_RETRY_RUN/home" PATH="$PATH" TMPDIR="$GITHUB_POLL_REFRESH_RETRY_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$GITHUB_POLL_REFRESH_RETRY_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-poll-refresh-retry.ts" "$GITHUB_POLL_REFRESH_RETRY_RUN"
 rm -rf "$GITHUB_POLL_REFRESH_RETRY_RUN/data" "$GITHUB_POLL_REFRESH_RETRY_RUN/home" "$GITHUB_POLL_REFRESH_RETRY_RUN/workspace"
 
 GITHUB_POLL_STARTUP_DEGRADED_RUN="$WORK_DIR/github-poll-startup-degraded"
 mkdir -p "$GITHUB_POLL_STARTUP_DEGRADED_RUN/home" "$GITHUB_POLL_STARTUP_DEGRADED_RUN/tmp"
-env -i HOME="$GITHUB_POLL_STARTUP_DEGRADED_RUN/home" PATH="$PATH" TMPDIR="$GITHUB_POLL_STARTUP_DEGRADED_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$GITHUB_POLL_STARTUP_DEGRADED_RUN/home" PATH="$PATH" TMPDIR="$GITHUB_POLL_STARTUP_DEGRADED_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$GITHUB_POLL_STARTUP_DEGRADED_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-poll-startup-degraded.ts" "$GITHUB_POLL_STARTUP_DEGRADED_RUN"
 
 GITHUB_POLL_CAPABILITY_FAILURE_RUN="$WORK_DIR/github-poll-capability-failure"
 mkdir -p "$GITHUB_POLL_CAPABILITY_FAILURE_RUN/home" "$GITHUB_POLL_CAPABILITY_FAILURE_RUN/tmp"
-env -i HOME="$GITHUB_POLL_CAPABILITY_FAILURE_RUN/home" PATH="$PATH" TMPDIR="$GITHUB_POLL_CAPABILITY_FAILURE_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$GITHUB_POLL_CAPABILITY_FAILURE_RUN/home" PATH="$PATH" TMPDIR="$GITHUB_POLL_CAPABILITY_FAILURE_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$GITHUB_POLL_CAPABILITY_FAILURE_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-poll-capability-failure.ts" "$GITHUB_POLL_CAPABILITY_FAILURE_RUN"
 
 TRANSCRIPT_SESSION_READER_RUN="$WORK_DIR/transcript-session-reader"
 mkdir -p "$TRANSCRIPT_SESSION_READER_RUN/home" "$TRANSCRIPT_SESSION_READER_RUN/tmp"
-env -i HOME="$TRANSCRIPT_SESSION_READER_RUN/home" PATH="$PATH" TMPDIR="$TRANSCRIPT_SESSION_READER_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$TRANSCRIPT_SESSION_READER_RUN/home" PATH="$PATH" TMPDIR="$TRANSCRIPT_SESSION_READER_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$TRANSCRIPT_SESSION_READER_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-transcript-session-reader.ts" --defer-body-copy "$TRANSCRIPT_SESSION_READER_RUN"
 
 HISTORY_SNAPSHOT_READER_RUN="$WORK_DIR/history-snapshot-reader"
 mkdir -p "$HISTORY_SNAPSHOT_READER_RUN/home" "$HISTORY_SNAPSHOT_READER_RUN/tmp"
-env -i HOME="$HISTORY_SNAPSHOT_READER_RUN/home" PATH="$PATH" TMPDIR="$HISTORY_SNAPSHOT_READER_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$HISTORY_SNAPSHOT_READER_RUN/home" PATH="$PATH" TMPDIR="$HISTORY_SNAPSHOT_READER_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$HISTORY_SNAPSHOT_READER_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/history-snapshot-reader.ts" "$HISTORY_SNAPSHOT_READER_RUN"
 
 SESSION_LIST_READER_RUN="$WORK_DIR/session-list-reader"
 mkdir -p "$SESSION_LIST_READER_RUN/home" "$SESSION_LIST_READER_RUN/tmp"
-env -i HOME="$SESSION_LIST_READER_RUN/home" PATH="$PATH" TMPDIR="$SESSION_LIST_READER_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$SESSION_LIST_READER_RUN/home" PATH="$PATH" TMPDIR="$SESSION_LIST_READER_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$SESSION_LIST_READER_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-list-reader.ts" "$SESSION_LIST_READER_RUN"
 
 SESSION_LIST_LIVE_READER_RUN="$WORK_DIR/session-list-live-reader"
 mkdir -p "$SESSION_LIST_LIVE_READER_RUN/home" "$SESSION_LIST_LIVE_READER_RUN/tmp"
-env -i HOME="$SESSION_LIST_LIVE_READER_RUN/home" PATH="$PATH" TMPDIR="$SESSION_LIST_LIVE_READER_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$SESSION_LIST_LIVE_READER_RUN/home" PATH="$PATH" TMPDIR="$SESSION_LIST_LIVE_READER_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$SESSION_LIST_LIVE_READER_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-list-live-reader.ts" "$SESSION_LIST_LIVE_READER_RUN"
 
 HEALTH_SESSION_COUNT_READER_RUN="$WORK_DIR/health-session-count-reader"
 mkdir -p "$HEALTH_SESSION_COUNT_READER_RUN/home" "$HEALTH_SESSION_COUNT_READER_RUN/tmp"
-env -i HOME="$HEALTH_SESSION_COUNT_READER_RUN/home" PATH="$PATH" TMPDIR="$HEALTH_SESSION_COUNT_READER_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$HEALTH_SESSION_COUNT_READER_RUN/home" PATH="$PATH" TMPDIR="$HEALTH_SESSION_COUNT_READER_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$HEALTH_SESSION_COUNT_READER_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-health-session-count-reader.ts" "$HEALTH_SESSION_COUNT_READER_RUN"
 
 PROJECTED_SESSION_READER_RUN="$WORK_DIR/projected-session-reader"
 mkdir -p "$PROJECTED_SESSION_READER_RUN/home" "$PROJECTED_SESSION_READER_RUN/tmp"
-env -i HOME="$PROJECTED_SESSION_READER_RUN/home" PATH="$PATH" TMPDIR="$PROJECTED_SESSION_READER_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$PROJECTED_SESSION_READER_RUN/home" PATH="$PATH" TMPDIR="$PROJECTED_SESSION_READER_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$PROJECTED_SESSION_READER_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-projected-session-reader.ts" "$PROJECTED_SESSION_READER_RUN"
 
 PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN="$WORK_DIR/projected-system-broadcast-failure"
 mkdir -p "$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN/home" "$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN/tmp"
-env -i HOME="$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN/home" PATH="$PATH" TMPDIR="$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN/home" PATH="$PATH" TMPDIR="$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-projected-system-broadcast-failure.ts" "$PROJECTED_SYSTEM_BROADCAST_FAILURE_RUN"
 
 TRANSCRIPT_SHUTDOWN_ORDER_RUN="$WORK_DIR/transcript-shutdown-order"
 mkdir -p "$TRANSCRIPT_SHUTDOWN_ORDER_RUN/home" "$TRANSCRIPT_SHUTDOWN_ORDER_RUN/tmp"
-env -i HOME="$TRANSCRIPT_SHUTDOWN_ORDER_RUN/home" PATH="$PATH" TMPDIR="$TRANSCRIPT_SHUTDOWN_ORDER_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$TRANSCRIPT_SHUTDOWN_ORDER_RUN/home" PATH="$PATH" TMPDIR="$TRANSCRIPT_SHUTDOWN_ORDER_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$TRANSCRIPT_SHUTDOWN_ORDER_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-transcript-shutdown-order.ts" "$TRANSCRIPT_SHUTDOWN_ORDER_RUN"
 
 TODO_MUTATION_PLANNING_RUN="$WORK_DIR/todo-mutation-planning"
 mkdir -p "$TODO_MUTATION_PLANNING_RUN/home" "$TODO_MUTATION_PLANNING_RUN/tmp"
-env -i HOME="$TODO_MUTATION_PLANNING_RUN/home" PATH="$PATH" TMPDIR="$TODO_MUTATION_PLANNING_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$TODO_MUTATION_PLANNING_RUN/home" PATH="$PATH" TMPDIR="$TODO_MUTATION_PLANNING_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$TODO_MUTATION_PLANNING_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-mutation-planning.ts" verify "$TODO_MUTATION_PLANNING_RUN"
 
-env -i HOME="$WORK_DIR/single-message-reader/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/single-message-reader/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-single-message-reader.ts" --defer-body-copy "$WORK_DIR/single-message-reader"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/single-message-reader/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/single-message-reader/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-single-message-reader.ts" --defer-body-copy "$WORK_DIR/single-message-reader"
 TODO_MUTATION_COMMIT_RUN="$WORK_DIR/todo-mutation-commit"
 mkdir -p "$TODO_MUTATION_COMMIT_RUN/home" "$TODO_MUTATION_COMMIT_RUN/tmp"
-env -i HOME="$TODO_MUTATION_COMMIT_RUN/home" PATH="$PATH" TMPDIR="$TODO_MUTATION_COMMIT_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$TODO_MUTATION_COMMIT_RUN/home" PATH="$PATH" TMPDIR="$TODO_MUTATION_COMMIT_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$TODO_MUTATION_COMMIT_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-mutation-commit.ts" verify "$TODO_MUTATION_COMMIT_RUN"
 
 CODING_DAEMON_BUILD_RUN="$WORK_DIR/coding-daemon-merge-build"
 mkdir -p "$CODING_DAEMON_BUILD_RUN/home" "$CODING_DAEMON_BUILD_RUN/tmp"
-env -i HOME="$CODING_DAEMON_BUILD_RUN/home" PATH="$PATH" TMPDIR="$CODING_DAEMON_BUILD_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$CODING_DAEMON_BUILD_RUN/home" PATH="$PATH" TMPDIR="$CODING_DAEMON_BUILD_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$CODING_DAEMON_BUILD_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/coding-daemon-merge-build.ts" "$CODING_DAEMON_BUILD_RUN"
 
 for CODING_DAEMON_SWEEP_VARIANT in enterprise policy-revoke merge-fails late-label per-pr retry-once legacy-open uncertain-error limit-gone external-owned zero-required no-checks human-default human-owner human-unconfigured approved-no-checks human-waiting-ci human-sibling-ci owner-ci human-new-head ci-startup-queued ci-startup-running ci-merge-race ci-retry-budget ci-stopped-ready; do
 	CODING_DAEMON_SWEEP_RUN="$WORK_DIR/coding-daemon-merge-sweep-$CODING_DAEMON_SWEEP_VARIANT"
 	mkdir -p "$CODING_DAEMON_SWEEP_RUN/home" "$CODING_DAEMON_SWEEP_RUN/tmp"
-	env -i HOME="$CODING_DAEMON_SWEEP_RUN/home" PATH="$PATH" TMPDIR="$CODING_DAEMON_SWEEP_RUN/tmp" NODE_ENV=test \
+	env -i HYPERNEO_SPACE=on HOME="$CODING_DAEMON_SWEEP_RUN/home" PATH="$PATH" TMPDIR="$CODING_DAEMON_SWEEP_RUN/tmp" NODE_ENV=test \
 		HYPERNEO_DATA_DIR="$CODING_DAEMON_SWEEP_RUN/data" LOG_LEVEL=warn \
 		deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/coding-daemon-merge-sweep.ts" "$CODING_DAEMON_SWEEP_VARIANT" "$CODING_DAEMON_SWEEP_RUN"
 done
 
 CODING_SIGNOFF_RUN="$WORK_DIR/coding-signoff-scope"
 mkdir -p "$CODING_SIGNOFF_RUN/home" "$CODING_SIGNOFF_RUN/tmp"
-env -i HOME="$CODING_SIGNOFF_RUN/home" PATH="$PATH" TMPDIR="$CODING_SIGNOFF_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$CODING_SIGNOFF_RUN/home" PATH="$PATH" TMPDIR="$CODING_SIGNOFF_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$CODING_SIGNOFF_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/coding-signoff-scope.ts" "$CODING_SIGNOFF_RUN"
 
 TODO_REMOVE_WRITER_RUN="$WORK_DIR/todo-remove-writer"
 mkdir -p "$TODO_REMOVE_WRITER_RUN/home" "$TODO_REMOVE_WRITER_RUN/tmp"
-env -i HOME="$TODO_REMOVE_WRITER_RUN/home" PATH="$PATH" TMPDIR="$TODO_REMOVE_WRITER_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$TODO_REMOVE_WRITER_RUN/home" PATH="$PATH" TMPDIR="$TODO_REMOVE_WRITER_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$TODO_REMOVE_WRITER_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-remove-writer.ts" verify "$TODO_REMOVE_WRITER_RUN"
 
 TODO_MUTATION_ACTIVATION_RUN="$WORK_DIR/todo-mutation-activation"
 mkdir -p "$TODO_MUTATION_ACTIVATION_RUN/home" "$TODO_MUTATION_ACTIVATION_RUN/tmp"
-env -i HOME="$TODO_MUTATION_ACTIVATION_RUN/home" PATH="$PATH" TMPDIR="$TODO_MUTATION_ACTIVATION_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$TODO_MUTATION_ACTIVATION_RUN/home" PATH="$PATH" TMPDIR="$TODO_MUTATION_ACTIVATION_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$TODO_MUTATION_ACTIVATION_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-mutation-activation.ts" verify "$TODO_MUTATION_ACTIVATION_RUN"
 
 TODO_RUNNER_STATE_RUN="$WORK_DIR/todo-runner-state"
 mkdir -p "$TODO_RUNNER_STATE_RUN/home" "$TODO_RUNNER_STATE_RUN/tmp"
-env -i HOME="$TODO_RUNNER_STATE_RUN/home" PATH="$PATH" TMPDIR="$TODO_RUNNER_STATE_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$TODO_RUNNER_STATE_RUN/home" PATH="$PATH" TMPDIR="$TODO_RUNNER_STATE_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$TODO_RUNNER_STATE_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-runner-state.ts" verify "$TODO_RUNNER_STATE_RUN"
 
 TODO_RUNNER_ACTIVATION_RUN="$WORK_DIR/todo-runner-activation"
 mkdir -p "$TODO_RUNNER_ACTIVATION_RUN/home" "$TODO_RUNNER_ACTIVATION_RUN/tmp"
-env -i HOME="$TODO_RUNNER_ACTIVATION_RUN/home" PATH="$PATH" TMPDIR="$TODO_RUNNER_ACTIVATION_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$TODO_RUNNER_ACTIVATION_RUN/home" PATH="$PATH" TMPDIR="$TODO_RUNNER_ACTIVATION_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$TODO_RUNNER_ACTIVATION_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-runner-activation.ts" verify "$TODO_RUNNER_ACTIVATION_RUN"
 
 TODO_START_RECOVERY_RUN="$WORK_DIR/todo-start-recovery"
 mkdir -p "$TODO_START_RECOVERY_RUN/home" "$TODO_START_RECOVERY_RUN/tmp"
-env -i HOME="$TODO_START_RECOVERY_RUN/home" PATH="$PATH" TMPDIR="$TODO_START_RECOVERY_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$TODO_START_RECOVERY_RUN/home" PATH="$PATH" TMPDIR="$TODO_START_RECOVERY_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$TODO_START_RECOVERY_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-start-recovery.ts" verify "$TODO_START_RECOVERY_RUN"
 
 TODO_START_RECOVERY_ACTIVATION_RUN="$WORK_DIR/todo-start-recovery-activation"
 mkdir -p "$TODO_START_RECOVERY_ACTIVATION_RUN/home" "$TODO_START_RECOVERY_ACTIVATION_RUN/tmp"
-env -i HOME="$TODO_START_RECOVERY_ACTIVATION_RUN/home" PATH="$PATH" TMPDIR="$TODO_START_RECOVERY_ACTIVATION_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$TODO_START_RECOVERY_ACTIVATION_RUN/home" PATH="$PATH" TMPDIR="$TODO_START_RECOVERY_ACTIVATION_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$TODO_START_RECOVERY_ACTIVATION_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-start-recovery-activation.ts" verify "$TODO_START_RECOVERY_ACTIVATION_RUN"
 
 ASK_SETTLEMENT_BUILD_RUN="$WORK_DIR/ask-settlement-build"
 mkdir -p "$ASK_SETTLEMENT_BUILD_RUN/home" "$ASK_SETTLEMENT_BUILD_RUN/tmp"
-env -i HOME="$ASK_SETTLEMENT_BUILD_RUN/home" PATH="$PATH" TMPDIR="$ASK_SETTLEMENT_BUILD_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$ASK_SETTLEMENT_BUILD_RUN/home" PATH="$PATH" TMPDIR="$ASK_SETTLEMENT_BUILD_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$ASK_SETTLEMENT_BUILD_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/ask-settlement-build.ts" verify "$ASK_SETTLEMENT_BUILD_RUN"
 
 TRACK_ADMISSION_RUN="$WORK_DIR/neo-track-admission-build"
 mkdir -p "$TRACK_ADMISSION_RUN/home" "$TRACK_ADMISSION_RUN/tmp"
-env -i HOME="$TRACK_ADMISSION_RUN/home" PATH="$PATH" TMPDIR="$TRACK_ADMISSION_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$TRACK_ADMISSION_RUN/home" PATH="$PATH" TMPDIR="$TRACK_ADMISSION_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$TRACK_ADMISSION_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/neo-track-admission-build.ts" verify "$TRACK_ADMISSION_RUN"
 
 TRACK_ACTIVATION_RUN="$WORK_DIR/neo-track-admission-activation"
 mkdir -p "$TRACK_ACTIVATION_RUN/home" "$TRACK_ACTIVATION_RUN/tmp"
-env -i HOME="$TRACK_ACTIVATION_RUN/home" PATH="$PATH" TMPDIR="$TRACK_ACTIVATION_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$TRACK_ACTIVATION_RUN/home" PATH="$PATH" TMPDIR="$TRACK_ACTIVATION_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$TRACK_ACTIVATION_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/neo-track-admission-activation.ts" verify "$TRACK_ACTIVATION_RUN"
 
 TODO_ADD_BUILD_RUN="$WORK_DIR/todo-add-build"
 mkdir -p "$TODO_ADD_BUILD_RUN/home" "$TODO_ADD_BUILD_RUN/tmp"
-env -i HOME="$TODO_ADD_BUILD_RUN/home" PATH="$PATH" TMPDIR="$TODO_ADD_BUILD_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$TODO_ADD_BUILD_RUN/home" PATH="$PATH" TMPDIR="$TODO_ADD_BUILD_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$TODO_ADD_BUILD_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-add-build.ts" verify "$TODO_ADD_BUILD_RUN"
 
 TODO_STOP_CONTEXT_RUN="$WORK_DIR/todo-stop-context"
 mkdir -p "$TODO_STOP_CONTEXT_RUN/home" "$TODO_STOP_CONTEXT_RUN/tmp"
-env -i HOME="$TODO_STOP_CONTEXT_RUN/home" PATH="$PATH" TMPDIR="$TODO_STOP_CONTEXT_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$TODO_STOP_CONTEXT_RUN/home" PATH="$PATH" TMPDIR="$TODO_STOP_CONTEXT_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$TODO_STOP_CONTEXT_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/todo-stop-context.ts" verify "$TODO_STOP_CONTEXT_RUN"
 
 ASK_SETTLEMENT_ACTIVATION_RUN="$WORK_DIR/ask-settlement-activation"
 mkdir -p "$ASK_SETTLEMENT_ACTIVATION_RUN/home" "$ASK_SETTLEMENT_ACTIVATION_RUN/tmp"
-env -i HOME="$ASK_SETTLEMENT_ACTIVATION_RUN/home" PATH="$PATH" TMPDIR="$ASK_SETTLEMENT_ACTIVATION_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$ASK_SETTLEMENT_ACTIVATION_RUN/home" PATH="$PATH" TMPDIR="$ASK_SETTLEMENT_ACTIVATION_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$ASK_SETTLEMENT_ACTIVATION_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/ask-settlement-activation.ts" verify "$ASK_SETTLEMENT_ACTIVATION_RUN"
 
 HUMAN_CONFIRMED_RUN="$WORK_DIR/human-confirmed-todos"
 mkdir -p "$HUMAN_CONFIRMED_RUN/home" "$HUMAN_CONFIRMED_RUN/tmp"
-env -i HOME="$HUMAN_CONFIRMED_RUN/home" PATH="$PATH" TMPDIR="$HUMAN_CONFIRMED_RUN/tmp" NODE_ENV=test \
+env -i HYPERNEO_SPACE=on HOME="$HUMAN_CONFIRMED_RUN/home" PATH="$PATH" TMPDIR="$HUMAN_CONFIRMED_RUN/tmp" NODE_ENV=test \
 	HYPERNEO_DATA_DIR="$HUMAN_CONFIRMED_RUN/data" LOG_LEVEL=warn \
 	deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/human-confirmed-todos.ts" verify "$HUMAN_CONFIRMED_RUN"
 
-env -i HOME="$WORK_DIR/message-count-reader/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/message-count-reader/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-message-count-reader.ts" "$WORK_DIR/message-count-reader"
-env -i HOME="$WORK_DIR/session-export-reader/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/session-export-reader/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-export-reader.ts" "$WORK_DIR/session-export-reader"
-env -i HOME="$WORK_DIR/session-schedule-create/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/session-schedule-create/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-schedule-create.ts" "$WORK_DIR/session-schedule-create"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/message-count-reader/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/message-count-reader/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-message-count-reader.ts" "$WORK_DIR/message-count-reader"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/session-export-reader/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/session-export-reader/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-export-reader.ts" "$WORK_DIR/session-export-reader"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/session-schedule-create/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/session-schedule-create/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-b-session-schedule-create.ts" "$WORK_DIR/session-schedule-create"
 WORKFLOW_NODE_CONFIG_CONTRACT_RUN="$WORK_DIR/workflow-node-config-contract"
 mkdir -p "$WORKFLOW_NODE_CONFIG_CONTRACT_RUN/home"
-env -i HOME="$WORKFLOW_NODE_CONFIG_CONTRACT_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_NODE_CONFIG_CONTRACT_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-node-config-contract.ts" verify "$WORKFLOW_NODE_CONFIG_CONTRACT_RUN"
+env -i HYPERNEO_SPACE=on HOME="$WORKFLOW_NODE_CONFIG_CONTRACT_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_NODE_CONFIG_CONTRACT_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-node-config-contract.ts" verify "$WORKFLOW_NODE_CONFIG_CONTRACT_RUN"
 WORKFLOW_EXISTING_RUN_PIN_RUN="$WORK_DIR/workflow-existing-run-pin"
 mkdir -p "$WORKFLOW_EXISTING_RUN_PIN_RUN/home"
-env -i HOME="$WORKFLOW_EXISTING_RUN_PIN_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_EXISTING_RUN_PIN_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-existing-run-pin.ts" verify "$WORKFLOW_EXISTING_RUN_PIN_RUN"
+env -i HYPERNEO_SPACE=on HOME="$WORKFLOW_EXISTING_RUN_PIN_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_EXISTING_RUN_PIN_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-existing-run-pin.ts" verify "$WORKFLOW_EXISTING_RUN_PIN_RUN"
 WORKFLOW_SNAPSHOT_WRITER_RUN="$WORK_DIR/workflow-snapshot-writer"
 mkdir -p "$WORKFLOW_SNAPSHOT_WRITER_RUN/home"
-env -i HOME="$WORKFLOW_SNAPSHOT_WRITER_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_SNAPSHOT_WRITER_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-snapshot-writer.ts" verify "$WORKFLOW_SNAPSHOT_WRITER_RUN"
+env -i HYPERNEO_SPACE=on HOME="$WORKFLOW_SNAPSHOT_WRITER_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_SNAPSHOT_WRITER_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-snapshot-writer.ts" verify "$WORKFLOW_SNAPSHOT_WRITER_RUN"
 DIRECT_START_REQUEUE_RUN="$WORK_DIR/direct-start-requeue-writer"
 mkdir -p "$DIRECT_START_REQUEUE_RUN/home"
-env -i HOME="$DIRECT_START_REQUEUE_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$DIRECT_START_REQUEUE_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/direct-start-requeue-writer.ts" verify "$DIRECT_START_REQUEUE_RUN"
+env -i HYPERNEO_SPACE=on HOME="$DIRECT_START_REQUEUE_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$DIRECT_START_REQUEUE_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/direct-start-requeue-writer.ts" verify "$DIRECT_START_REQUEUE_RUN"
 JOB_REQUEUE_WRITER_RUN="$WORK_DIR/job-requeue-writer"
 mkdir -p "$JOB_REQUEUE_WRITER_RUN/home"
-env -i HOME="$JOB_REQUEUE_WRITER_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$JOB_REQUEUE_WRITER_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/job-requeue-writer.ts" verify "$JOB_REQUEUE_WRITER_RUN"
+env -i HYPERNEO_SPACE=on HOME="$JOB_REQUEUE_WRITER_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$JOB_REQUEUE_WRITER_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/job-requeue-writer.ts" verify "$JOB_REQUEUE_WRITER_RUN"
 TASK_SCHEDULE_DELETE_RUN="$WORK_DIR/task-schedule-delete-writer"
 mkdir -p "$TASK_SCHEDULE_DELETE_RUN/home"
-env -i HOME="$TASK_SCHEDULE_DELETE_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$TASK_SCHEDULE_DELETE_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/task-schedule-delete-writer.ts" verify "$TASK_SCHEDULE_DELETE_RUN"
+env -i HYPERNEO_SPACE=on HOME="$TASK_SCHEDULE_DELETE_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$TASK_SCHEDULE_DELETE_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/task-schedule-delete-writer.ts" verify "$TASK_SCHEDULE_DELETE_RUN"
 TASK_SCHEDULE_PAUSE_RUN="$WORK_DIR/task-schedule-pause-writer"
 mkdir -p "$TASK_SCHEDULE_PAUSE_RUN/home"
-env -i HOME="$TASK_SCHEDULE_PAUSE_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$TASK_SCHEDULE_PAUSE_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/task-schedule-pause-writer.ts" verify "$TASK_SCHEDULE_PAUSE_RUN"
+env -i HYPERNEO_SPACE=on HOME="$TASK_SCHEDULE_PAUSE_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$TASK_SCHEDULE_PAUSE_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/task-schedule-pause-writer.ts" verify "$TASK_SCHEDULE_PAUSE_RUN"
 WORKFLOW_OPTIONS_CONTRACT_RUN="$WORK_DIR/workflow-options-contract"
 mkdir -p "$WORKFLOW_OPTIONS_CONTRACT_RUN/home"
-env -i HOME="$WORKFLOW_OPTIONS_CONTRACT_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_OPTIONS_CONTRACT_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-options-contract.ts" verify "$WORKFLOW_OPTIONS_CONTRACT_RUN"
-env -i HOME="$WORK_DIR/pairing-approve/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/pairing-approve/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-pairing-approve.ts" "$WORK_DIR/pairing-approve"
-env -i HOME="$WORK_DIR/pairing-redeem/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/pairing-redeem/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-pairing-redeem.ts" "$WORK_DIR/pairing-redeem"
-env -i HOME="$WORK_DIR/pairing-code-create/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/pairing-code-create/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-pairing-code-create.ts" "$WORK_DIR/pairing-code-create"
-env -i HOME="$WORK_DIR/pairing-revoke-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/pairing-revoke-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-pairing-revoke-command.ts" "$WORK_DIR/pairing-revoke-command"
-env -i HOME="$WORK_DIR/connected-device-observer/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/connected-device-observer/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-connected-device-observer.ts" "$WORK_DIR/connected-device-observer"
-env -i HOME="$WORK_DIR/pairing-revoke-activation/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/pairing-revoke-activation/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-pairing-revoke-activation.ts" "$WORK_DIR/pairing-revoke-activation"
-env -i HOME="$WORK_DIR/human-reset-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/human-reset-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-human-reset-command.ts" "$WORK_DIR/human-reset-command"
-env -i HOME="$WORK_DIR/conversation-reservation/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/conversation-reservation/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-conversation-reservation-extract.ts" "$WORK_DIR/conversation-reservation"
-env -i HOME="$WORK_DIR/human-reset-receipts/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/human-reset-receipts/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-human-reset-receipts.ts" "$WORK_DIR/human-reset-receipts"
-env -i HOME="$WORK_DIR/human-reset-coordinator/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/human-reset-coordinator/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-human-reset-coordinator.ts" "$WORK_DIR/human-reset-coordinator"
-env -i HOME="$WORK_DIR/human-reset-activation/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/human-reset-activation/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-human-reset-activation.ts" "$WORK_DIR/human-reset-activation"
-env -i HOME="$WORK_DIR/workspace-remove/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/workspace-remove/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-workspace-remove.ts" "$WORK_DIR/workspace-remove"
-env -i HOME="$WORK_DIR/workspace-upsert/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/workspace-upsert/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-workspace-upsert.ts" "$WORK_DIR/workspace-upsert"
-env -i HOME="$WORK_DIR/workspace-add/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/workspace-add/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-workspace-add.ts" "$WORK_DIR/workspace-add"
-env -i HOME="$WORK_DIR/artifact-identity-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-identity-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-identity-extract.ts" "$WORK_DIR/artifact-identity-extract"
-env -i HOME="$WORK_DIR/artifact-identity-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-identity-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-identity-command.ts" "$WORK_DIR/artifact-identity-command"
+env -i HYPERNEO_SPACE=on HOME="$WORKFLOW_OPTIONS_CONTRACT_RUN/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORKFLOW_OPTIONS_CONTRACT_RUN/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/workflow-options-contract.ts" verify "$WORKFLOW_OPTIONS_CONTRACT_RUN"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/pairing-approve/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/pairing-approve/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-pairing-approve.ts" "$WORK_DIR/pairing-approve"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/pairing-redeem/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/pairing-redeem/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-pairing-redeem.ts" "$WORK_DIR/pairing-redeem"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/pairing-code-create/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/pairing-code-create/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-pairing-code-create.ts" "$WORK_DIR/pairing-code-create"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/pairing-revoke-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/pairing-revoke-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-pairing-revoke-command.ts" "$WORK_DIR/pairing-revoke-command"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/connected-device-observer/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/connected-device-observer/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-connected-device-observer.ts" "$WORK_DIR/connected-device-observer"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/pairing-revoke-activation/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/pairing-revoke-activation/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-pairing-revoke-activation.ts" "$WORK_DIR/pairing-revoke-activation"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/human-reset-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/human-reset-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-human-reset-command.ts" "$WORK_DIR/human-reset-command"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/conversation-reservation/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/conversation-reservation/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-conversation-reservation-extract.ts" "$WORK_DIR/conversation-reservation"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/human-reset-receipts/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/human-reset-receipts/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-human-reset-receipts.ts" "$WORK_DIR/human-reset-receipts"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/human-reset-coordinator/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/human-reset-coordinator/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-human-reset-coordinator.ts" "$WORK_DIR/human-reset-coordinator"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/human-reset-activation/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/human-reset-activation/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-human-reset-activation.ts" "$WORK_DIR/human-reset-activation"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/workspace-remove/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/workspace-remove/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-workspace-remove.ts" "$WORK_DIR/workspace-remove"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/workspace-upsert/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/workspace-upsert/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-workspace-upsert.ts" "$WORK_DIR/workspace-upsert"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/workspace-add/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/workspace-add/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-workspace-add.ts" "$WORK_DIR/workspace-add"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/artifact-identity-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-identity-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-identity-extract.ts" "$WORK_DIR/artifact-identity-extract"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/artifact-identity-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-identity-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-identity-command.ts" "$WORK_DIR/artifact-identity-command"
 mkdir -p "$WORK_DIR/retire-local-register/home"
-env -i HOME="$WORK_DIR/retire-local-register/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/retire-local-register/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/retire-local-register.ts" verify "$WORK_DIR/retire-local-register"
-env -i HOME="$WORK_DIR/artifact-reference-identity/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-reference-identity/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-reference-identity.ts" "$WORK_DIR/artifact-reference-identity"
-env -i HOME="$WORK_DIR/artifact-git-identity/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-git-identity/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-git-identity.ts" "$WORK_DIR/artifact-git-identity"
-env -i HOME="$WORK_DIR/artifact-row-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-row-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-row-command.ts" "$WORK_DIR/artifact-row-command"
-env -i HOME="$WORK_DIR/artifact-git-row/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-git-row/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-git-row.ts" "$WORK_DIR/artifact-git-row"
-env -i HOME="$WORK_DIR/extension-global-sql-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-global-sql-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-global-sql-extract.ts" "$WORK_DIR/extension-global-sql-extract"
-env -i HOME="$WORK_DIR/extension-global-read-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-global-read-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-global-read-extract.ts" "$WORK_DIR/extension-global-read-extract"
-env -i HOME="$WORK_DIR/extension-space-read-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-space-read-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-space-read-extract.ts" "$WORK_DIR/extension-space-read-extract"
-env -i HOME="$WORK_DIR/extension-global-reader-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-global-reader-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-global-reader-command.ts" "$WORK_DIR/extension-global-reader-command"
-env -i HOME="$WORK_DIR/extension-space-reader-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-space-reader-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-space-reader-command.ts" "$WORK_DIR/extension-space-reader-command"
-env -i HOME="$WORK_DIR/extension-global-reader-activation/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-global-reader-activation/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-global-reader-activation.ts" "$WORK_DIR/extension-global-reader-activation"
-env -i HOME="$WORK_DIR/extension-global-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-global-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-global-command.ts" "$WORK_DIR/extension-global-command"
-env -i HOME="$WORK_DIR/extension-global-activation/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-global-activation/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-global-activation.ts" "$WORK_DIR/extension-global-activation"
-env -i HOME="$WORK_DIR/extension-space-activation/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-space-activation/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-space-activation.ts" "$WORK_DIR/extension-space-activation"
-env -i HOME="$WORK_DIR/extension-space-sql-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-space-sql-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-space-sql-extract.ts" "$WORK_DIR/extension-space-sql-extract"
-env -i HOME="$WORK_DIR/extension-space-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-space-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-space-command.ts" "$WORK_DIR/extension-space-command"
-env -i HOME="$WORK_DIR/github-space-enabled-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-space-enabled-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-space-enabled-extract.ts" "$WORK_DIR/github-space-enabled-extract"
-env -i HOME="$WORK_DIR/github-space-settings-read/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-space-settings-read/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-space-settings-read.ts" "$WORK_DIR/github-space-settings-read"
-env -i HOME="$WORK_DIR/github-watched-repos-read/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-watched-repos-read/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-watched-repos-read.ts" "$WORK_DIR/github-watched-repos-read"
-env -i HOME="$WORK_DIR/github-watched-projection/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-watched-projection/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-watched-projection.ts" "$WORK_DIR/github-watched-projection"
-env -i HOME="$WORK_DIR/github-space-enabled-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-space-enabled-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-space-enabled-command.ts" "$WORK_DIR/github-space-enabled-command"
-env -i HOME="$WORK_DIR/github-space-enable-wiring/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-space-enable-wiring/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-space-enable-wiring.ts" "$WORK_DIR/github-space-enable-wiring"
-env -i HOME="$WORK_DIR/github-filter-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-filter-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-filter-extract.ts" "$WORK_DIR/github-filter-extract"
-env -i HOME="$WORK_DIR/github-filter-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-filter-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-filter-command.ts" "$WORK_DIR/github-filter-command"
-env -i HOME="$WORK_DIR/github-filter-wiring/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-filter-wiring/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-filter-wiring.ts" "$WORK_DIR/github-filter-wiring"
-env -i HOME="$WORK_DIR/github-polling-intent-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-polling-intent-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-polling-intent-extract.ts" "$WORK_DIR/github-polling-intent-extract"
-env -i HOME="$WORK_DIR/github-watched-lookups-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-watched-lookups-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-watched-lookups-extract.ts" "$WORK_DIR/github-watched-lookups-extract"
-env -i HOME="$WORK_DIR/github-cursor-persist-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-cursor-persist-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-cursor-persist-extract.ts" "$WORK_DIR/github-cursor-persist-extract"
-env -i HOME="$WORK_DIR/github-watched-update-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-watched-update-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-watched-update-extract.ts" "$WORK_DIR/github-watched-update-extract"
-env -i HOME="$WORK_DIR/github-watched-insert-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-watched-insert-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-watched-insert-extract.ts" "$WORK_DIR/github-watched-insert-extract"
-env -i HOME="$WORK_DIR/github-watched-upsert-lift/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-watched-upsert-lift/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-watched-upsert-lift.ts" "$WORK_DIR/github-watched-upsert-lift"
-env -i HOME="$WORK_DIR/github-polling-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-polling-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-polling-command.ts" "$WORK_DIR/github-polling-command"
-env -i HOME="$WORK_DIR/github-polling-read-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-polling-read-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-polling-read-extract.ts" "$WORK_DIR/github-polling-read-extract"
-env -i HOME="$WORK_DIR/github-polling-usage-read/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-polling-usage-read/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-polling-usage-read.ts" "$WORK_DIR/github-polling-usage-read"
-env -i HOME="$WORK_DIR/github-capability-reader/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-capability-reader/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-capability-reader.ts" "$WORK_DIR/github-capability-reader"
-env -i HOME="$WORK_DIR/github-timer-reader/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-timer-reader/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-timer-reader.ts" "$WORK_DIR/github-timer-reader"
-env -i HOME="$WORK_DIR/github-unwatch-timer/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-unwatch-timer/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-unwatch-timer.ts" "$WORK_DIR/github-unwatch-timer"
-env -i HOME="$WORK_DIR/github-watch-timer/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-watch-timer/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-watch-timer.ts" "$WORK_DIR/github-watch-timer"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/retire-local-register/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/retire-local-register/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/retire-local-register.ts" verify "$WORK_DIR/retire-local-register"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/artifact-reference-identity/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-reference-identity/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-reference-identity.ts" "$WORK_DIR/artifact-reference-identity"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/artifact-git-identity/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-git-identity/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-git-identity.ts" "$WORK_DIR/artifact-git-identity"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/artifact-row-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-row-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-row-command.ts" "$WORK_DIR/artifact-row-command"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/artifact-git-row/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/artifact-git-row/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-artifact-git-row.ts" "$WORK_DIR/artifact-git-row"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/extension-global-sql-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-global-sql-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-global-sql-extract.ts" "$WORK_DIR/extension-global-sql-extract"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/extension-global-read-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-global-read-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-global-read-extract.ts" "$WORK_DIR/extension-global-read-extract"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/extension-space-read-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-space-read-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-space-read-extract.ts" "$WORK_DIR/extension-space-read-extract"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/extension-global-reader-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-global-reader-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-global-reader-command.ts" "$WORK_DIR/extension-global-reader-command"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/extension-space-reader-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-space-reader-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-space-reader-command.ts" "$WORK_DIR/extension-space-reader-command"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/extension-global-reader-activation/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-global-reader-activation/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-global-reader-activation.ts" "$WORK_DIR/extension-global-reader-activation"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/extension-global-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-global-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-global-command.ts" "$WORK_DIR/extension-global-command"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/extension-global-activation/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-global-activation/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-global-activation.ts" "$WORK_DIR/extension-global-activation"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/extension-space-activation/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-space-activation/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-space-activation.ts" "$WORK_DIR/extension-space-activation"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/extension-space-sql-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-space-sql-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-space-sql-extract.ts" "$WORK_DIR/extension-space-sql-extract"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/extension-space-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/extension-space-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-extension-space-command.ts" "$WORK_DIR/extension-space-command"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/github-space-enabled-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-space-enabled-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-space-enabled-extract.ts" "$WORK_DIR/github-space-enabled-extract"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/github-space-settings-read/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-space-settings-read/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-space-settings-read.ts" "$WORK_DIR/github-space-settings-read"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/github-watched-repos-read/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-watched-repos-read/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-watched-repos-read.ts" "$WORK_DIR/github-watched-repos-read"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/github-watched-projection/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-watched-projection/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-watched-projection.ts" "$WORK_DIR/github-watched-projection"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/github-space-enabled-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-space-enabled-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-space-enabled-command.ts" "$WORK_DIR/github-space-enabled-command"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/github-space-enable-wiring/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-space-enable-wiring/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-space-enable-wiring.ts" "$WORK_DIR/github-space-enable-wiring"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/github-filter-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-filter-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-filter-extract.ts" "$WORK_DIR/github-filter-extract"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/github-filter-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-filter-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-filter-command.ts" "$WORK_DIR/github-filter-command"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/github-filter-wiring/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-filter-wiring/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-filter-wiring.ts" "$WORK_DIR/github-filter-wiring"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/github-polling-intent-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-polling-intent-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-polling-intent-extract.ts" "$WORK_DIR/github-polling-intent-extract"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/github-watched-lookups-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-watched-lookups-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-watched-lookups-extract.ts" "$WORK_DIR/github-watched-lookups-extract"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/github-cursor-persist-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-cursor-persist-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-cursor-persist-extract.ts" "$WORK_DIR/github-cursor-persist-extract"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/github-watched-update-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-watched-update-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-watched-update-extract.ts" "$WORK_DIR/github-watched-update-extract"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/github-watched-insert-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-watched-insert-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-watched-insert-extract.ts" "$WORK_DIR/github-watched-insert-extract"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/github-watched-upsert-lift/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-watched-upsert-lift/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-watched-upsert-lift.ts" "$WORK_DIR/github-watched-upsert-lift"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/github-polling-command/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-polling-command/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-polling-command.ts" "$WORK_DIR/github-polling-command"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/github-polling-read-extract/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-polling-read-extract/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-polling-read-extract.ts" "$WORK_DIR/github-polling-read-extract"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/github-polling-usage-read/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-polling-usage-read/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-polling-usage-read.ts" "$WORK_DIR/github-polling-usage-read"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/github-capability-reader/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-capability-reader/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-capability-reader.ts" "$WORK_DIR/github-capability-reader"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/github-timer-reader/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-timer-reader/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-timer-reader.ts" "$WORK_DIR/github-timer-reader"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/github-unwatch-timer/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-unwatch-timer/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-unwatch-timer.ts" "$WORK_DIR/github-unwatch-timer"
+env -i HYPERNEO_SPACE=on HOME="$WORK_DIR/github-watch-timer/home" PATH="$PATH" TMPDIR="$WORK_DIR" NODE_ENV=test HYPERNEO_DATA_DIR="$WORK_DIR/github-watch-timer/data" LOG_LEVEL=warn deno run -A --no-check "$REPO_ROOT/.claude/skills/verify/lane-c-github-watch-timer.ts" "$WORK_DIR/github-watch-timer"
 echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, system.health, migrations, graceful SIGTERM)"

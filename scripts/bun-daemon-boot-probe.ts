@@ -9,7 +9,7 @@ import { SPACE_SCHEMA } from '../packages/daemon/src/storage/schema/space-schema
 import { MessageHub, WebSocketClientTransport } from '../packages/shared/src/mod.ts';
 
 const run = resolve(process.argv[2] ?? '');
-const spaceOff = process.env.HYPERNEO_SPACE === 'off';
+const spaceOff = process.env.HYPERNEO_SPACE !== 'on';
 const tableNames = (db: Database) =>
   (
     db
@@ -58,7 +58,7 @@ const child = spawn(
       HYPERNEO_DATA_DIR: join(run, 'data'),
       HYPERNEO_WORKSPACE_PATH: join(run, 'workspace'),
       LOG_LEVEL: 'warn',
-      ...(spaceOff ? { HYPERNEO_SPACE: 'off' } : {}),
+      ...(spaceOff ? {} : { HYPERNEO_SPACE: 'on' }),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   }

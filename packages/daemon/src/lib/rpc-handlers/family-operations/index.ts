@@ -1,5 +1,4 @@
 import type { OperationDefinition } from '../../operations/registry.ts';
-import { registerAuditOperations } from './audit.ts';
 import { registerClientOperations } from './clients.ts';
 import { registerDriverOperations } from './drivers.ts';
 import type { FamilyOperationContext } from './context.ts';
@@ -12,7 +11,6 @@ export type { FamilyOperationContext } from './context.ts';
 export function collectFamilyOperations(context: FamilyOperationContext): OperationDefinition[] {
   return [
     createProjectFolderOperation(context.deps.db.workspaceHistory),
-    ...registerAuditOperations(context),
     ...registerClientOperations(context),
     ...registerDriverOperations(context),
     ...registerSessionOperations(context),
