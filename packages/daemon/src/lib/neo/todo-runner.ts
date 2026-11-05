@@ -9,6 +9,7 @@ import type {
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { neoTodoRunnerWrites } from '../../storage/repositories/neo-todo-runner-state.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
+import type { PendingWorkSend } from '../../storage/repositories/work-held-send-repository.ts';
 import type { Place, WorkRef } from '../drivers/types.ts';
 import { type HeldWorkSend, isBusyWork } from '../drivers/work-operations.ts';
 import { withWorkerProvenance } from '../drivers/worker-provenance.ts';
@@ -78,8 +79,9 @@ export interface NeoTodoRunnerDeps {
   limits(): { running: number; perGroup: number };
 }
 
-export function decideHeldSend(open: boolean, status: string | undefined) {
+export function decideHeldSend(open: boolean, sending: boolean, status: string | undefined) {
   if (!open) return 'drop';
+  if (sending) return 'uncertain';
   return isBusyWork(status) || status === 'needs_you' ? 'wait' : 'send';
 }
 
@@ -971,6 +973,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     now: number
   ) => Promise<{ stall: string } | null | void>;
 
+  const releasing = new Set<string>();
   const releaseHeld = (superpipe({})('neo.todo.release-held-send') as PipelineAPI)
     .input(['held'])
     .pipe(
@@ -991,10 +994,17 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'live'
     )
     .pipe(
-      (owner: object | null, live: { status: string } | null) =>
-        decideHeldSend(!!owner, live?.status),
-      ['owner', 'live'],
+      (owner: object | null, { sending }: PendingWorkSend, live: { status: string } | null) =>
+        decideHeldSend(!!owner, sending, live?.status),
+      ['owner', 'held', 'live'],
       'action'
+    )
+    .pipe(
+      async (action: string, { key }: HeldWorkSend) => {
+        if (action === 'send') await sessions.held.setSending(key, Date.now());
+      },
+      ['action', 'held'],
+      'marked'
     )
     .pipe(
       async (
@@ -1015,8 +1025,16 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
               idempotencyKey: held.key,
             })
           );
-        if (sent && 'delivery' in sent && sent.delivery?.held) return;
+        if (sent && 'delivery' in sent && sent.delivery?.held)
+          return sessions.held.setSending(held.key, null);
         await sessions.held.remove(held.key);
+        if (owner && action === 'uncertain')
+          await deps.tell(
+            owner.ask,
+            owner.todo,
+            'Sending a held message for this todo was interrupted, so it may not have reached its worker. Check the worker before sending it again.',
+            `held-send-uncertain:${held.key}`
+          );
         if (owner && sent && 'failure' in sent)
           await deps.tell(
             owner.ask,
@@ -1028,7 +1046,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       ['action', 'held', 'owner'],
       'released'
     )
-    .endAsync('released') as (held: HeldWorkSend) => Promise<void>;
+    .endAsync('released') as (held: PendingWorkSend) => Promise<void>;
 
   const remindTodo = (superpipe({})('neo.todo.remind') as PipelineAPI)
     .input(['claim', 'now'])
@@ -1473,8 +1491,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           warn('Stalled todo rescue pending', error)
         );
       }
-      for (const held of sessions.held.nextPerWorker())
-        await releaseHeld(held).catch((error) => warn('Held send pending', error));
+      for (const held of sessions.held.nextPerWorker()) {
+        if (releasing.has(held.key)) continue;
+        releasing.add(held.key);
+        await releaseHeld(held)
+          .catch((error) => warn('Held send pending', error))
+          .finally(() => releasing.delete(held.key));
+      }
       await fill().catch((error) => warn('Queued todo start pending', error));
       await sessions
         .read('queueFacts')

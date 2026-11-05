@@ -26,6 +26,16 @@ export const removeWorkSend = defineDbOp({
   },
 });
 
+export const setWorkSendSending = defineDbOp({
+  name: 'work.heldSend.sending',
+  mode: 'write',
+  run: (db: Database, { key, at }: { key: string; at: number | null }): void => {
+    db.prepare('UPDATE work_held_sends SET sending_at = ? WHERE key = ?').run(at, key);
+  },
+});
+
+export type PendingWorkSend = HeldWorkSend & { sending: boolean };
+
 export class WorkHeldSendRepository {
   constructor(private readonly db: Database) {}
 
@@ -37,12 +47,20 @@ export class WorkHeldSendRepository {
     return gatewayFor(this.db).run(removeWorkSend, key);
   }
 
-  nextPerWorker(): HeldWorkSend[] {
+  setSending(key: string, at: number | null): Promise<void> {
+    return gatewayFor(this.db).run(setWorkSendSending, { key, at });
+  }
+
+  nextPerWorker(): PendingWorkSend[] {
     const rows = this.db
-      .prepare(`SELECT key, todo_id AS todoId, ref, message FROM work_held_sends
-        ORDER BY held_at, rowid`)
-      .all() as (Omit<HeldWorkSend, 'ref'> & { ref: string })[];
+      .prepare(`SELECT key, todo_id AS todoId, ref, message, sending_at AS sendingAt
+        FROM work_held_sends ORDER BY held_at, rowid`)
+      .all() as (Omit<HeldWorkSend, 'ref'> & { ref: string; sendingAt: number | null })[];
     const next = new Map(rows.toReversed().map((row) => [row.ref, row]));
-    return [...next.values()].reverse().map((row) => ({ ...row, ref: JSON.parse(row.ref) }));
+    return [...next.values()].reverse().map(({ sendingAt, ...row }) => ({
+      ...row,
+      ref: JSON.parse(row.ref),
+      sending: sendingAt !== null,
+    }));
   }
 }
