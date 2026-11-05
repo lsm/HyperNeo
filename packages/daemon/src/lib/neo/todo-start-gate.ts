@@ -1,4 +1,4 @@
-import type { NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoTodoPatch } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { neoStartQuestionTitle } from './start-question.ts';
 import {
@@ -80,8 +80,30 @@ export const neoStartCardText = (ids: readonly string[], family: readonly NeoTod
     ...ids.flatMap((id) => cancellationLine(family, id)),
   ].join('\n');
 
-export function planNeoStartCardPrune(question: NeoQuestion, family: readonly NeoTodo[]) {
-  const listed = question.startTodos ?? [];
+export type NeoQuestionPrune =
+  | { retire: string }
+  | {
+      retire?: undefined;
+      kept: string[];
+      text: string;
+      state: NeoQuestion['state'];
+      retiredReason: string | null;
+      released: NeoTodo[];
+    };
+
+export function planNeoQuestionPrune(
+  question: NeoQuestion,
+  family: readonly NeoTodo[]
+): { value: NeoQuestionPrune } | { reason: 'unchanged' } {
+  const active = family.some(
+    (todo) =>
+      todo.id === question.todoId &&
+      todo.askId === question.askId &&
+      !['done', 'removed'].includes(todo.state)
+  );
+  if (question.todoId && !active) return { value: { retire: 'todo no longer active' } };
+  if (question.kind !== 'start' || !question.startTodos) return { reason: 'unchanged' };
+  const listed = question.startTodos;
   const kept = listed.filter((id) => {
     const todo = family.find((item) => item.id === id);
     return todo?.askId === question.askId && neoTodoOnStartCard(todo, family);
@@ -90,17 +112,33 @@ export function planNeoStartCardPrune(question: NeoQuestion, family: readonly Ne
   const same =
     kept.length === listed.length &&
     (text === question.text || !kept.some((id) => neoTodoCancelledDependencies(family, id).length));
-  return same ? null : { kept, text, dropped: listed.filter((id) => !kept.includes(id)) };
+  if (same) return { reason: 'unchanged' };
+  return {
+    value: {
+      kept,
+      text: kept.length ? text : question.text,
+      state: kept.length ? 'open' : 'retired',
+      retiredReason: kept.length ? null : 'nothing left to start',
+      released: family.filter(
+        (todo) =>
+          listed.includes(todo.id) &&
+          !kept.includes(todo.id) &&
+          !!todo.approvedAt &&
+          todo.blockedBy === 'question'
+      ),
+    },
+  };
 }
 
 export const neoTodosAwaitingCancellationCard = (
   family: readonly NeoTodo[],
-  askId: string,
+  ask: NeoAsk | null,
   questions: readonly NeoQuestion[]
 ) =>
   family.filter(
     (todo) =>
-      todo.askId === askId &&
+      ask?.status === 'open' &&
+      todo.askId === ask.id &&
       neoTodoCancellationPending(todo, family) &&
       !questions.some((q) => q.state === 'open' && q.startTodos?.includes(todo.id))
   );
@@ -137,4 +175,30 @@ export function planNeoStartAnswer(
         nextAction: 'The human releases it.',
       }
     : { state: 'todo', approvedAt: todo.approvedAt ?? now };
+}
+
+export function planNeoStartRelease(
+  question: NeoQuestion,
+  family: readonly NeoTodo[],
+  questions: readonly NeoQuestion[],
+  ticked: readonly string[] | undefined,
+  withdrawn: string | undefined,
+  now: number
+) {
+  const waiting = questions
+    .filter((other) => other.kind === 'start' && other.state === 'open')
+    .flatMap((other) => other.startTodos ?? []);
+  const writes: { todo: NeoTodo; patch: NeoTodoPatch }[] = [];
+  let current = family;
+  for (const id of question.startTodos ?? []) {
+    const todo = current.find((item) => item.id === id);
+    const patch =
+      todo && !waiting.includes(id)
+        ? planNeoStartAnswer(todo, current, ticked, withdrawn, now)
+        : null;
+    if (!todo || !patch) continue;
+    writes.push({ todo, patch });
+    current = current.map((item) => (item.id === id ? { ...item, ...patch } : item));
+  }
+  return writes;
 }

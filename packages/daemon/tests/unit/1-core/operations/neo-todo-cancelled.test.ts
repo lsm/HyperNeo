@@ -650,4 +650,28 @@ describe('cancelled prerequisites', () => {
       db.close();
     }
   });
+
+  test('moving an approved step to another ask frees it from the card it left', async () => {
+    const { db, store, invoke, step, work } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Moved out',
+        request: 'Finish A before D.',
+        todos: [step('A', []), { ...step('D'), ...work }],
+      });
+      const other = await invoke('neo.ask.open', {
+        title: 'Elsewhere',
+        request: 'Other work.',
+        todos: [step('Z', [])],
+      });
+      const [a, d] = opened.todos;
+      store.approveTodo(store.getTodo(d.id)!, 1);
+      await invoke('neo.todo.remove', { todoId: a.id, reason: 'Cancelled by the human.' });
+      expect(store.getTodo(d.id)).toMatchObject({ state: 'blocked', blockedBy: 'question' });
+      store.moveTodo(store.getTodo(d.id)!, other.todos[0].askId, 'synthetic/elsewhere', 2);
+      expect(store.getTodo(d.id)).toMatchObject({ state: 'todo', blockedBy: null });
+    } finally {
+      db.close();
+    }
+  });
 });
