@@ -25,8 +25,10 @@ the retained log for database-close errors; a flag before a cleanup failure is
 not a pass. Close the gateway before the database and let the wrapper remove
 synthetic data after process exit.
 
-This builds the receipt assertions from the legacy inline writer block; runner
-wiring follows separately. It does not prove its separate lock-holder schedule,
+The Bun native entry point now invokes this probe last through proof-run.sh.
+Its failure must retain its status/evidence and withhold the runner's success
+marker. The runner fixture covers that final-case failure and fresh-data cleanup.
+This covers receipt assertions from the legacy inline writer block, not its separate lock-holder schedule,
 outbox, todo or subsequent progress/needs-you contracts. Existing schema,
 SQLite and gateway modules are reused without a new transitive ownership or
 performance audit. Keep the Deno runner and required CI enabled until all

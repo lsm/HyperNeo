@@ -31,7 +31,11 @@ helpers. Preserve their source filters, snapshots, cursors, caller clocks,
 rollback, receipt ordering, timer ownership and no-replay assertions. GitHub is
 synthetic throughout; no remote subscription or webhook is changed.
 After those cases, the standalone Bun shared-reader and gateway probes add two
-inline-contract replacement cases; with boot first, there are 144 total. For the shared reader, require complete turn
+inline-contract replacement cases. The event/job probe follows them as the final
+case; with boot first, there are 145 total. Require its duplicate event identity,
+retained feed body, distinct cleanup cutoffs/failed-job payload, full single-claim
+payload and resource closure; see [bun-event-job-probe.md](bun-event-job-probe.md).
+For the shared reader, require complete turn
 text/count, Codex snapshot and queued-error isolation flags plus reader/database
 closure. See
 [bun-shared-reader-probe.md](bun-shared-reader-probe.md) for that contract.
@@ -55,9 +59,10 @@ Together they exercise both platform decisions without depending on the host.
 The native smoke fixture exercises the real shell entry point and wrapper with synthetic child executables: Linux
 portability, explicit Bun selection despite an inherited Deno choice, quoted
 paths, mode and directory arguments, Darwin resource refusal and early exit on
-early, matrix-interior or late failures, including the first boot case, artifact publication, unwatch timer and the shared-reader and final gateway probes. Pin the legacy-relative invocation order and modes.
+early, matrix-interior or late failures, including the first boot case, artifact publication, unwatch timer, shared-reader and gateway probes, and final event/job probe. Pin the legacy-relative invocation order and modes.
 Keep failure status/evidence and prove later cases do not run, including the
-remaining variants after a failed sweep case.
+remaining variants after a failed sweep case. A final event/job failure must also
+retain its evidence/status and suppress the runner success marker.
 These fixture executables do not establish native helper parity.
 
 For native proof run the entry point with the real Bun binary, scrubbed parent
