@@ -23,10 +23,14 @@ The final batch adds 33 extension-configuration and GitHub settings/reader
 helpers. Preserve their source filters, snapshots, cursors, caller clocks,
 rollback, receipt ordering, timer ownership and no-replay assertions. GitHub is
 synthetic throughout; no remote subscription or webhook is changed.
-After those cases, the standalone Bun shared-reader probe adds one inline-contract
-replacement case, for 142 total. Require its complete turn text/count, Codex
-snapshot and queued-error isolation flags plus reader/database closure. See
+After those cases, the standalone Bun shared-reader and gateway probes add two
+inline-contract replacement cases, for 143 total. For the shared reader, require complete turn
+text/count, Codex snapshot and queued-error isolation flags plus reader/database
+closure. See
 [bun-shared-reader-probe.md](bun-shared-reader-probe.md) for that contract.
+The gateway probe requires two concurrent writes to retain count two, the exact
+unknown-read registration error and gateway/database closure; see
+[bun-gateway-probe.md](bun-gateway-probe.md).
 This covers the 117-helper inventory and its legacy sweep modes, but not all
 inline boot/database probes. Keep the Deno runner and required CI job enabled
 until those contracts and the replacement CI gate also prove parity.
@@ -44,7 +48,7 @@ Together they exercise both platform decisions without depending on the host.
 The native smoke fixture exercises the real shell entry point and wrapper with synthetic child executables: Linux
 portability, explicit Bun selection despite an inherited Deno choice, quoted
 paths, mode and directory arguments, Darwin resource refusal and early exit on
-early, matrix-interior or late failures, including artifact publication, unwatch timer and the final shared-reader probe. Pin the legacy-relative invocation order and modes.
+early, matrix-interior or late failures, including artifact publication, unwatch timer and the shared-reader and final gateway probes. Pin the legacy-relative invocation order and modes.
 Keep failure status/evidence and prove later cases do not run, including the
 remaining variants after a failed sweep case.
 These fixture executables do not establish native helper parity.

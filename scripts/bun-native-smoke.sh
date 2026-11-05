@@ -127,4 +127,5 @@ bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-github-timer-reader" "$PROOFS/lane
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-github-unwatch-timer" "$PROOFS/lane-c-github-unwatch-timer.ts"
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-github-watch-timer" "$PROOFS/lane-c-github-watch-timer.ts"
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/bun-shared-reader-probe" "$REPO_ROOT/scripts/bun-shared-reader-probe.ts"
-echo 'Bun native smoke: registered batches passed (117 legacy helpers, 142 proof cases)'
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/bun-gateway-probe" "$REPO_ROOT/scripts/bun-gateway-probe.ts"
+echo 'Bun native smoke: registered batches passed (117 legacy helpers, 143 proof cases)'
