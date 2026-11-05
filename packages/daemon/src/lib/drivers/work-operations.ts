@@ -1109,7 +1109,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.queue',
       description:
-        'Queue next-turn peer input by ref. A Neo send must name an open todo of this session or set notice: true, otherwise it is refused unsent with todo_required. Returns an opaque queuedSubmissionId when supported; delivered false/unconfirmed does not prove execution. Only Neo or the user can change work on another daemon. Unsupported adapters return a factual rejection with no fallback.',
+        'Queue next-turn peer input by ref. A todo send to a busy worker returns held: true and goes when its turn ends; if its status cannot be read it is refused unsent. Space tasks have no turns and take it at once. A Neo send must name an open todo of this session or set notice: true, otherwise it is refused unsent with todo_required. Returns an opaque queuedSubmissionId when supported; delivered false/unconfirmed does not prove execution. Only Neo or the user can change work on another daemon. Unsupported adapters return a factual rejection with no fallback.',
       inputSchema: SendWorkInputSchema,
       resultSchema: SendWorkResultSchema,
       policy: { safetyClass: 'mutate' },
