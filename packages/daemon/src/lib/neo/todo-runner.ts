@@ -1025,8 +1025,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'action'
     )
     .pipe(
-      async (action: string, { key }: HeldWorkSend) => {
-        if (action === 'send') await sessions.held.setSending(key, Date.now());
+      async (action: string, held: HeldWorkSend) => {
+        if (action === 'send') await sessions.held.setSending(held, Date.now());
       },
       ['action', 'held'],
       'marked'
@@ -1051,22 +1051,22 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
             })
           );
         if (sent && 'delivery' in sent && sent.delivery?.held)
-          return sessions.held.setSending(held.key, null);
+          return sessions.held.setSending(held, null);
         if (owner && action in HELD_SEND_NOTES)
           await deps.tell(
             owner.ask,
             owner.todo,
             HELD_SEND_NOTES[action],
-            `held-send-${action}:${held.key}`
+            `held-send-${action}:${held.ref.id}:${held.key}`
           );
         if (owner && sent && 'failure' in sent)
           await deps.tell(
             owner.ask,
             owner.todo,
             `A held send for this todo could not reach its worker: ${sent.failure}`,
-            `held-send-failed:${held.key}`
+            `held-send-failed:${held.ref.id}:${held.key}`
           );
-        await sessions.held.remove(held.key);
+        await sessions.held.remove(held);
       },
       ['action', 'held', 'owner'],
       'released'
@@ -1095,7 +1095,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       async (claim: NudgeClaim, sent: OperationOutcome | null) => {
         const reply = sent?.kind === 'completed' && (sent.value as { value?: { held?: boolean } });
         if (!reply || !reply.value?.held) return;
-        await sessions.held.remove(remindKey(claim));
+        await sessions.held.remove({ key: remindKey(claim), ref: claim.ref });
         await sessions.write(
           'finishNudge',
           claim.todo.id,
@@ -1537,11 +1537,12 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         );
       }
       for (const held of sessions.held.nextPerWorker()) {
-        if (releasing.has(held.key)) continue;
-        releasing.add(held.key);
+        const id = `${JSON.stringify(held.ref)}:${held.key}`;
+        if (releasing.has(id)) continue;
+        releasing.add(id);
         await releaseHeld(held)
           .catch((error) => warn('Held send pending', error))
-          .finally(() => releasing.delete(held.key));
+          .finally(() => releasing.delete(id));
       }
       await fill().catch((error) => warn('Queued todo start pending', error));
       await sessions
