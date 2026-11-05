@@ -169,7 +169,7 @@ export function NeoSessionPane({
       role={overlay ? 'dialog' : undefined}
       aria-modal={overlay ? true : undefined}
       class="neo-session-pane flex flex-col outline-none"
-      aria-label={t('session.chat', { title })}
+      aria-label={t('session.chat', { title: label })}
     >
       {overlay && (
         <header class="flex shrink-0 items-center gap-3 border-b border-line px-3 py-2">

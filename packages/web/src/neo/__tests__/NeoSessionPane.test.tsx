@@ -79,6 +79,7 @@ describe('NeoSessionPane title', () => {
       <NeoSessionPane sessionId="s3" title="HyperNeo · s3" label="Todo worker" onClose={() => {}} />
     );
     expect(screen.getByRole('heading', { name: 'Todo worker' })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Todo worker chat' })).toBeTruthy();
   });
 
   it('uses the daemon worker label only when no caller label was given', () => {
