@@ -103,7 +103,7 @@ function platformLibraryCandidates(): string[] {
   ];
 }
 
-async function loadSafeFsBackend(allowDeno = false): Promise<SafeFsBackend> {
+async function loadSafeFsBackend(): Promise<SafeFsBackend> {
   const candidates = platformLibraryCandidates();
   if (candidates.length === 0) {
     throw new Error(`ACP safe filesystem operations are unavailable on ${process.platform}`);
@@ -111,43 +111,7 @@ async function loadSafeFsBackend(allowDeno = false): Promise<SafeFsBackend> {
 
   try {
     const moduleName = ['bun', 'ffi'].join(':');
-    const deno = Reflect.get(globalThis, 'Deno') as {
-      dlopen: (
-        path: string,
-        definitions: Record<string, { parameters: unknown[]; result: unknown }>
-      ) => { symbols: LibcSymbols };
-      UnsafePointerView: new (
-        pointer: unknown
-      ) => { getArrayBuffer: (length: number, offset: number) => ArrayBuffer };
-    };
-    const ffi: BunFfiModule =
-      allowDeno && deno
-        ? {
-            FFIType: {
-              i32: 'i32',
-              u32: 'u32',
-              u64: 'u64',
-              i64: 'i64',
-              cstring: 'buffer',
-              ptr: 'buffer',
-            },
-            dlopen: (path, definitions) =>
-              deno.dlopen(
-                path,
-                Object.fromEntries(
-                  Object.entries(definitions).map(([key, value]) => [
-                    key,
-                    {
-                      parameters: value.args,
-                      result: value.returns === 'buffer' ? 'pointer' : value.returns,
-                    },
-                  ])
-                )
-              ),
-            toArrayBuffer: (pointer, offset, length) =>
-              new deno.UnsafePointerView(pointer).getArrayBuffer(length, offset),
-          }
-        : ((await import(moduleName)) as unknown as BunFfiModule);
+    const ffi = (await import(moduleName)) as unknown as BunFfiModule;
     const errnoSymbol = process.platform === 'darwin' ? '__error' : '__errno_location';
     const definitions = {
       [errnoSymbol]: { args: [], returns: ffi.FFIType.ptr },
@@ -218,7 +182,7 @@ function getSafeFsBackend(): Promise<SafeFsBackend> {
 
 let writerBackend: Promise<SafeFsBackend> | undefined;
 function getWriterBackend() {
-  writerBackend ??= loadSafeFsBackend(true);
+  writerBackend ??= loadSafeFsBackend();
   return writerBackend;
 }
 
@@ -293,15 +257,13 @@ export function decodeStatMode(statBuf: Buffer, modeOffset: number, modeWidth: 2
 }
 
 function replacementMode(symbols: LibcSymbols, directoryFd: number, fileName: string): number {
-  let fileFd = process.versions.bun
-    ? symbols.openat(
-        directoryFd,
-        cString(fileName),
-        constants.O_WRONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
-        0
-      )
-    : -1;
-  if (process.versions.bun && fileFd < 0) {
+  let fileFd = symbols.openat(
+    directoryFd,
+    cString(fileName),
+    constants.O_WRONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+    0
+  );
+  if (fileFd < 0) {
     fileFd = symbols.openat(
       directoryFd,
       cString(fileName),
@@ -324,9 +286,7 @@ function replacementMode(symbols: LibcSymbols, directoryFd: number, fileName: st
   }
   const modeOffset =
     process.platform === 'darwin'
-      ? process.versions.bun
-        ? getDarwinStatModeOffset(symbols, directoryFd)
-        : 4
+      ? getDarwinStatModeOffset(symbols, directoryFd)
       : STAT_MODE_OFFSET;
   const modeWidth = process.platform === 'darwin' ? 2 : 4;
   return decodeStatMode(statBuf, modeOffset, modeWidth);

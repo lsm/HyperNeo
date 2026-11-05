@@ -130,7 +130,7 @@ export interface EnvironmentSettings {
   cwd?: string;
   additionalDirectories?: string[];
   env?: Record<string, string>;
-  executable?: 'bun' | 'deno' | 'node';
+  executable?: 'bun' | 'node';
   executableArgs?: string[];
   pathToClaudeCodeExecutable?: string;
 }
