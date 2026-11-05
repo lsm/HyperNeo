@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { runMigration63 } from '../../../../src/storage/schema/migrations';
-import { slugify } from '../../../../src/lib/space/slug';
+import { slugify } from '../../../../src/lib/agents/slug';
 
 function createTestDb(): InstanceType<typeof Database> {
   const db = new Database(':memory:');

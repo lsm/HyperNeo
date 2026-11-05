@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { DEFAULT_SEED_AGENT_TEMPLATE_KEY } from '@hyperneo/shared';
-import { RESERVED_SPACE_AGENT_HANDLES } from '../../../../src/lib/space/slug';
+import { RESERVED_SPACE_AGENT_HANDLES } from '../../../../src/lib/agents/slug';
 import {
   getLongHorizonAgentTemplates,
   isLegacyWorkerTemplateKey,
