@@ -88,8 +88,8 @@ export function decideHeldSend(
   status: string | undefined
 ) {
   if (!open) return 'drop';
-  if (moved) return 'moved';
   if (sending) return 'uncertain';
+  if (moved) return 'moved';
   return status && HELD_SEND_READY.includes(status) ? 'send' : 'wait';
 }
 
