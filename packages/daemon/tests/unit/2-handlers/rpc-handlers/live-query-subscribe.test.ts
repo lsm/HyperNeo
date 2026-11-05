@@ -883,6 +883,28 @@ describe('setupLiveQueryHandlers', () => {
   });
 });
 
+describe('setupLiveQueryHandlers with Space tables absent', () => {
+  test('sets up and rejects Space-scoped subscriptions as not found', async () => {
+    const db = new BunDatabase(':memory:');
+    createTables(db);
+    const engine = new LiveQueryEngine(
+      db,
+      createReactiveDatabase({ getDatabase: () => db } as never)
+    );
+    const setup = createMockSetup();
+    setupLiveQueryHandlers(setup.hub, engine, db);
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'spaceWorkspaces.bySpace',
+        params: ['space-1'],
+        subscriptionId: 'sub-off',
+      })
+    ).rejects.toThrow('Unauthorized: space "space-1" not found');
+    engine.dispose();
+    db.close();
+  });
+});
+
 describe('setupLiveQueryHandlers: per-client subscription cap', () => {
   let db: BunDatabase;
   let reactiveDb: ReactiveDatabase;

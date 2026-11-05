@@ -31,9 +31,9 @@ function units(file) {
   return found;
 }
 const contracts = [
-  ['countSpacesWithPollingIntent', 'countGitHubSpacesWithPollingIntent', 'a91de00ca25f35346a03427756c0aebfceed3c08817e4370fcad24e25429a3cc', false],
+  ['countSpacesWithPollingIntent', 'countGitHubSpacesWithPollingIntent', 'bd97191ac0706b63a10525de02fecd6aae367e4b24e6457c64ee01df4b1b9016', false],
   ['listPollingRepos', 'listGitHubPollingRepos', '3b410d5c508a4f9615be4c10928e5471f785795bc0beb8b2c8893bd78c8c9bfc', true],
-  ['listAllPollingConfiguredRepos', 'listGitHubPollingConfiguredRepos', '3c0f2d76da092b6d31898271dcf25b7c1e234b4f33b0bb6d241df9448d1e2c5b', true],
+  ['listAllPollingConfiguredRepos', 'listGitHubPollingConfiguredRepos', '398040635a0c60d1fd726ecde0d286347edf18f6bcdeafd6dbb4afb95e8cb5ab', true],
 ];
 const methods = units(repo), helpers = units(helper), names = contracts.map(row => row[0]);
 const untouched = methods.filter(row => !names.includes(row.name)).map(row => [row.name, row.sha256]);

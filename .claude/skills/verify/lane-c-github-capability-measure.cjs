@@ -23,7 +23,7 @@ const untouched = all.filter(row => !selectedNames.includes(row.name)).map(row =
 if (hash(JSON.stringify(untouched)) !== 'e101f8630e27a2ce806f8d64006d09798772a56c9f69d546e2c0ec61959322e1') throw Error('Other extension code changed');
 const specs = [
   ['github-polling-usage-read.ts', 47, '84752c5c336df50f98a7941c53eb93c343ac0ff443e7c669fc52566a33145289'],
-  ['github-polling-repos-read.ts', 53, '91cf741b3bde862ff72018712a04f4672e87497f82c8810e0a60449ab93630f8'],
+  ['github-polling-repos-read.ts', 56, '39618e09a7cd70b7325cf31b205eb221f338ebe58ff6ea50bebef49a22b28d06'],
   ['github-watched-repos-read.ts', 44, '4c5945ea131459249bb302cdb27ee6a014fc6aadd5d15f9d402b3226972e6a95'],
 ];
 const data = specs.map(([name, lines, expected]) => {

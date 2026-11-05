@@ -143,10 +143,10 @@ describe('GitHub capability callback reader wiring', () => {
         { cwd: fileURLToPath(new URL('../../../../../../', import.meta.url)) }
       );
       expect(JSON.parse(readFileSync(output, 'utf8'))).toMatchObject({
-        fresh: 175,
+        fresh: 178,
         bridgeLines: 10,
         smokeLines: 1,
-        knownTotal: 186,
+        knownTotal: 189,
         excludedDataLines: 0,
       });
     } finally {

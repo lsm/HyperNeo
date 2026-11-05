@@ -144,7 +144,7 @@ describe('Public watch timer callback reader wiring', () => {
         lightweight: true,
       })
     ).polling.active;
-  test('approved two-module boundary pins complete files with 167 fresh and 264 known lines', () => {
+  test('approved two-module boundary pins complete files with 167 fresh and 267 known lines', () => {
     const dir = mkdtempSync(join(tmpdir(), 'watch-reader-measure-'));
     try {
       const output = join(dir, 'boundary.json');
@@ -156,14 +156,14 @@ describe('Public watch timer callback reader wiring', () => {
       const report = JSON.parse(readFileSync(output, 'utf8'));
       expect(report).toMatchObject({
         fresh: 167,
-        excludedLines: 97,
-        knownTotal: 264,
+        excludedLines: 100,
+        knownTotal: 267,
         caller: { name: 'space.github.watchRepo', lines: 92, onlyAwaitedTimerCallChanged: true },
       });
       expect(
         report.data.filter((row: { auditedStable: boolean }) => row.auditedStable)
       ).toMatchObject([
-        { lines: 53, sha256: '91cf741b3bde862ff72018712a04f4672e87497f82c8810e0a60449ab93630f8' },
+        { lines: 56, sha256: '39618e09a7cd70b7325cf31b205eb221f338ebe58ff6ea50bebef49a22b28d06' },
         { lines: 44, sha256: '4c5945ea131459249bb302cdb27ee6a014fc6aadd5d15f9d402b3226972e6a95' },
       ]);
     } finally {
