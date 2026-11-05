@@ -180,7 +180,9 @@ const cases: Record<string, (marker: string) => Promise<Record<string, unknown>>
     hang = { marker, until: Date.now() + 6_200 };
     await send(marker);
     await answered(marker, 30_000);
-    return { requestsSeen: seen.filter((body) => body.includes(marker)).length };
+    const recovered = served.findLast((body) => body.includes(marker)) ?? '';
+    const userTurns = (JSON.parse(recovered) as { messages: { role: string; content: unknown }[] }).messages.filter((message) => message.role === 'user' && JSON.stringify(message.content).includes(marker));
+    return { requestsSeen: seen.filter((body) => body.includes(marker)).length, copiesInRecoveredRequest: userTurns.length };
   },
   async parked_deliveries(marker) {
     await latch();
