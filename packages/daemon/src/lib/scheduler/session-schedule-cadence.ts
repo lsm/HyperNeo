@@ -1,5 +1,5 @@
 import type { SessionScheduleCadence } from '../../storage/repositories/session-schedule-repository.ts';
-import { getNextRunAt } from '../schedule/cron-utils.ts';
+import { getNextRunAt } from './cron-utils.ts';
 
 export function nextScheduleRun(cadence: SessionScheduleCadence, after: number): number | null {
   return cadence.kind === 'every'

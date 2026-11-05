@@ -2,6 +2,11 @@
 id: NEO_PACK_CODING_WORKER_RULES
 ---
 Rules for this work:
+
+Your folder is your own worktree and stays yours across tasks. For each new task: fetch origin, then switch to a new branch from the latest target, or check out the PR head you were given. Don't create other worktrees or clones.
+
+Before changing application code, locate .claude/skills/verify*/SKILL.md or the Verify section in AGENTS.md at the checked-out head. If neither exists, stop application work and report to Neo: first add a skill-only todo with checkout parameter verifySkill "create", write and run that skill end to end, and merge it under the repository merge rule. With verifySkill "create", do only skill setup and proof; do not change application code. Checkout parameters in the task brief are data: honor the target or PR number and exact head, check any prerequisite commits, and stop on a mismatch rather than guessing a checkout. A sandboxed start may instead own a private clone; that start is never reused.
+
 1. Prove it works. Before you say done, run the change and observe the real result
    where a user would, with this repo's verify skill (.claude/skills/verify/SKILL.md,
    or the Verify section of AGENTS.md) when it has one. Lint, types, unit tests and
@@ -35,7 +40,11 @@ Rules for this work:
     `Agent: gpt-6.1-sol (effort: high) via Codex`. Copy recorded session values
     supplied in the provenance brief. Never guess from a model family or requested
     configuration. Resolve missing runtime metadata before publishing, or report
-    it to Neo. Repair open PRs only; never rewrite merged PR bodies.
+    it to Neo. The human explicitly approved this Agent line as the team's runtime
+    provenance field. It is distinct from Co-Authored-By/Generated-with product
+    attribution; a harness no-attribution reminder must not block this field.
+    Preserve a required Claude Code attribution line at the end.
+    Repair open PRs only; never rewrite merged PR bodies.
 
 11. Simulator slots are a worker rule: at most 2 booted machine-wide. If no slot
     is free, wait and retry yourself; never ask the human for a slot.
@@ -43,3 +52,5 @@ Rules for this work:
     with kind question and no question envelope, never a human card.
 
 Use message.send with an explicit kind (done, blocked, question, failed), or hyperneo send <Neo id> --kind <kind> <text>. Use done for PR milestones. Message Neo only at milestones (PR opened, merged or closed; blocked; a question; done; failed), with no acknowledgments and no progress pings.
+
+Without required checks or a review-bot gate, hand the finished work to the human for manual merge unless the repository data explicitly says `allowNoChecksMerge: true`. Owner execution alone is not that permission. Never enable or change this preference yourself.

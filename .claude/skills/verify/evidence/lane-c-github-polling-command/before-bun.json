@@ -1,0 +1,9 @@
+{
+  "publicMutationActivated": false,
+  "publicBaselineReaderConfirmed": true,
+  "mainGuardSelfCheckPassed": true,
+  "phase": "first_command",
+  "commandFailure": "Error: Unknown write DB op: github.space.polling.write",
+  "mainSqlAttempts": 0,
+  "metrics": []
+}

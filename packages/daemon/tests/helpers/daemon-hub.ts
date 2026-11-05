@@ -199,10 +199,6 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
     };
   };
 
-  'github.inboxItemDismissed': {
-    sessionId: string;
-    itemId: string;
-  };
   'github.filterConfigUpdated': {
     sessionId: string;
     repository?: string;
@@ -222,16 +218,10 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
     eventId: string;
     securityResult: import('@hyperneo/shared').SecurityCheckResult;
   };
-  'github.inboxItemAdded': {
-    sessionId: string;
-    item: import('@hyperneo/shared').InboxItem;
-    reason: string;
-  };
   'github.eventError': {
     sessionId: string;
     eventId: string;
     error: string;
-    inboxItemId: string;
   };
 
   'mcp.registry.changed': {

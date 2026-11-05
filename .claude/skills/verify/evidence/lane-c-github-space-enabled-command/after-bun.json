@@ -1,0 +1,46 @@
+{
+  "publicMutationActivated": false,
+  "publicBaselineReaderConfirmed": true,
+  "mainGuardSelfCheckPassed": true,
+  "phase": "complete",
+  "firstCommandMs": 0.24783300000001418,
+  "atomicReceiptVisibleThroughPublicRpc": true,
+  "creationAndSharedSuppliedTimesPreserved": true,
+  "otherSpaceAndConstructorBackfillUntouched": true,
+  "snapshotFailureRollsBackSourceWatchedAndConfig": true,
+  "cursorFailureRollsBackSourceAndWatched": true,
+  "orphanAndInvalidIdLeaveNoPartialState": true,
+  "healthWhileWriterHeldMs": 1.5721670000000358,
+  "deliberatelyHeldWriterMs": 1246.7675,
+  "ackWaitsForAtomicCommit": true,
+  "admissionFailureDoesNotWriteOrReplay": true,
+  "actualCommittedReplyLossDoesNotReplay": true,
+  "maxLoopLagMs": 3.0275830000000497,
+  "commandPosts": 9,
+  "rssBytes": 181257320,
+  "walBytes": 0,
+  "pass": true,
+  "mainSqlAttempts": 0,
+  "metrics": [
+    {
+      "roundTripMs": 0.22224999999991724,
+      "requestBytes": 64,
+      "replyBytes": 1053
+    },
+    {
+      "roundTripMs": 0.09375,
+      "requestBytes": 65,
+      "replyBytes": 1056
+    },
+    {
+      "roundTripMs": 1246.357333,
+      "requestBytes": 64,
+      "replyBytes": 1053
+    },
+    {
+      "roundTripMs": 4.815209000000323,
+      "requestBytes": 65,
+      "replyBytes": 1056
+    }
+  ]
+}

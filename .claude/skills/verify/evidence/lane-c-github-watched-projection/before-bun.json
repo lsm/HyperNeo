@@ -1,0 +1,206 @@
+{
+  "publicRpcCharacterization": {
+    "replies": [
+      {
+        "spaceId": "synthetic-source-enabled",
+        "source": "github",
+        "enabled": true
+      },
+      {
+        "spaceId": "synthetic-source-enabled",
+        "source": "github",
+        "enabled": false
+      }
+    ],
+    "mainStatementRuns": 4,
+    "watchedRows": 2,
+    "sourceWatchedAndSnapshotStayAligned": true,
+    "creationAndSharedCommandTimesPreserved": true
+  },
+  "publicCompleteProjectionPreserved": true,
+  "publicSnapshots": [
+    {
+      "publicWatched": [
+        {
+          "id": "ddd78234-8210-44d8-9a24-12352f3a8bc3",
+          "spaceId": "synthetic-source-enabled",
+          "owner": "synthetic-owner",
+          "repo": "repo-one",
+          "enabled": true,
+          "webhookEnabled": false,
+          "pollingEnabled": false,
+          "webhookSecret": null,
+          "webhookRemoteId": null,
+          "webhookUrl": null,
+          "webhookAutoRegistered": false,
+          "webhookActive": null,
+          "webhookLastCheckedAt": null,
+          "webhookLastError": null,
+          "webhookConfiguredAt": null,
+          "lastWebhookAt": null,
+          "lastPollAt": null,
+          "pollCursor": null,
+          "createdAt": 1793254309264,
+          "updatedAt": 1793254309265
+        },
+        {
+          "id": "d79fde1e-027c-478d-903f-e60e61cfd2b9",
+          "spaceId": "synthetic-source-enabled",
+          "owner": "synthetic-owner",
+          "repo": "repo-two",
+          "enabled": true,
+          "webhookEnabled": false,
+          "pollingEnabled": false,
+          "webhookSecret": null,
+          "webhookRemoteId": null,
+          "webhookUrl": null,
+          "webhookAutoRegistered": false,
+          "webhookActive": null,
+          "webhookLastCheckedAt": null,
+          "webhookLastError": null,
+          "webhookConfiguredAt": null,
+          "lastWebhookAt": null,
+          "lastPollAt": null,
+          "pollCursor": null,
+          "createdAt": 1793254309265,
+          "updatedAt": 1793254309265
+        }
+      ],
+      "savedWatched": [
+        {
+          "id": "ddd78234-8210-44d8-9a24-12352f3a8bc3",
+          "owner": "synthetic-owner",
+          "repo": "repo-one",
+          "enabled": true,
+          "webhookEnabled": false,
+          "pollingEnabled": false,
+          "webhookSecret": null,
+          "webhookRemoteId": null,
+          "webhookUrl": null,
+          "webhookAutoRegistered": false,
+          "webhookActive": null,
+          "webhookLastCheckedAt": null,
+          "webhookLastError": null,
+          "webhookConfiguredAt": null,
+          "lastWebhookAt": null,
+          "lastPollAt": null,
+          "createdAt": 1793254309264,
+          "updatedAt": 1793254309265
+        },
+        {
+          "id": "d79fde1e-027c-478d-903f-e60e61cfd2b9",
+          "owner": "synthetic-owner",
+          "repo": "repo-two",
+          "enabled": true,
+          "webhookEnabled": false,
+          "pollingEnabled": false,
+          "webhookSecret": null,
+          "webhookRemoteId": null,
+          "webhookUrl": null,
+          "webhookAutoRegistered": false,
+          "webhookActive": null,
+          "webhookLastCheckedAt": null,
+          "webhookLastError": null,
+          "webhookConfiguredAt": null,
+          "lastWebhookAt": null,
+          "lastPollAt": null,
+          "createdAt": 1793254309265,
+          "updatedAt": 1793254309265
+        }
+      ]
+    },
+    {
+      "publicWatched": [
+        {
+          "id": "ddd78234-8210-44d8-9a24-12352f3a8bc3",
+          "spaceId": "synthetic-source-enabled",
+          "owner": "synthetic-owner",
+          "repo": "repo-one",
+          "enabled": false,
+          "webhookEnabled": false,
+          "pollingEnabled": false,
+          "webhookSecret": null,
+          "webhookRemoteId": null,
+          "webhookUrl": null,
+          "webhookAutoRegistered": false,
+          "webhookActive": null,
+          "webhookLastCheckedAt": null,
+          "webhookLastError": null,
+          "webhookConfiguredAt": null,
+          "lastWebhookAt": null,
+          "lastPollAt": null,
+          "pollCursor": null,
+          "createdAt": 1793254309264,
+          "updatedAt": 1793254309266
+        },
+        {
+          "id": "d79fde1e-027c-478d-903f-e60e61cfd2b9",
+          "spaceId": "synthetic-source-enabled",
+          "owner": "synthetic-owner",
+          "repo": "repo-two",
+          "enabled": false,
+          "webhookEnabled": false,
+          "pollingEnabled": false,
+          "webhookSecret": null,
+          "webhookRemoteId": null,
+          "webhookUrl": null,
+          "webhookAutoRegistered": false,
+          "webhookActive": null,
+          "webhookLastCheckedAt": null,
+          "webhookLastError": null,
+          "webhookConfiguredAt": null,
+          "lastWebhookAt": null,
+          "lastPollAt": null,
+          "pollCursor": null,
+          "createdAt": 1793254309265,
+          "updatedAt": 1793254309266
+        }
+      ],
+      "savedWatched": [
+        {
+          "id": "ddd78234-8210-44d8-9a24-12352f3a8bc3",
+          "owner": "synthetic-owner",
+          "repo": "repo-one",
+          "enabled": false,
+          "webhookEnabled": false,
+          "pollingEnabled": false,
+          "webhookSecret": null,
+          "webhookRemoteId": null,
+          "webhookUrl": null,
+          "webhookAutoRegistered": false,
+          "webhookActive": null,
+          "webhookLastCheckedAt": null,
+          "webhookLastError": null,
+          "webhookConfiguredAt": null,
+          "lastWebhookAt": null,
+          "lastPollAt": null,
+          "createdAt": 1793254309264,
+          "updatedAt": 1793254309266
+        },
+        {
+          "id": "d79fde1e-027c-478d-903f-e60e61cfd2b9",
+          "owner": "synthetic-owner",
+          "repo": "repo-two",
+          "enabled": false,
+          "webhookEnabled": false,
+          "pollingEnabled": false,
+          "webhookSecret": null,
+          "webhookRemoteId": null,
+          "webhookUrl": null,
+          "webhookAutoRegistered": false,
+          "webhookActive": null,
+          "webhookLastCheckedAt": null,
+          "webhookLastError": null,
+          "webhookConfiguredAt": null,
+          "lastWebhookAt": null,
+          "lastPollAt": null,
+          "createdAt": 1793254309265,
+          "updatedAt": 1793254309266
+        }
+      ]
+    }
+  ],
+  "mainThreadMovementClaim": false,
+  "expectedExitCode": 1,
+  "reason": "Actual Space RPC complete public/saved projection comparison passed before missing-helper assertion"
+}

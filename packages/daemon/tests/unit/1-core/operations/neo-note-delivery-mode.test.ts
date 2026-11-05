@@ -7,7 +7,7 @@ import {
   defineOperation,
 } from '../../../../src/lib/operations/registry.ts';
 import { wakeStalledAsks } from '../../../../src/lib/neo/stalled-asks.ts';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
 import {
   InternalEventBus,
   type DaemonInternalEventMap,
@@ -24,14 +24,27 @@ describe('Neo daemon notes', () => {
   let workerStatus: string;
   let turnEnds: { id: string; at: number; message: string; notify?: false }[];
   let reopen: () => void;
+  let sends: unknown[];
 
   beforeEach(async () => {
     db = await createTestDb();
     events = new InternalEventBus<DaemonInternalEventMap>();
     await db.createSession({ ...createTestSession(rootId), workspacePath: null });
     turnEnds = [];
+    sends = [];
     workerStatus = 'running';
     const registry = createOperationRegistry([
+      defineOperation({
+        name: 'work.send',
+        description: 'Synthetic worker send',
+        inputSchema: z.unknown(),
+        resultSchema: z.unknown(),
+        policy: { safetyClass: 'write' },
+        execute: async (input) => {
+          sends.push(input);
+          return { ok: true, value: { delivered: true } };
+        },
+      }),
       defineOperation({
         name: 'work.status',
         description: 'Synthetic worker status',
@@ -122,19 +135,24 @@ describe('Neo daemon notes', () => {
     );
   });
 
-  test.each(['wakeNeo', 'sendToRef'])('%s keeps structured PR events immediate', async (path) => {
-    if (path === 'wakeNeo') await service.wakeNeo('structured-pr', 'PR requires action.');
-    else
-      await service.sendToRef(
-        { adapter: 'hyperneo', id: rootId },
-        'structured-pr',
-        'PR requires action.'
-      );
+  test('wakeNeo keeps structured PR events immediate', async () => {
+    await service.wakeNeo('structured-pr', 'PR requires action.');
     expect(queued('structured-pr')).toEqual(['immediate']);
     const job = db
       .getJobQueueRepo()
       .listActiveByPayload('mailbox', { 'to.sessionId': rootId, messageUuid: 'structured-pr' })[0];
     expect((job.payload.message as { neoWakeEvent?: boolean }).neoWakeEvent).toBe(true);
+  });
+
+  test('sendToRef reaches a local HyperNeo worker through work.send', async () => {
+    const ref = { adapter: 'hyperneo', id: rootId };
+    expect(await service.sendToRef(ref, 'nudge-key', 'PR requires action.', 'todo')).toBe(true);
+    expect(await service.sendToRef(ref, 'notice-key', 'FYI')).toBe(true);
+    expect(sends).toEqual([
+      { ref, message: 'PR requires action.', idempotencyKey: 'nudge-key', todoId: 'todo' },
+      { ref, message: 'FYI', idempotencyKey: 'notice-key', notice: true },
+    ]);
+    expect(queued('nudge-key')).toEqual([]);
   });
 
   test('a burst of 20 unstructured worker notes does not start Neo', async () => {

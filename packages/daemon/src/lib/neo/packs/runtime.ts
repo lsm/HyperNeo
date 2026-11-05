@@ -1,3 +1,5 @@
+import { publishCodingHumanMerge } from './coding/human-merge-notice.ts';
+import { neoPublicationWrites } from '../../../storage/repositories/neo-publication-repository.ts';
 import { NEO_DEFAULT_PACKS } from './index.ts';
 import { createNeoProjectTreeOperations } from './coding/project-tree-operations.ts';
 import { NeoService } from '../service.ts';
@@ -31,6 +33,7 @@ import { createCodingConnectorPrReader } from './coding/connector-pr-reader.ts';
 import { createCodingPrStateReader } from './coding/pr-state-reader.ts';
 import { createLifeAdminPack } from './life-admin/pack.ts';
 import { createCoreTodoPack } from '../core-todo-checks.ts';
+import type { DaemonExtension } from '../../extensions/contract.ts';
 
 export function createNeoCodingReaders(db: () => Database) {
   const readMerge = createCodingMergeReader(db);
@@ -94,7 +97,18 @@ export function createNeoService(...args: NeoServiceArgs) {
         listGithub: (args, coverage) => configured.listGithub(args, coverage),
         todoPrs,
         prSweepDeps: {
-          tell: (ref, key, text) => configured.sendToRef(ref, key, text),
+          human: (key, text) =>
+            publishCodingHumanMerge(
+              {
+                conversation: () => configured.repo.conversationId(),
+                append: (input) =>
+                  configured.db.gateway.call(neoPublicationWrites, 'append', input),
+                notify: configured.notifyPublicationsChanged,
+              },
+              key,
+              text
+            ),
+          tell: (ref, key, text, todoId) => configured.sendToRef(ref, key, text, todoId),
           wake: (key, text) => configured.wakeNeo(key, text),
         },
         projectRepos: () => configured.repo.allRepositories(),
@@ -154,4 +168,14 @@ export function createNeoService(...args: NeoServiceArgs) {
     ...args
   );
   return Object.assign(service, readers, { todoPrs });
+}
+
+export function neoPacksExtension(service: NeoService): DaemonExtension {
+  return {
+    id: 'neo-packs',
+    schema: (db) => {
+      for (const pack of service.builtinPacks) pack.todos?.schema(db);
+    },
+    operations: () => service.packOperations,
+  };
 }

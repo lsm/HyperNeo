@@ -52,8 +52,9 @@ function harness(adapter: string) {
       remote: { list: () => [], invoke: async () => ({}) },
     })
   );
-  const call = async (name: string, input: unknown, caller = neo) => {
-    const result = await invokeOperation(registry, name, input, caller);
+  const call = async (name: string, input: object, caller = neo) => {
+    const request = name === 'work.start' ? input : { notice: true, ...input };
+    const result = await invokeOperation(registry, name, request, caller);
     expect(result.kind).toBe('completed');
     if (result.kind === 'completed') expect(result.value).toMatchObject({ ok: true });
   };
@@ -162,7 +163,11 @@ describe('Neo external worker reply instructions', () => {
               title: 'Build',
               message,
             }
-          : { ref: { adapter: 'codex-desktop', daemon: 'remote', id: 'worker' }, message };
+          : {
+              ref: { adapter: 'codex-desktop', daemon: 'remote', id: 'worker' },
+              message,
+              notice: true,
+            };
       const result = await invokeOperation(registry, name, input, neo);
       expect(result).toMatchObject({ kind: 'completed', value: { ok: true } });
     }

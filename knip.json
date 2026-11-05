@@ -25,6 +25,7 @@
         "src/lib/message-search-worker.ts",
         "src/lib/neo/project-mirror-worker.ts",
         "src/lib/voice/stream-relay-worker.ts",
+        "src/lib/voice/opus-input-worker.ts",
         "src/storage/db-gateway/db-gateway-worker.ts",
         "src/storage/repositories/agent-memory-embed-worker.ts",
         "src/storage/sdk-message-body-admission-worker.ts",

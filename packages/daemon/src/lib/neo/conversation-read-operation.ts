@@ -2,6 +2,7 @@ import type { Database } from '../../storage/sqlite-compat.ts';
 import { presentNeoPreviewAsk } from './preview-context.ts';
 import type { NeoSessionMessage } from '@hyperneo/shared/types/neo-session-message';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
+import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import { NeoConversationWakeSchema } from '../../storage/repositories/neo-conversation-wake-repository.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -39,7 +40,9 @@ export function createNeoConversationReadOperation(
   repo: NeoRepository,
   ledger: NeoConversationReader,
   present: (message: NeoSessionMessage) => Promise<NeoSessionMessage> = async (message) => message,
-  database?: Database
+  database?: Database,
+  presentPublications: (items: NeoPublication[]) => Promise<NeoPublication[]> = async (items) =>
+    items
 ) {
   const read = (superpipe({})('neo-conversation-read') as PipelineAPI)
     .input(['page', 'caller'])
@@ -129,6 +132,14 @@ export function createNeoConversationReadOperation(
     resultSchema,
     execute: async (page, caller) => {
       const result = await read(page, caller);
+      const publications = new Map(
+        (result.ok
+          ? await presentPublications(
+              result.items.flatMap((item) => (item.role === 'neo' ? [item.publication] : []))
+            )
+          : []
+        ).map((item) => [item.publicationId, item])
+      );
       return result.ok
         ? {
             ...result,
@@ -138,7 +149,9 @@ export function createNeoConversationReadOperation(
                   ? { ...item, message: await present(item.message) }
                   : item.role === 'human' && database
                     ? { ...item, ask: await presentNeoPreviewAsk(item.ask, database, caller) }
-                    : item
+                    : item.role === 'neo'
+                      ? { ...item, publication: publications.get(item.publication.publicationId)! }
+                      : item
               )
             ),
           }

@@ -1,0 +1,102 @@
+{
+  "units": [
+    {
+      "file": "packages/daemon/src/lib/pairing/pairing-operations.ts",
+      "name": "SESSION_DOOR_PRINCIPAL",
+      "start": 7,
+      "end": 7,
+      "lines": 1
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/pairing-operations.ts",
+      "name": "refused",
+      "start": 11,
+      "end": 11,
+      "lines": 1
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/pairing-operations.ts",
+      "name": "fromDoor",
+      "start": 23,
+      "end": 24,
+      "lines": 2
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/pairing-operations.ts",
+      "name": "NO_HUMAN_DEVICE",
+      "start": 29,
+      "end": 30,
+      "lines": 2
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/pairing-operations.ts",
+      "name": "planPairingCode",
+      "start": 32,
+      "end": 43,
+      "lines": 12
+    },
+    {
+      "file": "packages/daemon/src/lib/pairing/pairing-operations.ts",
+      "name": "device.pair.create execute",
+      "start": 74,
+      "end": 86,
+      "lines": 13
+    },
+    {
+      "file": "packages/daemon/src/lib/operations/caller.ts",
+      "name": "isLocalUser",
+      "start": 11,
+      "end": 13,
+      "lines": 3
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/device-pairing-repository.ts",
+      "name": "hash",
+      "start": 24,
+      "end": 24,
+      "lines": 1
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/device-pairing-repository.ts",
+      "name": "isActiveDevice",
+      "start": 145,
+      "end": 149,
+      "lines": 5
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/device-pairing-repository.ts",
+      "name": "countDevices",
+      "start": 204,
+      "end": 210,
+      "lines": 7
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/device-pairing-repository.ts",
+      "name": "createCodeAsync",
+      "start": 212,
+      "end": 214,
+      "lines": 3
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/device-pairing-repository.ts",
+      "name": "createCode",
+      "start": 216,
+      "end": 232,
+      "lines": 17
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/device-pairing-repository.ts",
+      "name": "humanRecoveryOpen",
+      "start": 269,
+      "end": 275,
+      "lines": 7
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/pairing-code-create-write.ts",
+      "name": "whole typed writer command",
+      "lines": 67
+    }
+  ],
+  "totalLines": 141,
+  "sharedGateway": "Unchanged transaction executor and typed .call plumbing are reused; not moved or edited."
+}

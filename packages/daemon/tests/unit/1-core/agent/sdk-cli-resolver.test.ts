@@ -334,13 +334,13 @@ describe('sdk-cli-resolver', () => {
         const p = String(path);
         if (p.includes('node_modules')) return false;
         if (p.includes('.hyperneo/sdk')) return false;
-        if (p.endsWith('.tgz')) return true;
+        if (p.endsWith('.tgz.partial')) return true;
         return originalExistsSync(p);
       });
 
       readMock((path: fs.PathLike) => {
         const p = String(path);
-        if (p.endsWith('.tgz')) {
+        if (p.endsWith('.tgz.partial')) {
           return Buffer.from('different-tarball-data');
         }
         return originalReadFileSync(p);
@@ -383,13 +383,13 @@ describe('sdk-cli-resolver', () => {
         const p = String(path);
         if (p.includes('node_modules')) return false;
         if (p.includes('.hyperneo/sdk')) return false;
-        if (p.endsWith('.tgz')) return true;
+        if (p.endsWith('.tgz.partial')) return true;
         return originalExistsSync(p);
       });
 
       readMock((path: fs.PathLike) => {
         const p = String(path);
-        if (p.endsWith('.tgz')) return tarData;
+        if (p.endsWith('.tgz.partial')) return tarData;
         return originalReadFileSync(p);
       });
 
@@ -432,13 +432,13 @@ describe('sdk-cli-resolver', () => {
         const p = String(path);
         if (p.includes('node_modules')) return false;
         if (p.includes('.hyperneo/sdk')) return false;
-        if (p.endsWith('.tgz')) return true;
+        if (p.endsWith('.tgz.partial')) return true;
         return originalExistsSync(p);
       });
 
       readMock((path: fs.PathLike) => {
         const p = String(path);
-        if (p.endsWith('.tgz')) return tarData;
+        if (p.endsWith('.tgz.partial')) return tarData;
         return originalReadFileSync(p);
       });
 
@@ -607,13 +607,13 @@ describe('warmupSDKCliBinary', () => {
       const p = String(path);
       if (p.includes('node_modules')) return false;
       if (p.includes('.hyperneo/sdk')) return false;
-      if (p.endsWith('.tgz')) return true;
+      if (p.endsWith('.tgz.partial')) return true;
       return originalExistsSync(p);
     });
 
     readMock((path: fs.PathLike) => {
       const p = String(path);
-      if (p.endsWith('.tgz')) return tarData;
+      if (p.endsWith('.tgz.partial')) return tarData;
       return originalReadFileSync(p);
     });
 
@@ -653,11 +653,11 @@ describe('warmupSDKCliBinary', () => {
     mocks.existsSync.mockImplementation((path: fs.PathLike) => {
       const p = String(path);
       if (p.includes('node_modules') || p.includes('.hyperneo/sdk')) return false;
-      if (p.endsWith('.tgz')) return true;
+      if (p.endsWith('.tgz.partial')) return true;
       return originalExistsSync(p);
     });
     mocks.readFileSync.mockImplementation((path: fs.PathLike) =>
-      String(path).endsWith('.tgz') ? tarData : mocks.actualFs.readFileSync(path)
+      String(path).endsWith('.tgz.partial') ? tarData : mocks.actualFs.readFileSync(path)
     );
     mocks.readFile.mockImplementation(async () => tarData);
     mocks.writeFile.mockImplementation(async () => {});
@@ -688,11 +688,11 @@ describe('warmupSDKCliBinary', () => {
     mocks.existsSync.mockImplementation((path: fs.PathLike) => {
       const p = String(path);
       if (p.includes('node_modules') || p.includes('.hyperneo/sdk')) return false;
-      if (p.endsWith('.tgz')) return true;
+      if (p.endsWith('.tgz.partial')) return true;
       return originalExistsSync(p);
     });
     readMock((path: fs.PathLike) =>
-      String(path).endsWith('.tgz') ? tarData : mocks.actualFs.readFileSync(path)
+      String(path).endsWith('.tgz.partial') ? tarData : mocks.actualFs.readFileSync(path)
     );
     let curlCalls = 0;
     curlMock((_file, args) => {
@@ -723,7 +723,7 @@ describe('warmupSDKCliBinary', () => {
     const startup = warmupSDKCliBinary();
 
     await expect(awaitSDKCliPath()).rejects.toThrow(
-      'Claude Code binary unavailable: All resolution strategies failed (node_modules, cache, download)'
+      'Claude Code binary unavailable: Could not download'
     );
     expect((await startup).status).toBe('failed');
   });

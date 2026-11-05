@@ -48,7 +48,7 @@ let tasks: SpaceTaskRepository;
 let sessions: SessionRepository;
 let attempts: DirectTaskExecutionRepository;
 let taskId: string;
-let control: Parameters<typeof createDirectStartJobHandler>[3];
+let control: Parameters<typeof createDirectStartJobHandler>[2];
 let loading = false;
 let load: ReturnType<typeof mock>;
 let start: ReturnType<typeof createDirectTaskStarter>;
@@ -95,6 +95,7 @@ beforeEach(() => {
     directStopVerificationJobs: new Map(),
   }) as SessionManager;
   control = {
+    getSessionForControl: async () => null,
     getCachedSession: () => undefined,
     isSessionLoading: () => loading,
     unregisterSession: async () => {},
@@ -125,11 +126,11 @@ test('ack atomically publishes, reserves and freezes job before loading any sess
   });
   expect(request({ taskId, requestKey: inputKey })).toEqual({ accepted: true, jobId: job.id });
   expect(count()).toBe(1);
-  expect(await createDirectStartJobHandler(db, start, jobs, control)(job)).toMatchObject({
+  expect(await createDirectStartJobHandler(db, start, control)(job)).toMatchObject({
     started: true,
   });
   expect(request({ taskId, requestKey: inputKey })).toEqual({ accepted: true, jobId: job.id });
-  expect(await createDirectStartJobHandler(db, start, jobs, control)(job)).toMatchObject({
+  expect(await createDirectStartJobHandler(db, start, control)(job)).toMatchObject({
     started: true,
   });
   expect(load).toHaveBeenCalledTimes(1);
@@ -137,15 +138,15 @@ test('ack atomically publishes, reserves and freezes job before loading any sess
 test('fresh handler resumes frozen request after failed session loading', async () => {
   const job = acceptedJob();
   load.mockResolvedValueOnce(null);
-  await expect(createDirectStartJobHandler(db, start, jobs, control)(job)).rejects.toThrow(
+  await expect(createDirectStartJobHandler(db, start, control)(job)).rejects.toThrow(
     'Direct start remains unavailable'
   );
   expect(attempts.getActive(taskId)?.phase).toBe('reserved');
-  expect(
-    await createDirectStartJobHandler(db, start, jobs, control)(jobs.getJob(job.id)!)
-  ).toMatchObject({
-    started: true,
-  });
+  expect(await createDirectStartJobHandler(db, start, control)(jobs.getJob(job.id)!)).toMatchObject(
+    {
+      started: true,
+    }
+  );
   expect(count()).toBe(1);
 });
 test('request queue failure rolls back draft publication and claim', () => {
@@ -168,7 +169,7 @@ test('receipt failure rolls back the queued job and claim', () => {
 test('stale or unlinked jobs never invoke the starter', async () => {
   const job = acceptedJob();
   const run = mock(start);
-  const handler = createDirectStartJobHandler(db, run, jobs, control);
+  const handler = createDirectStartJobHandler(db, run, control);
   expect(await handler({ ...job, id: 'other' })).toMatchObject({ reason: 'superseded' });
   expect(await handler({ ...job, queue: 'wrong' })).toMatchObject({ reason: 'unlinked_job' });
   const old = attempts.getActive(taskId)!;
@@ -180,7 +181,7 @@ test('a superseded cleanup stop notifies so the live-attempt flag clears', async
   const job = acceptedJob();
   const changed: string[] = [];
   tasks.updateTask(taskId, { status: 'done' });
-  const handler = createDirectStartJobHandler(db, start, jobs, control, (id) => changed.push(id));
+  const handler = createDirectStartJobHandler(db, start, control, (id) => changed.push(id));
   await handler(job);
   expect(attempts.getActive(taskId)).toBeNull();
   expect(changed).toEqual([taskId]);
@@ -194,7 +195,7 @@ test('a replay of the same request revives a dead start job under a fresh receip
   expect(ack.jobId).not.toBe(job.id);
   expect(jobs.getJob(ack.jobId)?.status).toBe('pending');
   expect(readDirectStartRequest(db, attempts.getActive(taskId)!.id)?.jobId).toBe(ack.jobId);
-  expect(await createDirectStartJobHandler(db, start, jobs, control)(job)).toEqual({
+  expect(await createDirectStartJobHandler(db, start, control)(job)).toEqual({
     started: false,
     reason: 'superseded',
   });
@@ -223,9 +224,7 @@ test('a dead start job whose stop cannot verify yet is revived so cleanup retrie
   expect(revivedId).not.toBe(job.id);
   expect(jobs.getJob(revivedId)?.status).toBe('pending');
   loading = false;
-  expect(
-    await createDirectStartJobHandler(db, start, jobs, control)(jobs.getJob(revivedId)!)
-  ).toEqual({
+  expect(await createDirectStartJobHandler(db, start, control)(jobs.getJob(revivedId)!)).toEqual({
     started: false,
     reason: 'superseded',
   });
@@ -246,7 +245,7 @@ test('a start note reaches the kickoff message and stays frozen across replays',
     )
   ).toEqual(ack);
   expect(
-    await createDirectStartJobHandler(db, start, jobs, control)(jobs.getJob(ack.jobId)!)
+    await createDirectStartJobHandler(db, start, control)(jobs.getJob(ack.jobId)!)
   ).toMatchObject({ started: true });
   const content = readDirectKickoffIntent(db, attempts.getActive(taskId)!.id)?.message.message
     .content;
@@ -263,7 +262,7 @@ test('a cancelled reservation is retired as soon as its expedited start job runs
   expect(expediteDirectStart(db, jobs, attempt.id)).toBe(true);
   expect(jobs.getJob(job.id)!.runAt).toBeLessThanOrEqual(Date.now());
   expect(expediteDirectStart(db, jobs, 'missing')).toBe(false);
-  expect(await createDirectStartJobHandler(db, start, jobs, control)(job)).toEqual({
+  expect(await createDirectStartJobHandler(db, start, control)(job)).toEqual({
     started: false,
     reason: 'superseded',
   });
@@ -387,7 +386,7 @@ test.each([
   if (route === 'paused-rejection') {
     const reserved = attempts.getActive(taskId)!;
     const [claimed] = jobs.dequeue(DIRECT_TASK_START, 1);
-    expect(await createDirectStartJobHandler(db, start, jobs, control)(claimed)).toMatchObject({
+    expect(await createDirectStartJobHandler(db, start, control)(claimed)).toMatchObject({
       parked: 'direct_start_not_ready',
     });
     expect(jobs.getJob(claimed.id)).toMatchObject({ status: 'pending', retryCount: 0 });
@@ -400,12 +399,7 @@ test.each([
     spaces.resumeSpace(spaceId);
   }
   tasks.updateTask(taskId, { approvalReason: 'Mutated note' });
-  const result = await createDirectStartJobHandler(
-    db,
-    start,
-    jobs,
-    control
-  )(jobs.getJob(ack.jobId)!);
+  const result = await createDirectStartJobHandler(db, start, control)(jobs.getJob(ack.jobId)!);
   expect(result).toMatchObject({ started: true });
   const current = attempts.getActive(taskId)!;
   expect(readDirectKickoffIntent(db, current.id)?.message.message.content).toContain(
@@ -427,7 +421,7 @@ test('dependency readiness defers same claimed job beyond retry budget then star
   tasks.updateTask(taskId, { dependsOn: [dependency.id] });
   const job = acceptedJob();
   const processor = new JobQueueProcessor(jobs, { maxConcurrent: 1 });
-  processor.register(DIRECT_TASK_START, createDirectStartJobHandler(db, start, jobs, control));
+  processor.register(DIRECT_TASK_START, createDirectStartJobHandler(db, start, control));
   try {
     for (let i = 0; i < job.maxRetries + 3; i++) {
       jobs.reschedulePending(job.id, Date.now() - 1);
@@ -454,7 +448,7 @@ test('stale claim cannot defer a replacement job claim', async () => {
   expect(jobs.requeue(job.id, Date.now() - 1, old.claimToken)).not.toBeNull();
   const [replacement] = jobs.dequeue(DIRECT_TASK_START, 1);
   const unavailable = async () => ({ started: false as const, reason: 'not_ready' });
-  expect(await createDirectStartJobHandler(db, unavailable, jobs, control)(old)).toMatchObject({
+  expect(await createDirectStartJobHandler(db, unavailable, control)(old)).toMatchObject({
     reason: 'superseded_claim',
   });
   expect(jobs.getJob(job.id)).toEqual(replacement);
@@ -466,7 +460,7 @@ test.each(['cancelled', 'archived', 'done', 'blocked'] as const)(
     const job = acceptedJob();
     const old = attempts.getActive(taskId)!;
     tasks.updateTask(taskId, { status });
-    expect(await createDirectStartJobHandler(db, start, jobs, control)(job)).toMatchObject({
+    expect(await createDirectStartJobHandler(db, start, control)(job)).toMatchObject({
       reason: 'superseded',
     });
     expect(attempts.getActive(taskId)).toBeNull();
@@ -479,7 +473,7 @@ test('a cancelled fence on a non-terminal task retires the reservation through t
   const job = acceptedJob();
   const old = attempts.getActive(taskId)!;
   attempts.requestStop(old.id, old.sessionId, 'cancelled');
-  expect(await createDirectStartJobHandler(db, start, jobs, control)(job)).toMatchObject({
+  expect(await createDirectStartJobHandler(db, start, control)(job)).toMatchObject({
     reason: 'superseded',
   });
   expect(attempts.getActive(taskId)).toBeNull();
@@ -496,7 +490,7 @@ test('cancellation during loading retains fenced ownership until verification th
       tasks.updateTask(taskId, { status: 'cancelled' });
     return { started: false as const, reason: 'not_ready' };
   };
-  const handler = createDirectStartJobHandler(db, waiting, jobs, control);
+  const handler = createDirectStartJobHandler(db, waiting, control);
   expect(await handler(job)).toMatchObject({ parked: 'direct_start_cleanup_unverified' });
   expect(attempts.getActive(taskId)?.id).toBe(old.id);
   expect(attempts.isStopRequested(old.id, old.sessionId)).toBe(true);
@@ -520,7 +514,7 @@ test.each(['between-jobs', 'during-load'] as const)(
     if (window === 'between-jobs') {
       load.mockResolvedValueOnce(null);
       const [first] = jobs.dequeue(DIRECT_TASK_START, 1);
-      expect(await createDirectStartJobHandler(db, start, jobs, control)(first)).toMatchObject({
+      expect(await createDirectStartJobHandler(db, start, control)(first)).toMatchObject({
         parked: 'direct_start_not_ready',
       });
       tasks.updateTask(taskId, { status: 'cancelled' });
@@ -537,7 +531,7 @@ test.each(['between-jobs', 'during-load'] as const)(
       });
     const [job] = jobs.dequeue(DIRECT_TASK_START, 1);
     const previous = attempts.getActive(taskId)!;
-    expect(await createDirectStartJobHandler(db, start, jobs, control)(job)).toMatchObject({
+    expect(await createDirectStartJobHandler(db, start, control)(job)).toMatchObject({
       reason: 'superseded',
     });
     expect(attempts.getActive(taskId)).toBeNull();
@@ -639,7 +633,7 @@ test('review submission cannot invalidate an unactivated direct request', async 
   expect(tasks.getLifecycleGeneration(taskId)).toBe(generation);
   expect(readDirectStartRequest(db, reserved.id)).toEqual(requestBefore);
   expect(attempts.getActive(taskId)).toEqual(reserved);
-  expect(await createDirectStartJobHandler(db, start, jobs, control)(job)).toMatchObject({
+  expect(await createDirectStartJobHandler(db, start, control)(job)).toMatchObject({
     started: true,
     attempt: { id: reserved.id },
   });
@@ -862,7 +856,7 @@ test.each(['in_progress', 'approved', 'rate_limited', 'usage_limited'] as const)
       "UPDATE job_queue SET payload = json_set(payload, '$.__parkCount', 60, '$.__parkedSince', 0) WHERE id = ?"
     ).run(job.id);
     const exhausted = { ...job, payload: { ...job.payload, __parkCount: 60, __parkedSince: 0 } };
-    expect(await createDirectStartJobHandler(db, start, jobs, control)(exhausted)).toMatchObject({
+    expect(await createDirectStartJobHandler(db, start, control)(exhausted)).toMatchObject({
       started: false,
       parked: 'awaiting_capacity',
     });
@@ -871,7 +865,7 @@ test.each(['in_progress', 'approved', 'rate_limited', 'usage_limited'] as const)
     expect(attempts.get(attempt.id)?.phase).toBe('reserved');
     expect(tasks.getTask(taskId)?.status).toBe('open');
     tasks.updateTask(occupying.id, { status: 'done' });
-    expect(await createDirectStartJobHandler(db, start, jobs, control)(job)).toMatchObject({
+    expect(await createDirectStartJobHandler(db, start, control)(job)).toMatchObject({
       started: true,
     });
   }

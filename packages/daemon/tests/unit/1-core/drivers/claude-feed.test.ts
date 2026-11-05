@@ -25,12 +25,61 @@ import {
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { EventLoopActivity } from '../../../../src/lib/event-loop-activity';
 import { readWorkFeedOffsets } from '../../../../src/storage/work-feed';
+import { claudeInboxFrame } from '../../../../src/lib/drivers/claude-inbox';
 
 const at = '2026-10-06T05:00:00.000Z';
 const line = (fields: Record<string, unknown>) =>
   JSON.stringify({ timestamp: at, cwd: '/Users/me/focus/neokai', ...fields });
 
 describe('claudeTranscriptTurns', () => {
+  test('retains exact worker answer envelopes and accepted queued peer inputs', () => {
+    const body = '[worker-answer:exact]\nThe human chose staging.';
+    const frame = JSON.parse(
+      claudeInboxFrame(
+        {
+          sessionId: '11111111-1111-4111-8111-111111111111',
+          pid: 1,
+          socketPath: '/synthetic.sock',
+          version: 'synthetic',
+        },
+        '/synthetic-reply.sock',
+        {
+          messageId: '22222222-2222-4222-8222-222222222222',
+          inputId: '33333333-3333-4333-8333-333333333333',
+          fromMode: 'prompting',
+          text: body,
+        }
+      )
+    );
+    const peer = { kind: 'peer', body };
+    const lines = [
+      line(frame),
+      line({
+        type: 'user',
+        uuid: 'meta-peer',
+        isMeta: true,
+        origin: peer,
+        message: { content: 'Native wrapper' },
+      }),
+      line({ type: 'attachment', attachment: { type: 'queued_command', origin: peer } }),
+      line({ type: 'user', uuid: 'side', isSidechain: true, origin: peer }),
+      line({ type: 'user', uuid: 'human-meta', isMeta: true, origin: { kind: 'human', body } }),
+      line({
+        type: 'user',
+        uuid: 'ordinary-peer',
+        message: {
+          content: '<cross-session-message from="x">\nUnrelated input\n</cross-session-message>',
+        },
+      }),
+    ];
+    const turns = claudeTranscriptTurns(lines, 'owner');
+    expect(turns.map((turn) => [turn.messageId, turn.role, turn.text])).toEqual([
+      ['33333333-3333-4333-8333-333333333333', 'user', body],
+      ['meta-peer', 'user', body],
+      ['owner:[worker-answer:exact]', 'user', body],
+    ]);
+  });
+
   test('keeps what the user typed and what Claude wrote, nothing injected', () => {
     const turns = claudeTranscriptTurns(
       [

@@ -1,6 +1,11 @@
+import { CODING_DAEMON_MERGE_MAX_ATTEMPTS } from './daemon-merge-attempt.ts';
+import { codingNoChecksNeedsHuman } from './daemon-merge-gates.ts';
+import { codingHumanHandoffs } from './human-merge-notice.ts';
+import { codingReviewOnHead } from './review.ts';
+import { codingLedgerPollReads } from './ledger-poll-db.ts';
 import { isRateLimitError } from '../../../session/rate-limit-detector.ts';
 import { codingCanonicalRepo, codingRepoWatched, codingWatchedRepos } from './watched-repos.ts';
-import { posix } from 'node:path';
+import { codingHumanSignoff } from './human-signoff.ts';
 import {
   CodingStageFactsRepository,
   codingReviewerPolicy,
@@ -23,6 +28,7 @@ import { CodingWorkFactsRepository } from './work-facts.ts';
 import { CodingBranchFactsRepository } from './branch-facts.ts';
 import { CodingMergeFactsRepository } from './merge-facts.ts';
 import { getNeoPackPreference } from '../../preferences.ts';
+import { codingMergeContextRepos } from './merge-context.ts';
 import { z } from 'zod';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { Logger } from '../../../logger.ts';
@@ -74,13 +80,19 @@ export const Node = z.object({
       pageInfo: z.object({ hasNextPage: z.boolean() }),
     })
     .nullish(),
+  labels: z
+    .object({
+      nodes: z.array(z.object({ name: z.string() })),
+      pageInfo: z.object({ hasNextPage: z.boolean() }),
+    })
+    .nullish(),
   reviews: z
     .object({
       nodes: z.array(
         z.object({
           state: z.string(),
           commit: z.object({ oid: z.string() }).nullable(),
-          author: z.object({ login: z.string() }).nullable().optional(),
+          author: z.object({ login: z.string(), type: z.string().optional() }).nullish(),
         })
       ),
     })
@@ -146,6 +158,8 @@ export function codingPrReplyAt(pr: Node): number | null {
 
 export interface CodingMergePolicy {
   provenance?: boolean;
+  allowNoChecksMerge?: boolean;
+  mergeBy?: 'owner' | 'daemon';
   mergePolicy?: 'review_bot' | 'ci_only' | 'human';
   reviewBot?: string;
   humanSignoff?: readonly string[];
@@ -171,28 +185,30 @@ export function codingPrState(
   if (!policy.mergePolicy) return 'waiting_human';
   const readyCi = noCi || ci === 'SUCCESS';
   const humanSignoff =
-    !!policy.humanSignoff?.length &&
-    (!pr.files ||
-      pr.files.pageInfo.hasNextPage ||
-      policy.humanSignoff.some((pattern) => pattern.startsWith('label:')) ||
-      pr.files.nodes.some((file) =>
-        policy.humanSignoff!.some((pattern) => posix.matchesGlob(file.path, pattern))
-      ));
+    codingHumanSignoff(
+      policy.humanSignoff ?? [],
+      pr.files && !pr.files.pageInfo.hasNextPage ? pr.files.nodes.map((file) => file.path) : null,
+      pr.labels && !pr.labels.pageInfo.hasNextPage
+        ? pr.labels.nodes.map((label) => label.name)
+        : null
+    ) !== false;
   if (policy.mergePolicy === 'human' || (policy.mergePolicy === 'review_bot' && !policy.reviewBot))
     return readyCi ? 'waiting_human' : 'waiting_ci';
   if (policy.mergePolicy === 'review_bot') {
-    const bot = pr.reviews.nodes
-      .filter(
-        (item) =>
-          item.commit?.oid === pr.headRefOid &&
-          item.author?.login.toLowerCase() === policy.reviewBot!.toLowerCase()
-      )
-      .at(-1);
+    const bot = codingReviewOnHead({
+      head: pr.headRefOid,
+      reviewBot: policy.reviewBot,
+      reviews: pr.reviews.nodes,
+    });
     if (bot?.state !== 'APPROVED') return 'waiting_review';
     if (humanSignoff) return 'waiting_human';
     return readyCi ? 'approved_green' : 'approved_pending';
   }
-  return readyCi ? (humanSignoff ? 'waiting_human' : 'approved_green') : 'waiting_ci';
+  return readyCi
+    ? humanSignoff || (noCi && codingNoChecksNeedsHuman(policy, 0))
+      ? 'waiting_human'
+      : 'approved_green'
+    : 'waiting_ci';
 }
 
 export type CodingPrTransition = CodingLedgerRow & { from: CodingPrState };
@@ -326,6 +342,8 @@ function codingLedgerSnapshotRow(
   };
 }
 
+type CodingDaemonMergeAttempt = { url: string; head: string; actor: string; at: number };
+
 export class CodingPrLedgerRepository {
   readonly health: CodingRepoHealthRepository;
   readonly stageFacts: CodingStageFactsRepository;
@@ -358,8 +376,171 @@ export class CodingPrLedgerRepository {
     >;
   }
 
+  daemonMerge(
+    change:
+      | { kind: 'list' }
+      | { kind: 'limits' }
+      | { kind: 'failures'; url: string; head: string }
+      | { kind: 'limitNotified' | 'retry'; url: string; head: string; at: number }
+      | ({ kind: 'failed' | 'uncertain'; error: string } & CodingDaemonMergeAttempt)
+      | { kind: 'begin' | 'void'; url: string; head: string; actor: string; at: number }
+      | { kind: 'finish'; url: string; head: string; commit: string; at: number }
+      | { kind: 'notified' | 'held' | 'retired'; url: string; head: string; at: number }
+  ) {
+    const target = 'url' in change ? [change.url, change.head] : [];
+    const attempt = 'actor' in change ? [...target, change.actor, change.at] : [];
+    const columns = `url, head, actor, started_at AS startedAt, merge_commit AS mergeCommit, merged_at AS mergedAt, notified_at AS notifiedAt, (SELECT at FROM pack_coding_daemon_merge_notices n WHERE n.url=pack_coding_daemon_merges.url AND n.head=pack_coding_daemon_merges.head AND n.kind='held') AS heldNotifiedAt, (SELECT error FROM pack_coding_daemon_merge_failures f WHERE f.url=pack_coding_daemon_merges.url AND f.head=pack_coding_daemon_merges.head AND f.started_at=pack_coding_daemon_merges.started_at) AS error`;
+    const failureWindow =
+      'confirmed_open=1 AND started_at>COALESCE((SELECT at FROM pack_coding_daemon_merge_retries n WHERE n.url=pack_coding_daemon_merge_failures.url AND n.head=pack_coding_daemon_merge_failures.head),-1)';
+    const statement =
+      change.kind === 'list'
+        ? {
+            sql: `SELECT ${columns} FROM pack_coding_daemon_merges WHERE notified_at IS NULL AND NOT EXISTS (SELECT 1 FROM pack_coding_daemon_merge_notices n WHERE n.url=pack_coding_daemon_merges.url AND n.head=pack_coding_daemon_merges.head AND n.kind='retired') ORDER BY started_at`,
+            args: [],
+          }
+        : change.kind === 'held' || change.kind === 'retired' || change.kind === 'retry'
+          ? {
+              sql:
+                change.kind === 'retry'
+                  ? `INSERT INTO pack_coding_daemon_merge_retries(url,head,at) SELECT ?,?,MAX(?,COALESCE((SELECT MAX(started_at) FROM pack_coding_daemon_merge_failures WHERE url=? AND head=?),0)) WHERE (SELECT count(*) FROM pack_coding_daemon_merge_failures WHERE url=? AND head=? AND ${failureWindow})>=? ON CONFLICT(url,head) DO UPDATE SET at=excluded.at`
+                  : 'INSERT OR IGNORE INTO pack_coding_daemon_merge_notices(url,head,kind,at) VALUES(?,?,?,?)',
+              args:
+                change.kind === 'retry'
+                  ? [...target, change.at, ...target, ...target, CODING_DAEMON_MERGE_MAX_ATTEMPTS]
+                  : [change.url, change.head, change.kind, change.at],
+            }
+          : change.kind === 'void'
+            ? {
+                sql: 'DELETE FROM pack_coding_daemon_merges WHERE url=? AND head=? AND actor=? AND started_at=? AND merge_commit IS NULL',
+                args: [change.url, change.head, change.actor, change.at],
+              }
+            : change.kind === 'begin'
+              ? {
+                  sql: `INSERT OR IGNORE INTO pack_coding_daemon_merges(url,head,actor,started_at) SELECT ?,?,?,MAX(?,COALESCE((SELECT MAX(started_at)+1 FROM pack_coding_daemon_merge_failures WHERE url=? AND head=?),?)) WHERE (SELECT count(*) FROM pack_coding_daemon_merge_failures WHERE url=? AND head=? AND ${failureWindow})<? RETURNING ${columns}`,
+                  args: [
+                    ...attempt,
+                    ...target,
+                    change.at,
+                    ...target,
+                    CODING_DAEMON_MERGE_MAX_ATTEMPTS,
+                  ],
+                }
+              : change.kind === 'finish'
+                ? {
+                    sql: `UPDATE pack_coding_daemon_merges SET merge_commit=?, merged_at=? WHERE url=? AND head=? AND merge_commit IS NULL RETURNING ${columns}`,
+                    args: [change.commit, change.at, change.url, change.head],
+                  }
+                : change.kind === 'failures' || change.kind === 'limits'
+                  ? {
+                      sql: `SELECT * FROM (SELECT url, head, actor, started_at AS startedAt, NULL AS mergeCommit, NULL AS mergedAt, notified_at AS notifiedAt, NULL AS heldNotifiedAt, error, count(*) OVER (PARTITION BY url,head) AS failures, row_number() OVER (PARTITION BY url,head ORDER BY started_at DESC) AS latest FROM pack_coding_daemon_merge_failures WHERE ${failureWindow} ${change.kind === 'failures' ? 'AND url=? AND head=?' : ''}) WHERE latest=1 ${change.kind === 'limits' ? 'AND failures>=? AND notifiedAt IS NULL' : ''}`,
+                      args:
+                        change.kind === 'failures' ? target : [CODING_DAEMON_MERGE_MAX_ATTEMPTS],
+                    }
+                  : change.kind === 'failed' || change.kind === 'uncertain'
+                    ? {
+                        sql: 'INSERT INTO pack_coding_daemon_merge_failures(url,head,actor,started_at,error,confirmed_open) VALUES(?,?,?,?,?,?) ON CONFLICT(url,head,started_at) DO UPDATE SET confirmed_open=MAX(confirmed_open,excluded.confirmed_open),error=excluded.error',
+                        args: [...attempt, change.error, Number(change.kind === 'failed')],
+                      }
+                    : change.kind === 'limitNotified'
+                      ? {
+                          sql: `UPDATE pack_coding_daemon_merge_failures SET notified_at=? WHERE url=? AND head=? AND ${failureWindow}`,
+                          args: [change.at, ...target],
+                        }
+                      : {
+                          sql: `UPDATE pack_coding_daemon_merges SET notified_at=? WHERE url=? AND head=? AND merge_commit IS NOT NULL AND notified_at IS NULL RETURNING ${columns}`,
+                          args: [change.at, change.url, change.head],
+                        };
+    return this.db.prepare(statement.sql).all(...statement.args) as {
+      url: string;
+      head: string;
+      actor: string;
+      startedAt: number;
+      mergeCommit: string | null;
+      mergedAt: number | null;
+      notifiedAt: number | null;
+      heldNotifiedAt: number | null;
+      failures?: number;
+      error?: string | null;
+    }[];
+  }
+
+  pollSnapshot(repos: readonly string[]) {
+    const last = this.lastReads();
+    return {
+      order: repos
+        .filter((repo) => this.watches(repo))
+        .sort(
+          (a, b) => (last.get(this.canonicalRepo(a)) ?? 0) - (last.get(this.canonicalRepo(b)) ?? 0)
+        ),
+      pending: this.list()
+        .filter((row) => row.state === 'approved_pending')
+        .map(({ repo, number, head, readAt }) => ({ repo, number, head, readAt })),
+    };
+  }
+
+  pollContext(repo: string) {
+    return {
+      watched: this.watches(repo),
+      health: this.health.read(repo),
+      policy: this.policy(repo),
+    };
+  }
+
+  pollSnapshotCurrent(repos: readonly string[]) {
+    return gatewayFor(this.db).call(codingLedgerPollReads, 'snapshot', repos);
+  }
+
+  pollContextCurrent(repo: string) {
+    return gatewayFor(this.db).call(codingLedgerPollReads, 'context', repo);
+  }
+
+  observePoll(
+    repo: string,
+    raw: unknown,
+    now: number,
+    observedAt: number,
+    seen: readonly string[],
+    pending: ReturnType<CodingPrLedgerRepository['pollSnapshot']>['pending']
+  ) {
+    if (!this.watches(repo))
+      return { canonical: null, transitions: [] as CodingPrTransition[], warning: null };
+    const before = this.health.read(repo);
+    const planned = planCodingLedgerRead(raw, now, (canonical) => this.policy(canonical));
+    const cycle = planLedgerHealth(raw, planned !== null, now);
+    if (planned) this.recordAlias(repo.toLowerCase(), planned.repo);
+    const canonical = this.canonicalRepo(repo);
+    const health = this.recordHealth(repo, {
+      ...cycle,
+      pending: pending.filter((row) => row.repo === canonical),
+    });
+    if (planned && planned.repo !== repo.toLowerCase()) this.dropRepo(repo.toLowerCase());
+    const transitions =
+      planned && !seen.includes(planned.repo)
+        ? this.replace(planned.repo, planned.rows, now, observedAt)
+        : [];
+    return {
+      canonical: planned?.repo ?? null,
+      transitions,
+      warning:
+        health.misses === CODING_LEDGER_WARN_SKIPS && before?.misses !== health.misses
+          ? health.reason
+          : null,
+    };
+  }
+
+  read(method: 'lastReads'): Promise<ReturnType<CodingPrLedgerRepository['lastReads']>>;
+  read(method: 'list'): Promise<ReturnType<CodingPrLedgerRepository['list']>>;
+  read(method: 'humanHandoffs'): Promise<ReturnType<CodingPrLedgerRepository['humanHandoffs']>>;
+  read(method: 'lastReads' | 'list' | 'humanHandoffs') {
+    return gatewayFor(this.db).call(codingLedgerReads, method);
+  }
+
   recordStage(fact: CodingStageFact): boolean {
     return this.stageFacts.record(fact);
+  }
+
+  readHealthCurrent(repo: string) {
+    return gatewayFor(this.db).call(codingLedgerReads, 'readHealth', repo);
   }
 
   readHealth(repo: string) {
@@ -378,8 +559,33 @@ export class CodingPrLedgerRepository {
     return codingReviewerPolicy(this.policy(repo).provenance !== false, body, reviewer);
   }
 
+  policyContextCurrent(text: string) {
+    return gatewayFor(this.db).call(codingLedgerReads, 'policyContext', text);
+  }
+
+  policyContext(text: string, known: readonly string[] = []) {
+    return codingMergeContextRepos(text, [...known, ...this.lastReads().keys()]).map((repo) => ({
+      repo,
+      policy: this.policy(repo),
+    }));
+  }
+
+  holdForHuman(repo: string, number: number, head: string, at: number) {
+    this.db.run(
+      "UPDATE pack_coding_pr_ledger SET state='waiting_human', state_since=?, terminal_event_json=NULL WHERE repo=? AND number=? AND head=? AND state IN ('approved_green','approved_pending','waiting_ci') AND closed_at IS NULL",
+      at,
+      repo,
+      number,
+      head
+    );
+  }
+
+  humanHandoffs() {
+    return codingHumanHandoffs(this.db, this.list());
+  }
+
   policy(repo: string): CodingMergePolicy {
-    const read = (key: string) => {
+    const preference = (key: string) => {
       const scope = this.db
         .prepare(`SELECT scope_key FROM neo_pack_preferences
         WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?`)
@@ -389,9 +595,13 @@ export class CodingPrLedgerRepository {
         'coding',
         { kind: 'repo', key: scope?.scope_key ?? repo },
         key
-      )?.value;
+      );
     };
+    const read = (key: string) => preference(key)?.value;
+    const noChecks = preference('allowNoChecksMerge');
     return {
+      allowNoChecksMerge: noChecks?.scope.kind === 'repo' && noChecks.value === true,
+      mergeBy: (read('mergeBy') ?? 'owner') as CodingMergePolicy['mergeBy'],
       provenance: read('provenance') as boolean | undefined,
       mergePolicy: read('mergePolicy') as CodingMergePolicy['mergePolicy'],
       reviewBot: read('reviewBot') as string | undefined,
@@ -406,6 +616,17 @@ export class CodingPrLedgerRepository {
     observedAt = now
   ): CodingPrTransition[] {
     return this.db.transaction(() => {
+      const handedOff = this.humanHandoffs();
+      rows = rows.map((row) =>
+        ['approved_green', 'approved_pending', 'waiting_ci', 'waiting_human'].includes(row.state) &&
+        codingNoChecksNeedsHuman(this.policy(row.repo), 0) &&
+        handedOff.some(
+          (prior) =>
+            prior.repo === row.repo && prior.number === row.number && prior.head === row.head
+        )
+          ? { ...row, state: 'waiting_human' }
+          : row
+      );
       const before = new Map(
         (
           this.db
@@ -811,39 +1032,28 @@ export async function reconcileCodingPrLedger(
 ): Promise<CodingPrTransition[]> {
   const seen = new Set<string>();
   const transitions: CodingPrTransition[] = [];
-  const last = ledger.lastReads();
-  const pending = ledger.list().filter((row) => row.state === 'approved_pending');
-  const pendingFor = (repo: string) => {
-    const canonical = ledger.canonicalRepo(repo);
-    return pending.filter((row) => row.repo === canonical);
-  };
-  const order = repos
-    .filter((repo) => ledger.watches(repo))
-    .sort(
-      (a, b) => (last.get(ledger.canonicalRepo(a)) ?? 0) - (last.get(ledger.canonicalRepo(b)) ?? 0)
-    );
+  const { order, pending } = await ledger.pollSnapshotCurrent(repos);
   for (const repo of order) {
-    if (!ledger.watches(repo)) continue;
-    const before = ledger.health.read(repo);
+    const context = await ledger.pollContextCurrent(repo);
+    if (!context.watched) continue;
     const observedAt = Date.now();
-    const raw = await read(repo, before?.quota);
-    if (!ledger.watches(repo)) continue;
-    const planned = planCodingLedgerRead(raw, now, (canonical) => ledger.policy(canonical));
-    const cycle = planLedgerHealth(raw, planned !== null, now);
-    if (planned) await ledger.write('recordAlias', repo.toLowerCase(), planned.repo);
-    const health = await ledger.write('recordHealth', repo, {
-      ...cycle,
-      pending: pendingFor(repo),
-    });
-    if (health.misses === CODING_LEDGER_WARN_SKIPS && before?.misses !== health.misses)
-      log.warn('PR ledger coverage missed three eligible cycles', { repo, reason: health.reason });
-    if (planned && planned.repo !== repo.toLowerCase())
-      await ledger.write('dropRepo', repo.toLowerCase());
-    if (planned && !seen.has(planned.repo))
-      transitions.push(
-        ...(await ledger.write('replace', planned.repo, planned.rows, now, observedAt))
-      );
-    if (planned) seen.add(planned.repo);
+    const raw = await read(repo, context.health?.quota);
+    const observation = await ledger.write(
+      'observePoll',
+      repo,
+      raw,
+      now,
+      observedAt,
+      [...seen],
+      pending
+    );
+    if (observation.warning)
+      log.warn('PR ledger coverage missed three eligible cycles', {
+        repo,
+        reason: observation.warning,
+      });
+    transitions.push(...observation.transitions);
+    if (observation.canonical) seen.add(observation.canonical);
   }
   await ledger.write('prune', [...repos, ...seen], now);
   await ledger.write('pruneSessions', now);
@@ -852,6 +1062,8 @@ export async function reconcileCodingPrLedger(
 }
 
 type CodingLedgerWrite =
+  | 'holdForHuman'
+  | 'daemonMerge'
   | 'acceptTerminalEvent'
   | 'acceptHealthNotice'
   | 'recordHealth'
@@ -863,13 +1075,16 @@ type CodingLedgerWrite =
   | 'prune'
   | 'pruneSessions'
   | 'assignOwners'
-  | 'observeSessions';
+  | 'observeSessions'
+  | 'observePoll';
 
 export const codingLedgerWrites = defineRepositoryOp<CodingPrLedgerRepository, CodingLedgerWrite>(
   'coding.ledgerWrites',
   'write',
   CodingPrLedgerRepository,
   [
+    'holdForHuman',
+    'daemonMerge',
     'acceptTerminalEvent',
     'acceptHealthNotice',
     'recordHealth',
@@ -882,5 +1097,13 @@ export const codingLedgerWrites = defineRepositoryOp<CodingPrLedgerRepository, C
     'pruneSessions',
     'assignOwners',
     'observeSessions',
+    'observePoll',
   ]
+);
+
+export const codingLedgerReads = defineRepositoryOp(
+  'coding.ledger.read',
+  'read',
+  CodingPrLedgerRepository,
+  ['lastReads', 'list', 'humanHandoffs', 'readHealth', 'policyContext'] as const
 );

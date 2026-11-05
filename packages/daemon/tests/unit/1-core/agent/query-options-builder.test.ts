@@ -129,6 +129,179 @@ describe('QueryOptionsBuilder', () => {
   afterEach(() => {});
 
   describe('build', () => {
+    it.each([
+      ['root', 'neo', null, true],
+      ['focused', 'project', 'synthetic-project', false],
+      ['worker', 'worker', null, false],
+      ['unbound', null, null, false],
+    ] as const)('limits Bash only for the %s session', async (_name, kind, projectId, capped) => {
+      const sqlite = new BunDatabase(':memory:');
+      try {
+        createNeoTables(sqlite);
+        mockSession.id = `neo:${generateUUID()}`;
+        mockSettingsManager.getGlobalSettings = mock(() => ({
+          settingSources: [],
+          outputLimiter: { enabled: false },
+          env: { BASH_DEFAULT_TIMEOUT_MS: '600000', BASH_MAX_TIMEOUT_MS: '600000' },
+        }));
+        if (projectId)
+          sqlite
+            .prepare(
+              'INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES (?,?,?,?,?,?,?)'
+            )
+            .run(projectId, 'Synthetic', '', '', 1, 1, 1);
+        if (kind)
+          sqlite
+            .prepare('INSERT INTO neo_session_bindings (session_id,concern_id,kind) VALUES (?,?,?)')
+            .run(mockSession.id, projectId, kind);
+        const options = await new QueryOptionsBuilder({
+          ...mockContext,
+          db: { ...mockContext.db!, getDatabase: () => sqlite },
+        }).build();
+        expect(options.env?.BASH_DEFAULT_TIMEOUT_MS).toBe(capped ? '120000' : '600000');
+        expect(options.env?.BASH_MAX_TIMEOUT_MS).toBe(capped ? '120000' : '600000');
+        expect(options.env?.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe(capped ? '1' : undefined);
+        const post =
+          options.hooks?.PostToolUse?.filter((entry) => entry.matcher === 'Bash').flatMap(
+            (entry) => entry.hooks
+          ) ?? [];
+        const failure =
+          options.hooks?.PostToolUseFailure?.filter((entry) => entry.matcher === 'Bash').flatMap(
+            (entry) => entry.hooks
+          ) ?? [];
+        expect(post.length).toBe(capped ? 1 : 0);
+        expect(failure.length).toBe(capped ? 1 : 0);
+        for (const hook of failure) {
+          const base = {
+            hook_event_name: 'PostToolUseFailure' as const,
+            session_id: mockSession.id,
+            transcript_path: '',
+            cwd: '/synthetic',
+            tool_name: 'Bash',
+            tool_input: { command: 'sleep 130', timeout: 600000 },
+            tool_use_id: 'synthetic',
+            is_interrupt: false,
+          };
+          expect(
+            await hook(
+              { ...base, error: 'Exit code 143\nCommand timed out after 2m 0s' },
+              'synthetic',
+              { signal: new AbortController().signal }
+            )
+          ).toMatchObject({
+            hookSpecificOutput: {
+              hookEventName: 'PostToolUseFailure',
+              additionalContext: expect.stringContaining(
+                'hand it to a worker with work.start/work.send'
+              ),
+            },
+          });
+          const routed = await hook(
+            { ...base, error: 'Exit code 143\nCommand timed out after 2m 0s' },
+            'synthetic',
+            { signal: new AbortController().signal }
+          );
+          expect(routed).toMatchObject({
+            hookSpecificOutput: {
+              additionalContext: expect.stringContaining('neo.todo.add {start:true}'),
+            },
+          });
+          expect(routed).toMatchObject({
+            hookSpecificOutput: {
+              additionalContext: expect.stringContaining(
+                'Do not call work.start/work.send directly.'
+              ),
+            },
+          });
+          for (const error of [
+            'Exit code 137\nCommand timed out after 2m 0s',
+            'Exit code 143\nCommand timed out after 2m 0s\n\nCAP=120000 MAX=120000',
+          ]) {
+            expect(
+              await hook({ ...base, error }, 'synthetic', { signal: new AbortController().signal })
+            ).toMatchObject({
+              hookSpecificOutput: {
+                additionalContext: expect.stringContaining('its outcome is unknown'),
+              },
+            });
+          }
+          for (const input of [
+            { ...base, error: 'Exit code 1\nBuild failed' },
+            { ...base, error: 'Exit code 124\nCommand timed out after 2m 0s' },
+            { ...base, error: 'Exit code 143\nCommand timed out after 2m 0s', is_interrupt: true },
+            { ...base, error: 'Exit code 143\nCommand timed out after 2m 0s', tool_name: 'Read' },
+          ])
+            expect(
+              await hook(input, 'synthetic', { signal: new AbortController().signal })
+            ).toEqual({});
+        }
+        for (const hook of post) {
+          const base = {
+            hook_event_name: 'PostToolUse' as const,
+            session_id: mockSession.id,
+            transcript_path: '',
+            cwd: '/synthetic',
+            tool_name: 'Bash',
+            tool_input: { command: 'sleep 130', timeout: 600000 },
+            tool_use_id: 'synthetic',
+          };
+          expect(
+            await hook(
+              {
+                ...base,
+                tool_response: {
+                  stdout: '',
+                  stderr: '',
+                  interrupted: false,
+                  backgroundTaskId: 'still-running',
+                  timedOutAfterMs: 120000,
+                },
+              },
+              'synthetic',
+              { signal: new AbortController().signal }
+            )
+          ).toEqual({});
+          const timeout = await hook(
+            {
+              ...base,
+              tool_response: {
+                stdout: '',
+                stderr: '',
+                interrupted: false,
+                timedOutAfterMs: 120000,
+              },
+            },
+            'synthetic',
+            { signal: new AbortController().signal }
+          );
+          expect(timeout).toMatchObject({
+            hookSpecificOutput: {
+              hookEventName: 'PostToolUse',
+              additionalContext: expect.stringContaining(
+                'This command hit the 2-minute limit and was stopped; its outcome is unknown.'
+              ),
+            },
+          });
+          expect(
+            await hook(
+              {
+                ...base,
+                tool_response: {
+                  stdout: 'Command timed out after 2m',
+                  stderr: '',
+                  interrupted: false,
+                },
+              },
+              'synthetic',
+              { signal: new AbortController().signal }
+            )
+          ).toEqual({});
+        }
+      } finally {
+        sqlite.close();
+      }
+    });
+
     it('prepared SDK workers honor a persisted local binding opt-out', async () => {
       const root = join(handoffDataDir, 'local-binding-opt-out');
       mkdirSync(join(root, '.git/info'), { recursive: true });
@@ -196,6 +369,16 @@ describe('QueryOptionsBuilder', () => {
       expect(options.env?.XDG_CACHE_HOME).not.toBe('/synthetic/obsolete-cache');
       expect(options.env?.CUSTOM_WORKER_VALUE).toBe('retain');
       expect(options.sandbox?.filesystem?.allowWrite).toContain(root);
+    });
+
+    it('gives workers location hints without enabling a sandbox or changing temp', async () => {
+      const options = await builder.build();
+      expect(options.env?.HYPERNEO_WORKTREES).toBe(join(handoffDataDir, 'worktrees'));
+      expect(options.env?.HYPERNEO_EVIDENCE).toContain(join(handoffDataDir, 'work/evidence'));
+      expect(options.env?.HYPERNEO_BUILDS).toContain(join(handoffDataDir, 'work/builds'));
+      expect(options.sandbox?.enabled).not.toBe(true);
+      expect(JSON.stringify(options.systemPrompt)).toContain('HYPERNEO_WORKTREES');
+      expect(JSON.stringify(options.systemPrompt)).not.toContain('(sandbox TMPDIR)');
     });
 
     it('should build basic query options', async () => {
@@ -1101,6 +1284,13 @@ describe('QueryOptionsBuilder', () => {
   });
 
   describe('host process controls already stored on the session', () => {
+    it('rejects an unsupported stored SDK executable before query setup', async () => {
+      Object.assign(mockSession.config, { executable: 'retired-runtime' });
+      await expect(builder.build()).rejects.toThrow(
+        'Unsupported stored SDK executable: retired-runtime'
+      );
+    });
+
     it('does not repoint the SDK CLI executable from a stored config', async () => {
       mockSession.config.pathToClaudeCodeExecutable = '/tmp/evil-cli';
       mockSession.config.executable = 'node';
@@ -1991,6 +2181,8 @@ describe('QueryOptionsBuilder', () => {
       expect(options.systemPrompt).toEqual({
         type: 'preset',
         preset: 'claude_code',
+        append: expect.stringContaining('HYPERNEO_WORKTREES'),
+        snapshot: false,
       });
     });
 
@@ -2021,7 +2213,7 @@ describe('QueryOptionsBuilder', () => {
 
       expect(options.systemPrompt).toEqual({
         type: 'custom',
-        prompt: 'Custom system prompt',
+        prompt: expect.stringContaining('Custom system prompt\n\n## Runtime Location'),
         snapshot: false,
       });
     });
@@ -2120,12 +2312,12 @@ describe('QueryOptionsBuilder', () => {
 
       expect(options.systemPrompt).toEqual({
         type: 'custom',
-        prompt: 'Space briefing text',
+        prompt: expect.stringContaining('Space briefing text\n\n## Runtime Location'),
         snapshot: false,
       });
     });
 
-    it('leaves the system prompt untouched for a session outside any Space', async () => {
+    it('preserves the SDK default prompt when only location hints are available', async () => {
       mockSession.config.tools = { useClaudeCodePreset: false };
       const newBuilder = new QueryOptionsBuilder({
         session: mockSession,
@@ -2134,6 +2326,7 @@ describe('QueryOptionsBuilder', () => {
       const options = await newBuilder.build();
 
       expect(options.systemPrompt).toBeUndefined();
+      expect(options.env?.HYPERNEO_WORKTREES).toBe(join(handoffDataDir, 'worktrees'));
     });
   });
 
@@ -2156,7 +2349,9 @@ describe('QueryOptionsBuilder', () => {
       expect(options.systemPrompt).toEqual({
         type: 'preset',
         preset: 'claude_code',
-        append: 'You are the Task Manager for this Space.',
+        append: expect.stringContaining(
+          'You are the Task Manager for this Space.\n\n## Runtime Location'
+        ),
         snapshot: false,
       });
     });
@@ -2173,14 +2368,16 @@ describe('QueryOptionsBuilder', () => {
       expect((options.systemPrompt as { snapshot?: boolean }).snapshot).toBe(false);
     });
 
-    it('leaves recording to the SDK when it contributes no prompt text of its own', async () => {
+    it('refreshes the location briefing when the worker resumes', async () => {
       const options = await builder.build();
 
       expect(options.systemPrompt).toEqual({
         type: 'preset',
         preset: 'claude_code',
+        append: expect.stringContaining('HYPERNEO_WORKTREES'),
+        snapshot: false,
       });
-      expect((options.systemPrompt as { snapshot?: boolean }).snapshot).toBeUndefined();
+      expect((options.systemPrompt as { snapshot?: boolean }).snapshot).toBe(false);
     });
   });
 
@@ -2256,7 +2453,16 @@ describe('QueryOptionsBuilder', () => {
             expect(options.permissionMode).toBe('acceptEdits');
             expect(options.allowedTools).toContain('AskUserQuestion');
           }
-          expect(options.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' });
+          expect(options.systemPrompt).toEqual(
+            kind === 'neo'
+              ? { type: 'preset', preset: 'claude_code' }
+              : {
+                  type: 'preset',
+                  preset: 'claude_code',
+                  append: expect.stringContaining('HYPERNEO_WORKTREES'),
+                  snapshot: false,
+                }
+          );
           if (kind === 'neo') {
             expect(options.disallowedTools).toEqual(neoSecretReadRules());
             expect(options.disallowedTools).toContain('Read(~/.ssh/**)');

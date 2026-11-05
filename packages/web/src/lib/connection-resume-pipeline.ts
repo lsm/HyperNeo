@@ -3,11 +3,11 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 export interface ConnectionResumeEffects {
   checkHealth(): Promise<unknown>;
   joinChannel(channel: string): Promise<void>;
-  getActiveSpaceId(): string | null;
+  extensionChannels(): string[];
   refreshSessions(): Promise<void>;
   refreshApp(): Promise<void>;
   refreshGlobal(): Promise<void>;
-  refreshSpace(): Promise<void>;
+  refreshExtensions(): Promise<void>;
 }
 
 export function checkResumeHealth(effects: ConnectionResumeEffects): Promise<unknown> {
@@ -18,9 +18,8 @@ export function rejoinGlobalChannel(effects: ConnectionResumeEffects): Promise<v
   return effects.joinChannel('global');
 }
 
-export function rejoinActiveSpace(effects: ConnectionResumeEffects): Promise<void> | undefined {
-  const activeSpaceId = effects.getActiveSpaceId();
-  if (activeSpaceId) return effects.joinChannel(`space:${activeSpaceId}`);
+export async function rejoinExtensionChannels(effects: ConnectionResumeEffects): Promise<void> {
+  await Promise.all(effects.extensionChannels().map((channel) => effects.joinChannel(channel)));
 }
 
 export async function refreshResumeStores(effects: ConnectionResumeEffects): Promise<void> {
@@ -28,7 +27,7 @@ export async function refreshResumeStores(effects: ConnectionResumeEffects): Pro
     effects.refreshSessions(),
     effects.refreshApp(),
     effects.refreshGlobal(),
-    effects.refreshSpace(),
+    effects.refreshExtensions(),
   ]);
 }
 
@@ -36,6 +35,6 @@ export const runConnectionResume = (superpipe({})('connection-resume') as Pipeli
   .input(['effects'])
   .pipe(checkResumeHealth, 'effects')
   .pipe(rejoinGlobalChannel, 'effects')
-  .pipe(rejoinActiveSpace, 'effects')
+  .pipe(rejoinExtensionChannels, 'effects')
   .pipe(refreshResumeStores, 'effects', 'completion')
   .endAsync('completion') as (effects: ConnectionResumeEffects) => Promise<void>;

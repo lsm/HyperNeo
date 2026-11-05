@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
+import { createNeoOperations } from '../../helpers/neo-service.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -163,6 +163,9 @@ test('validates every declared type and keeps false, zero, empty globs and login
     ['synthetic', 'count', -1, false],
     ['synthetic', 'count', 3, false],
     ['synthetic', 'count', Infinity, false],
+    ['coding', 'mergeBy', 'owner', true],
+    ['coding', 'mergeBy', 'daemon', true],
+    ['coding', 'mergeBy', 'automatic', false],
     ['coding', 'reviewBot', 'hyperneo-ai-test', true],
     ['coding', 'reviewBot', 'a'.repeat(40), false],
     ['coding', 'humanSignoff', [], true],

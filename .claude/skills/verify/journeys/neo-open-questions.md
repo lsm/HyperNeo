@@ -15,3 +15,6 @@ At mobile width, answer both through the UI and confirm each persisted human ans
 via RPC, with no question left visible after the last answer. Evidence includes
 screenshots and open-questions.json under the run's evidence directory.
 Stop only the owned daemon/mock and preserve evidence before removing the run.
+
+Question fixtures carry an explicit core evidence retirement check inside the
+synthetic run. That file stays absent during rendering and answering checks.

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { leaveSession, sessionTitle } from './session-pane-web.mjs';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -21,12 +22,12 @@ try {
       await question.waitFor();
       const header = question.locator('[data-question-source]');
       assert.equal(await header.innerText(), 'Open');
-      assert.equal(await header.locator('svg').count(), 0);
+      assert.equal(await header.locator('svg').count(), 1);
       const joined = page.locator(`[data-ask-question="${saved.start.question.id}"]:visible`);
       assert.equal(await joined.locator('[data-question-source]').innerText(), 'Open');
       await joined.getByRole('button', { name: 'Open session: Review worker', exact: true }).click();
-      await page.locator('.neo-session-pane').getByRole('heading', { name: 'HyperNeo · Review worker', exact: true }).waitFor();
-      await page.locator('.neo-session-pane').getByRole('button', { name: 'Back to Neo', exact: true }).click();
+      await sessionTitle(page, { name: 'HyperNeo · Review worker', exact: true }).waitFor();
+      await leaveSession(page);
       const linkless = page.locator('[data-ask-question="linkless-source"]:visible');
       assert.equal(await linkless.locator('[data-question-source]').count(), 0);
       assert.equal(await linkless.getByRole('button', { name: /^Open session:/ }).count(), 0);
@@ -44,9 +45,9 @@ try {
       await page.screenshot({ path: `${run}/evidence/question-source-${width}.png`, fullPage: true });
       await question.getByRole('button', { name: 'Open session: Review worker', exact: true }).click();
       const pane = page.locator('.neo-session-pane');
-      await pane.getByRole('heading', { name: 'HyperNeo · Review worker', exact: true }).waitFor();
+      await sessionTitle(page, { name: 'HyperNeo · Review worker', exact: true }).waitFor();
       await page.screenshot({ path: `${run}/evidence/question-source-open-${width}.png`, fullPage: true });
-      await pane.getByRole('button', { name: 'Back to Neo', exact: true }).click();
+      await leaveSession(page);
       await question.getByRole('button', { name: 'Approve', exact: true }).waitFor();
       if (width === 390) {
         await question.getByRole('button', { name: 'Approve', exact: true }).click();
@@ -60,5 +61,5 @@ try {
     } finally { await page.close(); }
   }
   writeFileSync(`${run}/evidence/question-source-web.json`, JSON.stringify(observed, null, 2));
-  console.log('PASS: short Open button without source title/provider, adapter opener and answer controls at desktop/mobile widths');
+  console.log('PASS: logo + Open button without source title/provider, adapter opener and answer controls at desktop/mobile widths');
 } finally { await browser.close(); }

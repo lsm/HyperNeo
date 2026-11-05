@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events';
 import { GitHubEventExtension } from '../../../../src/lib/external-events/github';
 import { SESSION_EVENT_SCOPE } from '../../../../src/lib/external-events/session-external-event-store';
 import { githubRepoOfTopic } from '../../../../src/lib/external-events/subscription-operations';
@@ -7,6 +6,7 @@ import { SessionEventSubscriptionRepository } from '../../../../src/storage/repo
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { runMigration329 } from '../../../../src/storage/schema/m329-session-event-subscriptions';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 
 let extension: GitHubEventExtension | null = null;
 afterEach(async () => {
@@ -24,7 +24,7 @@ async function started(
     fetchImpl: (async () => new Response('[]', { status: 200 })) as unknown as typeof fetch,
   });
   extension = created;
-  const config = new ExternalEventExtensionConfigStore(db);
+  const config = createExternalEventConfigStore(db);
   await config.setGlobalConfig('github', {
     source: 'github',
     globallyEnabled: true,
@@ -72,7 +72,7 @@ describe('watchSessionRepo', () => {
       fetchImpl: (async () => new Response('{}', { status: 200 })) as unknown as typeof fetch,
     });
     extension = created;
-    const config = new ExternalEventExtensionConfigStore(db);
+    const config = createExternalEventConfigStore(db);
     await created.start({
       publisher: { publish: async (event) => ({ outcome: 'published', eventId: event.id }) },
       config,
@@ -160,7 +160,7 @@ describe('the first poll of a session watch', () => {
       fetchImpl: (async () => new Response('{}', { status: 200 })) as unknown as typeof fetch,
     });
     extension = github;
-    const config = new ExternalEventExtensionConfigStore(db);
+    const config = createExternalEventConfigStore(db);
     await config.setGlobalConfig('github', {
       source: 'github',
       globallyEnabled: true,
@@ -221,7 +221,7 @@ describe('the first poll of a session watch', () => {
       fetchImpl: (async () => new Response('{}', { status: 200 })) as unknown as typeof fetch,
     });
     extension = github;
-    const config = new ExternalEventExtensionConfigStore(db);
+    const config = createExternalEventConfigStore(db);
     await config.setGlobalConfig('github', {
       source: 'github',
       globallyEnabled: true,

@@ -2,7 +2,11 @@ import { publishSQLiteWorkerLogs } from '../sqlite-worker-observability.ts';
 import { Database } from '../sqlite-compat.ts';
 import { ChangeRecorder } from './db-op.ts';
 import { DB_OPS } from './db-ops.ts';
+import { isSpaceEnabled, registerSchemaExtension } from '../schema/extensions.ts';
+import { SPACE_SCHEMA } from '../schema/space-schema.ts';
 import type { DbGatewayReply, DbGatewayRequest } from './db-gateway.ts';
+
+if (isSpaceEnabled()) registerSchemaExtension(SPACE_SCHEMA);
 
 const worker = globalThis as unknown as {
   onmessage: (event: { data: DbGatewayRequest }) => void;

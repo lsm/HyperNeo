@@ -1677,5 +1677,61 @@ describe('ContextFetcher.fetch', () => {
       expect(recordObservedContextWindow('anthropic', 'claude-sonnet-5', 1_000_000)).toBe(true);
       expect(recordObservedContextWindow('glm', 'glm-5.2[1m]', 1_000_000)).toBe(false);
     });
+
+    it('prefers metadata capacity while an auto-compact window is armed', () => {
+      const response = baseResponse({
+        totalTokens: 100_000,
+        maxTokens: 533_000,
+        rawMaxTokens: 533_000,
+        percentage: 19,
+        model: 'claude-sonnet-5-5[1m]',
+        autoCompactThreshold: 500_000,
+        isAutoCompactEnabled: true,
+        categories: [
+          { name: 'Messages', tokens: 100_000, color: 'blue' },
+          { name: 'Autocompact buffer', tokens: 33_000, color: 'gray' },
+          { name: 'Free space', tokens: 400_000, color: 'gray-dim' },
+        ],
+      });
+
+      const info = ContextFetcher.toContextInfo(response, {
+        id: 'claude-sonnet-5-5[1m]',
+        provider: 'anthropic',
+        contextWindow: 1_000_000,
+        autoCompactPercent: 50,
+        autoCompactPercentOverride: 50,
+      });
+
+      expect(info.totalCapacity).toBe(1_000_000);
+      expect(info.autoCompactThreshold).toBe(500_000);
+    });
+
+    it('never adopts the armed auto-compact window as observed capacity', async () => {
+      setModelsCache(anthropicSlice());
+      const getContextUsage = mock(async () =>
+        baseResponse({
+          totalTokens: 100_000,
+          maxTokens: 533_000,
+          rawMaxTokens: 533_000,
+          model: 'claude-sonnet-5',
+        })
+      );
+      const query = { getContextUsage } as unknown as Query;
+
+      const fetcher = new ContextFetcher('anthropic-armed-session');
+      const infoSpy = spyOn(fetcher.logger, 'info');
+
+      const info = await fetcher.fetch(query, {
+        id: 'claude-sonnet-5',
+        contextWindow: 200_000,
+        provider: 'anthropic',
+        autoCompactPercent: 50,
+        autoCompactPercentOverride: 50,
+      });
+
+      expect(info?.totalCapacity).toBe(200_000);
+      expect(infoSpy).not.toHaveBeenCalled();
+      expect(recordObservedContextWindow('anthropic', 'claude-sonnet-5', 533_000)).toBe(true);
+    });
   });
 });

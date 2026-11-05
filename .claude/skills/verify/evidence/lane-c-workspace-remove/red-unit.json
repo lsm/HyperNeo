@@ -1,0 +1,6 @@
+{
+  "passed": 1,
+  "failed": 7,
+  "failure": "workspace removal SQL reached main",
+  "invalidPathAdmissionPreserved": true
+}

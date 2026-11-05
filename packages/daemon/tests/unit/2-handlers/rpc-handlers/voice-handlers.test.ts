@@ -513,11 +513,16 @@ describe('voice RPC handlers', () => {
   });
 
   it('rejects concurrent transcription requests from the same client', async () => {
-    let resolveFetch: ((response: Response) => void) | undefined;
+    let resolveFetch!: (response: Response) => void;
+    let signalFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      signalFetchStarted = resolve;
+    });
     globalThis.fetch = mock(
       async () =>
         new Promise<Response>((resolve) => {
           resolveFetch = resolve;
+          signalFetchStarted();
         })
     ) as typeof fetch;
 
@@ -532,6 +537,7 @@ describe('voice RPC handlers', () => {
       }
     );
 
+    await fetchStarted;
     await expect(
       handlers.get('voice.transcribe')?.(
         { audioBase64: wavBase64(), mimeType: 'audio/wav' },
@@ -545,7 +551,7 @@ describe('voice RPC handlers', () => {
       )
     ).rejects.toThrow('Voice transcription is already in progress for this client');
 
-    resolveFetch?.(new Response(JSON.stringify({ text: 'done' }), { status: 200 }));
+    resolveFetch(new Response(JSON.stringify({ text: 'done' }), { status: 200 }));
     await expect(firstRequest).resolves.toEqual({ text: 'done' });
   });
 
@@ -1138,12 +1144,12 @@ describe('voice stream RPC handlers', () => {
     asrRelayDefaults.create = originalRelayFactory;
   });
 
-  it('voice.stream.start takes only pcm16 at 16 kHz', async () => {
+  it('voice.stream.start rejects an unsupported sample rate', async () => {
     const { hub, handlers } = createMockMessageHub();
     registerVoiceHandlers(hub, createSettings({ voice }));
     await expect(
       handlers.get('voice.stream.start')?.({ encoding: 'opus', sampleRate: 48_000 })
-    ).rejects.toThrow('Voice streams take pcm16 audio at 16000 Hz');
+    ).rejects.toThrow('Voice streams take pcm16 or opus audio at 16000 Hz');
   });
 
   it('the pinned CA also reaches the batch fetch for the configured host', async () => {

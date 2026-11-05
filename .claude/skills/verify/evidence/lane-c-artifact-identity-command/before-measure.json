@@ -1,0 +1,51 @@
+{
+  "base": "baae6ec8d28d54d5b9587d8cca29af2f3bfacb25",
+  "units": [
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-repository.ts",
+      "name": "constructor",
+      "start": 9,
+      "end": 11,
+      "lines": 3,
+      "sha256": "02be737b6f0113c59bcdfb52377155edfe432693ffa408285060269c306b53ff"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-identity.ts",
+      "name": "ensureArtifactFileIdentity",
+      "start": 4,
+      "end": 8,
+      "lines": 5,
+      "sha256": "def555f966934767227b6a1553f547bfee60eb432588318bc0228ed6a09db940"
+    }
+  ],
+  "fullLocalGraphLines": 8,
+  "productionLines": 0,
+  "smokeLines": 0,
+  "delta": [],
+  "sql": [
+    {
+      "bytes": 58,
+      "sha256": "8cb8d4d56c4500e7e9878d1f19030340785f48efecfdbfe8aa53c742417bdb55"
+    },
+    {
+      "bytes": 44,
+      "sha256": "d2a23547820de87d09904aab32e258c6f615bc2e78cc1d99beae38bb3cdddc0d"
+    }
+  ],
+  "sqlBytesUnchanged": true,
+  "stableReceiptAndSave": [
+    {
+      "name": "receipt",
+      "sha256": "25ac85a867820cc62b38c48debf8e4a043dd7b38721f8a47cc12fb3ac17dda9e"
+    },
+    {
+      "name": "save",
+      "sha256": "05548ba597a1998859c48ca08fb1be869175627db83a14db9b6d34775439357d"
+    }
+  ],
+  "contract": "artifact.identity.ensure.write / write / ensure(callerUuid): retained identity string after immediate transaction commit; one singleton under concurrency; lookup failure rolls back creation/trigger effects; no automatic replay after unknown outcome. Optional committed-identity constructor parameter performs no identity SQL. Legacy helper/default constructor preserve UUID allocation order and prior behavior.",
+  "publicArtifactActivation": false,
+  "fullCaptureOwnershipGraphMeasured": false,
+  "auditLimit": "Construction helper/constructor/registered command subtree only; generic gateway/SQLite/crypto plumbing unchanged. Public artifact registration/reference/Git capture/policy/ownership/FS graph is not wired or fully audited here.",
+  "sqlBaselineChanged": false
+}

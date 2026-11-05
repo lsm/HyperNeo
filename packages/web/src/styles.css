@@ -788,6 +788,29 @@ html {
   color: var(--prose-link-hover);
 }
 
+.prose [data-demoted-link] {
+  color: var(--prose-link);
+}
+
+.prose.neo-quote-excerpt :is(h1, h2, h3, h4, h5, h6) {
+  font-size: inherit;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.prose.neo-quote-excerpt :is(p, ul, ol, blockquote, table) {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.prose.neo-quote-excerpt pre {
+  margin-top: 0;
+  margin-bottom: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
 .prose [data-preview-reference]:not(a) {
   color: var(--prose-link);
   text-decoration: underline dotted;

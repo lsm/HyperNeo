@@ -1,0 +1,13 @@
+{
+  "mainThreadMovementClaim": false,
+  "boundary": "Verbatim reduced UPSERT extraction; fresh envelope 162, excluded audited stable data modules 166, total known 328. Public writes remain main-side; full public/shared-barrel/runtime closure unclaimed",
+  "publicRpcMs": 2.019207999999935,
+  "publicRpc": {
+    "mainInserts": 2,
+    "newInsertsObserved": true,
+    "callerUuidTimeFallbackAndCursorPreserved": true,
+    "existingUpdateAndSavedConfigPreserved": true
+  },
+  "constructorFreeUpsertReceiptCursorFailureAndRollbackPreserved": true,
+  "pass": true
+}

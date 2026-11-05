@@ -3,6 +3,10 @@ import * as nodeNet from 'node:net';
 import { configureLogger, LogLevel } from '@hyperneo/shared';
 import { resetProviderRegistry } from '../src/lib/providers/registry';
 import { vi } from 'vitest';
+import { registerSchemaExtension } from '../src/storage/schema/extensions';
+import { SPACE_SCHEMA } from '../src/storage/schema/space-schema';
+
+registerSchemaExtension(SPACE_SCHEMA);
 
 vi.mock('../src/lib/acp/acp-safe-fs.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/lib/acp/acp-safe-fs.ts')>();

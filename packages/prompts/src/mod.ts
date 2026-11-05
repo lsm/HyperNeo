@@ -42,6 +42,9 @@ import mdneoSystemGoalCycle from './neo/system/goal-cycle.md' with { type: 'text
 import mdneoSystemRoot from './neo/system/root.md' with { type: 'text' };
 import mdneoSystemRootTurnEnd from './neo/system/root-turn-end.md' with { type: 'text' };
 import mdneoPacksCodingInstructions from './neo/packs/coding/instructions.md' with { type: 'text' };
+import mdneoPacksCodingWorkerWorktreeBrief from './neo/packs/coding/worker-worktree-brief.md' with {
+  type: 'text',
+};
 import mdneoPacksCodingWorkerRules from './neo/packs/coding/worker-rules.md' with { type: 'text' };
 import mdneoWorkFiles from './neo/work/files.md' with { type: 'text' };
 import mdneoWorkGoal from './neo/work/goal.md' with { type: 'text' };
@@ -277,6 +280,7 @@ const registry: Record<string, string> = {
   'neo/work/goal-asked.md': mdneoWorkGoalAsked,
   'neo/work/goal-done-when.md': mdneoWorkGoalDoneWhen,
   'neo/packs/coding/instructions.md': mdneoPacksCodingInstructions,
+  'neo/packs/coding/worker-worktree-brief.md': mdneoPacksCodingWorkerWorktreeBrief,
   'neo/packs/coding/worker-rules.md': mdneoPacksCodingWorkerRules,
   'neo/packs/coding/goal-merge.md': mdneoWorkGoalMerge,
   'neo/packs/coding/goal-pr-events.md': mdneoPacksCodingGoalPrEvents,
@@ -406,6 +410,7 @@ export const {
   GITHUB_SECURITY_SYSTEM_PROMPT,
   NEO_PACK_CODING_INSTRUCTIONS,
   NEO_PACK_CODING_WORKER_RULES,
+  NEO_PACK_CODING_WORKTREE_BRIEF,
   NEO_PACK_LIFE_ADMIN_INSTRUCTIONS,
   NEO_SESSION_TRACK,
   NEO_GOAL_CYCLE,

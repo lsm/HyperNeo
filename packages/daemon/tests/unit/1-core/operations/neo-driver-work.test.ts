@@ -27,7 +27,7 @@ import {
   readDriverSent,
   readDriverSettlement,
 } from '../../../../src/lib/neo/driver-work.ts';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import { createNeoOperations } from '../../helpers/neo-service.ts';
 import type { NeoRef } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
 import { withCodingWorkGoal as withWorkGoal } from '../../../../src/lib/neo/packs/coding/work-goal.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
@@ -43,6 +43,17 @@ import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 const place = { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen', daemon: 'laptop' };
 const startTarget: NeoDriverTarget = { verb: 'start', adapter: 'codex-desktop', place };
+
+test('worker delivery guidance uses a live owning-daemon path instead of requiring registration', () => {
+  const message = withWorkGoal('Write the report.', {
+    goal: 'Prepare a report',
+    doneWhen: 'File exists',
+  });
+  expect(message).toContain('absolute path on the owning daemon');
+  expect(message).toContain('Removing its worktree makes the reference unavailable');
+  expect(message).not.toContain('artifact.file.register');
+  expect(message).toContain('owner_unavailable');
+});
 const sendTarget: NeoDriverTarget = {
   verb: 'send',
   ref: { adapter: 'hyperneo', id: 's1' },

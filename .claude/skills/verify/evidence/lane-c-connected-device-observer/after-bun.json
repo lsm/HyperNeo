@@ -1,0 +1,57 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "nativeObserverDetected": true,
+  "onlyActualConnectedIdsDeduplicated": true,
+  "singleFlightWhileReplyHeldMs": 2200.546292,
+  "healthWhileHeldMs": 2.361333000000286,
+  "lostReceiptError": "Error: synthetic committed revocation reply lost; outcome unknown",
+  "readAdmissionsDuring2200msOutage": 2,
+  "unconfirmedDevicesRemainOpen": true,
+  "connectionsClosedAfterReadRecovery": true,
+  "recoveryMs": 677.4108750000005,
+  "activeAndUnpairedRemainOpen": true,
+  "noMutationReplay": true,
+  "realCliConfirmsPersistedRevocation": true,
+  "walBytes": 37112,
+  "cleanupStopsPollsAndLateNotification": true,
+  "maxLoopLagMs": 4.997916999999688,
+  "rssBytes": 145196088,
+  "readAdmissions": 5,
+  "writeAdmissions": 2,
+  "mainSqlAttempts": 0,
+  "timings": [
+    {
+      "roundTripMs": 1.0452920000000177,
+      "requestBytes": 110,
+      "replyBytes": 2,
+      "encodeMs": 0.029583000000002357
+    },
+    {
+      "roundTripMs": 0.8092499999997926,
+      "requestBytes": 125,
+      "replyBytes": 11,
+      "encodeMs": 0.01587500000005093
+    },
+    {
+      "roundTripMs": 3.979082999999264,
+      "requestBytes": 110,
+      "replyBytes": 40,
+      "encodeMs": 0.005959000000075321
+    },
+    {
+      "roundTripMs": 0.5073339999999007,
+      "requestBytes": 125,
+      "replyBytes": 11,
+      "encodeMs": 0.001833000000260654
+    },
+    {
+      "roundTripMs": 0.42433400000027177,
+      "requestBytes": 110,
+      "replyBytes": 40,
+      "encodeMs": 0.011999999999716238
+    }
+  ],
+  "runtime": "Bun 1.4.3",
+  "temporaryDataRemoved": true,
+  "exitCode": 0
+}

@@ -30,6 +30,7 @@ export interface SystemState {
   maxSessions: number;
   storageLocation: string;
   workspaceRoot?: string;
+  homeDirectory?: string;
 
   auth: AuthStatus;
 
@@ -104,6 +105,7 @@ export type AgentProcessingState =
       phase: 'initializing' | 'thinking' | 'streaming' | 'finalizing';
       streamingStartedAt?: number;
       isCompacting?: boolean;
+      messageIds?: string[];
     }
   | { status: 'waiting_for_input'; pendingQuestion: PendingUserQuestion }
   | {

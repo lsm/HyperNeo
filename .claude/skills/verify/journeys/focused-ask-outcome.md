@@ -24,12 +24,17 @@ calls neo.ask.outcome with the decision, document and PR links, and adds an
 execution todo with the existing coding PR check. Leave the ask open: recording
 the discussion outcome does not settle its execution. Explicit settlement is
 covered by ask-bookkeeping-actions.md, where unfinished todos close unverified.
+The synthetic settled report uses message.send kind done; unstructured notes
+wait for a worker batch and do not promise immediate SDK delivery. Fixture
+delivery-input acceptance and outcome writes are awaited before using their ID.
 Restart the test daemon and assert the same
 outcome, source link, open ask and pending execution remain in neo.snapshot.
 
 Headless 1440px/390px screenshots show the outcome's working Markdown links in
-Details and the incomplete execution row. The persistent session opener must
-still reopen the correct session and return. Retain observed.json, web.json,
+All and the incomplete execution row. The header retains session context without a duplicate opener. The retained
+Human-led discussion todo's logo + Open reopens the focused session, and Back
+restores the card. No duplicate fallback appears while that todo can open it. Question and
+per-todo navigation remain covered by neo-open-controls.md in both themes. Retain observed.json, web.json,
 screenshots, receipts.json and cleanup.json. The helper closes its own daemon,
 model, browser and server in finally.
 

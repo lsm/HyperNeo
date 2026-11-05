@@ -12,10 +12,18 @@ describe('neoPackBriefs', () => {
     expect(neoPackBriefs(NEO_DEFAULT_PACKS)).toEqual([
       {
         id: 'coding',
-        describe: 'Software work in git repositories: pull requests, CI, review and merging.',
+        describe:
+          'Software work in git repositories: pull requests, CI, review and merging. Check pr_approved {url} waits for saved-policy approval; pr_merged waits for merge.',
         guidance: NEO_PACK_CODING_INSTRUCTIONS,
       },
     ]);
+  });
+
+  test('publishes approval checks for both todos and question retirement in the coding guidance', () => {
+    const guidance = neoPackBriefs(NEO_DEFAULT_PACKS)[0].guidance?.replace(/\s+/g, ' ');
+    expect(guidance).toContain('kind:"pr_approved",params:{url:');
+    expect(guidance).toContain('neo.todo.add check or neo.question.ask retireWhen');
+    expect(guidance).toContain('human never passes automatically');
   });
 
   test('keeps only installed packs the enable list names', () => {
@@ -25,10 +33,13 @@ describe('neoPackBriefs', () => {
 
   test('requires review approval before a manual merge and forbids auto-merge', () => {
     const guidance = neoPackBriefs(NEO_DEFAULT_PACKS)[0].guidance?.replace(/\s+/g, ' ');
-    expect(guidance).toContain('never enable GitHub auto-merge');
+    expect(guidance).toContain('Never enable GitHub auto-merge');
     expect(guidance).toContain(
-      'after the review it uses approves the latest head and required checks are green'
+      'For owner execution, merge by hand after the required review approves the latest head and required checks are green'
     );
+    expect(guidance).toContain('Do not chase owners to merge in daemon repos');
+    expect(guidance).toContain('call neo.coding.merge.human');
+    expect(guidance).toContain('enabled:true to add human-merge; use enabled:false');
   });
 
   test('asks the human how a new repository is reviewed and creates its verify skill first', () => {

@@ -10,14 +10,38 @@ its PR check. Track any required deployment or smoke as its own checkable todo. 
 "owner/repo#N"}}. NOT_PLANNED fails the todo; open or unreadable never completes it.
 Keep the repository's review and merge rules. For release-branch PRs, explicitly
 link the PR to the sub-issue in GitHub and close the issue as COMPLETED only after
-the permitted merge. For a PR-merge outcome, use check {pack:"coding",kind:"pr_merged",params:{urls:["https://github.com/example/project/pull/123"]}}. Existing pr_merged todos keep working. Read GitHub facts with
+the permitted merge. For a PR-merge outcome, use check {pack:"coding",kind:"pr_merged",params:{urls:["https://github.com/example/project/pull/123"]}}. Existing pr_merged todos keep working.
+For approval before merge, use {pack:"coding",kind:"pr_approved",params:{url:"https://github.com/example/project/pull/123"}} with neo.todo.add check or neo.question.ask retireWhen. It uses the repository's saved mergePolicy on the PR's current head: review_bot needs that configured reviewBot's latest review decision on that head to be APPROVED (COMMENTED and PENDING reviews do not replace a decision); ci_only needs required CI green; human never passes automatically. A new head needs fresh approval, and failed reads leave the check unmet. Login matching ignores case; a trailing [bot] alias requires a known GitHub Bot actor across approval checks, ledger and merge gates. User accounts or unknown actor types never qualify through a suffix alias. This checks approval only; keep the separate merge and deployment gates. Read GitHub facts with
 neo.github.read; never ask the human to confirm them. Name refs as owner/repo#N.
 PR events, owner workers' reports and passing pr_merged/issue_closed checks reach
 you as messages; never sleep or poll gh / neo.github.read to wait for review, CI
 or merge.
-Put the repository's merge rule in a coding todo's instruction: merge by hand
-after the review it uses approves the latest head and required checks are green,
-and never enable GitHub auto-merge.
+Coding worker briefs, work goals and PR notifications include repository merge
+preferences as data: merge policy, review bot, human sign-off, merge executor
+and provenance. Unset review settings are explicit; declared defaults still apply.
+Put the repository's merge rule and executor in each coding todo instruction.
+For owner execution, merge by hand after the required review approves the latest
+head and required checks are green. Never enable GitHub auto-merge.
+The repo-scoped `mergeBy` preference defaults to `owner` without saving a value.
+`daemon` runs fresh merge gates in the coding sweep, squash-merges eligible PRs
+on their exact head, records receipts and tells the owner or Neo. Do not chase
+owners to merge in daemon repos. A fresh OPEN result releases a failed attempt for
+retry; all gates are checked again. Pending CI or GitHub's unready commit status
+does not consume the budget; unreadable outcomes retain the receipt and CLI
+error without consuming the retry budget. The daemon stops after three confirmed
+failed attempts per head and tells Neo the last error; resolve it before reopening the budget.
+After resolving a stopped report, Neo may call neo.coding.merge.retry with its URL
+and exact head. It accepts the report and reopens the budget only after every fresh
+merge gate passes, preserves historical failures, and leaves merging to the daemon.
+When a stopped PR later passes fresh gates, Neo receives a new ready cue; it does not reopen the budget itself.
+Retry-limit reports remain pending until Neo accepts them, even if the PR closes
+or repository policy changes. Human policy and sign-off still require the human. With zero required checks and no configured review-bot gate, work is handed to the human for manual merge, including owner-execution repositories. Never ask workers to merge these PRs. Only the exact repository setting `allowNoChecksMerge:true` opts into zero-check merging; its default is false and global values do not authorize it. Human handoff notices are published directly and do not complete pr_merged checks.
+When the human wants to merge a PR themselves, call neo.coding.merge.human with
+its URL and enabled:true to add human-merge; use enabled:false if they change
+their mind. Never change saved
+preferences unless the human approves the preference change. `humanSignoff`
+checks changed path globs and actual PR labels (`label:human-merge` explicitly,
+or a bare label name); unreadable scope remains blocked.
 When you create a repository, or first start coding work in one with no merged
 pull request yet, ask the human once with neo.question.ask (kind choice) how its
 pull requests get reviewed: "I'll install my review app on it", "Merge on green
@@ -29,8 +53,12 @@ When you set up a new project folder for Claude Desktop sessions, ask the human
 once, in the same round of questions, to create a Claude Desktop environment for
 it: "New environment", then the folder's full path. Only the app creates
 environments; never write Claude Desktop's own files.
-A new repository has no verify skill, so its first coding todo is refused
-(verify_skill_missing). Make a new project's first todo one whose worker writes
+Coding workers own their worktree across tasks and receive checkout parameters in
+their start brief. Ordinary starts and Review/Verify assignments do not prepare a
+checkout on the server; only an enabled worker-sandbox preference requests a private
+clone. Verification-skill absence does not refuse session admission: the worker checks
+the assigned head and stops application work until the skill-only task gate is met.
+Make a new project's first todo one whose worker writes
 .claude/skills/verify/SKILL.md for shared setup and separate journey files in
 .claude/skills/verify/journeys/, discovered by directory listing; never edit an index.
 Run it end to end once: start it with
@@ -78,7 +106,7 @@ and reuse the repo verify skill. Relay `neo.coding.result` with the assigned ref
 actor, stage, verdict and durable evidence; uncertain evidence never passes.
 A new head needs fresh assignments. Keep one todo/sub-issue for the slice.
 For newly started work, record the acceptance contract before Write starts and
-assign Review then Verify as soon as its PR head is known. Before authorizing a
+assign Review then Verify as soon as its PR head is known. For owner execution, before authorizing a
 merge, call `neo.coding.merge.prepare` with only todoId and PR url; refusal keeps
 work open. Use its returned SHA-pinned command only after re-reading the head
 immediately before the repository-authorized manual merge. Never enable auto-merge.

@@ -1,3 +1,4 @@
+import { createPushedWorkerRepo } from '../../../helpers/native-worker-worktree';
 import { vi } from 'vitest';
 import * as sandbox from '../../../../src/lib/drivers/worker-sandbox';
 import { prepareWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
@@ -140,16 +141,27 @@ describe('claude-desktop adapter against the app session records', () => {
     exitCode = 0,
     onSpawn = () => {},
     output: { stdout?: string; stderr?: string } = { stderr: exitCode ? 'relay failed' : '' },
-    sendInbox?: ClaudeDesktopAdapterDeps['sendInbox']
+    sendInbox?: ClaudeDesktopAdapterDeps['sendInbox'],
+    readInput?: ClaudeDesktopAdapterDeps['readInput']
   ) {
     spawned = [];
     clock = 0;
     return createClaudeDesktopAdapter({
       sendInbox,
+      readInput,
       admitInbox: sendInbox
         ? (context) => requireClaudeReplyDestination(context, { hasSession: () => false })
         : undefined,
-      listProcesses: async () => [],
+      listProcesses: async () => {
+        const sessions = live instanceof Error ? [] : typeof live === 'function' ? live() : live;
+        const records = await readClaudeDesktopRecords(dir, new Map());
+        return sessions.map((session) => ({
+          pid: session.pid!,
+          ppid: 1,
+          elapsedSeconds: 1,
+          command: `claude --permission-mode ${records.find((record) => record.cliSessionId === session.sessionId)?.permissionMode ?? 'auto'}`,
+        }));
+      },
       sessionsDir: dir,
       projectsDir: join(dir, 'projects'),
       machine: 'laptop',
@@ -180,6 +192,29 @@ describe('claude-desktop adapter against the app session records', () => {
       },
     });
   }
+
+  test('finds an exact input marker under the Desktop record owning CLI session', async () => {
+    const driver = adapter(
+      [],
+      0,
+      () => {},
+      {},
+      undefined,
+      async (id, marker) => ({
+        messageId: `${id}:input`,
+        role: 'user',
+        at: 1,
+        text: `${marker}\nStored answer`,
+      })
+    );
+    expect(await driver.readInput?.('local_a1', '[worker-answer:exact]')).toMatchObject({
+      messageId: 'cli-a1:input',
+      text: '[worker-answer:exact]\nStored answer',
+    });
+    expect(await driver.readInput?.('cli-a1', '[worker-answer:exact]')).toBeNull();
+    expect(await driver.readInput?.('unknown', '[worker-answer:exact]')).toBeNull();
+    expect(spawned).toEqual([]);
+  });
 
   test.each([false, true])(
     'an import between CLI turns leaves Desktop UI unconfirmed (second turn completed: %s)',
@@ -557,6 +592,34 @@ describe('claude-desktop adapter against the app session records', () => {
         .map((work) => work.ref.id)
     ).not.toContain(ref.id);
   });
+
+  test.each(['clean', 'dirty', 'unpushed'])(
+    'archives Claude while removing only a clean pushed native worktree: %s',
+    async (state) => {
+      const { repo, git } = createPushedWorkerRepo(dir);
+      const folder = join(repo, '.claude', 'worktrees', 'worker');
+      git('worktree', 'add', '--detach', folder, 'HEAD');
+      if (state === 'dirty') writeFileSync(join(folder, 'keep.txt'), 'changes');
+      if (state === 'unpushed') git('-C', folder, 'commit', '--allow-empty', '-m', 'keep unpushed');
+      const path = join(dir, 'acct-a/scope-1/local_a1.json');
+      writeFileSync(
+        path,
+        JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), cwd: folder, originCwd: repo })
+      );
+      const result = await adapter([]).archive!(
+        { adapter: 'claude-desktop', id: 'local_a1' },
+        () => null
+      );
+      expect(result).toMatchObject({
+        ok: true,
+        value: { archived: true, worktree: { directory: folder, removed: state === 'clean' } },
+      });
+      expect(existsSync(folder)).toBe(state !== 'clean');
+      expect(JSON.parse(readFileSync(path, 'utf8')).isArchived).toBe(true);
+      if (state !== 'clean')
+        expect(JSON.stringify(result)).toMatch(state === 'dirty' ? /changes/ : /unpushed/);
+    }
+  );
 
   test('keeps the Claude record unarchived when runtime removal fails', async () => {
     const path = join(dir, 'acct-a/scope-1/local_a1.json');
@@ -977,6 +1040,14 @@ describe('claude-desktop adapter against the app session records', () => {
       },
     };
 
+    test('an idle user-created session receives no HyperNeo worker instructions', async () => {
+      expect(await resumeAs('auto').send?.(ref, 'run the audit', context)).toEqual(delivered);
+      expect(spawned).toHaveLength(1);
+      expect(spawned[0].args).not.toContain('--settings');
+      expect(spawned[0].args).not.toContain('--append-system-prompt');
+      expect(spawned[0].args.join(' ')).not.toContain('HYPERNEO_');
+    });
+
     test('runs the message as a CLI turn on the session, in its own mode, and confirms it', async () => {
       expect(await resumeAs('auto').send?.(ref, 'run the audit', context)).toEqual(delivered);
       expect(spawned).toEqual(resumed('auto'));
@@ -1303,7 +1374,7 @@ describe('claudeTranscriptState', () => {
     const user = (timestamp: string, fields: Record<string, unknown>) =>
       JSON.stringify({ type: 'user', timestamp, ...fields });
     const state = claudeTranscriptState([
-      user('2026-10-08T10:00:00.000Z', { message: { content: 'typed' } }),
+      user('2026-10-08T10:00:00.000Z', { uuid: 'typed-input', message: { content: 'typed' } }),
       user('2026-10-08T10:01:00.000Z', {
         isMeta: true,
         turnOrigin: 'system',
@@ -1319,7 +1390,12 @@ describe('claudeTranscriptState', () => {
     expect(state).toEqual({
       reply: null,
       inputs: [
-        { at: Date.parse('2026-10-08T10:00:00.000Z'), text: 'typed', human: true },
+        {
+          at: Date.parse('2026-10-08T10:00:00.000Z'),
+          text: 'typed',
+          human: true,
+          inputId: 'typed-input',
+        },
         { at: Date.parse('2026-10-08T10:01:00.000Z'), text: 'notice', human: false },
       ],
       lastAt: Date.parse('2026-10-08T10:03:00.000Z'),

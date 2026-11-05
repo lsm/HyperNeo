@@ -11,7 +11,11 @@ export const wakeStalledAsks = (superpipe({})('neo-stalled-ask-wake') as Pipelin
   .input(['store', 'tell', 'now'])
   .pipe(
     async (store: NeoAskTodoRepository, tell: NeoService['deliverForward'], now: number) => {
-      for (const ask of store.listStalledAsks(now - STALLED_ASK_AFTER_MS, now - REPEAT_AFTER_MS)) {
+      for (const ask of store.listStalledAsks(
+        now - STALLED_ASK_AFTER_MS,
+        now - REPEAT_AFTER_MS,
+        false
+      )) {
         try {
           await tell(
             ask.sessionId,

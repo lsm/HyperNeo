@@ -1,6 +1,7 @@
 import { Database } from './sqlite-compat.ts';
 import { runLagPhase } from '../lib/event-loop-activity.ts';
 import { join } from 'node:path';
+import { readdirSync } from 'node:fs';
 import type {
   CodexSnapshot,
   CodexRootRow,
@@ -15,7 +16,23 @@ export const THREAD_COLUMNS = `id, COALESCE(NULLIF(substr(trim(replace(replace($
 const CLOSED_THREADS = 500;
 const BUSY_TIMEOUT_MS = 2_000;
 
-export const codexStatePath = (home: string): string => join(home, '.codex', 'state_5.sqlite');
+export function codexStatePath(home: string): string {
+  const directory = join(home, '.codex');
+  let selected = 'state_5.sqlite';
+  let newest = -1n;
+  try {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const match = entry.name.match(/^state_(\d+)\.sqlite$/);
+      if (!entry.isFile() || !match) continue;
+      const version = BigInt(match[1]);
+      if (version > newest) {
+        newest = version;
+        selected = entry.name;
+      }
+    }
+  } catch {}
+  return join(directory, selected);
+}
 
 function readCodexStateOnce<T>(path: string, read: (db: Database) => T, busyTimeoutMs: number): T {
   const db = runLagPhase(
@@ -27,6 +44,10 @@ function readCodexStateOnce<T>(path: string, read: (db: Database) => T, busyTime
       db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}`)
     );
     return runLagPhase('scanner:codex_desktop:query', () => read(db));
+  } catch (error) {
+    if (/no such (?:table|column)/.test(String(error)))
+      throw new Error(`Unsupported Codex state schema: ${String(error)}`, { cause: error });
+    throw error;
   } finally {
     runLagPhase('scanner:codex_desktop:close', () => db.close());
   }

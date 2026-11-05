@@ -1,0 +1,157 @@
+{
+  "verified": false,
+  "realGithub": false,
+  "neoConcernDeliveryWired": false,
+  "runtime": {
+    "commit": "2ef2e844a5b2910dfc162c4d9b304952b77bc18b",
+    "pid": 97705,
+    "port": 60473
+  },
+  "resourcesStopped": true,
+  "mode": "verify",
+  "mainSql": [
+    "SELECT repo, MAX(readAt) AS readAt FROM (\n            SELECT repo, MAX(read_at) AS readAt FROM pack_coding_pr_ledger GROUP BY repo\n            UNION ALL SELECT repo, json_extract(health_json, '$.attemptedAt') AS readAt\n              FROM pack_coding_repo_health) GROUP BY repo HAVING readAt IS NOT NULL",
+    "SELECT repo, number, title, branch, head, state, closed_at AS closedAt,\n                state_since AS stateSince, read_at AS readAt\n           FROM pack_coding_pr_ledger ORDER BY repo, number",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT health_json FROM pack_coding_repo_health\n        WHERE repo = ?1 OR repo IN\n          (SELECT alias FROM pack_coding_repo_aliases WHERE canonical = ?1)\n        ORDER BY json_extract(health_json, '$.cycleAt') DESC, repo = ?1 DESC LIMIT 1",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT health_json FROM pack_coding_repo_health\n        WHERE repo = ?1 OR repo IN\n          (SELECT alias FROM pack_coding_repo_aliases WHERE canonical = ?1)\n        ORDER BY json_extract(health_json, '$.cycleAt') DESC, repo = ?1 DESC LIMIT 1",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT repo, MAX(readAt) AS readAt FROM (\n            SELECT repo, MAX(read_at) AS readAt FROM pack_coding_pr_ledger GROUP BY repo\n            UNION ALL SELECT repo, json_extract(health_json, '$.attemptedAt') AS readAt\n              FROM pack_coding_repo_health) GROUP BY repo HAVING readAt IS NOT NULL",
+    "SELECT repo, number, title, branch, head, state, closed_at AS closedAt,\n                state_since AS stateSince, read_at AS readAt\n           FROM pack_coding_pr_ledger ORDER BY repo, number",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT health_json FROM pack_coding_repo_health\n        WHERE repo = ?1 OR repo IN\n          (SELECT alias FROM pack_coding_repo_aliases WHERE canonical = ?1)\n        ORDER BY json_extract(health_json, '$.cycleAt') DESC, repo = ?1 DESC LIMIT 1",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT scope_key FROM neo_pack_preferences\n        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?",
+    "SELECT value_json, scope_kind, scope_key, set_by, set_at\n    FROM neo_pack_preferences WHERE pack = ? AND key = ?\n      AND ((scope_kind = ? AND scope_key = ?) OR (scope_kind = 'global' AND scope_key = ''))\n    ORDER BY CASE WHEN scope_kind = ? AND scope_key = ? THEN 0 ELSE 1 END LIMIT 1",
+    "SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?"
+  ],
+  "commands": [
+    {
+      "name": "coding.ledgerWrites",
+      "method": "recordAlias",
+      "mode": "write",
+      "durationMs": 0.21029199999998127,
+      "argsBytes": 69,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "recordHealth",
+      "mode": "write",
+      "durationMs": 0.5948750000000018,
+      "argsBytes": 107,
+      "replyBytes": 214
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "replace",
+      "mode": "write",
+      "durationMs": 0.7132500000000164,
+      "argsBytes": 305,
+      "replyBytes": 2
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "recordAlias",
+      "mode": "write",
+      "durationMs": 0.1383339999999862,
+      "argsBytes": 67,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "recordHealth",
+      "mode": "write",
+      "durationMs": 0.1297500000000582,
+      "argsBytes": 106,
+      "replyBytes": 214
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "replace",
+      "mode": "write",
+      "durationMs": 0.12720899999999347,
+      "argsBytes": 303,
+      "replyBytes": 2
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "prune",
+      "mode": "write",
+      "durationMs": 0.10158400000000256,
+      "argsBytes": 113,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "pruneSessions",
+      "mode": "write",
+      "durationMs": 0.024750000000040018,
+      "argsBytes": 49,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "assignOwners",
+      "mode": "write",
+      "durationMs": 0.17204100000003564,
+      "argsBytes": 35,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "recordAlias",
+      "mode": "write",
+      "durationMs": 0.10495900000000802,
+      "argsBytes": 69,
+      "replyBytes": 4
+    },
+    {
+      "name": "coding.ledgerWrites",
+      "method": "recordHealth",
+      "mode": "write",
+      "durationMs": 0.18304200000011406,
+      "argsBytes": 107,
+      "replyBytes": 214
+    }
+  ]
+}

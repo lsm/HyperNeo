@@ -1,0 +1,34 @@
+{
+  "failingCommit": "073b9d2363116c1873767c862c769247a2245c6e",
+  "red": "Real Bun concurrent registration RPCs reject when the cached/new main INSERT trap catches both legacy publication attempts; zero row commands posted. Matching test fails. Deno baseline already refuses capture and is a compatibility control, not a failing row activation proof.",
+  "focusedTests": 29,
+  "strictTypeScript": "6.0.3: zero errors for new test plus registration production module",
+  "repositoryCheck": "bun run check: exit 0, SQL ratchet unchanged",
+  "fullLocalGraphLines": 199,
+  "productionLines": 12,
+  "appendOnlySmokeLines": 1,
+  "netPrepare": 0,
+  "netRun": 0,
+  "auditedDependencies": {
+    "rowWriterLines": 135,
+    "rowWriterManifestSha256": "e5bd770ab9c429055ec5b512e62b50866c2ce79603fd4157ed3c673b020ff01b",
+    "identityWriterLines": 31,
+    "identityWriterManifestSha256": "c873ccbaabb67077528a7318458ca26300a0c6e2752a48a2ba4a0643fbcf8f26",
+    "boundaryManifestSha256": "042d5673723bd139ad50913234f37c4e9dedbd7c2377622f677d23df8fd771d7"
+  },
+  "nativeBun": "Public registration main INSERT count 0; concurrent lane/retained receipt/old and revised snapshot bytes, admission refusal, unknown outcome without replay, explicit read-only retry, post-commit access revocation withholding, competing writer health/commit wait, sensitive/traversal refusals pass.",
+  "nativeDeno": "Existing safe_open_unavailable capture refusal, zero rows/row commands, sensitive/traversal compatibility passes. Successful row activation, bytes and contention/reply fences remain unverified on Deno; merged construction tests the Deno writer separately.",
+  "compatibilityJourneys": "Updated registration-identity and receipt-extract assertions to zero main publication INSERTs, rerun both on Bun and Deno; four wrapper exits 0 with data removed.",
+  "sqlMeasurementScope": "Registration row INSERT only. Main-side read-only receipt/authorization/native binding SQL and sync descriptor work remain; Git publication remains main until a separate slice. #9342 earlier todo binding startup transaction outside this ask fixture and late row-post contention window.",
+  "latencyLimit": "Held publication was deliberately over 1.2s; not an all-writes-under-250ms or complete-RPC ownership proof.",
+  "proofDataRemoved": true,
+  "oneCheckout": true,
+  "noInstalls": true,
+  "unverified": [
+    "Full transitive capture/binding/ownership/runtime/OS graph",
+    "Successful Deno capture/row activation/bytes",
+    "Native Bun 1.4.2 (local 1.4.3)",
+    "Browser and Neo-owned deployment smoke",
+    "Final no-SQLite/sync-disk main-thread guard"
+  ]
+}

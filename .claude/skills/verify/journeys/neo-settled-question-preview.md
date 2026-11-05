@@ -11,7 +11,7 @@ bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/neo-se
 
 Use fresh evidence and ready paths. Keep the owning shell alive. The ready JSON
 contains its ephemeral URL, run and PID. Before the fix, open the Work card's
-Details: both long rows render over 2,500 characters without Read all. Capture
+All dialog: both long rows render over 2,500 characters without Read all. Capture
 both viewports and save browser.json with phase before and baselineReproduced.
 
 For the fix, rebuild the exact committed head and launch with after. Read the
@@ -24,7 +24,7 @@ Inspect initial, preview and complete-question screenshots. Both settled bodies
 must be short, with answer/date or retirement reason visible. Read all opens the
 complete safe Markdown including its final table/link/text; only this dialog
 renders that full body. Close returns to the bounded preview. Short questions
-have no Read all. View full versions still opens the separate literal document.
+have no Read all. View full report still opens the separate literal document.
 Open-question answer controls remain available. Component tests cover Chinese
 labels, safe Markdown and attached artifacts. Confirm dialog bounds and no
 horizontal overflow; vertical scrolling is intentional for long full text.
@@ -38,8 +38,8 @@ stops the preview, WebSocket and daemon. The wrapper saves evidence then deletes
 its temporary HOME/data. Require wrapper exit zero. Run the NeoAskTodos suite
 and full check on the final head before publishing.
 
-Deployment smoke is applicable but pending owner rollout while the daemon's
-served web remains on 0.49.0 f48add72. There is no alternate live URL; do not use
-port 8399 or restart the daemon. Exact containing build assets with synthetic
-real-daemon data establish isolated proof, never deployed/live verification.
+The work-card history now lives in the All dialog; see neo-all-items-dialog.md
+for paging and nested-modal checks. Deployment smoke needs a containing served
+build and explicit permission for a read-only browser check. Never restart or
+mutate the live daemon. Isolated proof alone does not establish live verification.
 The other #9086 items are outside this slice.

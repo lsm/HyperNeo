@@ -1,8 +1,6 @@
 # Health session counter uses the reader
 
-Run `lane-b-health-session-count-reader.ts` through `proof-run.sh` in a fresh
-synthetic daemon; native Deno smoke uses the same helper with a disposable
-HOME/data/TMPDIR. There is no model turn, provider key or external HTTP.
+There is no model turn, provider key or external HTTP.
 
 Seed active, paused, archived and excluded room/Space/lobby sessions. Warm the
 existing main counter statement before measuring. A statement proxy installed

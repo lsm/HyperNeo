@@ -1,0 +1,32 @@
+50 |  evidence.forward=await read({conversationId,after:stored[1].sequence,limit:2});assert.deepEqual(evidence.forward.items,stored.slice(2,4));
+51 |  evidence.tail=await read({conversationId,before:Number.MAX_SAFE_INTEGER,limit:3});assert.deepEqual(evidence.tail.items,stored.slice(4));
+52 |  evidence.older=await read({conversationId,before:stored[4].sequence,limit:3});assert.deepEqual(evidence.older.items,stored.slice(1,4));
+53 |  evidence.empty=await read({conversationId,after:Number.MAX_SAFE_INTEGER});assert.deepEqual(evidence.empty,{ok:true,conversationId,items:[],nextAfter:Number.MAX_SAFE_INTEGER});
+54 |  evidence.foreign=await read({conversationId:foreign});assert.deepEqual(evidence.foreign,{ok:false,reason:'conversation_not_found'});
+55 |  evidence.unbound=await mcp('neo:unbound-synthetic');assert.deepEqual(evidence.unbound,{ok:false,reason:'human_only'});
+                                                                 ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
+  {
+    ok: false,
++   reason: 'human_only: Only the human can do this, from the app. Ask the human instead.'
+-   reason: 'human_only'
+  }
+
+ generatedMessage: true,
+     actual: {
+  ok: false,
+  reason: "human_only: Only the human can do this, from the app. Ask the human instead.",
+},
+   expected: {
+  ok: false,
+  reason: "human_only",
+},
+   operator: "deepStrictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /Users/lsm/.codex/worktrees/lane-a-publication-page/neokai/.claude/skills/verify/lane-a-publication-page-db.ts:55:61
+
+Bun v1.4.3 (macOS arm64)

@@ -22,12 +22,7 @@ export function routeDriveTurnOutcome(result: DeliveryOutcome): HandlerOutcomeRo
     return { mutation: 'none', settleSkipped: true, result: { outcome: 'aborted' } };
   }
   if (result.outcome === 'blocked') {
-    const parked =
-      result.reason === 'context_clear_boundary'
-        ? 'context_clear_boundary'
-        : result.reason === 'limit_recovery'
-          ? 'limit_recovery'
-          : 'sdk_resume_choice';
+    const parked = result.reason ?? 'sdk_resume_choice';
     return {
       mutation: 'requeue',
       retryAt: result.retryAt,

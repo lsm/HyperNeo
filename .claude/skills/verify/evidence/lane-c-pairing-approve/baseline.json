@@ -1,0 +1,11 @@
+{
+  "unitFailedRegressions": 3,
+  "unitPassingRefusalControls": 2,
+  "realRpcExitCode": 1,
+  "realRpcTargetMainSql": 1,
+  "setupCorrections": [
+    "The first proof launch lacked an installed dependency link; reused existing cached exact pins without installing. That launch is not bug evidence.",
+    "Relay permission is rejected by operation policy before execution; corrected the control assertion before committing the regression."
+  ],
+  "scope": "Only paired-human code approval; other pairing SQL remains outside this slice."
+}

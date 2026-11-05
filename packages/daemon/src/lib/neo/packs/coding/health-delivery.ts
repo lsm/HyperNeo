@@ -41,7 +41,7 @@ export async function deliverCodingHealth(
   now: number
 ): Promise<void> {
   for (const repo of new Set(repos.map((repo) => repo.toLowerCase()))) {
-    const health = await ledger.write('readHealth', repo);
+    const health = await ledger.readHealthCurrent(repo);
     for (const notice of health?.notices ?? []) {
       if (notice.acceptedAt !== null) continue;
       emitStructuredLogEvent({

@@ -1,0 +1,6 @@
+{
+  "compiler": "6.0.3",
+  "config": "packages/daemon/tsconfig.tests.json",
+  "root": "packages/daemon/tests/unit/1-core/pairing/human-reset-command.test.ts",
+  "errors": []
+}

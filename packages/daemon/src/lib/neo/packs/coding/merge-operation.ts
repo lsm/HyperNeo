@@ -1,5 +1,6 @@
+import { codingNoChecksNeedsHuman } from './daemon-merge-gates.ts';
 import { homedir } from 'node:os';
-import { posix } from 'node:path';
+import { codingHumanSignoff } from './human-signoff.ts';
 import { isDeepStrictEqual } from 'node:util';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -12,7 +13,7 @@ import { codingReviewerPolicy } from './stage-facts.ts';
 import { createCodingReviewThreadReader } from './connector-review-thread-reader.ts';
 import type { CodingTodoPrRepository } from './todo-prs.ts';
 import type { prepareCodingMerge } from './merge-gates.ts';
-import type { runCodingReview } from './review.ts';
+import { codingReviewMatches, type runCodingReview } from './review.ts';
 
 const Input = z
   .object({
@@ -177,11 +178,12 @@ export function createCodingMergeOperation(deps: Deps) {
         const signoff = state.policy.humanSignoff ?? [];
         const needsHuman =
           state.policy.mergePolicy === 'human' ||
-          signoff.some((pattern) =>
-            pattern.startsWith('label:')
-              ? pr.labels.some((label) => posix.matchesGlob(label.name, pattern.slice(6)))
-              : pr.files.some((file) => posix.matchesGlob(file.path, pattern))
-          );
+          codingNoChecksNeedsHuman(state.policy, checks.length) ||
+          codingHumanSignoff(
+            signoff,
+            pr.changedFiles === pr.files.length ? pr.files.map((file) => file.path) : null,
+            pr.labels.map((label) => label.name)
+          ) !== false;
         return deps.prepareMerge(
           deps.todos.deliveryFacts,
           input.todoId,
@@ -204,7 +206,7 @@ export function createCodingMergeOperation(deps: Deps) {
               ...(route.kind === 'bot'
                 ? reviews.filter(
                     (r) =>
-                      r.user?.login.toLowerCase() === route.login.toLowerCase() &&
+                      codingReviewMatches(r.user, route.login) &&
                       r.commit_id === route.head &&
                       r.state === 'APPROVED'
                   )
@@ -252,3 +254,5 @@ export function createCodingMergeOperation(deps: Deps) {
     execute: (input) => prepare(input),
   });
 }
+
+export const codingMergeGithubSchemas = { Head, Pr, Reviews, Checks, Threads };

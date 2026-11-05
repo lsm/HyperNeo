@@ -1,0 +1,347 @@
+{
+  "base": "13d3364456b98bc634ba509f9a08874fe4732fb8",
+  "root": "packages/daemon/src/lib/artifacts/register-operation.ts",
+  "units": [
+    {
+      "name": "RegisterArtifactInput",
+      "start": 22,
+      "end": 28,
+      "lines": 7,
+      "sha256": "6003bfc1869deccb99cab3bd707bfb913da2da7601e781e783f5ee30240d4d6b"
+    },
+    {
+      "name": "textKinds",
+      "start": 30,
+      "end": 39,
+      "lines": 10,
+      "sha256": "6543dda73c178b619cad47f7b3e1e73b5bf08b7d40359a02258092db3e709e31"
+    },
+    {
+      "name": "instances",
+      "start": 40,
+      "end": 40,
+      "lines": 1,
+      "sha256": "2b045801976e3cb25dd521263b4a3aa9ea066a23b1b0bb9eae7cfcbb1b52ddf0"
+    },
+    {
+      "name": "refused",
+      "start": 41,
+      "end": 44,
+      "lines": 4,
+      "sha256": "c30f568659539d245e0310e14622f4a895154c5709bab242227b0969cd2a2190"
+    },
+    {
+      "name": "storedKind",
+      "start": 46,
+      "end": 71,
+      "lines": 26,
+      "sha256": "d52cd8b98346c78e07f6c4edd1e6decd6d869c49099f5036cc7e16c1fa932f98"
+    },
+    {
+      "name": "registrationService",
+      "start": 73,
+      "end": 185,
+      "lines": 113,
+      "sha256": "2d4ff232b192456833dba20a6e4f216f5257d7f7c14c78c50d641e0327725365"
+    },
+    {
+      "name": "createArtifactRegistration",
+      "start": 187,
+      "end": 221,
+      "lines": 35,
+      "sha256": "d77e72b4764f3a10ad24e2008778297ca0dde59dabb0cf5670a62aee8d86c665"
+    }
+  ],
+  "fullLocalGraphLines": 196,
+  "productionLines": 0,
+  "smokeLines": 0,
+  "delta": [],
+  "auditedMergedWriters": [
+    {
+      "name": "lane-c-artifact-row-command",
+      "manifestSha256": "e5bd770ab9c429055ec5b512e62b50866c2ce79603fd4157ed3c673b020ff01b",
+      "fullSubtreeLines": 135,
+      "contract": "publish(...legacySaveArgs): no identity initialization; unchanged worker-local save and clock, exact retained row/canonical receipt check in same transaction, result carries reference/receipt/createdAt only after commit; no retry/conflict recovery. No public mutation callers changed.",
+      "units": [
+        {
+          "file": "packages/daemon/src/storage/repositories/artifact-file-repository.ts",
+          "name": "constructor",
+          "start": 10,
+          "end": 15,
+          "lines": 6,
+          "sha256": "56b63cd0413fe3ab057a3ad1e26012d3f0aace9d49b80d1a8ad7f95af34c551d"
+        },
+        {
+          "file": "packages/daemon/src/storage/repositories/artifact-file-repository.ts",
+          "name": "save",
+          "start": 29,
+          "end": 57,
+          "lines": 29,
+          "sha256": "481b021c4fff54bd5ed71d13c023f3fc4394e50ae2277712700474370b29b89d"
+        },
+        {
+          "file": "packages/daemon/src/storage/repositories/artifact-file-read-repository.ts",
+          "name": "constructor",
+          "start": 17,
+          "end": 17,
+          "lines": 1,
+          "sha256": "f3497513bcf32938aa5f7db1373dbba49a8a21a482ff030c347fc6d96437a2db"
+        },
+        {
+          "file": "packages/daemon/src/storage/repositories/artifact-file-read-repository.ts",
+          "name": "get",
+          "start": 27,
+          "end": 31,
+          "lines": 5,
+          "sha256": "f6bf95a5d8d837994257d239f91779ca96479e03a5f2eadca7e543342e903133"
+        },
+        {
+          "file": "packages/daemon/src/storage/repositories/artifact-file-receipt.ts",
+          "name": "serializeArtifactReceipt",
+          "start": 4,
+          "end": 17,
+          "lines": 14,
+          "sha256": "3e010c7fa1a7017ca0752b89dfa7280be65c3c176392aa1df279f07eb58c1c86"
+        },
+        {
+          "file": "packages/daemon/src/storage/repositories/artifact-file-identity.ts",
+          "name": "ensureArtifactFileIdentity",
+          "start": 4,
+          "end": 10,
+          "lines": 7,
+          "sha256": "86dfda497e8e13b6b918b767aba241180efa5983e2e8afb1180265ee44c1bc63"
+        },
+        {
+          "file": "packages/daemon/src/storage/repositories/artifact-file-row-write.ts",
+          "name": "complete new module (including types/imports/op)",
+          "lines": 73,
+          "sha256": "04f3d4417be0190bcd9d2bf1139acecb61f7237a54fa2322e2741fa47d17c4e4"
+        }
+      ]
+    },
+    {
+      "name": "lane-c-artifact-identity-command",
+      "manifestSha256": "c873ccbaabb67077528a7318458ca26300a0c6e2752a48a2ba4a0643fbcf8f26",
+      "fullSubtreeLines": 31,
+      "contract": "artifact.identity.ensure.write / write / ensure(callerUuid): retained identity string after immediate transaction commit; one singleton under concurrency; lookup failure rolls back creation/trigger effects; no automatic replay after unknown outcome. Optional committed-identity constructor parameter performs no identity SQL. Legacy helper/default constructor preserve UUID allocation order and prior behavior.",
+      "units": [
+        {
+          "file": "packages/daemon/src/storage/repositories/artifact-file-repository.ts",
+          "name": "constructor",
+          "start": 9,
+          "end": 14,
+          "lines": 6,
+          "sha256": "56b63cd0413fe3ab057a3ad1e26012d3f0aace9d49b80d1a8ad7f95af34c551d"
+        },
+        {
+          "file": "packages/daemon/src/storage/repositories/artifact-file-identity.ts",
+          "name": "ensureArtifactFileIdentity",
+          "start": 4,
+          "end": 10,
+          "lines": 7,
+          "sha256": "86dfda497e8e13b6b918b767aba241180efa5983e2e8afb1180265ee44c1bc63"
+        },
+        {
+          "file": "packages/daemon/src/storage/repositories/artifact-file-identity-write.ts",
+          "name": "complete data-only identity writer",
+          "lines": 18,
+          "sha256": "56a8d823058eb4e4cc82cd9572db06f07a3fecf7b874cabfd0cc1fea499a51f3"
+        }
+      ]
+    }
+  ],
+  "unchangedBoundaryManifestSha256": "042d5673723bd139ad50913234f37c4e9dedbd7c2377622f677d23df8fd771d7",
+  "unchangedBoundaryPins": [
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-row-write.ts",
+      "lines": 73,
+      "sha256": "04f3d4417be0190bcd9d2bf1139acecb61f7237a54fa2322e2741fa47d17c4e4",
+      "imports": [
+        "superpipe",
+        "../db-gateway/db-op.ts",
+        "../sqlite-compat.ts",
+        "./artifact-file-repository.ts",
+        "./artifact-file-read-repository.ts",
+        "./artifact-file-receipt.ts"
+      ]
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-receipt.ts",
+      "lines": 17,
+      "sha256": "8cb65e05167afebab3420e7e9ee3b8e37901d42184220625d202df9d98d26ed4",
+      "imports": [
+        "@hyperneo/shared/types/artifact-file",
+        "../../lib/artifacts/bundle.ts"
+      ]
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-read-repository.ts",
+      "lines": 45,
+      "sha256": "b5f74f37b4789401f2ca8f6ff97d34d153a26c94d144220120336fb0c069e891",
+      "imports": [
+        "../sqlite-compat.ts",
+        "../../lib/artifacts/file-policy.ts"
+      ]
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-identity-write.ts",
+      "lines": 18,
+      "sha256": "56a8d823058eb4e4cc82cd9572db06f07a3fecf7b874cabfd0cc1fea499a51f3",
+      "imports": [
+        "../db-gateway/db-op.ts",
+        "../sqlite-compat.ts",
+        "./artifact-file-identity.ts"
+      ]
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-identity.ts",
+      "lines": 10,
+      "sha256": "8e34adca5c6948e9bdb8aa6a59a6313c7363c7c7644ca7aaa965570d31ff00cc",
+      "imports": [
+        "node:crypto",
+        "../sqlite-compat.ts"
+      ]
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-repository.ts",
+      "lines": 58,
+      "sha256": "9312dae7cb24b6aed59acf950b585087b6df3fe6dcec58ec60c512d94e0f6508",
+      "imports": [
+        "./artifact-file-receipt.ts",
+        "./artifact-file-identity.ts",
+        "../../lib/artifacts/bundle.ts",
+        "@hyperneo/shared/types/artifact-file",
+        "../sqlite-compat.ts",
+        "../../lib/artifacts/file-policy.ts"
+      ]
+    },
+    {
+      "file": "packages/daemon/src/lib/artifacts/file-policy.ts",
+      "lines": 171,
+      "sha256": "028810594e1db888cfe18edc341e1a77f33d9cd01339c9e09963c271f759ad70",
+      "imports": [
+        "@hyperneo/shared/types/artifact-file",
+        "node:path",
+        "superpipe",
+        "../operations/caller.ts",
+        "../operations/registry.ts",
+        "../secret-file-name.ts"
+      ]
+    },
+    {
+      "file": "packages/daemon/src/lib/artifacts/registration-binding.ts",
+      "lines": 136,
+      "sha256": "231b5e6e6dc326a70d49b4bd8c975d40d75e2dfb4db74af0680b2e73d0bf8b45",
+      "imports": [
+        "../../storage/sqlite-compat.ts",
+        "../../storage/repositories/neo-ask-todo-repository.ts",
+        "../../storage/repositories/neo-todo-session-repository.ts",
+        "./file-policy.ts",
+        "node:os",
+        "node:fs",
+        "node:path",
+        "../../storage/codex-desktop-read.ts",
+        "../drivers/claude-feed.ts"
+      ]
+    },
+    {
+      "file": "packages/daemon/src/lib/artifacts/capture-owner.ts",
+      "lines": 13,
+      "sha256": "691a71e187436ff3c22745615ce50da6a412d566b0e9e7525ff3ef29a142ed74",
+      "imports": [
+        "node:path",
+        "../../storage/sqlite-compat.ts",
+        "./capture-store.ts"
+      ]
+    },
+    {
+      "file": "packages/daemon/src/lib/artifacts/capture-store.ts",
+      "lines": 174,
+      "sha256": "8bb2146177498fa0cc210f59c4b780a7bd1813763259778e11f60cb4a260a232",
+      "imports": [
+        "@hyperneo/shared/types/artifact-file",
+        "node:crypto",
+        "node:fs",
+        "node:fs/promises",
+        "node:path",
+        "node:util",
+        "../runtime-artifact-open.ts",
+        "./file-contracts.ts",
+        "./capture-admission.ts"
+      ]
+    },
+    {
+      "file": "packages/daemon/src/lib/artifacts/capture-admission.ts",
+      "lines": 41,
+      "sha256": "cf414ce0cb816edbd39b1858215940f02062866aae7c4be0bb9563811c5ecaea",
+      "imports": [
+        "@hyperneo/shared/types/artifact-file",
+        "superpipe"
+      ]
+    },
+    {
+      "file": "packages/daemon/src/lib/artifacts/bundle.ts",
+      "lines": 81,
+      "sha256": "de19230c61238d78a6275b6fb83762b0816d9050c5d0c3252d093323674fff8c",
+      "imports": [
+        "@hyperneo/shared/types/artifact-file",
+        "zod",
+        "../../storage/sqlite-compat.ts",
+        "../../storage/repositories/artifact-file-read-repository.ts",
+        "./file-policy.ts"
+      ]
+    },
+    {
+      "file": "packages/daemon/src/lib/runtime-artifact-open.ts",
+      "lines": 1,
+      "sha256": "0d616b757edcafbf0dc2deb134234b9ddc7af0ba8be9fd38bac37daf3b3efe2b",
+      "imports": []
+    },
+    {
+      "file": "packages/daemon/src/lib/acp/acp-safe-fs.ts",
+      "lines": 52,
+      "sha256": "2383862eb3f796847881e36226433cf2957d5a7f7ad75851f112feaf169c7748",
+      "imports": [
+        "./acp-safe-fs-backend.ts"
+      ]
+    },
+    {
+      "file": "packages/daemon/src/lib/acp/acp-safe-fs-backend.ts",
+      "lines": 627,
+      "sha256": "2f3223e28770ff10dfc390730b2a30d21002a13d1da396edf766e0bc0d821182",
+      "imports": [
+        "node:crypto",
+        "node:fs",
+        "node:os"
+      ]
+    },
+    {
+      "file": "packages/daemon/src/lib/artifacts/file-contracts.ts",
+      "lines": 132,
+      "sha256": "df9da333ddc7d625f99cc9ea796730cc0dece5640724bb5ced1828e5ba6146d7",
+      "imports": [
+        "@hyperneo/shared/types/artifact-file",
+        "zod"
+      ]
+    },
+    {
+      "file": "packages/daemon/src/lib/operations/caller.ts",
+      "lines": 30,
+      "sha256": "74e050526fcb69588709e51adf8408a6d96087659791d3f7b2d7c317c46efdb6",
+      "imports": [
+        "./registry.ts"
+      ]
+    },
+    {
+      "file": "packages/daemon/src/lib/secret-file-name.ts",
+      "lines": 13,
+      "sha256": "c9b57bf79a042ce06a50c0528a8cd284a5efb8b0a9b45f149fafcddba19c43c2",
+      "imports": []
+    }
+  ],
+  "auditLimit": "Complete local register module executable roots, nested closures and constant/schema bindings are counted. Merged 135-line row writer and 31-line identity writer subtrees are pinned separately. Unchanged main-side policy/binding/capture/descriptor/bundle modules are pinned in full with direct imports; their transitive repository/native-runtime/OS/library implementations are not fully measured or claimed audited. Only registration row publication is activated. Read-only receipt/binding/authorization SQL and synchronous descriptor work remain on main, as does Git publication. No transitive runtime/capture ownership audit is claimed.",
+  "fullTransitiveCaptureOwnershipGraphMeasured": false,
+  "netPrepare": 0,
+  "netRun": 0,
+  "sqlBaselineChanged": false
+}

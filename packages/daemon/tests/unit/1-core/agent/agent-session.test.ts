@@ -6029,6 +6029,26 @@ describe('AgentSession', () => {
       expect(repo.getDeliveryContent(sessionId, activeUuid)?.sendStatus).toBe('submitted');
       expect(repo.getDeliveryContent(sessionId, staleUuid)?.sendStatus).toBe('failed');
     });
+
+    it('reports a visible session error instead of rejecting when a reconcile scan fails', async () => {
+      const errors: Array<{ error: string }> = [];
+      const unsubscribe = agentSession.internalEventBus.subscribe(
+        'session.error',
+        (event) => {
+          errors.push(event);
+        },
+        { subscriberName: 'agent-session-reconcile-error-test' }
+      );
+      spyOn(db.getJobQueueRepo(), 'activeDeliveryMessageUuids').mockImplementation(() => {
+        throw new Error('sqlite busy');
+      });
+
+      await expect(agentSession.reconcileStrandedDeliveries()).resolves.toBe(0);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(errors.length).toBeGreaterThan(0);
+      unsubscribe();
+    });
   });
 
   describe('driveDeliveryTurn — crash-window reclaim (task #946)', () => {

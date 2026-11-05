@@ -1,0 +1,16 @@
+{
+  "variant": "temporary three-read cap",
+  "productionChangeReverted": true,
+  "persistentReadOutage": {
+    "rpcSettledWithinOneSecond": true,
+    "readAdmissionsWithinOneSecond": 3,
+    "writeAdmissions": 1,
+    "targetStillConnectedDuringOutage": true,
+    "persistedInactive": true
+  },
+  "eventualClosureAfterReadRecovery": false,
+  "mainSqlAttempts": 0,
+  "runtime": "Bun 1.4.3",
+  "proofExitCode": 1,
+  "temporaryDataRemoved": true
+}

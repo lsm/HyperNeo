@@ -2,8 +2,8 @@ import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
 import { EventEmitter } from 'node:events';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { rmSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { Database } from '../../../../src/storage/index';
 import { createReactiveDatabase, mergeScopes } from '../../../../src/storage/reactive-database';
 import type {
@@ -16,7 +16,7 @@ import type { QueryDiff } from '../../../../src/storage/live-query';
 import type { Session, SessionConfig, SessionMetadata } from '@hyperneo/shared';
 
 function makeTempDbPath(): string {
-  return join(tmpdir(), `scoped-test-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
+  return join(mkdtempSync(join(tmpdir(), 'scoped-test-')), 'test.db');
 }
 
 function makeSession(
@@ -95,13 +95,10 @@ describe('ReactiveDatabase — scope extraction', () => {
 
   afterEach(() => {
     try {
-      db.close();
-    } catch {}
-    try {
-      rmSync(dbPath, { force: true });
-      rmSync(dbPath + '-wal', { force: true });
-      rmSync(dbPath + '-shm', { force: true });
-    } catch {}
+      db?.close();
+    } finally {
+      rmSync(dirname(dbPath), { recursive: true, force: true });
+    }
   });
 
   test('saveSDKMessage emits change event with sessionId scope', async () => {

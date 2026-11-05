@@ -1,3 +1,5 @@
+import { escalateWorkerBlocker, recordWorkerBlocker } from '../../lib/neo/worker-blocker.ts';
+import type { WorkRef } from '../../lib/drivers/types.ts';
 import { recoverNeoTodoStart } from './neo-todo-start-recovery.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -7,6 +9,7 @@ import type { NeoTodoPolicy } from '../../lib/neo/todo-operations.ts';
 import { neoTodoPolicies } from '../../lib/neo/packs/todo-policies.ts';
 import { neoMoveTodo, neoTodoRepo } from '../../lib/neo/todo-repo.ts';
 import { requireNeoTodoStartable } from '../../lib/neo/todo-runner.ts';
+import { neoTodoStartRefusal } from '../../lib/neo/todo-start-gate.ts';
 import { sameNeoTodoCheck } from '../../lib/neo/todo-completion.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
@@ -73,6 +76,18 @@ const claim = (superpipe({})('neo.todo.claim-start-state') as PipelineAPI)
   )
   .pipe(requireNeoTodoStartable, 'facts', 'result:outcome')
   .pipe(
+    (store: NeoAskTodoRepository, plan: Start) => {
+      const reason = neoTodoStartRefusal(
+        plan.todo,
+        store.listFamilyTodos(plan.ask.id),
+        store.gateQuestions(plan.ask)
+      );
+      return reason ? { reason: { ok: false as const, reason } } : { value: plan };
+    },
+    ['store', 'outcome'],
+    'result:outcome'
+  )
+  .pipe(
     (store: NeoAskTodoRepository, plan: Start, now: number) => {
       const todo = store.claimStart(plan.todo, now);
       return todo
@@ -124,9 +139,10 @@ class NeoTodoRunnerState {
         notify('neo_asks');
       },
       undefined,
-      () => notify('neo_questions')
+      () => notify('neo_questions'),
+      changes
     );
-    this.sessions = new NeoTodoSessionRepository(db);
+    this.sessions = new NeoTodoSessionRepository(db, changes);
     this.policies = neoTodoPolicies(db);
   }
   recompute(
@@ -141,6 +157,23 @@ class NeoTodoRunnerState {
   claim(id: string, now: number) {
     return { ...claim(this.store, this.sessions, this.policies, id, now), changed: this.changed };
   }
+  blocker(
+    todo: NeoTodo,
+    ref: WorkRef,
+    dispatchId: string,
+    turn: { id: string; at: number; message: string },
+    now: number
+  ) {
+    const result = recordWorkerBlocker(this.store, this.sessions, todo, ref, dispatchId, turn, now);
+    return { todo: result, changed: this.changed };
+  }
+  escalate(id: string, now: number) {
+    return escalateWorkerBlocker(this.store, this.sessions, id, now);
+  }
+  cardUnapproved(now: number) {
+    this.store.cardUnapprovedTodos(now);
+  }
+
   recover(id: string, now: number) {
     const recovery = recoverNeoTodoStart(this.store, this.sessions, id, now);
     if (recovery) this.changes?.notifyChange('neo_todo_sessions');
@@ -152,5 +185,5 @@ export const neoTodoRunnerWrites = defineRepositoryOp(
   'neo.todoRunnerWrites',
   'write',
   NeoTodoRunnerState,
-  ['recompute', 'claim', 'recover']
+  ['recompute', 'claim', 'recover', 'blocker', 'escalate', 'cardUnapproved']
 );

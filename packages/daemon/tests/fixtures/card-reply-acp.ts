@@ -62,6 +62,11 @@ createInterface({ input: process.stdin })
         await new Promise((resolve) => setTimeout(resolve, 10));
       const background = text.includes('BACKGROUND_CARD');
       const input = {
+        retireWhen: {
+          pack: 'core',
+          kind: 'evidence',
+          params: { path: join(run, 'question-no-longer-needed') },
+        },
         askId: 'costco',
         kind: 'choice',
         text: background ? 'Background card' : '周六还是周日去 Costco？',

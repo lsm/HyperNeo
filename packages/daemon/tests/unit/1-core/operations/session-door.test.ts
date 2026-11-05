@@ -38,6 +38,8 @@ const send = (content: string, extra: Record<string, unknown> = {}) => ({
   message: { type: 'user', message: { content }, parent_tool_use_id: null, ...extra },
 });
 
+const authenticated = async () => ({ deviceId: 'local-tools', kind: 'human' as const });
+
 describe('the session door', () => {
   let mailbox: MailboxTestDb;
   let dir: string;
@@ -49,7 +51,7 @@ describe('the session door', () => {
       createSendMessageOperation(mailbox.jobQueue, () => 'active'),
       createBuildOperation(() => mailbox.db.prepare('SELECT 1').get()),
     ]);
-    door = await startSessionDoor(() => registry, join(dir, 'door.sock'));
+    door = await startSessionDoor(() => registry, authenticated, join(dir, 'door.sock'));
   });
   afterEach(async () => {
     await door.close();
@@ -102,7 +104,7 @@ describe('the session door', () => {
     const previous = process.umask(0o022);
     let created: Awaited<ReturnType<typeof startSessionDoor>> | undefined;
     try {
-      created = await startSessionDoor(() => createOperationRegistry([]), path);
+      created = await startSessionDoor(() => createOperationRegistry([]), authenticated, path);
       expect(modes).toEqual([0o600]);
       expect(statSync(path).mode & 0o777).toBe(0o600);
       expect(process.umask()).toBe(0o022);
@@ -117,7 +119,11 @@ describe('the session door', () => {
     const previous = process.umask(0o027);
     try {
       await expect(
-        startSessionDoor(() => createOperationRegistry([]), join(dir, 'absent', 'door.sock'))
+        startSessionDoor(
+          () => createOperationRegistry([]),
+          authenticated,
+          join(dir, 'absent', 'door.sock')
+        )
       ).rejects.toThrow(/listen/);
       expect(process.umask()).toBe(0o027);
     } finally {
@@ -140,6 +146,7 @@ describe('the session door', () => {
             revoked: () => {},
           })
         ),
+      authenticated,
       join(dir, 'diagnostics.sock')
     );
     try {
@@ -183,6 +190,7 @@ describe('the session door', () => {
     });
     const door = await startSessionDoor(
       () => createOperationRegistry([operation]),
+      authenticated,
       join(dir, 'failed.sock')
     );
     try {
@@ -231,9 +239,9 @@ describe('the session door', () => {
   });
 
   test('a second daemon on the same data dir leaves the live door alone', async () => {
-    await expect(startSessionDoor(() => createOperationRegistry([]), door.path)).rejects.toThrow(
-      /another daemon already serves/
-    );
+    await expect(
+      startSessionDoor(() => createOperationRegistry([]), authenticated, door.path)
+    ).rejects.toThrow(/another daemon already serves/);
     expect(
       await post(door.path, { sender: 'worker-1', name: 'message.send', input: send('still here') })
     ).toMatchObject({ status: 200, body: { value: { kind: 'accepted' } } });

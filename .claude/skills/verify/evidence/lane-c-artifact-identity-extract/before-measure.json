@@ -1,0 +1,46 @@
+{
+  "base": "2249b47993f19f3da163d195b15bf06f6ac5559e",
+  "units": [
+    {
+      "file": "packages/daemon/src/storage/repositories/artifact-file-repository.ts",
+      "name": "constructor",
+      "start": 9,
+      "end": 14,
+      "lines": 6,
+      "sha256": "5eaa238de63e6826921020c2090a2b5ae2cd2a5b107f491780ea69b77e679589"
+    }
+  ],
+  "changedGraphLines": 6,
+  "productionLines": 0,
+  "smokeLines": 0,
+  "delta": [],
+  "sql": [
+    {
+      "bytes": 58,
+      "sha256": "8cb8d4d56c4500e7e9878d1f19030340785f48efecfdbfe8aa53c742417bdb55"
+    },
+    {
+      "bytes": 44,
+      "sha256": "d2a23547820de87d09904aab32e258c6f615bc2e78cc1d99beae38bb3cdddc0d"
+    }
+  ],
+  "sqlBytesAndOrderUnchanged": true,
+  "stableReceiptAndSave": [
+    {
+      "name": "receipt",
+      "sha256": "25ac85a867820cc62b38c48debf8e4a043dd7b38721f8a47cc12fb3ac17dda9e"
+    },
+    {
+      "name": "save",
+      "sha256": "05548ba597a1998859c48ca08fb1be869175627db83a14db9b6d34775439357d"
+    }
+  ],
+  "contract": "ensureArtifactFileIdentity(db): UUID string; INSERT OR IGNORE(singleton 1, freshly generated UUID), then SELECT the retained identity; no new transaction/retry; caller-owned rollback and outside-transaction partial insert on read failure remain unchanged.",
+  "mainThreadMovementClaim": false,
+  "phase": "Verbatim extraction only; registered writer construction and public activation are later rungs.",
+  "fullArtifactGraphMeasured": false,
+  "auditLimit": "Only constructor/helper SQL subtree measured. Public resolve RPC refusal and retained identity are characterized; full registration/capture/ownership/FS/source closure remains outside this extraction.",
+  "netPrepare": 0,
+  "netRun": 0,
+  "sqlBaselineChanged": false
+}

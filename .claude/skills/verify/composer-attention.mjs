@@ -13,7 +13,8 @@ try {
       await page.goto(`http://127.0.0.1:${port}/neo`);
       if (width < 800) await page.getByRole('button', { name: /^Your work/ }).click();
       const card = page.locator('[data-ask="composer-fixture"]:visible');
-      await card.locator('[data-ask-focused-session] button').click();
+      assert.equal(await card.locator('[data-ask-focused-session] button').count(), 0);
+      await card.locator('[data-question-source]').getByRole('button', { name: 'Open session: Synthetic worker', exact: true }).click();
       const pane = page.locator('.neo-session-pane');
       const input = pane.getByRole('textbox', { name: 'Message this chat', exact: true });
       await input.waitFor();

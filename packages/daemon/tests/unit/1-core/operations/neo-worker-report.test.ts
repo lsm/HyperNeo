@@ -3,7 +3,7 @@ import { expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import { z } from 'zod';
 import { createTestDb } from '../../../helpers/database.ts';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
 import {
   createSendMessageOperation,
   type SessionSent,
@@ -68,7 +68,14 @@ async function setup() {
   const todo = service.todos.addTodo(
     'todo',
     'ask',
-    { title: 'Build', doneWhen: 'Done', instruction: 'Stay quiet', check: null, named: null },
+    {
+      approvedAt: 1,
+      title: 'Build',
+      doneWhen: 'Done',
+      instruction: 'Stay quiet',
+      check: null,
+      named: null,
+    },
     1
   );
   service.todoSessions.bind(todo.id, ref, 2);

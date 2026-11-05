@@ -1,0 +1,30 @@
+{
+  "failingCommit": "b4fb0167d9",
+  "red": "Eight command/candidate/constructor contracts fail; legacy default contract passes. Both native runtimes refuse the missing writer command after the main SQL guard self-check.",
+  "focusedTests": 40,
+  "strictTypeScript": "6.0.3: zero errors",
+  "repositoryCheck": "bun run check: exit 0; SQL ratchet unchanged",
+  "productionLines": 33,
+  "smokeRegistrationLines": 1,
+  "fullLocalGraphLines": 31,
+  "contract": "Caller UUID to retained singleton receipt after commit. Receipt failure rolls back creation and trigger effects. No automatic replay after admission rejection or unknown outcome. Optional known-identity constructor executes no identity SQL; legacy defaults/SQL/receipt/save behavior retained.",
+  "netPrepare": 0,
+  "netRun": 0,
+  "mainSqlAttempts": 0,
+  "nativeSuccess": [
+    "Bun 1.4.3",
+    "Deno 2.9.4"
+  ],
+  "fixtureCorrection": "The first fixed Deno run failed because deep equality compared a native null-prototype SQLite row with a plain object. Normalize only the fixture row values; final native Bun and Deno runs both exit 0. Failed log retained separately, not counted as a pass.",
+  "syntheticEmptyIdentityResetCountPerProof": 1,
+  "unverified": [
+    "Public artifact mutation activation (later rungs)",
+    "Full filesystem/capture/ownership/source graph",
+    "Generic gateway/SQLite/crypto internals unchanged and outside local graph audit",
+    "Native Bun 1.4.2 (local is 1.4.3)",
+    "Browser and Neo-owned deployment smoke"
+  ],
+  "oneCheckout": true,
+  "noInstalls": true,
+  "proofDataRemoved": true
+}

@@ -1,0 +1,30 @@
+{
+  "redCommit": "db39a8e2009ee4af565488311f8f50b17796eaba",
+  "before": {
+    "mergedHelperPassed": 1,
+    "missingCommandFailed": 5,
+    "nativeWorkerError": "Unknown write DB op: extension.space.config.write"
+  },
+  "focused": {
+    "files": 5,
+    "tests": 22,
+    "passed": true
+  },
+  "strictTypeScript6": {
+    "passed": true,
+    "scope": "New command module and both new tests plus imported dependencies"
+  },
+  "native": "Bun and Deno real writer command plus space.github.listConfig RPC readback; target main UPSERT self-check/absence, exact settings/time, rollback, FK enforcement, held writer/health, admission rejection and actual lost committed reply no replay all pass",
+  "limits": [
+    "Construction only; public Space setter remains unchanged",
+    "GitHub source-setting/watch-row writes before the setter remain separate and must be accounted for before public activation/contention proof",
+    "Unchanged exact-hash helper/framework roots do not prove full transitive plugin/startup/Space audit",
+    "Intentional 1.2-second writer hold is outside 250 ms write target",
+    "Local Bun 1.4.3; pinned Bun 1.4.2 remains CI-owned",
+    "Deployment is Neo-owned; no live daemon or OAP touched"
+  ],
+  "rootCheck": {
+    "command": "bun run check",
+    "exitCode": 0
+  }
+}

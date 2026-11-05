@@ -114,3 +114,10 @@ export const neoSessionTrackWrites = defineDbOp({
       : result;
   },
 });
+
+export const neoSessionTrackRootRead = defineDbOp({
+  name: 'neo.sessionTrackRootRead',
+  mode: 'read',
+  run: (db: Database, _input: null) =>
+    requireNeoTrackRoot(new NeoRepository(db).defaultBinding()?.sessionId),
+});

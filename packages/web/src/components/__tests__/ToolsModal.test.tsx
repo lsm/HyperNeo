@@ -2,14 +2,9 @@ import { describe, it, expect } from 'vitest';
 import type { AppMcpServer, AppSkill, SessionMcpServerEntry } from '@hyperneo/shared';
 import {
   buildDisabledSkillsList,
-  computeMcpServerSkillLinkage,
-  computeMcpSkillRuntimeState,
   computeSkillGroupState,
   getMcpServerEffectiveEnabled,
   getMcpServerProvenanceBadge,
-  getMcpSkillRuntimeClasses,
-  getSkillSourceBadge,
-  isSkillEnabledForSession,
 } from '../ToolsModal.utils.ts';
 
 describe('computeSkillGroupState', () => {
@@ -113,175 +108,6 @@ function makeEntry(overrides: Partial<SessionMcpServerEntry> = {}): SessionMcpSe
   };
 }
 
-describe('computeMcpSkillRuntimeState', () => {
-  it('does not certify builtin instructions without an observed inventory', () => {
-    const skill = makeBuiltinSkill();
-    const state = computeMcpSkillRuntimeState(skill, [], true);
-    expect(state.status).toBe('pending');
-    expect(state.label).toMatch(/running inventory unavailable/);
-  });
-
-  it('keeps attachment unconfirmed while session MCP configuration loads', () => {
-    const skill = makeMcpSkill();
-    const state = computeMcpSkillRuntimeState(skill, [], false);
-    expect(state.status).toBe('pending');
-  });
-
-  it('does not infer active attachment from an enabled backing server', () => {
-    const skill = makeMcpSkill();
-    const entries = [makeEntry({ enabled: true, source: 'registry' })];
-    const state = computeMcpSkillRuntimeState(skill, entries, true);
-    expect(state.status).toBe('pending');
-    expect(state.label).toMatch(/Configured but not attached yet/);
-  });
-
-  it('returns "server-off" with registry source when registry default is false', () => {
-    const skill = makeMcpSkill();
-    const entries = [makeEntry({ enabled: false, source: 'registry' })];
-    const state = computeMcpSkillRuntimeState(skill, entries, true);
-    expect(state.status).toBe('server-off');
-    expect(state.overrideSource).toBe('registry');
-    expect(state.label).toMatch(/registry/i);
-  });
-
-  it('returns "server-off" with session source when session override disables', () => {
-    const skill = makeMcpSkill();
-    const entries = [makeEntry({ enabled: false, source: 'session' })];
-    const state = computeMcpSkillRuntimeState(skill, entries, true);
-    expect(state.status).toBe('server-off');
-    expect(state.overrideSource).toBe('session');
-    expect(state.label).toMatch(/this session/);
-  });
-
-  it('returns "server-off" with space source when space override disables', () => {
-    const skill = makeMcpSkill();
-    const entries = [makeEntry({ enabled: false, source: 'space' })];
-    const state = computeMcpSkillRuntimeState(skill, entries, true);
-    expect(state.status).toBe('server-off');
-    expect(state.overrideSource).toBe('space');
-    expect(state.label).toMatch(/space/);
-  });
-
-  it('returns "server-missing" when backing app_mcp_servers entry is absent', () => {
-    const skill = makeMcpSkill({
-      config: { type: 'mcp_server', appMcpServerId: 'ghost-id' },
-    });
-    const entries = [makeEntry()];
-    const state = computeMcpSkillRuntimeState(skill, entries, true);
-    expect(state.status).toBe('server-missing');
-    expect(state.label).toMatch(/missing|no backing/i);
-  });
-
-  it('returns "skill-disabled" when the skill itself is off but server exists', () => {
-    const skill = makeMcpSkill({ enabled: false });
-    const entries = [makeEntry({ enabled: true })];
-    const state = computeMcpSkillRuntimeState(skill, entries, true);
-    expect(state.status).toBe('skill-disabled');
-  });
-
-  it('prefers "server-missing" over "skill-disabled" when both apply', () => {
-    const skill = makeMcpSkill({
-      enabled: false,
-      config: { type: 'mcp_server', appMcpServerId: 'ghost-id' },
-    });
-    const entries = [makeEntry()];
-    const state = computeMcpSkillRuntimeState(skill, entries, true);
-    expect(state.status).toBe('server-missing');
-  });
-});
-
-describe('computeMcpServerSkillLinkage', () => {
-  it('returns empty map for empty skills list', () => {
-    expect(computeMcpServerSkillLinkage([])).toEqual(new Map());
-  });
-
-  it('ignores builtin and plugin skills', () => {
-    const skills = [
-      makeBuiltinSkill({ id: 'a' }),
-      makeBuiltinSkill({ id: 'b', sourceType: 'builtin' }),
-    ];
-    expect(computeMcpServerSkillLinkage(skills).size).toBe(0);
-  });
-
-  it('maps mcp_server skills by appMcpServerId', () => {
-    const skill = makeMcpSkill({
-      id: 'wrap-1',
-      config: { type: 'mcp_server', appMcpServerId: 'server-1' },
-    });
-    const map = computeMcpServerSkillLinkage([skill]);
-    expect(map.get('server-1')).toBe(skill);
-  });
-
-  it('keeps the first wrapper when multiple skills point at the same server', () => {
-    const first = makeMcpSkill({ id: 'first', displayName: 'First' });
-    const second = makeMcpSkill({ id: 'second', displayName: 'Second' });
-    const map = computeMcpServerSkillLinkage([first, second]);
-    expect(map.get('server-1')).toBe(first);
-  });
-
-  it('skips skills with empty appMcpServerId', () => {
-    const skill = makeMcpSkill({
-      config: { type: 'mcp_server', appMcpServerId: '' },
-    });
-    expect(computeMcpServerSkillLinkage([skill]).size).toBe(0);
-  });
-});
-
-describe('getMcpSkillRuntimeClasses', () => {
-  it('maps active → emerald', () => {
-    expect(getMcpSkillRuntimeClasses('active')).toEqual({
-      dot: 'bg-emerald-400',
-      text: 'text-emerald-500/70',
-    });
-  });
-
-  it('maps server-off → amber (distinct from skill-disabled gray)', () => {
-    expect(getMcpSkillRuntimeClasses('server-off')).toEqual({
-      dot: 'bg-warning',
-      text: 'text-warning/70',
-    });
-  });
-
-  it('maps server-missing → red', () => {
-    expect(getMcpSkillRuntimeClasses('server-missing')).toEqual({
-      dot: 'bg-red-400',
-      text: 'text-danger',
-    });
-  });
-
-  it('maps skill-disabled → gray (user-owned state)', () => {
-    expect(getMcpSkillRuntimeClasses('skill-disabled')).toEqual({
-      dot: 'bg-fg-faint',
-      text: 'text-fg-faint',
-    });
-  });
-
-  it('maps unknown → gray (caller should suppress render)', () => {
-    expect(getMcpSkillRuntimeClasses('unknown')).toEqual({
-      dot: 'bg-fg-faint',
-      text: 'text-fg-faint',
-    });
-  });
-});
-
-describe('isSkillEnabledForSession', () => {
-  it('returns false when the skill is globally disabled, regardless of session state', () => {
-    const skill = makeBuiltinSkill({ enabled: false });
-    expect(isSkillEnabledForSession(skill, new Set())).toBe(false);
-    expect(isSkillEnabledForSession(skill, new Set([skill.id]))).toBe(false);
-  });
-
-  it('returns true for a globally-enabled skill that is not in the session disable list', () => {
-    const skill = makeBuiltinSkill({ enabled: true });
-    expect(isSkillEnabledForSession(skill, new Set())).toBe(true);
-  });
-
-  it('returns false for a globally-enabled skill that the session has opted out of', () => {
-    const skill = makeBuiltinSkill({ id: 'opt-out', enabled: true });
-    expect(isSkillEnabledForSession(skill, new Set(['opt-out']))).toBe(false);
-  });
-});
-
 describe('buildDisabledSkillsList', () => {
   it('returns the IDs of skills currently in the pending set', () => {
     const skills = [
@@ -302,26 +128,6 @@ describe('buildDisabledSkillsList', () => {
   it('returns an empty array when nothing is pending', () => {
     const skills = [makeBuiltinSkill({ id: 'a' })];
     expect(buildDisabledSkillsList(skills, new Set())).toEqual([]);
-  });
-});
-
-describe('getSkillSourceBadge', () => {
-  it('gives builtin skills a "Built-in" badge', () => {
-    const badge = getSkillSourceBadge(makeBuiltinSkill());
-    expect(badge.label).toBe('Built-in');
-    expect(badge.className).toMatch(/accent/);
-  });
-
-  it('gives plugin skills a "Plugin" badge', () => {
-    const badge = getSkillSourceBadge(makePluginSkill());
-    expect(badge.label).toBe('Plugin');
-    expect(badge.className).toMatch(/violet/);
-  });
-
-  it('gives mcp_server skills an "MCP" badge', () => {
-    const badge = getSkillSourceBadge(makeMcpSkill());
-    expect(badge.label).toBe('MCP');
-    expect(badge.className).toMatch(/warning/);
   });
 });
 

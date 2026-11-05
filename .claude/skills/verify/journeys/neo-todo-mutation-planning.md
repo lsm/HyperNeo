@@ -16,18 +16,15 @@ No test-only RPC, provider turn, external command or network endpoint is added.
 The synthetic fixture has an open human card, two todos and a large Unicode
 report; it never copies a live database.
 
-Pass requires a title/URL proposal to preserve current peer-ownership
-bookkeeping, and a core-check proposal to derive its label without observing
-external completion facts. Remove is also only a proposal. The public full card
-must keep its original title, open human card and entire stored report/hash.
-Completion plans with an unanswered todo-specific human card must be refused
-without changing the card. Final writer revalidation in 1b remains required.
-Planning must emit no `neo.changed` event and execute no todo SQL on main.
-`todo-mutation-planning.json` records the result and `resourcesStopped` after
-cleanup; the wrapper saves it before deleting temporary HOME/data/TMPDIR.
-The required Deno smoke invokes the same helper and prints its JSON before
-shared fixture cleanup. Deno not installed locally is unverified until that
-required job succeeds; do not fabricate a Deno evidence report.
+Pass requires a title/URL proposal to preserve current peer-ownership bookkeeping, and a
+core-check proposal to derive its label without observing external completion facts.
+Remove is also only a proposal. The public full card must keep its original title, open
+human card and entire stored report/hash. Completion plans with an unanswered
+todo-specific human card must be refused without changing the card. Final writer
+revalidation in 1b remains required. Planning must emit no `neo.changed` event and execute
+no todo SQL on main. `todo-mutation-planning.json` records the result and
+`resourcesStopped` after cleanup; the wrapper saves it before deleting temporary
+HOME/data/TMPDIR.
 
 The inline gateway unit contracts additionally cover settled-ask successful
 no-op receipts, invalid/missing/removed work, full proposed reports, artifact

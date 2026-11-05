@@ -1,0 +1,16 @@
+{
+  "mainThreadMovementClaim": false,
+  "phase": "pure receipt serialization extraction; legacy row publication remains on its supplied connection",
+  "firstRpcMs": 9.590667000000053,
+  "publicRegistrationReceiptAndBytesPreserved": true,
+  "publicReceiptBytes": 269,
+  "publicReceiptSha256": "17f7e091a996ca5b6254fed0b679cad18cba68a6687d4a1a094a8c32e2260e1b",
+  "mainInsertRuns": 1,
+  "publicMainInsertBindCounts": [
+    11
+  ],
+  "runtime": "Bun 1.4.3",
+  "expectedFailure": "Existing public registration behavior preserved, then missing canonical serializer contract fails.",
+  "passBeforeFix": false,
+  "temporaryDaemonDataRemoved": true
+}

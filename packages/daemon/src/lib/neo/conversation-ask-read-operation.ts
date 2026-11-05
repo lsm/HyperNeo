@@ -1,3 +1,4 @@
+import { presentNeoCardQuotes } from './card-quote.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { NeoPreviewReferenceSchema } from './preview-context-schema.ts';
 import { presentNeoPreviewAsk } from './preview-context.ts';
@@ -105,7 +106,8 @@ async function readAskStatus(
   caller: OperationCaller
 ): Promise<Result> {
   if (!result.ok) return result;
-  const items = await presentStatus(result.items);
+  const statusItems = await presentStatus(result.items);
+  const items = database ? await presentNeoCardQuotes(statusItems, database) : statusItems;
   return {
     ...result,
     items: database

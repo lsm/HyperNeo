@@ -1,105 +1,109 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+HyperNeo uses the Claude Agent SDK. Use Preact conventions, not React APIs.
+See [ADRs](docs/adr/) and [architecture](docs/architecture/) for design and layout.
 
-## Project
+## Runtime and setup
 
-HyperNeo is a browser UI for the Claude Agent SDK: multi-session chat, provider/model switching, file/git operations, MCP servers, checkpoints, and Space multi-agent workflows.
-
-- **Runtimes:** Bun 1.4.2 (pinned release runtime) and Deno 2.9.x for the daemon (`docs/supported-runtimes.md`). Plain Node is not supported.
-- **Stack:** Hono + Claude Agent SDK + SQLite backend; Preact + Signals + Vite + Tailwind frontend (Preact conventions, not React APIs); custom MessageHub RPC/pub-sub over WebSocket.
-- **Tests:** Vitest everywhere except messaging (Bun test). Daemon and shared tests import `bun:test` but run under Vitest through `packages/daemon/tests/bun-test-shim.ts`.
-- **Dependencies:** exact version pins only; CI rejects `^`/`~`.
-
-## Monorepo
-
-`cli` (entry point + HTTP wrapper), `daemon` (backend, sessions, providers, persistence, operations, Space), `shared` (types, MessageHub protocol, `OPERATION_NAMES`), `messaging` (transport-independent contracts), `prompts`, `web` (Preact frontend), `ui` (component library), `skills` (bundled `SKILL.md` plugins, copied to `~/.hyperneo/skills/` at startup), `desktop` (Tauri).
-
-`packages/prompts/src/mod.ts` imports every `.md` with `with { type: 'text' }`; the attribute is mandatory (Bun silently renders attribute-less `.md` imports to HTML) and there is no generated registry. Aliases `@hyperneo/shared`, `@hyperneo/daemon`, `@hyperneo/ui`, and `@/*` resolve directly to source.
+- Use Bun 1.4.2 for the daemon and native proof jobs ([runtimes](docs/supported-runtimes.md)).
+- Pin exact dependency versions; no `^` or `~`.
+- Run `bun install --frozen-lockfile` in fresh worktrees before committing.
+- Always pass a unique `DB_PATH` from a worktree; the DB has a PID lock.
+- Startup must delete `process.env.CLAUDECODE` so SDK subprocesses can launch inside Claude Code.
+- Credential discovery reads env, then `~/.claude/.credentials.json`, macOS Keychain, then the env block in `~/.claude/settings.json`.
+- Credential-dependent tests must fail when secrets are missing; never silently skip.
+- In `packages/prompts/src/mod.ts`, import every `.md` with `with { type: 'text' }`; Bun otherwise renders HTML.
 
 ## Commands
 
 ```bash
-make dev PORT=8484 DB_PATH=/tmp/hyperneo-$(basename $PWD).db   # always isolate the DB in a worktree
-cd packages/daemon && DB_PATH=/tmp/hyperneo-deno-$(basename $(git rev-parse --show-toplevel)).db bun run dev:deno
+make dev PORT=8484 DB_PATH=/tmp/hyperneo-$(basename $PWD).db
 
-bun run check          # no-comments, format, lint, types, knip, then the guards below
+bun run check
 bun run lint:fix && bun run format
-make setup-hooks       # pre-commit: lint, format check, typecheck, knip
+make setup-hooks
 
-./scripts/test-daemon.sh                  # all daemon + shared shards; add a shard name, --rerun, or --show-failures
-cd packages/daemon && bun test tests/unit/some-test.test.ts     # never run `bun test` from the repo root
+./scripts/test-daemon.sh  # accepts a shard name, --rerun, --show-failures
+cd packages/daemon && bun test tests/unit/some-test.test.ts
 cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/convo/multiturn-conversation.test.ts
 cd packages/web && bunx vitest run src/lib/__tests__/some.test.ts
 
 make build && make compile
 ```
 
-Prefer unit/component tests.
-
-## Quality guards
-
-Repo-specific checks inside `bun run check`, all CI-enforced:
-
-- `check:no-comments` — zero comments in `.ts`/`.tsx`. Exempt only: shebangs, `/// <reference>`, `@ts-*`, `biome-ignore`, `eslint-*`, `oxlint-*`, knip `@public`/`knip-ignore`, coverage ignores. Vendored `packages/shared/src/sdk/{sdk,sdk-tools}.d.ts` also retain only their generated `Upstream SDK documentation` pointer; `make sync-sdk-types` refreshes those pointers to the installed, documented upstream declarations.
-- `check:session-guards` — only the allowlist in `scripts/check-session-deletion-callers.sh` may call session delete/archive primitives; anything else reopens a closed data-loss path.
-- `check:operation-names` — every `defineOperation` name must be declared in `packages/shared/src/types/operation-names.ts`, and vice versa.
-- `check:db-schema-parity` — `createSpaceTables` in `packages/daemon/tests/unit/helpers/space-test-db.ts` must match the migrated schema; update it with every migration that touches a table it covers.
-- `check:test-matrix` / `check:online-shards` — every test file must land in exactly one CI shard. Shard discovery uses directory globs in `scripts/test-daemon.sh` and `scripts/test-online.sh`, with duration-weighted buckets and deterministic hash fallbacks; never hand-list files.
-- `check:test-quality` — rejects assertions that cannot fail against a mocked component, and tests filed under a `describe` naming a function they never call.
-- `check:raw-palette` — no new raw Tailwind palette classes in `packages/web/src`; use theme tokens.
-- knip ignores tests, so a module nothing imports fails CI. Export or register new modules in the same PR.
+Never run `bun test` from the repo root. Pre-commit checks lint, format, types and knip.
 
 ## Style and constraints
 
-- Biome: spaces, single quotes (double in JSX), semicolons, ES5 trailing commas, width 100.
-- Oxlint rejects explicit `any`, unused variables, and `console.*` in app code (entry points and tests exempt; startup logging uses `const logInfo = verbose ? console.log : () => {};`).
-- Surgical changes only: preserve surrounding idioms, no unrelated cleanup.
-- New daemon/web business logic composes as ONE direct superpipe pipeline per business path (ADR 0004, `docs/adr/0004-superpipe-pipelines.md`), named for the operation and mixing decision/transform/effect stages. Typed rejections are gates sharing one `result:<name>` output with disjoint `{ value } | { reason }` arms and named inputs, not ctx objects; `!dep` halts stay valid for data-dependent exits. Never hand-roll gate cascades where a pipeline fits; `decisionRun`/`stagedRun` are deprecated with no new call sites. Hot loops and resource-owning shells stay imperative and consult pipelines at decision points.
-- The daemon DB has a PID lock; always pass a unique `DB_PATH` from a worktree.
-- Daemon startup deletes `process.env.CLAUDECODE` so SDK subprocesses can launch inside Claude Code.
-- Credential discovery (`packages/daemon/src/lib/credential-discovery.ts`): env → `~/.claude/.credentials.json` → macOS Keychain → `~/.claude/settings.json` env block.
-- Tests that need credentials must fail when secrets are missing; no silent skip guards.
+- Preserve idioms; make surgical changes, no unrelated cleanup.
+- Biome uses spaces, single quotes (double in JSX), semicolons, ES5 trailing commas and width 100.
+- Oxlint bans `any`, unused variables and app `console.*` (entry points/tests exempt). Startup logging uses `const logInfo = verbose ? console.log : () => {};`.
+- Use ONE direct superpipe pipeline per daemon/web business path, named for its operation. Mix decisions, transforms and effects ([ADR 0004](docs/adr/0004-superpipe-pipelines.md)).
+- Decisions are pure functions over recorded facts; effects (DB writes, sends, spawns) sit at the pipeline's edges. A multi-step effect must leave consistent recorded state whichever step fails.
+- Record each fact once. Derive from the tables that already hold it instead of adding columns or tables that duplicate it.
+- Neo core vs packs: core (`packages/daemon/src/lib/neo/`) knows asks, todos, questions and workers only. Domain rules (pull requests, review, QA, life admin, ...) live in their pack under `lib/neo/packs/<pack>/` and reach core through the `NeoPack` hooks in `pack-contract.ts`; core never branches on a pack id or a domain concept.
+- Typed rejection gates share one `result:<name>` output with disjoint `{ value } | { reason }` arms.
+- Use named inputs, not ctx objects; `!dep` halts may exit based on data.
+- Do not hand-roll gate cascades where a pipeline fits.
+- Do not add `decisionRun` or `stagedRun` calls; both are deprecated.
+- Hot loops and resource-owning shells stay imperative; consult pipelines for decisions.
 
-## Change decomposition (ADR 0004)
+## Checks and tests
 
-Measure before cutting: slice budgets and counts come from reading the touched code and call sites, never from the description. For a re-slice, measure with a three-dot diff against a freshly fetched `origin/dev`. The limit is ~300 prod lines per PR (tests ride their slice); the limit only splits work further, never bundles unrelated deliverables.
+`bun run check` includes format, lint, types, knip and these guards:
 
-Ladder, one PR per rung: **Pin** (characterization tests for behavior that survives) → **Extract** (verbatim moves into pure functions, suites pass unmodified) → **Build** (new functions and pipelines with tests; nothing calls them yet, but they must be reachable for knip) → **Wire** (single call-site swaps; flags only for staged behavior changes) → **Delete** (removal only).
+- `check:no-comments`: no TS/TSX comments except shebangs, triple-slash references, `@ts-*`, `biome-ignore`, `eslint-*`, `oxlint-*`, knip `@public`/`knip-ignore` and coverage ignores. Vendored `packages/shared/src/sdk/{sdk,sdk-tools}.d.ts` also retain their generated `Upstream SDK documentation` pointer; refresh it with `make sync-sdk-types`.
+- `check:session-guards`: only the `scripts/check-session-deletion-callers.sh` allowlist may delete/archive sessions.
+- `check:operation-names`: `defineOperation` names must match `packages/shared/src/types/operation-names.ts` both ways.
+- `check:db-schema-parity`: keep `createSpaceTables` in `packages/daemon/tests/unit/helpers/space-test-db.ts` aligned with migrations.
+- `check:test-matrix` / `check:online-shards`: each test belongs to one shard via directory globs in `scripts/test-{daemon,online}.sh`, never hand-lists.
+- `check:test-quality`: assertions must be able to fail against mocked components; call the function named in `describe`.
+- `check:raw-palette`: use theme tokens, not new raw Tailwind palette classes in `packages/web/src`.
+- knip ignores tests; export/register new modules in the same PR so production reaches them.
+- Prefer unit/component tests. Use Vitest except for messaging, which uses Bun test.
+- Vitest loads `tests/vitest.setup.ts` and aliases the SDK to `tests/sdk-mock.ts`; direct `bun test` preloads `tests/unit/setup.ts`.
+- Online tests boot a daemon. `HYPERNEO_USE_DEV_PROXY=1` routes Anthropic to `.devproxy/` with real credentials blanked; never silently fall back.
+- `real-api-tests.yml` runs selected modules with real keys.
+- Register flaky tests in `flaky-tests.json`; do not add retries or skips.
 
-Rules for every slice:
+## Change decomposition and Git
 
-- One issue, one purpose, one task, one PR. A title needing "and" or a comma is multiple slices; work that outgrows 1:1:1 becomes an epic with child issues.
-- Every PR targets `dev` from updated `dev`; no stacked branches, never build on a sibling's unmerged branch.
-- Construction, wiring, and deletion do not share a PR (a few-line build+wire is tolerable within budget; deletion never combines).
-- No polling: subscribe to PR events and act on deliveries; one point-in-time read at a decision moment is fine. When the next step is "wait", end the turn. Post-merge work ends at merge + sync + audit + task completion; dev CI belongs to its owner.
-- Reach a human checkpoint within ~90 minutes; a PR idle ~2 hours is stalled — report and re-plan or block.
-- Each slice carries a merge contract (what it may touch, prod and test line budgets). Exceeding it means stop and report (`blocked` in Space work); budgets are contracts.
-- Reuse existing pipelines and gates; never rebuild routing a sibling owns.
-- Every PR description carries `Closes #<issue>` for its mapped issue, and the post-approval procedure verifies the issue actually closed after the squash-merge — close it manually with a comment referencing the squash commit if auto-close did not fire. A post-merge base mismatch caused by linear `dev` advancement (merge parent ≠ gated base) is informational, not a blocker: the gate binds to the PR head — record it in the merge audit and proceed.
+- Measure touched code and callers before slicing; never estimate from a brief.
+- When re-slicing, use a three-dot diff against freshly fetched `origin/dev`.
+- Keep PRs near 300 production lines; tests ride their slice. The limit only splits work, never bundles unrelated work.
+- One PR per rung: Pin (preserve behavior in tests) → Extract (verbatim moves, tests unchanged) → Build (tested, reachable for knip, not called) → Wire (one call site; flags only for staged behavior) → Delete (removal only).
+- Keep construction, wiring and deletion separate; only a few-line Build+Wire within budget is allowed.
+- One issue, purpose, task and PR. Split titles needing “and” or a comma; growing scope needs an epic with child issues.
+- Target `dev` from updated `dev`; no stacked branches or unmerged sibling branches.
+- Commit/PR prefixes: `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`, `ci:`.
+- Do not poll PRs. Act on events; read once at decision points. End the turn when waiting.
+- After merge, sync, audit and complete the task. Dev CI belongs to its owner.
+- Reach a human checkpoint in ~90 minutes. A PR idle ~2 hours is stalled: report and re-plan or block.
+- Each slice needs a merge contract: allowed changes, production/test budgets. If exceeded, stop and report (`blocked` in Space work).
+- Reuse pipelines and gates; do not rebuild routing a sibling owns.
+- Every PR body needs `Closes #<issue>`. After squash-merge verify closure; if needed, close it with a squash-commit comment.
+- A merge-parent mismatch from advancing `dev` is informational: gates bind to the head. Record it in the audit.
+- Releases are tags on protected `dev`; follow [the release process](docs/release-process.md).
 
-## Architecture
+## Operations and runtime boundaries
 
-ADRs in `docs/adr/` (0001 live query + job queue, 0002 job-queue migration, 0003 workflow engine, 0004 superpipe, 0005 capability dispatcher, 0006 shared operations). `docs/architecture/` holds the RPC/MCP unification docs and the module decomposition program.
-
-**Daemon.** `DaemonApp` (`packages/daemon/src/app.ts`) wires managers, background jobs, and external-event extensions; core areas are `lib/agent` (SDK query runtime), `providers`, `session`, `session-resolution`, `rpc-handlers`, `operations`, the flat subsystem folders `tasks`, `workflows`, `messaging`, `goals`, `evolution`, `agents`, `workspaces`, `schedule`, and `space`. MessageHub layers under `packages/shared/src/message-hub/`: `MessageHubRouter` → `MessageHub` → `WebSocketServerTransport` (daemon-side); initialize in that order. SDK messages reach the web through LiveQuery `messages.bySession`; `SessionStore` subscribes, applies snapshot and delta events, and re-syncs on reconnect or `MESSAGE_TOO_LARGE`.
-
-**Storage.** `packages/daemon/src/storage/schema/index.ts` owns `createTables` and sequences the numbered migrations `mNNN-*.ts`; data access goes through `storage/repositories/`. Bun/Deno dual support rests on the runtime seams (`sqlite-compat.ts`, `lib/runtime-server/`, `lib/runtime-spawn/`, `lib/runtime-hash.ts`); route new `Bun.*` usage through them.
-
-**Operations door (ADR 0006).** One transport-neutral operation per business path. `packages/daemon/src/lib/operations/` holds the plumbing (registry, `invoke.ts`, catalog, discovery, RPC and MCP adapters); the operations themselves live in the subsystem that owns the path (`tasks/`, `messaging/`, …). Each is `defineOperation({ name, inputSchema, resultSchema, execute(input, caller) })` wrapping one pipeline. Humans call `operation.invoke` over RPC; agents call the `invoke` tool on the `hyperneo-operations` MCP server that `QueryOptionsBuilder` attaches to every session. Adapters stay thin; never implement a second transition or retry policy in an adapter or typed tool. Domain rejections are result values (`{ accepted: false, reason }`), throws are infrastructure faults, and long-running work returns `{ accepted: true, jobId }`. `call_action` and the `space-actions` server are gone (#4600); new agent capability is an operation. The `ActionRegistry` survives only as an adapter — `actionsAsOperations` (`space/actions/action-operations.ts`) folds its actions into a session's operation registry, so agents reach them through the same `invoke` tool. Caller role is resolved before invocation by `resolveSpaceMcpSessionPolicy` (`space/runtime/space-mcp-session-policy.ts`) into an `OperationCallerRole`.
-
-**Skills and MCP.** Skills flow from the SQLite registry through `SkillsManager` into `QueryOptionsBuilder.build()`; room overrides can disable global skills but not enable them. MCP visibility is the app registry plus enablement overrides (session > space > default — room scope is not read by the resolver despite the schema still admitting it, see #4802); the SDK runs `strictMcpConfig: true`, so `.mcp.json` is never auto-loaded. Space agent sessions also get the `agent-memory` and `db-query` servers plus a Space-scoped operation registry via `SpaceRuntimeService.attachLongTermAgentMcpServersForSession` (workers via `TaskAgentManager`); use `AgentSession.mergeRuntimeMcpServers` so existing servers survive. Authorization and autonomy gates live in handlers and admission stages, never in prompts. See `docs/features/skills.md`.
-
-**Space runtime** (`packages/daemon/src/lib/space/`): `runtime/` execution and delivery, `managers/`, `actions/` (the ADR 0005 registry, now surfaced as operations), `tools/` (tool pipeline and admission gates). Goals, workflows, tasks, and messaging are their own top-level subsystems (`lib/goals/`, `lib/workflows/`, `lib/tasks/`, `lib/messaging/`). Agent definitions (worker, custom, long-horizon, plus templates) are their own subsystem at `packages/daemon/src/lib/agents/` — not to be confused with `packages/daemon/src/lib/agent/` (singular), the SDK query runtime. A space owns registered git workspaces (`space_workspaces`, `docs/features/space-workspaces.md`); all task→repo resolution goes through `resolveTaskWorkspace` in `tasks/spawn-slot-resolution.ts`, never a hand-rolled fallback. `buildCustomAgentTaskMessage` (`agents/custom-agent.ts`) injects runtime location, role, prior goal work, and standing instructions; workflow slot prompts stay behavioral and must not duplicate peers, channels, gate IDs, or reviewer framing. Goals use `space_goals` plus append-only `space_goal_events`; check-ins create ordinary tasks; Forge scopes add evidence loops but do not replace goal state. Long-horizon agents are persistent actors rehydrated by `SpaceRuntimeService` and stored via `SpaceLongHorizonAgentRepository`. Autonomy is numeric 1–5. Legacy `goals`, `mission_executions`, and `mission_metric_history` are not the model for new work.
-
-**Web** (`packages/web/src`): `islands/` are page regions, `components/` and `hooks/` beneath them, `lib/` holds the signal stores (`session-store`, `space-store`, `global-store`), `connection-manager`, router, and `connection-*-pipeline.ts`. Tests colocate in `__tests__/` under happy-dom.
-
-## Testing
-
-- Daemon unit tests under `tests/unit/` are discovered recursively and balanced across `daemon-a` through `daemon-h` using recorded file durations, with deterministic hash fallbacks for unmeasured files. Shared tests have a separate shard. Vitest preloads `tests/vitest.setup.ts` and aliases the SDK to `tests/sdk-mock.ts`; bare `bun test` gets the same isolation with `--preload=./tests/unit/setup.ts`.
-- `tests/online/` boots a real daemon. CI runs it with `HYPERNEO_USE_DEV_PROXY=1` (Anthropic traffic to the `.devproxy/` stub, real credentials blanked); `real-api-tests.yml` runs selected modules with real keys. The proxy flag must never fall back silently.
-- Flaky tests are registered in `flaky-tests.json`, not patched with retries or skips.
-
-## Git
-
-`dev` is the protected default and release branch; all PRs target it, releases are tags on it (`docs/release-process.md`). Conventional prefixes: `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`, `ci:`. In a fresh worktree run `bun install --frozen-lockfile` before committing, or the pre-commit format check fails on untouched files.
+- Use one transport-neutral `defineOperation` per business path, wrapping one pipeline.
+- Humans use `operation.invoke` RPC; agents use `invoke` on `hyperneo-operations` MCP.
+- Adapters/typed tools must not add another transition or retry policy.
+- Domain rejections return `{ accepted: false, reason }`; infrastructure faults throw; long work returns `{ accepted: true, jobId }`.
+- Resolve caller roles with `resolveSpaceMcpSessionPolicy` before invocation.
+- Reach `ActionRegistry` through operations via `actionsAsOperations`.
+- Keep authorization and autonomy checks in handlers and admission gates, never prompts.
+- Route new `Bun.*` calls through the SQLite, server, spawn or hash runtime seams.
+- Initialize `MessageHubRouter`, then `MessageHub`, then `WebSocketServerTransport`.
+- Use `messages.bySession` snapshots/deltas; re-sync on reconnect or `MESSAGE_TOO_LARGE`.
+- Room overrides may disable global skills, never enable them ([skills](docs/features/skills.md)).
+- MCP visibility uses app registry + enablement (session > space > default); room scope is not read.
+- Keep SDK `strictMcpConfig: true`; `.mcp.json` is not auto-loaded.
+- Add MCP servers with `AgentSession.mergeRuntimeMcpServers` so existing servers survive.
+- Use `resolveTaskWorkspace` for every task-to-repo lookup; never invent fallbacks.
+- SDK runtime locations come from the host system prompt, not workflow slot prompts.
+- Workflow slot prompts describe behavior; do not duplicate peers, channels, gate IDs or reviewer framing.
+- Store goal state in `space_goals` with append-only `space_goal_events`.
+- Goal check-ins create ordinary tasks; Forge adds evidence loops without replacing goal state.
+- Autonomy is numeric, 1–5.

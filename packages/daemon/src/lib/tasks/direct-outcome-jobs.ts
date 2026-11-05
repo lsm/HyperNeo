@@ -17,7 +17,11 @@ import {
   type DirectFinalizationResult,
   type DirectTaskFinalizerDependencies,
 } from './finalize-direct-attempt.ts';
-import { DIRECT_TASK_PARK_BUDGET, decideParkAdmission, parkAdmissionInput } from './park-budget.ts';
+import {
+  DIRECT_TASK_PARK_BUDGET,
+  decideParkAdmission,
+  parkAdmissionInput,
+} from '../job-handlers/park-budget.ts';
 import { verifyDirectAttemptStop } from './stop-direct-attempt.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { parkDeliveryJob } from '../../storage/repositories/job-delivery-parking.ts';

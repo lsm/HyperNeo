@@ -89,6 +89,7 @@ export type SettingsSection =
   | 'general'
   | 'appearance'
   | 'providers'
+  | 'connections'
   | 'voice'
   | 'exa'
   | 'app-mcp-servers'

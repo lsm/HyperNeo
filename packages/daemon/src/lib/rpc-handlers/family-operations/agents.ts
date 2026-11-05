@@ -14,9 +14,9 @@ import {
   publishUnifiedAgentUpdated,
 } from '../../agents/unified-agent-events.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
-import type { FamilyOperationContext } from './context.ts';
+import type { SpaceFamilyContext } from './space-context.ts';
 
-export function registerAgentOperations(context: FamilyOperationContext): OperationDefinition[] {
+export function registerAgentOperations(context: SpaceFamilyContext): OperationDefinition[] {
   const publishAgentCreated: CreateAgentDependencies['publishAgentCreated'] = (
     agent,
     sessionId
@@ -100,7 +100,7 @@ export function registerAgentOperations(context: FamilyOperationContext): Operat
       refreshSubscription: (spaceId, subscriptionId) =>
         context.spaceRuntimeService.refreshLongHorizonSubscription(spaceId, subscriptionId),
       getSpaceAutonomyLevel: async (spaceId) => {
-        const space = await context.deps.spaceManager.getSpace(spaceId);
+        const space = await context.spaceManager.getSpace(spaceId);
         return space?.autonomyLevel ?? 1;
       },
       publishAgentCreated,

@@ -1,6 +1,6 @@
 import type { ConnectionEventEffects } from './connection-event-pipeline';
 import { connectionState, reconnectAttemptCount } from './state';
-import { spaceStore } from './space-store';
+import { shellExtensions } from './web-extensions';
 import { startAutoFlush, stopAutoFlush } from './outbound-queue';
 import { startVoiceAudioOutboxFlush, stopVoiceAudioOutboxFlush } from './voice/voice-audio-outbox';
 import {
@@ -41,7 +41,9 @@ export function createDefaultConnectionEventEffects(
       }
     },
     notifyConnected: () => owner.notifyConnected(),
-    rejoinSpace: () => spaceStore.rejoinChannel(),
+    rejoinExtensions: () => {
+      for (const extension of shellExtensions()) extension.rejoinChannel();
+    },
     getReconnectAttempts: () => owner.getReconnectAttempts(),
   };
 }

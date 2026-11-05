@@ -14,7 +14,7 @@ import type { SessionStore } from '../lib/session-store.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoModelMenu } from './NeoModelMenu.tsx';
 import { t } from '../lib/i18n/index.ts';
-import { ThinkingLevelIcon } from '../components/ThinkingLevelIcon.tsx';
+import { NeoThinkingIcon } from './NeoThinkingIcon.tsx';
 import { ProviderLogo } from '../components/ProviderLogo.tsx';
 
 export type NeoPreference = NeoSnapshot['preferences'];
@@ -174,7 +174,7 @@ export function NeoPreferences({
         aria-controls={forSession ? 'neo-preferences-session' : 'neo-preferences'}
         onClick={() => setOpen(!open)}
         title={`${name} · Thinking: ${thinking}`}
-        class="flex max-w-full items-center gap-1.5 rounded-full border border-line bg-fill-soft px-2.5 py-2 text-xs text-fg-muted transition-colors hover:border-accent/30 hover:text-fg sm:gap-2 sm:px-3"
+        class="flex max-w-full items-center gap-1.5 rounded-full bg-fill-soft px-2.5 py-2 text-xs text-fg-muted transition-colors hover:text-fg sm:gap-2 sm:px-3"
       >
         <span class="flex shrink-0" style={{ color: providerLogoColor(info?.provider) }}>
           <ProviderLogo provider={info?.provider ?? 'anthropic'} class="h-3.5 w-3.5" />
@@ -191,16 +191,13 @@ export function NeoPreferences({
             {t('composer.switchesNextTurn')}
           </span>
         )}
-        <span aria-hidden="true" class="text-fg-faint">
-          ·
-        </span>
         <span
           class="shrink-0"
           role="img"
           aria-label={`Thinking: ${thinking}`}
           title={`Thinking: ${thinking}`}
         >
-          <ThinkingLevelIcon level={level} />
+          <NeoThinkingIcon level={level} />
         </span>
         <NeoIcon
           name="chevron"

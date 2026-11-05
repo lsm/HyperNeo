@@ -7,8 +7,15 @@ import {
 } from '../../../../src/lib/agent/stream-silence-watch';
 
 const quiet: StreamSilenceState = { lastActivityAt: 0, openTools: [] };
+const TOOL_STALL_MS = 1000;
 const plan = (state: StreamSilenceState, now: number, processing = true) =>
-  planStreamSilence({ state, processing, now, thresholdMs: 100 });
+  planStreamSilence({
+    state,
+    processing,
+    now,
+    thresholdMs: 100,
+    openToolStallMs: TOOL_STALL_MS,
+  });
 
 describe('a silent model request', () => {
   it('stalls a processing turn after the threshold of silence and waits out the rest before it', () => {
@@ -16,21 +23,25 @@ describe('a silent model request', () => {
     expect(plan(quiet, 100)).toEqual({ stalled: true, silentMs: 100 });
   });
 
-  it('is not armed while idle or while a tool is running', () => {
+  it('is not armed while idle', () => {
     expect(plan(quiet, 500, false)).toEqual({ stalled: false, waitMs: 100 });
+  });
+
+  it('waits out an open tool up to the tool bound, then stalls instead of hanging forever', () => {
     const tool = noteStreamMessage(
       quiet,
       { type: 'assistant', message: { content: [{ type: 'tool_use', id: 't1' }] } },
       0
     );
-    expect(plan(tool, 500)).toEqual({ stalled: false, waitMs: 100 });
+    expect(plan(tool, 500)).toEqual({ stalled: false, waitMs: 500 });
+    expect(plan(tool, TOOL_STALL_MS)).toEqual({ stalled: true, silentMs: TOOL_STALL_MS });
     const done = noteStreamMessage(
       tool,
       { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1' }] } },
-      400
+      900
     );
     expect(done.openTools).toEqual([]);
-    expect(plan(done, 450)).toEqual({ stalled: false, waitMs: 50 });
+    expect(plan(done, 950)).toEqual({ stalled: false, waitMs: 50 });
   });
 });
 

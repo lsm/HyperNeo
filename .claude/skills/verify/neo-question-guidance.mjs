@@ -29,7 +29,7 @@ const quote = (value) => `'${String(value).replaceAll("'", "''")}'`;
 const now = Date.now();
 execFileSync('sqlite3', [`${run}/data/daemon.db`, `INSERT INTO neo_asks(id,session_id,title,request,status,created_at,updated_at) VALUES(${quote(ask)},${quote(opened.sessionId)},'Synthetic guidance examples','Synthetic verification only','open',${now},${now});`]);
 const questions = fixtures.map((fixture) => {
-      const receipt = rpc('neo.question.ask', { askId: ask, kind: 'yesno', text: fixture.text, noLabel: 'Release now', yesLabel: 'Preview first' });
+      const receipt = rpc('neo.question.ask', { retireWhen: { pack: 'core', kind: 'evidence', params: { path: `${run}/question-no-longer-needed` } }, askId: ask, kind: 'yesno', text: fixture.text, noLabel: 'Release now', yesLabel: 'Preview first' });
       assert(receipt.ok, JSON.stringify(receipt));
       return { ...fixture, id: receipt.question.id };
     });

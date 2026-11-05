@@ -1,0 +1,23 @@
+{
+  "publicRpcCharacterization": {
+    "replies": [
+      {
+        "spaceId": "synthetic-source-enabled",
+        "source": "github",
+        "enabled": true
+      },
+      {
+        "spaceId": "synthetic-source-enabled",
+        "source": "github",
+        "enabled": false
+      }
+    ],
+    "mainStatementRuns": 4,
+    "watchedRows": 2,
+    "sourceWatchedAndSnapshotStayAligned": true,
+    "creationAndSharedCommandTimesPreserved": true
+  },
+  "mainThreadMovementClaim": false,
+  "expectedExitCode": 1,
+  "reason": "Real Space RPC characterization passed before constructor-free helper availability assertion failed"
+}

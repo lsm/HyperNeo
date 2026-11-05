@@ -3,7 +3,7 @@ import {
   ApproveTaskSchema,
   MarkCompleteSchema,
   SubmitForApprovalSchema,
-} from '../../../../src/lib/space/actions/task-agent-schemas.ts';
+} from '../../../../src/lib/hooks/task-agent-schemas.ts';
 
 describe('ApproveTaskSchema', () => {
   test('accepts empty object', () => {

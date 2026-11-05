@@ -1,0 +1,13 @@
+{
+  "verified": false,
+  "mode": "verify",
+  "consumer": "Real public WebSocket project.save/snapshot, system.health RPC and registered MCP saves",
+  "limitations": "Synthetic metadata; no filesystem/GitHub/model/GUI, identity alias, core ask/card-reply or whole-daemon SQL claim.",
+  "mainSql": [
+    "SELECT id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt FROM neo_concerns WHERE id = ?",
+    "INSERT INTO neo_concerns\n              (id, title, summary, context, revision, created_at, updated_at)\n              VALUES (?, ?, ?, ?, 1, ?, ?) ON CONFLICT(id) DO NOTHING\n              RETURNING id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,\n  created_at AS createdAt, updated_at AS updatedAt"
+  ],
+  "commands": [],
+  "maxLagMs": 1198.13175,
+  "resourcesStopped": true
+}

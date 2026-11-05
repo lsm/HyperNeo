@@ -1,3 +1,4 @@
+import { t } from '../lib/i18n/index.ts';
 import { CheckGlyph, ChevronLeftGlyph } from '../components/icons/common-glyphs.tsx';
 import { useState, useEffect, useMemo } from 'preact/hooks';
 import {
@@ -23,11 +24,9 @@ import {
   navigateToSpaceTasks,
 } from '../lib/router.ts';
 import { cn } from '../lib/utils.ts';
-import { SpaceCreateDialog } from '../components/space/SpaceCreateDialog.tsx';
 import { SectionSwitcher } from '../components/SectionSwitcher.tsx';
 import { SessionsSidebar } from './SessionsSidebar.tsx';
-import { SpaceDetailPanel } from './SpaceDetailPanel.tsx';
-import { spaceStore } from '../lib/space-store.ts';
+import { webExtension } from '../lib/web-extensions.ts';
 
 const SETTINGS_SECTIONS: Array<{
   id: SettingsSection;
@@ -43,6 +42,12 @@ const SETTINGS_SECTIONS: Array<{
     accent: 'text-cat-purple bg-cat-purple/15',
   },
   { id: 'providers', label: 'Providers', icon: 'cloud', accent: 'text-info-soft bg-sky-500/15' },
+  {
+    id: 'connections',
+    label: 'Connections',
+    icon: 'plug',
+    accent: 'text-accent-soft bg-accent/15',
+  },
   { id: 'voice', label: 'Voice', icon: 'mic', accent: 'text-cat-rose bg-rose-500/15' },
   { id: 'exa', label: 'Exa Search', icon: 'search', accent: 'text-cat-teal bg-cat-teal/15' },
   {
@@ -233,12 +238,13 @@ export function ContextPanel() {
 
   const navSection = navSectionSignal.value;
   const isPanelOpen = contextPanelOpenSignal.value;
+  const spaceExt = webExtension('space');
 
   useEffect(() => {
     if (navSection === 'spaces') {
-      spaceStore.initGlobalList().catch(() => {});
+      spaceExt?.store.initGlobalList().catch(() => {});
     }
-  }, [navSection]);
+  }, [navSection, spaceExt]);
   const activeSettingsSection = settingsSectionSignal.value;
   const currentSpaceId = currentSpaceIdSignal.value;
   const currentSpaceCanonicalId = currentSpaceCanonicalIdSignal.value;
@@ -247,7 +253,7 @@ export function ContextPanel() {
   const currentSpaceTasksFilterTab = currentSpaceTasksFilterTabSignal.value;
   const currentSpaceViewMode = currentSpaceViewModeSignal.value;
   const isSpaceDetail = navSection === 'spaces' && currentSpaceId !== null;
-  const headerTitle = spaceStore.space.value?.name ?? 'Space';
+  const headerTitle = spaceExt?.store.space.value?.name ?? 'Space';
 
   const handlePanelClose = () => {
     contextPanelOpenSignal.value = false;
@@ -291,9 +297,10 @@ export function ContextPanel() {
     contextPanelOpenSignal.value = false;
   };
 
+  const spacesWithTasks = spaceExt?.store.spacesWithTasks.value;
   const activeSpaces = useMemo(
-    () => spaceStore.spacesWithTasks.value.filter((space) => space.status === 'active'),
-    [spaceStore.spacesWithTasks.value]
+    () => (spacesWithTasks ?? []).filter((space) => space.status === 'active'),
+    [spacesWithTasks]
   );
 
   const spaceSwitcherContent = (
@@ -466,11 +473,13 @@ export function ContextPanel() {
                   All Spaces
                 </button>
               </div>
-              <SpaceDetailPanel
-                spaceId={detailPanelSpaceId!}
-                navigationSpaceId={currentSpaceId!}
-                onNavigate={() => (contextPanelOpenSignal.value = false)}
-              />
+              {spaceExt && (
+                <spaceExt.SpaceDetailPanel
+                  spaceId={detailPanelSpaceId!}
+                  navigationSpaceId={currentSpaceId!}
+                  onNavigate={() => (contextPanelOpenSignal.value = false)}
+                />
+              )}
             </div>
           )}
           {navSection === 'settings' && (
@@ -501,7 +510,9 @@ export function ContextPanel() {
                       >
                         <SectionIcon type={section.icon} />
                       </span>
-                      <span class="truncate text-sm font-medium">{section.label}</span>
+                      <span class="truncate text-sm font-medium">
+                        {section.id === 'connections' ? t('connections.title') : section.label}
+                      </span>
                     </button>
                   );
                 })}
@@ -539,7 +550,12 @@ export function ContextPanel() {
           </button>
         </div>
       </div>
-      <SpaceCreateDialog isOpen={createSpaceOpen} onClose={() => setCreateSpaceOpen(false)} />
+      {spaceExt && (
+        <spaceExt.SpaceCreateDialog
+          isOpen={createSpaceOpen}
+          onClose={() => setCreateSpaceOpen(false)}
+        />
+      )}
     </>
   );
 }

@@ -1,0 +1,20 @@
+{
+  "failingCommit": "125c986e92",
+  "red": "7 expected failures and one passing validation test; real Bun and Deno workspace.add both rejected the main-thread INSERT",
+  "focused": "110 tests across workspace handler/repository, MCP import and RPC contracts; follow-up 39 tests include the updated 9 workspace-add tests plus 30 default-transition/commit tests",
+  "strictTypeScript": "6.0.3: zero errors",
+  "repositoryCheck": "bun run check: exit 0; SQL ratchet unchanged",
+  "productionLines": 7,
+  "smokeRegistrationLines": 1,
+  "localBusinessGraphLines": 97,
+  "mcpFullTransitiveGraphMeasured": false,
+  "unverified": [
+    "Native Bun 1.4.2 (local Bun is 1.4.3)",
+    "History and MCP source reads remain main-side",
+    "Browser layout",
+    "Neo-owned deployment smoke"
+  ],
+  "noInstalls": true,
+  "oneCheckout": true,
+  "proofDataRemoved": true
+}

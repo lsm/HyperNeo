@@ -1,3 +1,4 @@
+import { createLocalSocket } from "../../../packages/daemon/src/lib/pairing/local-credential.ts";
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -144,7 +145,7 @@ const app = await createDaemonApp({
 });
 assert.notEqual(app.server.port, 8399);
 const hub = new MessageHub({ defaultSessionId: 'global' });
-const transport = new WebSocketClientTransport({
+const transport = new WebSocketClientTransport({ createSocket: createLocalSocket,
   url: `ws://127.0.0.1:${app.server.port}/ws`,
   autoReconnect: false,
 });

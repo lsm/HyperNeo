@@ -1,0 +1,24 @@
+{
+  "mainThreadMovementClaim": false,
+  "boundary": "Verbatim filter UPSERT extraction only; public filter and saved config writes remain main-side, constructor/backfill unchanged",
+  "publicRpcMs": 0.9140409999999974,
+  "publicRpc": {
+    "replies": [
+      {
+        "spaceId": "synthetic-filter",
+        "filterCurrentUser": false
+      },
+      {
+        "spaceId": "synthetic-filter",
+        "filterCurrentUser": true
+      },
+      {
+        "spaceId": "synthetic-filter-empty",
+        "filterCurrentUser": false
+      }
+    ],
+    "mainStatementRuns": 3,
+    "snapshotAndCreationTimesPreserved": true,
+    "enabledAndPollingIntentPreserved": true
+  }
+}

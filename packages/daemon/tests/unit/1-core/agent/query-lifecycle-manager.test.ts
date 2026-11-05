@@ -11,7 +11,7 @@ import {
   type QueryLifecycleManagerContext,
 } from '../../../../src/lib/agent/query-lifecycle-manager';
 import type { SDKMessageHandler } from '../../../../src/lib/agent/sdk-message-handler';
-import type { ErrorManager } from '../../../../src/lib/error-manager';
+import { ErrorCategory, type ErrorManager } from '../../../../src/lib/error-manager';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
 import { createNeoTables } from '../../../../src/storage/schema/neo';
@@ -1654,6 +1654,27 @@ describe('QueryLifecycleManager', () => {
       await manager.executeDeferredRestartIfPending();
 
       expect(mockContext.pendingRestartReason).toBeNull();
+    });
+
+    test('reports a visible session error when the deferred restart fails', async () => {
+      mockContext = createMockContext({
+        pendingRestartReason: 'settings.local.json',
+        startStreamingQuery: async () => {
+          throw new Error('Restart failed');
+        },
+      });
+      manager = new QueryLifecycleManager(mockContext);
+
+      const result = await manager.executeDeferredRestartIfPending();
+
+      expect(result).toBe(false);
+      expect(handleErrorSpy).toHaveBeenCalledWith(
+        'test-session',
+        expect.any(Error),
+        ErrorCategory.SESSION,
+        expect.any(String),
+        expect.objectContaining({ status: expect.any(String) })
+      );
     });
   });
 

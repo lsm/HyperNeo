@@ -1,5 +1,5 @@
 import { stat } from 'node:fs/promises';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, relative, sep } from 'node:path';
 import type { NeoTodo, NeoTodoCheck } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -45,12 +45,71 @@ function doneWhen(rule: NeoTodoCheck) {
   return parsed?.success ? sentence(parsed.data) : null;
 }
 
+type CheckDraft = Pick<NeoTodo, 'check'> & { id?: string };
+const invalid =
+  'invalid_core_check: use human_confirmed {questionId}, evidence {path: absolute file path} (on a todo, {} for a daemon-assigned path), or deployed {repo: lsm/HyperNeo, sha: full commit}.';
+const admit = (superpipe({})('neo.todo.core-admission') as PipelineAPI)
+  .input(['draft', 'peers'])
+  .pipe(
+    (draft: CheckDraft) => {
+      const parsed = draft.check?.pack === 'core' ? Check.safeParse(draft.check) : null;
+      return parsed?.success ? { value: parsed.data } : { reason: { refusal: invalid } };
+    },
+    'draft',
+    'result:refusal'
+  )
+  .pipe(
+    (check: CoreCheck, draft: CheckDraft, peers: readonly NeoTodo[]) => {
+      const artifact =
+        check.kind === 'evidence' && 'artifact' in check.params ? check.params.artifact : null;
+      return {
+        refusal:
+          artifact &&
+          !peers.some(
+            (peer) =>
+              peer.id === draft.id &&
+              peer.check?.pack === 'core' &&
+              peer.check.kind === 'evidence' &&
+              peer.check.params.artifact === artifact
+          )
+            ? invalid
+            : null,
+      };
+    },
+    ['refusal', 'draft', 'peers'],
+    'refusal'
+  )
+  .end('refusal') as (draft: CheckDraft, peers: readonly NeoTodo[]) => { refusal: string | null };
+
+const isEvidence = (check: NeoTodoCheck | null | undefined): check is NeoTodoCheck =>
+  check?.pack === 'core' && check.kind === 'evidence';
+
+export const withAssignedEvidence = <T extends NeoTodoCheck | null | undefined>(
+  check: T,
+  file: string
+): T | NeoTodoCheck =>
+  isEvidence(check) && !Object.keys(check.params).length
+    ? { ...check, params: { path: file } }
+    : check;
+
+export function neoEvidenceRefusal(
+  check: NeoTodoCheck | null | undefined,
+  repo: string | null | undefined,
+  userFolder: string,
+  previous?: NeoTodoCheck | null
+): string | null {
+  const path = isEvidence(check) ? check.params.path : null;
+  if (!repo || typeof path !== 'string' || JSON.stringify(check) === JSON.stringify(previous))
+    return null;
+  const inside = relative(userFolder.toLowerCase(), path.toLowerCase());
+  return inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)
+    ? null
+    : `evidence_in_user_folder: ${path} is in the human's folder, which holds only results they should see. Omit params.path; the daemon assigns one and gives it to the worker.`;
+}
+
 export const coreTodoPolicy = {
   doneWhen,
-  refuse: (draft: Pick<NeoTodo, 'check'>) =>
-    doneWhen(draft.check!)
-      ? null
-      : 'invalid_core_check: use human_confirmed {questionId}, evidence {artifact} or {path}, or deployed {repo: lsm/HyperNeo, sha: full commit}.',
+  refuse: (draft: CheckDraft, peers: readonly NeoTodo[] = []) => admit(draft, peers).refusal,
 };
 
 export function createCoreTodoPack(db: Database, contains: Contains): NeoPack {

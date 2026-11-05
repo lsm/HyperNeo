@@ -47,7 +47,11 @@ export interface ArtifactHtmlAsset {
   readonly kind: 'css' | 'image';
   readonly data: string;
 }
-type Assets = Pick<ReadonlyMap<string, ArtifactHtmlAsset>, 'get'>;
+type Assets = Pick<ReadonlyMap<string, ArtifactHtmlAsset>, 'get'> & {
+  acceptRaster?: (data: string) => boolean;
+};
+const raster = (data: string, assets: Assets) =>
+  RASTER.test(data) && (assets.acceptRaster?.(data) ?? true);
 
 function resource(target: unknown, assets: Assets, base = '') {
   if (typeof target !== 'string' || /[\\\u0000-\u001f\u007f]/.test(target)) return null;
@@ -105,9 +109,9 @@ function cleanCss(css: string, assets: Assets, base = ''): string {
       .replace(/^(['"])(.*)\1$/s, '$2');
     out += source.slice(at, match.index);
     const asset = resource(target, assets, base);
-    out += RASTER.test(target)
+    out += raster(target, assets)
       ? source.slice(match.index, close + 1)
-      : asset?.kind === 'image' && RASTER.test(asset.data)
+      : asset?.kind === 'image' && raster(asset.data, assets)
         ? `url(${asset.data})`
         : 'none';
     at = opener.lastIndex = close + 1;
@@ -215,9 +219,9 @@ function cleanElement(
     assets
   );
   if (!KEPT.has(tag)) return children;
-  if (tag === 'img' && !RASTER.test(String(element.properties.src ?? '').trim())) {
+  if (tag === 'img' && !raster(String(element.properties.src ?? '').trim(), assets)) {
     const asset = resource(element.properties.src, assets);
-    if (asset?.kind !== 'image' || !RASTER.test(asset.data)) return [];
+    if (asset?.kind !== 'image' || !raster(asset.data, assets)) return [];
     element = { ...element, properties: { ...element.properties, src: asset.data } };
   }
   const allowed = new Set([...GLOBAL_PROPERTIES, ...(PROPERTIES[tag] ?? [])]);
@@ -335,6 +339,7 @@ export function prepareArtifactHtml(
 ): PreparedArtifactHtml | null {
   let remaining: number = ARTIFACT_DEFAULT_LIMITS.documentPreviewBytes;
   const bounded: Assets = {
+    acceptRaster: assets.acceptRaster,
     get(path) {
       const asset = assets.get(path);
       if (asset) {

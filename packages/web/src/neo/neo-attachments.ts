@@ -55,8 +55,8 @@ export const readNeoAttachment = (superpipe({})('neo-read-attachment') as Pipeli
   .pipe(readFile, 'attachment', 'result:attachment')
   .endAsync('attachment') as (file: File) => Promise<NeoAttachment | string>;
 
-export function attachmentMessage(draft: string, files: NeoAttachment[]) {
-  const documents = files.flatMap((file) => {
+export function attachmentDocuments(files: NeoAttachment[]): string[] {
+  return files.flatMap((file) => {
     if (file.kind !== 'text') return [];
     const fence = '`'.repeat(
       Math.max(3, ...(file.text.match(/`+/g) ?? []).map((run) => run.length + 1))
@@ -64,7 +64,13 @@ export function attachmentMessage(draft: string, files: NeoAttachment[]) {
     const name = file.name.replace(/[\r\n]/g, ' ').replace(/([\\`*_{}[\]<>])/g, '\\$1');
     return [`### Attached file: ${name}\n\n${fence}text\n${file.text}\n${fence}`];
   });
-  return [draft.trim() || (files.length ? 'Attached files' : ''), ...documents].join('\n\n');
+}
+
+export function attachmentMessage(draft: string, files: NeoAttachment[]) {
+  return [
+    draft.trim() || (files.length ? 'Attached files' : ''),
+    ...attachmentDocuments(files),
+  ].join('\n\n');
 }
 
 export function restoreNeoImages(sessionId: string, images: readonly MessageImage[]): boolean {

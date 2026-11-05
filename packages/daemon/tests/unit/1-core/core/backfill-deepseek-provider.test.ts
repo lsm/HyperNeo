@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { existsSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import {
   backfillDeepSeekProvider,
   gateDeepSeekImport,
@@ -16,18 +18,16 @@ describe('backfillDeepSeekProvider', () => {
   const originalKey = process.env.DEEPSEEK_API_KEY;
 
   beforeEach(async () => {
-    const tmpBase = (process.env.TMPDIR || '/tmp').replace(/\/$/, '');
-    dbPath = `${tmpBase}/test-deepseek-backfill-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`;
+    dbPath = join(mkdtempSync(join(tmpdir(), 'test-deepseek-backfill-')), 'test.sqlite');
     db = new Database(dbPath);
     await db.initialize(createReactiveDatabase(db));
   });
 
   afterEach(() => {
-    db.close();
-    for (const suffix of ['', '-wal', '-shm']) {
-      try {
-        unlinkSync(`${dbPath}${suffix}`);
-      } catch {}
+    try {
+      db?.close();
+    } finally {
+      rmSync(dirname(dbPath), { recursive: true, force: true });
     }
     expect(existsSync(`${dbPath}-wal`)).toBe(false);
     expect(existsSync(`${dbPath}-shm`)).toBe(false);
@@ -172,18 +172,16 @@ describe('migrateProvidersIfNeeded', () => {
   };
 
   beforeEach(async () => {
-    const tmpBase = (process.env.TMPDIR || '/tmp').replace(/\/$/, '');
-    dbPath = `${tmpBase}/test-provider-import-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`;
+    dbPath = join(mkdtempSync(join(tmpdir(), 'test-provider-import-')), 'test.sqlite');
     db = new Database(dbPath);
     await db.initialize(createReactiveDatabase(db));
   });
 
   afterEach(() => {
-    db.close();
-    for (const suffix of ['', '-wal', '-shm']) {
-      try {
-        unlinkSync(`${dbPath}${suffix}`);
-      } catch {}
+    try {
+      db?.close();
+    } finally {
+      rmSync(dirname(dbPath), { recursive: true, force: true });
     }
     expect(existsSync(`${dbPath}-wal`)).toBe(false);
     expect(existsSync(`${dbPath}-shm`)).toBe(false);
@@ -216,19 +214,17 @@ describe('migrateProvidersIfNeeded', () => {
   const originalKey = process.env.GLM_API_KEY;
 
   beforeEach(async () => {
-    const tmpBase = (process.env.TMPDIR || '/tmp').replace(/\/$/, '');
-    dbPath = `${tmpBase}/test-provider-import-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`;
+    dbPath = join(mkdtempSync(join(tmpdir(), 'test-provider-import-')), 'test.sqlite');
     db = new Database(dbPath);
     await db.initialize(createReactiveDatabase(db));
     process.env.GLM_API_KEY = 'glm-from-env';
   });
 
   afterEach(() => {
-    db.close();
-    for (const suffix of ['', '-wal', '-shm']) {
-      try {
-        unlinkSync(`${dbPath}${suffix}`);
-      } catch {}
+    try {
+      db?.close();
+    } finally {
+      rmSync(dirname(dbPath), { recursive: true, force: true });
     }
     expect(existsSync(`${dbPath}-wal`)).toBe(false);
     expect(existsSync(`${dbPath}-shm`)).toBe(false);
@@ -252,7 +248,7 @@ describe('migrateProvidersIfNeeded', () => {
     stored.clear();
     for (const provider of db.providers.listProviders()) db.providers.deleteProvider(provider.id);
     db.close();
-    unlinkSync(dbPath);
+    dbPath = join(dirname(dbPath), 'fresh.sqlite');
     db = new Database(dbPath);
     await db.initialize(createReactiveDatabase(db));
     await migrateProvidersIfNeeded(db, credentials);

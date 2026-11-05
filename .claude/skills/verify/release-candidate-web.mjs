@@ -10,7 +10,13 @@ const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, executablePath: process.env.VERIFY_BROWSER });
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-  await page.goto(`http://127.0.0.1:${port}/neo`);
+  const origin = `http://127.0.0.1:${port}`;
+  const paired = await page.request.post(`${origin}/pair`, {
+    headers: { origin },
+    data: { ...JSON.parse(readFileSync(0, 'utf8')), name: 'RC isolated browser' },
+  });
+  assert.equal(paired.status(), 200);
+  await page.goto(`${origin}/neo`);
   await page.getByText('Release candidate Neo chat is working.', { exact: true }).first().waitFor();
   await page.evaluate(async () => {
     await Promise.all(document.getAnimations().filter(animation => animation.effect?.getTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => {})));

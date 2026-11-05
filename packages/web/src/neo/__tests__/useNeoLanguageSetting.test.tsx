@@ -1,7 +1,9 @@
-import { act, cleanup, render, waitFor } from '@testing-library/preact';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { locale } from '../../lib/i18n/index.ts';
 import { connectionState } from '../../lib/state.ts';
+import MarkdownRenderer from '../../components/chat/MarkdownRenderer.tsx';
+import { globalStore } from '../../lib/global-store.ts';
 import { useNeoLanguageSetting } from '../useNeoLanguageSetting.ts';
 
 const hub = vi.hoisted(() => ({
@@ -33,11 +35,13 @@ beforeEach(() => {
   hub.request.mockReset();
   connectionState.value = 'connected';
   locale.value = 'en';
+  globalStore.systemState.value = null;
 });
 
 afterEach(() => {
   cleanup();
   locale.value = 'en';
+  globalStore.systemState.value = null;
 });
 
 describe('useNeoLanguageSetting', () => {
@@ -73,4 +77,15 @@ describe('useNeoLanguageSetting', () => {
     await act(async () => answer(snapshot('en')));
     expect(locale.value).toBe('zh-Hans');
   });
+});
+
+it('makes the existing lightweight snapshot available to Neo path labels', async () => {
+  hub.request.mockResolvedValue({ ...snapshot('en'), system: { homeDirectory: '/home/owner' } });
+  function HomePath() {
+    useNeoLanguageSetting();
+    return <MarkdownRenderer content="`/home/owner/report.md`" />;
+  }
+  render(<HomePath />);
+  expect(await screen.findByText('~/report.md')).toBeTruthy();
+  expect(hub.request).toHaveBeenCalledTimes(1);
 });

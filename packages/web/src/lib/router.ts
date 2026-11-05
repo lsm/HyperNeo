@@ -48,6 +48,7 @@ const SETTINGS_SECTIONS = new Set<SettingsSection>([
   'general',
   'appearance',
   'providers',
+  'connections',
   'voice',
   'exa',
   'app-mcp-servers',

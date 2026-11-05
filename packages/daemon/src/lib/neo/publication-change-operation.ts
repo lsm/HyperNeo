@@ -33,6 +33,7 @@ export interface NeoPublicationChangeRuntime {
   getRootBinding(): NeoBinding | null;
   publications: Pick<NeoPublicationRepository, 'get' | 'edit' | 'listRecent' | 'reviseCurrent'>;
   notify(conversationId: string): void;
+  present?(items: NeoPublication[]): Promise<NeoPublication[]>;
 }
 
 export function requireConversationPublication(
@@ -160,7 +161,9 @@ export function createNeoPublicationChangeOperations(runtime: NeoPublicationChan
       execute: async (input, caller) => {
         const result = await runtime.publications.reviseCurrent(input, caller);
         if (result.accepted) runtime.notify(result.publication.conversationId);
-        return result;
+        return result.accepted && runtime.present
+          ? { ...result, publication: (await runtime.present([result.publication]))[0] }
+          : result;
       },
     }),
   ];

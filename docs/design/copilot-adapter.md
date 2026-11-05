@@ -226,6 +226,10 @@ for HyperNeo's strict, no-fallback `work.send mode: steer` is **unsupported** on
 our pinned SDK **1.0.13 / CLI 1.0.83**. This is a contract limitation, not a claim
 that Copilot lacks steering.
 
+2026-10-28: the pin moved to SDK **1.0.28 / CLI 1.0.105** (#9353). SDK 1.0.28 adds
+`queue.withdrawMessage` and `queue.appendSteering`, but still no expected-active-turn
+precondition on send, so this decision stands.
+
 Evidence reviewed without starting the real CLI or accessing an account:
 
 - [Official steering documentation](https://docs.github.com/en/enterprise-cloud@latest/copilot/how-tos/copilot-sdk/features/steering-and-queueing)

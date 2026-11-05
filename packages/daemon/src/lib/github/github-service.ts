@@ -8,13 +8,7 @@ import { githubPollRefreshWrites } from '../../storage/repositories/github-poll-
 import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
 import { GITHUB_POLL } from '../job-queue-constants.ts';
 import { handleGitHubPoll } from '../job-handlers/github-poll.handler.ts';
-import type {
-  GitHubEvent,
-  RoutingResult,
-  FilterResult,
-  SecurityCheckResult,
-  InboxItem,
-} from './types.ts';
+import type { GitHubEvent, RoutingResult, FilterResult, SecurityCheckResult } from './types.ts';
 import type { GitHubPollCollector } from './poll-source.ts';
 import { GitHubPollingService, createPollingService } from './polling-service.ts';
 import {
@@ -24,7 +18,6 @@ import {
 } from './event-filter.ts';
 import { FilterConfigManager, createFilterConfigManager } from './filter-config-manager.ts';
 import { SecurityAgent, createSecurityAgent } from './security-agent.ts';
-import { InboxManager } from './inbox-manager.ts';
 import { createWebhookHandler } from './webhook-handler.ts';
 import { Logger } from '../logger.ts';
 
@@ -57,7 +50,6 @@ export class GitHubService {
   private eventFilter: GitHubEventFilter;
   private filterConfigManager: FilterConfigManager;
   private securityAgent: SecurityAgent;
-  private inboxManager: InboxManager;
   private webhookHandler?: (req: Request) => Promise<Response>;
   private jobQueue?: JobQueueRepository;
   private jobProcessor?: JobQueueProcessor;
@@ -92,8 +84,6 @@ export class GitHubService {
       apiKey: this.apiKey,
       apiKeyType: this.apiKeyType,
     });
-
-    this.inboxManager = new InboxManager(this.db);
 
     log.info('GitHubService initialized', {
       hasWebhookSecret: !!this.config.githubWebhookSecret,
@@ -281,13 +271,6 @@ export class GitHubService {
           securityResult,
         });
 
-        const item = this.addToInbox(event, securityResult, 'Security check failed');
-        this.emitEvent('github.inboxItemAdded', {
-          sessionId: 'global',
-          item,
-          reason: 'Security check failed',
-        });
-
         return {
           decision: 'reject',
           confidence: 'high',
@@ -296,50 +279,28 @@ export class GitHubService {
         };
       }
 
-      const routingResult: RoutingResult = {
-        decision: 'inbox',
+      return {
+        decision: 'accept',
         confidence: 'high',
-        reason: 'GitHub events are delivered to the inbox',
+        reason: 'Event passed the filter and security check',
         securityCheck: securityResult,
       };
-
-      const item = this.addToInbox(event, securityResult, routingResult.reason);
-      log.info('Event added to inbox', {
-        eventId: event.id,
-        inboxItemId: item.id,
-        reason: routingResult.reason,
-      });
-
-      this.emitEvent('github.inboxItemAdded', {
-        sessionId: 'global',
-        item,
-        reason: routingResult.reason,
-      });
-
-      return routingResult;
     } catch (error) {
       log.error('Error processing event', {
         eventId: event.id,
         error: error instanceof Error ? error.message : error,
       });
 
-      const item = this.addToInbox(
-        event,
-        { passed: true, injectionRisk: 'low' },
-        `Processing error: ${error instanceof Error ? error.message : 'Unknown error'}`
-      );
-
       this.emitEvent('github.eventError', {
         sessionId: 'global',
         eventId: event.id,
         error: error instanceof Error ? error.message : 'Unknown error',
-        inboxItemId: item.id,
       });
 
       return {
-        decision: 'inbox',
+        decision: 'reject',
         confidence: 'low',
-        reason: `Processing error, sent to inbox: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        reason: `Processing error: ${error instanceof Error ? error.message : 'Unknown error'}`,
         securityCheck: {
           passed: true,
           injectionRisk: 'low',
@@ -360,10 +321,6 @@ export class GitHubService {
       title,
       author: event.sender.login,
     });
-  }
-
-  private addToInbox(event: GitHubEvent, security: SecurityCheckResult, reason: string): InboxItem {
-    return this.inboxManager.addToInbox(event, security, reason);
   }
 
   private emitEvent<K extends keyof DaemonInternalEventMap & string>(
@@ -403,10 +360,6 @@ export class GitHubService {
       return [];
     }
     return this.pollingService.getRepositories();
-  }
-
-  getPendingInboxCount(): number {
-    return this.inboxManager.countByStatus().pending;
   }
 
   getFilterConfigManager(): FilterConfigManager {

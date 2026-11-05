@@ -12,7 +12,7 @@ mkdirSync(root);
 mkdirSync(outside);
 writeFileSync(join(outside, 'doc'), 'Outside sentinel.');
 const binary = Buffer.from([0xff, 0xc3, 0x28, 0, 0x42]);
-const evidence: Record<string, unknown> = { runtime: Reflect.get(globalThis, 'Deno')?.version?.deno ?? process.versions.bun };
+const evidence: Record<string, unknown> = { runtime: process.versions.bun };
 try {
   await replaceFileWithinWorkspace(root, ['nested', 'binary'], binary);
   assert.deepEqual(readFileSync(join(root, 'nested', 'binary')), binary);

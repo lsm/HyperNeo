@@ -1,0 +1,55 @@
+{
+  "sqlScope": "Registration row INSERT only; existing read-only authorization/receipt SQL, native FS and Git publication not included",
+  "fullTransitiveCaptureOwnershipGraphMeasured": false,
+  "mainGuardSelfCheckPassed": true,
+  "firstConcurrentRpcMs": 9.08445800000004,
+  "concurrentLaneAndReceiptRetryPreserved": true,
+  "publicSnapshotBytesRetained": true,
+  "admissionFailureHasNoFallbackOrReplay": true,
+  "unknownOutcomeNeverAutomaticallyReplayed": true,
+  "explicitRetryReadsCommittedReceipt": true,
+  "postCommitAccessRevocationWithholdsReference": true,
+  "healthWhileWriterHeldMs": 2.0792079999998805,
+  "deliberatelyHeldPublicationMs": 1307.157458,
+  "publicReceiptWaitsForCommit": true,
+  "changedSourceCreatesImmutableRevision": true,
+  "pathRefusalsPreserved": true,
+  "maxLoopLagMs": 4.02758300000005,
+  "rssBytes": 190481560,
+  "walBytes": 140112,
+  "pass": true,
+  "registrationMainInsertRuns": 0,
+  "rowCommandPosts": 7,
+  "workerMetrics": [
+    {
+      "roundTripMs": 0.27729199999998855,
+      "requestBytes": 526,
+      "replyBytes": 529
+    },
+    {
+      "roundTripMs": 6.062584000000015,
+      "requestBytes": 508,
+      "replyBytes": 520
+    },
+    {
+      "roundTripMs": 0.13495799999998326,
+      "requestBytes": 502,
+      "replyBytes": 517
+    },
+    {
+      "roundTripMs": 6.019790999999941,
+      "requestBytes": 508,
+      "replyBytes": 520
+    },
+    {
+      "roundTripMs": 1300.5405830000002,
+      "requestBytes": 502,
+      "replyBytes": 517
+    },
+    {
+      "roundTripMs": 0.2375409999999647,
+      "requestBytes": 536,
+      "replyBytes": 529
+    }
+  ]
+}

@@ -29,6 +29,7 @@ export function createOperationRpcHandler(
       {
         ...caller,
         source: 'rpc',
+        clientId: context.clientId,
         principal: LOCAL_RPC_PRINCIPAL,
       }
     );

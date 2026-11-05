@@ -2377,14 +2377,21 @@ export class SDKMessageRepository {
   }
 
   getUserSendStatus(sessionId: string, uuid: string): SendStatus | null {
+    return this.getUserDeliveryReceipt(sessionId, uuid)?.status ?? null;
+  }
+
+  getUserDeliveryReceipt(
+    sessionId: string,
+    uuid: string
+  ): { status: SendStatus; timestamp: number } | null {
     const row = this.db
       .prepare(
-        `SELECT COALESCE(send_status, 'consumed') AS status FROM sdk_messages
+        `SELECT COALESCE(send_status, 'consumed') AS status, timestamp FROM sdk_messages
            WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
            ORDER BY timestamp ASC LIMIT 1`
       )
-      .get(sessionId, uuid) as { status: SendStatus } | undefined;
-    return row?.status ?? null;
+      .get(sessionId, uuid) as { status: SendStatus; timestamp: string } | undefined;
+    return row ? { status: row.status, timestamp: new Date(row.timestamp).getTime() } : null;
   }
 
   findMessageIdByUuid(sessionId: string, uuid: string): string | null {

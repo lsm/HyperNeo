@@ -78,12 +78,12 @@ export function createClaudeInboxDriver(deps: ClaudeInboxDriverDeps) {
       sessionId: string,
       text: string,
       context: WorkCallContext,
-      fromMode?: ClaudeInboxSubmission['fromMode']
+      fromMode: ClaudeInboxSubmission['fromMode']
     ) {
       const id = crypto.randomUUID();
       return submitClaudeInboxMessage(
         sessionId,
-        { messageId: id, inputId: id, text, ...(fromMode ? { fromMode } : {}) },
+        { messageId: id, inputId: id, text, fromMode },
         context,
         {
           ...deps,

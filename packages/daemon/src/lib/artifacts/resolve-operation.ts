@@ -1,15 +1,15 @@
 import { homedir } from 'node:os';
-import { join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../storage/sqlite-compat.ts';
-import { ArtifactFileRepository } from '../../storage/repositories/artifact-file-repository.ts';
+import { randomUUID } from 'node:crypto';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { artifactIdentityWrites } from '../../storage/repositories/artifact-file-identity-write.ts';
 import { ArtifactReferenceSourceRepository } from '../../storage/repositories/artifact-reference-source.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { isLocalUser } from '../operations/caller.ts';
 import { getDataDir } from '../data-dir.ts';
 import { ArtifactRefSchema, ArtifactRefusalSchema } from './file-contracts.ts';
-import { createArtifactRegistration } from './register-operation.ts';
 import { planStoredReference } from './reference-plan.ts';
 import { ArtifactPrSummarySchema, readBoundPrSummary } from './pr-summary.ts';
 import { readBoundGitBlob } from './git-blob.ts';
@@ -39,13 +39,12 @@ export function createArtifactReferenceResolve(
   database: () => Database,
   data = getDataDir(),
   home = homedir(),
-  capture = createArtifactRegistration(database, data, home).execute,
   readPr = readBoundPrSummary,
   readGit = readBoundGitBlob
 ) {
   async function plan(input: Input, caller: OperationCaller) {
     const db = database();
-    const daemonId = new ArtifactFileRepository(db).daemonId;
+    const daemonId = await gatewayFor(db).call(artifactIdentityWrites, 'ensure', randomUUID());
     const sources = new ArtifactReferenceSourceRepository(db, daemonId, home);
     const selected = await planStoredReference(
       { source: input.sourceMessageOrCard, reference: input.reference, context: input.context },
@@ -53,7 +52,7 @@ export function createArtifactReferenceResolve(
       {
         daemonId,
         home,
-        loadSource: async (key) => sources.load(key),
+        loadSource: async (key) => sources.load(key, caller),
       }
     );
     if (!selected.accepted || !input.file) return selected;
@@ -92,15 +91,7 @@ export function createArtifactReferenceResolve(
           )) as { accepted: boolean; reason?: string })
         : selected.kind === 'github-pr'
           ? await readPr(selected).then((pr) => (pr ? { accepted: true, pr } : unavailable()))
-          : ((await capture(
-              {
-                requestId: input.requestId,
-                context: selected.context,
-                path: join(selected.root, selected.relativePath),
-                title: selected.relativePath.split('/').at(-1)!.slice(0, 200),
-              },
-              caller
-            )) as { accepted: boolean; reason?: string });
+          : unavailable();
     const current = await plan(input, caller);
     if (JSON.stringify(current) !== JSON.stringify(selected)) return unavailable();
     return !result.accepted && 'reason' in result && result.reason === 'unsafe_path'
@@ -116,14 +107,34 @@ export function createArtifactReferenceResolve(
       'result:resolved'
     )
     .pipe(prepare, ['input', 'resolved'], 'result:resolved')
+    .pipe(
+      (selected: Plan) =>
+        selected.kind === 'worktree'
+          ? {
+              reason: {
+                accepted: false,
+                reason: 'client_upgrade_required',
+                detail:
+                  'This client uses retired local snapshot previews. Update HyperNeo and reopen the file from its message to read the current file.',
+              },
+            }
+          : { value: selected },
+      'resolved',
+      'result:resolved'
+    )
     .pipe(snapshot, ['resolved', 'input', 'caller'], 'resolved')
     .endAsync('resolved') as (input: Input, caller: OperationCaller) => Promise<unknown>;
   return defineOperation({
     name: 'artifact.reference.resolve',
     description:
-      'Paired-human tap: resolve an exact stored message/publication/todo reference to an immutable file snapshot or bound GitHub PR summary. Provide one requestId per tap and reuse it for retries. PR file selection requires its displayed headSha and listed path. Optional context chooses only among authorized source bindings. No raw-path grants, arbitrary URL fetch or agent invocation. File reads use anchored no-follow descriptors.',
+      'Paired-human tap: resolve an exact stored message/publication/todo Git reference to an immutable file snapshot or bound GitHub PR summary. Local worktree targets are retired: client_upgrade_required tells the human to update HyperNeo and reopen the file from its message through file.reference.read; no local snapshot is created. Provide one requestId per tap and reuse it for retries. PR file selection requires its displayed headSha and listed path. Optional context chooses only among authorized source bindings. No raw-path grants, arbitrary URL fetch or agent invocation. File reads use anchored no-follow descriptors.',
     inputSchema,
     resultSchema: z.union([
+      z.strictObject({
+        accepted: z.literal(false),
+        reason: z.literal('client_upgrade_required'),
+        detail: z.string(),
+      }),
       ArtifactRefusalSchema,
       z.strictObject({
         accepted: z.literal(false),

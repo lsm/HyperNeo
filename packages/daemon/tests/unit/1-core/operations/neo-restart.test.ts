@@ -1,8 +1,8 @@
 import { describe, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
+import { createNeoOperations } from '../../helpers/neo-service.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
@@ -84,6 +84,7 @@ describe('neo.restart operation', () => {
       db,
       {
         updateSession,
+        getOperationRegistry: () => createOperationRegistry([]),
       } as unknown as SessionManager,
       { event: mock(() => {}) } as unknown as MessageHub,
       events

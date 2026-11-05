@@ -19,7 +19,12 @@ const target: ClaudeInboxTarget = {
   version: '2.1.295',
 };
 const origin = 'session:origin';
-const input = () => ({ messageId: randomUUID(), inputId: randomUUID(), text: 'continue' });
+const input = () => ({
+  messageId: randomUUID(),
+  inputId: randomUUID(),
+  text: 'continue',
+  fromMode: 'bypass' as const,
+});
 const reply = (from = `uds:${target.socketPath}`): ClaudeInboxFrameEvent => ({
   kind: 'reply',
   messageId: randomUUID(),

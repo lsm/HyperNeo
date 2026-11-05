@@ -8,6 +8,9 @@ export function getAcpCommandIdentityDigest(commandLine: string): string {
 }
 
 const ACP_SAFE_ENV_KEYS = [
+  'HYPERNEO_WORKTREES',
+  'HYPERNEO_EVIDENCE',
+  'HYPERNEO_BUILDS',
   'HOME',
   'PATH',
   'SHELL',

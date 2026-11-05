@@ -4,6 +4,8 @@ export function keepNeoOwnedSettings(
   updates: Partial<GlobalSettings>,
   current: GlobalSettings
 ): Partial<GlobalSettings> {
+  updates = { ...updates };
+  delete updates.driverHealth;
   if (!updates.neo) return updates;
   const {
     standingRules: _rules,

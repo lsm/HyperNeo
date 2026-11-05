@@ -1,6 +1,8 @@
 import { type DbScopeType, getScopeConfig } from '../../src/lib/db-query/scope-config.ts';
 
 export const EXCLUDED_TABLE_NAMES: string[] = [
+  'neo_peers',
+  'google_connections',
   'artifact_file_identity',
   'artifact_files',
   'claude_inbox_routes',
@@ -156,7 +158,7 @@ export function getAccessibleTableNames(scopeType: DbScopeType): string[] {
 }
 
 export function getBlacklistedColumns(tableName: string): string[] {
-  for (const scopeType of ['global', 'room', 'space'] as const) {
+  for (const scopeType of ['global', 'space'] as const) {
     const table = getScopeConfig(scopeType).find((cfg) => cfg.tableName === tableName);
     if (table) return table.blacklistedColumns;
   }

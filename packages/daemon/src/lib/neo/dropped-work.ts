@@ -63,17 +63,19 @@ export const publishDroppedWork = (superpipe({})('neo-daily-dropped-work') as Pi
       [
         `Daily dropped work ${day} (UTC)`,
         `Core: ${format(await readCounts(service, now))}`,
-        ...service
-          .packs()
-          .filter((pack) => pack.stats)
-          .map((pack) => {
-            try {
-              return `${pack.id}: ${format(pack.stats!(now))}`;
-            } catch (error) {
-              log.warn(`Daily counts unavailable for ${pack.id}`, error);
-              return `${pack.id}: unavailable`;
-            }
-          }),
+        ...(await Promise.all(
+          service
+            .packs()
+            .filter((pack) => pack.stats)
+            .map(async (pack) => {
+              try {
+                return `${pack.id}: ${format(await pack.stats!(now))}`;
+              } catch (error) {
+                log.warn(`Daily counts unavailable for ${pack.id}`, error);
+                return `${pack.id}: unavailable`;
+              }
+            })
+        )),
       ].join('\n'),
     ['service', 'now', 'day'],
     'text'

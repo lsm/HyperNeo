@@ -230,6 +230,46 @@ describe('voice transcribe pipeline', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
+  it.each(['commit', 'failure', 'abort'] as const)(
+    'waits for durable recording dispatch before ASR: %s',
+    async (outcome) => {
+      let release!: () => void;
+      let entered!: () => void;
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const controller = new AbortController();
+      const response = fetchTranscriptionWithRedirects(
+        new URL('http://127.0.0.1:1/v1/audio/transcriptions'),
+        {},
+        new FormData(),
+        true,
+        false,
+        controller.signal,
+        undefined,
+        async () => {
+          entered();
+          await gate;
+          if (outcome === 'failure') throw new Error('recording storage failed');
+        }
+      );
+      await started;
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+      if (outcome === 'abort') controller.abort();
+      release();
+      if (outcome === 'commit') {
+        await response;
+        expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+      } else {
+        await expect(response).rejects.toThrow();
+        expect(globalThis.fetch).not.toHaveBeenCalled();
+      }
+    }
+  );
+
   it('normalizes HTTP error responses', async () => {
     globalThis.fetch = mock(
       async () =>

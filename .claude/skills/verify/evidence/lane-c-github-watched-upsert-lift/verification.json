@@ -1,0 +1,33 @@
+{
+  "redCommit": "bf05602c578051ceec8cd8fc6cf66a18c6c05924",
+  "redUnitTests": {
+    "passed": 2,
+    "failed": 5,
+    "failure": "Constructor-free GitHub watched UPSERT is unavailable"
+  },
+  "redNative": {
+    "legacyPublicRpcPassed": true,
+    "failure": "Constructor-free GitHub watched UPSERT is unavailable"
+  },
+  "greenUnitAndNativeParentTests": {
+    "passed": 271,
+    "files": 3
+  },
+  "strictTypeScript6": "pass",
+  "repositoryCheck": "pass",
+  "bunNative": "pass",
+  "denoNative": "pass",
+  "productionLines": 70,
+  "smokeRegistrationLines": 1,
+  "freshEnvelope": 162,
+  "excludedStableLines": 166,
+  "totalKnownLines": 328,
+  "newExclusions": 0,
+  "completeInsertHelperKeptFresh": 40,
+  "mainThreadMovementClaim": false,
+  "scope": "Verbatim reduced UPSERT extraction with explicit db calls; UUID/clock/Space fallback order, flags, row receipts and cursor policy unchanged",
+  "transactionOwnership": "Caller rollback retained; outside caller transaction, cursor rejection preserves the existing first-write partial result",
+  "writeRejection": "Single attempt, original rejection, no replay or peer mutation",
+  "debt": "https://github.com/lsm/HyperNeo/issues/9418",
+  "laterAdditionalExclusionsRequireNeoDecision": true
+}

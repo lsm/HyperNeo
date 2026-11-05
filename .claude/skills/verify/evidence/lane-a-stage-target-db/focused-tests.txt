@@ -1,0 +1,33 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/neo-coding-stage-preferences.test.ts:
+(pass) coding stage target preferences > shares the prefer shape for write without storing defaults [110.09ms]
+(pass) coding stage target preferences > shares the prefer shape for review without storing defaults [100.67ms]
+(pass) coding stage target preferences > shares the prefer shape for verify without storing defaults [102.16ms]
+(pass) coding stage target preferences > an unavailable preference uses the default with a reason, without changing the saved setting [99.73ms]
+(pass) coding stage target preferences > repository values override global preferences with case-insensitive repository matching [100.33ms]
+(pass) coding stage target preferences > review preferences cannot select the author model; a different harness breaks otherwise equal ties [102.43ms]
+(pass) coding stage target preferences > declares all nine fields as bounded text, including vendor model IDs and explicit defaults [0.56ms]
+
+tests/unit/1-core/operations/neo-coding-assign.test.ts:
+(pass) coding actor assignments > configured bot suppresses all reviewer starts, including explicit human/preferences, but permits independent Verify [432.97ms]
+(pass) coding actor assignments > a PR from a fork (%s) asks for the worker sandbox on its Review and Verify starts [415.90ms]
+(pass) coding actor assignments > a PR from a fork (%s) asks for the worker sandbox on its Review and Verify starts [347.61ms]
+(pass) coding actor assignments > one todo keeps its author and linked fresh reviewer/Verify; repeated calls reuse exact-head assignments [360.49ms]
+(pass) coding actor assignments > an explicit human is an alternative with no reviewer session [317.84ms]
+(pass) coding actor assignments > missing provenance and same-model review cannot launch; explicit opt-out permits the default [356.19ms]
+(pass) coding actor assignments > shared Review/Verify harness, model and effort preferences reach the started actor [333.50ms]
+(pass) coding actor assignments > an unavailable preferred configuration (unsupported_model) safely falls back to the qualifying default [291.16ms]
+(pass) coding actor assignments > an unavailable preferred configuration (unsupported_effort) safely falls back to the qualifying default [323.78ms]
+(pass) coding actor assignments > an unavailable preferred configuration (unsupported_preparation) safely falls back to the qualifying default [289.33ms]
+(pass) coding actor assignments > an unavailable preferred configuration (unknown_adapter) safely falls back to the qualifying default [296.85ms]
+(pass) coding actor assignments > uncertain delivery is never retried or recorded as an assignment [297.16ms]
+(pass) coding actor assignments > a new head requires fresh assignments; contract changes and stale/closed PRs refuse before launch [391.13ms]
+(pass) coding actor assignments > Verify cannot reuse the author or reviewer ref [374.05ms]
+(pass) coding actor assignments > head changes during start stop only the new actor rather than persist stale ownership [301.52ms]
+(pass) coding actor assignments > simultaneous assignment requests do not duplicate session starts [296.33ms]
+
+ 23 pass
+ 0 fail
+ 176 expect() calls
+Ran 23 tests across 2 files. [6.11s]

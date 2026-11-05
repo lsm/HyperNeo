@@ -8,7 +8,7 @@ import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapp
 import type { TaskAgentManager } from '../space/runtime/task-agent-manager.ts';
 import type { EnsureSessionOutcome, SessionTarget } from '../session-resolution/target.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
-import { jsonResult, type ToolResult } from '../space/tools/tool-result.ts';
+import { jsonResult, type ToolResult } from '../tools/tool-result.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
 

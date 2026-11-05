@@ -69,6 +69,40 @@ describe('codexOpenedPrs', () => {
       ])
     ).toEqual([pr(5), pr(7)]);
   });
+
+  test('takes the PR a Codex exec call created with github_create_pull_request', () => {
+    const output = (id: string, number: number) =>
+      codex({
+        type: 'custom_tool_call_output',
+        call_id: id,
+        output: [
+          { type: 'input_text', text: 'Script completed\nWall time 1.7 seconds\nOutput:\n' },
+          {
+            type: 'input_text',
+            text: JSON.stringify({ structuredContent: { url: pr(number), number, state: 'open' } }),
+          },
+        ],
+      });
+    expect(
+      codexOpenedPrs([
+        codex({
+          type: 'custom_tool_call',
+          name: 'exec',
+          call_id: 'a',
+          input:
+            'const r=await tools.mcp__codex_apps__github_create_pull_request({repository_full_name:"lsm/HyperNeo",base:"dev",head:"codex/x",title:"docs",body,draft:true});text(r);',
+        }),
+        output('a', 9561),
+        codex({
+          type: 'custom_tool_call',
+          name: 'exec',
+          call_id: 'b',
+          input: `text(await tools.mcp__codex_apps__github_fetch({url:"${pr(9553)}"}));`,
+        }),
+        output('b', 9553),
+      ])
+    ).toEqual([pr(9561)]);
+  });
 });
 
 describe('keepOpenedPrs', () => {

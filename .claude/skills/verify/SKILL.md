@@ -31,9 +31,13 @@ root of your worktree.
 
 ## Launch
 
+Build web for the current checkout HEAD before launching. A bundle from an older
+commit intentionally reloads on connection and can invalidate browser setup.
+
 ```bash
 cd packages/web && bun run build && cd ../..
 .claude/skills/verify/launch.sh 9311 "$RUN"
+export HYPERNEO_DATA_DIR="$RUN/data"
 ```
 
 - Pick any free port except 8399. `launch.sh` refuses a busy port, and refuses
@@ -79,6 +83,11 @@ scrubbed; set the browser paths on the wrapper invocation when using --web.
 
 Give it a model, once per run (stored in the run's DB only):
 
+The RPC helper reads the isolated daemon's owner-only `local-rpc.credential`,
+unless VERIFY_CREDENTIAL selects a paired synthetic client. Set HYPERNEO_DATA_DIR
+to the fresh run's data directory; anonymous WebSockets are refused. Never point
+a verification command at the real credential file.
+
 ```bash
 VERIFY_PORT=9311 bun .claude/skills/verify/rpc.ts rpc:providers.create \
   '{"params":{"providerId":"anthropic","displayName":"Anthropic (dev proxy)","kind":"built_in","authType":"api_key","isEnabled":true,"isDefault":true,"sortOrder":0},"credentials":{"apiKey":"sk-devproxy-test-key"}}'
@@ -99,6 +108,28 @@ or use a shell with `set -e`. For example:
 bash .claude/skills/verify/resource-check.sh && bun run check
 ```
 
+Portable wrappers invoke this macOS-only check on Darwin; Linux must not require
+`memory_pressure` or `/System/Volumes/Data` to enter a journey.
+
+For full daemon unit runs used by an SDK upgrade, also isolate HOME and TMPDIR:
+startup fixtures can otherwise scan the owner's native-session directories.
+Run the existing suite under `with-run.sh`, retaining its output outside RUN:
+
+```bash
+bash .claude/skills/verify/resource-check.sh && \
+bash .claude/skills/verify/with-run.sh bash -c '
+  mkdir -p "$RUN/home" "$RUN/tmp" "$RUN/bin"
+  cp .claude/skills/verify/gh-stub.sh "$RUN/bin/gh"
+  env -i HOME="$RUN/home" TMPDIR="$RUN/tmp" PATH="$RUN/bin:$PATH" \
+    BUN_INSTALL="$(dirname "$(dirname "$(command -v bun)")")" \
+    TERM=dumb NODE_ENV=test ./scripts/test-daemon.sh
+' > /absolute/persistent-evidence/daemon-unit.log 2>&1
+```
+
+For this isolated unit setup, leave `HYPERNEO_DATA_DIR` unset. The synthetic
+HOME already isolates `.hyperneo`; SDK resolver fixtures exercise that default
+cache path. Metadata-only daemon proofs still use their explicit `RUN/data`.
+
 In a standalone clone beneath a directory named `tmp`, Biome can ignore its `.`
 target because the repository excludes `**/tmp`. If `format:check` reports zero
 files, run the same check chain with that one command replaced by
@@ -117,15 +148,21 @@ For a metadata-only Bun helper taking `[arguments] <run>`, use:
 bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory "$PROOF" verify
 ```
 
-For a dual-runtime native-filesystem helper, repeat with `VERIFY_PROOF_RUNTIME=deno`
-and the pinned Deno on PATH. The wrapper uses `deno run -A` and keeps its cache
-inside the disposable run; the default remains Bun.
-
 The wrapper checks disk space, creates a disposable HOME/data/TMPDIR, saves
 the helper's evidence JSON and log outside that run, then immediately removes
 its temporary daemon data. It preserves failure status and never deletes the
 run if saving evidence fails. Keep baseline and fixed evidence in separate
 directories; the helper must close its resources in finally.
+Let the owning parent remove data after the helper process exits; deleting home
+or data inside the helper can race native-worker filesystem teardown.
+
+Shell wrappers that own daemon processes must translate INT/TERM to exit 130/143
+as well as registering EXIT cleanup. Preserve cancellation status and evidence
+before `with-run.sh` removes the run; an EXIT trap alone is insufficient. Wait
+for active work in an interruptible background job and forward cancellation to
+that job and its children. Create `$RUN/.preserve-run` before producing evidence
+and remove it only after saving succeeds; `with-run.sh` retains marked runs even
+after a save error or cancellation.
 
 Reader proofs that trap SDK-message SQL must finish startup body copying before
 measuring reader work or acquiring a competing writer. After seeding fixtures,
@@ -134,7 +171,7 @@ hashes and enable the measurement guard. It waits for the real completion or
 rollback marker with a deadline; never seed those markers to bypass migration.
 Use the transcript/single-message helpers' `--defer-body-copy` mode to exercise
 late startup copying deterministically.
-The wrapper and Deno smoke trim TMPDIR's trailing slash so HOME/data paths match helpers'
+The wrapper trims TMPDIR's trailing slash so HOME/data paths match helpers'
 normalized run paths, including macOS's default TMPDIR.
 For native Unix-socket fixtures, select `TMPDIR=/private/tmp` when invoking the
 wrapper to keep the fresh HOME's socket paths within the OS path-length limit.
@@ -146,13 +183,12 @@ The wrapper forwards NODE_PATH and VERIFY_BROWSER for browser helpers; its
 child environment remains otherwise scrubbed.
 Set TMPDIR to an existing writable temporary directory when the host restricts
 the default temp location; the wrapper creates its disposable run there.
+For the full macOS native smoke, pass `TMPDIR=/private/tmp` directly to its child.
+Nested connected-device sockets must stay within the OS path-length limit.
+
 For a Node compatibility-adapter proof, `VERIFY_PROOF_RUNTIME=node` selects
 `node --import tsx` with the same isolated environment and cleanup. This tests
-the Deno/Node adapter seam; Node remains unsupported as a daemon runtime.
-
-The Deno boot smoke also honors `TMPDIR`. Its fixture-isolation journey is
-`journeys/deno-smoke-fixture-isolation.md`; it runs the real smoke with a
-competing writer when fixtures overlap the booted daemon.
+the independent Node adapter seam; Node remains unsupported as a daemon runtime.
 
 If a metadata helper cannot bind its own listener (for example EPERM or an
 ephemeral port 0 reported as EADDRINUSE), preserve its log and mark daemon proof
@@ -309,6 +345,17 @@ temporary daemon data and run directory you created.
 
 ## Metadata-only daemon proofs
 
+For in-process helpers, `disableWorktrees` belongs inside the `config` supplied
+to `createDaemonApp`, not among the app options. Build it as
+`{ ...getConfig(overrides), disableWorktrees: true }`; `getConfig` does not accept
+that field as an override. Verify it through session.create
+in a disposable Git repository when worktree isolation matters. The parsed
+`disableGoalProcessing` field currently has no runtime consumer; it is not an
+isolation control. Metadata-only helpers that do not exercise jobs must await
+`app.jobProcessor.stop()` before seeding fixtures, and use the fresh synthetic DB
+without saved goal work. Job journeys explicitly start the processor they test.
+
+
 Construction-only writer journeys may invoke a registered command through the
 isolated daemon gateway and verify its receipt through a public reader. Record
 that public mutation callers remain unchanged; repeat the proof through those
@@ -326,12 +373,25 @@ and RPC evidence, and own an EXIT trap that stops and waits for that exact child
 No HTTP model mock or provider registration is needed. The worker-identity helper
 implements this setup; it never touches another process's occupied mock port.
 
-## Native worker sandbox proofs
+## Native SDK and worker sandbox proofs
 
-Native CLI sandbox journeys use scrubbed child-process environments and disposable
-homes too. They may supply a literal synthetic API key only to the native Claude
-child connected to the helper's loopback scripted model; never to the daemon or
-an external endpoint. Use absolute `VERIFY_CLAUDE` / `VERIFY_CODEX` executable
+After an installed local driver's own journey passes, read its saved health via
+work.adapters, then record the exact tested clientVersions with work.health
+`{action: "verified", adapter, journey, clientVersions}`. This records evidence;
+it does not run the journey. Never mark a live client verified from synthetic
+fixture versions, a health self-check alone, or a journey that did not pass.
+Only the local human or a bound Neo MCP session may record verification.
+Workers report the passed journey, evidence and exact tested versions to Neo;
+their MCP caller cannot mark a driver verified.
+For health status and notice coverage, use journeys/driver-health.md. Tests skip
+automatic health startup jobs; that journey explicitly enqueues the real job in
+its isolated daemon before starting its processor.
+
+Native SDK journeys (including `journeys/neo-bash-cap.md`) and CLI sandbox
+journeys use scrubbed child-process environments and disposable homes too. They
+may supply a literal synthetic API key only to the native Claude child connected
+to the helper's loopback scripted model; never to the daemon environment or an
+external endpoint. Use absolute `VERIFY_CLAUDE` / `VERIFY_CODEX` executable
 paths so the daemon's synthetic CLI peers cannot replace the real OS probe.
 These helpers preserve CLI tool results and report simulated Desktop transport
 separately from actual OS enforcement. Never disable the sandbox for these proofs.
@@ -349,3 +409,5 @@ The workflow configures that permission on its disposable CI VMs and runs a
 bubblewrap startup probe before testing. Local Ubuntu verification requires a
 host policy allowing those namespaces; this journey changes no local host policy.
 The cleanup OS boundary stays enabled during these tests.
+
+For opt-in speech separate from publications, follow [spoken replies](journeys/spoken-replies.md).

@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { rmSync } from 'node:fs';
+import type { Session } from '@hyperneo/shared';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type {
   RPCHandlerDependencies,
   RPCHandlerSetupResult,
 } from '../../../../src/lib/rpc-handlers';
 import { setupRPCHandlers } from '../../../../src/lib/rpc-handlers';
+import { createSpaceRpc } from '../../../../src/lib/rpc-handlers/space-setup.ts';
+import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { Database } from '../../../../src/storage/index';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import {
@@ -15,13 +18,14 @@ import {
 } from '../../../../src/storage/repositories/space-agent-inactivity-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { DaemonExtensions } from '../../../../src/lib/extensions/contract.ts';
 
 const THRESHOLD_MS = 60_000;
 const IDLE_SINCE_MS = 2 * 60 * 60 * 1000;
 const CLAIM_LEASE_MS = 5 * 60 * 1000;
 
 function makeTempDbPath(): string {
-  return join(tmpdir(), `nag-probes-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
+  return join(mkdtempSync(join(tmpdir(), 'nag-probes-')), 'test.db');
 }
 
 function noopProxy(overrides: Record<string, unknown> = {}): unknown {
@@ -60,12 +64,14 @@ function mailboxPayload(
   };
 }
 
+type SpaceRpcServices = Awaited<ReturnType<typeof createSpaceRpc>>['services'];
 type Fixture = { spaceId: string; agentId: string; sessionId: string };
 
 describe('inactivity nag probes reconciled with mailbox admissions', () => {
   let db: Database;
   let dbPath: string;
-  let setup: RPCHandlerSetupResult;
+  let setup: RPCHandlerSetupResult<SpaceRpcServices>;
+  let space: SpaceRpcServices;
   let claimRepo: SpaceAgentInactivityClaimRepository;
   let configRepo: SpaceAgentInactivityConfigRepository;
   let deliveries: string[];
@@ -82,8 +88,10 @@ describe('inactivity nag probes reconciled with mailbox admissions', () => {
       getSpace: async () => ({ id: 'space', status: 'active', paused: false, stopped: false }),
       onSpaceResumedRegister: () => {},
     });
+    const messageHub = noopProxy();
     const deps = {
-      messageHub: noopProxy(),
+      extensions: new DaemonExtensions(db.getDatabase(), messageHub as never),
+      messageHub,
       sessionManager: noopProxy({ getCachedSession: () => null }),
       authManager: noopProxy(),
       settingsManager: noopProxy(),
@@ -106,7 +114,6 @@ describe('inactivity nag probes reconciled with mailbox admissions', () => {
       externalEventExtensionConfigStore: noopProxy(),
       externalEventExtensionContext: noopProxy(),
       db,
-      spaceManager,
       jobQueue: db.getJobQueueRepo(),
       jobProcessor: noopProxy(),
       messageDeliveryProcessor: noopProxy(),
@@ -115,12 +122,16 @@ describe('inactivity nag probes reconciled with mailbox admissions', () => {
       skillsManager: noopProxy(),
       mcpImportService: noopProxy(),
     } as unknown as RPCHandlerDependencies;
-    setup = await setupRPCHandlers(deps);
+    setup = await setupRPCHandlers(deps, (rpcDeps, host) =>
+      createSpaceRpc({ ...rpcDeps, spaceManager: spaceManager as SpaceManager }, host)
+    );
+    if (!setup.space) throw new Error('Space RPC setup did not run');
+    space = setup.space;
     claimRepo = new SpaceAgentInactivityClaimRepository(db.getDatabase());
     configRepo = new SpaceAgentInactivityConfigRepository(db.getDatabase());
     deliveries = [];
     admittedJobIds = [];
-    setup.spaceRuntimeService.deliverLongHorizonAgentNag = async (args) => {
+    space.spaceRuntimeService.deliverLongHorizonAgentNag = async (args) => {
       deliveries.push(args.idempotencyKey);
       const sessionId = new SpaceLongHorizonAgentRepository(db.getDatabase()).getById(
         args.agentId
@@ -141,11 +152,19 @@ describe('inactivity nag probes reconciled with mailbox admissions', () => {
   });
 
   afterEach(async () => {
-    await setup.cleanup();
     try {
-      db.close();
-    } catch {}
-    rmSync(dbPath, { force: true });
+      await setup?.cleanup();
+    } finally {
+      try {
+        db?.close();
+      } finally {
+        rmSync(dirname(dbPath), { recursive: true, force: true });
+      }
+    }
+  });
+
+  it('sets the Space session port on the database', () => {
+    expect(db.spaceSessions?.taskForSession({ id: 'none', context: {} } as Session)).toBeNull();
   });
 
   function seedWatchedAgent(): Fixture {
@@ -186,7 +205,7 @@ describe('inactivity nag probes reconciled with mailbox admissions', () => {
   }
 
   async function scan(fixture: Fixture): Promise<void> {
-    await setup.spaceAgentInactivityWatchdog.scanAgent(fixture.spaceId, fixture.agentId);
+    await space.spaceAgentInactivityWatchdog.scanAgent(fixture.spaceId, fixture.agentId);
   }
 
   it('counts an active mailbox admission as pending delivery so scans do not double-admit', async () => {

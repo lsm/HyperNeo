@@ -1,5 +1,11 @@
 # Docked attachment previews and mobile bottom sheets
 
+C3 update: local registration is retired. These helpers seed synthetic historical
+attachment rows/blobs directly via legacy-attachment-fixture.ts; any registration
+wording below describes the historical data, not a currently available API.
+New working files use source-bound live reads. No production snapshots are created.
+
+
 Build web (`cd packages/web && bun run build`). Follow SKILL.md isolation: fresh synthetic HOME/data/DB, NODE_ENV=test, no keys, GUI takeover, model turn or port 8399.
 
 ```bash

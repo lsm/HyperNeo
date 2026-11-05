@@ -128,6 +128,7 @@ describe('SDK runtime filter contracts', () => {
       { isReplay: true, message: { content: [{ type: 'text', text: 'Replay text' }] } },
       6
     );
+    expect(readHyperneoInputs(db, 's')[0]).toMatchObject({ inputId: 'human', human: true });
     expect(readHyperneoInputs(db, 's').map((input) => input.text)).toEqual([
       'Human',
       'Null kind',

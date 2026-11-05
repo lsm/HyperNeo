@@ -39,6 +39,72 @@ git push origin vX.Y.Z
 
 ### 3) GitHub Release
 
+Generate an API compatibility report for the release notes before publishing:
+
+The report includes phone-used push payloads once their source ref owns Zod
+contracts. New coverage of a previously untyped payload is labelled coverage-only,
+not a proven safe wire change; it is excluded from compatibility totals. Older
+release tags stay untyped. Event payload changes use result compatibility rules.
+
+```bash
+bun run api:surface
+bun run api:diff vPREVIOUS
+# For two existing release tags:
+bun run api:diff vPREVIOUS vCURRENT
+```
+
+The single-ref form compares the previous release with the generated working
+snapshot, not a tagged release. The two-ref form compares exactly those commits.
+When a tag predates `api-surface.json`, the tool collects its catalog from an
+isolated checkout of that tag using the same generator. It reuses dependencies,
+uses a synthetic home/database, refuses external HTTP/GitHub and removes its
+temporary checkout and daemon data. Fetch the required tags first; use trusted
+repository refs. No install or production daemon is needed for this report.
+
+Include the summary and changes in release notes. For example:
+`v0.52.0 -> v0.53.0: phone-used operations: 0 breaking, 0 risky, 1 safe`.
+That release also removed **both `work` and `consultation`** from
+`neo.publication.publish input.links[].kind`, leaving `project`. This is a real
+input-contract removal, not a rename: the older publisher accepted then omitted
+those links; the newer input schema rejects them. The new optional top-level
+`session` field is a separate source-session reference, not a replacement enum
+spelling. The pinned phone source does not publish through this operation.
+
+Classification: new operations, optional input fields and result fields are
+safe. Result enum/union additions and results becoming optional/nullable are
+risky. Removed operations/fields, type changes, newly required inputs and removed
+input enum values are breaking. Accepted input widening and result enum/union
+narrowing are safe; other changed constraints are conservatively breaking.
+Changed defaults and opaque transform fingerprints require review as risky.
+Phone summary counts use each method's highest severity; the full list retains
+each classified schema change. Event name changes are included, but event payload
+schemas require their own surface support. Legacy transport methods without a
+catalog schema are not validated by the operation comparison.
+
+The default phone inventory is `api-phone-methods.json`. Refresh it from a
+configurable source checkout and its released commit:
+
+```bash
+bun run api:phone-methods "$PHONE_SOURCE" "$PHONE_RELEASE_REF" > phone-methods.json
+bun run api:diff vPREVIOUS vCURRENT --phone-methods phone-methods.json
+```
+
+The extractor reads committed product Swift files, excludes test directories,
+and collects sorted unique literal `invoke`, `request`, `call`, `onEvent` and
+named `*Request` helper method strings. It does not infer dynamically computed names. Review unexpected
+inventory changes before replacing the committed default; do not put source
+repository names or machine paths in it. `--json` emits machine-readable changes
+and source commit identities.
+
+Use `--worktree-root` to select a writable parent for historical detached
+worktrees (the OS temporary directory is the default). Only one historical
+checkout and proof daemon runs at a time; each is removed before the next.
+
+The default source is commit `5a35d4d4bcabb7866ddfc95212a775ebc465979b`, reported as
+phone app 0.5.0 (6). Its association with the installed TestFlight build is based
+on owner-reported release/archive timing only; no durable upload receipt was
+retained. This is source coverage, not proof of the installed binary's contents.
+
 The release pipeline creates a GitHub Release automatically. If it fails (e.g., auto-generated notes are too long), create it manually:
 
 ```bash

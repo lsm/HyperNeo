@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   createDaemonOperationCatalog,
-  type TaskOperationDependencies,
+  type MessagingOperationDependencies,
 } from '../../../../src/lib/operations/catalog.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
@@ -35,7 +35,7 @@ describe('worker handoff artifact operation contract', () => {
   const catalog = () =>
     createDaemonOperationCatalog(mailbox.jobQueue, {
       sessionStatus: (id: string) => (id === sessionId ? status : null),
-    } as TaskOperationDependencies);
+    } as MessagingOperationDependencies);
   const invoke = async (name: string, input: unknown, id = sessionId) => {
     const outcome = await invokeOperation(catalog(), name, input, { source: 'mcp', sessionId: id });
     expect(outcome.kind).toBe('completed');

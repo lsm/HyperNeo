@@ -1,0 +1,59 @@
+{
+  "sqlScope": "Git publication row INSERT only; existing source/receipt/authorization SQL, core #9342 constructor transaction and sync native descriptor work remain outside this ownership proof",
+  "fullTransitiveCaptureOwnershipGraphMeasured": false,
+  "mainGuardSelfCheckPassed": true,
+  "firstConcurrentRpcMs": 326.62074999999993,
+  "concurrentLaneAndReceiptRetryPreserved": true,
+  "completeBytes": 1680000,
+  "readChunks": 7,
+  "commitProvenanceAndFullSnapshotBytesRetained": true,
+  "admissionFailureHasNoFallbackOrReplay": true,
+  "unknownOutcomeNeverAutomaticallyReplayed": true,
+  "explicitRetryReadsCommittedReceiptWithoutLookup": true,
+  "postCommitBindingChangeWithholdsReference": true,
+  "postCommitSourceRevocationWithholdsReference": true,
+  "healthWhileWriterHeldMs": 2.178791999999703,
+  "deliberatelyHeldPublicationMs": 1349.304959,
+  "publicReceiptWaitsForCommit": true,
+  "explicitOfflineRetryReadsWithoutLookupOrPublication": true,
+  "foreignOrNonSourceReferenceRefusedBeforeLookup": true,
+  "fixtureGhCalls": 21,
+  "maxLoopLagMs": 5.002207999999996,
+  "rssBytes": 199001192,
+  "walBytes": 115392,
+  "pass": true,
+  "GitMainInsertRuns": 0,
+  "rowCommandPosts": 7,
+  "workerMetrics": [
+    {
+      "roundTripMs": 0.601041000000123,
+      "requestBytes": 647,
+      "replyBytes": 642
+    },
+    {
+      "roundTripMs": 2.913624999999911,
+      "requestBytes": 647,
+      "replyBytes": 642
+    },
+    {
+      "roundTripMs": 0.19133400000009715,
+      "requestBytes": 647,
+      "replyBytes": 642
+    },
+    {
+      "roundTripMs": 2.0251250000001164,
+      "requestBytes": 647,
+      "replyBytes": 642
+    },
+    {
+      "roundTripMs": 0.15224999999963984,
+      "requestBytes": 647,
+      "replyBytes": 642
+    },
+    {
+      "roundTripMs": 1231.2148339999999,
+      "requestBytes": 647,
+      "replyBytes": 642
+    }
+  ]
+}

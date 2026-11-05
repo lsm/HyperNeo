@@ -1,0 +1,11 @@
+{
+  "exactDependencyFiles": 15,
+  "fullTransitiveGraphMeasured": false,
+  "contracts": [
+    "workspace.history.upsert.write write/upsert(path, now) returns committed plain row; one increment, captured caller time and receipt in the same immediate transaction; no replay on uncertain outcome.",
+    "refreshAllForPath reads sources and filesystem on main, disables user config and orphan pruning for this path, snapshots plain import data; commitImport delegates existing tool_defaults.transition apply with imports/sources mutation and no explicit edits.",
+    "tool_defaults.transition commits registry and canonical defaults atomically in its existing worker; imported defaults remain disabled; no filesystem or event callback is supplied to its transaction.",
+    "workspace.add publishes mcp.registry.changed only for nonzero committed import counts; scan failure retains history success; response remains the enriched history read after scan."
+  ],
+  "manifestSha256": "cd918ce80b345fa424b46a3cd555429a67ded0a26b8c1a35df5d3558c790f270"
+}

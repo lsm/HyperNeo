@@ -123,6 +123,7 @@ export function Modal({
         ref={modalRef}
         role="dialog"
         aria-modal="true"
+        aria-label={title}
         data-testid={testId}
         class={cn(
           'relative w-full bg-surface-overlay rounded-lg shadow-xl border border-line-strong animate-scaleIn flex flex-col max-h-[90vh]',
@@ -132,12 +133,16 @@ export function Modal({
       >
         {(title || showCloseButton) && (
           <div class="flex items-center justify-between px-4 py-3 border-b border-line flex-shrink-0">
-            {title && <h2 class="text-sm font-semibold text-fg">{title}</h2>}
+            {title && (
+              <h2 class="text-sm font-semibold text-fg max-[720px]:min-w-0 max-[720px]:break-words">
+                {title}
+              </h2>
+            )}
             {showCloseButton && (
               <button
                 type="button"
                 onClick={onClose}
-                class="ml-auto text-fg-muted hover:text-fg transition-colors p-1 rounded hover:bg-fill-strong"
+                class="ml-auto flex min-h-11 min-w-11 items-center justify-center text-fg-muted hover:text-fg transition-colors p-1 rounded hover:bg-fill-strong"
                 aria-label="Close modal"
               >
                 <CloseGlyph class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" />

@@ -9,6 +9,8 @@ const hubRequest = vi.fn(
   async (method: string, payload?: unknown): Promise<Record<string, unknown>> => {
     if (method === 'operation.invoke') {
       const invocation = payload as IntakeInvocation;
+      if (invocation.name === 'message.send')
+        return { kind: 'accepted', messageId: 'session-message', mailboxId: 'session-mailbox' };
       if (invocation.name !== 'neo.message.send')
         throw new Error(`Unknown operation: ${invocation.name}`);
       const { requestId } = invocation.input;
@@ -46,8 +48,14 @@ vi.mock('../voice-transcript-outbox.ts', async (importOriginal) => ({
   enqueueTranscript,
 }));
 
+import type { VoiceRecordEntry } from '../voice-audio-store.ts';
 import { connectionManager } from '../../connection-manager.ts';
-import { flushPendingVoiceAudio, resetVoiceAudioOutbox } from '../voice-audio-outbox.ts';
+import {
+  flushPendingVoiceAudio,
+  resetVoiceAudioOutbox,
+  queuePendingVoiceSend,
+  submitVoiceSendIntent,
+} from '../voice-audio-outbox.ts';
 
 function seedEntry(overrides: Record<string, unknown> = {}) {
   const entry = {
@@ -99,29 +107,41 @@ describe('voice send-intent recovery', () => {
     expect(rawMethods()).not.toContain('neo.message.send');
   });
 
-  it('sends a session pane recording to its session through message.send', async () => {
+  it('sends a session pane recording through the idempotent operation door', async () => {
     seedEntry({ intent: 'send', door: 'session' });
     await flushPendingVoiceAudio();
 
     expect(asks()).toHaveLength(0);
-    expect(hubRequest).toHaveBeenCalledWith('message.send', {
-      sessionId: 's1',
-      content: 'hello world',
+    expect(hubRequest).toHaveBeenCalledWith('operation.invoke', {
+      name: 'message.send',
+      input: {
+        sessionId: 's1',
+        idempotencyKey: 'voice:rec-1',
+        message: {
+          type: 'user',
+          inputKind: 'human',
+          parent_tool_use_id: null,
+          message: { role: 'user', content: 'hello world' },
+        },
+      },
     });
     expect(store.records).toHaveLength(0);
   });
 
   it('parks an unconfirmed session send in the draft instead of replaying it', async () => {
     seedEntry({ intent: 'send', door: 'session' });
-    hubRequest.mockImplementation(async (method: string) => {
+    hubRequest.mockImplementation(async (method: string, payload?: unknown) => {
       if (method === 'voice.transcribe') return { text: 'hello world' };
-      if (method === 'message.send') throw new Error('Request timeout');
+      if (method === 'operation.invoke' && (payload as { name: string }).name === 'message.send')
+        throw new Error('Request timeout');
       return { success: true };
     });
     await flushPendingVoiceAudio();
     await flushPendingVoiceAudio();
 
-    expect(rawMethods().filter((method) => method === 'message.send')).toHaveLength(1);
+    expect(intakes().filter(([, invocation]) => invocation.name === 'message.send')).toHaveLength(
+      1
+    );
     expect(enqueueTranscript).toHaveBeenCalledWith('s1', 'hello world', 'rec-1');
   });
 
@@ -246,5 +266,103 @@ describe('voice send-intent recovery', () => {
     await flush;
     expect(store.records).toHaveLength(1);
     expect(asks()).toHaveLength(0);
+  });
+
+  it('recovers an upgraded pending Send with its original quote, photo and file suffix', async () => {
+    seedEntry({ intent: 'draft' });
+    const quote = {
+      author: 'Neo' as const,
+      text: 'original quote',
+      anchor: 'original',
+      replyTo: { kind: 'message' as const, id: 'original', excerpt: 'original quote' },
+    };
+    expect(
+      await queuePendingVoiceSend('rec-1', {
+        sendDraft: 'accepted typed words',
+        sendContext: {
+          suffix: 'original attachment',
+          images: [{ data: 'aGk=', media_type: 'image/png' }],
+          quote,
+          attachmentIds: ['photo1'],
+        },
+      })
+    ).toBe(true);
+    resetVoiceAudioOutbox();
+    await flushPendingVoiceAudio();
+    expect(asks()).toHaveLength(1);
+    const input = asks()[0][1].input;
+    expect(input.requestId).toBe('rec-1');
+    expect(JSON.stringify(input.content)).toContain('original attachment');
+    expect(JSON.stringify(input.content)).toContain('aGk=');
+    expect(input).toHaveProperty('replyTo', quote.replyTo);
+    expect(store.records).toHaveLength(0);
+  });
+  it('refuses missing or already accepted pending Send records', async () => {
+    expect(await queuePendingVoiceSend('missing', {})).toBe(false);
+    seedEntry({ intent: 'send' });
+    expect(await queuePendingVoiceSend('rec-1', {})).toBe(false);
+  });
+  it('replays the accepted session receipt after a lost response without another delivery', async () => {
+    const record = seedEntry({
+      intent: 'send',
+      door: 'session',
+      sendContext: {
+        suffix: 'saved file words',
+        attachmentIds: [],
+        images: [{ data: 'aGk=', media_type: 'image/png' }],
+      },
+    }) as VoiceRecordEntry;
+    const receipts = new Map<string, Record<string, unknown>>();
+    let deliveries = 0;
+    let dropResponse = true;
+    hubRequest.mockImplementation(async (method, payload) => {
+      const invocation = payload as { name?: string; input?: { idempotencyKey?: string } };
+      if (
+        method !== 'message.send' &&
+        !(method === 'operation.invoke' && invocation.name === 'message.send')
+      )
+        throw new Error('Unexpected route');
+      const key = method === 'operation.invoke' ? invocation.input?.idempotencyKey : undefined;
+      let receipt = key ? receipts.get(key) : undefined;
+      if (!receipt) {
+        deliveries++;
+        receipt = {
+          kind: 'accepted',
+          mailboxId: 'mailbox-' + deliveries,
+          messageId: 'message-' + deliveries,
+        };
+        if (key) receipts.set(key, receipt);
+      }
+      if (dropResponse) {
+        dropResponse = false;
+        throw new Error('Response lost after acceptance');
+      }
+      return receipt;
+    });
+    const hub = { request: hubRequest } as never;
+    expect(
+      (
+        await submitVoiceSendIntent(
+          hub,
+          record,
+          'typed words\nfinal transcript\n\nsaved file words'
+        )
+      ).kind
+    ).not.toBe('accepted');
+    expect(deliveries).toBe(1);
+    const saved = store.records.find(
+      (entry) => entry.id === record.id
+    ) as unknown as VoiceRecordEntry;
+    expect(saved.sendContext).toEqual(record.sendContext);
+    expect(
+      await submitVoiceSendIntent({ request: hubRequest } as never, saved, saved.sendText!)
+    ).toEqual({ kind: 'accepted' });
+    expect(deliveries).toBe(1);
+    expect(rawMethods()).not.toContain('message.send');
+    expect(hubRequest.mock.calls[0][1]).toEqual(hubRequest.mock.calls[1][1]);
+    expect(hubRequest.mock.calls[1][1]).toMatchObject({
+      name: 'message.send',
+      input: { idempotencyKey: 'voice:rec-1', sessionId: 's1' },
+    });
   });
 });

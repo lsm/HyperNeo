@@ -6,7 +6,6 @@ storage contract through the real public operation and its DB writer:
 
 ```sh
 python3 .claude/skills/verify/coding-smoke-admission-db-run.py bun verify
-python3 .claude/skills/verify/coding-smoke-admission-db-run.py deno verify --executable "$DENO"
 ```
 
 The runner owns a fresh HOME/data/TMPDIR and ephemeral daemon, saves evidence,

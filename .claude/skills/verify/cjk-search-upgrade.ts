@@ -65,7 +65,7 @@ if (phase) {
   assert(!existsSync(dbPath));
   const { Database } = await import('../../../packages/daemon/src/storage/sqlite-compat.ts');
   const execute = async (name: string) => {
-    const args = [...('Deno' in globalThis ? ['run', '-A'] : []), fileURLToPath(import.meta.url), '--phase', name, run];
+    const args = [fileURLToPath(import.meta.url), '--phase', name, run];
     const child = spawn(process.execPath, args, { stdio: 'inherit' });
     try {
       await new Promise<void>((done, fail) => { child.once('error', fail); child.once('exit', (code, signal) => code === 0 ? done() : fail(new Error(`${name}: ${code}, ${signal}`))); });

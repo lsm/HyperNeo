@@ -1,9 +1,19 @@
+import { cleanupOwnedWorktree } from './work-placement.ts';
+import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
 import { releaseWorkerSandbox, workerSandboxOn } from './worker-sandbox.ts';
 import { createHash } from 'node:crypto';
 import { getDataDir } from '../data-dir.ts';
-import { installClaudeNativeWrites, readClaudeWorkerSandbox } from './claude-native-writes.ts';
+import {
+  installClaudeNativeWrites,
+  prepareClaudeWorkEnvironment,
+  readClaudeWorkerSandbox,
+} from './claude-native-writes.ts';
 import { collectDescendantPids, listProcesses, type ProcessLister } from '../process-watchdog.ts';
-import { readClaudeReceiverMode } from './claude-receiver-mode.ts';
+import {
+  readClaudeReceiverMode,
+  readClaudeSenderMode,
+  claudeReceiverClass,
+} from './claude-receiver-mode.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
 import type { createClaudeDesktopModsDriver } from './claude-desktop-mods-driver.ts';
@@ -15,7 +25,7 @@ import {
 } from '@hyperneo/prompts';
 import { open, readdir, readFile, stat } from 'node:fs/promises';
 import { readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -32,6 +42,7 @@ import type {
   WorkAdapter,
   WorkCallContext,
   WorkDelivery,
+  WorkArchived,
   WorkDetail,
   WorkStarted,
   WorkExchangeEntry,
@@ -59,6 +70,11 @@ import {
 } from './work-messages.ts';
 import { matchChatsBy } from './match-chats.ts';
 import { claudeOpenedPrs } from './opened-prs.ts';
+import {
+  observeClaudeIdentity,
+  withClaudeIdentity,
+  type ClaudeRuntimeIdentity,
+} from './claude-runtime-identity.ts';
 import { readTailLines } from './transcript-tail.ts';
 import { claudeInboxText, type ClaudeInboxSubmission } from './claude-inbox.ts';
 import { planWorkPlacement, type GitCheckout } from './work-placement.ts';
@@ -132,13 +148,14 @@ export interface ClaudeLiveSession {
 }
 
 export interface ClaudeDesktopAdapterDeps {
+  readInput?: WorkAdapter['readInput'];
   mods?: NonNullable<ReturnType<typeof createClaudeDesktopModsDriver>>['ready'];
   admitInbox?: (context: WorkCallContext) => Gate<string>;
   sendInbox?: (
     sessionId: string,
     message: string,
     context: WorkCallContext,
-    fromMode?: ClaudeInboxSubmission['fromMode']
+    fromMode: ClaudeInboxSubmission['fromMode']
   ) => Promise<Result<WorkDelivery>>;
   prepareExecution?: WorkExecutionPreparer;
   sessionsDir: string;
@@ -441,7 +458,7 @@ function assistantText(line: string): string | null {
   }
 }
 
-export interface ClaudeTranscriptState {
+export interface ClaudeTranscriptState extends ClaudeRuntimeIdentity {
   turnEnds?: WorkDetail['turnEnds'];
   reply: string | null;
   replyAt?: number;
@@ -460,7 +477,9 @@ interface ClaudeTranscriptEntry {
   turnOrigin?: unknown;
   origin?: unknown;
   attachment?: unknown;
-  message?: { content?: unknown };
+  effort?: unknown;
+  perTurnEffort?: unknown;
+  message?: { content?: unknown; model?: unknown };
 }
 
 function queuedPeerText(entry: ClaudeTranscriptEntry): string | null {
@@ -503,6 +522,7 @@ export function claudeTranscriptState(
   let lastAt = 0;
   let earliest: number | undefined;
   let startedAt: number | undefined;
+  let identity: ClaudeRuntimeIdentity = {};
   for (const line of lines) {
     let entry: ClaudeTranscriptEntry | null;
     try {
@@ -512,6 +532,7 @@ export function claudeTranscriptState(
     }
     if (!entry) continue;
     const at = workEntryTime(entry.timestamp);
+    identity = observeClaudeIdentity(entry, at) ?? identity;
     if (at !== undefined) lastAt = Math.max(lastAt, at);
     earliest ??= at;
     if (entry.type === 'user' && entry.isSidechain !== true && ended) startedAt = at;
@@ -555,7 +576,8 @@ export function claudeTranscriptState(
             entry.type === 'user' &&
               !entry.isMeta &&
               !entry.origin &&
-              (!entry.turnOrigin || entry.turnOrigin === 'human' || entry.turnOrigin === 'user')
+              (!entry.turnOrigin || entry.turnOrigin === 'human' || entry.turnOrigin === 'user'),
+            typeof entry.uuid === 'string' ? entry.uuid : undefined
           );
     if (input) inputs.push(input);
     const next =
@@ -571,6 +593,7 @@ export function claudeTranscriptState(
   const openedPrs = claudeOpenedPrs(lines);
   const reply = turnReply(turn);
   return {
+    ...identity,
     ...(turnEnds.length ? { turnEnds } : {}),
     reply,
     ...(reply !== null && replyAt !== undefined ? { replyAt } : {}),
@@ -617,7 +640,7 @@ export function describeClaudeSession(
   record: ClaudeDesktopRecord,
   liveSessions: readonly ClaudeLiveSession[],
   transcript: ClaudeTranscriptState | null,
-  deps: ClaudeDesktopAdapterDeps
+  deps: Pick<ClaudeDesktopAdapterDeps, 'machine'>
 ): Result<WorkDetail> {
   const live = new Map(liveSessions.map((session) => [session.sessionId, session.status]));
   const waitingFor = liveSessions.find(
@@ -633,6 +656,7 @@ export function describeClaudeSession(
     ok: true,
     value: {
       ...work,
+      ...withClaudeIdentity(transcript),
       lastActivityAt: Math.max(work.lastActivityAt, transcript.lastAt),
       ...(transcript.turnEnds?.length ? { turnEnds: transcript.turnEnds } : {}),
       ...(transcript.reply ? { lastReply: transcript.reply } : {}),
@@ -1106,19 +1130,21 @@ async function sendOwnedClaudeMessage(
   const path = await locateClaudeTranscript(deps.projectsDir, record);
   const before = await transcriptSize(path);
   const receiver = desktop ? await readCurrentDesktopReceiver(record, deps) : record;
+  const desktopMode = claudeReceiverClass(receiver?.permissionMode);
+  const fromMode = desktop
+    ? 'value' in desktopMode
+      ? desktopMode.value
+      : desktopMode.reason
+    : await readClaudeSenderMode(
+        record.cliSessionId,
+        liveSessions,
+        deps.listProcesses ?? listProcesses
+      );
+  if (typeof fromMode !== 'string') return fromMode;
   const direct =
     deps.sendInbox && context && receiver
       ? await deps
-          .sendInbox(
-            record.cliSessionId,
-            message,
-            context,
-            desktop
-              ? receiver.permissionMode === 'bypassPermissions'
-                ? 'bypass'
-                : 'prompting'
-              : undefined
-          )
+          .sendInbox(record.cliSessionId, message, context, fromMode)
           .catch((error: unknown) =>
             reject('not_delivered', error instanceof Error ? error.message : String(error))
           )
@@ -1252,7 +1278,14 @@ export async function resumeIdleClaudeSession(
       record.cliSessionId,
       '--permission-mode',
       mode,
-      ...(sandbox ? ['--settings', join(folder, '.claude/settings.local.json')] : []),
+      ...(sandbox
+        ? [
+            '--settings',
+            join(folder, '.claude/settings.local.json'),
+            '--append-system-prompt',
+            workerWorkLocationsBrief(folder),
+          ]
+        : []),
       '--',
       message,
     ],
@@ -1427,19 +1460,10 @@ export async function launchInClaudeDesktop(
   deps: Pick<ClaudeDesktopAdapterDeps, 'spawn'>
 ): Promise<number> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const sandbox = await readClaudeWorkerSandbox(cwd);
+  await readClaudeWorkerSandbox(cwd);
   try {
     const proc = deps.spawn(
-      [
-        'script',
-        '-q',
-        '/dev/null',
-        'claude',
-        '--desktop',
-        '--resume',
-        cliSessionId,
-        ...(sandbox ? ['--settings', join(cwd, '.claude/settings.local.json')] : []),
-      ],
+      ['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', cliSessionId],
       {
         cwd,
         stdout: 'ignore',
@@ -1597,6 +1621,16 @@ export async function startClaudeSession(
     placement.kind === 'worktree' && worktree
       ? join(placement.repo, '.claude', 'worktrees', worktree)
       : (prepared?.value.directory ?? folder);
+  let writeEnvironment: (() => Promise<void>) | null = null;
+  if (!worktree) {
+    try {
+      writeEnvironment = await prepareClaudeWorkEnvironment(cwd);
+    } catch (error) {
+      await prepared?.value.release();
+      if (prepared) await releaseWorkerSandbox(prepared.value.directory);
+      return reject('preparation_failed', `Could not persist work locations: ${String(error)}`);
+    }
+  }
   const opened = await runToExit(
     deps,
     [
@@ -1616,7 +1650,12 @@ export async function startClaudeSession(
       '--mcp-config',
       '{"mcpServers":{}}',
       ...(worktree ? ['--worktree', worktree] : []),
-      ...(sandboxed ? ['--settings', join(cwd, '.claude/settings.local.json')] : []),
+      '--settings',
+      sandboxed
+        ? join(cwd, '.claude/settings.local.json')
+        : JSON.stringify({ env: workerWorkEnvironment(cwd) }),
+      '--append-system-prompt',
+      workerWorkLocationsBrief(cwd),
       '--',
       CLAUDE_DESKTOP_PREPARE,
     ],
@@ -1649,7 +1688,14 @@ export async function startClaudeSession(
     permissionMode,
   };
   cache.set(`${STARTED_KEY}${sessionId}`, { modifiedAt: 0, records: [record] });
-  const imported = await importClaudeDesktopSession(cliSessionId, cwd, deps);
+  const imported = await (writeEnvironment
+    ? writeEnvironment()
+    : prepareClaudeWorkEnvironment(cwd).then((write) => write())
+  )
+    .then(() => importClaudeDesktopSession(cliSessionId, cwd, deps))
+    .catch((error: unknown) =>
+      reject('not_delivered', `Could not open prepared worker: ${String(error)}`)
+    );
   if (!imported.ok)
     return {
       ...imported,
@@ -1659,6 +1705,7 @@ export async function startClaudeSession(
     ok: true,
     value: {
       ...toClaudeWork(imported.value, new Map(), deps.machine),
+      ...withClaudeIdentity(await readClaudeTranscript(location, deps)),
       place: { machine: deps.machine, folder, name: request.place.name },
       status: 'queued',
     },
@@ -1682,6 +1729,14 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
   const reused = { ...deps, liveSessions: reuseLiveSessions(deps.liveSessions, Date.now) };
   return {
     id: 'claude-desktop',
+    readInput: async (id, marker) => {
+      const record = (await loadClaudeDesktopRecords(deps, cache)).find(
+        (row) => row.sessionId === id
+      );
+      return record?.cliSessionId && deps.readInput
+        ? deps.readInput(record.cliSessionId, marker)
+        : null;
+    },
     supportsStartPreparation: !!deps.prepareExecution,
     capabilities: [
       'find',
@@ -1735,7 +1790,7 @@ async function archiveClaudeSession(
   ref: WorkRef,
   admit: ArchiveAdmission,
   deps: ClaudeDesktopAdapterDeps
-): Promise<Result<{ archived: boolean }>> {
+): Promise<Result<WorkArchived>> {
   const records: ClaudeRecordCache = new Map();
   await readClaudeDesktopRecords(deps.sessionsDir, records);
   const paths = [...records].filter(([, entry]) =>
@@ -1759,7 +1814,20 @@ async function archiveClaudeSession(
   const refused = admit();
   if (refused) return refused;
   await releaseWorkerSandbox(record.cwd);
-  if (record.isArchived) return { ok: true, value: { archived: false } };
+  const cwd = record.cwd;
+  const cleanup = () =>
+    cwd
+      ? cleanupOwnedWorktree(
+          cwd,
+          basename(dirname(cwd)) === 'worktrees' && basename(dirname(dirname(cwd))) === '.claude'
+            ? [dirname(cwd)]
+            : []
+        )
+      : Promise.resolve(undefined);
+  if (record.isArchived) {
+    const worktree = await cleanup();
+    return { ok: true, value: { archived: false, ...(worktree ? { worktree } : {}) } };
+  }
   const temporary = `${path}.${crypto.randomUUID()}.tmp`;
   try {
     writeFileSync(temporary, JSON.stringify({ ...original, isArchived: true }), {
@@ -1770,5 +1838,6 @@ async function archiveClaudeSession(
   } finally {
     rmSync(temporary, { force: true });
   }
-  return { ok: true, value: { archived: true } };
+  const worktree = await cleanup();
+  return { ok: true, value: { archived: true, ...(worktree ? { worktree } : {}) } };
 }

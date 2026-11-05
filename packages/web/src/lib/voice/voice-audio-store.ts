@@ -1,5 +1,12 @@
+import type { NeoDraft } from '../../neo/neo-intake.ts';
+import { neoIntakeSnapshots } from '../../neo/neo-intake-snapshot.ts';
 import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
 import { readNeoPreviewReference } from '../../neo/neo-preview-context.ts';
+
+export type VoiceSendContext = Pick<NeoDraft, 'images' | 'quote'> & {
+  suffix: string;
+  attachmentIds: string[];
+};
 
 export interface VoiceRecordEntry {
   id: string;
@@ -12,6 +19,7 @@ export interface VoiceRecordEntry {
   intent?: 'draft' | 'send';
   sendDraft?: string;
   sendText?: string;
+  sendContext?: VoiceSendContext;
   door?: 'session';
   previewContext?: NeoPreviewReference;
   sendRefusal?: string;
@@ -129,6 +137,7 @@ function isVoiceRecordEntry(value: unknown): value is VoiceRecordEntry {
     (entry.intent === undefined || entry.intent === 'draft' || entry.intent === 'send') &&
     (entry.sendDraft === undefined || typeof entry.sendDraft === 'string') &&
     (entry.sendText === undefined || typeof entry.sendText === 'string') &&
+    (entry.sendContext === undefined || neoIntakeSnapshots.voiceContext(entry.sendContext)) &&
     (entry.sendRefusal === undefined || typeof entry.sendRefusal === 'string') &&
     (entry.previewContext === undefined ||
       (entry.door !== 'session' && !!readNeoPreviewReference(entry.previewContext)))
@@ -144,7 +153,7 @@ interface DoomPlan {
 }
 
 function heldVoiceRecord(entry: VoiceRecordEntry): boolean {
-  return !!entry.previewContext && entry.sendRefusal !== undefined;
+  return !!(entry.previewContext || entry.sendContext) && entry.sendRefusal !== undefined;
 }
 
 function keepVoiceRecord(entry: VoiceRecordEntry, now = Date.now()): boolean {
@@ -220,6 +229,7 @@ function serializeMutation<T>(op: () => Promise<T>): Promise<T> {
 export function putVoiceRecord(entry: VoiceRecordEntry): Promise<boolean> {
   entry = {
     ...entry,
+    ...(entry.sendContext ? { sendContext: structuredClone(entry.sendContext) } : {}),
     ...(entry.previewContext ? { previewContext: { ...entry.previewContext } } : {}),
   };
   return serializeMutation(async () => {

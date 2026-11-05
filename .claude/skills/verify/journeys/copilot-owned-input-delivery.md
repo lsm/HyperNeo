@@ -55,7 +55,7 @@ without an extra send, and immediate persistence failure preserving old evidence
 Rerun the earlier discovery, construction and lifecycle journeys after changes.
 Shared setup remains in SKILL.md; there is no journey index.
 
-Real CLI 1.0.83 / SDK 1.0.13 compatibility, real queue scheduling/resume behavior,
+Real CLI 1.0.105 / SDK 1.0.28 compatibility, real queue scheduling/resume behavior,
 real account quotas/cost, Desktop/IDE visibility, tool execution and process-tree
 containment remain unverified. The fixture impersonates the pinned CLI and
 implements only its synthetic protocol. Tools remain unavailable and permissions

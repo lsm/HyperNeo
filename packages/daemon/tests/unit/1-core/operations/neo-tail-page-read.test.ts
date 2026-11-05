@@ -50,7 +50,7 @@ const streams = [
       const ledger = new NeoPublicationRepository(mailbox.db);
       for (let index = 1; index <= count; index++)
         expect(ledger.append(publication(index, target)).accepted).toBe(true);
-      return (repo: NeoRepository) => createNeoPublicationReadOperation(repo, ledger);
+      return (_repo: NeoRepository) => createNeoPublicationReadOperation(ledger);
     },
     key: (item: Record<string, unknown>) => item.publicationId,
   },

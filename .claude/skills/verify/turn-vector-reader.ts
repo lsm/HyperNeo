@@ -10,9 +10,11 @@ import { WorkerAgentMemoryEmbedder } from '../../../packages/daemon/src/storage/
 import { SDKBunWorkerBridge } from '../../../packages/daemon/tests/helpers/sdk-bun-worker-bridge.ts';
 import { installTurnVectorWait } from './turn-vector-wait.ts';
 
-const run = resolve(process.argv[2]);
-const waitMs = Number(process.argv[3] ?? 1200);
-const bridge = process.argv[4] === 'bridge';
+const [runArg, waitArg, flavor] = process.argv[2]?.startsWith('/') ? process.argv.slice(2) : [process.argv.at(-1)!, process.argv[2], process.argv[3]];
+const run = resolve(runArg);
+const waitMs = Number(waitArg ?? 1200);
+const bridge = flavor === 'bridge';
+const writer = flavor === 'writer';
 assert(run.startsWith('/private/tmp/'));
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -27,15 +29,15 @@ const NativeWorker = globalThis.Worker;
 const warm = WorkerAgentMemoryEmbedder.prototype.warm;
 WorkerAgentMemoryEmbedder.prototype.warm = () => {};
 const fixture = pathToFileURL(join(run, 'reader.ts')).href;
-writeFileSync(join(run, 'reader.ts'), `import { installTurnVectorWait } from ${JSON.stringify(pathToFileURL(resolve('.claude/skills/verify/turn-vector-wait.ts')).href)}; installTurnVectorWait(${JSON.stringify(run)},${waitMs},'worker'); const pending=[]; globalThis.onmessage=e=>pending.push(e); await import(${JSON.stringify(pathToFileURL(resolve('packages/daemon/src/storage/sdk-status-worker.ts')).href)}); const dispatch=globalThis.onmessage; for(const event of pending) dispatch(event);`);
+writeFileSync(join(run, 'reader.ts'), `import { installTurnVectorWait } from ${JSON.stringify(pathToFileURL(resolve('.claude/skills/verify/turn-vector-wait.ts')).href)}; installTurnVectorWait(${JSON.stringify(run)},${waitMs},'worker',${JSON.stringify(writer ? 'write' : 'read')}); const pending=[]; globalThis.onmessage=e=>pending.push(e); await import(${JSON.stringify(pathToFileURL(resolve(writer ? 'packages/daemon/src/storage/db-gateway/db-gateway-worker.ts' : 'packages/daemon/src/storage/sdk-status-worker.ts')).href)}); const dispatch=globalThis.onmessage; for(const event of pending) dispatch(event);`);
 globalThis.Worker = function (url: string | URL, options?: WorkerOptions) {
-  if (String(url).endsWith('/sdk-status-worker.ts')) return bridge ? new SDKBunWorkerBridge(fixture) : new NativeWorker(fixture, options);
+  if (String(url).endsWith(writer ? '/db-gateway-worker.ts' : '/sdk-status-worker.ts')) return bridge ? new SDKBunWorkerBridge(fixture) : new NativeWorker(fixture, options);
   return new NativeWorker(url, options);
 } as unknown as typeof Worker;
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let timer: ReturnType<typeof setInterval> | undefined;
 let probe: ReturnType<typeof spawn> | undefined;
-const evidence: Record<string, unknown> = { runtime: Bun.version, waitMs, bridge, surface: 'app-wired work.turns.embed job / independent system.health RPC', limitation: 'Executing-thread wait models slow MIN/MAX storage; not a physical-disk reproduction or a <=250ms affected-job pass.' };
+const evidence: Record<string, unknown> = { runtime: Bun.version, waitMs, bridge, writer, surface: 'app-wired work.turns.embed job / independent system.health RPC', limitation: 'Executing-thread wait models slow storage SQL; not a physical-disk reproduction or a <=250ms affected-job pass.' };
 try {
   app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db'), workspaceRoot: run }), disableWorktrees: true, disableGoalProcessing: true, verbose: false });
   await app.jobProcessor.stop();
@@ -64,7 +66,7 @@ try {
   const exited = new Promise((done, fail) => { probe!.once('exit', done); probe!.once('error', fail); });
   for (let i = 0; !output.includes('READY') && i < 500; i++) await Bun.sleep(10);
   assert(output.includes('READY'), errors);
-  installTurnVectorWait(run, waitMs, 'main');
+  installTurnVectorWait(run, waitMs, 'main', writer ? 'write' : 'read');
   let previous = performance.now(), lagMs = 0;
   timer = setInterval(() => { const now = performance.now(); lagMs = Math.max(lagMs, now - previous - 10); previous = now; }, 10);
   await Bun.sleep(30);
@@ -89,11 +91,13 @@ try {
   assert.deepEqual(vectors.map(row => row.content_id), rows.map(row => row.id));
   for (const row of vectors) { assert.equal(row.model, embedder.model); assert.equal(row.dimensions, embedder.dimensions); const vector = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4); assert.equal(vector[0], row.content_id === rows[2].id ? 7 : texts[0].length); }
   assert.equal(evidence.before, evidence.after, 'complete source bodies or preexisting vector changed');
-  assert(reads.length >= 3);
+  assert(reads.length >= (writer ? 4 : 3));
+  assert.equal(reads.filter(read => read.modeledWaitMs > 0).length, waitMs ? 1 : 0);
+  assert.equal(reads.reduce((sum, read) => sum + read.modeledWaitMs, 0), waitMs);
   console.log(JSON.stringify({ run, lagMs, maxHealthMs: evidence.maxHealthMs, jobMs, thread: reads[0].thread }));
   assert(lagMs < 1000, `main loop blocked ${lagMs}ms`);
   assert(Number(evidence.maxHealthMs) < 250, 'independent health exceeded250ms');
-  assert(reads.every(read => read.thread === 'worker'), 'range still read on main');
+  assert(reads.every(read => read.thread === 'worker'), 'vector SQL still on main');
   if (!waitMs) assert(jobMs < 250, 'ordinary-data job exceeded250ms');
 } finally {
   if (timer) clearInterval(timer);

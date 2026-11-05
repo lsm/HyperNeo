@@ -48,3 +48,74 @@ synthetic CLI peer. It does not prove OS sandbox enforcement, native path denial
 real worker model behavior or Desktop rendering. Those belong to later slices of
 #8161. The helper stops its daemon in finally; preserve evidence outside the
 implementation worktree, then remove only this synthetic run directory.
+
+## Work locations with sandbox off (#9090)
+
+Run the helper through the shared proof-run.sh wrapper with VERIFY_CLAUDE set
+explicitly to the installed Claude CLI. The synthetic Desktop preparation records
+the generated inline environment-only settings and appended location brief.
+The installed CLI loads those settings against a loopback scripted model and
+runs real Git to create a worktree under HYPERNEO_WORKTREES. The handoff now
+persists just the location environment in the worker's local project settings,
+preserving other settings; the Desktop opener receives only --desktop/--resume.
+The native adoption leg starts one real Claude conversation with the brief,
+then resumes it in a new process with no location settings or prompt flags.
+The resumed request must still contain the recorded brief and its real Bash
+must create a second worktree using the persisted environment. Before the fix,
+this leg fails because HYPERNEO_WORKTREES is missing, even though the recorded
+brief survives. Inspect adopted-native.json and adopted-native-*.log.
+
+The clone has no sandbox marker. A synthetic legacy worktree sentinel remains
+unchanged; legacy directories are accepted, not migrated. work-locations-native.log
+and observed.json retain the result. The Python helper uses a synthetic HOME,
+a loopback-only key helper and its own ephemeral HTTP server, closed in finally.
+No Desktop UI, actual app adoption, real provider or credential is exercised.
+SDK/Codex/Copilot launch-envelope regressions cover the other adapters; this
+native proof specifically exercises Claude's shell environment, not those CLIs.
+
+The focused SDK prompt tests preserve its default prompt when the preset is off
+and there is no other host-authored instruction; location environment hints still
+arrive. With an existing prompt or the preset, the brief is appended. Scratch is
+only described as TMPDIR when sandboxing is on; unsandboxed temp behavior stays
+unchanged. Include the existing-turn Codex policy tests when rebasing this change
+so policy refresh remains enforced before queueing an input.
+
+SDK system/user input de-duplication has its own real-SDK journey in
+worker-work-locations-sdk.md. The native Codex request-field contract is checked
+separately by codex-work-locations-schema.md; schema acceptance is not a native
+Codex shell or Desktop UI proof.
+
+The unsupported-settings leg commits deliberately invalid local settings into the
+synthetic remote, then calls work.start again. It must return preparation_failed
+before a child starts, release the unlaunched private clone and preserve source
+bytes. Invalid JSON and a regular file in place of the settings directory receive
+a typed pre-launch refusal. With sandboxing off, valid directory/file symlinks
+use the same target resolver as SDK settings writes: links and custom settings
+survive and the resolved target receives the location environment. The linked
+non-Git-folder work.start leg verifies that through the actual daemon. Sandbox-on
+native-policy symlink refusals remain covered separately. A confirmed CLI-created
+worktree is retained with typed not_delivered if later settings/import work fails.
+
+Validation reads supported project settings before the preparation turn, without
+creating or changing them. The location environment is persisted after the CLI
+confirms that first turn and before Desktop import. The failed-in-place legs
+check both absent and existing local settings: no directory is created and
+existing file bytes remain identical when CLI preparation fails. The successful
+native resume leg still verifies the persisted environment.
+
+An additional work.send leg discovers a synthetic user-created idle Desktop
+session without starting it through HyperNeo. Its actual CLI resume arguments
+must contain neither settings nor the Runtime Location prompt, and its project
+must remain free of generated settings. Marked prepared-worker resume regressions
+still require their policy file; unsandboxed workers retain locations through
+the persisted project settings and recorded creation brief, verified by the
+native resumed-shell leg. No human Desktop record or real transcript is read.
+
+Malformed top-level settings values and non-object env values must return typed
+preparation_failed through work.start before any child launch, preserving the
+original settings bytes. The helper covers arrays, strings, numbers and null in
+both positions. Settings-manager regressions also overlap a native location write
+with an SDK settings write against direct and symlinked targets; both deltas and
+custom settings must survive through the shared per-target write queue. This
+concurrency check exercises real file writes but does not claim cross-process
+locking between independent daemon processes.

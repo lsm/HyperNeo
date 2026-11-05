@@ -62,7 +62,6 @@ import type {
   OperationRegistryProvider,
 } from '../operations/registry.ts';
 import { SettingsManager } from '../settings-manager.ts';
-import { createDirectQueryStartGuard } from '../tasks/direct-query-start-guard.ts';
 import {
   NETWORK_OUTAGE_NOTICE,
   NetworkOutagePause,
@@ -723,9 +722,7 @@ export class AgentSession
       const restarted = appliedConfig || restartedForSettings || switched;
       this.flushPendingTaskNotificationRequery();
       const reconcileOwner = restarted ? this.stateManager.getCurrentIdleOwner() : owner;
-      void this.reconcileStrandedDeliveries(reconcileOwner).catch((error) => {
-        this.logger.warn('Idle reconcileStrandedDeliveries failed:', error);
-      });
+      void this.reconcileStrandedDeliveries(reconcileOwner);
     });
 
     if (session.metadata?.lastContextInfo) {
@@ -743,19 +740,13 @@ export class AgentSession
 
     if (this.runtimeOptions.autoReplayPendingMessages ?? true) {
       this.scheduleInitialPendingMessageReplay();
-      void this.reconcileStrandedDeliveries().catch((error) => {
-        this.logger.warn('Startup reconcileStrandedDeliveries failed:', error);
-      });
+      void this.reconcileStrandedDeliveries();
     }
 
     this.reconcilerProvisioned = this.runtimeOptions.autoReplayPendingMessages ?? true;
     this.reconcileTimer = setInterval(() => {
       if (!this.reconcilerProvisioned) return;
-      void runLagPhase('timer:stranded_deliveries', () => this.reconcileStrandedDeliveries()).catch(
-        (error) => {
-          this.logger.warn('Periodic reconcileStrandedDeliveries failed:', error);
-        }
-      );
+      void runLagPhase('timer:stranded_deliveries', () => this.reconcileStrandedDeliveries());
     }, SESSION_RECONCILE_INTERVAL_MS);
     if (typeof this.reconcileTimer.unref === 'function') {
       this.reconcileTimer.unref();
@@ -957,7 +948,7 @@ export class AgentSession
         `Session ${this.session.id} is ${this.session.status}; refusing to start the query`
       );
     }
-    const startGuard = createDirectQueryStartGuard(this.db.getDatabase(), () => this.session);
+    const startGuard = this.db.spaceSessions?.queryStartGuard(() => this.session);
     const rawProviderId = this.session.config.provider as string | undefined;
     const normalizedProviderId = rawProviderId?.trim() || undefined;
     if (rawProviderId !== normalizedProviderId) {
@@ -2464,12 +2455,11 @@ export class AgentSession
   private async escalateTaskNotificationRequeryExhaustion(): Promise<void> {
     const attempts = this.taskNotificationRequeryAttempts;
     const episodeToken = this.taskNotificationRequeryEpisodeToken;
-    const execution = this.db.getNodeExecutionRepo?.().getByAgentSessionId(this.session.id) ?? null;
     const event = buildTaskNotificationRequeryEscalationEvent({
       sessionId: this.session.id,
       spaceId: this.session.context?.spaceId,
       taskId: this.session.context?.taskId,
-      workflowRunId: execution?.workflowRunId,
+      workflowRunId: this.db.spaceSessions?.workflowRunIdForSession(this.session.id),
       attempts,
       timestamp: new Date().toISOString(),
     });
@@ -2784,6 +2774,12 @@ export class AgentSession
             return { outcome: 'blocked', retryAt, reason: 'limit_recovery' };
           }
 
+          const latchedUntil =
+            this.queryRunner instanceof QueryRunner ? this.queryRunner.failureLatchedUntil() : null;
+          if (latchedUntil !== null) {
+            return { outcome: 'blocked', retryAt: latchedUntil, reason: 'query_failure_cooldown' };
+          }
+
           if (this.networkPause.isActive()) await this.resumeNetworkPauseFor(messageUuid);
 
           if (!this.messageQueue.isRunning()) {
@@ -3073,6 +3069,23 @@ export class AgentSession
   }
 
   async reconcileStrandedDeliveries(owner?: IdleOwnerScope): Promise<number> {
+    try {
+      return await this.runReconcileStrandedDeliveries(owner);
+    } catch (error) {
+      this.logger.warn('reconcileStrandedDeliveries failed:', error);
+      await this.errorManager
+        .handleError(
+          this.session.id,
+          error instanceof Error ? error : new Error(String(error)),
+          ErrorCategory.SYSTEM,
+          'Background delivery recovery failed; a message may be stuck. Try resending it.'
+        )
+        .catch(() => {});
+      return 0;
+    }
+  }
+
+  private async runReconcileStrandedDeliveries(owner?: IdleOwnerScope): Promise<number> {
     const jobQueue = this.db.getJobQueueRepo?.();
     if (!jobQueue) return 0;
     const status = this.stateManager.getState().status;

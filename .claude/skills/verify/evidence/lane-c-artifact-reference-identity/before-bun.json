@@ -1,0 +1,11 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "nonHumanAndDiscoveryDoNotInitialize": true,
+  "retryIdValidationBeforeInitialization": true,
+  "resolverMainIdentitySqlAttempts": 1,
+  "workerMetrics": [],
+  "runtime": "Bun 1.4.3",
+  "expectedFailure": "Real artifact.reference.resolve RPC initializes identity on main before writer admission.",
+  "passBeforeFix": false,
+  "temporaryDaemonDataRemoved": true
+}

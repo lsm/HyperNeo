@@ -6,6 +6,7 @@ import { sleep } from '../utils/sleep.ts';
 
 type Episode = NonNullable<Session['metadata']['queryFailureEpisode']>;
 export class QueryFailureCapError extends MessageDeliveryTerminalTurnError {}
+export const QUERY_FAILURE_COOLDOWN_MS = 5 * 60_000;
 const empty = (id: string = crypto.randomUUID()): Episode => ({
   id,
   failures: 0,
@@ -25,7 +26,7 @@ const advance = (superpipe({})('query-failure-episode') as PipelineAPI)
       error,
       failures,
       failed,
-      retryAt: now + 1000 * 2 ** (failures - 1),
+      retryAt: now + (failed ? QUERY_FAILURE_COOLDOWN_MS : 1000 * 2 ** (failures - 1)),
     }),
     ['prior', 'error', 'now', 'failures', 'failed'],
     'episode'
@@ -58,9 +59,14 @@ export class QueryFailureGovernor {
     });
   }
 
+  latchedUntil() {
+    const episode = this.read();
+    return episode?.failed && episode.retryAt > Date.now() ? episode.retryAt : null;
+  }
+
   assertOpen() {
     const episode = this.read();
-    if (episode?.failed)
+    if (episode?.failed && episode.retryAt > Date.now())
       throw new QueryFailureCapError(
         `Query stopped after ${episode.failures} failures: ${episode.error}. Use Retry to recover.`
       );
@@ -68,7 +74,7 @@ export class QueryFailureGovernor {
 
   async admit(live: () => boolean) {
     this.assertOpen();
-    const episode = await this.change((prior) => prior);
+    const episode = await this.change((prior) => (prior.failed ? empty() : prior));
     const delay = episode.retryAt - Date.now();
     if (delay > 0) await sleep(delay);
     if (!live() || this.read()?.id !== episode.id) throw aborted();

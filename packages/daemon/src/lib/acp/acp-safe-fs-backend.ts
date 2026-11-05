@@ -103,7 +103,7 @@ function platformLibraryCandidates(): string[] {
   ];
 }
 
-async function loadSafeFsBackend(allowDeno = false): Promise<SafeFsBackend> {
+async function loadSafeFsBackend(): Promise<SafeFsBackend> {
   const candidates = platformLibraryCandidates();
   if (candidates.length === 0) {
     throw new Error(`ACP safe filesystem operations are unavailable on ${process.platform}`);
@@ -111,43 +111,7 @@ async function loadSafeFsBackend(allowDeno = false): Promise<SafeFsBackend> {
 
   try {
     const moduleName = ['bun', 'ffi'].join(':');
-    const deno = Reflect.get(globalThis, 'Deno') as {
-      dlopen: (
-        path: string,
-        definitions: Record<string, { parameters: unknown[]; result: unknown }>
-      ) => { symbols: LibcSymbols };
-      UnsafePointerView: new (
-        pointer: unknown
-      ) => { getArrayBuffer: (length: number, offset: number) => ArrayBuffer };
-    };
-    const ffi: BunFfiModule =
-      allowDeno && deno
-        ? {
-            FFIType: {
-              i32: 'i32',
-              u32: 'u32',
-              u64: 'u64',
-              i64: 'i64',
-              cstring: 'buffer',
-              ptr: 'buffer',
-            },
-            dlopen: (path, definitions) =>
-              deno.dlopen(
-                path,
-                Object.fromEntries(
-                  Object.entries(definitions).map(([key, value]) => [
-                    key,
-                    {
-                      parameters: value.args,
-                      result: value.returns === 'buffer' ? 'pointer' : value.returns,
-                    },
-                  ])
-                )
-              ),
-            toArrayBuffer: (pointer, offset, length) =>
-              new deno.UnsafePointerView(pointer).getArrayBuffer(length, offset),
-          }
-        : ((await import(moduleName)) as unknown as BunFfiModule);
+    const ffi = (await import(moduleName)) as unknown as BunFfiModule;
     const errnoSymbol = process.platform === 'darwin' ? '__error' : '__errno_location';
     const definitions = {
       [errnoSymbol]: { args: [], returns: ffi.FFIType.ptr },
@@ -218,7 +182,7 @@ function getSafeFsBackend(): Promise<SafeFsBackend> {
 
 let writerBackend: Promise<SafeFsBackend> | undefined;
 function getWriterBackend() {
-  writerBackend ??= loadSafeFsBackend(true);
+  writerBackend ??= loadSafeFsBackend();
   return writerBackend;
 }
 
@@ -255,13 +219,15 @@ function openRootDirectory(
   symbols: LibcSymbols,
   atFdcwd: number,
   workspaceRoot: string,
-  flags = 0
+  flags = 0,
+  failed?: () => unknown
 ): number {
   let directoryFd = openDirectory(symbols, atFdcwd, '/', flags);
   for (const component of workspaceRoot.split('/')) {
     if (!component) continue;
     if (directoryFd < 0) return -1;
     const nextFd = openDirectory(symbols, directoryFd, component, flags);
+    if (nextFd < 0) failed?.();
     closeFile(symbols, directoryFd);
     directoryFd = nextFd;
   }
@@ -291,15 +257,13 @@ export function decodeStatMode(statBuf: Buffer, modeOffset: number, modeWidth: 2
 }
 
 function replacementMode(symbols: LibcSymbols, directoryFd: number, fileName: string): number {
-  let fileFd = process.versions.bun
-    ? symbols.openat(
-        directoryFd,
-        cString(fileName),
-        constants.O_WRONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
-        0
-      )
-    : -1;
-  if (process.versions.bun && fileFd < 0) {
+  let fileFd = symbols.openat(
+    directoryFd,
+    cString(fileName),
+    constants.O_WRONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+    0
+  );
+  if (fileFd < 0) {
     fileFd = symbols.openat(
       directoryFd,
       cString(fileName),
@@ -322,9 +286,7 @@ function replacementMode(symbols: LibcSymbols, directoryFd: number, fileName: st
   }
   const modeOffset =
     process.platform === 'darwin'
-      ? process.versions.bun
-        ? getDarwinStatModeOffset(symbols, directoryFd)
-        : 4
+      ? getDarwinStatModeOffset(symbols, directoryFd)
       : STAT_MODE_OFFSET;
   const modeWidth = process.platform === 'darwin' ? 2 : 4;
   return decodeStatMode(statBuf, modeOffset, modeWidth);
@@ -566,7 +528,8 @@ async function withRegularArtifactDescriptor<Value>(
   root: string,
   segments: string[],
   consume: (fd: number, initial: Stats) => Value | Promise<Value>,
-  maxLinks: number
+  maxLinks: number,
+  onOpenError?: (errno: number) => void
 ): Promise<
   | { accepted: true; value: Value }
   | { accepted: false; reason: 'safe_open_unavailable' | 'unsafe_path' }
@@ -580,18 +543,22 @@ async function withRegularArtifactDescriptor<Value>(
   } catch {
     return { accepted: false, reason: 'unsafe_path' };
   }
+  const failed = () => {
+    onOpenError?.(backend.errno());
+    return { accepted: false as const, reason: 'unsafe_path' as const };
+  };
   const { symbols, atFdcwd } = backend;
   const cloexec = process.platform === 'darwin' ? 0x1000000 : 0x80000;
   let directoryFd = -1;
   let fileFd = -1;
   try {
-    directoryFd = openRootDirectory(symbols, atFdcwd, root, cloexec);
-    if (directoryFd < 0) return { accepted: false, reason: 'unsafe_path' };
+    directoryFd = openRootDirectory(symbols, atFdcwd, root, cloexec, failed);
+    if (directoryFd < 0) return failed();
     for (const segment of segments.slice(0, -1)) {
       const nextFd = openDirectory(symbols, directoryFd, segment, cloexec);
+      if (nextFd < 0) return failed();
       closeFile(symbols, directoryFd);
       directoryFd = nextFd;
-      if (directoryFd < 0) return { accepted: false, reason: 'unsafe_path' };
     }
     fileFd = symbols.openat(
       directoryFd,
@@ -599,7 +566,7 @@ async function withRegularArtifactDescriptor<Value>(
       constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW | cloexec,
       0
     );
-    if (fileFd < 0) return { accepted: false, reason: 'unsafe_path' };
+    if (fileFd < 0) return failed();
     const initial = fstatSync(fileFd);
     if (!initial.isFile() || initial.nlink < 1 || initial.nlink > maxLinks)
       return { accepted: false, reason: 'unsafe_path' };
@@ -613,9 +580,10 @@ async function withRegularArtifactDescriptor<Value>(
 export function withArtifactDescriptor<Value>(
   root: string,
   segments: string[],
-  consume: (fd: number, initial: Stats) => Value | Promise<Value>
+  consume: (fd: number, initial: Stats) => Value | Promise<Value>,
+  onOpenError?: (errno: number) => void
 ) {
-  return withRegularArtifactDescriptor(root, segments, consume, 1);
+  return withRegularArtifactDescriptor(root, segments, consume, 1, onOpenError);
 }
 
 export function withStoredArtifactDescriptor<Value>(

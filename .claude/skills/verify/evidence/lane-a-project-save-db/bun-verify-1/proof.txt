@@ -1,0 +1,18 @@
+39 |  unlocked=new Promise<void>((done,fail)=>{lock!.once('error',fail);lock!.once('exit',code=>code===0?done():fail(new Error('Synthetic writer failed')));});
+40 |  await new Promise<void>((done,fail)=>{const timer=setTimeout(()=>fail(new Error('Writer lock startup timed out')),5000);lock!.stdout!.once('data',chunk=>{clearTimeout(timer);String(chunk).includes('locked')?done():fail(new Error('Writer did not lock'));});lock!.once('error',fail);});
+41 |  measuring++;last=performance.now();const started=performance.now(),pending=save(request);await new Promise(done=>setTimeout(done,30));const dispatched=performance.now(),healthStart=performance.now();evidence.health=await rpc('system.health');const healthMs=performance.now()-healthStart;evidence.created=await pending;const saveMs=performance.now()-started;await unlocked;lock=undefined;unlocked=undefined;await new Promise(done=>setTimeout(done,20));measuring--;
+42 |  assert(evidence.created.ok);const project=evidence.created.project;assert.equal(hash(project.context),hash(text));
+43 |  evidence.contention={healthMs,clientDispatchDelayMs:Math.max(0,dispatched-started-30),saveMs,maxLagMs,affectedSaveUnder250ms:saveMs<250};
+44 |  assert(maxLagMs<1000,'Project save must not block the daemon loop for one second');assert(healthMs<250);assert(saveMs>1000,'Fixture must retain real writer contention');
+      ^
+AssertionError: Project save must not block the daemon loop for one second
+ generatedMessage: false,
+     actual: false,
+   expected: true,
+   operator: "==",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /Users/lsm/.codex/worktrees/lane-a-project-save/neokai/.claude/skills/verify/lane-a-project-save-db.ts:44:2
+
+Bun v1.4.3 (macOS arm64)

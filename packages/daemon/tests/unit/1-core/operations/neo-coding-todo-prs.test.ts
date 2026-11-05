@@ -13,6 +13,7 @@ import {
   createCodingTodoPack,
   planCodingTodoClaims,
 } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
+import { codingPrUrl } from '../../../../src/lib/neo/packs/coding/pr-sweep.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -443,6 +444,37 @@ describe('codingTodoOwnPrs', () => {
     expect(own([row('a', 4, 'reported', 2), row('b', 4, 'reported', 1)], 'b')).toBe(1);
     expect(own([row('a', 4, 'reported'), row('b', 4, 'named')], 'a')).toBe(0);
     expect(own([row('a', 4, 'branch'), row('b', 4, 'branch')], 'a')).toBe(1);
+  });
+});
+
+describe('CodingTodoPrRepository.holder', () => {
+  test('a PR url follows the configured GitHub host', () => {
+    expect(codingPrUrl('github.example.test', { repo: 'lsm/hyperneo', number: 9 })).toBe(
+      'https://github.example.test/lsm/hyperneo/pull/9'
+    );
+  });
+
+  test('finds the open todo on this session that holds the PR, not one that merely shares it', () => {
+    const { db, repo, todo, todos } = setup(async () => []);
+    const worker = { adapter: 'codex-desktop', id: 'shared-thread' };
+    const url = 'https://github.com/lsm/HyperNeo/pull/9553';
+    const docs = todo(null);
+    const holder = todo(null);
+    for (const item of [docs, holder])
+      db.prepare('INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES (?, ?, ?)').run(
+        item.id,
+        JSON.stringify({ verb: 'send', ref: worker }),
+        JSON.stringify(worker)
+      );
+    repo.record(docs.id, [], 1);
+    repo.record(holder.id, [pr(9553, 'OPEN', { url })], 1);
+    expect(repo.holder('https://github.com/lsm/hyperneo/pull/9553', worker)).toBe(holder.id);
+    expect(repo.holder(url, { ...worker, id: 'other-thread' })).toBeUndefined();
+    repo.record(docs.id, [pr(9553, 'OPEN', { url })], 1);
+    expect(repo.holder(url, worker)).toBeUndefined();
+    repo.record(docs.id, [], 1);
+    todos.updateTodo(holder, { state: 'done' }, 2);
+    expect(repo.holder(url, worker)).toBeUndefined();
   });
 });
 

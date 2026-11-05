@@ -1,0 +1,27 @@
+{
+  "failingCommit": "33913b4d42d820cac3beca49077ac5b9a51d7b40",
+  "red": "Four focused contracts fail and non-human/discovery characterization passes. Both native real RPC proofs trip the main identity SQL guard before writer admission.",
+  "focusedTests": 42,
+  "strictTypeScript": "6.0.3: zero errors",
+  "repositoryCheck": "bun run check: exit 0, SQL ratchet unchanged",
+  "fullLocalGraphLines": 130,
+  "productionLines": 6,
+  "smokeRegistrationLines": 1,
+  "netPrepare": 0,
+  "netRun": 0,
+  "contract": "Each human reference plan awaits one data-only identity command, then loads current source/binding with that committed identity. Existing post-capture plan revalidation remains. Failed/unknown-outcome commands never fall back or automatically replay. Non-human/discovery and missing retry IDs never initialize identity.",
+  "nativeBun": "Real reference RPC captures one immutable row for concurrent tap/retry, preserves snapshot bytes, loads source after committed receipt, withholds response when source disappears after capture while retaining the row, then recovers on explicit retry. Resolver main identity SQL zero.",
+  "nativeDeno": "Real reference RPC identity failure/recovery/current-source checks and documented safe_open_unavailable refusal pass. Main identity SQL zero; successful capture/bytes unverified.",
+  "legacyVerification": "Updated historical extraction helper: current reference RPC target main trace empty; explicitly invoked direct legacy helper emits exactly its INSERT/read on main. SQL/UUID/rollback legacy contracts pass on both runtimes.",
+  "latencyLimits": "Deliberately held resolver initialization exceeds 250 ms on both runtimes (reported, not an affected-RPC latency pass). Health and maximum loop lag remain responsive; uncontended RPC batch and command round-trip/payload/JSON encode metrics recorded. Worker queue and SQL/transaction split and complete RPC encode are not separately measured by this slice.",
+  "oneCheckout": true,
+  "noInstalls": true,
+  "proofDataRemoved": true,
+  "unverified": [
+    "Full transitive source/planner/binding/capture/PR/Git repository/runtime/OS/library graph; exact boundary source/import pins only",
+    "Git capture identity, source reads, row publication and read-only identity authorization remain main-side",
+    "Successful Deno/native Windows capture and bytes (existing fail-closed backend)",
+    "Native Bun 1.4.2 (local is 1.4.3)",
+    "Browser and Neo-owned deployment smoke"
+  ]
+}

@@ -44,43 +44,12 @@ describe('Migration 34: Add archived to status CHECK constraints', () => {
     } catch {}
   });
 
-  test('fresh DB: tasks CHECK constraint includes archived', () => {
-    createTables(db);
-    runMigrations(db, () => {});
-    const sql = getTableSql(db, 'tasks');
-    expect(sql).not.toBeNull();
-    expect(sql!).toContain("'archived'");
-  });
-
   test('fresh DB: space_tasks CHECK constraint includes archived', () => {
     createTables(db);
     runMigrations(db, () => {});
     expect(tableExists(db, 'space_tasks')).toBe(true);
     const sql = getTableSql(db, 'space_tasks')!;
     expect(sql).toContain("'archived'");
-  });
-
-  test('fresh DB: can insert a task with status = archived', () => {
-    createTables(db);
-    runMigrations(db, () => {});
-
-    const now = Date.now();
-    db.prepare(
-      `INSERT INTO rooms (id, name, allowed_paths, status, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?)`
-    ).run('room-1', 'Test Room', '[]', 'active', now, now);
-
-    expect(() => {
-      db.prepare(
-        `INSERT INTO tasks (id, room_id, title, description, status, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run('task-1', 'room-1', 'Test Task', 'desc', 'archived', now, now);
-    }).not.toThrow();
-
-    const row = db.prepare(`SELECT status FROM tasks WHERE id = 'task-1'`).get() as {
-      status: string;
-    };
-    expect(row.status).toBe('archived');
   });
 
   test('fresh DB: can insert a space_task with status = archived', () => {
@@ -265,29 +234,6 @@ describe('Migration 34: Add archived to status CHECK constraints', () => {
     expect(st2.status).toBe('in_progress');
   });
 
-  test('tasks indexes are recreated after table rebuild', () => {
-    createTables(db);
-
-    db.exec('PRAGMA foreign_keys = OFF');
-    const tasksSql = getTableSql(db, 'tasks')!;
-    const downgradedSql = tasksSql.replace(", 'archived'", '');
-    db.exec(`DROP TABLE tasks`);
-    db.exec(downgradedSql);
-    db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)');
-    db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)');
-    db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_room_updated ON tasks(room_id, updated_at DESC)');
-    db.exec('PRAGMA foreign_keys = ON');
-
-    expect(getTableSql(db, 'tasks')!).not.toContain("'archived'");
-
-    runMigrations(db, () => {});
-
-    const indexes = getIndexNames(db, 'tasks');
-    expect(indexes).toContain('idx_tasks_room');
-    expect(indexes).toContain('idx_tasks_status');
-    expect(indexes).toContain('idx_tasks_room_updated');
-  });
-
   test('space_tasks indexes are recreated after table rebuild', () => {
     createTables(db);
     runMigrations(db, () => {});
@@ -320,56 +266,5 @@ describe('Migration 34: Add archived to status CHECK constraints', () => {
     expect(indexes).toContain('idx_space_tasks_workflow_run_id');
     expect(indexes).not.toContain('idx_space_tasks_custom_agent_id');
     expect(indexes).not.toContain('idx_space_tasks_workflow_node_id');
-  });
-
-  test('idempotency: running migration twice does not error', () => {
-    createTables(db);
-    runMigrations(db, () => {});
-    expect(() => runMigrations(db, () => {})).not.toThrow();
-
-    const tasksSql = getTableSql(db, 'tasks')!;
-    expect(tasksSql).toContain("'archived'");
-  });
-
-  test('idempotency: data is not duplicated on second migration run', () => {
-    createTables(db);
-    runMigrations(db, () => {});
-
-    const now = Date.now();
-    db.prepare(
-      `INSERT INTO rooms (id, name, allowed_paths, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-    ).run('room-1', 'R', '[]', 'active', now, now);
-    db.prepare(
-      `INSERT INTO tasks (id, room_id, title, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).run('task-1', 'room-1', 'T', 'd', 'pending', now, now);
-
-    runMigrations(db, () => {});
-
-    const rows = db.prepare(`SELECT id FROM tasks`).all();
-    expect(rows).toHaveLength(1);
-  });
-
-  test('idempotency: backfill does not change already-archived tasks', () => {
-    createTables(db);
-    runMigrations(db, () => {});
-
-    const now = Date.now();
-    db.prepare(
-      `INSERT INTO rooms (id, name, allowed_paths, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-    ).run('room-1', 'R', '[]', 'active', now, now);
-
-    db.prepare(
-      `INSERT INTO tasks (id, room_id, title, description, status, archived_at, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run('task-1', 'room-1', 'T', 'd', 'archived', now - 5000, now, now);
-
-    runMigrations(db, () => {});
-
-    const row = db.prepare(`SELECT status, archived_at FROM tasks WHERE id = 'task-1'`).get() as {
-      status: string;
-      archived_at: number;
-    };
-    expect(row.status).toBe('archived');
-    expect(row.archived_at).toBe(now - 5000);
   });
 });

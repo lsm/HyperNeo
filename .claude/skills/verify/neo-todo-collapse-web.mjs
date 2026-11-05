@@ -14,8 +14,8 @@ export async function verifyTodoCollapse(page, { port, run, width }) {
   const other = page.locator('[data-ask="other-card"]:visible');
   await card.waitFor();
   await card.screenshot({ path: `${run}/evidence/todo-collapsed-${width}.png` });
-  record({ name: 'initial', details: await card.locator('[data-todo-details]').count(), expandAll: await card.getByRole('button', { name: 'Expand all', exact: true }).count() });
-  assert.equal(observed.steps[0].expandAll, 1, 'card needs an Expand all control');
+  record({ name: 'initial', details: await card.locator('[data-todo-details]').count(), all: await card.getByRole('button', { name: /^All · / }).count() });
+  assert.equal(observed.steps[0].all, 1, 'card needs one All dialog control');
   assert.equal(await card.locator('[data-todo-details]').count(), 0);
   const first = () => card.getByRole('button', { name: /details: Synthetic step 1$/ });
   await first().focus(); await page.keyboard.press('Enter');
@@ -26,7 +26,9 @@ export async function verifyTodoCollapse(page, { port, run, width }) {
   record({ name: 'keyboard-expand-one', details: 1, otherDetails: 0 });
   await page.keyboard.press('Space');
   assert.equal(await card.locator('[data-todo-details]').count(), 0);
-  await card.getByRole('button', { name: 'Expand all', exact: true }).click();
+  for (let index = 1; index <= 3; index++) {
+    await card.getByRole('button', { name: new RegExp(`details: Synthetic step ${index}$`) }).click();
+  }
   assert.equal(await card.locator('[data-todo-details]').count(), 3);
   await page.screenshot({ path: `${run}/evidence/todo-expanded-${width}.png` });
   const lastDetail = card.locator('[data-todo-details]').last();
@@ -34,11 +36,13 @@ export async function verifyTodoCollapse(page, { port, run, width }) {
   assert((await lastDetail.innerText()).includes('Evidence 3:'));
   await page.screenshot({ path: `${run}/evidence/todo-expanded-last-${width}.png` });
   assert.equal(await other.locator('[data-todo-details]').count(), 0);
-  record({ name: 'expand-all', details: 3, otherDetails: 0 });
-  await card.getByRole('button', { name: 'Collapse all', exact: true }).click();
+  record({ name: 'expand-each', details: 3, otherDetails: 0 });
+  for (let index = 1; index <= 3; index++) {
+    await card.getByRole('button', { name: new RegExp(`details: Synthetic step ${index}$`) }).click();
+  }
   assert.equal(await card.locator('[data-todo-details]').count(), 0);
   assert.equal(await first().getAttribute('aria-expanded'), 'false');
-  record({ name: 'collapse-all-including-first', details: 0 });
+  record({ name: 'collapse-each-including-first', details: 0 });
   await first().click();
   await page.reload();
   if (width < 800) await page.getByRole('button', { name: /^Your work/ }).click();

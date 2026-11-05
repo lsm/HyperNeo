@@ -35,8 +35,9 @@ Functional and visual QA inventory:
   the modal. An open drawer is not evidence of a usable modal.
 - Filter tools and clear the search. The primary rows must remain readable and
   usable, with no horizontal clipping, on desktop and a narrow viewport.
-- Expand Advanced settings. Legacy selectors and prompt/settings-source controls
-  are available there during the compatibility window. They are not the primary
+- Expand Advanced settings. Remaining legacy MCP selectors and prompt/settings-source controls
+  are available there during the compatibility window. The duplicate skill picker
+  was removed in slice 8b. They are not the primary
   Use here picker. Slice 8 removes obsolete duplicate selectors.
 - Exploratory: enabling Space Coordination in this unscoped session is refused
   with a reason and leaves its saved choice off. Network failures, duplicate

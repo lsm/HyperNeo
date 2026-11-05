@@ -10,6 +10,7 @@ const run = realpathSync(directory);
 assert.notEqual(port, '8399');
 const verify = fileURLToPath(new URL('.', import.meta.url));
 const evidence = join(run, 'evidence', 'preview-taps.json');
+const historical = (input) => JSON.parse(execFileSync('bun', [join(verify, 'legacy-attachment-fixture.ts'), run, JSON.stringify(input)], { env: { HOME: join(run, 'home'), NODE_ENV: 'test', HYPERNEO_DATA_DIR: join(run, 'data'), TMPDIR: run, PATH: process.env.PATH }, encoding: 'utf8' }));
 const rpc = (name, input) => {
   const out = execFileSync('bun', [join(verify, 'rpc.ts'), name, JSON.stringify(input)], {
     env: { ...process.env, VERIFY_PORT: port },
@@ -35,7 +36,7 @@ if (phase === 'prepare') {
   });
   const opened = rpc('neo.open', {});
   assert(opened.ok, JSON.stringify(opened));
-  const registered = rpc('artifact.file.register', {
+  const registered = historical({
     requestId: crypto.randomUUID(),
     context: { kind: 'todo', id: 'todo' },
     path: 'notes.md',

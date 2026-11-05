@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -18,7 +19,7 @@ for(const path of ['workspace','bin','evidence'])mkdirSync(join(run,path),{recur
 writeFileSync(join(run,'bin/gh'),'#!/bin/sh\nexit 1\n',{mode:0o700});
 const network=globalThis.fetch;globalThis.fetch=(()=>{throw new Error('External HTTP disabled');}) as typeof fetch;
 const app=await createDaemonApp({config:getConfig({port:0,host:'127.0.0.1',dbPath:join(run,'data/daemon.db')}),verbose:false});assert.notEqual(app.server.port,8399);
-const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`});hub.registerTransport(transport);
+const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketClientTransport({ createSocket: createLocalSocket,url:`ws://127.0.0.1:${app.server.port}/ws`});hub.registerTransport(transport);
 const db=app.db.getDatabase(),store=new NeoAskTodoRepository(db),sessions=new NeoTodoSessionRepository(db);
 const prepare=db.prepare.bind(db),replay=app.db.gateway.onChanges;let record=false,mainSql=0,held=false,neoEvents=0;const tables:string[]=[];
 db.prepare=((sql:string)=>{if(record && /neo_todos|neo_asks|neo_questions|neo_todo_sessions/.test(sql))mainSql++;return prepare(sql);}) as typeof db.prepare;
@@ -36,7 +37,7 @@ try{
  await app.db.createSession({id:root,title:'Synthetic settlement build',workspacePath:join(run,'workspace'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});
  new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
  const ask=(id:string,parentId:string|null=null)=>store.openAsk({id,parentId,repo:parentId?'github.com/synthetic/child':null,projectId:null,sessionId:root,originMessageId:null,title:id,request:'Keep full work',createdAt:1});
- const todo=(id:string,askId:string)=>store.addTodo(id,askId,{title:id,doneWhen:'Observed outcome',check:null,instruction:null,named:null},1);
+ const todo=(id:string,askId:string)=>store.addTodo(id,askId,{ approvedAt: 1,title:id,doneWhen:'Observed outcome',check:null,instruction:null,named:null},1);
  ask('ask');todo('first','ask');todo('second','ask');
  const report='Full settlement report 🦊\n'.repeat(20000).trim();
  store.updateTodo(store.getTodo('first')!,{state:'doing',report},2);

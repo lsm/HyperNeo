@@ -1,10 +1,18 @@
+import { sdkMessageWrites } from './sdk-message-writes.ts';
+import { ChangeRecorder } from '../db-gateway/db-op.ts';
+import type { ReactiveDatabase } from '../reactive-database.ts';
+import { JobQueueRepository } from './job-queue-repository.ts';
+import { SDKMessageRepository } from './sdk-message-repository.ts';
+import { sdkMailboxFailure } from './sdk-message-transactions.ts';
+import { neoTodoStartRefusal, neoTodoWaitReason } from '../../lib/neo/todo-start-gate.ts';
+import { neoTodoAwaitsHuman } from '../../lib/neo/todo-state.ts';
 import { NeoTurnReportReceipts } from '../../lib/neo/turn-report-receipts.ts';
 import {
-  continuesIncident,
+  advanceFollowThrough,
   type FollowThroughIncident,
-  planFollowThrough,
 } from '../../lib/work-queue/follow-through.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { markWorkUnusable } from '../work-started-sessions.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import type { WorkRef } from '../../lib/drivers/types.ts';
@@ -93,14 +101,18 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     target?: NeoDriverTarget;
   }) {
     const recorded = input.keepIdentity ? this.readCard(input.todoId) : null;
+    const observed =
+      input.observed.model !== undefined || input.observed.effort !== undefined
+        ? input.observed
+        : recorded;
     this.recordRef(
       input.todoId,
       input.ref,
       input.startedAt,
       input.link,
       {
-        model: input.observed.model ?? recorded?.model ?? undefined,
-        effort: input.observed.effort ?? recorded?.effort ?? undefined,
+        model: observed?.model ?? undefined,
+        effort: observed?.effort ?? undefined,
       },
       input.target
     );
@@ -114,10 +126,53 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
 
   readonly inputs: WorkDeliveryInputRepository;
   readonly turnReports: NeoTurnReportReceipts;
-  constructor(db: Database) {
+  constructor(
+    db: Database,
+    private readonly changes?: Pick<ReactiveDatabase, 'notifyChange'>
+  ) {
     super(db, 'neo_todo_sessions', 'todo_id');
     this.inputs = new WorkDeliveryInputRepository(db);
     this.turnReports = new NeoTurnReportReceipts(db);
+  }
+
+  cancelCheckOnlyReminder(todoId: string): void {
+    const incident = this.readNudge(todoId);
+    const reminder = incident?.checkOnlyReminder;
+    if (!reminder?.pending) return;
+    const todos = new NeoAskTodoRepository(this.db);
+    const todo = todos.getTodo(todoId)!;
+    const sessionId = reminder.sessionId ?? todos.getAsk(todo.askId)!.sessionId;
+    const jobs = new JobQueueRepository(this.db);
+    const job = jobs.getLatestByPayload('mailbox', {
+      'to.sessionId': sessionId,
+      messageUuid: reminder.pending,
+    });
+    const sdk = new SDKMessageRepository(this.db);
+    const receipt = sdk.getUserDeliveryReceipt(sessionId, reminder.pending);
+    if (receipt?.status === 'consumed')
+      reminder.delivered = [{ id: reminder.pending, at: receipt.timestamp }];
+    else if (job) {
+      const changes = new ChangeRecorder();
+      const result = sdkMailboxFailure.run(this.db, { job }, changes);
+      if (result.failure) throw new Error(result.failure);
+      jobs.markDeadIfActive(job.id, 'check_only_todo_no_longer_queued');
+      jobs.cancelDelivery(sessionId, reminder.pending);
+      for (const change of changes.changes) this.changes?.notifyChange(change.table, change.scope);
+      this.changes?.notifyChange('sdk_messages', { sessionId });
+      this.changes?.notifyChange('job_queue', { sessionId });
+    }
+    if (!job && receipt && receipt.status !== 'consumed') {
+      sdkMessageWrites.run(
+        this.db,
+        { method: 'markDeliveryFailedByUuid', args: [sessionId, reminder.pending] },
+        new ChangeRecorder()
+      );
+      jobs.cancelDelivery(sessionId, reminder.pending);
+      this.changes?.notifyChange('sdk_messages', { sessionId });
+      this.changes?.notifyChange('job_queue', { sessionId });
+    }
+    delete reminder.pending;
+    this.recordNudge(todoId, { ...incident!, checkOnlyReminder: reminder });
   }
 
   recordProgress(todoId: string, progress: NeoDriverProgress, now: number): boolean {
@@ -178,33 +233,27 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
             {
               group: asks.find((ask) => ask.id === todo.askId)?.projectId ?? null,
               worker: worker(this.readRef(todo.id)),
+              idle: this.workerIdle(todo.id),
             },
           ]
         : []
     );
-    const candidates = asks.flatMap((ask) => {
-      const plan = todos
-        .filter((todo) => todo.askId === ask.id)
-        .sort((a, b) => a.position - b.position);
-      const next = plan.find(
-        (todo) => !['done', 'closed_unverified', 'removed'].includes(todo.state)
-      );
-      const target = next && this.get(next.id);
-      return next?.state === 'todo' &&
+    const waiting = asks.flatMap((ask) => {
+      const plan = todos.filter((todo) => todo.askId === ask.id);
+      const asked = store.gateQuestions(ask);
+      const family = store.listFamilyTodos(ask.id);
+      return plan.flatMap((next) =>
+        next.state === 'todo' &&
         next.startedAt === null &&
-        next.instruction &&
-        plan.some(
-          (todo) => todo.startedAt !== null || ['done', 'closed_unverified'].includes(todo.state)
-        ) &&
-        !store
-          .listQuestions(ask.id)
-          .some(
-            (question) =>
-              question.state === 'open' &&
-              (!question.todoId || question.todoId === next.id) &&
-              (question.kind !== 'start' || !!question.startTodos?.includes(next.id))
-          ) &&
-        (target?.verb === 'start' || target?.verb === 'send')
+        !(next.instruction
+          ? neoTodoStartRefusal(next, family, asked)
+          : neoTodoWaitReason(next, family, asked))
+          ? [{ ask, next, target: this.get(next.id) }]
+          : []
+      );
+    });
+    const candidates = waiting.flatMap(({ ask, next, target }) =>
+      next.instruction && (target?.verb === 'start' || target?.verb === 'send')
         ? [
             {
               id: next.id,
@@ -214,9 +263,12 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
               worker: target.verb === 'send' ? worker(target.ref) : null,
             },
           ]
-        : [];
-    });
-    return { candidates, running };
+        : []
+    );
+    const unworked = waiting.flatMap(({ next, target }) =>
+      !next.instruction && !target ? [next.id] : []
+    );
+    return { candidates, running, unworked };
   }
 
   claimNudge(
@@ -232,27 +284,24 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       !context ||
       context.todo.updatedAt !== updatedAt ||
       JSON.stringify(context.ref) !== JSON.stringify(ref) ||
-      live.status === 'queued'
+      live.status === 'queued' ||
+      neoTodoAwaitsHuman(
+        context.todo,
+        new NeoAskTodoRepository(this.db).listQuestions(context.todo.askId)
+      )
     )
       return null;
     const since = Math.max(
       context.todo.startedAt ?? context.todo.createdAt,
       live.lastReplyAt ?? live.lastActivityAt
     );
-    const prior = this.readNudge(todoId);
-    const incident =
-      prior && continuesIncident(prior, since)
-        ? { ...prior, nudges: Math.min(prior.nudges, 2) }
-        : { since, nudges: 0, ...(prior?.redispatched ? { redispatched: true } : {}) };
-    const plan = ['done', 'stopped'].includes(live.status)
-      ? planFollowThrough(incident, now, { ...context.follow, move })
-      : null;
-    this.recordNudge(
-      todoId,
-      plan?.kind === 'redispatch'
-        ? { since: now, nudges: 0, redispatched: true }
-        : { ...incident, nudges: plan?.nudges ?? incident.nudges, ...(plan ? { at: now } : {}) }
+    const { incident, plan, next } = advanceFollowThrough(
+      this.readNudge(todoId),
+      { since, live: live.status, idle: ['done', 'stopped'].includes(live.status) },
+      now,
+      { ...context.follow, move }
     );
+    this.recordNudge(todoId, next);
     return plan ? { ...context, incident, plan } : null;
   }
 
@@ -260,6 +309,23 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     const current = this.readNudge(todoId);
     if (current?.since === since && current.nudges === expectedNudges)
       this.recordNudge(todoId, { ...current, nudges });
+  }
+
+  noteWorkerStatus(todoId: string, status: string): void {
+    const prior = this.readNudge(todoId);
+    if (prior?.live !== status)
+      this.recordNudge(
+        todoId,
+        prior ? { ...prior, live: status } : { since: 0, nudges: 0, live: status }
+      );
+  }
+
+  markWorkerUnusable(ref: WorkRef): void {
+    markWorkUnusable(this.db, ref);
+  }
+
+  workerIdle(todoId: string): boolean {
+    return ['done', 'stopped', 'failed', 'needs_you'].includes(this.readNudge(todoId)?.live ?? '');
   }
 
   readNudge(todoId: string): FollowThroughIncident | null {
@@ -272,11 +338,12 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   }
 
   recordNudge(todoId: string, incident: FollowThroughIncident): void {
+    const blockerReport = incident.blockerReport ?? this.readNudge(todoId)?.blockerReport;
     this.db
       .prepare(
         "INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, 'core', 'nudge', ?) ON CONFLICT(todo_id, pack, key) DO UPDATE SET value_json = excluded.value_json"
       )
-      .run(todoId, JSON.stringify(incident));
+      .run(todoId, JSON.stringify({ ...incident, ...(blockerReport ? { blockerReport } : {}) }));
   }
 
   doingTodoOn(
@@ -304,14 +371,50 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     this.db
       .prepare('INSERT OR IGNORE INTO neo_todo_sessions (todo_id, target) VALUES (?, ?)')
       .run(todoId, JSON.stringify(target));
+    this.cancelCheckOnlyReminder(todoId);
+  }
+
+  recordIdentity(
+    todoId: string,
+    ref: WorkRef,
+    identity: { model: string | null; effort: string | null }
+  ): void {
+    this.recordRef(
+      todoId,
+      ref,
+      undefined,
+      undefined,
+      {
+        model: identity.model ?? undefined,
+        effort: identity.effort ?? undefined,
+      },
+      undefined,
+      true
+    );
   }
 
   bind(todoId: string, ref: WorkRef, now: number): void {
+    const previous = this.readRef(todoId);
+    const same =
+      previous?.id === ref.id && previous.adapter === ref.adapter && previous.daemon === ref.daemon;
     this.db
-      .prepare(`INSERT OR REPLACE INTO neo_todo_sessions
+      .prepare(`INSERT INTO neo_todo_sessions
       (todo_id, target, ref, started_at, follow_anchor)
-      VALUES (?, ?, ?, ?, ?)`)
-      .run(todoId, JSON.stringify({ verb: 'adopt', ref }), JSON.stringify(ref), now, now);
+      VALUES (?, ?, ?, ?, ?) ON CONFLICT(todo_id) DO UPDATE SET
+        target = excluded.target, ref = excluded.ref, started_at = excluded.started_at,
+        follow_anchor = excluded.follow_anchor,
+        actual_model = CASE WHEN ?6 THEN actual_model ELSE NULL END,
+        actual_effort = CASE WHEN ?6 THEN actual_effort ELSE NULL END,
+        link = NULL, remote_link = NULL, input_before = NULL, sent_opening = NULL,
+        sent_receipt = NULL, live_status = NULL, start_interrupted = 0, needs_you_since = NULL`)
+      .run(
+        todoId,
+        JSON.stringify({ verb: 'adopt', ref }),
+        JSON.stringify(ref),
+        now,
+        now,
+        Number(same)
+      );
   }
 
   readLinks(todoId: string): { link: string | null; remoteLink: string | null } {
@@ -363,7 +466,8 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
         .prepare(
           `SELECT s.todo_id AS todoId, s.ref FROM neo_todo_sessions s
              JOIN neo_todos t ON t.id = s.todo_id
-            WHERE s.ref IS NOT NULL AND t.state = 'doing'`
+             JOIN neo_asks a ON a.id = t.ask_id
+            WHERE s.ref IS NOT NULL AND a.status = 'open'`
         )
         .all() as { todoId: string; ref: string }[]
     ).map((row) => ({ todoId: row.todoId, ref: JSON.parse(row.ref) as WorkRef }));
@@ -380,5 +484,16 @@ export const neoTodoSessionWrites = defineRepositoryOp(
   'neo.todoSessionWrites',
   'write',
   NeoTodoSessionRepository,
-  ['recordLive', 'recordDispatch', 'recordProgress', 'claimNeedsYou', 'claimNudge', 'finishNudge']
+  [
+    'recordLive',
+    'recordFollowAnchor',
+    'recordDispatch',
+    'recordIdentity',
+    'recordProgress',
+    'claimNeedsYou',
+    'claimNudge',
+    'finishNudge',
+    'noteWorkerStatus',
+    'markWorkerUnusable',
+  ]
 );

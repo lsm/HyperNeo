@@ -1,0 +1,29 @@
+{
+  "redCommit": "bca4af7b13cc250c39faf3b4f7520a44324432b9",
+  "before": {
+    "legacyPassed": 3,
+    "missingHelperFailed": 2,
+    "nativePublicRpcPassedBeforeMissingHelperFailure": true
+  },
+  "focused": {
+    "files": 5,
+    "tests": 20,
+    "passed": true
+  },
+  "strictTypeScript6": {
+    "passed": true,
+    "scope": "Modified store, new helper and both new test files plus imported dependencies"
+  },
+  "native": "Actual GitHub extension public enable/disable/listConfig RPC on synthetic Space with no watchers; Bun and Deno preserve JSON, compound key, creation time and update state; scratch helper preserves supplied time, caller rollback and cascade",
+  "limits": [
+    "SQL extraction only; measured public Space config UPSERTs remain 2 on main",
+    "GitHub source-setting/watch-row writes before the setter remain separate; future activation must account for their writer-lock behavior",
+    "No full transitive GitHub/plugin/startup/Space dependency audit or off-main claim",
+    "Local Bun 1.4.3; pinned Bun 1.4.2 is CI-owned",
+    "Deployment remains Neo-owned; no live daemon or OAP touched"
+  ],
+  "rootCheck": {
+    "command": "bun run check",
+    "exitCode": 0
+  }
+}

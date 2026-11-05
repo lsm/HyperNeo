@@ -1,10 +1,14 @@
+import { z } from 'zod';
+import { WorkRefSchema } from '../../../../src/lib/drivers/types.ts';
+import { pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
-import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import { createNeoService } from '../../helpers/neo-service.ts';
+import { createNeoOperations } from '../../helpers/neo-service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
+  defineOperation,
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
 import {
@@ -96,7 +100,9 @@ test('a publication explicitly answers exactly the named received human inputs',
 
 test('questions retain explicit human references without marking them answered', async () => {
   const id = await received();
-  expect(await invoke('neo.question.ask', { ...question, replyTo: [id] })).toMatchObject({
+  expect(
+    await invoke('neo.question.ask', { retireWhen: pendingTodoCheck, ...question, replyTo: [id] })
+  ).toMatchObject({
     value: { ok: true, question: { replyTo: [id] } },
   });
   expect(service.sessions.getCachedSession).not.toHaveBeenCalled();
@@ -128,7 +134,9 @@ test.each(['unknown', 'foreign', 'system', 'task', 'queued'])(
     expect(
       await invoke('neo.publication.publish', { ...publication, replyTo: [id] })
     ).toMatchObject({ value: { accepted: true, publication: { replyTo: [] } } });
-    expect(await invoke('neo.question.ask', { ...question, replyTo: [id] })).toMatchObject({
+    expect(
+      await invoke('neo.question.ask', { retireWhen: pendingTodoCheck, ...question, replyTo: [id] })
+    ).toMatchObject({
       value: { ok: true, question: { replyTo: [] } },
     });
     expect(service.publications.list(conversationId)).toHaveLength(1);
@@ -156,12 +164,65 @@ test('new publishes reject triggerId while legacy publications keep it readable'
   });
 });
 
+test('a publication without explicit references answers the human input being processed', async () => {
+  const id = await received();
+  await db.updateSession(sessionId, {
+    processingState: JSON.stringify({ status: 'processing', messageId: id }),
+  });
+  expect(await invoke('neo.publication.publish', publication)).toMatchObject({
+    value: { accepted: true, publication: { replyTo: [id] } },
+  });
+  expect(
+    service.publications.toldSince(conversationId, { sessionId, messageId: id }, '1970-01-01')
+  ).toBe(true);
+});
+
+test('a publication answers every human input consumed in the current turn', async () => {
+  const first = await received();
+  const second = await received();
+  const foreign = crypto.randomUUID();
+  await db.updateSession(sessionId, {
+    processingState: JSON.stringify({
+      status: 'processing',
+      messageId: second,
+      messageIds: [first, second, foreign],
+    }),
+  });
+  expect(await invoke('neo.publication.publish', publication)).toMatchObject({
+    value: { accepted: true, publication: { replyTo: [first, second] } },
+  });
+  for (const id of [first, second])
+    expect(
+      service.publications.toldSince(conversationId, { sessionId, messageId: id }, '1970-01-01')
+    ).toBe(true);
+});
+
+test('explicit references win over inference, and an idle session infers none', async () => {
+  const chosen = await received();
+  const processing = await received();
+  await db.updateSession(sessionId, {
+    processingState: JSON.stringify({ status: 'processing', messageId: processing }),
+  });
+  expect(
+    await invoke('neo.publication.publish', { ...publication, replyTo: [chosen] })
+  ).toMatchObject({ value: { accepted: true, publication: { replyTo: [chosen] } } });
+  await db.updateSession(sessionId, {
+    processingState: JSON.stringify({ status: 'idle' }),
+  });
+  expect(
+    await invoke('neo.publication.publish', { ...publication, requestId: 'two' })
+  ).toMatchObject({ value: { accepted: true } });
+  expect(service.publications.list(conversationId)?.[1].replyTo).toBeUndefined();
+});
+
 test('mixed references retain only received human inputs in both tools', async () => {
   const replyTo = [await received(), crypto.randomUUID()];
   expect(await invoke('neo.publication.publish', { ...publication, replyTo })).toMatchObject({
     value: { accepted: true, publication: { replyTo: [replyTo[0]] } },
   });
-  expect(await invoke('neo.question.ask', { ...question, replyTo })).toMatchObject({
+  expect(
+    await invoke('neo.question.ask', { retireWhen: pendingTodoCheck, ...question, replyTo })
+  ).toMatchObject({
     value: { ok: true, question: { replyTo: [replyTo[0]] } },
   });
   expect(service.publications.list(conversationId)).toHaveLength(2);
@@ -185,9 +246,93 @@ test('rewording a start question retains its explicit human references', async (
     1
   );
   expect(
-    await invoke('neo.question.ask', { ...question, kind: 'start', replyTo: [id] })
+    await invoke('neo.question.ask', {
+      retireWhen: pendingTodoCheck,
+      ...question,
+      kind: 'start',
+      replyTo: [id],
+    })
   ).toMatchObject({ value: { ok: true, question: { id: 'start', replyTo: [id] } } });
   expect(
-    await invoke('neo.question.ask', { ...question, kind: 'start', text: 'Start now?' })
+    await invoke('neo.question.ask', {
+      retireWhen: pendingTodoCheck,
+      ...question,
+      kind: 'start',
+      text: 'Start now?',
+    })
   ).toMatchObject({ value: { ok: true, question: { id: 'start', replyTo: [id] } } });
 });
+
+test('publication session validation uses the existing adapter lookup for external sessions', async () => {
+  const read = mock(({ ref }: { ref: { adapter: string; id: string } }) =>
+    ref.id === 'known'
+      ? {
+          ok: true,
+          value: {
+            ref,
+            title: 'External worker',
+            place: { machine: 'synthetic', name: 'Synthetic' },
+            status: 'running',
+            lastActivityAt: 1,
+          },
+        }
+      : { ok: false, reason: 'not_found' }
+  );
+  service.sessions.getOperationRegistry = () =>
+    createOperationRegistry([
+      defineOperation({
+        name: 'work.status',
+        description: 'Synthetic adapter read',
+        inputSchema: z.object({ ref: WorkRefSchema }),
+        resultSchema: z.unknown(),
+        execute: read,
+      }),
+    ]);
+  expect(
+    await invoke('neo.publication.publish', { ...publication, session: 'codex-desktop:missing' })
+  ).toMatchObject({
+    value: {
+      accepted: false,
+      reason: 'unknown_session',
+      detail: 'Unknown session: codex-desktop:missing',
+    },
+  });
+  expect(
+    await invoke('neo.publication.publish', { ...publication, session: 'codex-desktop:known' })
+  ).toMatchObject({
+    value: { accepted: true, publication: { session: 'codex-desktop:known' } },
+  });
+  expect(read).toHaveBeenLastCalledWith(
+    { ref: { adapter: 'codex-desktop', id: 'known' } },
+    { source: 'internal' }
+  );
+});
+
+test.each(['unreachable', 'execution_failed'])(
+  'session lookup %s is retryable and is not unknown_session',
+  async (failure) => {
+    service.sessions.getOperationRegistry = () =>
+      createOperationRegistry([
+        defineOperation({
+          name: 'work.status',
+          description: 'Synthetic unavailable adapter',
+          inputSchema: z.object({ ref: WorkRefSchema }),
+          resultSchema: z.unknown(),
+          execute: () => {
+            if (failure === 'execution_failed') throw new Error('Synthetic adapter failure');
+            return { ok: false, reason: failure };
+          },
+        }),
+      ]);
+    expect(
+      await invoke('neo.publication.publish', { ...publication, session: 'codex-desktop:known' })
+    ).toMatchObject({
+      value: {
+        accepted: false,
+        reason: 'session_lookup_failed',
+        detail: expect.stringContaining('codex-desktop:known'),
+      },
+    });
+    expect(service.publications.list(conversationId)).toHaveLength(0);
+  }
+);

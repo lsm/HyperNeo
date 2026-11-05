@@ -25,7 +25,7 @@ export function setupWorkspaceHandlers(
       throw new Error('path is required');
     }
     const workspacePath = await validateWorkspaceDirectory(path);
-    workspaceHistoryRepo.upsert(workspacePath);
+    await workspaceHistoryRepo.upsertAsync(workspacePath);
 
     if (mcpImportService) {
       try {
@@ -48,7 +48,7 @@ export function setupWorkspaceHandlers(
     if (!path || typeof path !== 'string') {
       throw new Error('path is required');
     }
-    const success = workspaceHistoryRepo.remove(path);
+    const success = await workspaceHistoryRepo.removeAsync(path);
     return { success };
   });
 }

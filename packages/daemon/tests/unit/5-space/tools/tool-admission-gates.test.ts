@@ -4,7 +4,7 @@ import {
   HUMAN_ONLY_AUTONOMY_LEVEL,
   resolveEffectiveAutonomyLevel,
   SESSION_WRITE_AUTONOMY_LEVEL,
-} from '../../../../src/lib/space/tools/tool-admission-gates.ts';
+} from '../../../../src/lib/tasks/tool-admission-gates.ts';
 
 describe('resolveEffectiveAutonomyLevel', () => {
   test('null agentLevel falls back to the space level for every space level', () => {

@@ -4,6 +4,7 @@ import {
   createResolveClones,
   type CloneCascadeDependencies,
 } from '../../../../src/lib/session/clone-cascade';
+import { nameClonedAgent } from '../../../../src/lib/agents/agent-identity.ts';
 
 function child(id: string, title = id): Session {
   const now = new Date().toISOString();
@@ -73,16 +74,19 @@ function makeHarness(overrides: Partial<Harness> = {}): Harness {
     detach: async (id) => {
       h.detached.push(id);
     },
-    agentOwning: () => h.owner,
-    listAgents: () => h.agents,
-    createAgent: (params) => {
-      h.created.push(params);
-      const agent = { ...OWNER, ...params, id: `agent-${h.created.length}` };
-      h.agents = [...h.agents, agent];
-      return agent;
-    },
-    stampProvenance: async (sessionId, provenance) => {
-      h.stamped.push({ sessionId, agentId: provenance.agentId, source: provenance.source });
+    agents: {
+      agentOwning: () => h.owner,
+      listAgents: () => h.agents,
+      nameAgent: nameClonedAgent,
+      createAgent: (params) => {
+        h.created.push(params);
+        const agent = { ...OWNER, ...params, id: `agent-${h.created.length}` };
+        h.agents = [...h.agents, agent];
+        return agent;
+      },
+      stampProvenance: async (sessionId, provenance) => {
+        h.stamped.push({ sessionId, agentId: provenance.agentId, source: provenance.source });
+      },
     },
     archiveChild: async (id) => {
       h.archived.push(id);
@@ -133,6 +137,14 @@ describe('resolveClones', () => {
       parentId === 'parent' ? h.children : parentId === 'c1' ? [grandchild] : [];
     expect(await createResolveClones(h.deps)('parent', 'cascade', 'archive')).toBeNull();
     expect(h.archived).toEqual(['g1', 'c1']);
+  });
+
+  test('flatten only detaches when Space agents are not available', async () => {
+    const h = makeHarness({ owner: OWNER });
+    const { agents: _agents, ...deps } = h.deps;
+    expect(await createResolveClones(deps)('parent', 'flatten', 'archive')).toBeNull();
+    expect(h.detached).toEqual(['c1', 'c2']);
+    expect(h.created).toEqual([]);
   });
 
   test('flatten detaches the clones of a plain session', async () => {

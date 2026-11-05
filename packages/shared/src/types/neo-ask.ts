@@ -44,6 +44,7 @@ export type NeoTodoBlocker =
   | 'failure'
   | 'question'
   | 'needs-human'
+  | 'environment'
   | 'stalled'
   | 'held';
 
@@ -64,6 +65,7 @@ export interface NeoTodo extends ArtifactProjection {
   nextAction: string | null;
   blockedBy: NeoTodoBlocker | null;
   priority: NeoTodoPriority;
+  dependsOn: string[] | null;
   replacedBy: string | null;
   addedAfterStart: boolean;
   report: string | null;
@@ -72,6 +74,7 @@ export interface NeoTodo extends ArtifactProjection {
   updatedAt: number;
   startedAt: number | null;
   finishedAt: number | null;
+  approvedAt: number | null;
 }
 
 export type NeoQuestionKind = 'yesno' | 'choice' | 'reply' | 'start';
@@ -80,12 +83,19 @@ export type NeoQuestionState = 'open' | 'answered' | 'retired';
 
 export type NeoQuestionAnswer = string | string[];
 
+export function isAgentResolvedQuestion(
+  question: Pick<NeoQuestion, 'state' | 'answer' | 'answeredBy'>
+): boolean {
+  return question.state === 'retired' && question.answer !== null && question.answeredBy === null;
+}
+
 export interface NeoQuestionSource extends WorkerIdentity {
   provider: string;
   link: string | null;
 }
 
 export interface NeoQuestion extends ArtifactProjection {
+  retireWhen?: NeoTodoCheck;
   sourceSession?: NeoQuestionSource;
   todoId?: string | null;
   document?: string | null;

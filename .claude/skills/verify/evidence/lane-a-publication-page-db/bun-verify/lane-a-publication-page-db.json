@@ -1,0 +1,26 @@
+{
+  "verified": false,
+  "mode": "verify",
+  "consumer": "Real public WebSocket neo.publication.read and registered MCP operation",
+  "limitations": "No GUI, model, card-reply mutation, real GitHub, live daemon or global latency benchmark.",
+  "conversationAfterFailedRead": {
+    "id": "10000000-0000-4000-8000-000000009244"
+  },
+  "resourcesStopped": true,
+  "mainSql": [
+    "SELECT id FROM neo_conversation",
+    "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE kind = 'neo'",
+    "INSERT OR IGNORE INTO neo_conversation (singleton, id, created_at) VALUES (1, ?, ?)",
+    "SELECT id FROM neo_conversation",
+    "SELECT sequence, payload_json AS payloadJson, created_at AS createdAt FROM neo_publications\n        WHERE conversation_id = ? AND sequence > ? ORDER BY sequence LIMIT ?"
+  ],
+  "commands": [
+    {
+      "name": "pairing.recordUnpaired",
+      "mode": "write",
+      "durationMs": 8.343291000000136,
+      "argsBytes": 142,
+      "replyBytes": 4
+    }
+  ]
+}

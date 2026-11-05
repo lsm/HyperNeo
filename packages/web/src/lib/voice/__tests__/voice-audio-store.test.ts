@@ -369,3 +369,33 @@ describe('voice audio record store', () => {
     expect(await readDurableIds(factory)).toEqual(['ok']);
   });
 });
+
+it('stores an upgraded send context without aliasing mutable photos or quotes', async () => {
+  const context = {
+    suffix: 'file content',
+    attachmentIds: ['f1'],
+    images: [{ data: 'aGk=', media_type: 'image/png' }],
+    quote: { author: 'Neo', text: 'original', anchor: 'source' },
+  };
+  const record = {
+    id: 'context-record',
+    sessionId: 'neo:1',
+    audioBase64: 'aGk=',
+    mimeType: 'audio/wav',
+    peakLevel: 0.5,
+    createdAt: Date.now(),
+    intent: 'send',
+    sendContext: context,
+  };
+  await putVoiceRecord(record);
+  context.images[0].data = 'bGF0ZXI=';
+  context.quote.text = 'later';
+  expect((await getVoiceRecord(record.id))?.sendContext?.images?.[0].data).toBe('aGk=');
+  expect((await getVoiceRecord(record.id))?.sendContext?.quote?.text).toBe('original');
+  expect(
+    await putVoiceRecord({
+      ...record,
+      sendContext: { ...context, images: [{ data: 'bad', media_type: 'unknown' }] },
+    })
+  ).toBe(false);
+});

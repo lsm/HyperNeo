@@ -3,6 +3,15 @@ import './lib/theme.ts';
 import { render } from 'preact';
 import { App } from './App.tsx';
 import { PairPage } from './components/pairing/PairPage.tsx';
+import { connectionManager } from './lib/connection-manager.ts';
+import { spaceNav } from './lib/space-nav.tsx';
+import { declareExtensionNav, loadWebExtensions } from './lib/web-extensions.ts';
+
+declareExtensionNav(spaceNav);
+
+void loadWebExtensions(() => connectionManager.getHub(), {
+  space: () => import('./lib/space-web-extension.ts').then((m) => m.spaceWebExtension),
+});
 
 if ('scrollRestoration' in history) {
   history.scrollRestoration = 'manual';
@@ -15,7 +24,10 @@ if (!root) {
 }
 
 function renderApp() {
-  render(location.pathname === '/pair' ? <PairPage /> : <App />, root!);
+  if (location.pathname === '/pair') return render(<PairPage />, root!);
+  void fetch('/ws', { credentials: 'same-origin', cache: 'no-store' })
+    .then((response) => render(response.status === 401 ? <PairPage /> : <App />, root!))
+    .catch(() => render(<App />, root!));
 }
 
 renderApp();

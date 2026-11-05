@@ -1,0 +1,11 @@
+57 |   await app!.jobProcessor.start();
+58 |   try {
+59 |     for(let i = 0; i < 300; i++) {
+60 |       const row = app!.jobQueue.getJob(job.id)!;
+61 |       if(row.status === 'completed') return {status: row.status, result: row.result};
+62 |       if(row.error) throw new Error(row.error);
+                                   ^
+error: Pure health delivery read must not wait for the writer lock
+      at deliver (/Users/lsm/.codex/worktrees/lane-a-health-reader/neokai/.claude/skills/verify/lane-a-health-reader-db.ts:62:31)
+
+Bun v1.4.3 (macOS arm64)

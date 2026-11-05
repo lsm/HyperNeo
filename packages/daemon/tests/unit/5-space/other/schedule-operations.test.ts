@@ -113,7 +113,7 @@ function harness(): Harness {
         if (state.transitionThrows) throw new Error(state.transitionThrows);
         return schedule({ id: scheduleId, status: 'active' });
       },
-      deleteSchedule: (scheduleId) => {
+      deleteScheduleAsync: async (scheduleId) => {
         state.calls.push('deleteSchedule');
         if (!state.deleteSucceeds) return false;
         state.stored = state.stored.filter((entry) => entry.id !== scheduleId);
@@ -379,6 +379,42 @@ describe('schedule operation catalog', () => {
     ).toEqual({ ok: true });
     expect(h.stored).toEqual([]);
     expect(h.audits.map((entry) => entry.toolName)).toEqual(['schedule.delete']);
+  });
+
+  test('delete waits for its commit before recording the audit', async () => {
+    let finish: (deleted: boolean) => void = () => {};
+    const pending = new Promise<boolean>((resolve) => {
+      finish = resolve;
+    });
+    let entered: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    h.deps.schedules.deleteScheduleAsync = () => {
+      entered();
+      return pending;
+    };
+    const result = run('schedule.delete', { scheduleId: 'sched-1' }, mcpCaller('long_term_agent'));
+    await started;
+    expect(h.audits).toEqual([]);
+    finish(true);
+    expect(await result).toEqual({ ok: true });
+    expect(h.audits.map((entry) => entry.toolName)).toEqual(['schedule.delete']);
+  });
+
+  test('an asynchronous delete failure returns a rejection without an audit', async () => {
+    h.deps.schedules.deleteScheduleAsync = async () => {
+      throw new Error('writer unavailable');
+    };
+    expect(
+      await run('schedule.delete', { scheduleId: 'sched-1' }, mcpCaller('long_term_agent'))
+    ).toEqual({
+      ok: false,
+      reason: 'rejected',
+      message: 'writer unavailable',
+    });
+    expect(h.stored).toHaveLength(1);
+    expect(h.audits).toEqual([]);
   });
 
   test('an audit writer failure never turns a committed mutation into a rejection', async () => {

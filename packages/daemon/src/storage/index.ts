@@ -12,7 +12,6 @@ import type {
   Session,
   GlobalToolsConfig,
   GlobalSettings,
-  InboxItem,
   MessageOrigin,
   HyperNeoActionMessage,
   ChatMessage,
@@ -45,15 +44,9 @@ import {
 } from './repositories/sdk-message-repository.ts';
 import type { SdkMessageWriteMethod } from './repositories/sdk-message-writes.ts';
 import { SettingsRepository } from './repositories/settings-repository.ts';
-import {
-  InboxItemRepository,
-  type CreateInboxItemParams,
-} from './repositories/inbox-item-repository.ts';
+import type { SpaceSessionPort } from '../lib/agent/space-session-port.ts';
 import { JobQueueRepository } from './repositories/job-queue-repository.ts';
 import { AppMcpServerRepository } from './repositories/app-mcp-server-repository.ts';
-import { SpaceTaskRepository } from './repositories/space-task-repository.ts';
-import { NodeExecutionRepository } from './repositories/node-execution-repository.ts';
-import { SpaceLongHorizonAgentRepository } from './repositories/space-long-horizon-agent-repository.ts';
 import { McpEnablementRepository } from './repositories/mcp-enablement-repository.ts';
 import { SkillRepository } from './repositories/skill-repository.ts';
 import { WorkspaceHistoryRepository } from './repositories/workspace-history-repository.ts';
@@ -76,17 +69,6 @@ import type { ReactiveDatabase } from './reactive-database.ts';
 
 export type { SendStatus } from './repositories/sdk-message-repository.ts';
 export type { SQLiteValue } from './types.ts';
-export type {
-  CreateInboxItemParams,
-  InboxItemFilter,
-} from './repositories/inbox-item-repository.ts';
-export type {
-  CreateGoalParams,
-  UpdateGoalParams,
-  CreateExecutionParams,
-  UpdateExecutionParams,
-} from './repositories/goal-repository.ts';
-export { getEffectiveMaxPlanningAttempts } from './repositories/goal-repository.ts';
 export type { Job, EnqueueParams } from './repositories/job-queue-repository.ts';
 export { JobQueueProcessor } from './job-queue-processor.ts';
 export type {
@@ -96,7 +78,6 @@ export type {
 } from './job-queue-processor.ts';
 
 // @public - Library export
-export { GoalRepository } from './repositories/goal-repository.ts';
 export { AppMcpServerRepository } from './repositories/app-mcp-server-repository.ts';
 export { McpEnablementRepository } from './repositories/mcp-enablement-repository.ts';
 export { SkillRepository } from './repositories/skill-repository.ts';
@@ -130,12 +111,9 @@ export class Database {
   private sessionRepo!: SessionRepository;
   private sdkMessageRepo!: SDKMessageRepository;
   private settingsRepo!: SettingsRepository;
-  private inboxItemRepo!: InboxItemRepository;
+  spaceSessions?: SpaceSessionPort;
   private jobQueueRepo!: JobQueueRepository;
   private appMcpServerRepo!: AppMcpServerRepository;
-  private spaceTaskRepo!: SpaceTaskRepository;
-  private nodeExecutionRepo!: NodeExecutionRepository;
-  private longHorizonAgentRepo!: SpaceLongHorizonAgentRepository;
   private mcpEnablementRepo!: McpEnablementRepository;
   private skillRepo!: SkillRepository;
   private workspaceHistoryRepo!: WorkspaceHistoryRepository;
@@ -192,10 +170,6 @@ export class Database {
     this.sessionRepo = new SessionRepository(db);
     this.sdkMessageRepo = new SDKMessageRepository(db, reactiveDb);
     this.settingsRepo = new SettingsRepository(db);
-    this.inboxItemRepo = new InboxItemRepository(db);
-    this.spaceTaskRepo = new SpaceTaskRepository(db, reactiveDb);
-    this.nodeExecutionRepo = new NodeExecutionRepository(db, reactiveDb);
-    this.longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
     this.jobQueueRepo = new JobQueueRepository(db);
     this.appMcpServerRepo = new AppMcpServerRepository(db, reactiveDb);
     this.mcpEnablementRepo = new McpEnablementRepository(db, reactiveDb);
@@ -673,14 +647,6 @@ export class Database {
     return this.settingsRepo.updateGlobalSettings(updates);
   }
 
-  createInboxItem(params: CreateInboxItemParams): InboxItem {
-    return this.inboxItemRepo.createItem(params);
-  }
-
-  countInboxItemsByStatus(status: 'pending' | 'routed' | 'dismissed' | 'blocked'): number {
-    return this.inboxItemRepo.countByStatus(status);
-  }
-
   getDatabase(): BunDatabase {
     return this.core.getDb();
   }
@@ -698,18 +664,6 @@ export class Database {
     ...args: Parameters<SDKMessageRepository[K]>
   ): Promise<ReturnType<SDKMessageRepository[K]>> {
     return this.sdkMessageRepo.write(method, ...args);
-  }
-
-  getSpaceTaskRepo(): SpaceTaskRepository {
-    return this.spaceTaskRepo;
-  }
-
-  getNodeExecutionRepo(): NodeExecutionRepository {
-    return this.nodeExecutionRepo;
-  }
-
-  getLongHorizonAgentRepo(): SpaceLongHorizonAgentRepository {
-    return this.longHorizonAgentRepo;
   }
 
   getDatabasePath(): string {

@@ -1,3 +1,5 @@
+import { createPushedWorkerRepo } from '../../../helpers/native-worker-worktree';
+import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -244,6 +246,16 @@ describe('codexTurnState', () => {
 });
 
 describe('codexRecentInputs and reply time', () => {
+  test('exposes the native input id used by dispatch receipts', () => {
+    expect(codexRecentInputs([heardAs('native-input', 'Direct instruction')])).toEqual([
+      {
+        at: Date.parse('2026-10-04T11:00:00.000Z'),
+        text: 'Direct instruction',
+        human: true,
+        inputId: 'native-input',
+      },
+    ]);
+  });
   const at = (iso: string, entry: string) =>
     JSON.stringify({ ...JSON.parse(entry), timestamp: iso });
 
@@ -389,6 +401,57 @@ describe('codex-desktop adapter status and send', () => {
 
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
+  test.each(['clean', 'dirty', 'unpushed'])(
+    'archive removes only a clean pushed owned worktree: %s',
+    async (state) => {
+      const { repo, git } = createPushedWorkerRepo(dir);
+      const worktrees = join(dir, 'worktrees'),
+        folder = join(worktrees, 'worker');
+      git('worktree', 'add', '--detach', folder, 'HEAD');
+      if (state === 'dirty') writeFileSync(join(folder, 'keep.txt'), 'uncommitted');
+      if (state === 'unpushed')
+        expect(
+          spawnSync('git', [
+            '-C',
+            folder,
+            '-c',
+            'commit.gpgsign=false',
+            '-c',
+            'core.hooksPath=/dev/null',
+            '-c',
+            'user.name=Synthetic',
+            '-c',
+            'user.email=synthetic@example.invalid',
+            'commit',
+            '--allow-empty',
+            '-m',
+            'keep unpushed',
+          ]).status
+        ).toBe(0);
+      const db = new Database(statePath);
+      db.prepare('UPDATE threads SET cwd=? WHERE id=?').run(folder, 'idle');
+      db.close();
+      const driver = adapter(
+        0,
+        '',
+        async () => ({
+          call: async (method) =>
+            method === 'thread/read' ? { thread: { id: 'idle', status: { type: 'idle' } } } : null,
+          close: () => {},
+        }),
+        worktrees
+      );
+      const result = await driver.archive!(ref('idle'), () => null);
+      expect(result).toMatchObject({
+        ok: true,
+        value: { archived: true, worktree: { directory: folder, removed: state === 'clean' } },
+      });
+      expect(existsSync(folder)).toBe(state !== 'clean');
+      if (state !== 'clean')
+        expect(JSON.stringify(result)).toMatch(state === 'dirty' ? /changes/ : /unpushed/);
+    }
+  );
+
   test.each(
     ['idle', 'active', 'systemError', 'notLoaded'].flatMap((status) =>
       ['present', 'missing', 'unreadable'].map((rollout) => ({ status, rollout }))
@@ -511,6 +574,7 @@ describe('codex-desktop adapter status and send', () => {
     worktreesDir = '/codex/worktrees',
     stdout = '',
     overrides: {
+      bootstrapServer?: () => Promise<CodexAppServer>;
       newId?: () => string;
       onSpawn?: () => void;
       realServer?: boolean;
@@ -530,7 +594,7 @@ describe('codex-desktop adapter status and send', () => {
       };
     };
     return createCodexDesktopAdapter({
-      bootstrapServer: () => Promise.reject(new Error('not used')),
+      bootstrapServer: overrides.bootstrapServer ?? (() => Promise.reject(new Error('not used'))),
       prepareDesktopProject: async () => 'project-1',
       startDesktopTurn: async () => {
         throw new Error('not used');
@@ -561,6 +625,100 @@ describe('codex-desktop adapter status and send', () => {
   }
 
   const ref = (id: string) => ({ adapter: 'codex-desktop', id });
+
+  test('work.start reuses an idle Codex worker using its real recorded status identity', async () => {
+    writeFileSync(
+      join(dir, 'finished.jsonl'),
+      [
+        line('turn_context', { model: 'gpt-6.1-sol', effort: 'high' }),
+        line('event_msg', { type: 'task_complete' }),
+      ].join('\n')
+    );
+    const driver = adapter(0, '', undefined, '/codex/worktrees', '', {
+      bootstrapServer: async () => ({
+        call: async () => ({
+          data: [
+            {
+              id: 'sol',
+              model: 'gpt-6.1-sol',
+              displayName: 'Sol 6.1',
+              isDefault: true,
+              supportedReasoningEfforts: [{ reasoningEffort: 'high' }],
+            },
+          ],
+          nextCursor: null,
+        }),
+        close: () => {},
+      }),
+    });
+    const sent: string[] = [];
+    const registry = createOperationRegistry(
+      createWorkVerbOperations({
+        adapters: () => [
+          {
+            ...driver,
+            send: async (ref) => {
+              sent.push(ref.id);
+              return { ok: true, value: { delivered: true } };
+            },
+            start: async () => {
+              throw new Error('must reuse the real Codex worker');
+            },
+          },
+        ],
+        remote: { list: () => [], invoke: async () => ({}) },
+        daemonName: 'laptop',
+        freeWorkers: () => new Set(['idle']),
+      })
+    );
+    const outcome = await invokeOperation(
+      registry,
+      'work.start',
+      {
+        adapter: 'codex-desktop',
+        place: { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen' },
+        title: 'next',
+        message: 'next task',
+        model: 'Sol 6.1',
+        effort: 'HIGH',
+      },
+      { source: 'internal', role: 'neo', sessionId: 'neo' }
+    );
+    expect(outcome).toMatchObject({
+      kind: 'completed',
+      value: {
+        ok: true,
+        value: { ref: { id: 'idle' }, model: 'gpt-6.1-sol', effort: 'high', reused: true },
+      },
+    });
+    expect(sent).toEqual(['idle']);
+    expect(spawned).toEqual([]);
+  });
+
+  test('status reports only the latest recorded Codex turn configuration', async () => {
+    const rollout = join(dir, 'finished.jsonl');
+    writeFileSync(
+      rollout,
+      [
+        line('turn_context', { model: 'gpt-6-luna', effort: 'low' }),
+        line('turn_context', { model: 'gpt-6.1-sol', effort: ' HIGH ' }),
+        line('event_msg', { type: 'task_complete' }),
+      ].join('\n')
+    );
+    const driver = adapter();
+    expect(await driver.status!(ref('idle'))).toMatchObject({
+      ok: true,
+      value: { model: 'gpt-6.1-sol', effort: 'high' },
+    });
+    appendFileSync(rollout, '\n' + line('turn_context', { model: 'gpt-6.1-sol' }));
+    const latest = await driver.status!(ref('idle'));
+    expect(latest.ok && latest.value.model).toBe('gpt-6.1-sol');
+    expect(latest.ok && latest.value.effort).toBeUndefined();
+    appendFileSync(rollout, '\n' + line('turn_context', { model: null, effort: null }));
+    const unknown = await driver.status!(ref('idle'));
+    expect(unknown.ok && unknown.value.model).toBeUndefined();
+    expect(unknown.ok && unknown.value.effort).toBeUndefined();
+  });
 
   test.each([
     '',

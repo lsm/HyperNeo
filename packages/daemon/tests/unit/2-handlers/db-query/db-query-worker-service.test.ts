@@ -96,7 +96,7 @@ describe('DbQueryWorkerService', () => {
     const first = service.query({
       scopeType: 'global',
       scopeValue: '',
-      sql: 'SELECT * FROM rooms',
+      sql: 'SELECT * FROM spaces',
     });
     const second = service.query({
       scopeType: 'global',
@@ -301,15 +301,15 @@ describe.skipIf(!isBun)('DbQueryWorkerService real worker', () => {
     tmpDirs.push(dir);
     const path = join(dir, 'test.db');
     const db = new BunDatabase(path);
-    db.exec('CREATE TABLE rooms (id TEXT PRIMARY KEY, name TEXT, config TEXT)');
+    db.exec('CREATE TABLE spaces (id TEXT PRIMARY KEY, name TEXT, config TEXT)');
     db.exec(
-      'CREATE TABLE tasks (id TEXT PRIMARY KEY, room_id TEXT, title TEXT, created_at INTEGER)'
+      'CREATE TABLE space_tasks (id TEXT PRIMARY KEY, space_id TEXT, title TEXT, created_at INTEGER)'
     );
-    db.exec("INSERT INTO rooms VALUES ('room-1', 'Room 1', '{\"m\":\"o\"}')");
-    db.exec("INSERT INTO rooms VALUES ('room-2', 'Room 2', NULL)");
-    db.exec("INSERT INTO tasks VALUES ('task-1', 'room-1', 'Task 1', 1000)");
-    db.exec("INSERT INTO tasks VALUES ('task-2', 'room-1', 'Task 2', 2000)");
-    db.exec("INSERT INTO tasks VALUES ('task-3', 'room-2', 'Task 3', 3000)");
+    db.exec("INSERT INTO spaces VALUES ('space-1', 'Space 1', '{\"m\":\"o\"}')");
+    db.exec("INSERT INTO spaces VALUES ('space-2', 'Space 2', NULL)");
+    db.exec("INSERT INTO space_tasks VALUES ('task-1', 'space-1', 'Task 1', 1000)");
+    db.exec("INSERT INTO space_tasks VALUES ('task-2', 'space-1', 'Task 2', 2000)");
+    db.exec("INSERT INTO space_tasks VALUES ('task-3', 'space-2', 'Task 3', 3000)");
     db.close();
     return path;
   }
@@ -320,18 +320,18 @@ describe.skipIf(!isBun)('DbQueryWorkerService real worker', () => {
     const globalResult = await service.query({
       scopeType: 'global',
       scopeValue: '',
-      sql: 'SELECT * FROM rooms',
+      sql: 'SELECT * FROM spaces',
     });
     expect(globalResult.rowCount).toBe(2);
     expect(globalResult.rows.every((row) => !('config' in row))).toBe(true);
 
     const scopedResult = await service.query({
-      scopeType: 'room',
-      scopeValue: 'room-1',
-      sql: 'SELECT * FROM tasks',
+      scopeType: 'space',
+      scopeValue: 'space-1',
+      sql: 'SELECT * FROM space_tasks',
     });
     expect(scopedResult.rowCount).toBe(2);
-    expect(scopedResult.rows.every((row) => row.room_id === 'room-1')).toBe(true);
+    expect(scopedResult.rows.every((row) => row.space_id === 'space-1')).toBe(true);
 
     service.close();
   });
@@ -340,7 +340,7 @@ describe.skipIf(!isBun)('DbQueryWorkerService real worker', () => {
     const service = new DbQueryWorkerService(createQueryDb(), 5_000);
 
     await expect(
-      service.query({ scopeType: 'global', scopeValue: '', sql: 'DELETE FROM rooms' })
+      service.query({ scopeType: 'global', scopeValue: '', sql: 'DELETE FROM spaces' })
     ).rejects.toThrow('Only SELECT');
 
     service.close();
@@ -372,7 +372,7 @@ describe.skipIf(!isBun)('DbQueryWorkerService real worker', () => {
     const fast = await service.query({
       scopeType: 'global',
       scopeValue: '',
-      sql: 'SELECT * FROM rooms',
+      sql: 'SELECT * FROM spaces',
     });
     expect(fast.rowCount).toBe(2);
 

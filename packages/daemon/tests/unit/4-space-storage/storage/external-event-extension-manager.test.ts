@@ -1,6 +1,6 @@
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
+import type { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
 import { MessageHub } from '@hyperneo/shared/message-hub/message-hub.ts';
 import { ExternalEventExtensionManager } from '../../../../src/lib/external-events/extension-manager';
 import type {
@@ -8,6 +8,7 @@ import type {
   ExternalEventExtensionContext,
   RpcExternalEventExtension,
 } from '../../../../src/lib/external-events/types';
+import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 
 let db: Database;
 let config: ExternalEventExtensionConfigStore;
@@ -16,7 +17,7 @@ let manager: ExternalEventExtensionManager;
 
 beforeEach(() => {
   db = new Database(':memory:');
-  config = new ExternalEventExtensionConfigStore(db);
+  config = createExternalEventConfigStore(db);
   context = {
     publisher: { publish: async () => ({ outcome: 'published', eventId: 'evt-1' }) },
     config,

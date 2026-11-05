@@ -1,0 +1,57 @@
+70 |   const protectedRows = history(); await cycle(base);
+71 |   const facts = ledger.list(); assert.equal(facts.length, 2);
+72 |   const beforeHealth=ledger.health.read(repos[0]);
+73 |   sql().exec("CREATE TRIGGER reject_ledger_observation BEFORE INSERT ON pack_coding_pr_ledger WHEN NEW.repo='synthetic/first' BEGIN SELECT RAISE(ABORT,'synthetic observation rejection'); END");
+74 |   await assert.rejects(cycle(base+50),/synthetic observation rejection/);
+75 |   assert.deepEqual(ledger.health.read(repos[0]),beforeHealth,'Failed PR persistence must not report completed coverage');
+              ^
+AssertionError: Failed PR persistence must not report completed coverage
++ actual - expected
+
+  {
++   attemptedAt: 1793127240065,
++   completeAt: 1793127240065,
++   cycleAt: 1793127240065,
+-   attemptedAt: 1793127240015,
+-   completeAt: 1793127240015,
+-   cycleAt: 1793127240015,
+    firstMissAt: null,
+    incident: null,
+    lastError: null,
+    lastErrorAt: null,
+    misses: 0,
+
+ generatedMessage: false,
+     actual: {
+  lastError: null,
+  lastErrorAt: null,
+  cycleAt: 1793127240065,
+  attemptedAt: 1793127240065,
+  completeAt: 1793127240065,
+  misses: 0,
+  firstMissAt: null,
+  reason: "complete",
+  nextRetryAt: null,
+  incident: null,
+  notices: [],
+},
+   expected: {
+  lastError: null,
+  lastErrorAt: null,
+  cycleAt: 1793127240015,
+  attemptedAt: 1793127240015,
+  completeAt: 1793127240015,
+  misses: 0,
+  firstMissAt: null,
+  reason: "complete",
+  nextRetryAt: null,
+  incident: null,
+  notices: [],
+},
+   operator: "deepStrictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /Users/lsm/.codex/worktrees/lane-a-ledger-observation/neokai/.claude/skills/verify/lane-a-ledger-observation-db.ts:75:10
+
+Bun v1.4.3 (macOS arm64)

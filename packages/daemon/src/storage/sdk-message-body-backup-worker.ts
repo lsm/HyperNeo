@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
   existsSync,
-  mkdirSync,
   renameSync,
   rmSync,
   openSync,
@@ -34,7 +33,6 @@ worker.onmessage = ({ data }) => {
       worker.postMessage({ id: data.id });
       return;
     }
-    mkdirSync(dirname(data.backupPath), { recursive: true, mode: 0o700 });
     verifying = data.mustExist === true;
     if (!existsSync(data.backupPath)) {
       if (data.mustExist)

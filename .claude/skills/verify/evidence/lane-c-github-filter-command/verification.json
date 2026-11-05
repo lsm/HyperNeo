@@ -1,0 +1,36 @@
+{
+  "redCommit": "c90d1b743ad59bcec09f48a7e20c4fa4994cc787",
+  "before": {
+    "unitFailures": 7,
+    "nativeFailure": "Unknown write DB op: github.space.filter.write",
+    "publicBaselineAndSixGuardProbesPassed": true
+  },
+  "after": {
+    "tests": 22,
+    "files": 6,
+    "includes": "new command, previous filter extraction and existing Space-enabled command, with native parents",
+    "strictTS6": true,
+    "rootCheck": "bun run check passed",
+    "native": "Bun1.4.3/Deno2.9.4 native worker command + actual listConfig/health RPC; exact committed projection, unchanged enabled/polling intent/watched rows, creation and supplied times, atomic rollback on snapshot/cursor/FK/key failure, held writer old read/health responsiveness and delayed receipt, admission/actual committed-reply loss once/no fallback or replay"
+  },
+  "scope": {
+    "productionAndRegistryLines": 44,
+    "registryLines": 2,
+    "smokeLines": 1,
+    "completeOwnedDataGraphLines": 175,
+    "dependencySubtreeSha256": "ed36d6cbe8b590b73250df5c01ca83a1432c107dafc1bd47fae9eed00b1d0b96"
+  },
+  "netPrepare": 0,
+  "netRun": 0,
+  "netTransaction": 0,
+  "baselineIncrease": false,
+  "limits": [
+    "Construction only: public filter mutation remains unchanged/main-side; native worker command is new surface verified through public reader",
+    "Five complete merged helper modules plus42-line command counted; gateway/SQLite internals are existing stable infrastructure, exact files/transaction contract pinned",
+    "Public authorization/polling/notification/plugin/startup transitive closure not audited or activated",
+    "Target main guards cover source UPSERT/watched enabled UPDATE/config UPSERT; general reader SELECTs remain separate",
+    "First measured command uses a worker warmed during synthetic setup; no cold-start or250ms held-writer SLA pass claim",
+    "Local Bun1.4.3; pinned1.4.2 and complete Deno smoke CI-owned",
+    "Deployment smoke Neo-owned; no live daemon/8399/credentials/core edits beyond own2-line registry and1 smoke registration"
+  ]
+}

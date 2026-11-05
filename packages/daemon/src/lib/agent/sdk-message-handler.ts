@@ -241,16 +241,7 @@ export class SDKMessageHandler {
     this.repeatedToolErrorGuardrail = new RepeatedToolErrorGuardrail({
       getTaskForSession: () => {
         try {
-          const repo = this.ctx.db?.getSpaceTaskRepo();
-          if (!repo) return null;
-
-          const task = repo.getTaskBySessionId(this.ctx.session.id);
-          if (task) return task;
-
-          const taskId = this.ctx.session.context?.taskId;
-          if (taskId) return repo.getTask(taskId);
-
-          return null;
+          return this.ctx.db?.spaceSessions?.taskForSession(this.ctx.session) ?? null;
         } catch (err) {
           this.logger.warn('Failed to resolve task for repeated-tool-error guardrail:', err);
           return null;
@@ -258,14 +249,7 @@ export class SDKMessageHandler {
       },
       emitEvidence: (params) => {
         try {
-          const repo = this.ctx.db?.getSpaceTaskRepo();
-          if (!repo) return undefined;
-
-          const task =
-            repo.getTaskBySessionId(this.ctx.session.id) ??
-            (this.ctx.session.context?.taskId
-              ? repo.getTask(this.ctx.session.context.taskId)
-              : null);
+          const task = this.ctx.db?.spaceSessions?.taskForSession(this.ctx.session);
           if (!task) return undefined;
 
           return this.ctx.db?.evolution.createEvidence({

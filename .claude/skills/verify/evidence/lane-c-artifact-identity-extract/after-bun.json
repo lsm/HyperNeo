@@ -1,0 +1,65 @@
+{
+  "mainThreadMovementClaim": false,
+  "phase": "verbatim extraction; legacy RPC and helper still execute on their supplied connection",
+  "firstRpcMs": 4.532708000000071,
+  "realRpcRefusalAndRetainedIdentity": true,
+  "legacyMainExecutionPreserved": true,
+  "extractedHelperRetainsRpcIdentity": true,
+  "sqlAndBoundUuidShapeIdentical": true,
+  "retainedSingletonStable": true,
+  "callerOwnedRollbackPreserved": true,
+  "outsideTransactionPartialInsertPreserved": true,
+  "insertAndReceiptErrorsPreserved": true,
+  "publicRpcAfterHelperStillUnchanged": true,
+  "healthMs": 0.2841670000000249,
+  "rssBytes": 206193768,
+  "walBytes": 1190712,
+  "pass": true,
+  "mainStatementTrace": [
+    {
+      "kind": "insert",
+      "bindCount": 1
+    },
+    {
+      "kind": "select",
+      "bindCount": 0
+    },
+    {
+      "kind": "insert",
+      "bindCount": 1
+    },
+    {
+      "kind": "select",
+      "bindCount": 0
+    },
+    {
+      "kind": "insert",
+      "bindCount": 1
+    },
+    {
+      "kind": "select",
+      "bindCount": 0
+    },
+    {
+      "kind": "insert",
+      "bindCount": 1
+    },
+    {
+      "kind": "select",
+      "bindCount": 0
+    }
+  ],
+  "sql": [
+    {
+      "bytes": 58,
+      "sha256": "8cb8d4d56c4500e7e9878d1f19030340785f48efecfdbfe8aa53c742417bdb55"
+    },
+    {
+      "bytes": 44,
+      "sha256": "d2a23547820de87d09904aab32e258c6f615bc2e78cc1d99beae38bb3cdddc0d"
+    }
+  ],
+  "runtime": "bun",
+  "runtimeVersion": "1.4.3",
+  "temporaryDaemonDataRemoved": true
+}

@@ -1,3 +1,5 @@
+import { withWorkerProvenance } from './worker-provenance.ts';
+import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
 import { basename, join } from 'node:path';
 import { CODEX_WORKER_INSTRUCTIONS } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -69,7 +71,7 @@ import {
   workInput,
 } from './work-messages.ts';
 import { reject } from './work-operations.ts';
-import { type GitCheckout, planWorkPlacement } from './work-placement.ts';
+import { type GitCheckout, prepareWorkerFolder, cleanupOwnedWorktree } from './work-placement.ts';
 
 const THREADS_PER_PLACE = 20;
 const RECENT_MS = 2 * 60_000;
@@ -144,6 +146,8 @@ export interface CodexThreadDetail {
 }
 
 export interface CodexTurnState {
+  model?: string;
+  effort?: string;
   turnEnds?: WorkDetail['turnEnds'];
   marker: string | null;
   outcome?: 'asked' | 'errored';
@@ -258,7 +262,8 @@ export function buildCodexGroups(
             {
               ref: { adapter: 'codex-desktop', id: thread.id },
               title: thread.title,
-              place: { ...linked, folder: thread.folder },
+              place: linked,
+              ...workExecutionLocation(thread.folder, deps.machine),
               status: codexStatus(thread, now),
               lastActivityAt: thread.updatedAt,
               link: `codex://threads/${thread.id}`,
@@ -454,7 +459,8 @@ export function codexRecentInputs(lines: readonly string[], since?: number): Wor
         text,
         !text.includes(WORK_AGENT_INPUT) &&
           !text.includes('Neo routed this to you:') &&
-          !text.startsWith('# AGENTS.md instructions')
+          !text.startsWith('# AGENTS.md instructions'),
+        codexUserInput(entry)?.id
       );
       return input ? [input] : [];
     }),
@@ -544,6 +550,24 @@ export function requireOpenCodexThread(detail: CodexThreadDetail): Gate<CodexThr
     : { value: detail };
 }
 
+function recordedCodexConfiguration(
+  lines: readonly string[]
+): Pick<CodexTurnState, 'model' | 'effort'> {
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const entry = parseLine(lines[index]);
+    if (entry?.type !== 'turn_context') continue;
+    const model = entry.payload?.model;
+    const effort = entry.payload?.effort;
+    return {
+      ...(typeof model === 'string' && model.trim() ? { model: model.trim() } : {}),
+      ...(typeof effort === 'string' && effort.trim()
+        ? { effort: workStartConfiguration.normalize(effort) }
+        : {}),
+    };
+  }
+  return {};
+}
+
 export async function readCodexTurn(
   detail: CodexThreadDetail,
   since?: number,
@@ -586,6 +610,7 @@ export async function readCodexTurn(
     });
     return {
       ...codexTurnState(lines),
+      ...recordedCodexConfiguration(lines),
       ...(turnEnds.length ? { turnEnds } : {}),
       inputs: codexRecentInputs(lines, since),
       ...(since !== undefined ? { exchange: codexExchange(lines, since, truncated) } : {}),
@@ -612,6 +637,8 @@ export async function describeCodexThread(
       place: { machine: deps.machine, folder, name: root?.name || basename(folder) || folder },
       ...workExecutionLocation(thread.folder, deps.machine),
       status: turnStatus(thread, state, deps.now()),
+      ...(state.model ? { model: state.model } : {}),
+      ...(state.effort ? { effort: state.effort } : {}),
       ...(state.turnEnds?.length ? { turnEnds: state.turnEnds } : {}),
       lastActivityAt: thread.updatedAt,
       link: `codex://threads/${thread.id}`,
@@ -1149,38 +1176,12 @@ interface CodexWorkFolder {
   release: () => Promise<void>;
 }
 
-async function runGit(args: string[], repo: string, deps: CodexDesktopAdapterDeps) {
-  const proc = deps.spawn(['git', ...args], { cwd: repo, stdout: 'ignore', stderr: 'pipe' });
-  const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
-  return { code, stderr: stderr.trim() };
-}
-
 export async function prepareCodexWorkFolder(
   folder: string,
   deps: CodexDesktopAdapterDeps,
   inPlace = false
 ): Promise<Result<CodexWorkFolder>> {
-  const placement = planWorkPlacement(
-    inPlace ? null : await deps.gitCheckout(folder).catch(() => null)
-  );
-  if (placement.kind === 'in_place') {
-    return { ok: true, value: { cwd: folder, release: async () => {} } };
-  }
-  const { repo } = placement;
-  const worktree = join(deps.worktreesDir, deps.newId().slice(0, 8), basename(repo));
-  const added = await runGit(['worktree', 'add', '--detach', worktree, 'HEAD'], repo, deps);
-  if (added.code !== 0) {
-    return reject('not_delivered', `Could not create a worktree in ${repo}: ${added.stderr}`);
-  }
-  return {
-    ok: true,
-    value: {
-      cwd: worktree,
-      release: async () => {
-        await runGit(['worktree', 'remove', '--force', worktree], repo, deps).catch(() => {});
-      },
-    },
-  };
+  return prepareWorkerFolder(folder, deps, inPlace);
 }
 
 export async function withCodexAppServer<Value>(
@@ -1244,6 +1245,7 @@ export async function startCodexThread(
         : ((await deps.gitCheckout(folder))?.repo ?? folder);
       const projectId = await deps.prepareDesktopProject(projectFolder);
       const config = {
+        shell_environment_policy: { set: workerWorkEnvironment(workFolder.cwd) },
         ...sandbox?.config,
         ...(configuration.value.effort
           ? { model_reasoning_effort: configuration.value.effort }
@@ -1251,10 +1253,11 @@ export async function startCodexThread(
       };
       const started = await server.call('thread/start', {
         projectId,
+        developerInstructions: workerWorkLocationsBrief(workFolder.cwd),
         cwd: workFolder.cwd,
         approvalPolicy: 'never',
         ...(sandbox ? { permissions: sandbox.permissions } : { sandbox: 'danger-full-access' }),
-        ...(sandbox || configuration.value.effort ? { config } : {}),
+        config,
         ...(configuration.value.model ? { model: configuration.value.model } : {}),
       });
       const createdThreadId = startedThreadId(started);
@@ -1282,7 +1285,14 @@ export async function startCodexThread(
       }
       await server.call('thread/name/set', { threadId, name: request.title });
       await server.close();
-      const message = `${request.message}\n${CODEX_WORKER_INSTRUCTIONS}`;
+      const brief = request.provenance
+        ? withWorkerProvenance(request.message, {
+            model: model ?? null,
+            effort: effort ?? null,
+            harness: 'codex-desktop',
+          })
+        : request.message;
+      const message = `${brief}\n${CODEX_WORKER_INSTRUCTIONS}`;
       await deps.startDesktopTurn(threadId, {
         threadId,
         approvalPolicy: 'never',
@@ -1398,6 +1408,10 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
         deps,
         query.text && !query.spaceId && deps.searchChats ? await deps.searchChats(query.text) : []
       ),
+    resolveStartConfiguration: (request) =>
+      withCodexAppServer({ appServer: deps.bootstrapServer }, (server) =>
+        selectCodexConfiguration({ model: request.model, effort: request.effort }, server)
+      ),
     start: (request) => runCodexStart(request, deps),
     rename: (ref, title) => runCodexRename(ref, title, deps),
     send: (ref, message, context) =>
@@ -1431,7 +1445,8 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
         const refused = admit();
         if (refused) return refused;
         await releaseWorkerSandbox(found.value.thread.folder);
-        return { ok: true, value: { archived: false } };
+        const worktree = await cleanupOwnedWorktree(found.value.thread.folder, [deps.worktreesDir]);
+        return { ok: true, value: { archived: false, ...(worktree ? { worktree } : {}) } };
       }
       return withCodexAppServer(deps, async (server) => {
         const read = z
@@ -1450,7 +1465,8 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
         if (refused) return refused;
         await releaseWorkerSandbox(found.value.thread.folder);
         await server.call('thread/archive', { threadId: ref.id });
-        return { ok: true, value: { archived: true } };
+        const worktree = await cleanupOwnedWorktree(found.value.thread.folder, [deps.worktreesDir]);
+        return { ok: true, value: { archived: true, ...(worktree ? { worktree } : {}) } };
       });
     },
   };

@@ -38,7 +38,19 @@ export class GitHubPollingService {
       baseUrl: config.baseUrl ?? DEFAULT_BASE_URL,
       userAgent: config.userAgent ?? DEFAULT_USER_AGENT,
     };
-    this.onEvent = onEvent;
+    this.onEvent = onEvent
+      ? async (event) => {
+          try {
+            await onEvent.call(this, event);
+          } catch (error) {
+            log.error('Failed to deliver polled event', {
+              eventId: event.id,
+              eventType: event.eventType,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+      : undefined;
     this.collectPollPage = config.collectPollPage;
   }
 

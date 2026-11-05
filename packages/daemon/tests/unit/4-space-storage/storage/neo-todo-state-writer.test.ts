@@ -29,7 +29,14 @@ function fixture(state: NeoTodo['state'] = 'doing', humanBlocked = false, askClo
     store.addTodo(
       id,
       'ask',
-      { title: id, doneWhen: 'Observed', check: null, instruction: 'Continue work', named: null },
+      {
+        approvedAt: 1,
+        title: id,
+        doneWhen: 'Observed',
+        check: null,
+        instruction: 'Continue work',
+        named: null,
+      },
       1
     );
   db.prepare(
@@ -167,7 +174,9 @@ test.each(cases)(
         legacy.store.getQuestion('stale-start')
       );
       expect(writer.store.getAsk('ask')).toEqual(legacy.store.getAsk('ask'));
-      expect(writer.store.getTodo('next')?.state).toBe('todo');
+      expect(writer.store.getTodo('next')?.state).toBe(
+        input.state === 'removed' && !input.askClosed ? 'blocked' : 'todo'
+      );
     } finally {
       await legacy.close();
       await writer.close();

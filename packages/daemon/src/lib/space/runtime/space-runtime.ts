@@ -102,7 +102,7 @@ import type {
 } from '../../internal-event-bus.ts';
 import { Logger } from '../../logger.ts';
 import type { SpaceActorRegistryAdapter } from '../../messaging/actor-registry.ts';
-import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format.ts';
+import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../../workflows/agent-slot-limits.ts';
 import { unifiedAgentRecordExists } from '../../agents/worker-long-horizon-mapper.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import {
@@ -943,11 +943,11 @@ export class SpaceRuntime {
     }
     this.unsubscribeSdkToolUseCreated = this.config.internalEventBus.subscribe(
       'sdk.toolUse.created',
-      (payload) => {
+      async (payload) => {
         if (typeof payload.toolUseId !== 'string' || typeof payload.sessionId !== 'string') {
           return;
         }
-        this.toolContinuationRepo.recordToolUse({
+        await this.toolContinuationRepo.write('recordToolUse', {
           toolUseId: payload.toolUseId,
           sessionId: payload.sessionId,
           ttlMs: DEFAULT_TOOL_USE_ACTIVE_TTL_MS,
@@ -957,9 +957,9 @@ export class SpaceRuntime {
     );
     this.unsubscribeSdkToolUseConsumed = this.config.internalEventBus.subscribe(
       'sdk.toolUse.consumed',
-      (payload) => {
+      async (payload) => {
         if (typeof payload.toolUseId !== 'string') return;
-        this.toolContinuationRepo.markConsumed(payload.toolUseId);
+        await this.toolContinuationRepo.write('markConsumed', payload.toolUseId);
       },
       { subscriberName: 'SpaceRuntime.toolUseRecovery' }
     );
@@ -4091,7 +4091,7 @@ export class SpaceRuntime {
     let rehydratedGateSettled = false;
     try {
       if (hasSqlExec(this.config.db)) {
-        this.toolContinuationRepo.markExpired();
+        await this.toolContinuationRepo.write('markExpired');
       }
 
       const justRehydrated = !this.rehydrated;
@@ -8072,7 +8072,8 @@ export class SpaceRuntime {
         queuedContinuations: pendingInbox.length,
         updatedAt: Date.now(),
       };
-      this.toolContinuationRepo.markInboxReboundForExecution(
+      await this.toolContinuationRepo.write(
+        'markInboxReboundForExecution',
         execution.id,
         'queued orphaned tool_result rebound by restarting workflow node execution'
       );

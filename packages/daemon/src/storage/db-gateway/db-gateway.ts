@@ -149,6 +149,7 @@ class WorkerLane {
 }
 
 export class DbGateway {
+  private readonly closing = new AbortController();
   private readonly lanes: Record<Lane, WorkerLane>;
   onChanges: (changes: TableChange[]) => void = () => {};
   sdkBodyWriteMode?: () => boolean;
@@ -218,7 +219,12 @@ export class DbGateway {
     return this.run(op, { method, args }) as never;
   }
 
+  get closeSignal(): AbortSignal {
+    return this.closing.signal;
+  }
+
   close(): Promise<void> {
+    this.closing.abort();
     return Promise.all([this.lanes.read.close(), this.lanes.write.close()]).then(() => {});
   }
 

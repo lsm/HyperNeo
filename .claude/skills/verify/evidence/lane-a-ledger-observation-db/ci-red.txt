@@ -1,0 +1,50 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/neo-ledger-health-wire.test.ts:
+67 |         "CREATE TRIGGER reject_poll_rows BEFORE INSERT ON pack_coding_pr_ledger BEGIN SELECT RAISE(ABORT,'synthetic observation rejection'); END"
+68 |       );
+69 |       await expect(
+70 |         reconcileCodingPrLedger(ledger, [repos[0]], async () => observed, 2)
+71 |       ).rejects.toThrow('synthetic observation rejection');
+72 |       expect(ledger.health.read(repos[0])).toEqual(before);
+                                                ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "attemptedAt": 1,
+-   "completeAt": 1,
+-   "cycleAt": 1,
++   "attemptedAt": 2,
++   "completeAt": 2,
++   "cycleAt": 2,
+    "firstMissAt": null,
+    "incident": null,
+    "lastError": null,
+    "lastErrorAt": null,
+    "misses": 0,
+    "nextRetryAt": null,
+    "notices": [],
+    "reason": "complete",
+  }
+
+- Expected  - 3
++ Received  + 3
+
+      at <anonymous> (/Users/lsm/.codex/worktrees/lane-a-ledger-observation/neokai/packages/daemon/tests/unit/1-core/operations/neo-ledger-health-wire.test.ts:72:44)
+      at async using (/Users/lsm/.codex/worktrees/lane-a-ledger-observation/neokai/packages/daemon/tests/unit/1-core/operations/neo-ledger-health-wire.test.ts:29:11)
+(fail) ledger reconciliation health > failed PR persistence cannot advance completed coverage [315.78ms]
+(pass) ledger reconciliation health > records empty coverage without inventing PR rows [270.35ms]
+(pass) ledger reconciliation health > records partial coverage without inventing PR rows [270.90ms]
+(pass) ledger reconciliation health > records failed coverage without inventing PR rows [273.55ms]
+(pass) ledger reconciliation health > records unreadable coverage without inventing PR rows [266.10ms]
+(pass) ledger reconciliation health > stale approved-pending snapshots retain acquisition diagnostics and raise one notice through cooldown [272.90ms]
+(pass) ledger reconciliation health > an aliased target exposes canonical pending diagnostics and delivers one durable notice [266.69ms]
+(pass) ledger reconciliation health > unattributed low-budget summaries do not starve targets across reopening [285.47ms]
+(pass) ledger reconciliation health > unscoped retry evidence records actual attempts without suppressing a fresh reader [277.81ms]
+(pass) ledger reconciliation health > summary resets without response attribution never invent shared cooldowns [260.69ms]
+(pass) ledger reconciliation health > partial coverage without credential attribution cannot halt unrelated targets [258.63ms]
+
+ 10 pass
+ 1 fail
+ 39 expect() calls
+Ran 11 tests across 1 file. [3.13s]

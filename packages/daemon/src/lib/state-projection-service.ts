@@ -1,6 +1,7 @@
+import type { ClientEventData } from './operations/client-event-schemas.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
+import { homedir } from 'node:os';
 import type { MessageHub, AgentProcessingState, IClientEventGateway } from '@hyperneo/shared';
-import { capSdkMessage } from './rpc-handlers/message-output-cap.ts';
 import type { SessionManager } from './session-manager.ts';
 import type { AuthManager } from './auth-manager.ts';
 import type { SettingsManager } from './settings-manager.ts';
@@ -22,7 +23,7 @@ import type {
 } from '@hyperneo/shared';
 import type { Session } from '@hyperneo/shared';
 import { ClientEventGateway, STATE_CHANNELS } from '@hyperneo/shared';
-import { SDKMessageRepository } from '../storage/repositories/sdk-message-repository.ts';
+import { historySnapshotReads } from '../storage/repositories/sdk-history-snapshot-read.ts';
 import { healthSessionCountReads } from '../storage/repositories/health-session-count-read.ts';
 import { sessionProjectionReads } from '../storage/repositories/session-projection-read.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus.ts';
@@ -297,6 +298,7 @@ export class StateProjectionService {
       maxSessions: this.config.maxSessions,
       storageLocation: this.config.dbPath,
       workspaceRoot: this.config.workspaceRoot,
+      homeDirectory: homedir(),
 
       auth: authStatus,
 
@@ -324,7 +326,7 @@ export class StateProjectionService {
     };
   }
 
-  private async getSettingsState(): Promise<SettingsState> {
+  private async getSettingsState(): Promise<SettingsState & ClientEventData<'state.settings'>> {
     const settings = sanitizeGlobalSettings(
       this.settingsManager.getGlobalSettings(),
       this.credentialManager
@@ -349,7 +351,9 @@ export class StateProjectionService {
     };
   }
 
-  private async getSessionState(sessionId: string): Promise<SessionState> {
+  private async getSessionState(
+    sessionId: string
+  ): Promise<SessionState & ClientEventData<'state.session'>> {
     const agentSession = await this.sessionManager.getSessionForControl(sessionId);
     if (!agentSession) {
       if (sessionId.startsWith('room:') || sessionId.startsWith('conv:')) {
@@ -393,29 +397,16 @@ export class StateProjectionService {
   }
 
   private async getSDKMessagesState(sessionId: string, since?: number): Promise<SDKMessagesState> {
-    await this.db?.waitForSdkMessageColumns(sessionId, false);
-    const agentSession = await this.sessionManager.getSessionForControl(sessionId);
-    if (!agentSession) {
-      if ((sessionId.startsWith('room:') || sessionId.startsWith('conv:')) && this.db) {
-        const sdkMessageRepo = new SDKMessageRepository(this.db.getDatabase());
-        const { messages: sdkMessages, hasMore } = sdkMessageRepo.getSDKMessages(
-          sessionId,
-          100,
-          undefined,
-          since
-        );
-        return { sdkMessages: sdkMessages.map(capSdkMessage), hasMore, timestamp: Date.now() };
-      }
-      throw new Error('Session not found');
-    }
-
-    const { messages: sdkMessages, hasMore } = agentSession.getSDKMessages(100, undefined, since);
-
-    return {
-      sdkMessages: sdkMessages.map(capSdkMessage),
-      hasMore,
-      timestamp: Date.now(),
-    };
+    const store = this.db ?? this.sessionManager.getDatabase();
+    await store.waitForSdkMessageColumns(sessionId, false);
+    const page = await store.gateway.call(
+      historySnapshotReads,
+      'read',
+      sessionId,
+      since,
+      !((sessionId.startsWith('room:') || sessionId.startsWith('conv:')) && this.db)
+    );
+    return { ...page, timestamp: Date.now() };
   }
 
   async broadcastSystemChange(): Promise<void> {

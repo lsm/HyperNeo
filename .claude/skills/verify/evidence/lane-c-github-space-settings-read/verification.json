@@ -1,0 +1,30 @@
+{
+  "redCommit": "bdcaac32893df5950291d7ef900dcbe1a3fb116d",
+  "before": {
+    "legacyPassed": 1,
+    "missingHelperFailed": 3,
+    "nativePublicRpcPassedBeforeMissingHelperFailure": true
+  },
+  "focused": {
+    "files": 4,
+    "tests": 11,
+    "passed": true
+  },
+  "strictTypeScript6": {
+    "passed": true,
+    "scope": "Modified repository, new helpers and both new tests plus imported dependencies"
+  },
+  "native": "Bun 1.4.3 and Deno 2.9.4 real Space enable/disable/listWatchedRepos/listConfig preserve source/watched/snapshot settings and times; constructor-free query-only scratch reads preserve defaults, explicit flags and noncanonical/null flags",
+  "rootCheck": {
+    "command": "bun run check",
+    "exitCode": 0
+  },
+  "limits": [
+    "Public reads/writes remain on main, four target statement runs for two RPCs",
+    "No schema/backfill/constructor or transaction changes",
+    "Full transitive GitHub/plugin/startup/Space closure not audited",
+    "Prior native fixture imported unchanged for public RPC characterization; its daemon is closed before scratch read proof",
+    "Pinned Bun 1.4.2 CI-owned; local Bun 1.4.3",
+    "Deployment smoke Neo-owned; no live daemon touched"
+  ]
+}

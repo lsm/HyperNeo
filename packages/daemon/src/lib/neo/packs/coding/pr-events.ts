@@ -7,7 +7,7 @@ import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { callCodingBranchDb } from './branch-facts-db.ts';
 import { codingUnownedWrites } from './unowned-db.ts';
 import { CodingPrLedgerRepository, type CodingPrTransition } from './pr-ledger.ts';
-import { CODING_MANUAL_MERGE_NEXT_STEP, type CodingSweepDeps } from './pr-sweep.ts';
+import { CODING_MANUAL_MERGE_NEXT_STEP, codingPrUrl, type CodingSweepDeps } from './pr-sweep.ts';
 import {
   codingUnownedPrKey,
   planCodingUnownedNotice,
@@ -159,7 +159,7 @@ export class CodingPrEventRepository {
       .run(key);
   }
 
-  route(row: Pick<CodingPrTransition, 'repo' | 'number'>): { owner: WorkRef | null } {
+  route(row: Pick<CodingPrTransition, 'repo' | 'number'>) {
     const found = this.db
       .prepare(
         `SELECT owner
@@ -167,6 +167,7 @@ export class CodingPrEventRepository {
       )
       .get(row.repo, row.number) as { owner: string | null } | null;
     return {
+      mergeBy: new CodingPrLedgerRepository(this.db).policy(row.repo).mergeBy,
       owner:
         codingRepoWatched(this.db, row.repo) && found?.owner
           ? (JSON.parse(found.owner) as WorkRef)
@@ -188,9 +189,17 @@ export async function deliverCodingPrEvents(
     }
     for (const row of await repo.pendingEventsLater()) {
       const event = planCodingPrEvent(row);
-      const owner = (await repo.routeLater(row)).owner;
+      const { owner, mergeBy } = await repo.routeLater(row);
+      if (row.state === 'approved_green' && mergeBy === 'daemon') {
+        if (owner) await repo.acceptEvent(row, owner);
+        continue;
+      }
       if (!owner) continue;
-      const told = event ? await deps.tell(owner, event.key, event.text).catch(() => false) : true;
+      const told = event
+        ? await deps
+            .tell(owner, event.key, event.text, codingPrUrl(deps.host, row))
+            .catch(() => false)
+        : true;
       if (told) await repo.acceptEvent(row, owner);
       if (!event) continue;
       log.warn(

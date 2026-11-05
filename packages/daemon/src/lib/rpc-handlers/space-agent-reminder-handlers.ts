@@ -1,6 +1,9 @@
 import type { MessageHub } from '@hyperneo/shared';
 import type { SpaceAgentReminderRepository } from '../../storage/repositories/space-agent-reminder-repository.ts';
-import { getNextRunAt, isValidCronExpression } from '../schedule/cron-utils.ts';
+import {
+  prepareAgentReminderCreateInput,
+  type AgentReminderCreateInput,
+} from '../agents/reminder-create-input.ts';
 
 const METHOD_PREFIX = 'spaceAgentReminder';
 
@@ -26,59 +29,15 @@ export function setupSpaceAgentReminderHandlers(
   });
 
   messageHub.onRequest(method('create'), async (data) => {
-    const params = data as {
-      spaceId: string;
-      agentId: string;
-      title: string;
-      body?: string;
-      triggerType: 'at' | 'cron';
-      runAt?: number | null;
-      cronExpression?: string | null;
-      timezone?: string;
-    };
-    if (!params.spaceId) throw new Error('spaceId is required');
-    if (!params.agentId) throw new Error('agentId is required');
-    if (!params.title) throw new Error('title is required');
-    if (!params.triggerType) throw new Error('triggerType is required');
-    let nextRunAt: number | null = null;
-    if (params.triggerType === 'at') {
-      if (typeof params.runAt !== 'number') {
-        throw new Error('runAt is required for triggerType "at"');
-      }
-      nextRunAt = params.runAt;
-    } else {
-      const expression = params.cronExpression;
-      if (!expression) throw new Error('cronExpression is required for triggerType "cron"');
-      if (!isValidCronExpression(expression)) {
-        throw new Error(`Invalid cron expression: ${expression}`);
-      }
-      const timezone = params.timezone ?? 'UTC';
-      const firstRunAt = getNextRunAt(expression, timezone);
-      if (firstRunAt === null) {
-        throw new Error(`Invalid timezone or cron expression for reminder: ${timezone}`);
-      }
-      nextRunAt = firstRunAt;
-    }
-    const reminder = deps.reminders.createReminder({
-      spaceId: params.spaceId,
-      agentId: params.agentId,
-      title: params.title,
-      body: params.body,
-      triggerType: params.triggerType,
-      runAt: params.runAt,
-      cronExpression: params.cronExpression,
-      timezone: params.timezone,
-      nextRunAt,
-    });
+    const params = prepareAgentReminderCreateInput(data as AgentReminderCreateInput);
+    const reminder = deps.reminders.createReminder(params);
     return { reminder };
   });
 
   messageHub.onRequest(method('delete'), async (data) => {
     const params = data as { reminderId: string };
     if (!params.reminderId) throw new Error('reminderId is required');
-    const existing = deps.reminders.getReminder(params.reminderId);
-    if (!existing) throw new Error(`Reminder not found: ${params.reminderId}`);
-    deps.reminders.deleteReminder(params.reminderId);
+    await deps.reminders.deleteReminderAsync(params.reminderId);
     return { success: true };
   });
 }

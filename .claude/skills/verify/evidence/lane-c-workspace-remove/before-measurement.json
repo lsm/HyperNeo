@@ -1,0 +1,54 @@
+{
+  "base": "ae9cd18b740409a05b81735d13e3bd90ea40547e",
+  "units": [
+    {
+      "file": "packages/daemon/src/storage/repositories/workspace-history-repository.ts",
+      "name": "WorkspaceHistoryRepository.constructor",
+      "start": 11,
+      "end": 11,
+      "lines": 1,
+      "sha256": "37ae8ea2954cf392605c195037a07d4abd1b4658eb5c923aaa06862a17a0101d"
+    },
+    {
+      "file": "packages/daemon/src/storage/repositories/workspace-history-repository.ts",
+      "name": "WorkspaceHistoryRepository.remove",
+      "start": 100,
+      "end": 110,
+      "lines": 11,
+      "sha256": "97cbaadee9ffe2f889e7b28965ecd586dbbe26ca2af3e68cc222e458e76a1cbf"
+    },
+    {
+      "file": "packages/daemon/src/lib/rpc-handlers/workspace-handlers.ts",
+      "name": "workspace.remove RPC callback",
+      "start": 46,
+      "end": 53,
+      "lines": 8,
+      "sha256": "86262c1f460d049a8344e4d0c1749c3a62563d90a189cbcece81c6acbb4a4205"
+    },
+    {
+      "file": "packages/daemon/src/lib/rpc-handlers/index.ts",
+      "name": "existing daemon workspace handler binding",
+      "start": 543,
+      "end": 548,
+      "lines": 6,
+      "sha256": "a930e90cf1e3d0a949a3f293cdb4e0dd5914e2086bb0304c67e1493cb8687c72"
+    }
+  ],
+  "totalLines": 26,
+  "productionLines": 0,
+  "smokeRegistrationLines": 0,
+  "delta": [],
+  "sharedAdapterUnits": [
+    {
+      "file": "packages/daemon/src/storage/db-gateway/db-gateway.ts",
+      "name": "unchanged shared gateway binding",
+      "start": 247,
+      "end": 261,
+      "lines": 15,
+      "sha256": "bed555438ca8a2b982f91eb7308a7e9024c248e284b964ba4e1653728d0c239f"
+    }
+  ],
+  "contract": "workspace.remove({path}): {success:boolean}; one data-only writer command, both legacy deletes and membership cascades inside one immediate transaction; no filesystem, callbacks or network inside the command; unknown-outcome errors propagate without replay.",
+  "sharedPlumbing": "Unchanged gateway command adapter, SQLite transaction/savepoint and foreign-key machinery are reused. Workspace addition, project-folder mutation, history reads and startup callers are separate.",
+  "sqlBaselineChanged": false
+}

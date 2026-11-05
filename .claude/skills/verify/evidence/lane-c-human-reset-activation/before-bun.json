@@ -1,0 +1,7 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "networkResetRefusedWithoutAdmission": true,
+  "publicMutationFailure": "CLI reset failed while target main SQL was denied",
+  "mainSqlAttempts": 1,
+  "timings": []
+}

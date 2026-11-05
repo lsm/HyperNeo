@@ -1,7 +1,10 @@
-import { lstat, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { prepareDaemonWorkerSandbox } from './daemon-scratch.ts';
+import { lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
+import { queueSettingsWrite, resolveSettingsTarget } from '../settings-target.ts';
+import { workerWorkEnvironment } from '../work-locations.ts';
 import { secretNamePatterns } from '../neo/secret-read-rules.ts';
 import {
   excludeWorkerConfig,
@@ -11,6 +14,7 @@ import {
   workerWritableRoots,
 } from './worker-sandbox.ts';
 
+const WorkSettings = z.object({ env: z.record(z.string(), z.unknown()).optional() }).loose();
 const Marker = z.object({ roots: z.array(z.string().refine(isAbsolute)).min(1) });
 const RUNTIME_MANAGED_ENV_KEYS = [
   'TMPDIR',
@@ -87,7 +91,7 @@ async function writeAtomic(path: string, value: unknown) {
   }
 }
 
-async function install(root: string, roots: string[]) {
+async function install(root: string, roots: string[], daemonOwned = false) {
   const siblings = (await readdir(dirname(root), { withFileTypes: true }))
     .filter((entry) => entry.isDirectory())
     .map((entry) => join(dirname(root), entry.name));
@@ -103,7 +107,7 @@ async function install(root: string, roots: string[]) {
       if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
     }
   }
-  await prepareWorkerSandbox(root);
+  await (daemonOwned ? prepareDaemonWorkerSandbox : prepareWorkerSandbox)(root);
   await mkdir(join(root, '.claude'), { recursive: true });
   if (!(await lstat(join(root, '.claude'))).isDirectory())
     throw new Error('Native write policy requires an in-clone .claude directory');
@@ -121,10 +125,16 @@ async function install(root: string, roots: string[]) {
   }
 }
 
-export function installClaudeNativeWrites(directory: string, roots: string[]): Promise<void> {
+export function installClaudeNativeWrites(
+  directory: string,
+  roots: string[],
+  daemonOwned = false
+): Promise<void> {
   const next = pending
     .catch(() => {})
-    .then(() => install(resolve(directory), [...new Set(roots.map((root) => resolve(root)))]));
+    .then(() =>
+      install(resolve(directory), [...new Set(roots.map((root) => resolve(root)))], daemonOwned)
+    );
   pending = next;
   return next;
 }
@@ -166,7 +176,7 @@ function withSecretDenials(
   };
 }
 
-export async function readClaudeWorkerSandbox(directory: string | undefined) {
+export async function readClaudeWorkerSandbox(directory: string | undefined, daemonOwned = false) {
   if (!directory) return null;
   const marker = await readFile(markerPath(directory), 'utf8').catch((error) => {
     if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
@@ -177,7 +187,8 @@ export async function readClaudeWorkerSandbox(directory: string | undefined) {
   const existing = await readFile(settingsPath(directory), 'utf8')
     .then(JSON.parse)
     .catch(() => ({}));
-  if (existing?.sandbox?.enabled !== false) await prepareWorkerSandbox(directory);
+  if (existing?.sandbox?.enabled !== false)
+    await (daemonOwned ? prepareDaemonWorkerSandbox : prepareWorkerSandbox)(directory);
   const computed = policy(directory, roots, []);
   const before = JSON.stringify(existing);
   const upgraded = withSecretDenials(computed, existing, true);
@@ -190,4 +201,42 @@ export async function readClaudeWorkerSandbox(directory: string | undefined) {
   const normalized = { ...upgraded, env };
   if (before !== JSON.stringify(normalized)) await writeAtomic(settingsPath(directory), normalized);
   return normalized;
+}
+
+async function readClaudeWorkSettings(directory: string) {
+  const folder = join(directory, '.claude');
+  const directoryEntry = await stat(folder).catch((error) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (directoryEntry && !directoryEntry.isDirectory())
+    throw new Error('Claude settings require a directory');
+  const path = directoryEntry
+    ? await resolveSettingsTarget(settingsPath(directory))
+    : settingsPath(directory);
+  const entry = await lstat(path).catch((error) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (entry && !entry.isFile()) throw new Error('Claude settings must be a regular file');
+  return {
+    folder,
+    path,
+    existing: WorkSettings.parse(entry ? JSON.parse(await readFile(path, 'utf8')) : {}),
+  };
+}
+
+export async function prepareClaudeWorkEnvironment(directory: string) {
+  await readClaudeWorkSettings(directory);
+  return async () => {
+    const { path } = await readClaudeWorkSettings(directory);
+    await queueSettingsWrite(path, async () => {
+      const { folder, existing } = await readClaudeWorkSettings(directory);
+      await mkdir(folder, { recursive: true });
+      await writeAtomic(path, {
+        ...existing,
+        env: { ...existing.env, ...workerWorkEnvironment(directory) },
+      });
+    });
+  };
 }

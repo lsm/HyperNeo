@@ -1,4 +1,4 @@
-import { admitArtifactCapture } from '../../../packages/daemon/src/lib/artifacts/file-policy.ts';
+import { authorizeArtifactCaller, resolveArtifactSource } from '../../../packages/daemon/src/lib/artifacts/file-policy.ts';
 import { ArtifactRefSchema, ArtifactReadResultSchema } from '../../../packages/daemon/src/lib/artifacts/file-contracts.ts';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
@@ -49,10 +49,14 @@ const policy = { daemonId: reference.daemonId, home: join(run, 'home'), loadBind
   workspacePath: reference.path.slice(0, reference.path.lastIndexOf('/')), approvedEvidenceRoots: [],
 }) };
 const caller = { source: 'mcp' as const, role: 'direct_task_worker' as const, sessionId: reference.sessionId };
-const admitted = await admitArtifactCapture(context, reference.path, caller, policy);
-assert('root' in admitted && admitted.relativePath === reference.name);
-assert.deepEqual(await admitArtifactCapture(context, '.env', caller, policy), { accepted: false, reason: 'sensitive_path' });
-assert.deepEqual(await admitArtifactCapture(context, reference.path, { ...caller, sessionId: 'foreign-worker' }, policy), { accepted: false, reason: 'unavailable' });
+const binding = policy.loadBinding();
+assert('value' in authorizeArtifactCaller(binding, caller));
+const decision = resolveArtifactSource(binding, reference.path, policy);
+assert('value' in decision);
+const admitted = decision.value;
+assert(admitted.relativePath === reference.name);
+assert.deepEqual(resolveArtifactSource(binding, '.env', policy), { reason: { accepted: false, reason: 'sensitive_path' } });
+assert.deepEqual(authorizeArtifactCaller(binding, { ...caller, sessionId: 'foreign-worker' }), { reason: { accepted: false, reason: 'unavailable' } });
 const chunks: Buffer[] = [];
 let offset = 0;
 let complete = false;

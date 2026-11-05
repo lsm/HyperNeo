@@ -29,7 +29,7 @@ try {
   await page.waitForFunction((id) => { const cards = [...document.querySelectorAll(`[data-ask="${id}"]`)]; return cards.some((card) => { const r = card.getBoundingClientRect(); return r.width > 0 && r.left >= 0 && r.right <= innerWidth + 1; }); }, evidence.askId);
   const bounds = await card.boundingBox(); assert(bounds.x >= 0 && bounds.x + bounds.width <= width + 1);
   await page.screenshot({ path: `${run}/evidence/conflict-card-${width}.png`, fullPage: true });
-  await card.getByRole('button', { name: 'View full versions' }).click();
+  await card.getByRole('button', { name: 'View full report' }).click();
   const dialog = page.getByRole('dialog'); await dialog.waitFor();
   await dialog.evaluate(async (element) => { await Promise.all(element.parentElement.getAnimations({ subtree: true }).map((animation) => animation.finished.catch(() => {}))); });
   assert.equal(await dialog.locator('pre').textContent(), document);
@@ -40,7 +40,7 @@ try {
   await dialog.locator('pre').evaluate((element) => { element.parentElement.scrollTop = element.parentElement.scrollHeight; });
   await page.screenshot({ path: `${run}/evidence/conflict-document-end-${width}.png`, fullPage: true });
   await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'hidden' });
-  assert(await card.getByRole('button', { name: 'Keep local', exact: true }).isEnabled());
+  assert(await card.getByRole('button', { name: /Keep local$/ }).isEnabled());
   results.push({ width, bounds, fullTextExact: true, markupLiteral: true, answerControlsEnabled: true });
   await page.close();
  }

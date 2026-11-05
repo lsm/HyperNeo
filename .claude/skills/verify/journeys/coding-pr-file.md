@@ -35,6 +35,14 @@ raw file grant, URL fetch, diff formatter, live database or credential is used.
 The existing document viewer renders the returned Markdown kind; no new UI is
 introduced. This proof does not automate native applications or production deploy.
 
+Git capture and local registration share `lib/artifacts/stored-kind.ts`; Git
+capture must not import the registration operation. For the C1 extraction, keep
+the pinned-SHA suites unchanged and run this same complete-file proof before and
+after the move. The storage format and type/magic checks remain unchanged.
+
 The existing `todo-pack-facts.ts` journey also invokes the constructed pack
 operation as a non-owner and must receive an authorization refusal rather than
 a missing-database error. Its original fact/judgement assertions remain intact.
+
+The unlinked attachment card supplies a core evidence `retireWhen` whose
+synthetic file stays absent while checking the card and its registered document.

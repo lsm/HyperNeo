@@ -1,0 +1,138 @@
+{
+  "mainGuardSelfCheckPassed": true,
+  "nonHumanAndDiscoveryDoNotInitialize": true,
+  "retryIdValidationBeforeInitialization": true,
+  "admissionFailureNeverCapturesOrFallsBack": true,
+  "unknownOutcomeNeverAutomaticallyReplayed": true,
+  "healthWhileWriterHeldMs": 2.531167000000096,
+  "deliberatelyHeldInitializationMs": 1388.3870840000002,
+  "sourceLoadedAfterCommittedIdentityReceipt": true,
+  "uncontendedConcurrentResolutionMs": 17.7018750000002,
+  "concurrentCaptureAndRetryRetainOneReceipt": true,
+  "postCaptureSourceRevalidationWithholdsReceiptButRetainsSnapshot": true,
+  "publicSnapshotBytesRetained": true,
+  "existingReadOnlyIdentitySelectsOutsideResolver": 2,
+  "successfulCaptureAndSnapshotReadVerified": true,
+  "sourceAndSensitiveRefusalsPreserved": true,
+  "maxLoopLagMs": 12.123250000000098,
+  "rssBytes": 167773216,
+  "walBytes": 181312,
+  "mainRowSaves": 2,
+  "commandPosts": 19,
+  "fullTransitiveSourceCaptureGraphMeasured": false,
+  "pass": true,
+  "resolverMainIdentitySqlAttempts": 0,
+  "workerMetrics": [
+    {
+      "roundTripMs": 5.653541999999902,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.016208000000005995
+    },
+    {
+      "roundTripMs": 1295.783916,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.03533399999969333
+    },
+    {
+      "roundTripMs": 0.2727500000000873,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.001916999999593827
+    },
+    {
+      "roundTripMs": 3.1334999999999127,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0014580000001842564
+    },
+    {
+      "roundTripMs": 1.3288750000001528,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.001959000000169908
+    },
+    {
+      "roundTripMs": 1.7538329999997586,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0017920000000231084
+    },
+    {
+      "roundTripMs": 0.10395800000014788,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0017920000000231084
+    },
+    {
+      "roundTripMs": 0.07816700000012133,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0010000000002037268
+    },
+    {
+      "roundTripMs": 0.050208999999995285,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0008330000000569271
+    },
+    {
+      "roundTripMs": 0.09220900000036636,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0013329999997040431
+    },
+    {
+      "roundTripMs": 0.09570800000028612,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0008339999999407155
+    },
+    {
+      "roundTripMs": 0.07845799999995506,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0010000000002037268
+    },
+    {
+      "roundTripMs": 0.05570799999986775,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0006250000001273293
+    },
+    {
+      "roundTripMs": 0.0744169999998121,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0013330000001587905
+    },
+    {
+      "roundTripMs": 0.052625000000261934,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0007080000000314612
+    },
+    {
+      "roundTripMs": 0.06441600000016479,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0007499999996980478
+    },
+    {
+      "roundTripMs": 0.0439169999999649,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.0005000000001018634
+    },
+    {
+      "roundTripMs": 0.050666000000092026,
+      "requestBytes": 67,
+      "replyBytes": 38,
+      "encodeMs": 0.00033400000029359944
+    }
+  ],
+  "runtime": "Bun 1.4.3",
+  "scope": "Source-bound capture/receipts/revalidation/bytes and identity activation",
+  "temporaryDaemonDataRemoved": true
+}

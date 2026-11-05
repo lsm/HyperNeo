@@ -1,0 +1,6 @@
+{
+  "passed": 1,
+  "failed": 7,
+  "legacyDefaultClockAndRepeatCountPassed": true,
+  "failure": "workspace history upsert command is not registered"
+}

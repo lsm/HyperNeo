@@ -1,6 +1,7 @@
 import { WorkerIdentitySchema } from './worker-identity-schema.ts';
 import { z } from 'zod';
 import type { WorkTurnPage } from '../../storage/work-turn-page.ts';
+import type { WorkTurn } from '../../storage/work-turns.ts';
 import { workStartConfiguration } from './start-configuration.ts';
 import { workStartPreparation } from './start-preparation.ts';
 import type { OperationCaller } from '../operations/registry.ts';
@@ -46,6 +47,7 @@ const DesktopUIEvidenceSchema = z.object({
 });
 
 export const WorkSummarySchema = z.object({
+  execution: z.object({ directory: z.string().min(1), machine: z.string().min(1) }).optional(),
   worker: WorkerIdentitySchema.optional(),
   ref: WorkRefSchema,
   title: z.string(),
@@ -63,7 +65,16 @@ export const WorkSummarySchema = z.object({
     )
     .optional(),
   model: z.string().optional(),
+  provider: z.string().optional(),
   effort: z.string().optional(),
+  identityObservation: z
+    .object({
+      source: z.literal('assistant-transcript'),
+      at: z.number().optional(),
+      messageId: z.string().optional(),
+    })
+    .describe('Last observed assistant runtime identity; not a prediction of the next turn.')
+    .optional(),
   remoteLink: z.string().optional(),
   remoteControl: z
     .boolean()
@@ -114,6 +125,13 @@ export function workResultSchema<Value extends z.ZodType>(value: Value) {
       ok: z.literal(false),
       reason: WorkRejectionSchema,
       detail: z.string(),
+      uncertainDesktopInputId: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          'Client input ID of an uncertain Desktop handoff; not a delivery receipt. Reconcile before retrying.'
+        ),
       notSent: z
         .literal(true)
         .optional()
@@ -125,6 +143,7 @@ export function workResultSchema<Value extends z.ZodType>(value: Value) {
 }
 
 export const WorkInputSchema = z.object({
+  inputId: z.string().optional(),
   at: z.number(),
   text: z.string(),
   human: z.boolean().optional(),
@@ -184,6 +203,7 @@ export const WorkInputEvidenceSchema = z.discriminatedUnion('state', [
 
 export const WorkStartedSchema = WorkSummarySchema.extend({
   receipt: WorkInputReceiptSchema.optional(),
+  reused: z.literal(true).optional(),
 });
 
 export const WorkTurnEndSchema = z.object({
@@ -198,7 +218,6 @@ export const WorkDetailSchema = WorkSummarySchema.extend({
   turnEnds: z.array(WorkTurnEndSchema).optional(),
   inputEvidence: WorkInputEvidenceSchema.optional(),
   startReceipt: WorkInputReceiptSchema.optional(),
-  execution: z.object({ directory: z.string().min(1), machine: z.string().min(1) }).optional(),
   lastReply: z.string().optional(),
   lastReplyAt: z.number().optional(),
   waitingFor: z.string().max(200).optional(),
@@ -229,7 +248,13 @@ export type WorkRejection = z.infer<typeof WorkRejectionSchema>;
 export type WorkDetail = z.infer<typeof WorkDetailSchema>;
 export type WorkInput = z.infer<typeof WorkInputSchema>;
 export type WorkExchangeEntry = z.infer<typeof WorkExchangeEntrySchema>;
-export type Rejected = { ok: false; reason: WorkRejection; detail: string; notSent?: true };
+export type Rejected = {
+  ok: false;
+  reason: WorkRejection;
+  detail: string;
+  notSent?: true;
+  uncertainDesktopInputId?: string;
+};
 export type Result<T> = { ok: true; value: T; records?: string[] } | Rejected;
 
 export type WorkVerb =
@@ -267,6 +292,7 @@ export interface StartRequest {
   title: string;
   message: string;
   createFolder?: boolean;
+  provenance?: boolean;
   preparation?: z.infer<typeof workStartPreparation.schema>;
   model?: string;
   effort?: string;
@@ -275,17 +301,32 @@ export interface StartRequest {
 export interface WorkCallContext {
   from: string;
   caller: OperationCaller;
+  idempotencyKey?: string;
 }
 
 export type WorkRenamed = { renamed: true; title: string };
+
+export const WorkArchivedSchema = z.object({
+  archived: z.boolean(),
+  worktree: z
+    .object({ directory: z.string().min(1), removed: z.boolean(), reason: z.string().optional() })
+    .optional(),
+});
+export type WorkArchived = z.infer<typeof WorkArchivedSchema>;
 
 export interface WorkAdapter {
   readonly id: string;
   readonly capabilities: readonly WorkVerb[];
   readonly unsupportedCapabilities?: Partial<Record<WorkVerb, string>>;
+  readonly resolveStartConfiguration?: (
+    request: StartRequest
+  ) => Promise<Result<
+    z.infer<typeof workStartConfiguration.schema> & { provider?: string }
+  > | null>;
   readonly supportsStartEffort?: boolean;
   readonly supportsStartPreparation?: boolean;
   find(query: FindQuery): PlaceGroup[] | Promise<PlaceGroup[]>;
+  readonly readInput?: (sessionId: string, marker: string) => Promise<WorkTurn | null>;
   readonly readTurns?: (
     sessionId: string,
     around: string | undefined,
@@ -320,8 +361,5 @@ export interface WorkAdapter {
     receipt?: WorkDelivery['receipt']
   ) => Promise<Result<WorkDetail>>;
   readonly stop?: (ref: WorkRef, context: WorkCallContext) => Promise<Result<{ stopped: boolean }>>;
-  readonly archive?: (
-    ref: WorkRef,
-    admit: ArchiveAdmission
-  ) => Promise<Result<{ archived: boolean }>>;
+  readonly archive?: (ref: WorkRef, admit: ArchiveAdmission) => Promise<Result<WorkArchived>>;
 }

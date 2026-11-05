@@ -29,7 +29,7 @@ async function open() {
   db.prepare = ((sql: string) => { if(measuring && /pack_coding_repo_health|pack_coding_repo_aliases/.test(sql)) mainSql.push(sql); return prepare(sql); }) as typeof db.prepare;
   app.db.gateway.run = (async(op, args) => {
     const start = performance.now(), reply = await send(op, args), method = (args as {method: string}).method;
-    if(measuring && op.name === 'coding.ledgerWrites' && ['readHealth', 'acceptHealthNotice'].includes(method)) commands.push({ name: op.name, method, durationMs: performance.now() - start, argsBytes: Buffer.byteLength(JSON.stringify(args)), replyBytes: Buffer.byteLength(JSON.stringify(reply) ?? 'null') });
+    if(measuring && op.name.startsWith('coding.ledger') && ['readHealth', 'acceptHealthNotice'].includes(method)) commands.push({ name: op.name, method, durationMs: performance.now() - start, argsBytes: Buffer.byteLength(JSON.stringify(args)), replyBytes: Buffer.byteLength(JSON.stringify(reply) ?? 'null') });
     return reply;
   }) as typeof app.db.gateway.run;
   const ledger = new CodingPrLedgerRepository(db);

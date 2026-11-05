@@ -1,0 +1,21 @@
+{
+  "base": "0b81f588e2821c32de8b980a2ce1003e3fc36c27",
+  "redCommit": "3db9577f0f",
+  "productionChangedLines": 107,
+  "sharedSmokeRegistrationLines": 1,
+  "localCallGraphLines": 141,
+  "focusedVitest": {
+    "passed": 66,
+    "files": 8
+  },
+  "repositoryCheck": "passed",
+  "scope": "Pairing code creation admission only. A typed worker command reuses the existing planner and carries only scalar caller identity, kind, name and time. No callback or network effect crosses the boundary.",
+  "pipelineCorrection": "Existing refusal tests caught an initial mismatched output slot. Gate refusal and committed receipt now share the same result name; focused tests and both native runtime proofs pass after correction.",
+  "unverified": [
+    "Other pairing paths DB ownership",
+    "Browser layout and deployment",
+    "Large-volume latency",
+    "Separate SQL, queue and clone timings"
+  ],
+  "checkout": "Existing protected clean checkout reused on a branch from freshly fetched dev; no second checkout or install. Other lanes remain paused."
+}

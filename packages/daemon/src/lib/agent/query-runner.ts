@@ -32,10 +32,6 @@ import type { ProviderEnvVars } from '../provider-service.ts';
 import { setKeyBridgeThinkingOff } from '../providers/provider-key-bridge.ts';
 import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
 import { resolveAvailableQueryProvider } from '../providers/registry.js';
-import {
-  FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
-  resolveSpaceMcpSessionPolicy,
-} from '../space/runtime/space-mcp-session-policy.ts';
 import { sleep } from '../utils/sleep.ts';
 import { QueryFailureGovernor, QueryFailureCapError } from './query-failure-episode.ts';
 import type { AgentSession } from './agent-session.ts';
@@ -71,6 +67,7 @@ import {
   type SdkStartExitInfo,
 } from './startup-watch-pipeline.ts';
 import {
+  getOpenToolStallTimeoutMs,
   getStreamSilenceTimeoutMs,
   noteStreamFed,
   noteStreamMessage,
@@ -442,6 +439,8 @@ export class QueryRunner {
   private _turnConsumedUserMessages: Array<{ uuid: string; content: string | MessageContent[] }> =
     [];
 
+  private _turnConsumedGeneration: number | null = null;
+
   private fedAfterTurnEnd: Array<{
     uuid: string;
     content: string | MessageContent[];
@@ -487,6 +486,10 @@ export class QueryRunner {
   }
   resetFailureEpisode() {
     return this.failures.reset();
+  }
+
+  failureLatchedUntil() {
+    return this.failures.latchedUntil();
   }
 
   private notifyToolInventory(): void {
@@ -765,6 +768,8 @@ export class QueryRunner {
     const inactivityBackstopMs = getSdkStartInactivityBackstopMs();
     const nudgeThresholdMs = DEFAULT_SDK_STARTUP_NUDGE_THRESHOLD_MS;
     const silenceThresholdMs = getStreamSilenceTimeoutMs();
+    const openToolStallMs = getOpenToolStallTimeoutMs();
+    let lastStall: { silentMs: number; openToolCount: number } | null = null;
     this.streamSilence = { lastActivityAt: Date.now(), openTools: [] };
 
     let processExitInfo: SdkStartExitInfo = { code: null, signal: null };
@@ -908,21 +913,16 @@ export class QueryRunner {
 
       queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
       const mcpServerNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
-      const spacePolicy = resolveSpaceMcpSessionPolicy(session, {
-        nodeExecutionRepo: this.ctx.db.getNodeExecutionRepo(),
-        taskRepo: this.ctx.db.getSpaceTaskRepo(),
-        longHorizonAgentRepo:
-          this.ctx.db.getLongHorizonAgentRepo?.() ?? FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
-      });
-      const isWorkflowSubSession = spacePolicy.isWorkflowWorker;
+      const spacePolicy = this.ctx.db.spaceSessions?.mcpPolicy(session);
+      const isWorkflowSubSession = spacePolicy?.isWorkflowWorker;
       const sessionTaskId = session.context?.taskId as string | undefined;
       const snapshotPayload = {
         event: 'query.mcp.snapshot',
         sessionId: session.id,
         sessionType: session.type,
-        role: spacePolicy.role,
-        owner: spacePolicy.owner,
-        ...(spacePolicy.spaceId ? { spaceId: spacePolicy.spaceId } : {}),
+        role: spacePolicy?.role ?? 'session',
+        owner: spacePolicy?.owner ?? 'none',
+        ...(spacePolicy?.spaceId ? { spaceId: spacePolicy.spaceId } : {}),
         ...(sessionTaskId ? { taskId: sessionTaskId } : {}),
         ...(isWorkflowSubSession ? { workflowSubSession: true } : {}),
         mcpServers: mcpServerNames,
@@ -1170,6 +1170,7 @@ export class QueryRunner {
               processing: stateManager.getState().status === 'processing',
               now: Date.now(),
               thresholdMs: silenceThresholdMs,
+              openToolStallMs,
             });
           let silenceTimer: ReturnType<typeof setTimeout> | undefined;
           if (firstMessageArrived) {
@@ -1190,9 +1191,17 @@ export class QueryRunner {
           if (winner.kind === 'silence') {
             const planned = silence();
             if (!planned.stalled) continue;
-            logger.warn(`Model stream silent for ${planned.silentMs}ms; aborting the request.`);
+            const openTools = this.streamSilence.openTools;
+            lastStall = { silentMs: planned.silentMs, openToolCount: openTools.length };
+            logger.warn(
+              openTools.length
+                ? `Model stream silent for ${planned.silentMs}ms with ${openTools.length} open tool call(s) [${openTools.join(', ')}]; aborting the request.`
+                : `Model stream silent for ${planned.silentMs}ms; aborting the request.`
+            );
             throw new Error(
-              `${STREAM_STALL_ERROR}: no data from the model for ${Math.round(planned.silentMs / 1000)}s`
+              openTools.length
+                ? `${STREAM_STALL_ERROR}: ${openTools.length} tool call(s) ran without a result for ${Math.round(planned.silentMs / 1000)}s`
+                : `${STREAM_STALL_ERROR}: no data from the model for ${Math.round(planned.silentMs / 1000)}s`
             );
           }
 
@@ -1482,7 +1491,9 @@ export class QueryRunner {
       let episode: Session['metadata']['queryFailureEpisode'];
       if (!cancelled && owns()) {
         episode =
-          episodeId && !(error instanceof QueryFailureCapError)
+          episodeId &&
+          !(error instanceof QueryFailureCapError) &&
+          !isNetworkUnreachableError(errorMessage)
             ? await this.failures.failure(errorMessage, episodeId)
             : session.metadata.queryFailureEpisode;
       }
@@ -1697,7 +1708,10 @@ export class QueryRunner {
           idleFirst: true,
           snapshotLastConsumed: true,
           snapshotRequeueLabel: 'model stream stall retry',
-          notice: `⚠️ The model sent nothing for ${Math.round(silenceThresholdMs / 1000)} s. Retrying…`,
+          notice:
+            lastStall && lastStall.openToolCount > 0
+              ? `⚠️ ${lastStall.openToolCount} tool call(s) ran without a result for ${Math.round(lastStall.silentMs / 1000)} s. Retrying…`
+              : `⚠️ The model sent nothing for ${Math.round((lastStall?.silentMs ?? silenceThresholdMs) / 1000)} s. Retrying…`,
           guardAfterExit: true,
           restartQueue: true,
         });
@@ -1953,6 +1967,7 @@ export class QueryRunner {
 
         this._lastConsumedUserMessage = null;
         this._turnConsumedUserMessages = [];
+        this._turnConsumedGeneration = null;
 
         if (
           this.ctx.getQueryGeneration() === queryGeneration &&
@@ -2328,11 +2343,14 @@ export class QueryRunner {
       }
 
       if (!isInternal) {
-        await stateManager.setProcessing(message.uuid ?? 'unknown', 'initializing');
         this._lastConsumedUserMessage = {
           uuid: message.uuid ?? '',
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
         };
+        if (this._turnConsumedGeneration !== queryGeneration) {
+          this._turnConsumedUserMessages = [];
+          this._turnConsumedGeneration = queryGeneration;
+        }
         this._turnConsumedUserMessages.push({
           uuid: message.uuid ?? '',
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
@@ -2340,6 +2358,11 @@ export class QueryRunner {
         if (this._turnConsumedUserMessages.length > 32) {
           this._turnConsumedUserMessages.shift();
         }
+        await stateManager.setProcessing(
+          message.uuid ?? 'unknown',
+          'initializing',
+          this._turnConsumedUserMessages.map((entry) => entry.uuid)
+        );
         if (!this.ctx.firstMessageReceived) {
           const generationMessages = this._consumedUserMessages.get(queryGeneration) ?? [];
           generationMessages.push({
@@ -2551,10 +2574,12 @@ export class QueryRunner {
     }
     if (messageHint === 'stream_stall') {
       return (
-        `The model stopped sending anything for ${Math.round(getStreamSilenceTimeoutMs() / 1000)} s, ` +
+        `The model stopped sending anything for ${Math.round(getStreamSilenceTimeoutMs() / 1000)} s ` +
+        `(${Math.round(getOpenToolStallTimeoutMs() / 1000)} s while a tool call was open), ` +
         `again after one automatic retry, so this turn was stopped. ` +
-        `Try: resending your message, or switching models. The limit is ` +
-        `HYPERNEO_SDK_STREAM_SILENCE_TIMEOUT_MS (current: ${getStreamSilenceTimeoutMs()}ms).`
+        `Try: resending your message, or switching models. The limits are ` +
+        `HYPERNEO_SDK_STREAM_SILENCE_TIMEOUT_MS (current: ${getStreamSilenceTimeoutMs()}ms) and ` +
+        `HYPERNEO_SDK_OPEN_TOOL_STALL_TIMEOUT_MS (current: ${getOpenToolStallTimeoutMs()}ms).`
       );
     }
     if (messageHint === 'conversation_not_found') {

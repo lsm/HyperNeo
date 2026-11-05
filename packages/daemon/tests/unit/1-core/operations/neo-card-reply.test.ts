@@ -1,3 +1,4 @@
+import { pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import { readNeoPublications } from '../../../../../web/src/neo/publication-client.ts';
 import { describe, expect, test, spyOn } from 'bun:test';
@@ -46,6 +47,7 @@ function setup() {
   const ask = async (input: Record<string, unknown>, caller = owner) =>
     (await op.execute(
       op.inputSchema.parse({
+        retireWhen: pendingTodoCheck,
         askId: 'ask',
         kind: 'choice',
         options: ['Keep', 'Change'],
@@ -114,6 +116,33 @@ describe('card reply notices', () => {
       expect(f.rows()).toHaveLength(2);
       expect(f.rows()[0].shortText).toBe('Manual same association');
       expect(f.rows()[0].replyTo).toBeUndefined();
+    } finally {
+      f.db.close();
+    }
+  });
+  test('coalesced publications retain each revision session without rewinding on retry', async () => {
+    const f = setup();
+    try {
+      await f.ask({ replyTo: [human1] });
+      const { sequence: _sequence, createdAt: _createdAt, ...row } = f.rows()[0];
+      const first = { ...row, publicationId: crypto.randomUUID(), session: 'worker-one' };
+      expect(f.publications.append(first)).toMatchObject({ accepted: true });
+      expect(
+        f.publications.append({
+          ...first,
+          publicationId: crypto.randomUUID(),
+          session: 'worker-two',
+        })
+      ).toMatchObject({ accepted: true });
+      expect(f.rows()[0].session).toBe('worker-two');
+      expect(f.rows()[0].revisions).toContainEqual(
+        expect.objectContaining({ session: 'worker-one' })
+      );
+      expect(f.publications.append(first)).toMatchObject({
+        accepted: true,
+        created: false,
+        publication: { session: 'worker-two' },
+      });
     } finally {
       f.db.close();
     }

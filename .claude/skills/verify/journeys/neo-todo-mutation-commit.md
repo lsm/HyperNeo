@@ -25,9 +25,8 @@ todo/card writes, and settles the ask. Stale completion and unanswered-card
 attempts must be refused; rollback and settled-ask no-ops must announce nothing
 and leave the public card unchanged. Todo mutation SQL must stay off main.
 
-Run the atomic-commit, planning, completion and pack-boundary unit contracts,
-plus the full repository check. Required Deno smoke runs this same helper;
-local Deno is unverified when not installed. The helper closes all resources in
-finally, writes `todo-mutation-commit.json`, and the wrapper saves evidence then
-removes temporary proof data. GUI layout, real provider checks, runtime caller
-activation, stop and next-work dispatch remain outside this build.
+Run the atomic-commit, planning, completion and pack-boundary unit contracts, plus the
+full repository check. The helper closes all resources in finally, writes
+`todo-mutation-commit.json`, and the wrapper saves evidence then removes temporary proof
+data. GUI layout, real provider checks, runtime caller activation, stop and next-work
+dispatch remain outside this build.

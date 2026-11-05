@@ -7,8 +7,8 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/operation-pause-evidence
 
 The helper starts a fresh synthetic daemon, creates one-shot and cron schedules,
 and invokes schedule.update with status paused through real operation.invoke
-WebSocket RPC. The returned and persisted schedules must be paused with their
-pending jobs deleted and all metadata preserved. Repeating the desired status is
+WebSocket RPC using the fresh daemon's local authenticated socket. The returned
+and persisted schedules must be paused with their pending jobs deleted and all metadata preserved. Repeating the desired status is
 accepted without changes. Concurrent requests for paused status must both succeed
 with the same committed schedule; strict RPC pause rejection must not leak into
 the desired-status operation. Wrong-Space and missing targets return typed rejections.
@@ -19,8 +19,8 @@ Commit the failing baseline before wiring: the operation still uses the legacy
 synchronous pause path, so its failure loses the pending job. The fixed common
 operation must await the existing writer and run no target UPDATE/DELETE on the
 main connection. Audit callbacks remain on main after the writer reply; no
-callback is passed into the transaction. Repeat under supported Deno with
-VERIFY_PROOF_RUNTIME=deno; the wrapper preserves replies and SQL and cleans up.
+callback is passed into the transaction. Run with the supported Bun runtime. The
+wrapper preserves replies and SQL and cleans up its synthetic data.
 
 Run schedule-operations and schedule-service suites for caller admission, no-op,
 audit and error behavior. This covers the RPC door to the common operation;

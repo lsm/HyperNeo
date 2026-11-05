@@ -122,6 +122,7 @@ describe('todo target identity at the MCP add door', () => {
     try {
       const original = { adapter: 'hyperneo', id: full };
       const added = await f.add({ verb: 'send', ref: original });
+      f.todos.updateTodo(added.todo, { approvedAt: 1 }, 1);
       const ref = { adapter: 'codex-desktop', daemon: 'synthetic-peer', id: full.slice(0, 8) };
       const result = await f.bind(added.todo.id, ref);
       expect(result.ok).toBe(true);
@@ -164,15 +165,13 @@ describe('todo target identity at the MCP add door', () => {
       f.db.close();
     }
   });
-  test.each(['send', 'bind'])('stores the resolved full id for a %s target', async (verb) => {
+  test('stores the resolved full id for a send target', async () => {
     const f = fixture();
     try {
       const ref = { adapter: 'codex-desktop', daemon: 'synthetic-peer', id: full.slice(0, 8) };
-      const result = await f.add({ verb, ref });
+      const result = await f.add({ verb: 'send', ref });
       expect(result.ok).toBe(true);
-      const target =
-        verb === 'bind' ? f.sessions.readRef(result.todo.id) : f.sessions.get(result.todo.id)?.ref;
-      expect(target).toEqual({ ...ref, id: full });
+      expect(f.sessions.get(result.todo.id)?.ref).toEqual({ ...ref, id: full });
       expect(f.starts()).toBe(0);
     } finally {
       f.db.close();

@@ -55,8 +55,6 @@ const indexes: readonly [string, string, string?][] = [
     'session_id, timestamp, seq',
     "parent_tool_use_id IS NULL AND COALESCE(internal_compaction_turn, 0) = 0 AND (message_type = 'result' OR (message_type = 'user' AND COALESCE(send_status, 'consumed') = 'consumed' AND COALESCE(first_block_type, 'text') <> 'tool_result'))",
   ],
-  ['bg_task_time', 'session_id, message_subtype_norm, bg_task_id, timestamp'],
-  ['bg_tool_time', 'session_id, message_subtype_norm, bg_tool_use_id, timestamp'],
 ];
 
 export function createSdkMessageFilterIndexes(db: Database): void {

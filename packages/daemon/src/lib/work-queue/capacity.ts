@@ -12,6 +12,7 @@ export interface WorkCandidate {
 export interface RunningWork {
   group: string | null;
   worker: string | null;
+  idle?: boolean;
 }
 
 export function planWorkQueue(
@@ -21,8 +22,9 @@ export function planWorkQueue(
 ): { start: string[]; queued: string[] } {
   const perGroup = new Map<string | null, number>();
   const busy = new Set(running.flatMap((row) => row.worker ?? []));
-  for (const row of running) perGroup.set(row.group, (perGroup.get(row.group) ?? 0) + 1);
-  let total = running.length;
+  const active = running.filter((row) => !row.idle);
+  for (const row of active) perGroup.set(row.group, (perGroup.get(row.group) ?? 0) + 1);
+  let total = active.length;
   const start: string[] = [];
   const queued: string[] = [];
   for (const item of orderWork(candidates)) {

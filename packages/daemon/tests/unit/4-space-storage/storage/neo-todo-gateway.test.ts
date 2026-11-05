@@ -166,9 +166,9 @@ test('todo worker reads preserve lists, recovery and PR windows; live writes com
     expect(reminders.filter(Boolean)).toHaveLength(1);
     const reminder = reminders.find(Boolean)!;
     expect(reminder.plan).toEqual({ kind: 'remind', nudges: 1 });
-    expect(sessions.readNudge('t0')).toEqual({ since: 0, nudges: 1, at: now });
+    expect(sessions.readNudge('t0')).toEqual({ since: 0, nudges: 1, at: now, live: 'stopped' });
     await sessions.write('finishNudge', 't0', 0, 1, 0);
-    expect(sessions.readNudge('t0')).toEqual({ since: 0, nudges: 0, at: now });
+    expect(sessions.readNudge('t0')).toEqual({ since: 0, nudges: 0, at: now, live: 'stopped' });
     expect(
       await sessions.write('claimNudge', 't0', ref, live, now, updatedAt, true)
     ).not.toBeNull();

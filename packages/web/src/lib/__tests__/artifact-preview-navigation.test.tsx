@@ -65,7 +65,7 @@ describe('preview workspace navigation', () => {
     expect(artifactPreviewStack.value).toEqual([target('c')]);
     artifactPreviewWorkspace.close('c');
     expect(artifactPreviewWorkspace.state.value).toEqual({
-      open: true,
+      open: false,
       files: [],
       selectedId: null,
     });
@@ -96,7 +96,7 @@ describe('preview workspace navigation', () => {
     const reference = {
       kind: 'reference' as const,
       source: { kind: 'publication' as const, id: 'p' },
-      reference: 'docs/report.md',
+      reference: 'https://github.com/example/demo/pull/1',
     };
     openArtifactPreview(target('a'));
     pushArtifactPreview(reference);

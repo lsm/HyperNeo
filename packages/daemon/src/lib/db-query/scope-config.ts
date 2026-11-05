@@ -1,4 +1,4 @@
-export type DbScopeType = 'global' | 'room' | 'space';
+export type DbScopeType = 'global' | 'space';
 
 export interface ScopeJoinConfig {
   localColumn: string;
@@ -26,14 +26,11 @@ export interface ScopeTableConfig {
 
 const COLUMN_BLACKLISTS: Record<string, string[]> = {
   sessions: ['config', 'session_context'],
-  rooms: ['config'],
   spaces: ['config'],
   app_mcp_servers: ['env'],
-  inbox_items: ['raw_event', 'security_check'],
   job_queue: ['payload'],
   space_long_horizon_agents: ['session_id'],
   space_workflows: ['config', 'gates', 'channels', 'hooks'],
-  tasks: ['restrictions'],
   space_workflow_nodes: ['config'],
 };
 
@@ -43,12 +40,6 @@ const GLOBAL_SCOPE_TABLES: ScopeTableConfig[] = [
     blacklistedColumns: COLUMN_BLACKLISTS.sessions,
     description:
       'Agent sessions with metadata such as title, status, workspace path, type, and timestamps.',
-  },
-  {
-    tableName: 'rooms',
-    blacklistedColumns: COLUMN_BLACKLISTS.rooms,
-    description:
-      'Room definitions with name, instructions, allowed paths, model config, and status.',
   },
   {
     tableName: 'spaces',
@@ -69,11 +60,6 @@ const GLOBAL_SCOPE_TABLES: ScopeTableConfig[] = [
       'Available skills (plugins, MCP servers, built-ins) with config, enablement, and validation status.',
   },
   {
-    tableName: 'inbox_items',
-    blacklistedColumns: COLUMN_BLACKLISTS.inbox_items,
-    description: 'Incoming GitHub events (issues, comments, PRs) routed through the inbox system.',
-  },
-  {
     tableName: 'job_queue',
     blacklistedColumns: COLUMN_BLACKLISTS.job_queue,
     description:
@@ -83,64 +69,6 @@ const GLOBAL_SCOPE_TABLES: ScopeTableConfig[] = [
     tableName: 'short_id_counters',
     blacklistedColumns: [],
     description: 'Auto-incrementing short-ID counters keyed by entity type and scope.',
-  },
-];
-
-const ROOM_SCOPE_TABLES: ScopeTableConfig[] = [
-  {
-    tableName: 'tasks',
-    scopeColumn: 'room_id',
-    blacklistedColumns: COLUMN_BLACKLISTS.tasks,
-    description:
-      'Room tasks with title, status, priority, dependencies, PR tracking, and agent assignments.',
-  },
-  {
-    tableName: 'goals',
-    scopeColumn: 'room_id',
-    blacklistedColumns: [],
-    description:
-      'Room missions/goals with mission type, autonomy level, schedule, structured metrics, and execution tracking.',
-  },
-  {
-    tableName: 'mission_executions',
-    scopeJoin: {
-      localColumn: 'goal_id',
-      joinTable: 'goals',
-      joinPkColumn: 'id',
-      scopeColumn: 'room_id',
-    },
-    blacklistedColumns: [],
-    description:
-      'Individual execution runs of recurring missions with status, task IDs, and planning attempts.',
-  },
-  {
-    tableName: 'mission_metric_history',
-    scopeJoin: {
-      localColumn: 'goal_id',
-      joinTable: 'goals',
-      joinPkColumn: 'id',
-      scopeColumn: 'room_id',
-    },
-    blacklistedColumns: [],
-    description: 'Time-series snapshots of measurable mission metrics recorded over time.',
-  },
-  {
-    tableName: 'room_github_mappings',
-    scopeColumn: 'room_id',
-    blacklistedColumns: [],
-    description: 'GitHub repository mappings for rooms with priority ordering.',
-  },
-  {
-    tableName: 'room_mcp_enablement',
-    scopeColumn: 'room_id',
-    blacklistedColumns: [],
-    description: 'Per-room MCP server enablement overrides.',
-  },
-  {
-    tableName: 'room_skill_overrides',
-    scopeColumn: 'room_id',
-    blacklistedColumns: [],
-    description: 'Per-room skill enablement overrides.',
   },
 ];
 
@@ -438,7 +366,6 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
 
 const SCOPE_CONFIGS: Record<DbScopeType, ScopeTableConfig[]> = {
   global: GLOBAL_SCOPE_TABLES,
-  room: ROOM_SCOPE_TABLES,
   space: SPACE_SCOPE_TABLES,
 };
 

@@ -80,3 +80,6 @@ present, no background prompt was sent, and one neo_notes row remains pending.
 This is the requested queue behavior, so update the fixture's structured input
 rather than making untyped worker chatter wake Neo again. Keep the neo-wake-queue
 journey as the independent twenty-message quiet-burst contract.
+
+Both scripted model paths supply an explicit core evidence `retireWhen` for
+unlinked cards. Its synthetic file stays absent throughout the notice proof.

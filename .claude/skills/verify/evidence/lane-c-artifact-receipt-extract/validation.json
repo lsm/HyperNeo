@@ -1,0 +1,30 @@
+{
+  "failingCommit": "3b50f38206c56e4494b48d7964489f10aeca3173",
+  "red": "Three missing serializer contracts fail, three legacy byte/clock/rollback characterizations pass. Native public registration behavior is preserved before the missing-helper assertion fails.",
+  "focusedTests": 19,
+  "strictTypeScript": "6.0.3: zero errors",
+  "repositoryCheck": "bun run check: exit 0; SQL ratchet unchanged",
+  "fullLocalGraphLines": 43,
+  "productionLines": 52,
+  "smokeRegistrationLines": 1,
+  "netPrepare": 0,
+  "netRun": 0,
+  "serializationExpressionAstUnchanged": true,
+  "sqlBytesAndClockExpressionUnchanged": true,
+  "stableConstructorAndReceiptUnchanged": true,
+  "legacyOrder": "prepare -> serialization -> clock -> statement run; serialization errors precede clock/write; return artifact object reference and caller-owned rollback preserved",
+  "nativeBun": "Public registration/retry/retained snapshot bytes pass; one unchanged main INSERT with 11 binds. Six native scratch legacy receipt forms match helper bytes exactly.",
+  "nativeDeno": "Existing safe_open_unavailable refusal preserved, zero public rows; six native scratch legacy receipt forms match helper bytes exactly. Successful capture/read remains unverified.",
+  "receiptHashScope": "Before/after synthetic runs have fresh generated identity/artifact IDs, so their whole public receipt hashes differ. Exact equivalence is pinned with fixed-input unit bytes and per-run legacy-save/helper comparisons plus normalized serialization AST; no cross-run UUID/hash equality is claimed.",
+  "mainThreadMovementClaim": false,
+  "oneCheckout": true,
+  "noInstalls": true,
+  "proofDataRemoved": true,
+  "unverified": [
+    "Row writer construction and public activation (later rungs)",
+    "Full capture/source/native-runtime/OS dependency graph",
+    "Successful Deno/native Windows capture and bytes",
+    "Native Bun 1.4.2 (local is 1.4.3)",
+    "Browser and Neo-owned deployment smoke"
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "redCommit": "8a40cf49c81914902c8c7b7e9daaa2061ba4263a",
+  "before": {
+    "legacyPassed": 1,
+    "missingHelperFailed": 3,
+    "nativePublicRpcPassedBeforeMissingHelperFailure": true
+  },
+  "focused": {
+    "files": 5,
+    "tests": 29,
+    "passed": true
+  },
+  "strictTypeScript6": {
+    "passed": true,
+    "scope": "Modified repository, complete helper, two new tests and fixture plus imported dependencies"
+  },
+  "rootCheck": {
+    "command": "bun run check",
+    "exitCode": 0
+  },
+  "native": "Bun 1.4.3 and Deno 2.9.4 real Space enable/disable/listWatchedRepos/listConfig retain source/watched/snapshot settings and times; only watched table in native query-only scratch retains complete row, Space filtering/order/empty filter and malformed cursor failure",
+  "limits": [
+    "Public reads/writes remain on main; four target statement runs for two RPCs",
+    "No schema/backfill/constructor, time, write or transaction changes",
+    "All other repository methods and type interfaces pinned unchanged; all mapper consumers are not transitively audited",
+    "Full GitHub/plugin/startup/Space closure outside extraction",
+    "Prior settings-read/native Space fixture imported unchanged as observable characterization; its app closes before scratch proof",
+    "Pinned Bun 1.4.2 CI-owned; local Bun 1.4.3",
+    "Deployment smoke Neo-owned; live daemon untouched"
+  ]
+}

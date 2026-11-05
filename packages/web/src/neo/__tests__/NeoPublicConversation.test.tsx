@@ -11,6 +11,7 @@ import {
 } from '../../lib/artifact-preview-store.ts';
 import type { SessionStore } from '../../lib/session-store.ts';
 import { connectionState } from '../../lib/state.ts';
+import { connectionManager } from '../../lib/connection-manager.ts';
 import { NeoConversation } from '../NeoConversation.tsx';
 import { NeoPublicConversation, PendingAsk, publicAskText } from '../NeoPublicConversation.tsx';
 import { projectNeoPublicConversation } from '../public-conversation.ts';
@@ -78,6 +79,32 @@ const conversation = (asks = [ask()], publications = [publication()]) =>
     }
   );
 
+it('does not invent a path by parsing Markdown across short and full fields', () => {
+  const text = '_~/report.md';
+  render(
+    <NeoPublicConversation
+      conversation={conversation([], [publication({ shortText: text, fullText: text, links: [] })])}
+    />
+  );
+  expect(screen.queryByRole('button', { name: 'Open current file: report.md' })).toBeNull();
+});
+
+it('does not auto-link bare or relative PR filenames in a public reply', async () => {
+  const text = 'Review `CLAUDE.md` and `docs/guide.md`. The report is `/reports/review.md`.';
+  render(
+    <NeoPublicConversation
+      conversation={conversation([], [publication({ shortText: text, fullText: text, links: [] })])}
+    />
+  );
+  expect(await screen.findByText('CLAUDE.md')).toBeTruthy();
+  expect(screen.queryByRole('link', { name: 'Open preview: CLAUDE.md' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Open current file: CLAUDE.md' })).toBeNull();
+  expect(screen.queryByRole('link', { name: 'Open preview: docs/guide.md' })).toBeNull();
+  expect(
+    await screen.findByRole('link', { name: 'Open preview: /reports/review.md' })
+  ).toBeTruthy();
+});
+
 afterEach(() => {
   cleanup();
   closeArtifactPreview();
@@ -138,6 +165,93 @@ describe('message preview references', () => {
     fireEvent.click(button);
     expect(artifactPreviewStack.value).toHaveLength(0);
   });
+});
+
+describe('publication session Open', () => {
+  it.each([
+    ['worker', 'hyperneo', '/session/worker'],
+    ['codex-desktop:thread', 'codex-desktop', 'codex://threads/thread'],
+    ['claude-desktop:session', 'claude-desktop', 'claude://claude.ai/epitaxy/session'],
+  ])('opens exactly the named session %s using its card link', async (session, adapter, link) => {
+    const request = vi.fn(async () => ({
+      id: session,
+      adapter,
+      name: 'Named worker',
+      label: 'Named worker',
+      provider: adapter,
+      link,
+    }));
+    const read = vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
+    try {
+      const onOpen = vi.fn();
+      const { container } = render(
+        <NeoPublicConversation
+          conversation={conversation([], [publication({ session, links: [] })])}
+          onOpenSession={onOpen}
+        />
+      );
+      const button = await screen.findByRole('button', { name: 'Open session: Named worker' });
+      expect(button.textContent).toBe('Open');
+      expect(button.querySelector('svg')).toBeTruthy();
+      expect(button.closest('[data-public-entry]')).toBeTruthy();
+      expect(
+        container.querySelectorAll('[data-public-entry] button[aria-label^="Open session:"]')
+      ).toHaveLength(1);
+      expect(request).toHaveBeenCalledWith('operation.invoke', {
+        name: 'neo.session.link',
+        input: { session },
+      });
+      fireEvent.click(button);
+      expect(onOpen).toHaveBeenCalledExactlyOnceWith(link, 'Named worker');
+    } finally {
+      read.mockRestore();
+    }
+  });
+  it('does not infer a session from origins or work links', () => {
+    const read = vi.spyOn(connectionManager, 'getHub');
+    try {
+      render(<NeoPublicConversation conversation={conversation()} onOpenSession={vi.fn()} />);
+      expect(screen.queryByRole('button', { name: /^Open session:/ })).toBeNull();
+      expect(read).not.toHaveBeenCalled();
+    } finally {
+      read.mockRestore();
+    }
+  });
+  it.each([
+    null,
+    { ok: false, reason: 'session_unavailable' },
+    {
+      id: 'missing',
+      adapter: 'codex-desktop',
+      name: null,
+      label: 'Named worker',
+      provider: 'Codex',
+      link: null,
+    },
+  ])(
+    'leaves an unavailable session visible without inventing another target: %s',
+    async (result) => {
+      const read = vi
+        .spyOn(connectionManager, 'getHub')
+        .mockResolvedValue({ request: async () => result } as never);
+      try {
+        const onOpen = vi.fn();
+        render(
+          <NeoPublicConversation
+            conversation={conversation([], [publication({ session: 'missing', links: [] })])}
+            onOpenSession={onOpen}
+          />
+        );
+        const button = await screen.findByRole('button', { name: 'Open session: missing' });
+        await waitFor(() => expect(button.getAttribute('title')).toBe('This chat didn’t open.'));
+        expect(button.hasAttribute('disabled')).toBe(true);
+        fireEvent.click(button);
+        expect(onOpen).not.toHaveBeenCalled();
+      } finally {
+        read.mockRestore();
+      }
+    }
+  );
 });
 
 describe('durable public conversation presentation', () => {
@@ -236,14 +350,36 @@ describe('durable public conversation presentation', () => {
       );
       const more = await screen.findByRole('button', { name: /more$/ });
       expect(getComputedStyle(more).getPropertyValue('float')).toBe('right');
-      fireEvent.click(screen.getByText((value.shortText ?? '').trim()));
+      expect(more.closest('.neo-markdown, p')).toBeNull();
+      fireEvent.click(await screen.findByText((value.shortText ?? '').trim()));
       expect(container.querySelector('[data-publication-details]')).toBeNull();
       fireEvent.click(more);
       const less = await screen.findByRole('button', { name: /less$/ });
       expect(getComputedStyle(less).getPropertyValue('float')).toBe('right');
-      fireEvent.click(screen.getByText(ending.trim(), { exact: true }));
+      expect(less.closest('.neo-markdown, p')).toBeNull();
+      fireEvent.click(await screen.findByText(ending.trim(), { exact: true }));
       expect(container.querySelector('[data-publication-details]')).toBeTruthy();
       expect(less.getAttribute('aria-expanded')).toBe('true');
+    }
+  );
+
+  it.each(['7', '7.', '7)'])(
+    'keeps numeric reply %s readable with disclosure on a separate row',
+    async (shortText) => {
+      const value = publication({ shortText, fullText: 'Full numeric reply details.' });
+      const { container } = render(
+        <NeoPublicConversation conversation={conversation([], [value])} />
+      );
+      const body = await screen.findByText(shortText, { exact: true });
+      expect(body.tagName).toBe('P');
+      const more = screen.getByRole('button', { name: 'more', exact: true });
+      expect(more.closest('p')).toBeNull();
+      expect(body.textContent).toBe(shortText);
+      fireEvent.click(more);
+      expect(await screen.findByText(value.fullText!)).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'less', exact: true }));
+      expect(container.querySelector('[data-publication-details]')).toBeNull();
+      expect(screen.getByText(shortText, { exact: true }).textContent).toBe(shortText);
     }
   );
 
@@ -254,7 +390,7 @@ describe('durable public conversation presentation', () => {
     );
     expect(container.querySelector('details')).toBeNull();
     const more = await screen.findByRole('button', { name: /^more$/ });
-    expect(more.closest('p')?.textContent).toContain(value.shortText);
+    expect(more.closest('p')).toBeNull();
     expect(more.getAttribute('aria-expanded')).toBe('false');
     expect(container.querySelector('table')).toBeNull();
     fireEvent.click(more);

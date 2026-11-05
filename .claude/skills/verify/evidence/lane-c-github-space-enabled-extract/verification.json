@@ -1,0 +1,30 @@
+{
+  "redCommit": "08bafed90fe008fc12fec2682f04c2decdfb3376",
+  "before": {
+    "legacyPassed": 2,
+    "missingHelperFailed": 3,
+    "nativePublicRpcPassedBeforeMissingHelperFailure": true
+  },
+  "focused": {
+    "files": 4,
+    "tests": 12,
+    "passed": true
+  },
+  "strictTypeScript6": {
+    "passed": true,
+    "scope": "Modified repository, new helper and both new tests plus imported dependencies"
+  },
+  "native": "Bun and Deno real Space enable/disable/listWatchedRepos/listConfig RPCs with two synthetic watched rows preserve source/watched/snapshot flags, creation/shared-command timestamps; scratch helper preserves changed count, supplied time and caller-owned rollback",
+  "limits": [
+    "SQL extraction only; four target main statement runs remain for two public RPCs",
+    "No helper transaction added; unit contract preserves legacy first-statement partial effect when second statement fails without caller transaction",
+    "Repository constructor/backfill and every other method unchanged",
+    "Full GitHub/plugin/startup/Space closure and future atomic source+snapshot command/wiring are separate",
+    "Local Bun 1.4.3; pinned Bun 1.4.2 is CI-owned",
+    "Deployment is Neo-owned; no live daemon or OAP touched"
+  ],
+  "rootCheck": {
+    "command": "bun run check",
+    "exitCode": 0
+  }
+}

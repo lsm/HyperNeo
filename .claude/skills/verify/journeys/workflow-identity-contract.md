@@ -17,9 +17,8 @@ nullable description and tags must preserve the omitted name and endpoints.
 The same node definitions must remain, timestamps must advance and the immutable
 version payload must match the returned workflow's SHA-256 hash.
 
-Evidence records the actual requests/replies and metadata SQL. Run baseline and
-after in separate fresh directories. Repeat with `VERIFY_PROOF_RUNTIME=deno` and
-supported Deno on PATH. The wrapper retains evidence and removes synthetic data.
-No model turn, provider, GUI or live database is involved. The extracted builder
-contains only identity-field assembly; SQL, validation and notifications remain
-in their existing paths until later slices.
+Evidence records the actual requests/replies and metadata SQL. Run baseline and after in
+separate fresh directories. The wrapper retains evidence and removes synthetic data. No
+model turn, provider, GUI or live database is involved. The extracted builder contains
+only identity-field assembly; SQL, validation and notifications remain in their existing
+paths until later slices.

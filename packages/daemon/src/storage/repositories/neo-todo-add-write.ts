@@ -95,38 +95,18 @@ const add = (superpipe({})('neo.todo.commit-add') as PipelineAPI)
       const { draft } = plan;
       const home = neoTodoHome(store, plan.ask, plan.repo, plan.split);
       let todo = store.addTodo(input.todoId, home.id, draft, input.now, plan.repo);
-      const sessions = new NeoTodoSessionRepository(db);
-      if (draft.target?.verb === 'bind') {
-        sessions.bind(todo.id, draft.target.ref, input.now);
-        todo = store.updateTodo(
-          todo,
-          {
-            state: 'doing',
-            startedAt: input.now,
-            finishedAt: null,
-            reason: null,
-            report: null,
-            evidence: null,
-            blockedBy: null,
-            blockedReason: null,
-            nextAction: null,
-          },
-          input.now
-        );
-      } else {
-        if (draft.target) sessions.create(todo.id, draft.target);
-        if (!draft.start && todo.instruction) {
-          store.joinStartQuestion(todo, input.now);
-          changes.notifyChange('neo_questions');
-          const blocked = planNeoTodoAwaitingStart(todo);
-          if (blocked) todo = store.updateTodo(todo, blocked, input.now);
-        }
+      if (draft.target) new NeoTodoSessionRepository(db).create(todo.id, draft.target);
+      if (!draft.start && todo.instruction) {
+        store.joinStartQuestion(todo, input.now);
+        changes.notifyChange('neo_questions');
+        const blocked = planNeoTodoAwaitingStart(todo);
+        if (blocked) todo = store.updateTodo(todo, blocked, input.now);
       }
       if (draft.target) changes.notifyChange('neo_todo_sessions');
       return {
         ok: true,
         todo,
-        ...(draft.start && draft.target?.verb !== 'bind' ? { start: todo.id } : {}),
+        ...(draft.start ? { start: todo.id } : {}),
         ...(draft.records ? { records: draft.records } : {}),
       };
     },

@@ -1,5 +1,5 @@
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
-import { slugify, validateSlug } from '../space/slug.ts';
+import { slugify, validateSlug } from '../agents/slug.ts';
 import { WorkflowValidationError } from './workflow-validation-error.ts';
 
 export function validateName(

@@ -1,4 +1,3 @@
-import type { DirectStopVerificationResult } from '../tasks/stop-direct-attempt.ts';
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
@@ -88,7 +87,7 @@ export class SessionManager {
   private evictedExitedRootPids = new Map<number, number>();
 
   private sessionCache: SessionCache;
-  private directStopVerificationJobs = new Map<string, Promise<DirectStopVerificationResult>>();
+  private directStopVerificationJobs = new Map<string, Promise<unknown>>();
   private sessionLifecycle: SessionLifecycle;
   private toolsConfigManager: ToolsConfigManager;
   private messagePersistence: MessagePersistence;
@@ -461,11 +460,11 @@ export class SessionManager {
     return this.sessionCache.get(sessionId);
   }
 
-  coalesceDirectStopVerification(
+  coalesceDirectStopVerification<Result>(
     key: string,
-    verify: () => Promise<DirectStopVerificationResult>
-  ): Promise<DirectStopVerificationResult> {
-    const pending = this.directStopVerificationJobs.get(key);
+    verify: () => Promise<Result>
+  ): Promise<Result> {
+    const pending = this.directStopVerificationJobs.get(key) as Promise<Result> | undefined;
     if (pending) return pending;
     const job = Promise.resolve().then(verify);
     this.directStopVerificationJobs.set(key, job);

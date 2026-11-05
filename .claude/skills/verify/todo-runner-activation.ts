@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -21,7 +22,7 @@ const network=globalThis.fetch;
 globalThis.fetch=(()=>{throw new Error('External HTTP disabled');}) as typeof fetch;
 const app=await createDaemonApp({config:getConfig({port:0,host:'127.0.0.1',dbPath:join(run,'data/daemon.db')}),verbose:false});
 assert.notEqual(app.server.port,8399);
-const hub=new MessageHub({defaultSessionId:'global'}), transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`});
+const hub=new MessageHub({defaultSessionId:'global'}), transport=new WebSocketClientTransport({ createSocket: createLocalSocket,url:`ws://127.0.0.1:${app.server.port}/ws`});
 hub.registerTransport(transport);
 const db=app.db.getDatabase(),store=new NeoAskTodoRepository(db),sessions=new NeoTodoSessionRepository(db);
 const prepare=db.prepare.bind(db),replay=app.db.gateway.onChanges;
@@ -45,7 +46,7 @@ const runner=createNeoTodoRunner({ limits: () => ({ running: 99, perGroup: 99 })
 });
 const startCard=(id:string,todoId:string,askId='ask')=>store.askQuestion(id,askId,{kind:'start',text:'Start?',startTodos:[todoId],options:null,multiple:false,yesLabel:null,noLabel:null},2);
 const seed=(id:string,askId='ask')=>{
-  store.addTodo(id,askId,{title:id,doneWhen:'Observed',check:null,instruction:'Continue work',named:null},1);
+  store.addTodo(id,askId,{ approvedAt: 1, dependsOn: [],title:id,doneWhen:'Observed',check:null,instruction:'Continue work',named:null},1);
   sessions.create(id,{verb:'send',ref:{adapter:'hyperneo',id:'old-worker'}});
 };
 try {

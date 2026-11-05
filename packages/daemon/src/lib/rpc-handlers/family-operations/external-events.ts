@@ -3,15 +3,15 @@ import { createAgentSubscriptionOperations } from '../../external-events/agent-s
 import { createExternalEventOperations } from '../../external-events/operations.ts';
 import { createSubscriptionOperations } from '../../external-events/subscription-operations.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
-import type { FamilyOperationContext } from './context.ts';
+import type { SpaceFamilyContext } from './space-context.ts';
 import { SessionEventSubscriptionRepository } from '../../../storage/repositories/session-event-subscription-repository.ts';
 
 export function registerExternalEventOperations(
-  context: FamilyOperationContext
+  context: SpaceFamilyContext
 ): OperationDefinition[] {
   return [
     ...createExternalEventOperations({
-      eventStore: context.deps.externalEventStore,
+      eventStore: context.externalEventStore,
       getSession: (sessionId) => context.deps.db.getSession(sessionId),
       taskRepo: context.spaceTaskRepo,
       nodeExecutionRepo: context.nodeExecutionRepo,

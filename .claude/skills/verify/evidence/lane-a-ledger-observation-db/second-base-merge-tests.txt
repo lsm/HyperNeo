@@ -1,0 +1,17 @@
+Pageouts: 11892760 
+
+System-wide memory free percentage: 53%
+Filesystem      Size    Used   Avail Capacity iused ifree %iused  Mounted on
+/dev/disk3s5   926Gi   705Gi   189Gi    79%     16M  2.0G    1%   /System/Volumes/Data
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:7:14). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/.codex/worktrees/lane-a-ledger-observation/neokai/packages/daemon
+
+
+ Test Files  6 passed (6)
+      Tests  81 passed (81)
+   Start at  15:29:24
+   Duration  17.98s (tests 85%, transform 8%, import 6%, setup 1%)
+

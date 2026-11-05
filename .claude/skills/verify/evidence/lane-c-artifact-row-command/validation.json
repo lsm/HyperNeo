@@ -1,0 +1,30 @@
+{
+  "failingCommit": "2b6e20f0cccb7e3c1b03d03927303c9e43b9e27c",
+  "red": "Five writer contracts fail because command is absent; one legacy save characterization passes. Both native daemons reject Unknown write DB op: artifact.file.row.write; owned data removed.",
+  "focusedTests": 12,
+  "strictTypeScript": "6.0.3: zero errors",
+  "repositoryCheck": "bun run check: exit 0; ratchet unchanged",
+  "fullLocalGraphLines": 135,
+  "productionLinesIncludingRegistrations": 76,
+  "newModuleLines": 73,
+  "appendOnlyOpLines": 2,
+  "appendOnlySmokeLines": 1,
+  "netPrepare": 0,
+  "netRun": 0,
+  "publicPublicationCallersChanged": false,
+  "nativeBun": "pass: exact committed row and metadata RPC, zero command target SQL on main, concurrent duplicate fence, writer contention/health, admission rejection, real lost reply without replay, explicit duplicate refusal, rollback including trigger effects",
+  "nativeDeno": "same native command and public metadata proof passes; no filesystem capture claimed",
+  "sqlMeasurementLimit": "Command INSERT and exact SELECT only. Existing public metadata reader intentionally measured separately and still on main; no whole-RPC/main-SQL ownership claim.",
+  "latencyLimit": "Deliberate 1.2s writer hold is outside any sub-250-ms claim; normal synthetic worker round trips recorded, not a whole-daemon latency proof.",
+  "unchangedDependencies": "Complete local save, constructors, serializer, read get, conservative default identity helper counted. Shared dispatch/transaction/gateway shells hash-pinned in measurement without transitive runtime audit.",
+  "proofDataRemoved": true,
+  "oneCheckout": true,
+  "noInstalls": true,
+  "unverified": [
+    "Public capture/publication activation (separate rung)",
+    "Full capture/binding/security/native-runtime/OS dependency graph",
+    "Native Bun 1.4.2 (local 1.4.3)",
+    "Browser and Neo-owned deployment smoke",
+    "Final no-main-SQL/sync-disk guard"
+  ]
+}

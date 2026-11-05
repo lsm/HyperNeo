@@ -1,0 +1,22 @@
+{
+  "mainThreadMovementClaim": false,
+  "phase": "pure receipt serialization extraction; legacy row publication remains on its supplied connection",
+  "firstRpcMs": 8.740000000000009,
+  "publicRegistrationReceiptAndBytesPreserved": true,
+  "publicReceiptBytes": 269,
+  "publicReceiptSha256": "0a684a51b58cb0adfa6ed0620cf5c09be504b317e5151a042b2ddd29815e6488",
+  "optionalFieldMatrixPreserved": true,
+  "matrixCases": 6,
+  "callerOwnedRollbackPreserved": true,
+  "serializationErrorsBeforeWritePreserved": true,
+  "healthMs": 0.2652499999999236,
+  "rssBytes": 194954248,
+  "walBytes": 1277232,
+  "pass": true,
+  "mainInsertRuns": 1,
+  "publicMainInsertBindCounts": [
+    11
+  ],
+  "runtime": "Bun 1.4.3",
+  "temporaryDaemonDataRemoved": true
+}

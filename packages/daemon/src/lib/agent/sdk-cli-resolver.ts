@@ -5,44 +5,34 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
-  readdirSync,
   renameSync,
   rmSync,
   unlinkSync,
 } from 'node:fs';
-import { execFile, execSync } from 'node:child_process';
-import { readFile, writeFile } from 'node:fs/promises';
-import { promisify } from 'node:util';
-import { createHash } from 'node:crypto';
-import { gunzip } from 'node:zlib';
+import { execSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
+import daemonPackage from '../../../package.json' with { type: 'json' };
 import { getDataDir } from '../data-dir.ts';
+import {
+  describeWriteFailure,
+  downloadVerifiedTarball,
+  extractFileFromTarGz,
+  isMusl,
+  PACKAGE_DOWNLOAD_WAIT_MS,
+  waitForDownload,
+} from './npm-package-download.ts';
 
-const isVerbose = process.env.HYPERNEO_VERBOSE;
 // oxlint-disable-next-line no-console
-const logWarn = isVerbose ? console.warn : () => {};
+const logWarn = console.warn;
 
 // oxlint-disable-next-line no-console
 const logStartup = (...args: unknown[]) => console.log(...args);
 
 const SDK_PACKAGE = '@anthropic-ai/claude-agent-sdk';
 
-const gunzipAsync = promisify(gunzip);
-
 const SDK_CACHE_DIR = join(getDataDir(), 'sdk');
-
-function isMusl(): boolean {
-  if (process.platform !== 'linux') return false;
-  for (const libDir of ['/lib', '/lib64']) {
-    try {
-      const files = readdirSync(libDir);
-      if (files.some((f) => f.startsWith('ld-musl'))) return true;
-    } catch {}
-  }
-  return false;
-}
 
 /** @public */
 export function getPlatformPackageName(): string | undefined {
@@ -97,7 +87,7 @@ function getSdkVersion(): string {
     }
   } catch {}
 
-  return '0.3.302';
+  return daemonPackage.dependencies[SDK_PACKAGE];
 }
 
 function getCachePath(): string {
@@ -192,107 +182,6 @@ function resolveFromCache(): string | undefined {
   return undefined;
 }
 
-function curl(args: string[], timeout: number): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile('curl', args, { encoding: 'utf-8', timeout }, (err, stdout) =>
-      err ? reject(err) : resolve(String(stdout))
-    );
-  });
-}
-
-async function sha512OfFile(filePath: string): Promise<string> {
-  const hash = createHash('sha512');
-  const data = await readFile(filePath);
-  hash.update(data);
-  return `sha512-${hash.digest('base64')}`;
-}
-
-async function fetchNpmPackageMeta(
-  packageName: string,
-  version: string
-): Promise<{ tarballUrl: string; integrity: string } | undefined> {
-  const url = `https://registry.npmjs.org/${encodeURIComponent(packageName)}/${version}`;
-  try {
-    const result = (await curl(['-sf', url], 15_000)).trim();
-    const meta = JSON.parse(result);
-    const tarballUrl = meta?.dist?.tarball;
-    const integrity = meta?.dist?.integrity;
-    if (tarballUrl && integrity) return { tarballUrl, integrity };
-    logWarn(
-      `[sdk-cli-resolver] npm registry metadata missing dist.tarball for ${packageName}@${version}`
-    );
-    return undefined;
-  } catch (err) {
-    logWarn(
-      `[sdk-cli-resolver] Could not fetch npm metadata for ${packageName}@${version}: ${err}`
-    );
-    return undefined;
-  }
-}
-
-async function downloadTarball(url: string, destPath: string): Promise<string | undefined> {
-  try {
-    await curl(['-sfL', '-o', destPath, url], 120_000);
-    if (existsSync(destPath)) return destPath;
-    logWarn(`[sdk-cli-resolver] Download succeeded but file missing: ${destPath}`);
-    return undefined;
-  } catch (err) {
-    logWarn(`[sdk-cli-resolver] Download failed for ${url}: ${err}`);
-    return undefined;
-  }
-}
-
-async function extractFileFromTarGz(
-  tarballPath: string,
-  targetFileName: string,
-  destPath: string
-): Promise<string | undefined> {
-  try {
-    const compressed = await readFile(tarballPath);
-    const gunzipped = await gunzipAsync(compressed);
-
-    const TAR_HEADER_SIZE = 512;
-    let offset = 0;
-
-    while (offset + TAR_HEADER_SIZE <= gunzipped.length) {
-      const header = gunzipped.subarray(offset, offset + TAR_HEADER_SIZE);
-
-      if (header.every((b: number) => b === 0)) break;
-
-      // oxlint-disable-next-line no-control-regex -- tar headers use NUL-padding; \x00 is intentional
-      const stripNul = (s: string) => s.replace(/\x00/g, '');
-      const name = stripNul(header.subarray(0, 100).toString('utf-8'));
-      const sizeOctal = stripNul(header.subarray(124, 136).toString('utf-8')).trim();
-      const typeFlag = header.subarray(156, 157).toString('utf-8');
-      const prefix = stripNul(header.subarray(345, 500).toString('utf-8'));
-
-      const fullName = prefix ? `${prefix}${name}` : name;
-      const fileSize = sizeOctal ? parseInt(sizeOctal, 8) : 0;
-      const dataBlocks = Math.ceil(fileSize / TAR_HEADER_SIZE);
-
-      const isRegularFile = typeFlag === '0' || typeFlag === '\0' || typeFlag === '';
-      const baseName = fullName.replace(/^package\//, '');
-
-      if (isRegularFile && baseName === targetFileName && fileSize > 0) {
-        const fileData = gunzipped.subarray(
-          offset + TAR_HEADER_SIZE,
-          offset + TAR_HEADER_SIZE + fileSize
-        );
-        await writeFile(destPath, fileData);
-        return destPath;
-      }
-
-      offset += TAR_HEADER_SIZE + dataBlocks * TAR_HEADER_SIZE;
-    }
-
-    logWarn(`[sdk-cli-resolver] File "${targetFileName}" not found in tarball`);
-    return undefined;
-  } catch (err) {
-    logWarn(`[sdk-cli-resolver] Tar extraction failed: ${err}`);
-    return undefined;
-  }
-}
-
 function safeMoveFile(src: string, dest: string): void {
   try {
     renameSync(src, dest);
@@ -309,57 +198,32 @@ function safeMoveFile(src: string, dest: string): void {
   }
 }
 
-async function downloadSdkBinary(): Promise<string | undefined> {
-  const platformPkg = getPlatformPackageName();
-  if (!platformPkg) return undefined;
-
+async function downloadSdkBinary(platformPkg: string, cachePath: string): Promise<string> {
   const version = getSdkVersion();
-  const cachePath = getCachePath();
-  if (!cachePath) return undefined;
-
   const binaryName = getCliBinaryName();
   const cacheDir = dirname(cachePath);
+  const tarballPath = `${cacheDir}.tgz.partial`;
+  const tmpDir = join(tmpdir(), `hyperneo-sdk-download-${process.pid}-${Date.now()}`);
 
-  let tmpDir: string | undefined;
   try {
-    tmpDir = join(tmpdir(), `hyperneo-sdk-download-${process.pid}-${Date.now()}`);
+    await downloadVerifiedTarball(platformPkg, version, tarballPath);
     mkdirSync(tmpDir, { recursive: true });
 
-    const meta = await fetchNpmPackageMeta(platformPkg, version);
-    if (!meta) return undefined;
-
-    const tarballPath = join(tmpDir, `${platformPkg.replace(/\//g, '_')}-${version}.tgz`);
-    const downloaded = await downloadTarball(meta.tarballUrl, tarballPath);
-    if (!downloaded) return undefined;
-
-    const actualIntegrity = await sha512OfFile(tarballPath);
-    if (actualIntegrity !== meta.integrity) {
-      logWarn(
-        `[sdk-cli-resolver] Integrity mismatch for ${platformPkg}@${version}: expected ${meta.integrity}, got ${actualIntegrity}`
-      );
-      return undefined;
-    }
-
     const extractedPath = join(tmpDir, binaryName);
-    const extracted = await extractFileFromTarGz(tarballPath, binaryName, extractedPath);
-    if (!extracted) return undefined;
+    await extractFileFromTarGz(tarballPath, binaryName, extractedPath);
 
     mkdirSync(cacheDir, { recursive: true });
-    safeMoveFile(extracted, cachePath);
+    safeMoveFile(extractedPath, cachePath);
     chmodSync(cachePath, 0o755);
 
     copySystemRipgrepToVendor(cacheDir);
+    rmSync(tarballPath, { force: true });
 
     return cachePath;
   } catch (err) {
-    logWarn(`[sdk-cli-resolver] Unexpected error downloading SDK binary: ${err}`);
-    return undefined;
+    throw new Error(describeWriteFailure(err), { cause: err });
   } finally {
-    if (tmpDir) {
-      try {
-        rmSync(tmpDir, { recursive: true });
-      } catch {}
-    }
+    rmSync(tmpDir, { recursive: true, force: true });
   }
 }
 
@@ -441,6 +305,10 @@ export async function warmupSDKCliBinary(): Promise<WarmupResult> {
   return warmupInFlight;
 }
 
+export async function awaitSDKCliPathForQuery(): Promise<string | undefined> {
+  return waitForDownload(awaitSDKCliPath(), PACKAGE_DOWNLOAD_WAIT_MS, 'Claude Code binary');
+}
+
 export async function awaitSDKCliPath(): Promise<string | undefined> {
   const local = resolveSDKCliPath();
   if (local) return local;
@@ -494,8 +362,8 @@ async function doWarmup(): Promise<WarmupResult> {
   }
 
   logStartup(`[SDK] Downloading ${platformPkg}@${version}...`);
-  const downloadedPath = await downloadSdkBinary();
-  if (downloadedPath) {
+  try {
+    const downloadedPath = await downloadSdkBinary(platformPkg, getCachePath());
     cachedCliPath = downloadedPath;
     const size = formatFileSize(getFileSize(downloadedPath));
     logStartup(`[SDK] Claude Code binary ready: ${downloadedPath} (${size})`);
@@ -506,13 +374,13 @@ async function doWarmup(): Promise<WarmupResult> {
       packageName: platformPkg,
       version,
     };
+  } catch (err) {
+    const msg = `Could not download ${platformPkg}@${version}: ${(err as Error).message}`;
+    logWarn(
+      `[SDK] Claude Code binary unavailable. Agent queries may fail until the binary is available. Error: ${msg}`
+    );
+    return { status: 'failed', packageName: platformPkg, version, error: msg };
   }
-
-  const msg = 'All resolution strategies failed (node_modules, cache, download)';
-  logStartup(
-    `[SDK] Claude Code binary unavailable. Agent queries may fail until the binary is available. Error: ${msg}`
-  );
-  return { status: 'failed', packageName: platformPkg, version, error: msg };
 }
 
 function resolveSource(path: string): 'node_modules' | 'cache' | 'download' {

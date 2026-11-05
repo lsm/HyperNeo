@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { ArtifactFileRepository } from '../../../packages/daemon/src/storage/repositories/artifact-file-repository.ts';
@@ -45,7 +46,7 @@ let ws: WebSocket | undefined;
 async function rpc(name: string, input: unknown) {
   assert(ws);
   const id = crypto.randomUUID();
-  const result = await new Promise<{ ok?: boolean; todo?: NeoTodo; commit?: string }>(
+    const result = await new Promise<{ ok?: boolean; todo?: NeoTodo; commit?: string; accepted?:boolean; data?:string; reason?:string }>(
     (done, fail) => {
       const timeout = setTimeout(() => fail(new Error(`${name} timed out`)), 15000);
       ws!.onmessage = (event) => {
@@ -73,7 +74,7 @@ async function rpc(name: string, input: unknown) {
 }
 try {
   app = await createDaemonApp({
-    config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }),
+    config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db'), workspaceRoot: join(run, 'user-folder') }),
     verbose: false,
   });
   assert(app.server.port > 0 && app.server.port !== 8399);
@@ -103,7 +104,7 @@ try {
     originMessageId: null,
     createdAt: Date.now(),
   });
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => {
     ws!.onopen = () => done();
     ws!.onerror = () => fail(new Error('WebSocket open failed'));
@@ -129,11 +130,48 @@ try {
   };
   const path = join(run, 'result.txt');
   const fileTodo = await add('evidence', { path });
-  await close(fileTodo, 'closed_unverified');
+  await close(fileTodo, 'blocked');
   writeFileSync(path, 'Synthetic result');
   await close(fileTodo, 'done');
-  const artifactTodo = await add('evidence', { artifact: 'synthetic-artifact' });
-  await close(artifactTodo, 'closed_unverified');
+  store.openAsk({ id: 'repo-ask', title: 'Repo outcome', request: 'Verify', sessionId: owner, projectId: null, originMessageId: null, createdAt: Date.now(), repo: 'lsm/hyperneo' });
+  const repoCheck = (params: Record<string, unknown>) => ({ pack: 'core', kind: 'evidence', params });
+  const assigned = await rpc('neo.todo.add', { askId: 'repo-ask', title: 'Assigned evidence', check: repoCheck({}) });
+  assert(assigned.ok && assigned.todo, JSON.stringify(assigned));
+  const assignedPath = join(run, 'data/work/evidence', assigned.todo.id, 'result.md');
+  assert.deepEqual(assigned.todo.check?.params, { path: assignedPath });
+  assert(assigned.todo.doneWhen.includes(assignedPath), 'the worker brief carries doneWhen');
+  await close(assigned.todo, 'blocked');
+  mkdirSync(dirname(assignedPath), { recursive: true });
+  writeFileSync(assignedPath, 'Worker result');
+  await close(assigned.todo, 'done');
+  const assignedRead = await rpc('file.reference.read', { sourceMessageOrCard: { kind: 'todo', id: assigned.todo.id }, reference: assignedPath });
+  assert.equal(assignedRead.accepted, true, JSON.stringify(assignedRead));
+  const userPath = join(run, 'user-folder/proof.md');
+  const beforeRefusal = store.listTodos('repo-ask').length;
+  const refusedAdd = await rpc('neo.todo.add', { askId: 'repo-ask', title: 'User folder evidence', check: repoCheck({ path: userPath }) });
+  assert.equal(refusedAdd.ok, false, JSON.stringify(refusedAdd));
+  assert.match(refusedAdd.reason!, /Omit params\.path/);
+  assert.equal(store.listTodos('repo-ask').length, beforeRefusal);
+  const editable = await rpc('neo.todo.add', { askId: 'repo-ask', title: 'Edited evidence', check: repoCheck({ path: join(run, 'other.md') }) });
+  assert(editable.ok && editable.todo, JSON.stringify(editable));
+  const refusedEdit = await rpc('neo.todo.edit', { todoId: editable.todo.id, check: repoCheck({ path: userPath }) });
+  assert.equal(refusedEdit.ok, false, JSON.stringify(refusedEdit));
+  const keptPath = store.addTodo('existing-user-path', 'repo-ask', { title: 'Existing path', doneWhen: 'x', instruction: null, named: null, check: repoCheck({ path: userPath }) }, Date.now());
+  const unchanged = await rpc('neo.todo.edit', { todoId: keptPath.id, check: keptPath.check });
+  assert.equal(unchanged.ok, true, JSON.stringify(unchanged));
+  const reassigned = await rpc('neo.todo.edit', { todoId: editable.todo.id, check: repoCheck({}) });
+  assert.deepEqual(reassigned.todo?.check?.params, { path: join(run, 'data/work/evidence', editable.todo.id, 'result.md') });
+  const countBeforeLegacyAdmission=store.listTodos('ask').length;
+  const refusedArtifact=await rpc('neo.todo.add',{askId:'ask',title:'New artifact evidence',check:{pack:'core',kind:'evidence',params:{artifact:'synthetic-artifact'}}});
+  assert.equal(refusedArtifact.ok,false,'new artifact evidence must use an absolute path instead');
+  assert.equal(store.listTodos('ask').length,countBeforeLegacyAdmission);
+  const artifactTodo=store.addTodo('legacy-artifact-todo','ask',{title:'Legacy evidence',doneWhen:'Registered artifact synthetic-artifact exists.',instruction:null,named:null,check:{pack:'core',kind:'evidence',params:{artifact:'synthetic-artifact'}}},Date.now());
+  await close(artifactTodo, 'blocked');
+  const unchangedLegacy=await rpc('neo.todo.edit',{todoId:artifactTodo.id,check:artifactTodo.check});
+  assert.equal(unchangedLegacy.ok,true,JSON.stringify(unchangedLegacy));
+  const replacedLegacy=await rpc('neo.todo.edit',{todoId:artifactTodo.id,check:{pack:'core',kind:'evidence',params:{artifact:'different'}}});
+  assert.equal(replacedLegacy.ok,false,JSON.stringify(replacedLegacy));
+  assert.deepEqual(store.getTodo(artifactTodo.id)?.check,artifactTodo.check);
   const artifacts = new ArtifactFileRepository(db);
   artifacts.save(
     { kind: 'ask', id: 'ask' },
@@ -177,8 +215,19 @@ try {
   writeFileSync(compare, JSON.stringify({ status: 'diverged' }));
   await close(
     await add('deployed', { repo: 'lsm/HyperNeo', sha: 'b'.repeat(40) }),
-    'closed_unverified'
+    'blocked'
   );
+  const readCurrent=()=>rpc('file.reference.read',{sourceMessageOrCard:{kind:'todo',id:fileTodo.id},reference:path});
+  const first=await readCurrent();
+  assert.equal(first.accepted,true,JSON.stringify(first));
+  assert.equal(Buffer.from(first.data!,'base64').toString(),'Synthetic result');
+  writeFileSync(path,'Edited current result');
+  const edited=await readCurrent();
+  assert.equal(edited.accepted,true,JSON.stringify(edited));
+  assert.equal(Buffer.from(edited.data!,'base64').toString(),'Edited current result');
+  rmSync(path);
+  assert.equal((await readCurrent()).reason,'missing');
+  assert.equal(store.getTodo(fileTodo.id)?.state,'done');
   receipts.push({
     state: store.listTodos('ask'),
     isolatedPort: app.server.port,

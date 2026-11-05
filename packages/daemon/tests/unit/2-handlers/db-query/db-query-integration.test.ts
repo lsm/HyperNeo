@@ -10,57 +10,6 @@ function createFullSchemaDb(): Database {
   return db;
 }
 
-function seedRooms(db: Database): void {
-  db.exec(
-    "INSERT OR IGNORE INTO rooms (id, name, created_at, updated_at) VALUES ('room-int-1', 'Integration Room 1', 1000, 1000)"
-  );
-  db.exec(
-    "INSERT OR IGNORE INTO rooms (id, name, created_at, updated_at) VALUES ('room-int-2', 'Integration Room 2', 2000, 2000)"
-  );
-}
-
-function seedTasks(db: Database): void {
-  seedRooms(db);
-  db.exec(
-    "INSERT OR IGNORE INTO tasks (id, room_id, title, description, created_at) VALUES ('task-int-1', 'room-int-1', 'Integration Task 1', '', 1000)"
-  );
-  db.exec(
-    "INSERT OR IGNORE INTO tasks (id, room_id, title, description, status, created_at) VALUES ('task-int-2', 'room-int-1', 'Integration Task 2', '', 'in_progress', 2000)"
-  );
-  db.exec(
-    "INSERT OR IGNORE INTO tasks (id, room_id, title, description, created_at) VALUES ('task-int-3', 'room-int-2', 'Integration Task 3', '', 3000)"
-  );
-}
-
-function seedGoals(db: Database): void {
-  seedRooms(db);
-  db.exec(
-    "INSERT OR IGNORE INTO goals (id, room_id, title, created_at, updated_at) VALUES ('goal-int-1', 'room-int-1', 'Goal Int 1', 1000, 1000)"
-  );
-  db.exec(
-    "INSERT OR IGNORE INTO goals (id, room_id, title, created_at, updated_at) VALUES ('goal-int-2', 'room-int-1', 'Goal Int 2', 2000, 2000)"
-  );
-  db.exec(
-    "INSERT OR IGNORE INTO goals (id, room_id, title, created_at, updated_at) VALUES ('goal-int-3', 'room-int-2', 'Goal Int 3', 3000, 3000)"
-  );
-}
-
-function seedMissionExecutions(db: Database): void {
-  seedGoals(db);
-  db.exec(
-    "INSERT OR IGNORE INTO mission_executions (id, goal_id, execution_number, status) VALUES ('exec-int-1', 'goal-int-1', 1, 'running')"
-  );
-  db.exec(
-    "INSERT OR IGNORE INTO mission_executions (id, goal_id, execution_number, status) VALUES ('exec-int-2', 'goal-int-1', 2, 'completed')"
-  );
-  db.exec(
-    "INSERT OR IGNORE INTO mission_executions (id, goal_id, execution_number, status) VALUES ('exec-int-3', 'goal-int-2', 1, 'completed')"
-  );
-  db.exec(
-    "INSERT OR IGNORE INTO mission_executions (id, goal_id, execution_number, status) VALUES ('exec-int-4', 'goal-int-3', 1, 'running')"
-  );
-}
-
 function seedSpaces(db: Database): void {
   db.exec(
     "INSERT OR IGNORE INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES ('space-int-1', 'space-int-1', '/tmp/space-int-1', 'Space Int 1', 1000, 1000)"
@@ -119,16 +68,6 @@ function seedGateData(db: Database): void {
   );
 }
 
-function seedRoomGithubMappings(db: Database): void {
-  seedRooms(db);
-  db.exec(
-    "INSERT OR IGNORE INTO room_github_mappings (id, room_id, repositories, created_at, updated_at) VALUES ('rgm-int-1', 'room-int-1', '[\"owner/repo1\"]', 1000, 1000)"
-  );
-  db.exec(
-    "INSERT OR IGNORE INTO room_github_mappings (id, room_id, repositories, created_at, updated_at) VALUES ('rgm-int-2', 'room-int-2', '[\"owner/repo2\"]', 2000, 2000)"
-  );
-}
-
 function parseResult(result: {
   content: Array<{ type: string; text: string }>;
   isError?: boolean;
@@ -150,291 +89,6 @@ describe('db-query integration', () => {
 
   afterEach(() => {
     db.close();
-  });
-
-  describe('room scope', () => {
-    it('can query tasks filtered to the specified room_id', async () => {
-      seedTasks(db);
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
-        db
-      );
-      const result = await handlers.db_query({ sql: 'SELECT * FROM tasks' });
-      const parsed = parseResult(result);
-
-      expect(parsed.isError).toBeFalsy();
-      expect(parsed.rows).toHaveLength(2);
-      for (const row of parsed.rows) {
-        expect(row.room_id).toBe('room-int-1');
-      }
-    });
-
-    it('task rows do not include the blacklisted restrictions column', async () => {
-      seedTasks(db);
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
-        db
-      );
-      const result = await handlers.db_query({ sql: 'SELECT * FROM tasks' });
-      const parsed = parseResult(result);
-
-      expect(parsed.isError).toBeFalsy();
-      for (const row of parsed.rows) {
-        expect(row).not.toHaveProperty('restrictions');
-      }
-    });
-
-    it('can query goals filtered to the specified room_id', async () => {
-      seedGoals(db);
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
-        db
-      );
-      const result = await handlers.db_query({ sql: 'SELECT id, title FROM goals' });
-      const parsed = parseResult(result);
-
-      expect(parsed.isError).toBeFalsy();
-      expect(parsed.rows).toHaveLength(2);
-      const ids = parsed.rows.map((r: Record<string, unknown>) => r.id).sort();
-      expect(ids).toEqual(['goal-int-1', 'goal-int-2']);
-    });
-
-    it('goals not in the scoped room are excluded', async () => {
-      seedGoals(db);
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-2' },
-        db
-      );
-      const result = await handlers.db_query({ sql: 'SELECT id FROM goals' });
-      const parsed = parseResult(result);
-
-      expect(parsed.isError).toBeFalsy();
-      expect(parsed.rows).toHaveLength(1);
-      expect(parsed.rows[0].id).toBe('goal-int-3');
-    });
-
-    it('can query mission_executions filtered via goals indirect scope', async () => {
-      seedMissionExecutions(db);
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
-        db
-      );
-      const result = await handlers.db_query({ sql: 'SELECT id, goal_id FROM mission_executions' });
-      const parsed = parseResult(result);
-
-      expect(parsed.isError).toBeFalsy();
-      expect(parsed.rows).toHaveLength(3);
-      const ids = parsed.rows.map((r: Record<string, unknown>) => r.id).sort();
-      expect(ids).toEqual(['exec-int-1', 'exec-int-2', 'exec-int-3']);
-    });
-
-    it('mission_executions from other rooms are excluded via indirect scope', async () => {
-      seedMissionExecutions(db);
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-2' },
-        db
-      );
-      const result = await handlers.db_query({ sql: 'SELECT id FROM mission_executions' });
-      const parsed = parseResult(result);
-
-      expect(parsed.isError).toBeFalsy();
-      expect(parsed.rows).toHaveLength(1);
-      expect(parsed.rows[0].id).toBe('exec-int-4');
-    });
-
-    it('can query room_github_mappings filtered to the specified room_id', async () => {
-      seedRoomGithubMappings(db);
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
-        db
-      );
-      const result = await handlers.db_query({
-        sql: 'SELECT id, room_id FROM room_github_mappings',
-      });
-      const parsed = parseResult(result);
-
-      expect(parsed.isError).toBeFalsy();
-      expect(parsed.rows).toHaveLength(1);
-      expect(parsed.rows[0].id).toBe('rgm-int-1');
-    });
-
-    it('can JOIN tasks and goals (both room-scoped) with scope filter applied', async () => {
-      seedTasks(db);
-      seedGoals(db);
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
-        db
-      );
-      const result = await handlers.db_query({
-        sql: 'SELECT tasks.id AS task_id, goals.id AS goal_id FROM tasks JOIN goals ON tasks.room_id = goals.room_id',
-      });
-      const parsed = parseResult(result);
-
-      expect(parsed.isError).toBeFalsy();
-      expect(parsed.rows).toHaveLength(4);
-    });
-
-    it('cannot query space-scoped table space_tasks — rejected with scope error', async () => {
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
-        db
-      );
-      const result = await handlers.db_query({ sql: 'SELECT * FROM space_tasks' });
-
-      expect(result.isError).toBe(true);
-      expect(parseResult(result).raw).toContain('not accessible in room scope');
-    });
-
-    it('cannot query space-scoped table space_workflows — rejected with scope error', async () => {
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
-        db
-      );
-      const result = await handlers.db_query({ sql: 'SELECT * FROM space_workflows' });
-
-      expect(result.isError).toBe(true);
-      expect(parseResult(result).raw).toContain('not accessible in room scope');
-    });
-
-    it('cannot query sensitive table auth_config — rejected', async () => {
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
-        db
-      );
-      const result = await handlers.db_query({ sql: 'SELECT * FROM auth_config' });
-
-      expect(result.isError).toBe(true);
-      expect(parseResult(result).raw).toContain('not accessible in room scope');
-    });
-
-    it('cannot query sensitive table global_settings — rejected', async () => {
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
-        db
-      );
-      const result = await handlers.db_query({ sql: 'SELECT * FROM global_settings' });
-
-      expect(result.isError).toBe(true);
-      expect(parseResult(result).raw).toContain('not accessible in room scope');
-    });
-
-    it('cross-scope JOIN tasks with space_tasks is rejected for room scope', async () => {
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
-        db
-      );
-      const result = await handlers.db_query({
-        sql: 'SELECT * FROM tasks JOIN space_tasks ON tasks.id = space_tasks.id',
-      });
-
-      expect(result.isError).toBe(true);
-      expect(parseResult(result).raw).toContain('not accessible in room scope');
-    });
-
-    it('parameterized query with ? placeholder filters correctly in room scope', async () => {
-      seedTasks(db);
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
-        db
-      );
-      const result = await handlers.db_query({
-        sql: 'SELECT id FROM tasks WHERE status = ?',
-        params: ['in_progress'],
-      });
-      const parsed = parseResult(result);
-
-      expect(parsed.isError).toBeFalsy();
-      expect(parsed.rows).toHaveLength(1);
-      expect(parsed.rows[0].id).toBe('task-int-2');
-    });
-
-    it('COUNT aggregate returns correct count for scoped room', async () => {
-      seedTasks(db);
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
-        db
-      );
-      const result = await handlers.db_query({ sql: 'SELECT COUNT(*) AS cnt FROM tasks' });
-      const parsed = parseResult(result);
-
-      expect(parsed.isError).toBeFalsy();
-      expect(parsed.rows[0].cnt).toBe(2);
-    });
-
-    it('GROUP BY status works in room scope with full schema', async () => {
-      seedTasks(db);
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
-        db
-      );
-      const result = await handlers.db_query({
-        sql: 'SELECT status, COUNT(*) AS cnt FROM tasks GROUP BY status ORDER BY status',
-      });
-      const parsed = parseResult(result);
-
-      expect(parsed.isError).toBeFalsy();
-      expect(parsed.rows).toHaveLength(2);
-      const statuses = parsed.rows.map((r: Record<string, unknown>) => r.status).sort();
-      expect(statuses).toEqual(['in_progress', 'pending']);
-    });
-
-    it('ORDER BY and LIMIT work in room scope with full schema', async () => {
-      seedTasks(db);
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
-        db
-      );
-      const result = await handlers.db_query({
-        sql: 'SELECT id FROM tasks ORDER BY created_at DESC LIMIT 1',
-      });
-      const parsed = parseResult(result);
-
-      expect(parsed.isError).toBeFalsy();
-      expect(parsed.rows).toHaveLength(1);
-      expect(parsed.rows[0].id).toBe('task-int-2');
-    });
-
-    it('db_list_tables shows room-scoped tables only (no space or global tables)', async () => {
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
-        db
-      );
-      const result = await handlers.db_list_tables();
-      const parsed = parseResult(result);
-
-      expect(parsed.isError).toBeFalsy();
-      expect(parsed.tables).toContain('tasks');
-      expect(parsed.tables).toContain('goals');
-      expect(parsed.tables).toContain('mission_executions');
-      expect(parsed.tables).not.toContain('space_tasks');
-      expect(parsed.tables).not.toContain('space_workflows');
-      expect(parsed.tables).not.toContain('auth_config');
-      expect(parsed.tables).not.toContain('global_settings');
-    });
-
-    it('db_describe_table works for tasks table in room scope', async () => {
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
-        db
-      );
-      const result = await handlers.db_describe_table({ table_name: 'tasks' });
-      const parsed = parseResult(result);
-
-      expect(parsed.isError).toBeFalsy();
-      expect(parsed.description).toContain('tasks');
-      expect(parsed.description).not.toContain('| restrictions |');
-    });
-
-    it('db_describe_table rejects out-of-scope space_tasks in room scope', async () => {
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
-        db
-      );
-      const result = await handlers.db_describe_table({ table_name: 'space_tasks' });
-
-      expect(result.isError).toBe(true);
-      expect(parseResult(result).raw).toContain('not accessible in room scope');
-    });
   });
 
   describe('space scope', () => {
@@ -863,44 +517,9 @@ describe('db-query integration', () => {
       expect(parsed.isError).toBeFalsy();
       expect(parsed.rows[0].cnt).toBe(2);
     });
-
-    it('cannot access sessions from room scope (sessions not in room scope)', async () => {
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
-        db
-      );
-      const result = await handlers.db_query({ sql: 'SELECT * FROM sessions' });
-
-      expect(result.isError).toBe(true);
-      expect(parseResult(result).raw).toContain('not accessible in room scope');
-    });
-
-    it('cannot access sdk_messages from room scope', async () => {
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
-        db
-      );
-      const result = await handlers.db_query({ sql: 'SELECT * FROM sdk_messages' });
-
-      expect(result.isError).toBe(true);
-      expect(parseResult(result).raw).toContain('not accessible in room scope');
-    });
   });
 
   describe('global scope', () => {
-    it('can query all rows from rooms (no scope filter)', async () => {
-      seedRooms(db);
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'global', scopeValue: '' },
-        db
-      );
-      const result = await handlers.db_query({ sql: 'SELECT id FROM rooms' });
-      const parsed = parseResult(result);
-
-      expect(parsed.isError).toBeFalsy();
-      expect(parsed.rows).toHaveLength(2);
-    });
-
     it('can query all rows from spaces (no scope filter)', async () => {
       seedSpaces(db);
       const handlers = createDbQueryToolHandlers(
@@ -914,13 +533,13 @@ describe('db-query integration', () => {
       expect(parsed.rows).toHaveLength(2);
     });
 
-    it('rooms rows do not include the blacklisted config column', async () => {
-      seedRooms(db);
+    it('spaces rows do not include the blacklisted config column', async () => {
+      seedSpaces(db);
       const handlers = createDbQueryToolHandlers(
         { dbPath: ':memory:', scopeType: 'global', scopeValue: '' },
         db
       );
-      const result = await handlers.db_query({ sql: 'SELECT * FROM rooms' });
+      const result = await handlers.db_query({ sql: 'SELECT * FROM spaces' });
       const parsed = parseResult(result);
 
       expect(parsed.isError).toBeFalsy();
@@ -964,13 +583,13 @@ describe('db-query integration', () => {
       expect(parseResult(result).raw).toContain('not accessible in global scope');
     });
 
-    it('no scope filter is applied in global scope — all rooms are returned', async () => {
-      seedRooms(db);
+    it('no scope filter is applied in global scope — all spaces are returned', async () => {
+      seedSpaces(db);
       const handlers = createDbQueryToolHandlers(
         { dbPath: ':memory:', scopeType: 'global', scopeValue: '' },
         db
       );
-      const result = await handlers.db_query({ sql: 'SELECT COUNT(*) AS cnt FROM rooms' });
+      const result = await handlers.db_query({ sql: 'SELECT COUNT(*) AS cnt FROM spaces' });
       const parsed = parseResult(result);
 
       expect(parsed.isError).toBeFalsy();
@@ -986,7 +605,7 @@ describe('db-query integration', () => {
       const parsed = parseResult(result);
 
       expect(parsed.isError).toBeFalsy();
-      expect(parsed.tables).toContain('rooms');
+      expect(parsed.tables).not.toContain('rooms');
       expect(parsed.tables).toContain('spaces');
       expect(parsed.tables).toContain('sessions');
       expect(parsed.tables).toContain('skills');
@@ -998,56 +617,30 @@ describe('db-query integration', () => {
   });
 
   describe('cross-scope join prevention', () => {
-    it('room scope: JOIN with space_tasks (a space-scoped table) is rejected', async () => {
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
-        db
-      );
-      const result = await handlers.db_query({
-        sql: 'SELECT tasks.id FROM tasks JOIN space_tasks ON tasks.id = space_tasks.id',
-      });
-
-      expect(result.isError).toBe(true);
-      expect(parseResult(result).raw).toContain('not accessible in room scope');
-    });
-
-    it('room scope: JOIN with space_workflow_runs (space-scoped) is rejected', async () => {
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
-        db
-      );
-      const result = await handlers.db_query({
-        sql: 'SELECT * FROM goals JOIN space_workflow_runs ON goals.room_id = space_workflow_runs.space_id',
-      });
-
-      expect(result.isError).toBe(true);
-      expect(parseResult(result).raw).toContain('not accessible in room scope');
-    });
-
-    it('space scope: JOIN with tasks (a room-scoped table) is rejected', async () => {
+    it('space scope: JOIN with skills (a global-scoped table) is rejected', async () => {
       const handlers = createDbQueryToolHandlers(
         { dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-int-1' },
         db
       );
       const result = await handlers.db_query({
-        sql: 'SELECT space_tasks.id FROM space_tasks JOIN tasks ON space_tasks.id = tasks.id',
+        sql: 'SELECT space_tasks.id FROM space_tasks JOIN skills ON space_tasks.id = skills.id',
       });
 
       expect(result.isError).toBe(true);
       expect(parseResult(result).raw).toContain('not accessible in space scope');
     });
 
-    it('room scope: JOIN with sensitive table auth_config is rejected', async () => {
+    it('space scope: JOIN with sensitive table auth_config is rejected', async () => {
       const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
+        { dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-int-1' },
         db
       );
       const result = await handlers.db_query({
-        sql: 'SELECT * FROM tasks JOIN auth_config ON 1 = 1',
+        sql: 'SELECT * FROM space_tasks JOIN auth_config ON 1 = 1',
       });
 
       expect(result.isError).toBe(true);
-      expect(parseResult(result).raw).toContain('not accessible in room scope');
+      expect(parseResult(result).raw).toContain('not accessible in space scope');
     });
 
     it('global scope: JOIN with auth_config is rejected', async () => {
@@ -1056,7 +649,7 @@ describe('db-query integration', () => {
         db
       );
       const result = await handlers.db_query({
-        sql: 'SELECT * FROM rooms JOIN auth_config ON 1 = 1',
+        sql: 'SELECT * FROM spaces JOIN auth_config ON 1 = 1',
       });
 
       expect(result.isError).toBe(true);
@@ -1065,38 +658,25 @@ describe('db-query integration', () => {
   });
 
   describe('CTE queries in scoped mode with full schema', () => {
-    it('CTE over room-scoped table applies scope filter correctly', async () => {
-      seedTasks(db);
+    it('CTE over space-scoped table applies scope filter correctly', async () => {
+      seedSpaceTasks(db);
       const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
+        { dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-int-1' },
         db
       );
       const result = await handlers.db_query({
-        sql: "WITH active AS (SELECT id, title FROM tasks WHERE status = 'pending') SELECT * FROM active",
+        sql: "WITH active AS (SELECT id, title FROM space_tasks WHERE status = 'open') SELECT * FROM active",
       });
       const parsed = parseResult(result);
 
       expect(parsed.isError).toBeFalsy();
       expect(parsed.rows).toHaveLength(1);
-      expect(parsed.rows[0].id).toBe('task-int-1');
-    });
-
-    it('CTE referencing space-scoped table is rejected in room scope', async () => {
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
-        db
-      );
-      const result = await handlers.db_query({
-        sql: 'WITH space AS (SELECT * FROM space_tasks) SELECT * FROM space',
-      });
-
-      expect(result.isError).toBe(true);
-      expect(parseResult(result).raw).toContain('not accessible in room scope');
+      expect(parsed.rows[0].id).toBe('stask-int-1');
     });
 
     it('CTE referencing sensitive table is rejected', async () => {
       const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
+        { dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-int-1' },
         db
       );
       const result = await handlers.db_query({
@@ -1104,17 +684,17 @@ describe('db-query integration', () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(parseResult(result).raw).toContain('not accessible in room scope');
+      expect(parseResult(result).raw).toContain('not accessible in space scope');
     });
 
-    it('CTE over room-scoped table counts only in-scope rows', async () => {
-      seedTasks(db);
+    it('CTE over space-scoped table counts only in-scope rows', async () => {
+      seedSpaceTasks(db);
       const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
+        { dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-int-1' },
         db
       );
       const result = await handlers.db_query({
-        sql: 'WITH all_tasks AS (SELECT id FROM tasks) SELECT COUNT(*) AS cnt FROM all_tasks',
+        sql: 'WITH all_tasks AS (SELECT id FROM space_tasks) SELECT COUNT(*) AS cnt FROM all_tasks',
       });
       const parsed = parseResult(result);
 
@@ -1124,47 +704,47 @@ describe('db-query integration', () => {
 
     it('multi-CTE with cross-scope table is rejected even if outer SELECT only uses safe CTE', async () => {
       const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
+        { dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-int-1' },
         db
       );
       const result = await handlers.db_query({
-        sql: 'WITH room_cte AS (SELECT * FROM tasks), space_cte AS (SELECT * FROM space_tasks) SELECT * FROM room_cte',
+        sql: 'WITH safe_cte AS (SELECT * FROM space_tasks), unsafe_cte AS (SELECT * FROM auth_config) SELECT * FROM safe_cte',
       });
 
       expect(result.isError).toBe(true);
-      expect(parseResult(result).raw).toContain('not accessible in room scope');
+      expect(parseResult(result).raw).toContain('not accessible in space scope');
     });
   });
 
   describe('HAVING clause and subqueries in SELECT with full schema', () => {
     it('HAVING clause filters aggregated groups after scope filter is applied', async () => {
-      seedTasks(db);
+      seedSpaceTasks(db);
       db.exec(
-        "INSERT OR IGNORE INTO tasks (id, room_id, title, description, status, created_at) VALUES ('task-int-4', 'room-int-1', 'Integration Task 4', '', 'pending', 4000)"
+        "INSERT OR IGNORE INTO space_tasks (id, space_id, task_number, title, created_at, updated_at) VALUES ('stask-int-4', 'space-int-1', 3, 'Space Task 4', 4000, 4000)"
       );
       const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
+        { dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-int-1' },
         db
       );
       const result = await handlers.db_query({
-        sql: 'SELECT status, COUNT(*) AS cnt FROM tasks GROUP BY status HAVING cnt > 1',
+        sql: 'SELECT status, COUNT(*) AS cnt FROM space_tasks GROUP BY status HAVING cnt > 1',
       });
       const parsed = parseResult(result);
 
       expect(parsed.isError).toBeFalsy();
       expect(parsed.rows).toHaveLength(1);
-      expect(parsed.rows[0].status).toBe('pending');
+      expect(parsed.rows[0].status).toBe('open');
       expect(parsed.rows[0].cnt).toBe(2);
     });
 
-    it('HAVING clause only sees in-scope rows — room-int-2 tasks excluded', async () => {
-      seedTasks(db);
+    it('HAVING clause only sees in-scope rows — space-int-2 tasks excluded', async () => {
+      seedSpaceTasks(db);
       const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
+        { dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-int-1' },
         db
       );
       const result = await handlers.db_query({
-        sql: 'SELECT COUNT(*) AS total FROM tasks HAVING total > 0',
+        sql: 'SELECT COUNT(*) AS total FROM space_tasks HAVING total > 0',
       });
       const parsed = parseResult(result);
 

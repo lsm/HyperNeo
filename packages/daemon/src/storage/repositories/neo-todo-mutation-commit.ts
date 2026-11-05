@@ -6,6 +6,7 @@ import { requireNeoTodoMayFinish, sameNeoTodoCheck } from '../../lib/neo/todo-co
 import { ChangeRecorder, defineDbOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoAskTodoRepository, type NeoTodoPatch } from './neo-ask-todo-repository.ts';
+import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 import { neoTodoMutationReads } from './neo-todo-mutation-planning.ts';
 
 type Planner = InstanceType<typeof neoTodoMutationReads.Repository>;
@@ -56,10 +57,18 @@ const commit = (superpipe({})('neo.todo.commit-mutation') as PipelineAPI)
   )
   .pipe(
     (db: Database, plan: Plan, args: Input, changes: ChangeRecorder): Outcome => {
-      const todos = new NeoAskTodoRepository(db, () => changes.notifyChange('neo_todos'));
+      const todos = new NeoAskTodoRepository(
+        db,
+        () => changes.notifyChange('neo_todos'),
+        undefined,
+        undefined,
+        changes
+      );
       const committed = todos.commitState(plan.todo.id, plan.patch, args.now, {
         state: 'no_opinion',
       });
+      if (args.input.kind === 'edit' && args.input.target)
+        new NeoTodoSessionRepository(db, changes).create(plan.todo.id, args.input.target);
       return {
         ok: true,
         todo: committed.todo!,

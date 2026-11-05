@@ -1,0 +1,38 @@
+{
+  "mode": "verify",
+  "verified": false,
+  "events": [
+    {
+      "phase": "initial",
+      "name": "pack.preferences.list",
+      "input": {},
+      "reply": {
+        "id": "42f0fe25-e5a0-4ae6-8cf8-e3480746eb35",
+        "type": "RSP",
+        "sessionId": "global",
+        "method": "operation.invoke",
+        "data": {
+          "preferences": [
+            {
+              "pack": "coding",
+              "scope": {
+                "kind": "global",
+                "key": ""
+              },
+              "key": "watchedRepos",
+              "value": [],
+              "setBy": "upgrade",
+              "setAt": 1793121124298
+            }
+          ]
+        },
+        "requestId": "01905b72-c46a-4fe3-8574-067d8ab635f6",
+        "timestamp": "2026-10-27T17:12:04.426Z",
+        "version": "1.0.0",
+        "_transportName": "websocket-server"
+      }
+    }
+  ],
+  "mainSql": [],
+  "commands": []
+}

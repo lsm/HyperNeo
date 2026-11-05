@@ -1,7 +1,7 @@
 import { readHyperneoTurnEnds } from '../../../../src/storage/hyperneo-turn-ends-read.ts';
 import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
-import { spaceTaskControl } from '../../../../src/lib/rpc-handlers/family-operations/drivers';
+import { spaceTaskControl } from '../../../../src/lib/drivers/space-adapter';
 import { readDriverFollowUp, readDriverSettlement } from '../../../../src/lib/neo/driver-work';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
@@ -572,7 +572,7 @@ describe('space adapter send', () => {
   });
 
   test('status exposes typed human input for the Space agent after the refusal time', async () => {
-    db.exec(`CREATE TABLE sdk_messages (session_id TEXT, message_type TEXT, sdk_message TEXT,
+    db.exec(`CREATE TABLE sdk_messages (session_id TEXT, sdk_uuid TEXT, message_type TEXT, sdk_message TEXT,
       timestamp TEXT, send_status TEXT, parent_tool_use_id TEXT)`);
     const insert = db.prepare(
       'INSERT INTO sdk_messages (session_id,message_type,sdk_message,timestamp,send_status,parent_tool_use_id) VALUES (?, ?, ?, ?, ?, NULL)'

@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { rmSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { Database } from '../../../../src/storage/index';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
@@ -18,10 +18,7 @@ interface MessageRow {
 }
 
 function makeTempDbPath(): string {
-  return join(
-    tmpdir(),
-    `live-query-delivery-${Date.now()}-${Math.random().toString(36).slice(2)}.db`
-  );
+  return join(mkdtempSync(join(tmpdir(), 'live-query-delivery-')), 'test.db');
 }
 
 function makeUserMessage(uuid: string, content: string): SDKMessage {
@@ -92,15 +89,15 @@ describe('messages.bySession delivery-status reactive pipeline', () => {
   });
 
   afterEach(() => {
-    engine.dispose();
     try {
-      db.close();
-    } catch {}
-    try {
-      rmSync(dbPath, { force: true });
-      rmSync(dbPath + '-wal', { force: true });
-      rmSync(dbPath + '-shm', { force: true });
-    } catch {}
+      engine?.dispose();
+    } finally {
+      try {
+        db?.close();
+      } finally {
+        rmSync(dirname(dbPath), { recursive: true, force: true });
+      }
+    }
   });
 
   async function flush(): Promise<void> {

@@ -1,10 +1,10 @@
 # Owned queued input withdrawal admits on the writer
 
-Run lane-b-owned-input-withdrawal.ts under Bun or Deno in a fresh synthetic run,
-with env -i, NODE_ENV=test, HOME=<run>/home and HYPERNEO_DATA_DIR=<run>/data.
-The helper owns an ephemeral daemon and manual session, stops its own processor,
-and sends real work.queue and work.withdraw operations over WebSocket RPC.
-No provider, HTTP mock, GUI or model turn is required.
+Run lane-b-owned-input-withdrawal.ts under Bun in a fresh synthetic run, with env -i,
+NODE_ENV=test, HOME=<run>/home and HYPERNEO_DATA_DIR=<run>/data. The helper owns an
+ephemeral daemon and manual session, stops its own processor, and sends real work.queue
+and work.withdraw operations over WebSocket RPC. No provider, HTTP mock, GUI or model turn
+is required.
 
 The main connection rejects all withdrawal admission SQL. An unclaimed queued
 input must become withdrawn and remain idempotent on retry. A second input is

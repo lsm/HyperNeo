@@ -1,3 +1,5 @@
+import { createLocalSocket } from '../../../src/lib/pairing/local-credential.ts';
+import { pendingTodoCheck } from '../../unit/helpers/todo-check-packs.ts';
 import { expect, test } from 'bun:test';
 import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -221,6 +223,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
                         add: ['Keep synthetic garden changes as drafts.'],
                       }
                     : {
+                        retireWhen: pendingTodoCheck,
                         askId: 'fictional-garden',
                         kind: 'reply',
                         text: 'Which synthetic flower?',
@@ -412,6 +415,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
     });
     daemon.settingsManager.updateGlobalSettings({ sandbox: { enabled: false } });
     transport = new WebSocketClientTransport({
+      createSocket: createLocalSocket,
       url: `ws://127.0.0.1:${daemon.server.port}/ws`,
       autoReconnect: false,
     });
@@ -841,9 +845,10 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
     const human = (sent[0].human as { type: string; text?: string }[]).filter(
       (part) => part.type === 'text'
     );
-    expect(human.map((part) => part.text).slice(-2)).toEqual([
+    expect(human.map((part) => part.text).slice(-3)).toEqual([
       expect.stringMatching(/^\(local time: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+\)$/),
       'Tell me about the fictional moon garden. Keep synthetic garden changes as drafts.',
+      '[listening: no]',
     ]);
     expect(human.map((part) => part.text).join('\n')).not.toContain('<human-input>');
     expect(human.map((part) => part.text)).toContain(`[message id: ${requestId}]`);

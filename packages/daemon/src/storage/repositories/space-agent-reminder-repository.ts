@@ -6,6 +6,8 @@ import { generateUUID } from '@hyperneo/shared';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SpaceAgentRepository } from './space-agent-repository.ts';
 import { rowToReminder } from './space-agent-repository-helpers.ts';
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { agentReminderDeleteWrites } from './agent-reminder-delete-write.ts';
 
 export class SpaceAgentReminderRepository {
   constructor(
@@ -148,6 +150,10 @@ export class SpaceAgentReminderRepository {
       )
       .run(Date.now(), id);
     return result.changes > 0;
+  }
+
+  deleteReminderAsync(id: string): Promise<void> {
+    return gatewayFor(this.db).call(agentReminderDeleteWrites, 'delete', id);
   }
 
   deleteReminder(id: string): void {

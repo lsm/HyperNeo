@@ -1,0 +1,41 @@
+bun test v1.4.3 (c6da4a4d3)
+
+tests/unit/1-core/operations/neo-publication-page-writer.test.ts:
+34 |     const { repo, ledger } = seed(db);
+35 |     db.prepare('UPDATE neo_publications SET payload_json=?').run('{}');
+36 |     await expect(
+37 |       createNeoPublicationReadOperation(repo, ledger).execute(page, human)
+38 |     ).rejects.toThrow('Invalid stored Neo publication');
+39 |     expect(db.prepare('SELECT id FROM neo_conversation').get()).toBeNull();
+                                                                     ^
+error: expect(received).toBeNull()
+
+Received: {
+  id: "10000000-0000-4000-8000-000000009241",
+}
+
+      at <anonymous> (/Users/lsm/.codex/worktrees/lane-a-publication-page/neokai/packages/daemon/tests/unit/1-core/operations/neo-publication-page-writer.test.ts:39:65)
+(fail) a corrupt publication cannot leave a partially initialized public conversation [4.12ms]
+47 |     writer = new Database(':memory:');
+48 |   const { publication } = seed(writer);
+49 |   const gateway = new DbGateway(':memory:', writer);
+50 |   bindGateway(main, gateway);
+51 |   const prepare = spyOn(main, 'prepare').mockImplementation(((sql: string) => {
+52 |     throw new Error(`Publication SQL on main: ${sql}`);
+                   ^
+error: Publication SQL on main: SELECT id FROM neo_conversation
+      at <anonymous> (/Users/lsm/.codex/worktrees/lane-a-publication-page/neokai/packages/daemon/tests/unit/1-core/operations/neo-publication-page-writer.test.ts:52:15)
+      at conversationId (/Users/lsm/.codex/worktrees/lane-a-publication-page/neokai/packages/daemon/src/storage/repositories/neo-repository.ts:345:28)
+      at executePipe (/Users/lsm/.codex/worktrees/lane-a-publication-page/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:574:16)
+      at continuePipeline (/Users/lsm/.codex/worktrees/lane-a-publication-page/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:730:34)
+      at next (/Users/lsm/.codex/worktrees/lane-a-publication-page/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:687:5)
+      at runPipeline (/Users/lsm/.codex/worktrees/lane-a-publication-page/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:762:2)
+      at <anonymous> (/Users/lsm/.codex/worktrees/lane-a-publication-page/neokai/node_modules/.bun/superpipe@0.18.0/node_modules/superpipe/dist/index.mjs:809:22)
+      at execute (/Users/lsm/.codex/worktrees/lane-a-publication-page/neokai/packages/daemon/src/lib/neo/publication-read-operation.ts:135:38)
+      at <anonymous> (/Users/lsm/.codex/worktrees/lane-a-publication-page/neokai/packages/daemon/tests/unit/1-core/operations/neo-publication-page-writer.test.ts:60:17)
+(fail) public pages initialize and read from the gateway while main rejects SQL [1.47ms]
+
+ 0 pass
+ 2 fail
+ 2 expect() calls
+Ran 2 tests across 1 file. [36.00ms]

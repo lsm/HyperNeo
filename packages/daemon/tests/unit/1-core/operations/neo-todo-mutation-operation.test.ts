@@ -51,6 +51,7 @@ describe('Writer-backed todo operation activation', () => {
         id,
         'ask',
         {
+          approvedAt: 1,
           title: id,
           doneWhen: 'Merged',
           check: { pack: 'coding', kind: 'pr_merged', params: { urls: [] } },
@@ -93,6 +94,7 @@ describe('Writer-backed todo operation activation', () => {
         packs: () => packs,
         artifact: () => null,
         stop,
+        resolveTarget: async (ref) => ({ value: ref }),
         advance: () => start('peer'),
         changed: () => {
           order.push('announce');
@@ -122,6 +124,20 @@ describe('Writer-backed todo operation activation', () => {
       await call('neo.todo.edit', { todoId: 'first', done: 'reported', evidence: text })
     ).toMatchObject({ ok: true, todo: { state: 'done', report: text } });
     expect(order.slice(0, 2)).toEqual(['commit', 'announce']);
+  });
+
+  test('hold holds and releases through the atomic command', async () => {
+    expect(
+      await call('neo.todo.hold', { todoId: 'peer', reason: 'Human said wait.' })
+    ).toMatchObject({
+      ok: true,
+      todo: { id: 'peer', state: 'blocked', blockedBy: 'held', blockedReason: 'Human said wait.' },
+    });
+    expect(await call('neo.todo.hold', { todoId: 'peer', reason: null })).toMatchObject({
+      ok: true,
+      todo: { id: 'peer', state: 'todo', blockedBy: null },
+    });
+    expect(order).toEqual(['commit', 'announce', 'commit', 'announce']);
   });
 
   test('close stops first, commits, then lets the queue start the successor and returns its state', async () => {

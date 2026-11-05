@@ -1,0 +1,41 @@
+{
+  "fullSubsystemOffMainClaim": false,
+  "phase": "historical helper extraction contracts; current resolver identity is worker-backed, direct legacy helper remains on its supplied connection",
+  "firstRpcMs": 5.667666999999938,
+  "realRpcRefusalAndRetainedIdentity": true,
+  "referenceRpcIdentityNowWorkerBacked": true,
+  "extractedHelperRetainsRpcIdentity": true,
+  "directLegacyHelperStillMainSide": true,
+  "sqlAndBoundUuidShapeIdentical": true,
+  "retainedSingletonStable": true,
+  "callerOwnedRollbackPreserved": true,
+  "outsideTransactionPartialInsertPreserved": true,
+  "insertAndReceiptErrorsPreserved": true,
+  "publicRpcAfterHelperStillUnchanged": true,
+  "healthMs": 0.3811670000000049,
+  "rssBytes": 184321104,
+  "walBytes": 1190712,
+  "pass": true,
+  "mainStatementTrace": [
+    {
+      "kind": "insert",
+      "bindCount": 1
+    },
+    {
+      "kind": "select",
+      "bindCount": 0
+    }
+  ],
+  "sql": [
+    {
+      "bytes": 58,
+      "sha256": "8cb8d4d56c4500e7e9878d1f19030340785f48efecfdbfe8aa53c742417bdb55"
+    },
+    {
+      "bytes": 44,
+      "sha256": "d2a23547820de87d09904aab32e258c6f615bc2e78cc1d99beae38bb3cdddc0d"
+    }
+  ],
+  "runtime": "Bun 1.4.3",
+  "temporaryDaemonDataRemoved": true
+}

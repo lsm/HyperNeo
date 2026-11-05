@@ -160,14 +160,6 @@ describe('QueryRunner', () => {
       updateSession: updateSessionSpy,
       getSDKMessages: getSDKMessagesSpy,
       updateMessageStatus: updateMessageStatusSpy,
-      getNodeExecutionRepo: mock(() => ({
-        getByAgentSessionId: (sessionId: string) =>
-          sessionId === 'space:s1:task:t1:exec:e1' ? { id: 'exec-1' } : null,
-      })),
-      getSpaceTaskRepo: mock(() => ({
-        getTask: (taskId: string) =>
-          taskId === 't1' ? { id: 't1', spaceId: 's1', workflowRunId: 'run-1' } : null,
-      })),
     } as unknown as Database;
 
     publishSpy = mock(async () => {});
@@ -1400,7 +1392,41 @@ describe('QueryRunner', () => {
       for await (const _msg of generator) {
       }
 
-      expect(setProcessingSpy).toHaveBeenCalledWith('msg-1', 'initializing');
+      expect(setProcessingSpy).toHaveBeenCalledWith('msg-1', 'initializing', ['msg-1']);
+    });
+
+    it('does not leak a superseded turn inputs into the successor turn attribution', async () => {
+      async function* firstTurn() {
+        yield {
+          message: { uuid: 'msg-stale', content: 'Stale turn', internal: false },
+          onSent: () => {},
+        };
+      }
+      async function* secondTurn() {
+        yield {
+          message: { uuid: 'msg-fresh', content: 'Fresh turn', internal: false },
+          onSent: () => {},
+        };
+      }
+
+      const mockQueue = {
+        ...mockMessageQueue,
+        messageGenerator: mock(() => firstTurn()),
+      };
+
+      runner = createRunner({
+        messageQueue: mockQueue as unknown as MessageQueue,
+      });
+
+      for await (const _msg of runner.createMessageGeneratorWrapper(0)) {
+      }
+
+      mockQueue.messageGenerator = mock(() => secondTurn());
+
+      for await (const _msg of runner.createMessageGeneratorWrapper(1)) {
+      }
+
+      expect(setProcessingSpy).toHaveBeenLastCalledWith('msg-fresh', 'initializing', ['msg-fresh']);
     });
 
     it('does not publish or transition status at generator-yield time', async () => {

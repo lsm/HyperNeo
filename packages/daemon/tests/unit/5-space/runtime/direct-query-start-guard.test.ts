@@ -179,7 +179,12 @@ test.each([undefined, 'acp'] as const)(
     });
     const target = {
       session: live,
-      db: { getDatabase: () => db },
+      db: {
+        spaceSessions: {
+          queryStartGuard: (getSession: () => Session) =>
+            createDirectQueryStartGuard(db, getSession),
+        },
+      },
       queryRunner,
     } as unknown as AgentSession;
     await AgentSession.prototype.startStreamingQuery.call(target);

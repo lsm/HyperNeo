@@ -1,6 +1,6 @@
 import type { SpaceAgentAutonomyLevel, SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { OperationCaller } from '../operations/registry.ts';
-import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../space/slug.ts';
+import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from './slug.ts';
 
 export function displayNameTaken(
   agents: readonly SpaceLongHorizonAgent[],
@@ -22,6 +22,17 @@ export function uniqueAgentHandle(agents: readonly SpaceLongHorizonAgent[], name
     ...agents.map((agent) => agent.handle),
     ...RESERVED_SPACE_AGENT_HANDLES,
   ]);
+}
+
+export function nameClonedAgent(
+  agents: readonly SpaceLongHorizonAgent[],
+  title: string
+): { handle: string; displayName: string } {
+  const handle = uniqueAgentHandle(agents, title);
+  const base = title.trim() || handle;
+  let displayName = base;
+  for (let n = 2; displayNameTaken(agents, displayName); n++) displayName = `${base} (${n})`;
+  return { handle, displayName };
 }
 
 export function callerAutonomyLevel(

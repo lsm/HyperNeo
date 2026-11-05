@@ -28,10 +28,13 @@ export function requireNeoTodoMayFinish<T extends { todo: NeoTodo; patch?: NeoTo
       ...plan,
       patch: {
         ...plan.patch,
-        state: 'closed_unverified',
-        reason: result?.failed
+        state: 'blocked',
+        finishedAt: null,
+        blockedBy: 'check',
+        blockedReason: result?.failed
           ? `check_failed: ${result.failed}`
-          : `check_unmet: ${check ? `${check.pack}.${check.kind}` : 'outcome'} has not passed.`,
+          : `check_unmet: ${check ? `"${plan.todo.doneWhen ?? `${check.pack}.${check.kind}`}"` : 'outcome'} has not passed.`,
+        nextAction: 'It finishes when its check passes; fix a wrong check with neo.todo.edit.',
       },
     },
   };

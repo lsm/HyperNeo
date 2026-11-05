@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, appendFileSync, existsSync, chmodSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, appendFileSync, existsSync, chmodSync, rmSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { syntheticCodexDesktop } from './codex-desktop-peer.ts';
@@ -9,8 +9,12 @@ import { NeoRepository } from '../../../packages/daemon/src/storage/repositories
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import { createNeoWorkerQuestionWriter } from '../../../packages/daemon/src/lib/neo/question-operations.ts';
+import { feedCodexFiles } from '../../../packages/daemon/src/lib/drivers/codex-feed.ts';
 
-const run = resolve(process.argv[2]);
+const args = process.argv.slice(2);
+const mode = args.length > 1 ? args[0] : 'past';
+assert(['past', 'future'].includes(mode));
+const run = resolve(args.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -23,7 +27,7 @@ process.env.PATH = `${join(run, 'bin')}:${process.env.PATH}`;
 const codexHome = join(run, 'home/.codex');
 mkdirSync(codexHome, { recursive: true });
 const rollout = join(run, 'peer-rollout.jsonl');
-writeFileSync(rollout, '');
+writeFileSync(rollout, JSON.stringify({ type: 'session_meta', payload: { id: 'synthetic', cwd: join(run, 'workspace') } }) + '\n');
 const native = new Database(join(codexHome, 'state_5.sqlite'));
 native.exec(`CREATE TABLE threads (id TEXT, name TEXT, title TEXT, first_user_message TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT);
 CREATE TABLE projects (id TEXT, name TEXT); CREATE TABLE project_roots (project_id TEXT, path TEXT);`);
@@ -32,7 +36,7 @@ native.close();
 const peerInputs: string[] = [];
 const delayed: string[] = [];
 let loseReply = false;
-const record = (text: string) => appendFileSync(rollout, JSON.stringify({ type: 'response_item', timestamp: new Date().toISOString(), payload: { type: 'message', role: 'user', id: crypto.randomUUID(), content: [{ type: 'input_text', text }] } }) + '\n');
+const record = (text: string) => appendFileSync(rollout, JSON.stringify({ type: 'response_item', timestamp: new Date(Date.now() + (mode === 'past' ? -86400000 : 86400000)).toISOString(), payload: { type: 'message', role: 'user', id: crypto.randomUUID(), content: [{ type: 'input_text', text }] } }) + '\n');
 const startPeer = () => syntheticCodexDesktop(run, {
   start: (request) => {
     const text = request.params.turnStart.request.input[0].text;
@@ -88,6 +92,7 @@ try {
   };
   const refresh = async () => {
     const db = app.db.getDatabase();
+    await feedCodexFiles(db, [{ path: rollout, size: statSync(rollout).size, mtime: Math.floor(statSync(rollout).mtimeMs) }]);
     db.prepare("UPDATE job_queue SET run_at = ? WHERE status = 'pending'").run(Date.now() + 3600000);
     db.prepare("UPDATE job_queue SET run_at = ? WHERE queue = 'neo.work.driver.refresh' AND status = 'pending'").run(Date.now());
     await app.jobProcessor.tick();
@@ -124,11 +129,14 @@ try {
   assert.equal(waiting.answerDelivery[0].state, 'pending');
   assert.equal(peerInputs.length, 3, 'restart must not blindly resend a lost acknowledgement');
   for (const text of delayed) record(text);
-  for (let index = 0; index < 60; index++) record(`Subsequent unrelated input ${index}`);
+  for (let index = 0; index < 160; index++) record(`Subsequent unrelated input ${index}`);
   await refresh();
   const reconciled = await rpc('neo.question.get', { questionId: uncertainQuestion.id });
   const restartedStore = new NeoAskTodoRepository(app.db.getDatabase());
-  writeFileSync(join(run, 'evidence/reconciliation.json'), JSON.stringify({ reconciled, status: await rpc('work.status', { ref: { adapter: 'codex-desktop', id: 'synthetic' } }), statusSince: await rpc('work.status', { ref: { adapter: 'codex-desktop', id: 'synthetic' }, since: Math.max(0, (attempted.attemptedAt ?? uncertain.answerDelivery[0].answeredAt) - 1) }), peerInputs }, null, 2));
+  const statusSince = await rpc('work.status', { ref: { adapter: 'codex-desktop', id: 'synthetic' }, since: Math.max(0, (attempted.attemptedAt ?? uncertain.answerDelivery[0].answeredAt) - 1) });
+  const exactMarker = delayed[0].split('\n')[0];
+  writeFileSync(join(run, 'evidence/reconciliation.json'), JSON.stringify({ mode, reconciled, status: await rpc('work.status', { ref: { adapter: 'codex-desktop', id: 'synthetic' } }), statusSince, peerInputs }, null, 2));
+  assert(!statusSince.recentInputs?.some((input: { text: string }) => input.text.includes(exactMarker)), 'the old timestamp-bound view must not contain the accepted marker');
   assert.equal(reconciled.answerDelivery[0].state, 'accepted');
   assert.equal(restartedStore.getTodo('target')?.state, 'doing');
   await refresh();

@@ -108,6 +108,19 @@ describe('settleMessageDeliveryDeadLetter (onDead → session.error → settle o
     expect(calls).toContain('sessionError');
   });
 
+  it('names the dead-letter reason in session.error when the job recorded one', async () => {
+    const { settlement } = recordingSettlement();
+    await settleMessageDeliveryDeadLetter(
+      SPACE_INJECT_PAYLOAD,
+      settlement,
+      'Query stopped after 3 failures: Model stream stalled'
+    );
+    expect(settlement.publishSessionError).toHaveBeenCalledWith(
+      'sess-1',
+      'Message delivery failed: Query stopped after 3 failures: Model stream stalled'
+    );
+  });
+
   it('for a non-space_inject delivery, does NOT publish session.error (only mark + status + settle)', async () => {
     const { settlement, calls } = recordingSettlement();
     await settleMessageDeliveryDeadLetter(CHAT_PAYLOAD, settlement);

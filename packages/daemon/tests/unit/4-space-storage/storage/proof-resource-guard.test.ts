@@ -27,12 +27,13 @@ test.each([
     status: 79,
     message: 'DISK_GUARD',
   },
-])('proof wrapper refuses $name before creating a daemon run', (input) => {
+])('proof wrapper on Darwin refuses $name before creating a daemon run', (input) => {
   const directory = mkdtempSync(join(tmpdir(), 'proof-resource-guard-'));
   try {
     const bin = join(directory, 'bin'),
       evidence = join(directory, 'evidence');
     mkdirSync(bin);
+    writeFileSync(join(bin, 'uname'), '#!/bin/sh\nprintf "%s\\n" Darwin\n', { mode: 0o700 });
     writeFileSync(join(bin, 'memory_pressure'), `#!/bin/sh\necho '${input.pressure}'\n`, {
       mode: 0o700,
     });
@@ -52,6 +53,34 @@ test.each([
     expect(result.status).toBe(input.status);
     expect(result.stdout).toContain(input.message);
     expect(existsSync(evidence)).toBe(false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('proof wrapper rejects an unsupported runtime before invoking a helper', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'proof-runtime-'));
+  try {
+    const bin = join(directory, 'bin'),
+      evidence = join(directory, 'evidence');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'uname'), '#!/bin/sh\necho Linux\n', { mode: 0o700 });
+    const marker = join(directory, 'invoked');
+    writeFileSync(join(bin, 'bun'), '#!/bin/sh\ntouch "' + marker + '"\n', { mode: 0o700 });
+    const script = fileURLToPath(
+      new URL('../../../../../../.claude/skills/verify/proof-run.sh', import.meta.url)
+    );
+    const result = spawnSync('/bin/bash', [script, evidence, 'unused.ts'], {
+      env: {
+        PATH: bin + ':/usr/bin:/bin',
+        TMPDIR: directory,
+        VERIFY_PROOF_RUNTIME: 'removed-runtime',
+      },
+      encoding: 'utf8',
+    });
+    expect(result.status).toBe(2);
+    expect(result.stdout + result.stderr).toContain('Unsupported proof runtime');
+    expect(existsSync(marker)).toBe(false);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

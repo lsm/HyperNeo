@@ -1,0 +1,6 @@
+{
+  "regressionRun": "bun-verify-1",
+  "regression": "Public save under synthetic writer lock blocks the daemon loop for1200.8ms; save takes1212.8ms, and2 target SQL statements execute on main.",
+  "inconclusiveRun": "bun-verify",
+  "inconclusiveReason": "Helper initially matched response id before requestId; corrected correlation before the observed regression."
+}

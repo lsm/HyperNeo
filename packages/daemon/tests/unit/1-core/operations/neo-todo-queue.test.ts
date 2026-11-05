@@ -30,6 +30,8 @@ function world(limits = { running: 6, perGroup: 3 }, broken = false) {
   const sessions = new NeoTodoSessionRepository(db);
   const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
   const started: string[] = [];
+  const idle = new Set<string>();
+  const unreadable = new Set<string>();
   let workers = 0;
   const runner = createNeoTodoRunner({
     write: gatewayFor(db).run.bind(gatewayFor(db)),
@@ -45,7 +47,17 @@ function world(limits = { running: 6, perGroup: 3 }, broken = false) {
         started.push(String((input.ref as { id: string }).id));
         return completed({ ok: true, value: { delivered: true } });
       }
-      return completed({ ok: true, value: { status: 'running', lastActivityAt: Date.now() } });
+      if (unreadable.has(String((input.ref as { id?: string } | undefined)?.id)))
+        return completed({ ok: false, reason: 'unreachable', detail: 'synthetic status failure' });
+      return completed({
+        ok: true,
+        value: {
+          status: idle.has(String((input.ref as { id?: string } | undefined)?.id))
+            ? 'done'
+            : 'running',
+          lastActivityAt: Date.now(),
+        },
+      });
     },
     packs: () => [],
     tell: async () => {},
@@ -74,7 +86,14 @@ function world(limits = { running: 6, perGroup: 3 }, broken = false) {
     const step = store.addTodo(
       `${id}-step`,
       id,
-      { title: 'First step', doneWhen: 'done', check: null, instruction: 'Do it.', named: null },
+      {
+        approvedAt: 1,
+        title: 'First step',
+        doneWhen: 'done',
+        check: null,
+        instruction: 'Do it.',
+        named: null,
+      },
       0
     );
     db.prepare(
@@ -85,12 +104,21 @@ function world(limits = { running: 6, perGroup: 3 }, broken = false) {
   let created = 0;
   const add = (
     askId: string,
-    target: { verb: 'send'; ref: { adapter: string; id: string } } | null = null
+    target: { verb: 'send'; ref: { adapter: string; id: string } } | null = null,
+    dependsOn: string[] | null = null
   ) => {
     const todo = store.addTodo(
       `t${++created}`,
       askId,
-      { title: `t${created}`, doneWhen: 'done', check: null, instruction: 'Do it.', named: null },
+      {
+        approvedAt: 1,
+        title: `t${created}`,
+        doneWhen: 'done',
+        check: null,
+        instruction: 'Do it.',
+        named: null,
+        dependsOn,
+      },
       created
     );
     sessions.create(
@@ -108,7 +136,22 @@ function world(limits = { running: 6, perGroup: 3 }, broken = false) {
     await runner.recompute(store.getTodo(id)!, { state: 'done', finishedAt: Date.now() });
   };
   const tick = () => runner.refresh(() => {});
-  return { db, store, runner, clock, started, ask, approved, add, state, finish, tick };
+  return {
+    db,
+    store,
+    sessions,
+    idle,
+    unreadable,
+    runner,
+    clock,
+    started,
+    ask,
+    approved,
+    add,
+    state,
+    finish,
+    tick,
+  };
 }
 
 let current: ReturnType<typeof world> | null = null;
@@ -164,8 +207,9 @@ describe('queued todos start themselves', () => {
   test('an ask nobody approved waits for its start question', async () => {
     const w = (current = world());
     const todo = w.add(w.ask());
+    w.store.updateTodo(w.store.getTodo(todo)!, { approvedAt: null }, 1);
     await w.tick();
-    expect(w.state(todo)).toBe('todo');
+    expect(w.state(todo)).toBe('blocked');
     expect(w.started).toEqual([]);
   });
 
@@ -212,6 +256,7 @@ describe('queued todos start themselves', () => {
     const ask = w.approved();
     const [ticked, unticked] = [w.add(ask), w.add(ask)];
     for (const id of [ticked, unticked]) {
+      w.store.updateTodo(w.store.getTodo(id)!, { approvedAt: null }, 2);
       w.store.joinStartQuestion(w.store.getTodo(id)!, 2);
       w.store.updateTodo(
         w.store.getTodo(id)!,
@@ -235,6 +280,7 @@ describe('queued todos start themselves', () => {
     const w = (current = world());
     const ask = w.approved();
     const todo = w.add(ask);
+    w.store.updateTodo(w.store.getTodo(todo)!, { approvedAt: null }, 2);
     w.store.joinStartQuestion(w.store.getTodo(todo)!, 2);
     w.store.updateTodo(
       w.store.getTodo(todo)!,
@@ -270,5 +316,62 @@ describe('queued todos start themselves', () => {
     w.store.updateTodo(w.store.getTodo(first)!, { state: 'doing', startedAt: 3 }, 3);
     await w.finish(first);
     expect(w.state(first)).toBe('done');
+  });
+
+  test('todos whose workers sit idle do not fill the running cap', async () => {
+    const w = (current = world({ running: 2, perGroup: 2 }));
+    const idle = [w.add(w.approved()), w.add(w.approved())];
+    await w.tick();
+    expect(idle.map(w.state)).toEqual(['doing', 'doing']);
+    w.idle.add('worker-1');
+    w.idle.add('worker-2');
+    await w.tick();
+    expect(idle.map((id) => w.sessions.workerIdle(id))).toEqual([true, true]);
+    const waiting = w.add(w.approved());
+    await w.tick();
+    expect(w.state(waiting)).toBe('doing');
+  });
+
+  test('a worker whose status cannot be read counts as busy again', async () => {
+    const w = (current = world({ running: 1, perGroup: 1 }));
+    const first = w.add(w.approved());
+    await w.tick();
+    w.idle.add('worker-1');
+    await w.tick();
+    expect(w.sessions.workerIdle(first)).toBe(true);
+    w.idle.delete('worker-1');
+    w.unreadable.add('worker-1');
+    const waiting = w.add(w.approved());
+    await w.tick();
+    expect(w.sessions.workerIdle(first)).toBe(false);
+    expect(w.state(waiting)).toBe('todo');
+  });
+
+  test('independent steps start together and a join waits for all of its prerequisites', async () => {
+    const w = (current = world());
+    const ask = w.approved();
+    const left = w.add(ask, null, []);
+    const right = w.add(ask, null, []);
+    const join = w.add(ask, null, [left, right]);
+    await w.tick();
+    expect([w.state(left), w.state(right), w.state(join)]).toEqual(['doing', 'doing', 'todo']);
+    await w.finish(left);
+    await w.tick();
+    expect(w.state(join)).toBe('todo');
+    await w.finish(right);
+    await w.tick();
+    expect(w.state(join)).toBe('doing');
+  });
+
+  test('an ask whose start question the human answered may start released steps', async () => {
+    const w = (current = world());
+    const ask = w.ask();
+    const todo = w.add(ask);
+    w.store.updateTodo(w.store.getTodo(todo)!, { approvedAt: null }, 2);
+    w.store.joinStartQuestion(w.store.getTodo(todo)!, 2);
+    const question = w.store.listQuestions(ask).find((item) => item.kind === 'start')!;
+    w.store.answerQuestion(question, [todo], 'button', 3);
+    await w.tick();
+    expect(w.state(todo)).toBe('doing');
   });
 });

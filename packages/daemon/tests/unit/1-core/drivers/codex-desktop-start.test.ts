@@ -31,6 +31,16 @@ const threadAccess = {
   approvalPolicy: 'never',
   sandbox: 'danger-full-access',
   projectId: 'project-1',
+  developerInstructions: expect.stringContaining('HYPERNEO_WORKTREES'),
+  config: {
+    shell_environment_policy: {
+      set: {
+        HYPERNEO_WORKTREES: expect.stringMatching(/worktrees$/),
+        HYPERNEO_EVIDENCE: expect.stringContaining('/work/evidence/'),
+        HYPERNEO_BUILDS: expect.stringContaining('/work/builds/'),
+      },
+    },
+  },
 };
 const turnAccess = { approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } };
 
@@ -178,6 +188,22 @@ describe('codex-desktop start', () => {
     if (dir) rmSync(dir, { recursive: true, force: true });
     dir = '';
   });
+  test('unsandboxed workers receive shell locations and a location brief', async () => {
+    configureWorkerSandbox(() => 'off');
+    const { instance, calls } = adapter({
+      call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),
+    });
+    expect(await instance.start!(request, user)).toMatchObject({ ok: true });
+    const opening = calls.find(([method]) => method === 'thread/start')![1];
+    expect(opening.config).toMatchObject({
+      shell_environment_policy: {
+        set: { HYPERNEO_WORKTREES: expect.stringMatching(/worktrees$/) },
+      },
+    });
+    expect(opening.developerInstructions).toContain('HYPERNEO_WORKTREES');
+    expect(opening.sandbox).toBe('danger-full-access');
+  });
+
   test('tells a new Codex worker how to trim only its own merged or closed PR links', async () => {
     const { instance, calls } = adapter({
       call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),
@@ -428,7 +454,7 @@ describe('codex-desktop start', () => {
           ...threadAccess,
           cwd: '/focus/dolmen',
           model: model.model,
-          config: { model_reasoning_effort: 'medium' },
+          config: { ...threadAccess.config, model_reasoning_effort: 'medium' },
         },
       ],
       ['thread/name/set', { threadId: 'th1', name: request.title }],
@@ -442,6 +468,27 @@ describe('codex-desktop start', () => {
           effort: 'medium',
         },
       ],
+    ]);
+  });
+
+  test('injects confirmed identity into the first task input', async () => {
+    const { instance, calls } = adapter({
+      call: async (method) =>
+        method === 'model/list'
+          ? catalog
+          : method === 'thread/start'
+            ? { thread: { id: 'th1' }, model: model.model, reasoningEffort: 'medium' }
+            : {},
+    });
+    const result = await instance.start!({ ...request, provenance: true }, user);
+    expect(result.ok).toBe(true);
+    const turn = calls.find(([name]) => name === 'desktop/start-turn')![1];
+    expect(turn.input).toEqual([
+      {
+        type: 'text',
+        text: expect.stringContaining('Agent: gpt-6.1-sol (effort: medium) via Codex'),
+        text_elements: [],
+      },
     ]);
   });
 
@@ -656,6 +703,16 @@ describe('codex-desktop start', () => {
     expect(calls.find(([method]) => method === 'thread/start')?.[1]).toMatchObject({
       cwd: '/codex/worktrees/abcd1234/dolmen',
       projectId: 'project-1',
+      developerInstructions: expect.stringContaining('HYPERNEO_WORKTREES'),
+      config: {
+        shell_environment_policy: {
+          set: {
+            HYPERNEO_WORKTREES: expect.stringMatching(/worktrees$/),
+            HYPERNEO_EVIDENCE: expect.stringContaining('/work/evidence/'),
+            HYPERNEO_BUILDS: expect.stringContaining('/work/builds/'),
+          },
+        },
+      },
     });
   });
 
@@ -782,5 +839,21 @@ describe('codex-desktop start', () => {
         'desktop/start-turn: busy Thread th2 was created, but its opening turn was not confirmed.',
     });
     expect(halfway.closed()).toBe(true);
+  });
+});
+
+describe('Codex reuse configuration resolution', () => {
+  test('uses the start catalog without creating a thread or turn', async () => {
+    const run = adapter({ call: async () => catalog });
+    expect(
+      await run.instance.resolveStartConfiguration!({
+        ...request,
+        model: 'sol 6.1',
+        effort: ' Medium ',
+      })
+    ).toEqual({ ok: true, value: { model: 'gpt-6.1-sol', effort: 'medium' } });
+    expect(run.calls.map(([method]) => method)).toEqual(['model/list']);
+    expect(run.closed()).toBe(true);
+    expect(run.spawned).toEqual([]);
   });
 });

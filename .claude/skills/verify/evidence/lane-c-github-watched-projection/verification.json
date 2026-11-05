@@ -1,0 +1,36 @@
+{
+  "redCommit": "aba49e65a78c863a73e7c979304c7a439e8de4a7",
+  "before": {
+    "missingHelperFailed": 3,
+    "nativePublicCompleteProjectionPassedBeforeMissingHelperFailure": true
+  },
+  "focused": {
+    "files": 5,
+    "tests": 17,
+    "passed": true
+  },
+  "strictTypeScript6": {
+    "passed": true,
+    "scope": "Modified extension, pure helper and two new tests plus imported dependencies"
+  },
+  "rootCheck": {
+    "command": "bun run check",
+    "exitCode": 0,
+    "initialFormattingDifferenceCorrected": true
+  },
+  "native": "Bun 1.4.3 and Deno 2.9.4 actual Space enable/disable/listWatchedRepos/listConfig retain full saved/public projection equivalence, settings and times; configured synthetic webhook fixture pins masking, null/empty secrets and private cursor omission without mutation",
+  "scope": {
+    "productionLines": 51,
+    "smokeLines": 1,
+    "fullOwnedProjectionReadWriteValidationSubtreeLines": 188,
+    "discardedFullConfigProjectionCandidateLines": 202
+  },
+  "limits": [
+    "Public reads/writes stay on main; four target write runs for two RPCs",
+    "No callback/polling/config-store/schema/startup changes",
+    "Existing data/read/write/validation units pinned unchanged; full authorization/polling/hooks/plugin/startup transitive closure not audited",
+    "Imported native RPC/query-only fixture chain unchanged; all resources close before pure projection contract",
+    "Local Bun 1.4.3; pinned 1.4.2 CI-owned",
+    "Deployment smoke Neo-owned; no live daemon touched"
+  ]
+}

@@ -1,10 +1,16 @@
 import { resolveNeoCardReply } from './public-conversation.ts';
+import {
+  neoWorkReferenceEntry,
+  resolveNeoWorkReference,
+  type NeoWorkFocus,
+  type NeoWorkSelector,
+} from './neo-work-reference.ts';
 import type { NeoAskEntry } from '@hyperneo/shared/types/neo-ask';
 import type { NeoAskHistoryPage, NeoResult } from '@hyperneo/shared/types/neo-snapshot';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { NeoGoals } from './NeoGoals.tsx';
 import { SessionSchedules } from '../components/SessionSchedules.tsx';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useSignal } from '@preact/signals';
 import { getBannerLevel } from '../components/ConnectionOverlay.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
@@ -16,6 +22,8 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
 import { readNeoAskImages } from './conversation-ask-client.ts';
 import { NeoAskTodos } from './NeoAskTodos.tsx';
+import { NeoWorkSearch } from './NeoWorkSearch.tsx';
+import { useNeoWorkSearch } from './useNeoWorkSearch.ts';
 import { NeoComposer } from './NeoComposer.tsx';
 import { NeoConversation } from './NeoConversation.tsx';
 import { NeoDrawer } from './NeoDrawer.tsx';
@@ -32,6 +40,7 @@ import { invokeOperation } from '../lib/operations.ts';
 import { restoreNeoImages, useNeoAttachments } from './neo-attachments.ts';
 import { createNeoDraftReloadBuffer } from './neo-draft-reload-buffer.ts';
 import { useNeoPreviewCandidate } from './useNeoPreviewCandidate.ts';
+import { neoFileQuestionText } from './neo-file-question.ts';
 import { useNeo } from './useNeo.ts';
 import { useNeoDraftReloadRecovery } from './useNeoDraftReloadRecovery.ts';
 import { publicationConversationId } from './useNeoPublications.ts';
@@ -47,21 +56,54 @@ import {
   artifactPreviewStack,
   artifactPreviewWorkspace,
   closeArtifactPreview,
+  openArtifactPreview,
   takeArtifactPreviewOpener,
   type ArtifactPreviewTarget,
 } from '../lib/artifact-preview-store.ts';
 import { artifactTabIds, artifactWorkTabId } from '../components/artifacts/ArtifactPreviewTabs.tsx';
+import { sessionTabKey } from '../lib/artifact-preview-workspace.ts';
 import { NeoPreviewResize } from './NeoPreviewResize.tsx';
 import { neoQuestionText } from './todo-status.ts';
 
-async function loadNeoAskDetails(askId: string): Promise<NeoAskEntry> {
+async function loadNeoAskDetails(input: string | NeoWorkSelector): Promise<NeoAskEntry> {
   const hub = await connectionManager.getHub();
   const result = await invokeOperation<
     { ok: true; entry: NeoAskEntry } | { ok: false; reason: string }
-  >(hub, 'neo.ask.read', { askId });
+  >(hub, 'neo.ask.read', typeof input === 'string' ? { askId: input } : input);
   if (!result.ok) throw new Error(result.reason);
   return result.entry;
 }
+
+async function findNeoWork(
+  query: string,
+  cursor?: string
+): Promise<{ results: { askId: string }[]; nextCursor: string | null }> {
+  type Page =
+    | { ok: true; results: { askId: string }[]; nextCursor: string | null }
+    | { ok: false; reason: string };
+  const hub = await connectionManager.getHub();
+  try {
+    const result = await invokeOperation<Page>(hub, 'neo.ask.search', {
+      query,
+      limit: 50,
+      ...(cursor ? { cursor } : {}),
+    });
+    if (!result.ok) throw new Error(result.reason);
+    return result;
+  } catch (cause) {
+    if (
+      cause instanceof Error &&
+      'code' in cause &&
+      cause.code === 'INVALID_PARAMS' &&
+      cause.message.includes('query_too_short')
+    )
+      return { results: [], nextCursor: null };
+    throw cause;
+  }
+}
+
+const sessionTitle = (sessionId: string) =>
+  workerIdentity({ adapter: 'hyperneo', id: sessionId }, null).label;
 
 export function NeoLive() {
   const neo = useNeo();
@@ -76,8 +118,13 @@ export function NeoLive() {
     () => window.matchMedia('(min-width: 720px)').matches
   );
   const [roomy, setRoomy] = useState(() => window.matchMedia('(min-width: 1440px)').matches);
-  const [cardTarget, setCardTarget] = useState<{ askId: string; questionId: string } | null>(null);
+  const [cardTarget, setCardTarget] = useState<NeoWorkFocus | null>(null);
   const [cardUnavailable, setCardUnavailable] = useState(false);
+  const [cardOpening, setCardOpening] = useState(false);
+  const referenceRequest = useRef<object | null>(null);
+  const [referenced, setReferenced] = useState<{ scope: string | null; entry: NeoAskEntry } | null>(
+    null
+  );
   const returnToChat = useRef<{
     element: HTMLElement;
     top: number;
@@ -89,11 +136,20 @@ export function NeoLive() {
     returnToChat.current = null;
     saved.element.scrollTop = saved.top;
     saved.focus?.focus({ preventScroll: true });
+    referenceRequest.current = null;
+    setCardOpening(false);
     setCardTarget(null);
     setCardUnavailable(false);
   }, [scenesOpen]);
   const [chat, setChat] = useState<{ sessionId: string } | null>(null);
   const closeChat = useCallback(() => setChat(null), []);
+  const openSession = (link: string) => {
+    if (!link.startsWith('/session/')) return window.open(link, '_blank', 'noopener');
+    const sessionId = link.slice('/session/'.length);
+    if (columns && previewDesktop)
+      openArtifactPreview({ kind: 'session', sessionId }, sessionTitle(sessionId));
+    else setChat({ sessionId });
+  };
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const dragDepth = useRef(0);
   const [draft, setDraft] = useState<string | undefined>(undefined);
@@ -139,15 +195,29 @@ export function NeoLive() {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const older = history?.scope === sceneScope ? history : null;
   const historyCursor = older ? older.nextCursor : view?.historyCursor;
-  const currentEntries = view?.todoAsks ?? [];
-  const workEntries = [
-    ...currentEntries,
-    ...(older?.entries ?? []).filter(
-      (entry) => !currentEntries.some((current) => current.ask.id === entry.ask.id)
-    ),
-  ];
+  const loadedEntries = useMemo(() => {
+    const current = view?.todoAsks ?? [];
+    return [
+      ...current,
+      ...(older?.entries ?? []).filter(
+        (entry) => !current.some((item) => item.ask.id === entry.ask.id)
+      ),
+    ];
+  }, [view?.todoAsks, older?.entries]);
+  const workEntries = [...loadedEntries];
+  if (
+    referenced?.scope === sceneScope &&
+    !workEntries.some((entry) => entry.ask.id === referenced.entry.ask.id)
+  )
+    workEntries.push(referenced.entry);
+  const [workQuery, setWorkQuery] = useState('');
+  const search = useNeoWorkSearch(workEntries, workQuery, loadNeoAskDetails, findNeoWork);
   useEffect(() => {
     setHistory(null);
+    setReferenced(null);
+    referenceRequest.current = null;
+    setCardOpening(false);
+    setWorkQuery('');
     setLoadingHistory(false);
     setChat(null);
     setCardTarget(null);
@@ -201,13 +271,16 @@ export function NeoLive() {
     ])
   );
   useEffect(() => {
-    if (!cardTarget) return;
-    const target = resolveNeoCardReply(cardTarget, workEntries);
+    if (!cardTarget?.questionId) return;
+    const target = resolveNeoCardReply(
+      { askId: cardTarget.askId, questionId: cardTarget.questionId },
+      workEntries
+    );
     if (target === 'unavailable') {
       setCardTarget(null);
       setCardUnavailable(true);
     } else if (target.questionId !== cardTarget.questionId) setCardTarget(target);
-  }, [view?.todoAsks, history, cardTarget]);
+  }, [view?.todoAsks, history, referenced, cardTarget]);
   const sceneGroups = [
     { key: 'attention', label: t('live.group.attention') },
     { key: 'running', label: t('live.group.running') },
@@ -389,6 +462,18 @@ export function NeoLive() {
         setScenesOpenState(true);
         closeArtifactPreview();
       }
+      const top = artifactPreviewStack.value.at(-1);
+      if (top?.kind === 'session' && !(columns && previewWidth)) {
+        setChat({ sessionId: top.sessionId });
+        for (const { sessionId } of artifactPreviewWorkspace.state.value.files)
+          if (sessionId !== undefined) artifactPreviewWorkspace.close(sessionTabKey(sessionId));
+      } else if (chat && columns && previewWidth) {
+        openArtifactPreview(
+          { kind: 'session', sessionId: chat.sessionId },
+          sessionTitle(chat.sessionId)
+        );
+        setChat(null);
+      }
       setNarrow(!desktop);
       setPreviewDesktop(previewWidth);
       setRoomy(window.matchMedia('(min-width: 1440px)').matches);
@@ -442,8 +527,9 @@ export function NeoLive() {
       element.scrollTop / Math.max(1, element.scrollHeight - element.clientHeight);
   }
 
+  const sessionShown = !!chat || previewTarget?.kind === 'session';
   useLayoutEffect(() => {
-    if (chat) {
+    if (sessionShown) {
       dragDepth.current = 0;
       setDragging(false);
       const block = (event: DragEvent) => {
@@ -494,7 +580,7 @@ export function NeoLive() {
       window.removeEventListener('dragleave', leave);
       window.removeEventListener('drop', drop);
     };
-  }, [neo.sessionId, ready, !!chat]);
+  }, [neo.sessionId, ready, sessionShown]);
 
   useLayoutEffect(() => {
     const element = footer.current;
@@ -555,7 +641,7 @@ export function NeoLive() {
     <div
       ref={shell}
       style={expandable ? { '--neo-preview-width': `${previewWidth}%` } : undefined}
-      class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${columns ? ' neo-has-scenes' : ''}${chat ? ' neo-has-session' : ''}${sheet && scenesOpen ? ' neo-sheet-open' : ''}${focusPreview ? ' neo-preview-focus' : ''}${previewWork ? ' neo-preview-work' : ''}${expanded ? ' neo-preview-expanded' : ''}`}
+      class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${columns ? ' neo-has-scenes' : ''}${sheet && scenesOpen ? ' neo-sheet-open' : ''}${focusPreview ? ' neo-preview-focus' : ''}${previewWork ? ' neo-preview-work' : ''}${expanded ? ' neo-preview-expanded' : ''}`}
     >
       {dragging && (
         <div
@@ -674,51 +760,56 @@ export function NeoLive() {
               store={neo.store}
               sessionId={neo.sessionId}
               replyLabels={replyLabels}
+              onOpenSession={openSession}
               publicConversation={publicConversation}
               onOpenWork={(anchor, cardReply) => {
-                if (cardReply) {
-                  const element = scroll.current ?? mainScroll.current;
-                  if (element && !returnToChat.current)
-                    returnToChat.current = {
-                      element,
-                      top: element.scrollTop,
-                      focus:
-                        document.activeElement instanceof HTMLElement
-                          ? document.activeElement
-                          : null,
-                    };
-                  nearBottom.current = false;
-                  const target = resolveNeoCardReply(cardReply, workEntries);
-                  setCardTarget(target === 'unavailable' ? null : target);
-                  setCardUnavailable(target === 'unavailable');
-                  setChat(null);
-                  setScenesOpen(true);
-                  return;
-                }
+                const element = scroll.current ?? mainScroll.current;
+                if (element && !returnToChat.current)
+                  returnToChat.current = {
+                    element,
+                    top: element.scrollTop,
+                    focus:
+                      document.activeElement instanceof HTMLElement ? document.activeElement : null,
+                  };
+                nearBottom.current = false;
+                const ticket = {};
+                referenceRequest.current = ticket;
+                setWorkQuery('');
+                setCardTarget(null);
+                setCardUnavailable(false);
+                setCardOpening(true);
                 setChat(null);
                 setScenesOpen(true);
-                requestAnimationFrame(() => {
-                  const owner = workEntries.find(
-                    ({ ask, todos, questions, summary }) =>
-                      anchor === `neo-ref-ask-${ask.id}` ||
-                      todos.some((todo) => anchor === `neo-ref-todo-${todo.id}`) ||
-                      [...questions, ...(summary?.questionRefs ?? [])].some(
-                        (question) => anchor === `neo-ref-question-${question.id}`
-                      )
-                  );
-                  const card = owner && document.getElementById(`neo-ref-ask-${owner.ask.id}`);
-                  const question =
-                    owner &&
-                    [...owner.questions, ...(owner.summary?.questionRefs ?? [])].find(
-                      (question) => anchor === `neo-ref-question-${question.id}`
-                    );
-                  if (question) setCardTarget({ askId: owner!.ask.id, questionId: question.id });
-                  else if (!document.getElementById(anchor))
-                    card?.querySelector<HTMLButtonElement>('[data-ask-details-toggle]')?.click();
-                  requestAnimationFrame(() =>
-                    (document.getElementById(anchor) ?? card)?.scrollIntoView({ block: 'center' })
-                  );
-                });
+                void resolveNeoWorkReference(
+                  cardReply ? `neo-ref-question-${cardReply.questionId}` : anchor,
+                  workEntries,
+                  loadNeoAskDetails
+                ).then(
+                  (result) => {
+                    if (referenceRequest.current !== ticket) return;
+                    setCardOpening(false);
+                    if (result === 'unavailable') return setCardUnavailable(true);
+                    if (!loadedEntries.some((entry) => entry.ask.id === result.entry.ask.id))
+                      setReferenced({
+                        scope: sceneScope,
+                        entry: neoWorkReferenceEntry(result.entry),
+                      });
+                    requestAnimationFrame(() => {
+                      if (referenceRequest.current === ticket) setCardTarget(result.target);
+                    });
+                    if (!result.target.questionId && !result.target.todoId)
+                      requestAnimationFrame(() =>
+                        document
+                          .getElementById(`neo-ref-ask-${result.target.askId}`)
+                          ?.scrollIntoView({ block: 'center' })
+                      );
+                  },
+                  () => {
+                    if (referenceRequest.current !== ticket) return;
+                    setCardOpening(false);
+                    setCardUnavailable(true);
+                  }
+                );
               }}
               onRetryPublic={retryPublicConversation}
               pendingAsks={neo.pendingAsks}
@@ -875,18 +966,38 @@ export function NeoLive() {
               {t('chat.backToChat')}
             </button>
           )}
+          {cardOpening && (
+            <p role="status" class="mt-3 text-sm text-fg-muted">
+              {t('chat.cardOpening')}
+            </p>
+          )}
           {cardUnavailable && (
             <p role="status" class="mt-3 text-sm text-fg-muted">
               {t('chat.cardUnavailable')}
             </p>
           )}
           <NeoGoals sessionId={neo.sessionId} />
-          {publicConversation && workCount === 0 && (
+          {publicConversation && <NeoWorkSearch query={workQuery} onQuery={setWorkQuery} />}
+          {!!workQuery.trim() && (search.pending || search.failed || !search.results.length) && (
+            <p role="status" class="mt-4 text-sm text-fg-muted">
+              {t(
+                search.pending
+                  ? 'live.searching'
+                  : search.failed
+                    ? 'live.searchFailed'
+                    : 'live.noMatchingWork'
+              )}
+            </p>
+          )}
+          {publicConversation && !workQuery.trim() && workCount === 0 && (
             <p role="status" class="mt-6 text-sm text-fg-muted">
               {t('live.noWork')}
             </p>
           )}
-          {sceneGroups.map((group) =>
+          {(workQuery.trim()
+            ? [{ key: 'search', label: t('live.searchWork'), entries: search.results }]
+            : sceneGroups
+          ).map((group) =>
             group.entries.length === 0 ? null : (
               <section
                 key={group.key}
@@ -901,7 +1012,7 @@ export function NeoLive() {
                   <NeoAskTodos
                     key={entry.ask.id}
                     entry={entry}
-                    focusedQuestion={cardTarget?.askId === entry.ask.id ? cardTarget : undefined}
+                    focusedItem={cardTarget?.askId === entry.ask.id ? cardTarget : undefined}
                     disabled={!connected || !!neo.busyWork}
                     onAnswer={(questionId, answer) => void neo.answerQuestion(questionId, answer)}
                     onReply={
@@ -936,15 +1047,20 @@ export function NeoLive() {
                       )
                     }
                     onLoadDetails={loadNeoAskDetails}
-                    onOpen={(link) =>
-                      link.startsWith('/session/')
-                        ? setChat({ sessionId: link.slice('/session/'.length) })
-                        : window.open(link, '_blank', 'noopener')
-                    }
+                    onOpen={openSession}
                   />
                 ))}
               </section>
             )
+          )}
+          {!!workQuery.trim() && search.nextCursor && (
+            <Button
+              variant="ghost"
+              disabled={!connected || search.pending}
+              onClick={search.loadMore}
+            >
+              {t('live.moreSearchResults')}
+            </Button>
           )}
           {historyCursor && (
             <Button
@@ -960,8 +1076,7 @@ export function NeoLive() {
           <NeoSessionPane
             key={chat.sessionId}
             sessionId={chat.sessionId}
-            title={workerIdentity({ adapter: 'hyperneo', id: chat.sessionId }, null).label}
-            overlay={narrow || !publicConversation}
+            title={sessionTitle(chat.sessionId)}
             onClose={closeChat}
           />
         )}
@@ -1049,26 +1164,36 @@ export function NeoLive() {
           controls={
             previewTarget?.kind === 'artifact'
               ? artifactTabIds(previewTarget.artifactId).panel
-              : 'neo-preview-work-panel'
+              : previewTarget?.kind === 'session'
+                ? artifactTabIds(sessionTabKey(previewTarget.sessionId)).panel
+                : 'neo-preview-work-panel'
           }
           onChange={setPreviewSize}
         />
       )}
       <ArtifactPreviewPanel
         fileTabs
+        onAskFile={
+          !chat && ready && recoveryReady && draftLoadState === 'ready'
+            ? (path) => {
+                const reference = framedDraft ? previewContext : undefined;
+                setRestoredPreview({ scope: neo.sessionId!, reference, pinned: true });
+                captureDraft(neoFileQuestionText(draft ?? inputDraft.content, path), reference);
+                setScenesOpen(false);
+                setPreviewExpanded(false);
+                if (!previewDesktop) closeArtifactPreview();
+                requestAnimationFrame(() => footer.current?.querySelector('textarea')?.focus());
+              }
+            : undefined
+        }
         expansion={
           expandable ? { expanded, toggle: () => setPreviewExpanded(!expanded) } : undefined
         }
         suspended={!!chat || referenceWork}
-        work={
-          columns
-            ? {
-                id: 'neo-preview-work-panel',
-                showTab: !roomy || previewWork || expanded,
-                count: workCount,
-              }
-            : undefined
-        }
+        work={columns ? { id: 'neo-preview-work-panel', count: workCount } : undefined}
+        renderSession={(sessionId) => (
+          <NeoSessionPane key={sessionId} sessionId={sessionId} title={sessionTitle(sessionId)} />
+        )}
         markdownClass="neo-message-assistant neo-markdown neo-markdown-assistant text-base leading-relaxed"
       />
     </div>

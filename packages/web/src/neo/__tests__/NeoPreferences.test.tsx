@@ -51,6 +51,42 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Neo preferences', () => {
+  it('uses a borderless model pill without a separator', () => {
+    render(<NeoPreferences sessionId="neo:root" store={makeStore()} onError={vi.fn()} />);
+    const trigger = screen.getByRole('button', { name: 'Model and thinking' });
+    expect(trigger.className.split(' ')).not.toContain('border');
+    expect(trigger.textContent).not.toContain('·');
+  });
+
+  it.each([
+    ['off', 0],
+    ['think8k', 1],
+    ['think16k', 2],
+    ['think24k', 3],
+    ['think32k', 4],
+    ['think48k', 5],
+    ['think64k', 6],
+  ] as const)('shows the bulb glass filled by sixths for %s', (thinkingLevel, step) => {
+    const { container } = render(
+      <NeoPreferences
+        sessionId="neo:root"
+        store={makeStore()}
+        onError={vi.fn()}
+        preference={{ model: 'sonnet', provider: 'anthropic', thinkingLevel, saved: true }}
+      />
+    );
+    const icon = container.querySelector('[data-thinking-level]')!;
+    expect(icon.querySelector('circle')).toBeNull();
+    expect(icon.querySelectorAll('svg')).toHaveLength(1);
+    expect(icon.querySelector('svg')?.style.filter.includes('drop-shadow')).toBe(step === 6);
+    if (step === 0) expect(icon.querySelector('clipPath')).toBeNull();
+    else {
+      const fill = icon.querySelector('clipPath rect')!;
+      expect(Number(fill.getAttribute('height'))).toBeCloseTo((10 * step) / 6);
+      expect(Number(fill.getAttribute('y'))).toBeCloseTo(17 - (10 * step) / 6);
+    }
+  });
+
   it('lists models and thinking on /neo, with no settings link or restart', () => {
     render(<NeoPreferences sessionId="neo:root" store={makeStore()} onError={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));

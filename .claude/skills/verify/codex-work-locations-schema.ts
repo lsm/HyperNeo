@@ -1,0 +1,23 @@
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+
+const [binary, directory] = process.argv.slice(2);
+const run = resolve(directory);
+assert.equal(process.env.NODE_ENV, 'test');
+assert.equal(process.env.HOME, join(run, 'home'));
+const schemaDir = join(run, 'schema');
+const env = { HOME: join(run, 'home'), CODEX_HOME: join(run, 'codex-home'), PATH: process.env.PATH };
+mkdirSync(env.CODEX_HOME, { recursive: true });
+mkdirSync(join(run, 'evidence'), { recursive: true });
+const version = execFileSync(binary, ['--version'], { env, encoding: 'utf8', timeout: 30000 }).trim();
+execFileSync(binary, ['app-server', 'generate-json-schema', '--out', schemaDir], { env, timeout: 30000 });
+const path = readdirSync(schemaDir, { recursive: true }).map(String).find((name) => name.endsWith('ThreadStartParams.json'));
+assert(path, 'generated protocol includes ThreadStartParams');
+const schema = JSON.parse(readFileSync(join(schemaDir, path), 'utf8'));
+const field = schema.properties.developerInstructions;
+assert(field, 'thread/start declares developerInstructions');
+assert(field.type === 'string' || field.type?.includes('string'), 'developerInstructions accepts text');
+writeFileSync(join(run, 'evidence/codex-work-locations-schema.json'), JSON.stringify({ version, request: 'thread/start', field: 'developerInstructions', schema: field, passed: true, modelTurnRun: false }, null, 2));
+console.log(`${version}: generated thread/start schema accepts developerInstructions text; no model turn or Desktop UI tested`);

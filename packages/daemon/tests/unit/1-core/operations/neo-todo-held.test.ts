@@ -58,7 +58,14 @@ function world() {
     const todo = store.addTodo(
       id,
       'ask',
-      { title: id, doneWhen: 'done', check: null, instruction: 'Do it.', named: null },
+      {
+        approvedAt: 1,
+        title: id,
+        doneWhen: 'done',
+        check: null,
+        instruction: 'Do it.',
+        named: null,
+      },
       1
     );
     sessions.create(todo.id, {
@@ -143,7 +150,7 @@ describe('a held todo', () => {
     const id = w.add('first');
     await w.edit(id, 'Wait for the human.');
     expect(
-      planNeoTodoCheck(w.todo(id), { done: false, failed: 'CI failed', evidence: null }, 5, false)
+      planNeoTodoCheck(w.todo(id), { done: false, failed: 'CI failed', evidence: null }, 5)
     ).toBe(null);
   });
 

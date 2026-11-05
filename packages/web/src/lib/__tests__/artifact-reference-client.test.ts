@@ -27,6 +27,18 @@ function hub(reply: unknown) {
 }
 
 describe('resolveArtifactReference', () => {
+  it('shows the client upgrade state for retired local snapshot taps', async () => {
+    expect(
+      await resolveArtifactReference(
+        hub({
+          accepted: false,
+          reason: 'client_upgrade_required',
+          detail: 'Update HyperNeo to open current files.',
+        }).hub,
+        { source, reference: 'notes.md' }
+      )
+    ).toEqual({ kind: 'state', state: 'client_update' });
+  });
   it('asks the daemon to resolve the exact stored reference', async () => {
     const { hub: h, request } = hub({ accepted: true, artifact: { artifactId: 'a1' } });
     const file = { path: 'docs/a.md', headSha: 'a'.repeat(40) };

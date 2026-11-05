@@ -68,7 +68,7 @@ const call = async (name: string, input: unknown = {}) => {
 };
 try {
   await app.spaceRuntimeService.ready();
-  app.db.updateGlobalSettings({ language: 'en' });
+  await app.db.updateGlobalSettings({ language: 'en' });
   for (const [id, title] of [[root, 'Synthetic Neo'], [ref.id, 'Positioning discussion']])
     await app.db.createSession({ ...createTestSession(id), title, workspacePath: join(run, 'workspace'), config: { ...createTestSession(id).config, provider: 'anthropic', queryMode: 'manual' } });
   const socket = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
@@ -112,8 +112,8 @@ try {
   const target = { verb: 'send' as const, ref };
   sessions.create(todo.id, target);
   sessions.recordRef(todo.id, ref, at);
-  const dispatch = sessions.inputs.accept(todo.id, root, target, 'Discuss directly', at);
-  sessions.inputs.recordOutcome(dispatch, { ref }, at);
+  const dispatch = await sessions.inputs.accept(todo.id, root, target, 'Discuss directly', at);
+  await sessions.inputs.recordOutcome(dispatch, { ref }, at);
   const message = 'I approve this wording.\nKeep discussing; this is not approval to execute.';
   const base = app.sessionManager.getOperationRegistry();
   const registry = createOperationRegistry(base.entries.map((op) => op.name === 'work.status' ? { ...op, execute: async (input, caller) => {
@@ -146,7 +146,7 @@ try {
     outcomeEvidence.workerWrite = workerWrite;
     assert(workerWrite.isError || JSON.parse(workerWrite.content[0].text).ok === false);
     const explicitReport = `Settled focused discussion outcome for ask ${opened.ask.id}. The human explicitly said the discussion is settled.\n\n${settledOutcome}`;
-    const sent = await worker({ name: 'message.send', input: { to: root, text: explicitReport, idempotencyKey: 'synthetic-settled-outcome' } });
+    const sent = await worker({ name: 'message.send', input: { to: root, kind: 'done', text: explicitReport, idempotencyKey: 'synthetic-settled-outcome' } });
     assert(!sent.isError, JSON.stringify(sent));
     assert.equal(JSON.parse(sent.content[0].text).kind, 'accepted');
     const arrivedBy = Date.now() + 10000;

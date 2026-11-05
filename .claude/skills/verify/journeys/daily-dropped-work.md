@@ -24,3 +24,8 @@ CI publication-path control: run `HYPERNEO_TEST_DISABLE_SANDBOX=1 bash
 SDK with synthetic model responses and then the web reader contracts, without
 driving a GUI. Exactly one daily card must coexist with the scheduled wake and
 the single authored reply. The daemon still has only one publication writer.
+
+After restart, recovery retires the synthetic stopped worker's doing todo. Its
+still-open idle ask becomes the one stalled ask on the next day, after the
+original stalled ask is settled. The helper asserts that ask identity and the
+public count of one, matching the existing unit contract; zero is stale.

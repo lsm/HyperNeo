@@ -1,0 +1,19 @@
+Pageouts: 12029924
+
+System-wide memory free percentage: 66%
+Filesystem      Size    Used   Avail Capacity iused ifree %iused  Mounted on
+/dev/disk3s5   926Gi   710Gi   181Gi    80%     17M  1.9G    1%   /System/Volumes/Data
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:7:14). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/.codex/worktrees/lane-a-publication-page/neokai/packages/daemon
+
+
+ Test Files  3 passed (3)
+      Tests  56 passed (56)
+   Start at  16:51:40
+   Duration  2.51s (transform 61%, import 26%, tests 8%, setup 5%, worker 1%)
+
+    Isolate  3 workers spawned · ~137ms startup each (spawn + environment, per file)
+             at least ~275ms faster with isolate: false — reuses workers across files instead of one per file

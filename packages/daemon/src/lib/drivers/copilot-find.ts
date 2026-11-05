@@ -6,6 +6,8 @@ import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import { mergePlaceGroups } from './places.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter, WorkSummary } from './types.ts';
 
+type OwnedSummary = WorkSummary & { archived?: boolean };
+
 export function copilotOwnsSession(directory: string, id: string): boolean {
   return /^[0-9a-f-]{36}$/.test(id) && existsSync(join(directory, `${id}.json`));
 }
@@ -14,7 +16,7 @@ export function createCopilotFind(
   discovery: WorkAdapter,
   directory: string,
   owns: (id: string) => boolean,
-  summary: (id: string) => Promise<WorkSummary | undefined>
+  summary: (id: string) => Promise<OwnedSummary | undefined>
 ) {
   let listing: Promise<string[]> | undefined;
   const list = () =>
@@ -46,7 +48,7 @@ export function createCopilotFind(
       listing = undefined;
     }));
   const loadOwned = async () => {
-    const owned: WorkSummary[] = [];
+    const owned: OwnedSummary[] = [];
     for (const id of await list()) {
       const work = await summary(id);
       if (work) owned.push(work);
@@ -72,7 +74,7 @@ export function createCopilotFind(
             })),
     };
   };
-  const combine = (loaded: { external: PlaceGroup[]; owned: WorkSummary[] }, query: FindQuery) => {
+  const combine = (loaded: { external: PlaceGroup[]; owned: OwnedSummary[] }, query: FindQuery) => {
     const external = loaded.external.map((group) => {
       const work = group.work.filter((item) => !owns(item.ref.id));
       return {
@@ -81,11 +83,11 @@ export function createCopilotFind(
         openCount: Math.max(0, group.openCount - (group.work.length - work.length)),
       };
     });
-    const groups = loaded.owned.map((work) => ({
+    const groups = loaded.owned.map(({ archived, ...work }) => ({
       place: work.place,
       lastActivityAt: work.lastActivityAt,
-      openCount: 1,
-      archivedCount: 0,
+      openCount: archived ? 0 : 1,
+      archivedCount: archived ? 1 : 0,
       adapters: [discovery.id],
       work: [work],
     }));

@@ -5,6 +5,8 @@ const MAX_TRANSCRIPTION_REDIRECTS = 3;
 const MAX_TRANSCRIPTION_RESPONSE_BYTES = 256 * 1024;
 const RESOLUTION_TIMEOUT_MS = 10_000;
 
+export type BeforeVoiceDispatch = () => void | (() => void) | Promise<void | (() => void)>;
+
 export async function fetchTranscriptionWithRedirects(
   endpoint: URL,
   headers: Record<string, string>,
@@ -13,7 +15,7 @@ export async function fetchTranscriptionWithRedirects(
   allowInsecureTls: boolean,
   signal: AbortSignal,
   tlsCaPem?: string,
-  beforeDispatch?: () => void
+  beforeDispatch?: BeforeVoiceDispatch
 ): Promise<Response> {
   let logicalEndpoint = endpoint;
   let candidates = await resolveTranscriptionEndpoint(
@@ -31,7 +33,9 @@ export async function fetchTranscriptionWithRedirects(
     let fetchError: unknown;
     for (const candidate of candidates) {
       signal.throwIfAborted();
-      beforeDispatch?.();
+      const onDispatch = await beforeDispatch?.();
+      signal.throwIfAborted();
+      if (onDispatch) onDispatch();
       try {
         response = await fetch(candidate.toString(), {
           method: requestMethod,
