@@ -203,7 +203,11 @@ import {
 import { canTransition as canTransitionRunStatus } from '../../workflows/run-status-machine.ts';
 import { selectTimedOutExecutions } from '../../workflows/run-tick-admission-gates.ts';
 import type {
+  AdmitSpawnExecutionOutcome,
+  ExecutorMeta,
+  RunTickContext,
   SpaceWorkflowRunTickDeps,
+  SpawnPendingExecutionsOutcome,
   StrandedExecutionRecoveryResult,
 } from '../../workflows/run-tick-contract.ts';
 import { runSpaceWorkflowRunTick } from '../../workflows/run-tick-pipeline.ts';
@@ -221,7 +225,6 @@ import {
   decideSpawnAdmission,
   hasDriveableExecution,
   selectPromotablePendingExecutions,
-  type SpawnAdmissionDecision,
 } from '../../workflows/run-spawn-decisions.ts';
 
 const log = new Logger('space-runtime');
@@ -298,32 +301,6 @@ interface StartWorkflowRunOptions {
 }
 
 type WorkflowTaskRecoveryTargetStatus = 'open' | 'in_progress';
-
-export interface ExecutorMeta {
-  workflow: SpaceWorkflow;
-  spaceId: string;
-  workspacePath: string;
-}
-
-export interface RunTickContext {
-  meta: ExecutorMeta;
-  runTaskCount: number;
-  canonicalTask: SpaceTask;
-  loadNodeExecutions: () => NodeExecution[];
-  resolveRunIsComplete: () => boolean;
-}
-
-export interface AdmitSpawnExecutionOutcome {
-  canonicalTask: SpaceTask;
-  pendingExecutions: NodeExecution[];
-  spawnAdmission: SpawnAdmissionDecision;
-}
-
-export interface SpawnPendingExecutionsOutcome {
-  spawned?: boolean;
-  blockedByCrash: boolean;
-  permanentSpawnFailureReason: string | null;
-}
 
 interface WorkflowSubscriptionTarget {
   kind?: 'workflow';
@@ -6623,8 +6600,12 @@ export class SpaceRuntime {
         this.settleIfComplete(candidateRunId, runIsComplete, meta, canonicalTask),
       haltTickForInactiveSpace: (candidateRunId, run, context) =>
         this.haltTickForInactiveSpace(candidateRunId, run, context),
-      promotePendingExecutionsWithLiveSessions: (candidateRunId, preTickPendingIds, tam) =>
-        this.promotePendingExecutionsWithLiveSessions(candidateRunId, preTickPendingIds, tam),
+      promotePendingExecutionsWithLiveSessions: (candidateRunId, preTickPendingIds) =>
+        this.promotePendingExecutionsWithLiveSessions(
+          candidateRunId,
+          preTickPendingIds,
+          this.requireTaskAgentManager()
+        ),
       admitSpawnExecution: (candidateRunId, meta, canonicalTask, nodeExecutions, space) =>
         this.admitSpawnExecution(candidateRunId, meta, canonicalTask, nodeExecutions, space),
       spawnPendingExecutions: (
@@ -6634,7 +6615,6 @@ export class SpaceRuntime {
         meta,
         run,
         pendingExecutions,
-        tam,
         blockedByCrash
       ) =>
         this.spawnPendingExecutions(
@@ -6644,7 +6624,7 @@ export class SpaceRuntime {
           meta,
           run,
           pendingExecutions,
-          tam,
+          this.requireTaskAgentManager(),
           blockedByCrash
         ),
       blockRunForSpawnFailure: (candidateRunId, meta, canonicalTask, failureReason, crashed) =>
@@ -6654,6 +6634,12 @@ export class SpaceRuntime {
       getAvailableTaskSlots: (space) => this.getAvailableTaskSlots(space),
     };
     await runSpaceWorkflowRunTick(deps, runId);
+  }
+
+  private requireTaskAgentManager(): TaskAgentManager {
+    const manager = this.config.taskAgentManager;
+    if (!manager) throw new Error('TaskAgentManager is not wired');
+    return manager;
   }
 
   private async blockInvalidWorkflowRun(
@@ -6891,7 +6877,7 @@ export class SpaceRuntime {
 
     if (space?.stopped) return { action: 'halted' };
 
-    return { action: 'continue', tam, blockedByCrash, preTickPendingIds };
+    return { action: 'continue', blockedByCrash, preTickPendingIds };
   }
 
   private async haltTickForInactiveSpace(

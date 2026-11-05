@@ -1,78 +1,78 @@
-import { setupAgentMemoryHandlers } from './agent-memory-handlers.ts';
-import { createWorkflowTaskRecoveryExecutor } from '../tasks/recovery-executor.ts';
-import { recoverTaskExecution } from '../tasks/recover-task-execution.ts';
-import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
-import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
-import { createSpaceCallerScopeResolver } from '../space/runtime/space-caller-scope.ts';
-import { createSpaceScopeResolver } from '../space/runtime/space-scope-resolver.ts';
-import { createDatabaseDirectTaskWorkerResolver } from '../tasks/direct-task-worker-identity.ts';
+import { setupAgentMemoryHandlers } from '../../rpc-handlers/agent-memory-handlers.ts';
+import { createWorkflowTaskRecoveryExecutor } from '../../tasks/recovery-executor.ts';
+import { recoverTaskExecution } from '../../tasks/recover-task-execution.ts';
+import { createCompletionGateBindings } from '../../tasks/complete-task-gates.ts';
+import { isCoderOwnedMergeWorkflow } from '../../workflows/post-approval-router.ts';
+import { createSpaceCallerScopeResolver } from '../runtime/space-caller-scope.ts';
+import { createSpaceScopeResolver } from '../runtime/space-scope-resolver.ts';
+import { createDatabaseDirectTaskWorkerResolver } from '../../tasks/direct-task-worker-identity.ts';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
-import type { AgentSession } from '../agent/agent-session.ts';
+import type { AgentSession } from '../../agent/agent-session.ts';
 import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers.ts';
-import { createDefaultSessionResolutionDeps } from '../session-resolution/default-deps.ts';
-import { ensureSession } from '../session-resolution/ensure-session.ts';
-import { TaskAgentManager } from '../space/runtime/task-agent-manager.ts';
-import { spaceTaskWriter } from '../../storage/repositories/space-task-repository.ts';
-import { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository.ts';
+import { createDefaultSessionResolutionDeps } from '../../session-resolution/default-deps.ts';
+import { ensureSession } from '../../session-resolution/ensure-session.ts';
+import { TaskAgentManager } from '../runtime/task-agent-manager.ts';
+import { spaceTaskWriter } from '../../../storage/repositories/space-task-repository.ts';
+import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository.ts';
 import {
   deliverSpaceAgentMessage,
   type SessionInjectionOutcome,
-} from '../messaging/session-message-delivery.ts';
-import { resolveDeliverySession } from '../session-resolution/resolve-delivery-session.ts';
+} from '../../messaging/session-message-delivery.ts';
+import { resolveDeliverySession } from '../../session-resolution/resolve-delivery-session.ts';
 import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers.ts';
 import { setupNodeExecutionHandlers } from './space-node-execution-handlers.ts';
 import { setupSpaceExportImportHandlers } from './space-export-import-handlers.ts';
-import type { TaskAgentManagerConfig } from '../space/runtime/task-agent-manager.ts';
-import type { OperationDefinition } from '../operations/registry.ts';
-import type { SessionReportHandler } from '../messaging/message-send.ts';
-import type { createNeoCodingReaders } from '../neo/packs/runtime.ts';
+import type { TaskAgentManagerConfig } from '../runtime/task-agent-manager.ts';
+import type { OperationDefinition } from '../../operations/registry.ts';
+import type { SessionReportHandler } from '../../messaging/message-send.ts';
+import type { createNeoCodingReaders } from '../../neo/packs/runtime.ts';
 
 type CodingPrStateReader = ReturnType<typeof createNeoCodingReaders>['readPrState'];
-import { stampActiveAttemptList } from '../tasks/direct-attempt-flag.ts';
-import { registerDirectStartJobs } from '../tasks/direct-start-jobs.ts';
+import { stampActiveAttemptList } from '../../tasks/direct-attempt-flag.ts';
+import { registerDirectStartJobs } from '../../tasks/direct-start-jobs.ts';
 import {
   createDirectOutcomeRequester,
   registerDirectOutcomeJobs,
-} from '../tasks/direct-outcome-jobs.ts';
-import { settleTaskDependents } from '../tasks/settle-dependents.ts';
-import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
-import { createSpaceOperationRegistryProvider } from '../tasks/operations.ts';
-import { DirectTaskExecutionRepository } from '../../storage/repositories/direct-task-execution-repository.ts';
+} from '../../tasks/direct-outcome-jobs.ts';
+import { settleTaskDependents } from '../../tasks/settle-dependents.ts';
+import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
+import { createSpaceOperationRegistryProvider } from '../../tasks/operations.ts';
+import { DirectTaskExecutionRepository } from '../../../storage/repositories/direct-task-execution-repository.ts';
 import type { SessionMetadata, SpaceTask } from '@hyperneo/shared';
 import type { SpaceGoalOutcomeNotification } from '@hyperneo/shared';
-import { Logger } from '../logger.ts';
+import { Logger } from '../../logger.ts';
 import { setupSpaceHandlers } from './space-handlers.ts';
-import { publishUnifiedAgentCreated } from '../agents/unified-agent-events.ts';
-import { createResolveClones } from '../session/clone-cascade.ts';
-import { nameClonedAgent } from '../agents/agent-identity.ts';
-import { nodeWorkspaceValidationIo } from '../workspaces/validation-pipeline.ts';
-import { createCloneLifecycleEffects } from './session-handlers.ts';
-import { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
-import { ReplyRoutingRegistry } from '../messaging/reply-routing-registry.ts';
-import { SpaceWorktreeManager } from '../workspaces/worktree-manager.ts';
-import { CodingArtifactProfile } from '../workflows/coding-artifact-profile.ts';
+import { publishUnifiedAgentCreated } from '../../agents/unified-agent-events.ts';
+import { createResolveClones } from '../../session/clone-cascade.ts';
+import { nameClonedAgent } from '../../agents/agent-identity.ts';
+import { nodeWorkspaceValidationIo } from '../../workspaces/validation-pipeline.ts';
+import { createCloneLifecycleEffects } from '../../rpc-handlers/session-handlers.ts';
+import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
+import { ReplyRoutingRegistry } from '../../messaging/reply-routing-registry.ts';
+import { SpaceWorktreeManager } from '../../workspaces/worktree-manager.ts';
+import { CodingArtifactProfile } from '../../workflows/coding-artifact-profile.ts';
 import {
   setupSpaceWorkflowHandlers,
   checkBuiltInWorkflowDriftOnStartup,
   restampBuiltInWorkflowsOnStartup,
 } from './space-workflow-handlers.ts';
-import { SpaceTaskManager } from '../tasks/task-manager.ts';
-import { SpaceWorkflowManager, createSpaceAgentLookup } from '../workflows/workflow-manager.ts';
-import type { SpaceAgentLookup } from '../workflows/workflow-manager.ts';
-import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
-import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
-import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository.ts';
-import { createConversationFrictionEvidenceHandler } from '../job-handlers/conversation-friction-evidence.handler.ts';
-import { handleGoalAutomationExecute } from '../job-handlers/goal-automation-execute.handler.ts';
-import { GoalAutomationService } from '../goals/automation-service.ts';
+import { SpaceTaskManager } from '../../tasks/task-manager.ts';
+import { SpaceWorkflowManager, createSpaceAgentLookup } from '../../workflows/workflow-manager.ts';
+import type { SpaceAgentLookup } from '../../workflows/workflow-manager.ts';
+import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
+import { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
+import { createConversationFrictionEvidenceHandler } from '../../job-handlers/conversation-friction-evidence.handler.ts';
+import { handleGoalAutomationExecute } from '../../job-handlers/goal-automation-execute.handler.ts';
+import { GoalAutomationService } from '../../goals/automation-service.ts';
 import {
   GOAL_AUTOMATION_EXECUTE,
   SPACE_CONVERSATION_FRICTION_ANALYZE,
-} from '../job-queue-constants.ts';
-import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository.ts';
-import { SessionRepository } from '../../storage/repositories/session-repository.ts';
+} from '../../job-queue-constants.ts';
+import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
+import { SessionRepository } from '../../../storage/repositories/session-repository.ts';
 import { setupSpaceAgentReminderHandlers } from './space-agent-reminder-handlers.ts';
 import { setupSpaceAgentSubscriptionHandlers } from './space-agent-subscription-handlers.ts';
 import { setupSpaceAgentTemplateHandlers } from './space-agent-template-handlers.ts';
@@ -81,63 +81,66 @@ import {
   type SpaceAgentV2Deps,
   setupSpaceAgentV2Handlers,
 } from './space-agent-v2-handlers.ts';
-import { buildTemplateExtrasSeeder } from '../agents/template-extras-seeding.ts';
-import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
+import { buildTemplateExtrasSeeder } from '../../agents/template-extras-seeding.ts';
+import { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository.ts';
 import {
   SpaceLongHorizonAgentRepository,
   templateInstanceScanFromRepo,
-} from '../../storage/repositories/space-long-horizon-agent-repository.ts';
-import { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
-import { SpaceAgentGoalScopeRepository } from '../../storage/repositories/space-agent-goal-scope-repository.ts';
-import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
-import { SpaceAgentReminderRepository } from '../../storage/repositories/space-agent-reminder-repository.ts';
-import { SpaceAgentSubscriptionRepository } from '../../storage/repositories/space-agent-subscription-repository.ts';
-import { SpaceSessionEventSubscriptionRepository } from '../../storage/repositories/space-session-event-subscription-repository.ts';
-import { SpaceAgentTemplateManager } from '../agents/template-manager.ts';
-import { createAgentTemplateResolverFactory } from '../workflows/run-template-snapshot.ts';
-import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
-import { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
-import { GOAL_OUTCOME_WAKE_ENABLED } from '../space/runtime/goal-outcome-wake-flag.ts';
-import { SpaceAgentInactivityWatchdogService } from '../agents/inactivity-watchdog-service.ts';
-import type { InactivityWatchdogSessionSnapshot } from '../agents/inactivity-watchdog-service.ts';
+} from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
+import { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
+import { SpaceAgentGoalScopeRepository } from '../../../storage/repositories/space-agent-goal-scope-repository.ts';
+import { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository.ts';
+import { SpaceAgentReminderRepository } from '../../../storage/repositories/space-agent-reminder-repository.ts';
+import { SpaceAgentSubscriptionRepository } from '../../../storage/repositories/space-agent-subscription-repository.ts';
+import { SpaceSessionEventSubscriptionRepository } from '../../../storage/repositories/space-session-event-subscription-repository.ts';
+import { SpaceAgentTemplateManager } from '../../agents/template-manager.ts';
+import { createAgentTemplateResolverFactory } from '../../workflows/run-template-snapshot.ts';
+import type { EvolutionRepository } from '../../../storage/repositories/evolution-repository.ts';
+import { SpaceRuntimeService } from '../runtime/space-runtime-service.ts';
+import { GOAL_OUTCOME_WAKE_ENABLED } from '../runtime/goal-outcome-wake-flag.ts';
+import { SpaceAgentInactivityWatchdogService } from '../../agents/inactivity-watchdog-service.ts';
+import type { InactivityWatchdogSessionSnapshot } from '../../agents/inactivity-watchdog-service.ts';
 import {
   SpaceAgentInactivityClaimRepository,
   SpaceAgentInactivityConfigRepository,
-} from '../../storage/repositories/space-agent-inactivity-repository.ts';
-import { TaskScheduleRepository } from '../../storage/repositories/task-schedule-repository.ts';
-import { SpaceRepository } from '../../storage/repositories/space-repository.ts';
-import { setupTaskScheduleHandlers } from './task-schedule-handlers.ts';
+} from '../../../storage/repositories/space-agent-inactivity-repository.ts';
+import { TaskScheduleRepository } from '../../../storage/repositories/task-schedule-repository.ts';
+import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
+import { setupTaskScheduleHandlers } from '../../rpc-handlers/task-schedule-handlers.ts';
 import { setupSpaceGoalHandlers } from './space-goal-handlers.ts';
-import { subscribeAgentActivationOutcomeRedelivery } from '../goals/agent-activation-outcome-redelivery.ts';
-import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../goals/owner-change-outcome-redelivery.ts';
-import { setupEvolutionHandlers } from './evolution-handlers.ts';
-import { EvolutionConversationAnalysisService } from '../evolution/conversation-analysis-service.ts';
-import { EvolutionEpisodeService } from '../evolution/episode-service.ts';
-import { EvolutionScopeService } from '../evolution/scope-service.ts';
-import { EvolutionTraceEvidenceService } from '../evolution/trace-evidence-service.ts';
-import { ScheduleService } from '../schedule/schedule-service.ts';
-import { SpaceGoalEventRepository } from '../../storage/repositories/space-goal-event-repository.ts';
-import { SpaceGoalOutcomeNotificationRepository } from '../../storage/repositories/space-goal-outcome-notification-repository.ts';
-import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
-import { SpaceGoalService } from '../goals/service.ts';
-import { mergeEvolutionPolicy } from '../evolution/scope-service.ts';
-import type { RPCHandlerDependencies } from './index.ts';
-import type { ExternalEventService } from '../external-events/external-event-service.ts';
-import type { ExternalEventStore } from '../external-events/external-event-store.ts';
-import type { ExternalEventDeliveryState } from '../external-events/types.ts';
-import type { SpaceRpcHost } from './space-rpc.ts';
-import { createSpaceSessionPort } from '../space/runtime/space-session-port.ts';
-import type { FamilyOperationContext } from './family-operations/context.ts';
-import { collectSpaceFamilyOperations, createSessionSpacePort } from './family-operations/space.ts';
+import { subscribeAgentActivationOutcomeRedelivery } from '../../goals/agent-activation-outcome-redelivery.ts';
+import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../../goals/owner-change-outcome-redelivery.ts';
+import { setupEvolutionHandlers } from '../../rpc-handlers/evolution-handlers.ts';
+import { EvolutionConversationAnalysisService } from '../../evolution/conversation-analysis-service.ts';
+import { EvolutionEpisodeService } from '../../evolution/episode-service.ts';
+import { EvolutionScopeService } from '../../evolution/scope-service.ts';
+import { EvolutionTraceEvidenceService } from '../../evolution/trace-evidence-service.ts';
+import { ScheduleService } from '../../schedule/schedule-service.ts';
+import { SpaceGoalEventRepository } from '../../../storage/repositories/space-goal-event-repository.ts';
+import { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
+import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
+import { SpaceGoalService } from '../../goals/service.ts';
+import { mergeEvolutionPolicy } from '../../evolution/scope-service.ts';
+import type { RPCHandlerDependencies } from '../../rpc-handlers/index.ts';
+import type { ExternalEventService } from '../../external-events/external-event-service.ts';
+import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
+import type { ExternalEventDeliveryState } from '../../external-events/types.ts';
+import type { SpaceRpcHost } from '../../rpc-handlers/space-rpc.ts';
+import { createSpaceSessionPort } from '../runtime/space-session-port.ts';
+import type { FamilyOperationContext } from '../../rpc-handlers/family-operations/context.ts';
+import {
+  collectSpaceFamilyOperations,
+  createSessionSpacePort,
+} from '../../rpc-handlers/family-operations/space.ts';
 import { setupSpaceMcpHandlers } from './space-mcp-handlers.ts';
 import { archiveAgentSessions } from './space-agent-v2-handlers.ts';
-import type { SessionTarget } from '../session-resolution/target.ts';
-import type { SpaceManager } from '../space/managers/space-manager.ts';
+import type { SessionTarget } from '../../session-resolution/target.ts';
+import type { SpaceManager } from '../managers/space-manager.ts';
 import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
-import type { OperationRegistry } from '../operations/registry.ts';
+import type { OperationRegistry } from '../../operations/registry.ts';
 
-import { validateGoalAutomationSelfNagPolicy } from '../evolution/evolution-policy-validation.ts';
-import { syncGoalAutomationSelfNagScheduleForScope } from '../goals/automation-schedule-sync.ts';
+import { validateGoalAutomationSelfNagPolicy } from '../../evolution/evolution-policy-validation.ts';
+import { syncGoalAutomationSelfNagScheduleForScope } from '../../goals/automation-schedule-sync.ts';
 
 const log = new Logger('rpc-handlers');
 
@@ -1090,7 +1093,7 @@ function setupSpaceTaskAgents(
     explicitMessageId?: string,
     injectorOptions?: {
       onConsumed?: (settledSessionId: string) => void;
-      lateSettlement?: import('../messaging/session-message-delivery.ts').SessionLateSettlementOwner;
+      lateSettlement?: import('../../messaging/session-message-delivery.ts').SessionLateSettlementOwner;
       onLateFailure?: () => void;
     }
   ): Promise<SessionInjectionOutcome> => {

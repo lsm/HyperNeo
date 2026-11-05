@@ -1,18 +1,18 @@
 import type { MessageHub } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
-import type { SpaceWorkflowManager } from '../workflows/workflow-manager.ts';
-import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
-import type { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository.ts';
-import type { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository.ts';
-import type { SpaceTaskManager } from '../tasks/task-manager.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
+import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
+import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
+import type { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository.ts';
+import type { SpaceTaskManager } from '../../tasks/task-manager.ts';
 import { getWorkflowRunExecutionStatusLabel } from '@hyperneo/shared';
 import type { WorkflowRunStatus } from '@hyperneo/shared';
 import {
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
   hasPendingRetryableHookAction,
   triggerRetryableHookAction,
-} from '../hooks/hook-engine.ts';
-import { Logger } from '../logger.ts';
+} from '../../hooks/hook-engine.ts';
+import { Logger } from '../../logger.ts';
 
 const log = new Logger('space-workflow-run-handlers');
 

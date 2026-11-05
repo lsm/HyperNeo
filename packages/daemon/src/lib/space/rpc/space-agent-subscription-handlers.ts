@@ -1,9 +1,9 @@
 import type { MessageHub, SpaceLongHorizonAgentEventSubscriptionStatus } from '@hyperneo/shared';
-import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
-import type { SpaceAgentSubscriptionRepository } from '../../storage/repositories/space-agent-subscription-repository.ts';
-import { composeLongHorizonSubscriptionPattern } from '../external-events/long-horizon-subscription-pattern.ts';
-import { validateGlobPattern, validateSource } from '../external-events/topic-validator.ts';
-import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
+import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository.ts';
+import type { SpaceAgentSubscriptionRepository } from '../../../storage/repositories/space-agent-subscription-repository.ts';
+import { composeLongHorizonSubscriptionPattern } from '../../external-events/long-horizon-subscription-pattern.ts';
+import { validateGlobPattern, validateSource } from '../../external-events/topic-validator.ts';
+import type { SpaceRuntimeService } from '../runtime/space-runtime-service.ts';
 
 const METHOD_PREFIX = 'spaceAgentSubscription';
 
