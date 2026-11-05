@@ -106,7 +106,7 @@ import {
 } from '../../../storage/repositories/space-agent-inactivity-repository.ts';
 import { TaskScheduleRepository } from '../../../storage/repositories/task-schedule-repository.ts';
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
-import { setupTaskScheduleHandlers } from '../../rpc-handlers/task-schedule-handlers.ts';
+import { setupTaskScheduleHandlers } from './task-schedule-handlers.ts';
 import { setupSpaceGoalHandlers } from './space-goal-handlers.ts';
 import { subscribeAgentActivationOutcomeRedelivery } from '../../goals/agent-activation-outcome-redelivery.ts';
 import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../../goals/owner-change-outcome-redelivery.ts';
@@ -128,10 +128,7 @@ import type { ExternalEventDeliveryState } from '../../external-events/types.ts'
 import type { SpaceRpcHost } from '../../rpc-handlers/space-rpc.ts';
 import { createSpaceSessionPort } from '../runtime/space-session-port.ts';
 import type { FamilyOperationContext } from '../../rpc-handlers/family-operations/context.ts';
-import {
-  collectSpaceFamilyOperations,
-  createSessionSpacePort,
-} from '../../rpc-handlers/family-operations/space.ts';
+import { collectSpaceFamilyOperations, createSessionSpacePort } from './family-operations/space.ts';
 import { setupSpaceMcpHandlers } from './space-mcp-handlers.ts';
 import { archiveAgentSessions } from './space-agent-v2-handlers.ts';
 import type { SessionTarget } from '../../session-resolution/target.ts';

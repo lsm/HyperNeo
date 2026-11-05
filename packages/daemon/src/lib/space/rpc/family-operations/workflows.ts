@@ -1,5 +1,5 @@
-import type { OperationDefinition } from '../../operations/registry.ts';
-import { createWorkflowOperations } from '../../workflows/operations.ts';
+import type { OperationDefinition } from '../../../operations/registry.ts';
+import { createWorkflowOperations } from '../../../workflows/operations.ts';
 import type { SpaceFamilyContext } from './space-context.ts';
 
 export function registerWorkflowOperations(context: SpaceFamilyContext): OperationDefinition[] {

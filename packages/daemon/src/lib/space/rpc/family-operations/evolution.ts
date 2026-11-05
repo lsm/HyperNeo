@@ -1,6 +1,6 @@
-import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
-import { createEvolutionOperations } from '../../evolution/operations.ts';
-import type { OperationDefinition } from '../../operations/registry.ts';
+import { McpAuditLogRepository } from '../../../../storage/repositories/mcp-audit-log-repository.ts';
+import { createEvolutionOperations } from '../../../evolution/operations.ts';
+import type { OperationDefinition } from '../../../operations/registry.ts';
 import type { SpaceFamilyContext } from './space-context.ts';
 
 export function registerEvolutionOperations(context: SpaceFamilyContext): OperationDefinition[] {

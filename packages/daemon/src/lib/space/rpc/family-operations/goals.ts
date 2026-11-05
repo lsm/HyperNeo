@@ -1,10 +1,10 @@
-import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
-import { createGoalOperations } from '../../goals/operations.ts';
-import { createSessionGoalOperations } from '../../goals/session-goal-operations.ts';
-import { SessionGoalRepository } from '../../../storage/repositories/session-goal-repository.ts';
-import { SessionGoalSchedules } from '../../goals/session-goal-schedules.ts';
-import { NeoAskTodoRepository } from '../../../storage/repositories/neo-ask-todo-repository.ts';
-import type { OperationDefinition } from '../../operations/registry.ts';
+import { McpAuditLogRepository } from '../../../../storage/repositories/mcp-audit-log-repository.ts';
+import { createGoalOperations } from '../../../goals/operations.ts';
+import { createSessionGoalOperations } from '../../../goals/session-goal-operations.ts';
+import { SessionGoalRepository } from '../../../../storage/repositories/session-goal-repository.ts';
+import { SessionGoalSchedules } from '../../../goals/session-goal-schedules.ts';
+import { NeoAskTodoRepository } from '../../../../storage/repositories/neo-ask-todo-repository.ts';
+import type { OperationDefinition } from '../../../operations/registry.ts';
 import type { SpaceFamilyContext } from './space-context.ts';
 
 export function registerGoalOperations(context: SpaceFamilyContext): OperationDefinition[] {
