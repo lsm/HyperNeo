@@ -269,6 +269,10 @@ jobs:
         env:
           GLM_API_KEY: smoke-test
 
+      - name: Start Claude and Copilot from a folder with no node_modules
+        if: matrix.smoke
+        run: bun scripts/sdk-runtime-check.ts ./dist/bin/${{ matrix.binary }} --network
+
       - name: Upload binary artifact
         uses: actions/upload-artifact@v7
         with:

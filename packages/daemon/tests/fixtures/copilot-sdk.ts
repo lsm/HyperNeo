@@ -9,6 +9,11 @@ const sdkCliVersion: string = JSON.parse(
   )
 ).copilotCliVersion;
 
+if (process.argv.includes('--disable-builtin-mcps')) {
+  process.stderr.write("copilot-runtime: unsupported argument '--disable-builtin-mcps'\n");
+  process.exit(1);
+}
+
 let buffer = Buffer.alloc(0);
 let sessionId = '';
 let input = 0;

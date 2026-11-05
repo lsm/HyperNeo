@@ -134,12 +134,7 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
   const client = new CopilotClient({
     connection: RuntimeConnection.forStdio({
       path: config.cliPath,
-      args: [
-        '--no-remote',
-        '--no-remote-export',
-        '--disable-builtin-mcps',
-        '--no-custom-instructions',
-      ],
+      args: ['--no-remote', '--no-remote-export', '--no-custom-instructions'],
       env: { ...buildAcpSafeEnv(config.env), ...workerWorkEnvironment(config.cwd) },
     }),
     mode: 'empty',

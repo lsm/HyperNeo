@@ -60,7 +60,7 @@ function setup(projectFolder?: string) {
     projectFolder: () => projectFolder ?? run,
   });
   const deps = {
-    cliPath,
+    resolveCliPath: async () => cliPath,
     directory: join(run, 'owned'),
     machine: 'test',
     projectFolder: () => projectFolder ?? run,
