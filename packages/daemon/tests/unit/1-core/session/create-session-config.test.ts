@@ -271,6 +271,7 @@ describe('stripRejectedSessionConfig', () => {
 
     const stored: Record<string, unknown> = {};
     for (const [field] of entries) stored[field] = `sentinel:${field}`;
+    stored.executable = 'bun';
 
     const stripped = stripRejectedSessionConfig(stored as SessionConfig) as Record<string, unknown>;
 

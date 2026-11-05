@@ -1284,6 +1284,13 @@ describe('QueryOptionsBuilder', () => {
   });
 
   describe('host process controls already stored on the session', () => {
+    it('rejects an unsupported stored SDK executable before query setup', async () => {
+      Object.assign(mockSession.config, { executable: 'retired-runtime' });
+      await expect(builder.build()).rejects.toThrow(
+        'Unsupported stored SDK executable: retired-runtime'
+      );
+    });
+
     it('does not repoint the SDK CLI executable from a stored config', async () => {
       mockSession.config.pathToClaudeCodeExecutable = '/tmp/evil-cli';
       mockSession.config.executable = 'node';

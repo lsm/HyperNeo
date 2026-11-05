@@ -44,7 +44,7 @@ function fixture(attempts: number | undefined = 3) {
     notifyConnected: () => {
       calls.push('notify');
     },
-    rejoinSpace: () => {
+    rejoinExtensions: () => {
       calls.push('rejoin-space');
     },
     getReconnectAttempts: () => {

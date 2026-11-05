@@ -10,7 +10,7 @@ import {
   type OperationDefinition,
 } from '../operations/registry.ts';
 import { resolveWorkflowExecution } from '../space/runtime/space-mcp-session-policy.ts';
-import type { ToolResult } from '../space/tools/tool-result.ts';
+import type { ToolResult } from '../tools/tool-result.ts';
 import {
   ListArtifactsSchema,
   type ListArtifactsInput,

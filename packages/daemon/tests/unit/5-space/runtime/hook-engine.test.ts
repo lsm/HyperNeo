@@ -25,7 +25,7 @@ import type { WorkflowHookStateRepository } from '../../../../src/storage/reposi
 
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
 import type { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
-import type { ToolResult } from '../../../../src/lib/space/tools/tool-result';
+import type { ToolResult } from '../../../../src/lib/tools/tool-result';
 import {
   createOperationRegistry,
   defineOperation,

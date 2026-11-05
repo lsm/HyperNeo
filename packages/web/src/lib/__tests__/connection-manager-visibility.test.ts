@@ -328,11 +328,11 @@ describe('ConnectionManager - Page Visibility Handling', () => {
         createEventEffects: vi.fn(),
         createResumeEffects: (effects: Record<string, unknown>) => ({
           ...effects,
-          getActiveSpaceId: () => null,
+          extensionChannels: () => [],
           refreshSessions: vi.fn(async () => {}),
           refreshApp: vi.fn(async () => {}),
           refreshGlobal: vi.fn(async () => {}),
-          refreshSpace: vi.fn(async () => {}),
+          refreshExtensions: vi.fn(async () => {}),
         }),
         markSessionsRecovering,
       });

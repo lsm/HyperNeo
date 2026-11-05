@@ -774,7 +774,7 @@ export declare type Options = {
     env?: {
         [envVar: string]: string | undefined;
     };
-    executable?: 'bun' | 'deno' | 'node';
+    executable?: 'bun' | 'node';
     executableArgs?: string[];
     extraArgs?: Record<string, string | null>;
     fallbackModel?: string;
