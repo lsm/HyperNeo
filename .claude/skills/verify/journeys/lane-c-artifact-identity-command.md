@@ -1,11 +1,11 @@
 # Build artifact identity writer and committed-identity seam
 
-Use proof-run.sh with lane-c-artifact-identity-command.ts on Bun and native cached
-Deno (VERIFY_PROOF_RUNTIME=deno). Shared setup checks resources, scrubs credentials,
-creates fresh HOME/data and ephemeral listeners, saves evidence and removes data.
-No provider/model, credential, GitHub, live daemon or filesystem capture is used.
-This construction calls a registered native writer and reads the retained UUID/count;
-public artifact callers remain unchanged until the separate activation rungs.
+Use proof-run.sh with lane-c-artifact-identity-command.ts on Bun. Shared setup checks
+resources, scrubs credentials, creates fresh HOME/data and ephemeral listeners, saves
+evidence and removes data. No provider/model, credential, GitHub, live daemon or
+filesystem capture is used. This construction calls a registered native writer and reads
+the retained UUID/count; public artifact callers remain unchanged until the separate
+activation rungs.
 
 Commit failing command/candidate/seam contracts first. Self-check cached/new main
 SQL traps, then refuse identity INSERT and the helper's receipt SELECT on main.
@@ -30,9 +30,8 @@ unchanged synchronous legacy path keeps its caller-owned transaction semantics.
 The known-identity constructor path trusts only its caller's committed receipt;
 it performs no extra validation, initialization or SQL.
 
-Run the focused strict checker, SQL/constructor/gateway suites, graph/diff measurement
-and repository checks. Save payload sizes, timing, loop lag, RSS/WAL and SQL hashes
-without UUIDs. Append only this command's op import/array entry and Deno smoke line.
-Close owned socket, locks, processors and app before data cleanup. Public activation,
-full FS/capture/ownership graph, native Bun 1.4.2 when another Bun is installed,
-browser and Neo-owned deployment smoke remain unverified by this construction.
+Run the focused strict checker, SQL/constructor/gateway suites, graph/diff measurement and
+repository checks. Save payload sizes, timing, loop lag, RSS/WAL and SQL hashes without
+UUIDs. Close owned socket, locks, processors and app before data cleanup. Public
+activation, full FS/capture/ownership graph, native Bun 1.4.2 when another Bun is
+installed, browser and Neo-owned deployment smoke remain unverified by this construction.

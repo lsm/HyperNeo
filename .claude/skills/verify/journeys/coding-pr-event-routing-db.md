@@ -5,19 +5,15 @@ existing checkout and runtimes, running heavy jobs serially.
 
 ```sh
 python3 .claude/skills/verify/coding-pr-event-routing-db-run.py bun before
-python3 .claude/skills/verify/coding-pr-event-routing-db-run.py deno before --executable "$DENO"
 python3 .claude/skills/verify/coding-pr-event-routing-db-run.py bun verify
-python3 .claude/skills/verify/coding-pr-event-routing-db-run.py deno verify --executable "$DENO"
-bun --no-install --no-env-file .claude/skills/verify/coding-pr-event-routing-proof-binding.ts HEAD
 ```
 
-DENO names an existing runtime, with cached-only imports. Every run owns a
-fresh synthetic HOME/data/TMPDIR and real daemon on an ephemeral non-8399 port.
-HTTP throws and gh refuses all commands. No keys, live database, actual Neo
-mailbox, model, browser or external service is involved. Save evidence before
-immediately deleting temporary daemon data. Before mode restores pr-events.ts
-from origin/dev and restores the draft in finally; do not edit concurrently.
-The observable guarded-main regression is committed before the fix.
+Every run owns a fresh synthetic HOME/data/TMPDIR and real daemon on an ephemeral non-8399
+port. HTTP throws and gh refuses all commands. No keys, live database, actual Neo mailbox,
+model, browser or external service is involved. Save evidence before immediately deleting
+temporary daemon data. Before mode restores pr-events.ts from origin/dev and restores the
+draft in finally; do not edit concurrently. The observable guarded-main regression is
+committed before the fix.
 
 A synthetic persisted daemon job invokes the production PR-event delivery
 pipeline on a synthetic merged PR. The real job processor claims and settles

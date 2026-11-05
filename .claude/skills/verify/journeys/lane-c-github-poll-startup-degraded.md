@@ -1,10 +1,10 @@
 # Nonfatal degraded GitHub poll admission at startup
 
-Run lane-c-github-poll-startup-degraded.ts in a fresh synthetic Bun/Deno daemon
-under env -i, NODE_ENV=test and disposable HOME/data. It asserts data-dir isolation,
-stubs the provider auth gate in memory, disables model discovery and refuses
-external HTTP. A synthetic token is placed only on the owned GitHubService fixture;
-no provider or GitHub credential enters the environment or a real store.
+Run lane-c-github-poll-startup-degraded.ts in a fresh synthetic Bun daemon under env -i,
+NODE_ENV=test and disposable HOME/data. It asserts data-dir isolation, stubs the provider
+auth gate in memory, disables model discovery and refuses external HTTP. A synthetic token
+is placed only on the owned GitHubService fixture; no provider or GitHub credential enters
+the environment or a real store.
 
 Reject the first real startup poll writer request. Actual createDaemonApp must
 resolve with pollRefreshDegraded=true, one logged admission failure and no poll

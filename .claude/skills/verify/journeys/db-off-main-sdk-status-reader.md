@@ -23,16 +23,15 @@ env -i HOME="$MEM/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$MEM/data"
   bun .claude/skills/verify/sdk-status-reader-memory.ts verify "$MEM"
 ```
 
-This RPC journey must preserve complete mixed-block text and body SHA in `:memory:`.
-On the pre-fix source use `baseline` to record the file-backed error immediately
-at the same RPC. `bridge` instead uses a fresh file DB and the online harness's
-Bun-process IPC bridge to a real native Bun worker, then verifies the same result.
-The bridge is test-only: Vitest runs its daemon in Node without Web Worker; only
-the SDK reader factory is injected, with no synchronous read/reply mock. Its host
-gets an empty test HOME/data directory and no provider keys. CI still exercises
-the production factory through Deno smoke; native Bun is exercised by this journey.
-The in-memory path explicitly uses its own existing connection and shared text
-projection; it does not read disk or handle a failed file-backed worker.
+This RPC journey must preserve complete mixed-block text and body SHA in `:memory:`. On
+the pre-fix source use `baseline` to record the file-backed error immediately at the same
+RPC. `bridge` instead uses a fresh file DB and the online harness's Bun-process IPC bridge
+to a real native Bun worker, then verifies the same result. The bridge is test-only:
+Vitest runs its daemon in Node without Web Worker; only the SDK reader factory is
+injected, with no synchronous read/reply mock. Its host gets an empty test HOME/data
+directory and no provider keys. The in-memory path explicitly uses its own existing
+connection and shared text projection; it does not read disk or handle a failed
+file-backed worker.
 
 The first helper owns an actual daemon and calls public `session.create`,
 `session.messages.byStatus` and `system.health` over WebSocket. Both sessions are
@@ -51,15 +50,12 @@ Three page reads cover cold body pages/warm repeats. `coldEmptyReadMs` separatel
 records initial reader/module startup. The page and total use one read snapshot;
 previous completed main-writer inserts are visible to the already-open reader.
 
-`evidence/observed.json` retains each status-RPC time, max main heartbeat lag,
-independent health latency/count, competing writes, measured RSS peak, WAL size,
-body hashes/count/bytes, main SQL times, worker request/queue/error timings and
-forwarded SQL fingerprints/summaries. The test-only Worker wrapper measures
-argument postMessage time and serialized reply bytes; reply delivery time includes
-cloning AND queue delay, not pure cloning. Byte instrumentation adds some main CPU.
-Body hashing and seeding are outside hot-read timing. RSS after audit hashing is
-separate from the measured peak. Record failures against 250 ms SQL/RPC and 1 s
-lag honestly: moving disk work does not make large body reads or parsing faster.
+The test-only Worker wrapper measures argument postMessage time and serialized reply
+bytes; reply delivery time includes cloning AND queue delay, not pure cloning. Byte
+instrumentation adds some main CPU. Body hashing and seeding are outside hot-read timing.
+RSS after audit hashing is separate from the measured peak. Record failures against 250 ms
+SQL/RPC and 1 s lag honestly: moving disk work does not make large body reads or parsing
+faster.
 
 The helper intentionally terminates its owned reader during an accepted read.
 Web Worker termination does not emit an error; the real 30-second deadline must
@@ -77,12 +73,9 @@ that did not finish, and the earlier fixed run polluted by background indexing,
 remain failed/inconclusive evidence, never passes. Stable comparisons must use
 matching helper/seed versions; do not compare hashes with older 25-row fixtures.
 
-Both helpers close their sockets, probe and daemon in finally; shutdown drains
-accepted reads and closes the worker DB before the existing main close/checkpoint.
-CI fake-worker contracts cover stale epochs, queue capacity, timeouts, crashes and
-close. CI's Deno smoke additionally invokes this RPC in a manual session, using a
-fresh test HOME/data directory and empty environment, then checks graceful exit.
-Deno is not installed in the local proof environment; that runtime is CI-only.
+Both helpers close their sockets, probe and daemon in finally; shutdown drains accepted
+reads and closes the worker DB before the existing main close/checkpoint. CI fake-worker
+contracts cover stale epochs, queue capacity, timeouts, crashes and close.
 
 Only this SDK status data lookup is converted. Authorization/session lookup,
 health counters, boot, other repositories and main SQLite shutdown remain on

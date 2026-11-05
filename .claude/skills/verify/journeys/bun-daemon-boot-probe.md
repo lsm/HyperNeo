@@ -13,7 +13,7 @@ Commit the unavailable-probe regression before construction. After construction,
 require HTTP 200, an authenticated local-credential WebSocket health response,
 empty manual-session SDK status/page/live-query results and >80 migrated tables.
 The live snapshot must already be present when its subscribe acknowledgement
-arrives, matching the legacy Deno check. Record snapshotBeforeAck=true only after
+arrives. Record snapshotBeforeAck=true only after
 that assertion; do not wait for a late snapshot to turn an ordering failure into
 success. Open the database read-only only for the table count; do not seed or
 mutate it.
@@ -44,6 +44,4 @@ skip every domain case. Require the retained daemon log to contain both graceful
 shutdown lines without database-close errors before crediting native success.
 
 This proves POSIX source startup/shutdown. Native Windows signal behavior, GUI,
-compiled binaries and model/provider behavior are separate contracts. The old
-Deno runner, CI job and 117-helper parity manifest stay unchanged. Remaining
-inline contracts and CI replacement still need parity before Deno coverage retires.
+compiled binaries and model/provider behavior are separate contracts.

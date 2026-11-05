@@ -1,11 +1,10 @@
 # Extract watched GitHub repository lookups
 
-Run proof-run.sh with lane-c-github-watched-lookups-extract.ts under Bun and
-cached Deno (VERIFY_PROOF_RUNTIME=deno). Shared setup owns scrubbed HOME/data,
-free ephemeral ports, evidence and cleanup. No model or HTTP mock is needed.
-Never use the live daemon/8399, real credentials or deployment. The fixture
-refuses external HTTP/GitHub commands, disables automatic webhook reconciliation
-and configures RPC-only GitHub capability with polling/webhooks off.
+Run proof-run.sh with lane-c-github-watched-lookups-extract.ts under Bun. Shared setup
+owns scrubbed HOME/data, free ephemeral ports, evidence and cleanup. No model or HTTP mock
+is needed. Never use the live daemon/8399, real credentials or deployment. The fixture
+refuses external HTTP/GitHub commands, disables automatic webhook reconciliation and
+configures RPC-only GitHub capability with polling/webhooks off.
 
 Stop startup processors and finish SDK body copy before measuring. Create two
 synthetic Spaces. Through watchRepo, add a disabled-webhook/non-polling repository,

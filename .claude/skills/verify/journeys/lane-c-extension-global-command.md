@@ -1,9 +1,8 @@
 # Construct the global extension configuration command
 
-Use proof-run.sh with lane-c-extension-global-command.ts on Bun and cached Deno
-(VERIFY_PROOF_RUNTIME=deno). Shared setup owns fresh HOME/data, an ephemeral
-listener, credential scrubbing, evidence retention and immediate data cleanup.
-No provider turn, HTTP mock, GitHub or live daemon/8399 is used.
+Use proof-run.sh with lane-c-extension-global-command.ts on Bun. Shared setup owns fresh
+HOME/data, an ephemeral listener, credential scrubbing, evidence retention and immediate
+data cleanup. No provider turn, HTTP mock, GitHub or live daemon/8399 is used.
 
 Commit the failing proof before the command: the native worker rejects the
 unregistered operation while merged helper characterizations pass. Build only

@@ -17,12 +17,10 @@ blank slot names fall back to their agent ID, nonblank names retain whitespace,
 post-approval/transitions survive, and retired completionActions stay omitted.
 NULL and malformed configuration produce the existing empty-agent view.
 
-Commit this characterization before extracting pure node configuration/view builders and
-repeat it unchanged afterward and under supported Deno with
-VERIFY_PROOF_RUNTIME=deno. Compare the captured main-connection node SQL hashes.
-This rung leaves node SQL on main; it prepares the smaller serializable writer
-command and does not claim a write migration. No agent, hook script or model turn
-executes. The wrapper preserves evidence and removes its synthetic daemon data.
+Compare the captured main-connection node SQL hashes. This rung leaves node SQL on main;
+it prepares the smaller serializable writer command and does not claim a write migration.
+No agent, hook script or model turn executes. The wrapper preserves evidence and removes
+its synthetic daemon data.
 
 Run workflow-manager and node configuration repository suites. Shared setup stays
 in SKILL.md and proof-run.sh; later writer slices must preserve the whole node

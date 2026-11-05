@@ -1,9 +1,9 @@
 # Extract global extension configuration lookup
 
 Use the shared isolation/resource setup in `../SKILL.md` with
-`lane-c-extension-global-read-extract.ts` through `proof-run.sh` on Bun and Deno.
-It owns a fresh HOME/data, ephemeral daemon, refusing GitHub/HTTP stub and
-synthetic extensions that never start providers. Never use the live daemon/8399.
+`lane-c-extension-global-read-extract.ts` through `proof-run.sh` on Bun. It owns a fresh
+HOME/data, ephemeral daemon, refusing GitHub/HTTP stub and synthetic extensions that never
+start providers. Never use the live daemon/8399.
 
 Characterize the real `externalEvents.extensions.list` WebSocket RPC before the
 new helper is available: exact valid nested/Unicode JSON, synthetic secret

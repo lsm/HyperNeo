@@ -1,10 +1,10 @@
 # Extract Space extension configuration queries
 
 Use shared isolation/resource setup in `../SKILL.md` with
-`lane-c-extension-space-read-extract.ts` through `proof-run.sh` on Bun and Deno.
-It owns fresh HOME/data, an ephemeral daemon and refusing GitHub/HTTP stubs.
-Only the real GitHub RPC capability is enabled; polling/webhooks are disabled.
-No live daemon/8399, real credentials or model turn is used.
+`lane-c-extension-space-read-extract.ts` through `proof-run.sh` on Bun. It owns fresh
+HOME/data, an ephemeral daemon and refusing GitHub/HTTP stubs. Only the real GitHub RPC
+capability is enabled; polling/webhooks are disabled. No live daemon/8399, real
+credentials or model turn is used.
 
 Characterize `space.github.listConfig` through the authenticated WebSocket: exact
 nested/Unicode settings, disabled rows, missing nulls and malformed/non-object

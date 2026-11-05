@@ -148,10 +148,6 @@ For a metadata-only Bun helper taking `[arguments] <run>`, use:
 bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory "$PROOF" verify
 ```
 
-For a dual-runtime native-filesystem helper, repeat with `VERIFY_PROOF_RUNTIME=deno`
-and the pinned Deno on PATH. The wrapper uses `deno run -A` and keeps its cache
-inside the disposable run; the default remains Bun.
-
 The wrapper checks disk space, creates a disposable HOME/data/TMPDIR, saves
 the helper's evidence JSON and log outside that run, then immediately removes
 its temporary daemon data. It preserves failure status and never deletes the
@@ -175,7 +171,7 @@ hashes and enable the measurement guard. It waits for the real completion or
 rollback marker with a deadline; never seed those markers to bypass migration.
 Use the transcript/single-message helpers' `--defer-body-copy` mode to exercise
 late startup copying deterministically.
-The wrapper and Deno smoke trim TMPDIR's trailing slash so HOME/data paths match helpers'
+The wrapper trims TMPDIR's trailing slash so HOME/data paths match helpers'
 normalized run paths, including macOS's default TMPDIR.
 For native Unix-socket fixtures, select `TMPDIR=/private/tmp` when invoking the
 wrapper to keep the fresh HOME's socket paths within the OS path-length limit.
@@ -187,16 +183,12 @@ The wrapper forwards NODE_PATH and VERIFY_BROWSER for browser helpers; its
 child environment remains otherwise scrubbed.
 Set TMPDIR to an existing writable temporary directory when the host restricts
 the default temp location; the wrapper creates its disposable run there.
+For the full macOS native smoke, pass `TMPDIR=/private/tmp` directly to its child.
+Nested connected-device sockets must stay within the OS path-length limit.
+
 For a Node compatibility-adapter proof, `VERIFY_PROOF_RUNTIME=node` selects
 `node --import tsx` with the same isolated environment and cleanup. This tests
-the Deno/Node adapter seam; Node remains unsupported as a daemon runtime.
-
-The Deno boot smoke also honors `TMPDIR`. Its fixture-isolation journey is
-`journeys/deno-smoke-fixture-isolation.md`; it runs the real smoke with a
-competing writer when fixtures overlap the booted daemon.
-For the full macOS smoke, pass `TMPDIR=/private/tmp` directly to the smoke child,
-not a wrapper's nested temporary directory: the nested connected-device fixture's
-Unix socket can otherwise exceed macOS's 104-byte socket-path limit.
+the independent Node adapter seam; Node remains unsupported as a daemon runtime.
 
 If a metadata helper cannot bind its own listener (for example EPERM or an
 ephemeral port 0 reported as EADDRINUSE), preserve its log and mark daemon proof

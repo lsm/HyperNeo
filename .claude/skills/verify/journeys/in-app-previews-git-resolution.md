@@ -59,9 +59,7 @@ Stop owned services, write `{}` to RUN/git-fixtures.json, restart with the same
 stub, then run the helper in restart mode. It must return the original receipt,
 metadata and full bytes without any new GitHub fixture call. Stop again.
 
-Retain git-resolve-evidence.json, both RPC evidence JSON files, gh.log and doctor
-output. Synthetic fixtures/evidence remain. No live DB, credentials, real GitHub
-or provider traffic, port 8399 or unattended GUI. This proves Bun/macOS and served
-web/headless compatibility; it makes no new Deno/Linux native-runtime or visible
-web/iOS preview UI claim. Fork-head objects unavailable in the bound repository
-refuse; no arbitrary fork/host fallback is attempted. UI is delivered later.
+Retain git-resolve-evidence.json, both RPC evidence JSON files, gh.log and doctor output.
+Synthetic fixtures/evidence remain. No live DB, credentials, real GitHub or provider
+traffic, port 8399 or unattended GUI. Fork-head objects unavailable in the bound
+repository refuse; no arbitrary fork/host fallback is attempted. UI is delivered later.

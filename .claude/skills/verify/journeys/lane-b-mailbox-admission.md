@@ -19,10 +19,9 @@ RPC replies. Evidence and affected RPC latency are in
 `evidence/mailbox-admission.json`. The pre-fix daemon fails with one forbidden
 main SQL attempt. The helper closes its own resources in finally.
 
-The self-contained Deno smoke block runs the same proof in CI. Focused handoff
-and mailbox tests retain validation, serialization rejection, unique pending
-admission, and worker-failure behavior without fallback. This slice does not
-move receipt-based submission, delivery/consumption, ordinary-send session lookup, or mailbox
+Focused handoff and mailbox tests retain validation, serialization rejection, unique
+pending admission, and worker-failure behavior without fallback. This slice does not move
+receipt-based submission, delivery/consumption, ordinary-send session lookup, or mailbox
 expiry SQL, and does not establish contention, clone, RSS, or loop-lag targets.
 
 The helper also invokes the real schedule-delivery coordinator twice concurrently

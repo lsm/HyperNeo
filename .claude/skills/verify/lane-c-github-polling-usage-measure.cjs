@@ -18,10 +18,8 @@ const registry = fs.readFileSync('packages/daemon/src/storage/db-gateway/db-ops.
 for (const name of ['gitHubPollingCapabilityReads', 'gitHubPollingTimerReads']) {
   if ((registry.match(new RegExp('    ' + name + ',', 'g')) ?? []).length !== 1) throw Error('Missing/duplicate registry entry: ' + name);
 }
-const smoke = fs.readFileSync('scripts/deno-smoke.sh', 'utf8').split('\n').filter(line => line.includes('lane-c-github-polling-usage-read.ts'));
-if (smoke.length !== 1) throw Error('Missing/duplicate native smoke registration');
 const fullOwnedGraphLines = modules.reduce((n, row) => n + row.lines, 0);
-const sharedRegistrationChangedLines = 7, smokeRegistrationLines = 1;
+const sharedRegistrationChangedLines = 7, smokeRegistrationLines = 0;
 const knownTotal = fullOwnedGraphLines + sharedRegistrationChangedLines + smokeRegistrationLines;
 if (knownTotal > 200) throw Error('Polling read construction exceeds 200 lines');
 const report = {

@@ -29,10 +29,7 @@ then let the wrapper remove synthetic data after the process exits.
 
 Coverage is the native writer command receipts. Scheduled refresh, notification
 delivery, RPC latency and main-thread ownership have separate journeys in
-neo-todo-progress-writer.md and neo-todo-needs-you-writer.md. The native entry
-point calls this probe last through proof-run.sh. Failure must retain its
-status/evidence and suppress the smoke success marker. The runner fixture
-covers final-case failure and temporary-data cleanup. Remaining
-reminder/waiting/state contracts, active runtime adapters and CI gates
-continue in the removal ladder. Keep the Deno runner and required CI enabled
-through the remaining parity work.
+neo-todo-progress-writer.md and neo-todo-needs-you-writer.md. The native entry point
+calls this probe last through proof-run.sh. Failure must retain its status/evidence
+and suppress the smoke success marker. The runner fixture covers final-case failure
+and temporary-data cleanup.

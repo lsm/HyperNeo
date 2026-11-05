@@ -1,9 +1,8 @@
 # Extract GitHub filter persistence SQL
 
-Run proof-run.sh with lane-c-github-filter-extract.ts under Bun and cached Deno
-(VERIFY_PROOF_RUNTIME=deno). Shared setup owns fresh HOME/data, ephemeral sockets,
-scrubbed credentials, saved evidence and cleanup. No provider, external HTTP,
-GitHub access, live daemon/8399 or deployment is used.
+Run proof-run.sh with lane-c-github-filter-extract.ts under Bun. Shared setup owns fresh
+HOME/data, ephemeral sockets, scrubbed credentials, saved evidence and cleanup. No
+provider, external HTTP, GitHub access, live daemon/8399 or deployment is used.
 
 Commit red helper-availability contracts while the actual public filter RPC
 characterization passes. Seed two synthetic Spaces, with the first source disabled

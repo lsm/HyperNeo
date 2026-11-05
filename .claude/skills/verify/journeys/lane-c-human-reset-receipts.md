@@ -1,10 +1,9 @@
 # Build exact human-reset receipt recovery
 
-Run proof-run.sh with lane-c-human-reset-receipts.ts on Bun and the cached native
-Deno, selecting VERIFY_PROOF_RUNTIME=deno for Deno. The wrapper checks resources,
-uses disposable HOME/data and ephemeral ports, refuses GitHub/external HTTP,
-saves evidence and removes daemon data. No provider turn or HTTP model is needed.
-Record runtime versions; Bun 1.4.3 does not establish pinned Bun 1.4.2 coverage.
+The wrapper checks resources, uses disposable HOME/data and ephemeral ports, refuses
+GitHub/external HTTP, saves evidence and removes daemon data. No provider turn or HTTP
+model is needed. Record runtime versions; Bun 1.4.3 does not establish pinned Bun 1.4.2
+coverage.
 
 This construction keeps reset(now) and adds an optional request UUID. A read-only
 command returns that reset's receipt only when a matching recovery notice exists.

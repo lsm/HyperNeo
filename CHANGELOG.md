@@ -477,7 +477,6 @@ Patch release: v0.44.0 never reached npm because its Windows build failed.
 - **Workflow runtime hardening**: Durable workflow definition versions and external-event subscriptions; runtime-agnostic spawn seam and universal-read dispatcher; Coder-Only default workflow for unpinned tasks; workflow dead-loop detection.
 - **Session delivery hardening**: Session FIFO delivery, ensure-session/worker admission pipelines, stuck-initialization delivery refusal, per-call wait caps, stale queue recovery, model-switch duplicate-delivery prevention, and recoverable provider auto-reset/retry.
 - **Provider and model updates**: Model discovery for DeepSeek, GLM/Z.ai, Kimi, MiniMax, Ollama, OpenRouter, and ACP with persisted cache and reconciliation, force refresh, curated-first last-good fallback, and failure diagnostics; GPT-5.6 Codex, Kimi K3 256K with vision and granular thinking levels, and GLM-5.3 Flash catalog routing; restored Copilot SDK embedded startup and dynamic model listing.
-- **Dual runtime**: Bun and Deno support seams and documentation for the daemon.
 
 ### Changed
 

@@ -1,10 +1,9 @@
 # Activate the public human-device reset on DB workers
 
-Run proof-run.sh with lane-c-human-reset-activation.ts on Bun, then cached native
-Deno (VERIFY_PROOF_RUNTIME=deno). The wrapper checks resources, uses an empty
-disposable HOME/data directory and ephemeral listeners, scrubs credentials, saves
-evidence and removes daemon data. No model turn or HTTP model mock is needed.
-Record actual runtimes; local Bun 1.4.3 does not establish native Bun 1.4.2 coverage.
+The wrapper checks resources, uses an empty disposable HOME/data directory and ephemeral
+listeners, scrubs credentials, saves evidence and removes daemon data. No model turn or
+HTTP model mock is needed. Record actual runtimes; local Bun 1.4.3 does not establish
+native Bun 1.4.2 coverage.
 
 Commit the failing proof first. The real local CLI reset must fail while cached
 and new target main SQL is denied, with network callers still refused. Wire the

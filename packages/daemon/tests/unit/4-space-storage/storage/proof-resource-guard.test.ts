@@ -57,3 +57,31 @@ test.each([
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('proof wrapper rejects an unsupported runtime before invoking a helper', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'proof-runtime-'));
+  try {
+    const bin = join(directory, 'bin'),
+      evidence = join(directory, 'evidence');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'uname'), '#!/bin/sh\necho Linux\n', { mode: 0o700 });
+    const marker = join(directory, 'invoked');
+    writeFileSync(join(bin, 'bun'), '#!/bin/sh\ntouch "' + marker + '"\n', { mode: 0o700 });
+    const script = fileURLToPath(
+      new URL('../../../../../../.claude/skills/verify/proof-run.sh', import.meta.url)
+    );
+    const result = spawnSync('/bin/bash', [script, evidence, 'unused.ts'], {
+      env: {
+        PATH: bin + ':/usr/bin:/bin',
+        TMPDIR: directory,
+        VERIFY_PROOF_RUNTIME: 'removed-runtime',
+      },
+      encoding: 'utf8',
+    });
+    expect(result.status).toBe(2);
+    expect(result.stdout + result.stderr).toContain('Unsupported proof runtime');
+    expect(existsSync(marker)).toBe(false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

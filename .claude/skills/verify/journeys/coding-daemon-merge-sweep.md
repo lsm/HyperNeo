@@ -6,10 +6,9 @@ Use the guarded metadata-only wrapper from SKILL.md:
 bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/coding-daemon-merge-sweep.ts
 ```
 
-Add `enterprise` after the helper path to repeat with synthetic `GH_HOST`;
-required Deno smoke repeats every variant. Reads and the merge command must target
-that host, while the default remains github.com. The unit regression supplies
-a matching public PR on the same head and proves it is never selected.
+Reads and the merge command must target that host, while the default remains github.com.
+The unit regression supplies a matching public PR on the same head and proves it is never
+selected.
 
 The helper owns a real isolated daemon and ephemeral listener, disposable HOME and
 database, and a synthetic GitHub CLI. External HTTP is refused; no provider is

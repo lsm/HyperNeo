@@ -6,7 +6,7 @@ Bun probe through the existing wrapper, with pinned Bun 1.4.2 on PATH:
     VERIFY_PROOF_RUNTIME=bun bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence scripts/bun-shared-reader-probe.ts
 
 This construction preserves the inline turn-range/external-snapshot contract
-from scripts/deno-smoke.sh. It initializes a fresh database through DatabaseCore,
+for turn ranges and external snapshots. It initializes a fresh database through DatabaseCore,
 waits for actual startup body copying and drives SDKStatusReader through its
 native worker. It starts no listener or model, reads no existing database,
 and uses no GitHub, provider credential or live daemon.
@@ -24,10 +24,7 @@ and exit zero; retained evidence survives temporary-data cleanup. A PASS flag
 before a close error is not success. Inspect the proof log for background
 database-close errors.
 
-The schema initializer, body-copy wait and SQLite compatibility layer are
-existing dependencies, not new ownership or performance claims. The Bun native
-entry point now calls this probe after its 141 legacy cases through proof-run.sh.
-Require probe failure to retain its status/evidence and withhold the runner
-success marker. Required CI wiring, the remaining inline writer contracts and
-CI replacement follow separately; Deno coverage and historical bindings stay
-unchanged.
+The schema initializer, body-copy wait and SQLite compatibility layer are existing
+dependencies, not new ownership or performance claims. The Bun native entry point now
+calls this probe after its 141 legacy cases through proof-run.sh. Require probe
+failure to retain its status/evidence and withhold the runner success marker.

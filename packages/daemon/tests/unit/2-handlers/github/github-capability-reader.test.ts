@@ -145,8 +145,8 @@ describe('GitHub capability callback reader wiring', () => {
       expect(JSON.parse(readFileSync(output, 'utf8'))).toMatchObject({
         fresh: 178,
         bridgeLines: 10,
-        smokeLines: 1,
-        knownTotal: 189,
+        smokeLines: 0,
+        knownTotal: 188,
         excludedDataLines: 0,
       });
     } finally {

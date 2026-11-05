@@ -46,14 +46,12 @@ The fixed journey must prove the real local-human neo.session.track operation:
   human-only admission and committed-card behavior after kickoff failure.
 
 Run the activation, existing neo-session-track and 5a writer suites, then the full
-repository check. Keep the static SQL baseline unchanged or lower; never raise it.
-The Deno smoke runs the same helper. Label missing local Deno unverified and require
-its CI check. Review and independent Verify bind to the exact final PR head.
+repository check. Keep the static SQL baseline unchanged or lower; never raise it. Review
+and independent Verify bind to the exact final PR head.
 
-Require wrapper exit zero, no background/closed-database errors, resourcesStopped
-and verified in neo-track-admission-activation.json. Retain JSON and proof.log;
-the wrapper saves evidence before deleting synthetic HOME/data. RSS and WAL are
-end-of-run samples, not peaks. Keep #8998/#9002/#8712 open.
+Require wrapper exit zero, no background/closed-database errors, resourcesStopped and
+verified in neo-track-admission-activation.json. RSS and WAL are end-of-run samples, not
+peaks. Keep #8998/#9002/#8712 open.
 
 After merge, repeat the real Track RPC journey on the containing merged artifact
 and read served-build metadata. If the live daemon precedes the merge, record

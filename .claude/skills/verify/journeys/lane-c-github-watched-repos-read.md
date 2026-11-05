@@ -1,8 +1,8 @@
 # Constructor-free GitHub watched repository reads
 
-Run proof-run.sh with lane-c-github-watched-repos-read.ts under Bun and cached
-Deno (VERIFY_PROOF_RUNTIME=deno). Shared setup owns synthetic HOME/data, scrubbed
-environment, free listeners, retained evidence and owned data cleanup.
+Run proof-run.sh with lane-c-github-watched-repos-read.ts under Bun. Shared setup owns
+synthetic HOME/data, scrubbed environment, free listeners, retained evidence and owned
+data cleanup.
 
 The unchanged settings-read journey imports the original real daemon Space
 RPC proof: enable/disable/listWatchedRepos/listConfig with two synthetic watched

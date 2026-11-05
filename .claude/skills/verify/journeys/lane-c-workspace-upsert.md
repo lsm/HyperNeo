@@ -1,11 +1,9 @@
 # Build the workspace history upsert writer command
 
-Run proof-run.sh with lane-c-workspace-upsert.ts on Bun and cached native Deno
-(VERIFY_PROOF_RUNTIME=deno). It checks resources, scrubs credentials, uses a fresh
-HOME/data and ephemeral listeners, saves evidence and removes synthetic data.
-No provider/model, HTTP mock, live daemon, real credential or existing workspace
-is needed. Record actual runtimes; local Bun 1.4.3 does not establish native
-Bun 1.4.2 coverage.
+It checks resources, scrubs credentials, uses a fresh HOME/data and ephemeral listeners,
+saves evidence and removes synthetic data. No provider/model, HTTP mock, live daemon, real
+credential or existing workspace is needed. Record actual runtimes; local Bun 1.4.3 does
+not establish native Bun 1.4.2 coverage.
 
 Commit a failing construction proof first: the native worker rejects the missing
 command while the legacy upsert(path) clock/counter contract passes. Add a typed

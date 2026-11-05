@@ -1,9 +1,8 @@
 # GitHub Space enable and disable RPC writer activation
 
-Run proof-run.sh with lane-c-github-space-enable-wiring.ts under Bun and cached
-Deno (VERIFY_PROOF_RUNTIME=deno). Shared setup owns fresh HOME/data, scrubbed
-environment, free listeners, saved evidence and synthetic data cleanup. Never
-use the live daemon, port 8399, credentials or deployment.
+Run proof-run.sh with lane-c-github-space-enable-wiring.ts under Bun. Shared setup owns
+fresh HOME/data, scrubbed environment, free listeners, saved evidence and synthetic data
+cleanup. Never use the live daemon, port 8399, credentials or deployment.
 
 Use the real app, GitHub extension and public WebSocket RPCs. Stop captured
 processors and finish SDK body copy before measuring. Inject a safe 60-second

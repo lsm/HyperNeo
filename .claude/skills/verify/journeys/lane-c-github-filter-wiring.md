@@ -1,8 +1,8 @@
 # GitHub filter RPC writer activation
 
-Run proof-run.sh with lane-c-github-filter-wiring.ts under Bun and cached Deno
-(VERIFY_PROOF_RUNTIME=deno). Shared setup owns scrubbed HOME/data, free ephemeral
-sockets, evidence and cleanup; never use live daemon/8399, credentials or deployment.
+Run proof-run.sh with lane-c-github-filter-wiring.ts under Bun. Shared setup owns scrubbed
+HOME/data, free ephemeral sockets, evidence and cleanup; never use live daemon/8399,
+credentials or deployment.
 
 Commit red unit failures and actual WebSocket main-SQL failure first. Start the
 real app, stop captured processors and await startup body copying. Enable only
