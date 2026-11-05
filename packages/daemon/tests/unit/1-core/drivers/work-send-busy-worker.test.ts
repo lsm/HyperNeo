@@ -11,7 +11,12 @@ const ref = { adapter: 'codex-desktop', id: '019f2a4e-worker' };
 const neo: OperationCaller = { source: 'internal', role: 'neo', sessionId: 'root' };
 const human: OperationCaller = { source: 'rpc' };
 
-function fixture(status: string, on = false, adapterId = 'codex-desktop') {
+function fixture(
+  status: string,
+  on = false,
+  adapterId = 'codex-desktop',
+  queued: string = 'message'
+) {
   const reached: string[] = [];
   const waiting: unknown[] = [];
   const steer = async (_ref: unknown, message: string) => {
@@ -37,7 +42,10 @@ function fixture(status: string, on = false, adapterId = 'codex-desktop') {
       daemonName: 'fixture',
       todoWorker: {
         on: () => on,
-        wait: async (...args: unknown[]) => void waiting.push(args),
+        wait: async (...args: unknown[]) => {
+          waiting.push(args);
+          return queued;
+        },
       },
     } as never)
   );
@@ -64,6 +72,25 @@ describe('a Neo send for another todo to a busy worker', () => {
     });
     expect(reached).toEqual([]);
     expect(waiting).toEqual([['todo-b', ref, 'Next task']]);
+  });
+
+  test.each([
+    ['message', 'this message goes when the worker is free; do not send it again'],
+    [
+      'instruction',
+      'its existing instruction goes when the worker is free. Your message text was not kept',
+    ],
+    ['none', 'Nothing was queued or sent'],
+  ])('the reply says what happened to a %s send', async (queued, detail) => {
+    const { registry } = fixture('running', false, undefined, queued);
+    const reply = await invokeOperation(
+      registry,
+      'work.send',
+      { ref, message: 'Next task', todoId: 'todo-b' },
+      neo
+    );
+    expect(JSON.stringify(reply)).toContain(detail);
+    expect(reply).toMatchObject({ value: { reason: 'worker_busy', notSent: true } });
   });
 
   test.each([

@@ -3137,6 +3137,22 @@ describe('a todo for a busy worker', () => {
     }
   });
 
+  test('queueOn says what it did with the message', () => {
+    const h = setup();
+    try {
+      const withInstruction = h.add();
+      expect(h.sessions.queueOn(withInstruction.id, ref, 'Other text')).toBe('instruction');
+      expect(h.store.getTodo(withInstruction.id)?.instruction).toBe('Build the rows.');
+      const empty = h.add(null, null);
+      expect(h.sessions.queueOn(empty.id, ref, 'New text')).toBe('message');
+      expect(h.store.getTodo(empty.id)?.instruction).toBe('New text');
+      const doing = h.store.updateTodo(h.add(), { state: 'doing', startedAt: 1 }, 1);
+      expect(h.sessions.queueOn(doing.id, ref, 'Lost text')).toBe('none');
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('a direct start waits too', async () => {
     const h = setup();
     try {
