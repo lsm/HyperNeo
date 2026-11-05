@@ -41,6 +41,7 @@ describe('Bun claim lock parity probe', () => {
         runtime: 'bun',
         startupBodyCopyComplete: true,
         holderReady: true,
+        lockOwned: true,
         claimWaitedForRelease: true,
         holderCommitted: true,
         singleClaimPayload: true,
@@ -61,11 +62,12 @@ describe('Bun claim lock parity probe', () => {
     try {
       const result = invoke(run, preload);
       expect(result.status, result.stdout + result.stderr).toBe(1);
-      expect(result.stderr).toContain('Claim must remain pending while writer holds lock');
+      expect(result.stderr).toContain('Native holder must own write lock');
       expect(
         JSON.parse(readFileSync(join(run, 'evidence/bun-claim-lock.json'), 'utf8'))
       ).toMatchObject({
         holderReady: true,
+        lockOwned: false,
         claimWaitedForRelease: false,
         holderTerminated: true,
         gatewayClosed: true,
