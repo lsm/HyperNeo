@@ -11,5 +11,5 @@ env -i HOME="$RUN/home" PATH="$PATH" TMPDIR="$RUN" NODE_ENV=test HYPERNEO_SPACE=
 
 `$RUN/evidence/bun-daemon-boot.json` must show `pass: true`, `spaceTables: 0`
 and `noMissingTables: true`. The probe builds the Space table list from
-`SPACE_SCHEMA.baseline`, drives session, message and live-query reads, then
+`SPACE_SCHEMA.baseline` plus `SPACE_SCHEMA.tables`, drives session, message and live-query reads, then
 stops the daemon. `bun-daemon-boot-probe.test.ts` runs this in CI.

@@ -20,6 +20,7 @@ const spaceTableNames = () => {
   const db = new Database(':memory:');
   try {
     for (const statement of SPACE_SCHEMA.baseline?.statements ?? []) db.exec(statement);
+    SPACE_SCHEMA.tables?.(db);
     return new Set(tableNames(db));
   } finally {
     db.close();
@@ -168,7 +169,7 @@ try {
     evidence.tables = tables;
     if (spaceOff) {
       const space = spaceTableNames();
-      assert(space.size > 40, 'Space table list is too small to prove absence');
+      assert(space.size > 50, 'Space table list is too small to prove absence');
       assert.deepEqual(
         tableNames(db).filter((name) => space.has(name)),
         []
