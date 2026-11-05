@@ -287,6 +287,12 @@ const isTodoSend = (
 
 const isBusyWork = (status: string) => status === 'running' || status === 'queued';
 
+const sendingTo = new Map<string, QueuedInput>();
+const workerKey = ({ adapter, daemon, id }: WorkRef) => `${adapter}:${daemon ?? ''}:${id}`;
+const endTodoSend = (input: SendInput) => {
+  if (sendingTo.get(workerKey(input.ref)) === input) sendingTo.delete(workerKey(input.ref));
+};
+
 async function readTodoWorker(
   input: QueuedInput,
   caller: OperationCaller,
@@ -307,7 +313,11 @@ async function holdTodoSend<Value>(
 ): Promise<{ value: Value } | { reason: SendResult }> {
   if (!worker || !isTodoSend(input, caller)) return { value: route };
   if (!worker.ok) return { reason: { ...worker, notSent: true } };
-  if (!isBusyWork(worker.value.status)) return { value: route };
+  const target = workerKey(input.ref);
+  if (!isBusyWork(worker.value.status) && !sendingTo.has(target)) {
+    sendingTo.set(target, input);
+    return { value: route };
+  }
   await deps.heldSends?.hold({
     key: input.idempotencyKey ?? crypto.randomUUID(),
     todoId: input.todoId,
@@ -1106,7 +1116,8 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
       inputSchema: SendWorkInputSchema,
       resultSchema: SendWorkResultSchema,
       policy: { safetyClass: 'mutate' },
-      execute: (input, caller) => runSendWork(input, caller, deps),
+      execute: (input, caller) =>
+        runSendWork(input, caller, deps).finally(() => endTodoSend(input)),
     }),
     defineOperation({
       name: 'work.queue',
@@ -1115,7 +1126,10 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
       inputSchema: SendWorkInputSchema,
       resultSchema: SendWorkResultSchema,
       policy: { safetyClass: 'mutate' },
-      execute: (input, caller) => runQueuedInput(input, caller, deps) as Promise<SendResult>,
+      execute: (input, caller) =>
+        (runQueuedInput(input, caller, deps) as Promise<SendResult>).finally(() =>
+          endTodoSend(input)
+        ),
     }),
     defineOperation({
       name: 'work.withdraw',
