@@ -496,7 +496,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       const ask = todo && store.getAsk(todo.askId);
       if (!todo || !ask) continue;
       const waited = isNeoTodoWorkerWait(todo.reason);
-      if (reason && !waited) sessions.recordNudge(id, { since: now, nudges: 0 });
+      if (reason && !waited) restartLadder(id, now);
       if (reason !== todo.reason && (reason || waited)) {
         store.updateTodo(todo, { reason }, now);
         deps.changed();
@@ -578,7 +578,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
 
   const queue = createWorkQueue<NudgeClaim>(
     {
-      queue: () => readQueue(Date.now()),
+      queue: () => sessions.read('queueFacts'),
+      waiting: () => readQueue(Date.now()),
       claim: (todoId, now, move) => nudge(todoId, now, move),
       act: (claim, now) => act(claim, now),
       start: (todoId) => start(todoId),
