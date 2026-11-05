@@ -3159,11 +3159,33 @@ describe('a todo for a busy worker', () => {
       const todo = h.add();
       h.sessions.recordRef(todo.id, ref, 1);
       const doing = h.store.updateTodo(todo, { state: 'doing', startedAt: 1 }, 1);
-      expect(h.sessions.isOnWorker(doing.id, ref)).toBe(true);
+      expect(h.sessions.sendsNow(doing.id, ref)).toBe(true);
       const blocked = h.store.updateTodo(doing, { state: 'blocked', blockedBy: 'check' }, 2);
-      expect(h.sessions.isOnWorker(blocked.id, ref)).toBe(true);
+      expect(h.sessions.sendsNow(blocked.id, ref)).toBe(true);
       h.store.updateTodo(blocked, { state: 'failed', finishedAt: 3 }, 3);
-      expect(h.sessions.isOnWorker(todo.id, ref)).toBe(false);
+      expect(h.sessions.sendsNow(todo.id, ref)).toBe(false);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a send naming no todo is not a todo send, so it goes', () => {
+    const h = setup();
+    try {
+      expect(h.sessions.sendsNow('https://github.com/o/r/pull/1', ref)).toBe(true);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a wait keeps the mark that the todo was already moved once', async () => {
+    const h = setup();
+    try {
+      const todo = waitingOn(h);
+      h.sessions.recordNudge(todo.id, { since: 1, nudges: 0, redispatched: true });
+      h.setStatus(running);
+      await h.runner.refresh(() => {});
+      expect(h.sessions.readNudge(todo.id)?.redispatched).toBe(true);
     } finally {
       h.db.close();
     }
