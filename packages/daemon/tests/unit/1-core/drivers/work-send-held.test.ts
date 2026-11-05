@@ -76,6 +76,22 @@ describe('a todo send to a busy worker waits in HyperNeo', () => {
     expect(held).toEqual([]);
   });
 
+  test('a refused send to a busy worker stays refused, not held', async () => {
+    const { registry, reached, held } = fixture('running');
+    const reply = await invokeOperation(
+      registry,
+      'work.send',
+      { ref, message: 'Next task', todoId: 'todo-b', notice: true },
+      neo
+    );
+    expect(reply).toMatchObject({
+      kind: 'completed',
+      value: { ok: false, reason: 'todo_required', notSent: true },
+    });
+    expect(reached).toEqual([]);
+    expect(held).toEqual([]);
+  });
+
   test('a worker whose status cannot be read gets no todo send', async () => {
     const { registry, reached, held } = fixture('running', {
       ok: false,
