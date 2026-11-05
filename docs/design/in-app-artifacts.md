@@ -155,7 +155,7 @@ check followed by ordinary open is insufficient: parent swaps can race it.
 Reject hard-linked source files and recheck descriptor identity/size during the
 copy. If a supported runtime/platform cannot enforce this open contract, return
 `safe_open_unavailable`; do not fall back to a racy file read. Pin platform seams
-and prove races before wiring registration on Bun and Deno.
+and prove races before wiring registration on Bun.
 
 Root allowance never overrides the sensitive-file deny policy: `.ssh`, `.git`
 internals, keychains, private keys, `.env*`, auth/credentials JSON, token stores,
