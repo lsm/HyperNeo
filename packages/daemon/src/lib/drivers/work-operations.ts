@@ -27,6 +27,7 @@ import {
   WorkDeliverySchema,
   WorkInputReceiptSchema,
   WorkRefSchema,
+  WorkTurnFactSchema,
   WorkStartedSchema,
   workResultSchema,
   type Rejected,
@@ -46,6 +47,7 @@ type RoutedVerb =
   | 'queue'
   | 'withdraw'
   | 'status'
+  | 'turns'
   | 'stop'
   | 'archive';
 type Route<Verb extends RoutedVerb> =
@@ -164,6 +166,11 @@ export const SendWorkInputSchema = z.object({
   from: ForwardedOriginSchema,
 });
 export const WorkRefInputSchema = z.object({ ref: WorkRefSchema });
+const WorkTurnsInputSchema = z.object({
+  ref: WorkRefSchema,
+  cursor: z.string().min(1).max(200).optional(),
+});
+const WorkTurnsResultSchema = workResultSchema(z.object({ turns: z.array(WorkTurnFactSchema) }));
 const WithdrawWorkInputSchema = z.object({
   ref: WorkRefSchema,
   queuedSubmissionId: z.string().min(1).max(500),
@@ -907,6 +914,32 @@ const runWorkStatus = (superpipe({})('work-status') as PipelineAPI)
   .pipe(presentWorkIdentity, 'outcome', 'outcome')
   .endAsync('outcome') as (input: StatusInput, deps: WorkVerbDeps) => Promise<StatusResult>;
 
+type TurnsInput = z.infer<typeof WorkTurnsInputSchema>;
+type TurnsResult = z.infer<typeof WorkTurnsResultSchema>;
+
+const runWorkTurns = (superpipe({})('work-turns') as PipelineAPI)
+  .input(['input', 'deps'])
+  .pipe(
+    (input: TurnsInput, deps: WorkVerbDeps) => pickRoute('turns', input.ref, deps.adapters()),
+    ['input', 'deps'],
+    'result:outcome'
+  )
+  .pipe(
+    async (route: Route<'turns'>, input: TurnsInput, deps: WorkVerbDeps): Promise<TurnsResult> =>
+      'local' in route
+        ? route.local(input.ref, input.cursor)
+        : forwardWork(
+            route.daemon,
+            'work.turns',
+            { ...input, ref: localRef(input.ref) },
+            WorkTurnsResultSchema,
+            deps.remote
+          ),
+    ['outcome', 'input', 'deps'],
+    'outcome'
+  )
+  .endAsync('outcome') as (input: TurnsInput, deps: WorkVerbDeps) => Promise<TurnsResult>;
+
 type QueuedInput = SendInput | z.infer<typeof WithdrawWorkInputSchema>;
 type QueuedResult = SendResult | z.infer<typeof WithdrawWorkResultSchema>;
 function routeQueuedInput(input: QueuedInput, deps: WorkVerbDeps) {
@@ -1125,6 +1158,15 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
       resultSchema: WorkStatusResultSchema,
       policy: { safetyClass: 'read' },
       execute: (input) => runWorkStatus(input, deps),
+    }),
+    defineOperation({
+      name: 'work.turns',
+      description:
+        'Read finished turns of work by ref, oldest first and a few at a time: when each ran, how it ended, the inputs in it and the URLs in its final message and tool output. complete false means its output could not be fully read. Pass the last turn cursor to continue. Only some adapters report turns; others return unsupported.',
+      inputSchema: WorkTurnsInputSchema,
+      resultSchema: WorkTurnsResultSchema,
+      policy: { safetyClass: 'read' },
+      execute: (input) => runWorkTurns(input, deps),
     }),
     defineOperation({
       name: 'work.stop',

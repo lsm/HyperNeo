@@ -100,6 +100,17 @@ export const PlaceGroupSchema = z.object({
   work: z.array(WorkSummarySchema),
 });
 
+export const WorkTurnFactSchema = z.object({
+  id: z.string().min(1),
+  startedAt: z.number(),
+  endedAt: z.number(),
+  ended: z.string(),
+  inputs: z.array(z.string()),
+  urls: z.array(z.string()),
+  complete: z.boolean(),
+  cursor: z.string().min(1),
+});
+
 export const WorkRejectionSchema = z.enum([
   ...workStartConfiguration.refusalSchema.options,
   ...workStartPreparation.refusalSchema.options,
@@ -267,8 +278,10 @@ export type WorkVerb =
   | 'queue'
   | 'withdraw'
   | 'status'
+  | 'turns'
   | 'stop'
   | 'archive';
+export type WorkTurnFact = z.infer<typeof WorkTurnFactSchema>;
 export type WorkWithdrawal = {
   queuedSubmissionId: string;
   withdrawn: boolean;
@@ -339,6 +352,7 @@ export interface WorkAdapter {
     request: StartRequest,
     context: WorkCallContext
   ) => Promise<Result<WorkStarted>>;
+  readonly turns?: (ref: WorkRef, cursor?: string) => Promise<Result<{ turns: WorkTurnFact[] }>>;
   readonly send?: (
     ref: WorkRef,
     message: string,

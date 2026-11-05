@@ -64,6 +64,7 @@ import { createArtifactRefReader } from '../artifacts/read-operations.ts';
 import { readWorkerIdentity, sessionWorkerRef } from './worker-identity.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import type { WorkRef } from '../drivers/types.ts';
+import { WorkTurnRepository } from '../../storage/repositories/work-turn-repository.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
@@ -74,6 +75,7 @@ import { invokeOperation } from '../operations/invoke.ts';
 import { onHumanDevicesReset } from '../pairing/human-device-reset.ts';
 import type { SessionManager } from '../session/session-manager.ts';
 import { driverWorkCaller } from './driver-work.ts';
+import { recordWorkerTurns } from './turn-recording.ts';
 import { neoFolderPath, neoUserFolder } from './folder.ts';
 import { openNeoDefaultSession } from './inbox.ts';
 import {
@@ -166,6 +168,17 @@ export class NeoService {
       log: this.log,
       registry: () => this.sessions.getOperationRegistry(),
       followedCardRefs: (now) => this.followedCardRefs(now),
+      recordTurns: (ref) =>
+        recordWorkerTurns(ref, {
+          turns: new WorkTurnRepository(db.getDatabase()),
+          read: (work, cursor) =>
+            invokeOperation(
+              this.sessions.getOperationRegistry(),
+              'work.turns',
+              { ref: work, ...(cursor ? { cursor } : {}) },
+              { source: 'internal', role: 'neo' }
+            ),
+        }),
       mutedSessions: () => this.db.getGlobalSettings?.().neo?.mutedSessions,
       sessionBranchPrs: async (ref) =>
         (

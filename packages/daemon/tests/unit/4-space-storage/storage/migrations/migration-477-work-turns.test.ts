@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { WorkTurnRepository } from '../../../../../src/storage/repositories/work-turn-repository.ts';
-import { runMigration478 } from '../../../../../src/storage/schema/m478-work-turns.ts';
+import { runMigration477 } from '../../../../../src/storage/schema/m477-work-turns.ts';
 import { Database } from '../../../../../src/storage/sqlite-compat.ts';
 
 const turn = (id: string, endedAt: number) => ({
@@ -14,11 +14,11 @@ const turn = (id: string, endedAt: number) => ({
   cursor: `after-${id}`,
 });
 
-describe('migration 478: work turns', () => {
+describe('migration 477: work turns', () => {
   test('a turn is stored once per worker, and the newest cursor is where reading resumes', async () => {
     const db = new Database(':memory:');
-    runMigration478(db);
-    runMigration478(db);
+    runMigration477(db);
+    runMigration477(db);
     const turns = new WorkTurnRepository(db);
     const worker = { adapter: 'hyperneo', id: 'a' };
     const other = { adapter: 'hyperneo', id: 'b' };

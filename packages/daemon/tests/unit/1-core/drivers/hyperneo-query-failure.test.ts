@@ -42,6 +42,7 @@ async function persist(value: typeof episode | null) {
 
 function adapter() {
   return createHyperneoAdapter({
+    readTurnFacts: async () => [],
     readTurnEnds: async (id, since) => readHyperneoTurnEnds(db.getDatabase(), id, since),
     db: () => db.getDatabase(),
     machine: 'synthetic',

@@ -16,14 +16,16 @@ function write(
 ) {
   seq += 1;
   db.prepare(`INSERT INTO sdk_messages (seq, id, session_id, message_type, sdk_message, timestamp,
-    sdk_uuid, consumed_seq) VALUES (?, ?, 'w', ?, ?, ?, ?, ?)`).run(
+    sdk_uuid, consumed_seq, is_terminal, message_subtype) VALUES (?, ?, 'w', ?, ?, ?, ?, ?, ?, ?)`).run(
     seq,
     `m${seq}`,
     type,
     JSON.stringify({ type, ...body }),
     at(seconds),
     columns.uuid ?? `u${seq}`,
-    columns.consumed ?? null
+    columns.consumed ?? null,
+    Number(type === 'result'),
+    (body as { subtype?: string }).subtype ?? null
   );
 }
 const input = (uuid: string, seconds: number, consumed: number) =>
@@ -45,6 +47,7 @@ beforeEach(() => {
   db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
+  db.exec('PRAGMA foreign_keys = OFF');
   seq = 0;
 });
 
