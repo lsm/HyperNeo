@@ -1,4 +1,4 @@
-# Build the Bun daemon boot probe
+# Bun daemon boot probe
 
 Use shared isolation/resource setup in ../SKILL.md. Run the helper with the
 default Bun runtime through proof-run.sh:
@@ -27,8 +27,12 @@ probe process has a 60-second outer cap and its test has 90 seconds, leaving tim
 reap the child after cancellation. Cancellation readiness allows the same
 30-second startup window as the probe; its test also allows 90 seconds.
 
-This is a construction proof on POSIX source startup/shutdown. Native Windows
-signal behavior, GUI, compiled binaries and model/provider behavior are separate
-contracts. The old Deno runner, CI job, and 117-helper parity manifest are unchanged;
-this is not proof that all native helpers have migrated to Bun. A later PR
-extracts an old probe only after this construction merges.
+The Bun native entry point now calls this probe first through proof-run.sh.
+Its failure must retain status/evidence, suppress the runner success marker and
+skip every domain case. Require the retained daemon log to contain both graceful
+shutdown lines without database-close errors before crediting native success.
+
+This proves POSIX source startup/shutdown. Native Windows signal behavior, GUI,
+compiled binaries and model/provider behavior are separate contracts. The old
+Deno runner, CI job and 117-helper parity manifest stay unchanged. Remaining
+inline contracts and CI replacement still need parity before Deno coverage retires.
