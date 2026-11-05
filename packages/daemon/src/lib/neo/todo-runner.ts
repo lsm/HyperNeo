@@ -79,11 +79,23 @@ export interface NeoTodoRunnerDeps {
   limits(): { running: number; perGroup: number };
 }
 
-export function decideHeldSend(open: boolean, sending: boolean, status: string | undefined) {
+export function decideHeldSend(
+  open: boolean,
+  moved: boolean,
+  sending: boolean,
+  status: string | undefined
+) {
   if (!open) return 'drop';
+  if (moved) return 'moved';
   if (sending) return 'uncertain';
   return isBusyWork(status) || status === 'needs_you' ? 'wait' : 'send';
 }
+
+const HELD_SEND_NOTES: Record<string, string> = {
+  moved: 'A held message for this todo was dropped: the todo has moved to another worker.',
+  uncertain:
+    'Sending a held message for this todo was interrupted, so it may not have reached its worker. Check the worker before sending it again.',
+};
 
 const CARD_STATUS: Record<NeoTodo['state'], NeoWork['status']> = {
   todo: 'proposed',
@@ -994,8 +1006,15 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'live'
     )
     .pipe(
-      (owner: object | null, { sending }: PendingWorkSend, live: { status: string } | null) =>
-        decideHeldSend(!!owner, sending, live?.status),
+      (owner: object | null, held: PendingWorkSend, live: { status: string } | null) => {
+        const current = sessions.readRef(held.todoId);
+        const moved =
+          !!current &&
+          (current.id !== held.ref.id ||
+            current.adapter !== held.ref.adapter ||
+            current.daemon !== held.ref.daemon);
+        return decideHeldSend(!!owner, moved, held.sending, live?.status);
+      },
       ['owner', 'held', 'live'],
       'action'
     )
@@ -1028,12 +1047,12 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         if (sent && 'delivery' in sent && sent.delivery?.held)
           return sessions.held.setSending(held.key, null);
         await sessions.held.remove(held.key);
-        if (owner && action === 'uncertain')
+        if (owner && action in HELD_SEND_NOTES)
           await deps.tell(
             owner.ask,
             owner.todo,
-            'Sending a held message for this todo was interrupted, so it may not have reached its worker. Check the worker before sending it again.',
-            `held-send-uncertain:${held.key}`
+            HELD_SEND_NOTES[action],
+            `held-send-${action}:${held.key}`
           );
         if (owner && sent && 'failure' in sent)
           await deps.tell(
@@ -1048,19 +1067,39 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
     .endAsync('released') as (held: PendingWorkSend) => Promise<void>;
 
+  const remindKey = ({ todo, incident, plan }: NudgeClaim) =>
+    `neo-todo-remind:${todo.id}:${incident.since}:${plan.nudges}`;
+
   const remindTodo = (superpipe({})('neo.todo.remind') as PipelineAPI)
     .input(['claim', 'now'])
     .pipe(
-      ({ ask, ref, todo, incident }: NudgeClaim, now: number) =>
+      (claim: NudgeClaim, now: number) =>
         deps
-          .invoke(caller(ask), 'work.send', {
-            ref,
-            todoId: todo.id,
-            message: neoTodoIdleReminder(todo, idleMinutes(incident, now)),
+          .invoke(caller(claim.ask), 'work.send', {
+            ref: claim.ref,
+            todoId: claim.todo.id,
+            message: neoTodoIdleReminder(claim.todo, idleMinutes(claim.incident, now)),
+            idempotencyKey: remindKey(claim),
           })
           .catch(() => null),
       ['claim', 'now'],
       'sent'
+    )
+    .pipe(
+      async (claim: NudgeClaim, sent: OperationOutcome | null) => {
+        const reply = sent?.kind === 'completed' && (sent.value as { value?: { held?: boolean } });
+        if (!reply || !reply.value?.held) return;
+        await sessions.held.remove(remindKey(claim));
+        await sessions.write(
+          'finishNudge',
+          claim.todo.id,
+          claim.incident.since,
+          claim.plan.nudges,
+          claim.incident.nudges
+        );
+      },
+      ['claim', 'sent'],
+      'withdrawn'
     )
     .pipe(
       (sent: OperationOutcome | null) => {
@@ -1097,7 +1136,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
                 claim.ask,
                 claim.todo,
                 `Todo "${claim.todo.title}" has made no progress for ${idleMinutes(claim.incident, now)} min, and its worker could not be reached.`,
-                `neo-todo-remind:${claim.todo.id}:${claim.incident.since}:${claim.plan.nudges}`
+                remindKey(claim)
               )
               .catch((error: unknown) => releaseNudge(claim, error)),
       ['claim', 'unreached', 'now'],
