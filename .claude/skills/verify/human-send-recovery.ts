@@ -147,7 +147,7 @@ const cases: Record<string, (marker: string) => Promise<Record<string, unknown>>
   async restored_rate_limit_cooldown(marker) {
     await daemon.app.db.updateSession(root, { processingState: JSON.stringify({ status: 'rate_limit_cooldown', retryCount: 1, maxRetries: 3, retryAt: Date.now() + 600_000 }) });
     await live().resetQuery({ restartQuery: false, hardReset: true });
-    assert.equal(live().getProcessingState().status, 'rate_limit_cooldown');
+    await until(() => live().getProcessingState().status === 'rate_limit_cooldown', 5_000, 'cooldown restored');
     await send(marker);
     await answered(marker);
     return {};
