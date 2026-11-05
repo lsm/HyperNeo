@@ -47,7 +47,7 @@ function doneWhen(rule: NeoTodoCheck) {
 
 type CheckDraft = Pick<NeoTodo, 'check'> & { id?: string };
 const invalid =
-  'invalid_core_check: use human_confirmed {questionId}, evidence {path: absolute file path} or {} for a daemon-assigned path, or deployed {repo: lsm/HyperNeo, sha: full commit}.';
+  'invalid_core_check: use human_confirmed {questionId}, evidence {path: absolute file path} (on a todo, {} for a daemon-assigned path), or deployed {repo: lsm/HyperNeo, sha: full commit}.';
 const admit = (superpipe({})('neo.todo.core-admission') as PipelineAPI)
   .input(['draft', 'peers'])
   .pipe(

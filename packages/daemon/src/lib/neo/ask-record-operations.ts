@@ -1,7 +1,8 @@
 import { neoTodoAfterRefusal } from './todo-dependencies.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { todoEvidenceFile } from '../work-locations.ts';
-import { withAssignedEvidence } from './core-todo-checks.ts';
+import { neoEvidenceRefusal, withAssignedEvidence } from './core-todo-checks.ts';
+import { neoUserFolder } from './folder.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
@@ -203,12 +204,17 @@ export function createNeoAskRecordOperations(
           };
         const refused = input.todos
           .filter((todo) => !recordedRow(todo))
-          .map((todo) =>
-            planNeoTodoDraft(
-              { ...todo, check: withAssignedEvidence(todo.check, todoEvidenceFile('pending')) },
-              packs()
-            )
-          )
+          .map((todo) => {
+            const check = withAssignedEvidence(todo.check, todoEvidenceFile('pending'));
+            const reason = neoEvidenceRefusal(
+              check,
+              neoTodoRepo(todo, packs(), priorAsk ?? { repo: null }),
+              controls.userFolder ?? neoUserFolder()
+            );
+            return reason
+              ? { reason: { ok: false as const, reason } }
+              : planNeoTodoDraft({ ...todo, check }, packs());
+          })
           .find((planned) => 'reason' in planned);
         if (refused && 'reason' in refused) return refused.reason;
         const existing = priorAsk ? store.listFamilyTodos(priorAsk.id) : [];
