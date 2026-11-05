@@ -3257,6 +3257,22 @@ describe('held sends', () => {
     }
   });
 
+  test('an interrupted send to a worker the todo has left is reported as uncertain', async () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      await h.sessions.held.hold(held(todo.id, 'a'), 1);
+      await h.sessions.held.setSending({ key: 'a', ref }, 2);
+      h.sessions.recordRef(todo.id, { adapter: 'hyperneo', id: 'fresh' }, 3);
+      h.setStatus({ ok: true, value: { status: 'done', lastActivityAt: 4 } });
+      await h.runner.refresh(() => {});
+      expect(h.told.join()).toContain('may not have reached its worker');
+      expect(h.told.join()).not.toContain('was dropped');
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('a held send stays until Neo has been told about it', async () => {
     let refuse = true;
     const h = setup(null, ':memory:', undefined, () => {
