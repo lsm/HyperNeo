@@ -1,5 +1,4 @@
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
-import { jobQueueWrites } from '../../storage/repositories/job-queue-repository.ts';
 import { DeadLetterImmediatelyError, type JobHandler } from '../../storage/job-queue-processor.ts';
 import { parkDeliveryJob } from '../../storage/repositories/job-delivery-parking.ts';
 import {
