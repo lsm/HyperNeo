@@ -40,6 +40,7 @@ describe('Bun todo receipt parity probe', () => {
       ).toMatchObject({
         runtime: 'bun',
         startupBodyCopyComplete: true,
+        bootstrapReceipt: true,
         recoveryWindow: true,
         liveStatus: true,
         dispatchReceipt: true,
