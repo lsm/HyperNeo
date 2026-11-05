@@ -1,7 +1,11 @@
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { DeadLetterImmediatelyError, type JobHandler } from '../../storage/job-queue-processor.ts';
 import { parkDeliveryJob } from '../../storage/repositories/job-delivery-parking.ts';
-import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import {
+  type Job,
+  type JobQueueRepository,
+  jobQueueWrites,
+} from '../../storage/repositories/job-queue-repository.ts';
 import { routeDriveTurnOutcome } from '../agent/handler-outcome-routing.ts';
 import {
   asMessageDeliveryPayload,
@@ -136,7 +140,16 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       await session.settleSkippedDelivery?.(payload.messageUuid);
     }
     if (route.mutation === 'requeue' && route.retryAt !== undefined) {
-      const parked = await park(route.retryAt);
+      const parked =
+        'parked' in route.result && route.result.parked === 'no_provider'
+          ? await gatewayFor(deps.jobQueue.db).call(
+              jobQueueWrites,
+              'requeueWaiting',
+              job.id,
+              route.retryAt,
+              job.claimToken as string
+            )
+          : await park(route.retryAt);
       if (!parked) return { outcome: 'stale_attempt' };
     }
     return route.result;
