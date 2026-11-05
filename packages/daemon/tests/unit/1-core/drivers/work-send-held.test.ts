@@ -11,7 +11,7 @@ const ref = { adapter: 'codex-desktop', id: '019f2a4e-worker' };
 const neo: OperationCaller = { source: 'internal', role: 'neo', sessionId: 'root' };
 const human: OperationCaller = { source: 'rpc' };
 
-function fixture(status: string, statusReply?: unknown) {
+function fixture(status: string, statusReply?: unknown, adapterId = 'codex-desktop') {
   const reached: string[] = [];
   const held: unknown[] = [];
   const steer = async (_ref: unknown, message: string) => {
@@ -22,7 +22,7 @@ function fixture(status: string, statusReply?: unknown) {
     };
   };
   const adapter = {
-    id: 'codex-desktop',
+    id: adapterId,
     capabilities: ['find', 'send', 'steer', 'queue', 'status'],
     find: () => [],
     send: steer,
@@ -61,6 +61,19 @@ describe('a todo send to a busy worker waits in HyperNeo', () => {
     });
     expect(reached).toEqual([]);
     expect(held).toEqual([{ key: 'answer-1', todoId: 'todo-b', ref, message: 'Next task' }]);
+  });
+
+  test('a running Space task has no turns to wait for, so a todo send reaches it', async () => {
+    const { registry, reached, held } = fixture('running', undefined, 'space');
+    await invokeOperation(
+      registry,
+      'work.send',
+      { ref: { adapter: 'space', id: 'task-1' }, message: 'Next task', todoId: 'todo-b' },
+      neo
+    );
+    expect(reached).toHaveLength(1);
+    expect(reached[0]).toStartWith('Next task');
+    expect(held).toEqual([]);
   });
 
   test('a worker whose status cannot be read gets no todo send', async () => {
