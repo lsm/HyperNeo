@@ -173,7 +173,8 @@ export type DeliveryOutcome =
         | 'sdk_resume_choice'
         | 'context_clear_boundary'
         | 'limit_recovery'
-        | 'query_failure_cooldown';
+        | 'query_failure_cooldown'
+        | 'no_provider';
     };
 
 export type DriveTurnOutcome = DeliveryOutcome;
