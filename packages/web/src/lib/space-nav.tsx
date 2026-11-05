@@ -4,14 +4,21 @@ import {
   currentSpaceTaskIdSignal,
   currentSpaceViewModeSignal,
   navSectionSignal,
+  spaceOverlayPendingAgentNameSignal,
+  spaceOverlaySessionIdSignal,
 } from './signals.ts';
 import {
+  createSpaceSessionPath,
+  createSpaceTaskPath,
   navigateToSpace,
   navigateToSpaceAgent,
   navigateToSpaceConfigure,
   navigateToSpaces,
+  navigateToSpaceSession,
+  navigateToSpaceTask,
   navigateToSpaceTasks,
 } from './router.ts';
+import { voiceReturnTaskTargetSessionSignal } from './voice/voice-composer-registry.ts';
 import { isActionRequired, isActiveTask } from './task-filters.ts';
 import { type ExtensionNav, webExtension } from './web-extensions.ts';
 
@@ -123,11 +130,42 @@ function spaceContextTabs(): ReturnType<ExtensionNav['contextTabs']> {
   };
 }
 
+function spaceSessionFocus(): ReturnType<ExtensionNav['sessionFocus']> {
+  const overlaySessionId = spaceOverlaySessionIdSignal.value;
+  const overlayPending = spaceOverlayPendingAgentNameSignal.value !== null;
+  return {
+    overlayOpen: overlaySessionId !== null || overlayPending,
+    overlaySessionId,
+    sessionId: overlaySessionId ?? (overlayPending ? null : currentSpaceSessionIdSignal.value),
+  };
+}
+
+function spaceRecordingReturn(
+  spaceId: string,
+  sessionId: string,
+  taskId: string | null
+): ReturnType<ExtensionNav['recordingReturn']> {
+  if (taskId === null)
+    return {
+      path: createSpaceSessionPath(spaceId, sessionId),
+      open: (replace) => navigateToSpaceSession(spaceId, sessionId, replace),
+    };
+  return {
+    path: createSpaceTaskPath(spaceId, taskId),
+    open: (replace) => {
+      voiceReturnTaskTargetSessionSignal.value = sessionId;
+      navigateToSpaceTask(spaceId, taskId, replace);
+    },
+  };
+}
+
 export const spaceNav: ExtensionNav = {
   extension: 'space',
   section: 'spaces',
   label: 'Spaces',
   icon: SpacesIcon,
-  open: navigateToSpaces,
+  open: () => navigateToSpaces(),
   contextTabs: spaceContextTabs,
+  sessionFocus: spaceSessionFocus,
+  recordingReturn: spaceRecordingReturn,
 };

@@ -80,14 +80,14 @@ describe('voiceRecorderStore', () => {
 
   it('stamps the recording with its owning Space and clears it with ownership', async () => {
     await voiceRecorderStore.start('owner-a', 's1', null, 'space-9');
-    expect(voiceRecorderStore.recordingSpaceId.value).toBe('space-9');
+    expect(voiceRecorderStore.recordingScopeId.value).toBe('space-9');
     voiceRecorderStore.orphan('owner-a');
-    expect(voiceRecorderStore.recordingSpaceId.value).toBe('space-9');
+    expect(voiceRecorderStore.recordingScopeId.value).toBe('space-9');
     voiceRecorderStore.adopt('owner-b', 's1');
-    expect(voiceRecorderStore.recordingSpaceId.value).toBe('space-9');
+    expect(voiceRecorderStore.recordingScopeId.value).toBe('space-9');
     const recording = await voiceRecorderStore.stop();
     expect(recording.audioBase64.length).toBeGreaterThan(0);
-    expect(voiceRecorderStore.recordingSpaceId.value).toBeNull();
+    expect(voiceRecorderStore.recordingScopeId.value).toBeNull();
   });
 
   it('stamps a task-scoped recording with its task and clears it with ownership', async () => {
@@ -103,9 +103,9 @@ describe('voiceRecorderStore', () => {
 
   it('a primary-chat recording carries no Space stamp', async () => {
     await voiceRecorderStore.start('owner-a', 's1');
-    expect(voiceRecorderStore.recordingSpaceId.value).toBeNull();
+    expect(voiceRecorderStore.recordingScopeId.value).toBeNull();
     await voiceRecorderStore.cancel();
-    expect(voiceRecorderStore.recordingSpaceId.value).toBeNull();
+    expect(voiceRecorderStore.recordingScopeId.value).toBeNull();
   });
 
   it('start() acquires the mic, wires the graph, and flips isRecording', async () => {

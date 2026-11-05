@@ -1112,7 +1112,7 @@ export function SpaceTaskPane({
             <VoiceSurfaceContext.Provider
               value={{
                 surfaceId: 'primary',
-                spaceId: spaceId ?? null,
+                scopeId: spaceId ?? null,
                 taskId: task.id,
               }}
             >

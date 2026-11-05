@@ -157,7 +157,7 @@ export function AgentOverlayChat({
       <VoiceSurfaceContext.Provider
         value={{
           surfaceId: 'agent-overlay',
-          spaceId: voiceSurfaceSpaceId,
+          scopeId: voiceSurfaceSpaceId,
           taskId: taskContext?.taskId ?? null,
         }}
       >
