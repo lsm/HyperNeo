@@ -21,7 +21,7 @@ import {
   decideAutonomyAdmission,
   HUMAN_ONLY_AUTONOMY_LEVEL,
   resolveEffectiveAutonomyLevel,
-} from '../space/tools/tool-admission-gates.ts';
+} from './tool-admission-gates.ts';
 import {
   normalizePendingCompletion,
   rejectPendingCompletion,

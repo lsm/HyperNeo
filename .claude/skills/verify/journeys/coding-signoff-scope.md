@@ -33,9 +33,6 @@ snapshot, ledger and mailbox payloads are retained in `evidence/signoff-scope.js
 On the reproduction commit, the code PR incorrectly waits for a human and neither
 terminal event arrives. Every run shuts down its daemon and socket in `finally`.
 
-Required Deno smoke repeats this helper. Local Deno remains unverified when
-not installed.
-
 No network, credentials, provider turns or real DB are used. Mailbox acceptance is
 verified; model consumption and live GitHub transport are not. Incomplete changed
 file lists must keep signoff pending, covered by synthetic ledger unit tests.

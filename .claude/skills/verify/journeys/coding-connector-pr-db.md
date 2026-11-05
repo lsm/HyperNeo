@@ -6,18 +6,14 @@ or free disk below 25 GiB and never installs dependencies.
 
 ```sh
 python3 .claude/skills/verify/coding-connector-pr-db-run.py bun before
-python3 .claude/skills/verify/coding-connector-pr-db-run.py deno before --executable "$DENO"
 python3 .claude/skills/verify/coding-connector-pr-db-run.py bun verify
-python3 .claude/skills/verify/coding-connector-pr-db-run.py deno verify --executable "$DENO"
-bun --no-install --no-env-file .claude/skills/verify/coding-connector-pr-proof-binding.ts HEAD
 ```
 
-DENO selects an already installed Deno; its imports are cached-only. Every run
-owns a fresh HOME/data/TMPDIR and a synthetic SQLite database. The real daemon
-binds an ephemeral port and refuses 8399. Fake gh accepts only the synthetic PR
-lookup, refuses other requests and never discovers credentials. Direct HTTP
-throws. Provider keys, live databases, model turns, browser sessions and actual
-GitHub requests are absent. Save JSON before immediately removing daemon data.
+Every run owns a fresh HOME/data/TMPDIR and a synthetic SQLite database. The real daemon
+binds an ephemeral port and refuses 8399. Fake gh accepts only the synthetic PR lookup,
+refuses other requests and never discovers credentials. Direct HTTP throws. Provider keys,
+live databases, model turns, browser sessions and actual GitHub requests are absent. Save
+JSON before immediately removing daemon data.
 
 Before mode temporarily restores only connector-pr-reader.ts from origin/dev,
 then restores the draft in finally. Do not edit or run another job concurrently.
@@ -46,11 +42,3 @@ Main SQL instrumentation covers poll-fact and repository-alias SQL. Fixture
 setup/assertion SQL is excluded. Verify mode requires zero target SQL on main;
 no whole-daemon SQL absence is claimed. Gateway elapsed times and argument/reply
 sizes are retained without separate SQL, queue and clone attribution.
-
-Run the bound-writer, connector PR ledger and workflow connector suites in the
-CI runner plus full checks on the final application. The evidence binding names
-one committed application tree for both runtime proofs. After that commit only
-this journey and its evidence folder may change. The audit verifies ancestry,
-application trees, helper blobs, successful receipts and the complete post-proof
-change list. Any source, test or helper edit requires a new committed proof head
-and fresh Bun/Deno runs. No deployment or live-owner restart is authorized.

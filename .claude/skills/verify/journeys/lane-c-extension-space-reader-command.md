@@ -1,10 +1,10 @@
 # Construct Space extension configuration readers
 
 Use shared isolation/resource setup in `../SKILL.md` with
-`lane-c-extension-space-reader-command.ts` through `proof-run.sh` under Bun and
-Deno. It owns fresh HOME/data, an ephemeral daemon and refusing GitHub/HTTP stubs.
-Only GitHub RPC configuration is enabled; polling/webhooks remain disabled.
-No live daemon/8399, real credential or model turn is used.
+`lane-c-extension-space-reader-command.ts` through `proof-run.sh` under Bun. It owns fresh
+HOME/data, an ephemeral daemon and refusing GitHub/HTTP stubs. Only GitHub RPC
+configuration is enabled; polling/webhooks remain disabled. No live daemon/8399, real
+credential or model turn is used.
 
 Characterize real `space.github.listConfig` replies first. Then self-check cached
 and new main get/list SELECT traps and submit the unregistered data-only reader

@@ -1,11 +1,10 @@
 # Extract existing GitHub watched-repository UPDATE
 
-Run proof-run.sh with lane-c-github-watched-update-extract.ts under Bun and
-cached Deno (VERIFY_PROOF_RUNTIME=deno). Shared setup owns scrubbed HOME/data,
-free ephemeral port, evidence and cleanup. No model/HTTP mock or credentials.
-Never touch live daemon/8399, deployment or the real HOME. Refuse external HTTP
-and gh, disable webhook reconciliation, and inject a 60-second poll interval
-through existing options; cleanup stops the owned timer before it fires.
+Run proof-run.sh with lane-c-github-watched-update-extract.ts under Bun. Shared setup owns
+scrubbed HOME/data, free ephemeral port, evidence and cleanup. No model/HTTP mock or
+credentials. Never touch live daemon/8399, deployment or the real HOME. Refuse external
+HTTP and gh, disable webhook reconciliation, and inject a 60-second poll interval through
+existing options; cleanup stops the owned timer before it fires.
 
 Finish startup body copying and stop processors. Seed existing non-polling
 watched rows in two synthetic Spaces. Through watchRepo update the primary row

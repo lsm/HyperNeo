@@ -39,12 +39,10 @@ Late root work keeps its parent open; a late parent-card failure rolls back.
 Unit tests also pin failed-stop/concurrent-settlement diagnostics and publication
 only after the writer receipt is delivered.
 
-Trace explicit settlement SQL and require zero matching main-thread calls.
-The split-open command/decision is off main, but the rest of ask.open still
-has existing creation/routing/family-response SQL outside this slice. No broader
-main-thread claim is made. Preserve existing ask/state/stop compatibility tests,
-run the full check and required Deno smoke. Label local Deno unverified when
-unavailable. Keep #8998/#9002/#8712 open.
+Trace explicit settlement SQL and require zero matching main-thread calls. The split-open
+command/decision is off main, but the rest of ask.open still has existing
+creation/routing/family-response SQL outside this slice. No broader main-thread claim is
+made. Keep #8998/#9002/#8712 open.
 
 The helper saves `ask-settlement-activation.json`, stops all owned transports,
 workers and daemon in finally, and the wrapper removes temporary proof data

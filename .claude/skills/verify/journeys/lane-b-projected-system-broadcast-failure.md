@@ -1,8 +1,6 @@
 # Fire-and-forget system broadcast survives reader failure
 
-Run `lane-b-projected-system-broadcast-failure.ts` through `proof-run.sh` with a
-fresh synthetic daemon; the native Deno smoke uses the same helper and isolated
-HOME/data/TMPDIR. No model turn, provider key or external HTTP is used.
+No model turn, provider key or external HTTP is used.
 
 Capture the actual callback registered by the app with ProviderCredentialManager.
 Install the production process-fatal logger with its supported observing exit

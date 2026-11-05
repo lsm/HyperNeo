@@ -4,10 +4,9 @@
 bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/google-phase1.ts
 ```
 
-Repeat with `VERIFY_PROOF_RUNTIME=deno` and pinned Deno on PATH. Shared setup in
-SKILL.md supplies fresh test HOME/data, scrubbed credentials and free loopback
-ports. This helper starts two real isolated daemons with separate databases and
-a shared fake keychain, plus one fake Google HTTP endpoint. It never calls Google.
+Shared setup in SKILL.md supplies fresh test HOME/data, scrubbed credentials and free
+loopback ports. This helper starts two real isolated daemons with separate databases and a
+shared fake keychain, plus one fake Google HTTP endpoint. It never calls Google.
 
 Inspect `google-phase1.json`. Through human management RPC, complete consent and
 the real PKCE/loopback/JWKS/OIDC checks. Through the default registry/MCP adapter,

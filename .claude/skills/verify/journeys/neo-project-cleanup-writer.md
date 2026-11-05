@@ -26,10 +26,6 @@ latency misses 250 ms; the JSON report records the failure rather than claiming
 a full latency pass. No model, provider, GitHub, browser, credential or existing
 daemon is used. The helper closes its socket, lock process and daemon.
 
-Repeat on Deno 2.9.4 from `packages/daemon`, replacing the Bun invocation with
-`deno run -A ../../.claude/skills/verify/neo-project-cleanup-writer.ts verify "$RUN"`
-and using a fresh run directory and the same isolated environment.
-
 Retain `evidence/project-cleanup-writer.json` from each run. The associated
 contracts additionally refuse deletion after late content, roll back aliases
 when a synthetic delete trigger fails, suppress failure notifications and

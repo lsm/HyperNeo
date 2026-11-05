@@ -42,12 +42,11 @@ const data = specs.map(([name, expectedLines, expected]) => {
   if (actualLines !== expectedLines || hash(body) !== expected) throw Error('Counted data module drift: ' + name);
   return { file: path, lines: actualLines, sha256: expected, counted: name === 'github-polling-usage-read.ts', auditedStable: name !== 'github-polling-usage-read.ts' };
 });
-const importLines = 1, smokeLines = 1;
+const importLines = 1, smokeLines = 0;
 const knownTotal = selected.concat(data, [caller]).reduce((n, row) => n + row.lines, importLines + smokeLines);
 const excludedLines = data.filter(row => row.auditedStable).reduce((n, row) => n + row.lines, 0);
 const fresh = knownTotal - excludedLines;
 if (fresh > 200) throw Error('Public watch timer slice exceeds 200 lines');
-if (fs.readFileSync('scripts/deno-smoke.sh', 'utf8').split('\n').filter(line => line.includes('lane-c-github-watch-timer.ts')).length !== 1) throw Error('Missing/duplicate native registration');
 const report = { head: cp.execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), selected, caller, data, importLines, smokeLines, fresh, excludedLines, knownTotal, contract: 'One public timer call site awaits the registered reader in the existing effect queue; captured handle prevents clearing another lifetime. No timer/provider skips admission, errors propagate after known writes, no fallback/replay.', auditLimit: 'Sibling #9657 refreshes only the retired six-line helper deletion pin, with selected roots and data exclusions unchanged. Complete selected watch caller/auth, timer owner and reader/query/mapper counted. Neo approved only the two unchanged constructor-free query/mapper modules (97 lines) outside the fresh 167-line envelope, 264 known total. Watch validation/webhook/mutation/config effects remain unchanged main-side and are not re-audited. The retired legacy helper is deleted under #9657. Existing writer/capability subtrees retain separate audits; no full public/framework/runtime closure, background polling reader or #9438/#8714 completion claim.' };
 fs.writeFileSync(process.argv[2], JSON.stringify(report, null, 2) + '\n');
 console.log(JSON.stringify({ fresh, excludedLines, knownTotal }));

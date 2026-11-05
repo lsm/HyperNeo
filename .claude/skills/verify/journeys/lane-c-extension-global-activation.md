@@ -1,9 +1,8 @@
 # Activate global extension configuration writes
 
-Use proof-run.sh with lane-c-extension-global-activation.ts on Bun and cached
-Deno (VERIFY_PROOF_RUNTIME=deno). Shared setup owns a fresh HOME/data, ephemeral
-listener, scrubbed credentials, saved evidence and immediate data cleanup. No
-provider, HTTP mock, GitHub, real credential or live daemon/8399 is used.
+Use proof-run.sh with lane-c-extension-global-activation.ts on Bun. Shared setup owns a
+fresh HOME/data, ephemeral listener, scrubbed credentials, saved evidence and immediate
+data cleanup. No provider, HTTP mock, GitHub, real credential or live daemon/8399 is used.
 
 Commit the failing native public-RPC proof first. Self-check cached/new main
 UPSERT guards, then deny all main INSERT INTO external_event_extension_configs

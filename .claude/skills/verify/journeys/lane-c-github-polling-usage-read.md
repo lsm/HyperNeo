@@ -1,10 +1,10 @@
 # Polling usage read command construction
 
 Use shared setup in `../SKILL.md`. Run `proof-run.sh` with
-`lane-c-github-polling-usage-read.ts` under Bun and Deno. The isolated daemon
-owns a fresh synthetic HOME/database, refusing GitHub/HTTP stubs, authenticated
-WebSocket and ephemeral port. Stop processors and finish startup body copy
-before seeding target rows. Never use live data, credentials or port 8399.
+`lane-c-github-polling-usage-read.ts` under Bun. The isolated daemon owns a fresh
+synthetic HOME/database, refusing GitHub/HTTP stubs, authenticated WebSocket and ephemeral
+port. Stop processors and finish startup body copy before seeding target rows. Never use
+live data, credentials or port 8399.
 
 Invoke the two registered typed read operations through the daemon gateway.
 Trap target SELECTs on main only while invoking those commands; fail on any

@@ -1,8 +1,8 @@
 # Constructor-free GitHub Space settings reads
 
-Run proof-run.sh with lane-c-github-space-settings-read.ts under Bun and cached
-Deno (VERIFY_PROOF_RUNTIME=deno). Shared setup owns fresh HOME/data, scrubbed
-environment, ephemeral listeners, retained evidence and owned data cleanup.
+Run proof-run.sh with lane-c-github-space-settings-read.ts under Bun. Shared setup owns
+fresh HOME/data, scrubbed environment, ephemeral listeners, retained evidence and owned
+data cleanup.
 
 The unchanged lane-c-github-space-enabled-extract.ts journey first drives the
 real Space enable/disable/listWatchedRepos/listConfig RPCs, with two synthetic

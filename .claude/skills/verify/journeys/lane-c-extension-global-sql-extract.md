@@ -1,9 +1,8 @@
 # Global extension configuration SQL extraction
 
-Use proof-run.sh with lane-c-extension-global-sql-extract.ts on Bun and cached
-Deno (VERIFY_PROOF_RUNTIME=deno). Shared setup supplies fresh HOME/data and an
-ephemeral daemon listener, scrubs credentials, retains evidence and removes data.
-No model turn, HTTP mock, GitHub access or live daemon/8399 is used.
+Use proof-run.sh with lane-c-extension-global-sql-extract.ts on Bun. Shared setup supplies
+fresh HOME/data and an ephemeral daemon listener, scrubs credentials, retains evidence and
+removes data. No model turn, HTTP mock, GitHub access or live daemon/8399 is used.
 
 The helper registers a synthetic extension in the real daemon manager, then uses
 the public WebSocket enable/disable and list RPCs. Both states must persist,

@@ -1,13 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { MessageHub } from '@hyperneo/shared';
 import {
+  registerWebExtension,
+  shellExtensions,
   type SpaceWebExtension,
   loadWebExtensions,
   webExtension,
   webExtensionDeclined,
 } from '../web-extensions';
 
-const space = { store: {} } as SpaceWebExtension;
+const shell = { activeChannel: () => 'space:one' } as SpaceWebExtension['shell'];
+const space = { shell, store: {} } as SpaceWebExtension;
 
 function hubAnswering(request: () => Promise<unknown>): MessageHub {
   return { request: vi.fn(request) } as unknown as MessageHub;
@@ -73,5 +76,14 @@ describe('loadWebExtensions', () => {
     expect(getHub).toHaveBeenCalledTimes(3);
     expect(load).toHaveBeenCalledTimes(2);
     expect(webExtension('space')).toBe(space);
+  });
+
+  it('shellExtensions lists only the extensions that loaded', async () => {
+    const hub = hubAnswering(async () => ({ extensions: [] }));
+    await loadWebExtensions(connected(hub), { space: async () => space });
+    expect(shellExtensions()).toEqual([]);
+
+    registerWebExtension('space', space);
+    expect(shellExtensions()).toEqual([shell]);
   });
 });

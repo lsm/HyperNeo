@@ -27,11 +27,10 @@ policy. Units also pin a pending child answer retaining that hold, explicit
 settlement overriding it, late changes to a prior snapshot, failure diagnostics,
 missing/settled asks, late card failure and competing settlement attempts.
 
-Repeated split settlement and stale explicit settlement must stay quiet.
-The build must issue no Neo event or worker stop/dispatch, and admission/state
-SQL must not execute on main. Run focused settlement, ask, state-policy and
-session-repository tests, then the full check. The required Deno smoke runs
-this same helper; local Deno is unverified if unavailable.
+Repeated split settlement and stale explicit settlement must stay quiet. The build must
+issue no Neo event or worker stop/dispatch, and admission/state SQL must not execute on
+main. Run focused settlement, ask, state-policy and session-repository tests, then the
+full check.
 
 The helper closes its transport and daemon in finally, writes
 `ask-settlement-build.json`, and the wrapper saves evidence before deleting

@@ -1,11 +1,10 @@
 # Extract new GitHub watched-repository INSERT
 
-Run proof-run.sh with lane-c-github-watched-insert-extract.ts under Bun and
-cached Deno (VERIFY_PROOF_RUNTIME=deno). Shared setup owns scrubbed HOME/data,
-free ephemeral port, evidence and cleanup. No model/HTTP mock or credentials.
-Never touch live daemon/8399, deployment or real HOME. Refuse external HTTP/gh,
-disable webhook reconciliation, use an injected 60-second poll interval and
-close the owned timer before it fires. Finish body copying and stop processors.
+Run proof-run.sh with lane-c-github-watched-insert-extract.ts under Bun. Shared setup owns
+scrubbed HOME/data, free ephemeral port, evidence and cleanup. No model/HTTP mock or
+credentials. Never touch live daemon/8399, deployment or real HOME. Refuse external
+HTTP/gh, disable webhook reconciliation, use an injected 60-second poll interval and close
+the owned timer before it fires. Finish body copying and stop processors.
 
 Seed two synthetic Spaces with empty watch lists; disable the primary source.
 Through watchRepo create the primary with no enabled override (Space fallback
@@ -16,14 +15,14 @@ Existing cursor activation marker must equal the INSERT's caller time. Observe
 two main INSERTs before/after; public mutations remain on main in this extraction.
 Commit helper-availability failures first while legacy and real RPC proofs pass.
 
-Scratch SQLite has only the watched table. INSERT uses its supplied id, resolved
-Space flag and time even when params differ; no clock, UUID or initialization.
-Pin defaults/nulls, duplicate-id failure without replay, and caller rollback.
-Normalize only SQLite row prototypes across Bun/Deno before comparing all values.
-Focused tests compare exact legacy/helper SQL/bindings/raw rows before cursor
-policy, across source/param flags, null, empty and zero cases. Check single
-failed attempts and unchanged peer rows. Full-file hash/interface tests pin the
-five stable dependencies, including rollback and supplied-time UPDATE contract.
+Scratch SQLite has only the watched table. INSERT uses its supplied id, resolved Space
+flag and time even when params differ; no clock, UUID or initialization. Pin
+defaults/nulls, duplicate-id failure without replay, and caller rollback. Normalize only
+SQLite row prototypes across Bun before comparing all values. Focused tests compare exact
+legacy/helper SQL/bindings/raw rows before cursor policy, across source/param flags, null,
+empty and zero cases. Check single failed attempts and unchanged peer rows. Full-file
+hash/interface tests pin the five stable dependencies, including rollback and
+supplied-time UPDATE contract.
 
 Run measurement in the unmerged slice branch; after merge use saved evidence.
 Neo approved fresh 146, excluded 166, total known 312. The fifth audited stable

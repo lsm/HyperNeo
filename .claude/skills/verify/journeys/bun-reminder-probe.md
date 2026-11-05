@@ -30,7 +30,5 @@ Require wrapper exit zero and no database-close error. Existing-data refusal
 must preserve its marker and create no database. Close the gateway before the
 database. The wrapper removes temporary data after the helper exits.
 
-Schema, SQLite, gateway and repository implementations are reused without a
-full transitive ownership or performance audit. Native runner wiring and
-replacement CI gates follow separately. Keep Deno coverage enabled until the
-remaining inline contracts and runtime adapters prove replacement parity.
+Schema, SQLite, gateway and repository implementations are reused without a full
+transitive ownership or performance audit.

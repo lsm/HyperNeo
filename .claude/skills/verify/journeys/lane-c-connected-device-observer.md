@@ -1,11 +1,9 @@
 # Observe connected device revocations
 
-Run lane-c-connected-device-observer.ts through proof-run.sh with Bun, then Deno.
-The wrapper isolates HOME/data, provider credentials and GitHub, uses ephemeral
-listeners and removes temporary data after preserving evidence. Record actual
-versions: local Bun 1.4.3 does not establish pinned Bun 1.4.2 native coverage.
-The separate Deno proof uses the installed pinned Deno 2.9.4. No runtime install,
-provider turn, live daemon or port 8399 is needed.
+The wrapper isolates HOME/data, provider credentials and GitHub, uses ephemeral listeners
+and removes temporary data after preserving evidence. Record actual versions: local Bun
+1.4.3 does not establish pinned Bun 1.4.2 native coverage. No runtime install, provider
+turn, live daemon or port 8399 is needed.
 
 Commit the failing connection-observation proof first. The trigger is the already
 registered data-only revocation command: lose its successful native reply and

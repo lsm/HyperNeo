@@ -5,10 +5,9 @@ bash .claude/skills/verify/proof-run.sh /absolute/evidence/google-refresh \
   .claude/skills/verify/google-refresh.ts
 ```
 
-Repeat with `VERIFY_PROOF_RUNTIME=deno` and pinned Deno 2.9.4 on PATH.
-Shared setup supplies test mode, fresh HOME/data/database and no credentials.
-The helper owns ephemeral listeners and refuses every endpoint except fake
-Google; no model, GUI, real account or Cloud action runs.
+Shared setup supplies test mode, fresh HOME/data/database and no credentials. The helper
+owns ephemeral listeners and refuses every endpoint except fake Google; no model, GUI,
+real account or Cloud action runs.
 
 The regular daemon startup registers its refresh loop with a fake clock. A grant
 is renewed while still valid. Concurrent clock ticks make one request. The
@@ -28,13 +27,7 @@ All daemons, clock registrations, workers and HTTP listeners close in finally.
 An empty instance must not open its Google vault or initialize an artifact
 identity merely because the refresh loop starts. The Google refresh-loop unit
 contract pins lazy creation and shutdown of a service created by a human action.
-Repeat the native-worker identity regression with:
-
-```bash
-VERIFY_PROOF_RUNTIME=deno bash .claude/skills/verify/proof-run.sh \
-  /absolute/evidence/google-empty-identity \
-  .claude/skills/verify/lane-c-artifact-identity-command.ts
-```
+The existing native-worker identity regression has its own artifact-identity journey.
 
 Unit contracts additionally cover expired-token refusal during backoff, malformed
 or oversized responses, missing offline credentials and per-grant single-flight

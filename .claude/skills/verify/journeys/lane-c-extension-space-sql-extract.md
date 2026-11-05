@@ -1,9 +1,9 @@
 # Extract Space extension configuration SQL
 
-Use proof-run.sh with lane-c-extension-space-sql-extract.ts on Bun and cached
-Deno (VERIFY_PROOF_RUNTIME=deno). Shared setup owns fresh HOME/data and an
-ephemeral listener, scrubs credentials, retains evidence and deletes owned data.
-No provider turn, HTTP mock, GitHub access or live daemon/8399 is used.
+Use proof-run.sh with lane-c-extension-space-sql-extract.ts on Bun. Shared setup owns
+fresh HOME/data and an ephemeral listener, scrubs credentials, retains evidence and
+deletes owned data. No provider turn, HTTP mock, GitHub access or live daemon/8399 is
+used.
 
 The real GitHub extension is enabled through its public global RPC with polling
 and webhooks disabled and RPC configuration enabled. Seed only a synthetic Space

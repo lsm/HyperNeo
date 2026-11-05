@@ -4,16 +4,14 @@ Use the shared resource guard and isolation setup in SKILL.md. Run heavy jobs se
 
 ```sh
 python3 .claude/skills/verify/lane-a-health-delivery-run.py bun verify
-python3 .claude/skills/verify/lane-a-health-delivery-run.py deno verify --executable "$DENO"
 ```
 
-DENO names an existing runtime with cached dependencies. Each run owns a fresh
-synthetic HOME/data/TMPDIR and ephemeral non-8399 daemon. HTTP is refused and gh
-is a refusing stub. The runner saves evidence before removing temporary daemon
-data. The historical before mode targeted the pre-gateway implementation and is not
-a baseline against already migrated dev. The reader-lane regression and its
-current baseline commands live in lane-a-health-reader-db.md. The original
-guarded-main failure remains committed in the original PR history.
+Each run owns a fresh synthetic HOME/data/TMPDIR and ephemeral non-8399 daemon. HTTP is
+refused and gh is a refusing stub. The runner saves evidence before removing temporary
+daemon data. The historical before mode targeted the pre-gateway implementation and is not
+a baseline against already migrated dev. The reader-lane regression and its current
+baseline commands live in lane-a-health-reader-db.md. The original guarded-main failure
+remains committed in the original PR history.
 
 Real persisted jobs invoke the production deliverCodingHealth pipeline. A
 synthetic keyed receiver refuses the incident, then a recovery is recorded.
@@ -42,10 +40,6 @@ provider turn, whole-daemon SQL absence or a latency target.
 The original PR bound its historical passing runtime pair to its committed
 application/helper tree; that audit applies to that PR revision, not later
 application changes. The current reader-lane binding is in the new journey:
-
-```sh
-bun --no-install --no-env-file .claude/skills/verify/lane-a-health-delivery-proof-binding.ts HEAD
-```
 
 Only this journey and its evidence directory may change after the bound proof
 commit; application or helper changes require fresh runs on a new commit.

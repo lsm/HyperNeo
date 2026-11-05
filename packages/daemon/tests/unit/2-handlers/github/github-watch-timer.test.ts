@@ -155,9 +155,9 @@ describe('Public watch timer callback reader wiring', () => {
       );
       const report = JSON.parse(readFileSync(output, 'utf8'));
       expect(report).toMatchObject({
-        fresh: 167,
+        fresh: 166,
         excludedLines: 100,
-        knownTotal: 267,
+        knownTotal: 266,
         caller: { name: 'space.github.watchRepo', lines: 92, onlyAwaitedTimerCallChanged: true },
       });
       expect(

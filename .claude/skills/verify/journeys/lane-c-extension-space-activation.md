@@ -1,11 +1,10 @@
 # Activate the Space extension configuration setter
 
 Use shared isolation/resource setup in `../SKILL.md` and run
-`lane-c-extension-space-activation.ts` through `proof-run.sh` under Bun and Deno.
-It owns a fresh HOME/data, ephemeral daemon, refusing GitHub/HTTP stub and a
-synthetic Space/watch with no remote webhook ownership. No provider, real
-credential or live daemon/8399 is used. Stop its processors and finish startup
-body copying before measuring.
+`lane-c-extension-space-activation.ts` through `proof-run.sh` under Bun. It owns a fresh
+HOME/data, ephemeral daemon, refusing GitHub/HTTP stub and a synthetic Space/watch with no
+remote webhook ownership. No provider, real credential or live daemon/8399 is used. Stop
+its processors and finish startup body copying before measuring.
 
 Drive the real `space.github.unwatchRepo` RPC. Self-check cached/new main config
 UPSERT traps; baseline fails at that UPSERT. After the setter is wired, deny all
