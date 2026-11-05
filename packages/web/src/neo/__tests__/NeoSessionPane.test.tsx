@@ -66,12 +66,19 @@ afterEach(() => {
 });
 
 describe('NeoSessionPane title', () => {
-  it('keeps the caller title over the daemon worker label once state loads', () => {
+  it('keeps the caller title on the preview tab over the daemon worker label', () => {
     store.current = fakeStore('Daemon label');
     openArtifactPreview({ kind: 'session', sessionId: 's1' }, 'Todo worker');
     render(<NeoSessionPane sessionId="s1" title="HyperNeo · s1" label="Todo worker" />);
-    expect(screen.getByRole('heading', { name: 'Todo worker' })).toBeTruthy();
     expect(artifactPreviewWorkspace.state.value.files[0].title).toBe('Todo worker');
+  });
+
+  it('shows the caller title in the overlay header over the daemon worker label', () => {
+    store.current = fakeStore('Daemon label');
+    render(
+      <NeoSessionPane sessionId="s3" title="HyperNeo · s3" label="Todo worker" onClose={() => {}} />
+    );
+    expect(screen.getByRole('heading', { name: 'Todo worker' })).toBeTruthy();
   });
 
   it('uses the daemon worker label only when no caller label was given', () => {
