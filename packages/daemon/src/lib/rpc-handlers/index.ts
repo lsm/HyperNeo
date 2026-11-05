@@ -22,6 +22,7 @@ import { join, resolve } from 'node:path';
 import { collectFamilyOperations, type FamilyOperationContext } from './family-operations/index.ts';
 import type { SpaceRpc, SpaceRpcFactory } from './space-rpc.ts';
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
+import { neoUserFolder } from '../neo/folder.ts';
 import { createNeoService, neoPacksExtension } from '../neo/packs/runtime.ts';
 import type { OperationRegistry } from '../operations/registry.ts';
 import { createDaemonExtensionsOperation, type DaemonExtensions } from '../extensions/contract.ts';
@@ -473,7 +474,8 @@ export async function setupRPCHandlers<SpaceServices = never>(
     deps.sessionManager,
     deps.messageHub,
     deps.internalEventBus,
-    (settings) => publishGlobalSettings(deps.internalEventBus, settings, deps.credentialManager)
+    (settings) => publishGlobalSettings(deps.internalEventBus, settings, deps.credentialManager),
+    neoUserFolder(deps.config.workspaceRoot)
   );
   deps.extensions.register(neoPacksExtension(neoService));
   deps.reactiveDb.on('change:neo_session_messages', () => neoService.notifyChanged());

@@ -71,7 +71,7 @@ describe('neo.todo operations', () => {
       () => [],
       () => null
     ).find((op) => op.name === 'neo.todo.add')!;
-    expect(add.description).toContain('core.evidence {path: absolute file path}');
+    expect(add.description).toContain('core.evidence {}');
     expect(add.description).not.toContain('core.evidence {artifact:');
   });
   test('adds todos in order and marks the ones added after work started', async () => {

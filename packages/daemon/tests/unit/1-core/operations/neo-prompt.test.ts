@@ -18,7 +18,7 @@ describe('root Neo system prompt', () => {
     { packs: ['coding', 'life-admin'] },
   ])('delivered root and pack guidance use paths with $packs', ({ packs }) => {
     const prompt = neoPrompt(packs.length ? neoSettingsPackBriefs({ packs }) : []);
-    expect(prompt).toContain('core.evidence {path: absolute file path}');
+    expect(prompt).toContain('core.evidence {}');
     expect(prompt).toContain('absolute path on the owning daemon');
     expect(prompt).toContain('fixed-head Git');
     expect(prompt).not.toContain('{artifact:registeredArtifactId}');
