@@ -49,7 +49,7 @@ export function extensionWorkspaceSources(db: BunDatabase): { path: string; labe
 }
 
 export function isSpaceEnabled(): boolean {
-  return process.env.HYPERNEO_SPACE !== 'off';
+  return process.env.HYPERNEO_SPACE === 'on';
 }
 
 export function schemaTableExists(db: BunDatabase, table: string): boolean {

@@ -83,7 +83,6 @@ describe('Bun daemon boot probe construction', () => {
             TMPDIR: run,
             NODE_ENV: 'test',
             HYPERNEO_DATA_DIR: join(run, 'data'),
-            HYPERNEO_SPACE: 'off',
           },
           timeout: 60000,
           stdio: 'pipe',

@@ -92,12 +92,6 @@ export interface SubSessionMemberInfo {
   freshSessionOnly?: boolean;
 }
 
-export interface VerifiedSessionStop {
-  sessionId: string;
-  stopped: boolean;
-  detail?: string;
-}
-
 import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository.ts';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository.ts';
@@ -171,6 +165,7 @@ import {
   resolveWorkflowNodeSlot,
   spaceAgentTemplateToNodeSource,
 } from '../../tasks/spawn-slot-resolution.ts';
+import type { VerifiedSessionStop } from '../../tasks/stop-verification-gates.ts';
 import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from '../../tasks/verified-stop-flow.ts';
 import {
   runLiveWorkspaceSyncFlow,

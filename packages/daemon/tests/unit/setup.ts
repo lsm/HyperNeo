@@ -61,6 +61,7 @@ import { resetProviderRegistry } from '../../src/lib/providers/registry';
 import { registerSchemaExtension } from '../../src/storage/schema/extensions';
 import { SPACE_SCHEMA } from '../../src/storage/schema/space-schema';
 
+process.env.HYPERNEO_SPACE ??= 'on';
 registerSchemaExtension(SPACE_SCHEMA);
 
 process.env.NODE_ENV = 'test';

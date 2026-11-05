@@ -29,6 +29,7 @@ save_and_clean() {
 trap save_and_clean EXIT
 mkdir -p "$RUN/home" "$RUN/tmp" "$RUN/bin"
 env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" TMPDIR="$RUN/tmp" NODE_ENV=test \
+  HYPERNEO_SPACE="${HYPERNEO_SPACE:-on}" \
   NODE_PATH="${NODE_PATH:-}" VERIFY_BROWSER="${VERIFY_BROWSER:-}" \
   HYPERNEO_DATA_DIR="$RUN/data" VERIFY_CLAUDE="${VERIFY_CLAUDE:-}" \
   VERIFY_BROWSER="${VERIFY_BROWSER:-}" NODE_PATH="${NODE_PATH:-}" LOG_LEVEL=warn "${PROOF_RUNTIME[@]}" "$PROOF" "$@" "$RUN" \

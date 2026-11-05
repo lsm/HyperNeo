@@ -6,6 +6,7 @@ import { vi } from 'vitest';
 import { registerSchemaExtension } from '../src/storage/schema/extensions';
 import { SPACE_SCHEMA } from '../src/storage/schema/space-schema';
 
+process.env.HYPERNEO_SPACE ??= 'on';
 registerSchemaExtension(SPACE_SCHEMA);
 
 vi.mock('../src/lib/acp/acp-safe-fs.ts', async (importOriginal) => {

@@ -3,13 +3,13 @@ import type { AgentProcessingState } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { AgentSession } from '../agent/agent-session.ts';
 import type { FlowOutcome } from './flow-outcome.ts';
-import type { VerifiedSessionStop } from '../space/runtime/task-agent-manager.ts';
 import {
   assembleVerifiedStopResult,
   decideStopVerification,
   isStopDownProcessingStatus,
   type SessionLivenessSnapshot,
   type StopVerificationDecision,
+  type VerifiedSessionStop,
 } from './stop-verification-gates.ts';
 
 export interface VerifiedStopFlowDeps {

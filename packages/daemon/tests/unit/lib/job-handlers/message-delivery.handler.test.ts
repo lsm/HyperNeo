@@ -78,10 +78,13 @@ function makeHarness(
     requeueParked: mock(
       (_id: string, _runAt: number, _token: string | null) => ({ id: _id }) as Job
     ),
+    requeueWaiting: mock(
+      (_id: string, _runAt: number, _token: string | null) => ({ id: _id }) as Job
+    ),
   };
   bindGateway(jobQueue.db, {
     call: async (_op: unknown, method: string, ...args: [string, number, string | null]) => {
-      if (method === 'requeueWaiting') return { id: args[0] };
+      if (method === 'requeueWaiting') return jobQueue.requeueWaiting(...args);
       if (method !== 'park') throw new Error(`Unexpected parking command: ${method}`);
       return jobQueue.requeueParked(...args) !== null;
     },
@@ -500,6 +503,17 @@ describe('createMessageDeliveryHandler', () => {
 
   describe('park budget', () => {
     const EXHAUSTED_PARKS = 360;
+
+    it('keeps a message with no provider waiting past the park budget', async () => {
+      const { handler, session, jobQueue, job } = makeHarness();
+      const retryAt = Date.now() + 30_000;
+      session.driveResult = { outcome: 'blocked', retryAt, reason: 'no_provider' };
+      job.payload.__parkCount = EXHAUSTED_PARKS;
+
+      expect(await handler(job, {})).toEqual({ parked: 'no_provider', retryAt });
+      expect(jobQueue.requeueWaiting).toHaveBeenCalledWith('job-1', retryAt, 'claim-1');
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
+    });
 
     it('dead-letters a blocked requeue once the park count is exhausted', async () => {
       const { handler, session, jobQueue, job } = makeHarness();

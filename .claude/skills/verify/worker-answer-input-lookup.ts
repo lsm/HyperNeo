@@ -1,3 +1,4 @@
+process.env.HYPERNEO_SPACE ??= 'on';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, statSync, rmSync, chmodSync, appendFileSync, readFileSync } from 'node:fs';
 import { hostname } from 'node:os';
