@@ -711,7 +711,7 @@ describe('neo todo runner', () => {
         h.setStatus({
           ok: true,
           value: {
-            status: 'running',
+            status: 'done',
             lastActivityAt: 1,
             recentInputs: [],
             model: 'claude-opus-5-5',
@@ -3128,6 +3128,9 @@ describe('a todo for a busy worker', () => {
       expect(sends(h)).toHaveLength(1);
       expect(sends(h)[0].input.todoId).toBe(high.id);
       expect(h.store.getTodo(high.id)).toMatchObject({ state: 'doing', reason: null });
+      h.setStatus(running);
+      await h.runner.refresh(() => {});
+      expect(sends(h)).toHaveLength(1);
       expect(h.store.getTodo(low.id)?.reason).toContain(`working on "${high.title}"`);
     } finally {
       h.db.close();

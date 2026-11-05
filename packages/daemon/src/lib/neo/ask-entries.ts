@@ -59,7 +59,8 @@ export function neoTodoStatusLine(
     return todo.reason ? neoTextStatus(todo.reason) : coded('todo.failed');
   if (todo.state === 'blocked') return coded('todo.blocked', { reason: todo.blockedReason ?? '' });
   if (packLine) return packLine;
-  if (todo.state === 'todo') return coded('todo.notStarted');
+  if (todo.state === 'todo')
+    return todo.reason ? neoTextStatus(todo.reason) : coded('todo.notStarted');
   if (todo.state === 'doing')
     return coded(!todo.report ? 'todo.doing' : todo.check ? 'todo.checking' : 'todo.awaitingNeo');
   if (todo.evidence) return neoTextStatus(todo.evidence);
