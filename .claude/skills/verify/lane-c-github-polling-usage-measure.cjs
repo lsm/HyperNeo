@@ -5,7 +5,7 @@ const hash = text => createHash('sha256').update(text).digest('hex');
 const root = 'packages/daemon/src/storage/repositories/';
 const specs = [
   ['github-polling-usage-read.ts', 47, null],
-  ['github-polling-repos-read.ts', 53, '91cf741b3bde862ff72018712a04f4672e87497f82c8810e0a60449ab93630f8'],
+  ['github-polling-repos-read.ts', 56, '39618e09a7cd70b7325cf31b205eb221f338ebe58ff6ea50bebef49a22b28d06'],
   ['github-watched-repos-read.ts', 44, '4c5945ea131459249bb302cdb27ee6a014fc6aadd5d15f9d402b3226972e6a95'],
 ];
 const modules = specs.map(([name, expectedLines, expectedHash]) => {

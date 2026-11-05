@@ -32,7 +32,9 @@ must preserve its marker and create no database. No listener, provider, model,
 existing database or live daemon participates.
 
 This construction uses existing schema, SQLite, gateway and fixture modules.
-Its bounded claims cover native lock ownership and job receipts. Runner wiring,
-later progress/needs-you contracts, runtime adapters and replacement CI gates
-remain in the removal ladder. Keep the Deno runner and required CI enabled
-through the remaining parity work.
+Its bounded claims cover native lock ownership and job receipts. The Bun native
+entry point calls this probe last through proof-run.sh. Its failure must retain
+status/evidence and suppress the runner success marker. The runner fixture
+checks final-case failure and temporary-data cleanup. Later progress/needs-you
+contracts, runtime adapters and replacement CI gates remain in the ladder.
+Keep the Deno runner and required CI enabled through the remaining parity work.

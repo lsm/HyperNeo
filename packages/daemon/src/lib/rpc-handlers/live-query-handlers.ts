@@ -26,6 +26,7 @@ import {
   SPACE_TASK_MESSAGES_COMPACT_TOOL_SUMMARY_LIMIT,
 } from '../live-query/queries/compact-task-messages.ts';
 import type { NamedQuery } from '../live-query/types.ts';
+import { schemaTableExists } from '../../storage/schema/extensions.ts';
 import { ensureTaskMessageRows } from '../../storage/schema/task-message-rows.ts';
 import { MessageHubHandlerError, ErrorCode, createEventMessage } from '@hyperneo/shared';
 import { SPACE_TASK_MESSAGES_COMPACT_RECENT_TURNS } from '../live-query/queries/task-message-window.ts';
@@ -98,7 +99,9 @@ export function setupLiveQueryHandlers(
   });
 
   const stmtGroup = db.prepare('SELECT ref_id, group_type FROM session_groups WHERE id = ?');
-  const stmtSpace = db.prepare('SELECT id FROM spaces WHERE id = ?');
+  const stmtSpace = schemaTableExists(db, 'spaces')
+    ? db.prepare('SELECT id FROM spaces WHERE id = ?')
+    : undefined;
   const stmtSession = readMessageFeed
     ? undefined
     : db.prepare('SELECT id FROM sessions WHERE id = ?');
@@ -186,7 +189,7 @@ export function setupLiveQueryHandlers(
       queryName === 'spaceWorkspaces.bySpace'
     ) {
       const spaceId = params[0] as string;
-      if (!stmtSpace.get(spaceId)) {
+      if (!stmtSpace?.get(spaceId)) {
         throw new Error(`Unauthorized: space "${spaceId}" not found`);
       }
     } else if (MESSAGE_FEED_QUERIES.has(queryName)) {
