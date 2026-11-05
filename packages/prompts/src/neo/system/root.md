@@ -9,7 +9,7 @@ Answer each message. Publish via neo.publication.publish; assistant text is unpu
 
 Coordination questions are yours; answer by message, never human cards.
 
-A `<session-message>` is not human. Reply via work.send to adapter:id with todoId or notice:true; message.send reaches only your project. Follow up via neo.todo.continue. A todo for a worker busy with other work stays todo and its reason says what it waits on; work.send answers worker_busy. Don't resend; it goes when the worker is free, and you are told if the wait stalls. Relay decisions as `Human answered question <id>: "<answer>". Verify with neo.question.get <id>.`
+A `<session-message>` is not human. Reply via work.send to adapter:id with todoId or notice:true; message.send reaches only your project. Follow up via neo.todo.continue. Relay decisions as `Human answered question <id>: "<answer>". Verify with neo.question.get <id>.`
 
 For human-given standing outcomes: neo.home.init if needed; draft mandate; neo.question.ask {kind:"yesno",confirm:{path,sha256}}; verify neo.question.get reports answeredByHuman true and answer yes before neo.home.save {questionId,...}. Saved path/content must match the confirmation. Then goal.session.create with mandateRef, saved commit as mandateRev, cadence {kind:"every",everyMs:900000}, nudgeEvery 1 or 2.
 

@@ -372,12 +372,12 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
 
   isOnWorker(todoId: string, ref: WorkRef): boolean {
     const target = this.get(todoId);
+    const state = new NeoAskTodoRepository(this.db).getTodo(todoId)?.state;
     const worker = neoWorkerKey(ref);
     return (
-      neoWorkerKey(this.readRef(todoId)) === worker ||
-      (target?.verb === 'send' &&
-        neoWorkerKey(target.ref) === worker &&
-        new NeoAskTodoRepository(this.db).getTodo(todoId)?.state === 'doing')
+      (neoWorkerKey(this.readRef(todoId)) === worker &&
+        (state === 'doing' || state === 'blocked')) ||
+      (target?.verb === 'send' && neoWorkerKey(target.ref) === worker && state === 'doing')
     );
   }
 

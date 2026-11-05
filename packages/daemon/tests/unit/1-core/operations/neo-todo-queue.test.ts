@@ -188,6 +188,7 @@ describe('queued todos start themselves', () => {
     const ref = { adapter: 'codex-desktop', id: 'thread-1' };
     const first = w.add(w.approved(), { verb: 'send', ref });
     const second = w.add(w.approved(), { verb: 'send', ref });
+    w.idle.add(ref.id);
     await w.tick();
     expect([w.state(first), w.state(second)]).toEqual(['doing', 'todo']);
     await w.finish(first);
