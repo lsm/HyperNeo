@@ -35,7 +35,9 @@ for database-close errors. Close the gateway before the database, then let the
 wrapper remove synthetic data after process exit; a flag before cleanup failure
 is not success.
 
-This is standalone construction; runner wiring follows separately. The legacy
+The Bun native entry point calls this probe last through proof-run.sh. Failure
+must retain its status/evidence and suppress the runner success marker; the
+runner fixture covers final-case failure and temporary-data cleanup. The legacy
 lock-holder and later progress/needs-you contracts, active runtime adapters and
 replacement CI gates remain separate. Existing schema/SQLite/gateway/repository
 code is reused without a full transitive ownership/performance audit. Keep the
