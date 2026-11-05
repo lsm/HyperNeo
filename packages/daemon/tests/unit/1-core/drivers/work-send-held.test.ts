@@ -11,7 +11,7 @@ const ref = { adapter: 'codex-desktop', id: '019f2a4e-worker' };
 const neo: OperationCaller = { source: 'internal', role: 'neo', sessionId: 'root' };
 const human: OperationCaller = { source: 'rpc' };
 
-function fixture(status: string) {
+function fixture(status: string, statusReply?: unknown) {
   const reached: string[] = [];
   const held: unknown[] = [];
   const steer = async (_ref: unknown, message: string) => {
@@ -28,7 +28,7 @@ function fixture(status: string) {
     send: steer,
     steer,
     queue: steer,
-    status: async () => ({ ok: true, value: { ref, status, lastActivityAt: 1 } }),
+    status: async () => statusReply ?? { ok: true, value: { ref, status, lastActivityAt: 1 } },
   } as unknown as WorkAdapter;
   const registry = createOperationRegistry(
     createWorkVerbOperations({
@@ -61,6 +61,26 @@ describe('a todo send to a busy worker waits in HyperNeo', () => {
     });
     expect(reached).toEqual([]);
     expect(held).toEqual([{ key: 'answer-1', todoId: 'todo-b', ref, message: 'Next task' }]);
+  });
+
+  test('a worker whose status cannot be read gets no todo send', async () => {
+    const { registry, reached, held } = fixture('running', {
+      ok: false,
+      reason: 'unreachable',
+      detail: 'status timed out',
+    });
+    const reply = await invokeOperation(
+      registry,
+      'work.send',
+      { ref, message: 'Next task', todoId: 'todo-b' },
+      neo
+    );
+    expect(reply).toMatchObject({
+      kind: 'completed',
+      value: { ok: false, reason: 'unreachable', notSent: true },
+    });
+    expect(reached).toEqual([]);
+    expect(held).toEqual([]);
   });
 
   test.each([

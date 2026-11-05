@@ -3254,6 +3254,27 @@ describe('held sends', () => {
     }
   });
 
+  test('a held send stays until Neo has been told about it', async () => {
+    let refuse = true;
+    const h = setup(null, ':memory:', undefined, () => {
+      if (refuse) throw new Error('mailbox refused');
+    });
+    try {
+      const todo = h.add();
+      await h.sessions.held.hold(held(todo.id, 'a'), 1);
+      h.sessions.recordRef(todo.id, { adapter: 'hyperneo', id: 'fresh' }, 2);
+      h.setStatus({ ok: true, value: { status: 'done', lastActivityAt: 3 } });
+      await h.runner.refresh(() => {});
+      expect(h.sessions.held.nextPerWorker().map((send) => send.key)).toEqual(['a']);
+      refuse = false;
+      await h.runner.refresh(() => {});
+      expect(h.told.join()).toContain('moved to another worker');
+      expect(h.sessions.held.nextPerWorker()).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('a held send that cannot reach its worker tells Neo', async () => {
     const h = setup();
     try {
