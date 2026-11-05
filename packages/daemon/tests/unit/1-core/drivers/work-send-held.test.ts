@@ -39,7 +39,10 @@ function fixture(
     queue: steer,
     status: async () =>
       statusReply ?? { ok: true, value: { ref, status, lastActivityAt: activity } },
-    withdraw: async () => ({ ok: true, value: { queuedSubmissionId: 'q', withdrawn: true } }),
+    withdraw: async (_ref: unknown, queuedSubmissionId: string) => ({
+      ok: true,
+      value: { queuedSubmissionId, withdrawn: queuedSubmissionId !== 'stuck' },
+    }),
   } as unknown as WorkAdapter;
   const registry = createOperationRegistry(
     createWorkVerbOperations({
@@ -168,12 +171,31 @@ describe('a todo send to a busy worker waits in HyperNeo', () => {
     const { registry, reached, setDelivery } = fixture('done');
     const send = (todoId: string) =>
       invokeOperation(registry, 'work.send', { ref, message: todoId, todoId }, neo);
+    const withdraw = (queuedSubmissionId: string) =>
+      invokeOperation(registry, 'work.withdraw', { ref, queuedSubmissionId }, neo);
     setDelivery({ delivered: false, queuedSubmissionId: 'q' });
     await send('todo-a');
-    await invokeOperation(registry, 'work.withdraw', { ref, queuedSubmissionId: 'q' }, neo);
+    await withdraw('q');
     setDelivery({ delivered: true });
     await send('todo-b');
     expect(reached).toHaveLength(2);
+  });
+
+  test.each([
+    ['another submission', 'other', 'q'],
+    ['a refused withdrawal', 'stuck', 'stuck'],
+  ])('%s leaves the fence up', async (_name, withdrawn, queued) => {
+    const { registry, held, setDelivery, setActivity } = fixture('done');
+    const send = (todoId: string) =>
+      invokeOperation(registry, 'work.send', { ref, message: todoId, todoId }, neo);
+    setDelivery({ delivered: false, queuedSubmissionId: queued });
+    await send('todo-a');
+    await invokeOperation(registry, 'work.withdraw', { ref, queuedSubmissionId: withdrawn }, neo);
+    await send('todo-b');
+    expect(held).toHaveLength(1);
+    setActivity(2);
+    setDelivery({ delivered: true });
+    await send('todo-c');
   });
 
   test('a worker whose status cannot be read gets no todo send', async () => {
