@@ -76,10 +76,15 @@ export const commandPaletteOpenSignal = signal<boolean>(false);
 export const commandPaletteModeSignal = signal<CommandPaletteMode>('commands');
 
 export type InspectorSection = 'session' | 'work' | 'changes';
+export interface ExtensionPanelTarget {
+  type: 'extension';
+  panel: string;
+  owner: string;
+  item: string;
+}
 export type RightPanelTarget =
   | { type: 'inspector'; sessionId: string; section?: InspectorSection }
-  | { type: 'goal'; spaceId: string; goalId: string }
-  | { type: 'scope'; spaceId: string; scopeId: string };
+  | ExtensionPanelTarget;
 export const rightPanelTargetSignal = signal<RightPanelTarget | null>(null);
 
 export const currentSpaceGoalIdSignal = signal<string | null>(null);

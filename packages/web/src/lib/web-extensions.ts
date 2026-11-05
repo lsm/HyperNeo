@@ -5,10 +5,10 @@ import type {
   SpaceTask,
   SpaceTaskActivityMember,
 } from '@hyperneo/shared';
-import type { ComponentType } from 'preact';
+import type { ComponentChild, ComponentType } from 'preact';
 import { type ReadonlySignal, signal } from '@preact/signals';
 import { invokeOperation } from './operations';
-import type { SpaceViewMode } from './signals';
+import type { ExtensionPanelTarget, SpaceViewMode } from './signals';
 
 export type SpaceWithTaskList = Space & { tasks: SpaceTask[] };
 
@@ -17,6 +17,15 @@ export interface ShellExtension {
   rejoinChannel(): void;
   refresh(): Promise<void>;
   sessionRenamed(sessionId: string, title: string): void;
+  panelTarget(): ExtensionPanelTarget | null;
+  renderPanel(target: ExtensionPanelTarget): ComponentChild;
+  sessionAgent(sessionId: string): ExtensionSessionAgent | null;
+}
+
+export interface ExtensionSessionAgent {
+  rows: { label: string; value: string }[];
+  instructions?: string;
+  openSettings?(): void;
 }
 
 export interface ExtensionNavTab {
@@ -68,8 +77,6 @@ export interface SpaceWebExtension {
   }>;
   SpacesHome: ComponentType;
   SpaceCreateDialog: ComponentType<{ isOpen: boolean; onClose: () => void }>;
-  GoalDetailPanel: ComponentType<{ spaceId: string; navigationSpaceId?: string; goalId: string }>;
-  ScopeDetailPanel: ComponentType<{ spaceId: string; scopeId: string }>;
 }
 
 interface WebExtensions {
