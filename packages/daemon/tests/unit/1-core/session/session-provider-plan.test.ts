@@ -5,10 +5,13 @@ import {
   decideSessionProvider,
   NO_PROVIDER_NOTICE,
   planSessionProvider,
+  PROVIDER_UNREACHABLE_NOTICE,
 } from '../../../../src/lib/session/session-provider-plan.ts';
 
 const model = (id: string, provider: string, extra: Partial<ModelInfo> = {}) =>
   ({ id, alias: id, name: id, provider, ...extra }) as ModelInfo;
+
+const on = (...models: ModelInfo[]) => ({ models, unreachable: false });
 
 const request = {
   wanted: 'anthropic',
@@ -19,14 +22,14 @@ const request = {
 
 describe('decideSessionProvider', () => {
   it('waits and says why once when no provider is on', () => {
-    expect(decideSessionProvider(request, [])).toEqual({
+    expect(decideSessionProvider(request, on())).toEqual({
       kind: 'wait',
       notice: NO_PROVIDER_NOTICE,
     });
   });
 
   it('moves an unpinned session silently', () => {
-    expect(decideSessionProvider(request, [model('gpt', 'anthropic-copilot')])).toEqual({
+    expect(decideSessionProvider(request, on(model('gpt', 'anthropic-copilot')))).toEqual({
       kind: 'move',
       provider: 'anthropic-copilot',
       model: 'gpt',
@@ -35,9 +38,10 @@ describe('decideSessionProvider', () => {
   });
 
   it('tells the human when a pinned session moves', () => {
-    const plan = decideSessionProvider({ ...request, pinned: true }, [
-      model('gpt', 'anthropic-copilot'),
-    ]);
+    const plan = decideSessionProvider(
+      { ...request, pinned: true },
+      on(model('gpt', 'anthropic-copilot'))
+    );
 
     expect(plan).toMatchObject({ kind: 'move', provider: 'anthropic-copilot' });
     expect(plan.notice).toContain('anthropic, which is off');
@@ -45,10 +49,10 @@ describe('decideSessionProvider', () => {
   });
 
   it('keeps the same model when a provider that is on offers it', () => {
-    const plan = decideSessionProvider({ ...request, model: 'shared' }, [
-      model('other', 'glm'),
-      model('shared', 'anthropic-copilot'),
-    ]);
+    const plan = decideSessionProvider(
+      { ...request, model: 'shared' },
+      on(model('other', 'glm'), model('shared', 'anthropic-copilot'))
+    );
 
     expect(plan).toMatchObject({ provider: 'anthropic-copilot', model: 'shared' });
   });
@@ -56,20 +60,35 @@ describe('decideSessionProvider', () => {
   it('prefers the configured default model over the first one listed', () => {
     const plan = decideSessionProvider(
       { ...request, settings: { model: 'chosen', modelProvider: 'glm' } },
-      [model('first', 'anthropic-copilot'), model('chosen', 'glm')]
+      on(model('first', 'anthropic-copilot'), model('chosen', 'glm'))
     );
 
     expect(plan).toMatchObject({ provider: 'glm', model: 'chosen' });
   });
 
   it('ignores models marked unavailable', () => {
-    const models = [model('gone', 'glm', { available: false })];
+    const plan = decideSessionProvider(request, on(model('gone', 'glm', { available: false })));
 
-    expect(decideSessionProvider(request, models).kind).toBe('wait');
+    expect(plan.kind).toBe('wait');
   });
 });
 
 describe('planSessionProvider', () => {
+  it('does not ask a logged-in user to log in when their service is not answering', async () => {
+    const unreachable = {
+      id: 'custom:down',
+      isAvailable: async () => true,
+      getModels: async () => {
+        throw new Error('probe failed');
+      },
+    } as unknown as Provider;
+
+    expect(await planSessionProvider(request, [unreachable])).toEqual({
+      kind: 'wait',
+      notice: PROVIDER_UNREACHABLE_NOTICE,
+    });
+  });
+
   const provider = (id: string, available: boolean | Error) =>
     ({
       id,
