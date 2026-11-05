@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { SpaceWorktreeManager } from '../../../../src/lib/workspaces/worktree-manager.ts';
-import { worktreeSlug } from '../../../../src/lib/space/worktree-slug.ts';
+import { worktreeSlug } from '../../../../src/lib/workspaces/worktree-slug.ts';
 import { encodeRepoPath, getProjectShortKey } from '../../../../src/lib/worktree-path-utils.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
