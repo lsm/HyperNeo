@@ -15,17 +15,19 @@ function fixture(
   status: string,
   statusReply?: unknown,
   adapterId = 'codex-desktop',
-  capabilities = ['find', 'send', 'steer', 'queue', 'status'],
+  capabilities = ['find', 'send', 'steer', 'queue', 'status', 'withdraw'],
   sending: Promise<void> = Promise.resolve()
 ) {
   const reached: string[] = [];
+  let delivery: object = { delivered: true, steeredIntoTurnId: '019f2a51-running-turn' };
+  let activity = 1;
   const held: unknown[] = [];
   const steer = async (_ref: unknown, message: string) => {
     reached.push(message);
     await sending;
     return {
       ok: true as const,
-      value: { delivered: true, steeredIntoTurnId: '019f2a51-running-turn' },
+      value: delivery,
     };
   };
   const adapter = {
@@ -35,7 +37,9 @@ function fixture(
     send: steer,
     steer,
     queue: steer,
-    status: async () => statusReply ?? { ok: true, value: { ref, status, lastActivityAt: 1 } },
+    status: async () =>
+      statusReply ?? { ok: true, value: { ref, status, lastActivityAt: activity } },
+    withdraw: async () => ({ ok: true, value: { queuedSubmissionId: 'q', withdrawn: true } }),
   } as unknown as WorkAdapter;
   const registry = createOperationRegistry(
     createWorkVerbOperations({
@@ -45,7 +49,17 @@ function fixture(
       heldSends: { hold: async (send: unknown) => void held.push(send) },
     } as never)
   );
-  return { registry, reached, held };
+  return {
+    registry,
+    reached,
+    held,
+    setDelivery: (value: object) => {
+      delivery = value;
+    },
+    setActivity: (value: number) => {
+      activity = value;
+    },
+  };
 }
 
 describe('a todo send to a busy worker waits in HyperNeo', () => {
@@ -133,6 +147,33 @@ describe('a todo send to a busy worker waits in HyperNeo', () => {
     expect(reached).toHaveLength(2);
     expect(reached[0]).toStartWith('todo-a');
     expect(reached[1]).toStartWith('todo-c');
+  });
+
+  test('a send the worker only queued fences it until the worker moves', async () => {
+    const { registry, reached, held, setDelivery, setActivity } = fixture('done');
+    const send = (todoId: string) =>
+      invokeOperation(registry, 'work.send', { ref, message: todoId, todoId }, neo);
+    setDelivery({ delivered: false, queuedSubmissionId: 'q' });
+    await send('todo-a');
+    expect(await send('todo-b')).toMatchObject({ value: { value: { held: true } } });
+    expect(held).toHaveLength(1);
+    setActivity(2);
+    setDelivery({ delivered: true });
+    await send('todo-c');
+    expect(reached).toHaveLength(2);
+    expect(reached[1]).toStartWith('todo-c');
+  });
+
+  test('withdrawing the queued send lifts the fence', async () => {
+    const { registry, reached, setDelivery } = fixture('done');
+    const send = (todoId: string) =>
+      invokeOperation(registry, 'work.send', { ref, message: todoId, todoId }, neo);
+    setDelivery({ delivered: false, queuedSubmissionId: 'q' });
+    await send('todo-a');
+    await invokeOperation(registry, 'work.withdraw', { ref, queuedSubmissionId: 'q' }, neo);
+    setDelivery({ delivered: true });
+    await send('todo-b');
+    expect(reached).toHaveLength(2);
   });
 
   test('a worker whose status cannot be read gets no todo send', async () => {
