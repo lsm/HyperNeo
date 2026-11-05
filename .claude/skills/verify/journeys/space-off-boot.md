@@ -1,7 +1,8 @@
 # Space-off boot
 
 Prove a daemon with Space left out boots on a fresh database and creates no
-Space tables. Run from the worktree root with no daemon or mock server needed:
+Space-extension tables. The core `space_github_*` tables stay in both modes because
+Neo's PR watching uses them, so `spaceTables: 0` does not mean no `space_*` table. Run from the worktree root with no daemon or mock server needed:
 
 ```bash
 RUN=$(mktemp -d /private/tmp/hyperneo-space-off-XXXXXX)

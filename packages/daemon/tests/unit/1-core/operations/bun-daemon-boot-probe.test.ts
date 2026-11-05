@@ -65,7 +65,7 @@ describe('Bun daemon boot probe construction', () => {
       rmSync(run, { recursive: true, force: true });
     }
   }, 90000);
-  test('daemon boots on a fresh database with Space off and creates no Space tables', () => {
+  test('daemon boots on a fresh database with Space off and creates no Space-extension tables', () => {
     const run = realpathSync(mkdtempSync(join(tmpdir(), 'bun-boot-space-off-')));
     try {
       execFileSync(
