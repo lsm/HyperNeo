@@ -3276,6 +3276,27 @@ describe('held sends', () => {
     }
   });
 
+  test('a held send waits out an unreadable worker and fails only for a gone one', async () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      h.store.updateTodo(todo, { state: 'blocked', blockedBy: 'check' }, 1);
+      await h.sessions.held.hold(held(todo.id, 'a'), 1);
+      h.setStatus({ ok: false, reason: 'unreachable', detail: 'status timed out' });
+      await h.runner.refresh(() => {});
+      expect(sends(h)).toEqual([]);
+      expect(h.sessions.held.nextPerWorker()[0]?.sending).toBe(false);
+
+      h.setStatus({ ok: false, reason: 'not_found', detail: 'No such session.' });
+      h.setSend({ ok: false, reason: 'not_found', detail: 'No such session.', notSent: true });
+      await h.runner.refresh(() => {});
+      expect(h.told.join()).toContain('could not reach its worker: not_found');
+      expect(h.sessions.held.nextPerWorker()).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('a held send that cannot reach its worker tells Neo', async () => {
     const h = setup();
     try {
