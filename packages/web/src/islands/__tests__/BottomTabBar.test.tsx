@@ -12,7 +12,14 @@ import {
   navSectionSignal,
 } from '../../lib/signals';
 import { BottomTabBar } from '../BottomTabBar';
-import { registerWebExtension, type SpaceWebExtension } from '../../lib/web-extensions';
+import {
+  declareExtensionNav,
+  registerWebExtension,
+  type SpaceWebExtension,
+} from '../../lib/web-extensions';
+import { spaceNav } from '../../lib/space-nav';
+
+declareExtensionNav(spaceNav);
 
 vi.mock('../../lib/router', () => ({
   navigateToSessions: vi.fn(),
