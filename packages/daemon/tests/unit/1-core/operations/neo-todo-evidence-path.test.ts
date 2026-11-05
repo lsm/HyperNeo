@@ -10,6 +10,8 @@ import {
   createNeoTodoOperations,
   type NeoTodoControls,
 } from '../../../../src/lib/neo/todo-operations.ts';
+import { wireNeoTodoMutations } from '../../../../src/lib/neo/todo-mutation-operation.ts';
+import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
@@ -25,6 +27,7 @@ function setup(repository: string | null) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
+  createCodingPackTables(db);
   const packs = createTodoCheckPacks(db);
   const store = new NeoAskTodoRepository(db);
   store.openAsk({
@@ -42,13 +45,30 @@ function setup(repository: string | null) {
     resolveTarget: existingTodoTarget,
     start: async () => ({ ok: false as const, reason: 'not started' }),
   } as unknown as NeoTodoControls;
-  const add = createNeoTodoOperations(
-    store,
-    new NeoTodoSessionRepository(db),
-    controls,
-    () => packs,
-    () => null
-  ).find((op) => op.name === 'neo.todo.add')!;
+  const gateway = gatewayFor(db);
+  const operations = wireNeoTodoMutations(
+    createNeoTodoOperations(
+      store,
+      new NeoTodoSessionRepository(db),
+      controls,
+      () => packs,
+      () => null
+    ),
+    {
+      gateway,
+      write: gateway.run.bind(gateway),
+      userFolder,
+      packs: () => packs,
+      artifact: () => null,
+      stop: async () => null,
+      resolveTarget: existingTodoTarget,
+      advance: async () => {},
+      changed: () => {},
+      project: async (todos) => [...todos],
+    }
+  );
+  const add = operations.find((op) => op.name === 'neo.todo.add')!;
+  const edit = operations.find((op) => op.name === 'neo.todo.edit')!;
   const open = createNeoAskRecordOperations(
     store,
     new NeoTodoSessionRepository(db),
@@ -64,6 +84,11 @@ function setup(repository: string | null) {
   return {
     db,
     store,
+    edit: async (input: unknown) =>
+      (await edit.execute(edit.inputSchema.parse(input), owner)) as {
+        ok: boolean;
+        reason?: string;
+      },
     open: async (input: unknown) =>
       (await open.execute(open.inputSchema.parse(input), owner)) as { ok: boolean },
     add: async (params: Record<string, unknown>) =>
@@ -140,6 +165,23 @@ describe('neo.todo.add evidence paths', () => {
     expect(result.ok).toBe(false);
     expect(count('neo_asks')).toBe(1);
     expect(count('neo_todos')).toBe(0);
+  });
+
+  test('an older todo with no repo of its own follows its ask on edit', async () => {
+    const { edit, store } = setup('lsm/hyperneo');
+    const todo = store.addTodo(
+      'older',
+      'ask',
+      { title: 'Older', doneWhen: 'Observed', check: null, instruction: null, named: null },
+      1
+    );
+    expect(todo.repo).toBeNull();
+    const result = await edit({
+      todoId: todo.id,
+      check: { pack: 'core', kind: 'evidence', params: { path: join(userFolder, 'proof.md') } },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('Omit');
   });
 
   test('an unchanged path on an existing todo keeps working', () => {
