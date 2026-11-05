@@ -2426,7 +2426,10 @@ describe('stopped worker ladder', () => {
       h.setSend({ ok: true, value: { delivered: false, held: true } });
       await h.at(20);
       const [reminder] = h.calls.filter((call) => call.name === 'work.send');
-      expect(remove).toHaveBeenCalledWith(reminder.input.idempotencyKey);
+      expect(remove).toHaveBeenCalledWith({
+        key: reminder.input.idempotencyKey,
+        ref: reminder.input.ref,
+      });
       h.setSend({ ok: true, value: { delivered: true } });
       await h.at(21);
       expect(h.sends()).toHaveLength(2);
@@ -3171,7 +3174,7 @@ describe('held sends', () => {
     try {
       const todo = h.add();
       await h.sessions.held.hold(held(todo.id, 'a'), 1);
-      await h.sessions.held.setSending('a', 2);
+      await h.sessions.held.setSending({ key: 'a', ref }, 2);
       h.setStatus({ ok: true, value: { status: 'done', lastActivityAt: 3 } });
       await h.runner.refresh(() => {});
       expect(sends(h)).toEqual([]);
