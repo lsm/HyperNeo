@@ -7,6 +7,8 @@ export const NETWORK_PROBE_EVERY_MS = 30_000;
 export const NETWORK_PROBE_MAX_MS = 5 * 60 * 1000;
 const NETWORK_PROBE_TIMEOUT_MS = 5_000;
 
+const DEFAULT_PROVIDER_URL = 'https://api.anthropic.com';
+
 const NETWORK_UNREACHABLE_RE =
   /\b(?:ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|ENETDOWN|EAI_AGAIN)\b|getaddrinfo|\bConnection error\./;
 const PROBE_HOST_RE =
@@ -40,6 +42,19 @@ export function planNetworkOutageTick(
     popup: !popupShown && now - startedAt >= NETWORK_OUTAGE_POPUP_AFTER_MS,
     nextProbeAt: now + networkProbeDelayMs(failedResumes),
   };
+}
+
+const isLocalUrl = (url: string): boolean => {
+  try {
+    return LOCAL_HOST_RE.test(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+};
+
+export function providerProbeUrl(sessionUrl?: string, upstreamUrl?: string): string {
+  const url = sessionUrl ?? DEFAULT_PROVIDER_URL;
+  return upstreamUrl && isLocalUrl(url) && !isLocalUrl(upstreamUrl) ? upstreamUrl : url;
 }
 
 export async function probeProviderUrl(url: string): Promise<boolean> {

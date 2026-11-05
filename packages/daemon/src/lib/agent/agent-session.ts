@@ -66,6 +66,7 @@ import {
   NETWORK_OUTAGE_NOTICE,
   NetworkOutagePause,
   probeProviderUrl,
+  providerProbeUrl,
 } from './network-outage-pause.ts';
 import { runRateLimitManualCancel } from './rate-limit-manual-cancel.ts';
 import { runRateLimitManualRetry } from './rate-limit-manual-retry.ts';
@@ -263,8 +264,6 @@ import {
   TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
   taskNotificationRequeryDelayMs,
 } from './task-notification-requery.ts';
-
-const DEFAULT_PROVIDER_URL = 'https://api.anthropic.com';
 
 export class AgentSession
   implements
@@ -1222,7 +1221,20 @@ export class AgentSession
     const env = await getProviderService()
       .resolveSessionProviderEnvVars(this.session)
       .catch(() => null);
-    return probeProviderUrl(env?.ANTHROPIC_BASE_URL?.toString() ?? DEFAULT_PROVIDER_URL);
+    return probeProviderUrl(
+      providerProbeUrl(env?.ANTHROPIC_BASE_URL?.toString(), this.providerUpstreamUrl())
+    );
+  }
+
+  private providerUpstreamUrl(): string | undefined {
+    try {
+      return getProviderRegistry()
+        .get(this.providerId())
+        ?.buildSdkConfig(this.session.config.model ?? 'sonnet')
+        .envVars.ANTHROPIC_BASE_URL?.toString();
+    } catch {
+      return undefined;
+    }
   }
 
   async holdForNetwork(): Promise<void> {

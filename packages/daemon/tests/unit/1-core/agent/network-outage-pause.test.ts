@@ -8,6 +8,7 @@ import {
   NetworkOutagePause,
   networkProbeDelayMs,
   networkProbeHost,
+  providerProbeUrl,
   planNetworkOutageTick,
 } from '../../../../src/lib/agent/network-outage-pause';
 import { resultNetworkOutage } from '../../../../src/lib/agent/sdk-message-handler';
@@ -34,6 +35,25 @@ describe('isNetworkUnreachableError', () => {
       'backend connection error',
     ])
       expect(isNetworkUnreachableError(text)).toBe(false);
+  });
+});
+
+describe('providerProbeUrl', () => {
+  test('probes the upstream behind a local key bridge, never the bridge', () => {
+    expect(providerProbeUrl('http://127.0.0.1:51234', 'https://open.bigmodel.cn/api')).toBe(
+      'https://open.bigmodel.cn/api'
+    );
+  });
+
+  test('keeps the session URL otherwise', () => {
+    expect(providerProbeUrl('https://proxy.example', 'https://open.bigmodel.cn')).toBe(
+      'https://proxy.example'
+    );
+    expect(providerProbeUrl('http://127.0.0.1:8000', undefined)).toBe('http://127.0.0.1:8000');
+    expect(providerProbeUrl('http://127.0.0.1:8000', 'http://localhost:1')).toBe(
+      'http://127.0.0.1:8000'
+    );
+    expect(providerProbeUrl(undefined, undefined)).toBe('https://api.anthropic.com');
   });
 });
 
