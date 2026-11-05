@@ -9,7 +9,7 @@ import { ProviderCredentialManager } from '../../../packages/daemon/src/lib/cred
 import { QueryOptionsBuilder } from '../../../packages/daemon/src/lib/agent/query-options-builder.ts';
 import { ProviderService } from '../../../packages/daemon/src/lib/provider-service.ts';
 import { AnthropicProvider } from '../../../packages/daemon/src/lib/providers/anthropic-provider.ts';
-import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
+import { createLocalSocket, readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 
 process.env.HYPERNEO_HUMAN_SEND_SILENCE_MS = '4000';
@@ -25,7 +25,7 @@ process.env.PATH = `${run}/bin:${process.env.PATH}`;
 
 type Mode = 'ok' | 'hang' | '401' | '429';
 let mode: Mode = 'ok';
-let hangOnce: string | null = null;
+let hang: { marker: string; until: number } | null = null;
 const served: string[] = [];
 const seen: string[] = [];
 const sse = (text: string) => {
@@ -45,7 +45,7 @@ const serveModel = (port: number) => Bun.serve({ hostname: '127.0.0.1', port, id
   if (new URL(request.url).pathname !== '/v1/messages') return Response.json({ data: [], has_more: false });
   const text = await request.text();
   seen.push(text);
-  if (hangOnce && text.includes(hangOnce)) { hangOnce = null; return never(); }
+  if (hang && text.includes(hang.marker) && Date.now() < hang.until) return never();
   if (mode === 'hang') return never();
   if (mode === '401') return Response.json({ type: 'error', error: { type: 'authentication_error', message: 'OAuth token has expired' } }, { status: 401 });
   if (mode === '429') return Response.json({ type: 'error', error: { type: 'rate_limit_error', message: 'Usage limit reached' } }, { status: 429 });
@@ -81,7 +81,7 @@ const web = Bun.serve({ hostname: '127.0.0.1', port: 0,
   async fetch(request, server) {
     const path = new URL(request.url).pathname;
     if (path === '/ws') {
-      if (server.upgrade(request, { data: { connectionSessionId: 'global', device: await daemon.app.authenticateUpgrade(request, '127.0.0.1') } })) return;
+      if (server.upgrade(request, { data: { connectionSessionId: 'global', device: await daemon.app.authenticateUpgrade(new Request(request.url, { headers: { authorization: `Bearer ${readLocalCredential()}` } }), '127.0.0.1') } })) return;
       return new Response('Upgrade failed', { status: 500 });
     }
     const file = Bun.file(join(resolve('packages/web/dist'), path === '/neo' || path.startsWith('/neo/') ? 'neo/index.html' : path));
@@ -105,6 +105,13 @@ const send = async (marker: string) => {
 const answered = (marker: string, ms = 25_000) => until(
   () => served.some((body) => body.includes(marker)) && daemon.app.sessionManager.getCachedSession(root)?.getProcessingState().status === 'idle',
   ms, `${marker} answered by the model`);
+const settled = async () => {
+  let quietSince = Date.now();
+  await until(() => {
+    if (daemon.app.sessionManager.getCachedSession(root)?.getProcessingState().status !== 'idle') quietSince = Date.now();
+    return Date.now() - quietSince >= 1_000;
+  }, 30_000, 'session settled');
+};
 const latch = () => daemon.app.db.updateSession(root, { metadata: { queryFailureEpisode: { id: crypto.randomUUID(), failures: 3, retryAt: Date.now() + 300_000, error: 'stalled', failed: true } } } as never);
 const systemTurn = async (text: string) => {
   const receipt = await invoke<{ kind: string; messageId: string }>('message.send', { to: root, from: 'session:synthetic-worker', kind: 'blocked', text });
@@ -149,7 +156,7 @@ const cases: Record<string, (marker: string) => Promise<Record<string, unknown>>
     return {};
   },
   async swallowed_message(marker) {
-    hangOnce = marker;
+    hang = { marker, until: Date.now() + 4_200 };
     await send(marker);
     await answered(marker, 30_000);
     return { requestsSeen: seen.filter((body) => body.includes(marker)).length };
@@ -191,18 +198,6 @@ const cases: Record<string, (marker: string) => Promise<Record<string, unknown>>
       AnthropicProvider.prototype.refreshToken = refreshToken;
     }
   },
-  async daemon_restart_mid_outage(marker) {
-    modelDown();
-    await live().onNetworkOutage('API Error: Connection error.', null);
-    await latch();
-    await daemon.transport.close();
-    await daemon.app.cleanup();
-    daemon = await boot();
-    modelUp();
-    await send(marker);
-    await answered(marker);
-    return {};
-  },
   async no_network(marker) {
     modelDown();
     const url = `http://127.0.0.1:${web.port}/neo`;
@@ -215,6 +210,18 @@ const cases: Record<string, (marker: string) => Promise<Record<string, unknown>>
     await answered(marker, 45_000);
     return { browserView, messagesSent: 1 };
   },
+  async daemon_restart_mid_outage(marker) {
+    modelDown();
+    await live().onNetworkOutage('API Error: Connection error.', null);
+    await latch();
+    await daemon.transport.close();
+    await daemon.app.cleanup();
+    daemon = await boot();
+    modelUp();
+    await send(marker);
+    await answered(marker);
+    return {};
+  },
   async real_quota(marker) {
     await latch();
     mode = '429';
@@ -222,7 +229,7 @@ const cases: Record<string, (marker: string) => Promise<Record<string, unknown>>
     await send(marker);
     await until(() => seen.some((body) => body.includes(marker)), 10_000, 'tried at once');
     const triedAfterMs = Date.now() - startedAt;
-    await until(() => { const rows = daemon.app.db.getSDKMessageRepo().getSDKMessages(root, 30).messages; return JSON.stringify(rows.slice(-8)).match(/limit|Usage/i) !== null; }, 30_000, 'human told about the limit');
+    await until(() => { const rows = daemon.app.db.getSDKMessageRepo().getSDKMessages(root, 30).messages; return JSON.stringify(rows.slice(-8)).includes('Usage limit reached'); }, 30_000, 'human told about the limit');
     mode = 'ok';
     return { triedAfterMs };
   },
@@ -236,11 +243,15 @@ async function composerView(url: string) {
     const page = await browser.newPage();
     await page.goto(url);
     const box = page.locator('textarea').first();
-    await box.waitFor();
+    await box.waitFor({ timeout: 15_000 }).catch(async (error: unknown) => {
+      await page.screenshot({ path: join(run, 'evidence/no-network-failed.png') });
+      console.log('page text:', (await page.locator('body').innerText()).slice(0, 400));
+      throw error;
+    });
     await box.fill('second message');
     const line = page.getByText('No network.');
     await line.waitFor({ timeout: 15_000 });
-    const send = page.getByRole('button', { name: 'Send' });
+    const send = page.getByRole('button', { name: 'Send message' });
     const view = { line: await line.textContent(), sendDisabled: await send.isDisabled() };
     await page.screenshot({ path: join(run, 'evidence/no-network-composer.png') });
     assert.equal(view.sendDisabled, true);
@@ -262,6 +273,7 @@ try {
   const only = process.argv.find((arg) => arg.startsWith('--only='))?.slice(7).split(',');
   for (const [name, proof] of Object.entries(cases)) {
     if (only && !only.includes(name)) continue;
+    await settled();
     const marker = `case-${name}-${crypto.randomUUID().slice(0, 8)}`;
     const startedAt = Date.now();
     try {
@@ -270,7 +282,7 @@ try {
     } catch (error) {
       results.push({ case: name, pass: false, ms: Date.now() - startedAt, error: String(error).slice(0, 300) });
       mode = 'ok';
-      hangOnce = null;
+      hang = null;
       modelUp();
       await daemon.app.db.updateSession(root, { processingState: JSON.stringify({ status: 'idle' }), metadata: { queryFailureEpisode: null } } as never);
       await daemon.app.sessionManager.getCachedSession(root)?.resetQuery({ restartQuery: false, hardReset: true });

@@ -78,13 +78,18 @@ export class OAuthRefreshScheduler {
     }
   }
 
+  async refreshNow(providerId: string): Promise<void> {
+    const provider = this.registry.get(providerId);
+    if (provider) await this.refreshProviderIfNeeded(provider, true);
+  }
+
   private async runTick(): Promise<void> {
     await Promise.all(
       this.registry.getAll().map((provider) => this.refreshProviderIfNeeded(provider))
     );
   }
 
-  private async refreshProviderIfNeeded(provider: Provider): Promise<void> {
+  private async refreshProviderIfNeeded(provider: Provider, force = false): Promise<void> {
     if (!provider.refreshToken) return;
     const credentials = await this.credentialsForProvider(provider);
     if (!credentials || credentials.type !== 'oauth') return;
@@ -92,13 +97,13 @@ export class OAuthRefreshScheduler {
     const due = decideRefreshDue({
       expiresAt: credentials.expiresAt,
       now: this.now(),
-      refreshWindowMs: this.refreshWindowMs,
+      refreshWindowMs: force ? Number.POSITIVE_INFINITY : this.refreshWindowMs,
       failureKind: getProviderFailure(provider.id)?.errorKind,
     });
     if ('reason' in due) return;
 
     const retryKey = this.retryKey(provider.id, credentials);
-    if ((this.retryCounts.get(retryKey) ?? 0) >= this.maxRetries) return;
+    if (!force && (this.retryCounts.get(retryKey) ?? 0) >= this.maxRetries) return;
 
     let refreshed = false;
     try {

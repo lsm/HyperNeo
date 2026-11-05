@@ -49,7 +49,7 @@ function candidate(reference: string, explicit: boolean): PreviewReferenceCandid
     : null;
 }
 
-const pathStops = new Set([...',;:\'"!?()[]{}<>`|，。；：、！？（）【】《》「」“”']);
+const pathStops = new Set(',;:\'"!?()[]{}<>`|，。；：、！？（）【】《》「」“”');
 
 function plainPaths(token: string): string[] {
   const paths: string[] = [];
@@ -59,7 +59,7 @@ function plainPaths(token: string): string[] {
       (token[i] === '/' && token[i + 1] !== '/') || (token[i] === '~' && token[i + 1] === '/');
     if (
       !start ||
-      /[A-Za-z0-9_.\/~-]/.test(previous) ||
+      /[A-Za-z0-9_./~-]/.test(previous) ||
       (previous === ':' && /[A-Za-z0-9]/.test(token[i - 2] ?? ''))
     ) {
       i++;

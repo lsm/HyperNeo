@@ -89,7 +89,7 @@ export function createClaudeInboxConversations(deps: ClaudeInboxConversationDeps
           [...inboxes.values()].map((opening) => opening.catch(() => null))
         );
         const results = await Promise.allSettled(opened.map((item) => item?.close()));
-        await Promise.allSettled([...events]);
+        await Promise.allSettled(events);
         const failures = results.flatMap((result) =>
           result.status === 'rejected' ? [result.reason] : []
         );

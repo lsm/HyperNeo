@@ -26,9 +26,9 @@ export function neoSessionKind(
 ): NeoSessionKind | null {
   if (adapter && adapterKinds[adapter]) return adapterKinds[adapter];
   if (!link) return null;
-  if (/^claude:\/\//.test(link) || /^https:\/\/claude\.ai\//.test(link)) return 'claude';
-  if (/^codex:\/\//.test(link)) return 'codex';
-  if (/^ghapp:\/\//.test(link)) return 'copilot';
-  if (/^\/session\//.test(link)) return 'hyperneo';
+  if (link.startsWith('claude://') || link.startsWith('https://claude.ai/')) return 'claude';
+  if (link.startsWith('codex://')) return 'codex';
+  if (link.startsWith('ghapp://')) return 'copilot';
+  if (link.startsWith('/session/')) return 'hyperneo';
   return null;
 }

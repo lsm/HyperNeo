@@ -161,6 +161,7 @@ import type { SpaceWorktreeManager } from './lib/workspaces/worktree-manager.ts'
 import {
   cleanupJobsInBatches,
   JobQueueRepository,
+  jobQueueWrites,
 } from './storage/repositories/job-queue-repository.ts';
 import { purgeWorkFeedSessions } from './storage/work-feed.ts';
 import { JobQueueProcessor, applyStaleReclaimJitter } from './storage/job-queue-processor.ts';
@@ -178,6 +179,8 @@ import {
   SKILL_VALIDATE,
   SESSION_SCHEDULE_FIRE,
 } from './lib/job-queue-constants.ts';
+import { createHumanSendRecovery } from './lib/agent/human-send-recovery.ts';
+import { gatewayFor } from './storage/db-gateway/db-gateway.ts';
 import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler.ts';
 import { registerMailboxJobs } from './lib/mailbox/registration.ts';
 import { captureDirectMailboxAdmission } from './lib/tasks/direct-mailbox-admission.ts';
@@ -1445,10 +1448,31 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       logError: (message) => mailboxLog.error(message),
     });
 
+    const humanSend = createHumanSendRecovery({
+      getSession: async (sessionId) => (await sessionManager?.getSessionAsync(sessionId)) ?? null,
+      refreshCredentials: (providerId) => oauthRefreshScheduler.refreshNow(providerId),
+      wakeParked: async (sessionId) => {
+        await gatewayFor(db.getDatabase()).call(
+          jobQueueWrites,
+          'wakeParkedDeliveries',
+          sessionId,
+          Date.now()
+        );
+      },
+      reopen: (sessionId, uuid) =>
+        restartRecoveryDeps.resend(
+          sessionId,
+          uuid,
+          !restartRecoveryDeps.hasActiveDelivery(sessionId, uuid)
+        ),
+    });
+
     messageDeliveryProcessor.register(
       MESSAGE_DELIVERY,
       createMessageDeliveryHandler({
         jobQueue,
+        prepareHumanSend: humanSend.prepare,
+        watchHumanSend: humanSend.watch,
         getSession: async (sessionId: string) => {
           const indexed = taskAgentManager?.getSubSession(sessionId);
           if (indexed && sessionManager?.getCachedSession(sessionId) === indexed) {
@@ -1635,6 +1659,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
         processWatchdog.stop();
         logInfo('[Daemon] Process watchdog stopped');
+        humanSend.stop();
         await oauthRefreshScheduler.stop();
         await googleRefresh.stop();
         logInfo('[Daemon] OAuth refresh scheduler stopped');

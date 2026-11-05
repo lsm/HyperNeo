@@ -67,11 +67,20 @@ describe('noteStreamMessage', () => {
       },
       5
     );
-    expect(sub).toEqual({ lastActivityAt: 5, openTools: [] });
+    expect(sub).toEqual({ lastActivityAt: 5, lastOutputAt: 5, openTools: [] });
     const open = { lastActivityAt: 0, openTools: ['t1'] };
     expect(noteStreamMessage(open, { type: 'result' }, 9)).toEqual({
       lastActivityAt: 9,
+      lastOutputAt: 9,
       openTools: [],
     });
+  });
+
+  it('counts only what the model produced as output', () => {
+    expect(
+      noteStreamMessage(quiet, { type: 'system', subtype: 'init' }, 5).lastOutputAt
+    ).toBeUndefined();
+    expect(noteStreamMessage(quiet, { type: 'user' }, 5).lastOutputAt).toBeUndefined();
+    expect(noteStreamMessage(quiet, { type: 'stream_event' }, 5).lastOutputAt).toBe(5);
   });
 });

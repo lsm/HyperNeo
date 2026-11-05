@@ -251,6 +251,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'composer.recordingTap': '正在录音 · 点箭头停止并发送',
   'composer.recordingClick': '正在录音 · 点击箭头停止并发送',
   'composer.transcribing': '正在转写到草稿…',
+  'composer.noNetwork': '没有网络。连接恢复后 Neo 会继续。',
   'composer.sendingDraft': '正在和草稿一起发送…',
   'composer.addedTap': '已加入草稿，会和{context}一起发出。准备好后点发送。',
   'composer.addedClick': '已加入草稿，会和{context}一起发出。准备好后点击发送。',

@@ -488,6 +488,10 @@ export class QueryRunner {
     return this.failures.reset();
   }
 
+  streamFacts(): StreamSilenceState {
+    return this.streamSilence;
+  }
+
   failureLatchedUntil() {
     return this.failures.latchedUntil();
   }

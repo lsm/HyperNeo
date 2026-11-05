@@ -81,6 +81,7 @@ function makeHarness(
   };
   bindGateway(jobQueue.db, {
     call: async (_op: unknown, method: string, ...args: [string, number, string | null]) => {
+      if (method === 'requeueWaiting') return { id: args[0] };
       if (method !== 'park') throw new Error(`Unexpected parking command: ${method}`);
       return jobQueue.requeueParked(...args) !== null;
     },
@@ -291,14 +292,56 @@ describe('createMessageDeliveryHandler', () => {
 
     it('parks the job until a restored cooldown expires instead of driving the turn', async () => {
       const retryAt = Date.now() + 60_000;
-      const { handler, session, jobQueue, getMessageContent, job } = makeHarness({
+      const { handler, session, jobQueue, job } = makeHarness({
         getSessionCooldownRetryAt: () => retryAt,
       });
       const result = await handler(job, {});
       expect(result).toEqual({ parked: 'rate_limit_cooldown', retryAt });
       expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', retryAt, 'claim-1');
       expect(session.driveCalls).toBe(0);
-      expect(getMessageContent).not.toHaveBeenCalled();
+    });
+
+    it('a human message skips the cooldown park and is watched once delivered', async () => {
+      const watched: string[] = [];
+      const prepared: string[] = [];
+      const { handler, session, jobQueue, job } = makeHarness({
+        getSessionCooldownRetryAt: () => Date.now() + 60_000,
+        getMessageContent: () => ({ content: 'hi', sendStatus: 'enqueued', inputKind: 'human' }),
+        prepareHumanSend: async (sessionId) => {
+          prepared.push(sessionId);
+          return 'recovered';
+        },
+        watchHumanSend: (_sessionId, uuid) => watched.push(uuid),
+      });
+      expect(await handler(job, {})).toEqual({ outcome: 'completed' });
+      expect(prepared).toEqual(['sess-1']);
+      expect(session.driveCalls).toBe(1);
+      expect(watched).toEqual(['uuid-1']);
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
+    });
+
+    it('a human message waits without spending the park budget when there is no network', async () => {
+      const { handler, session, jobQueue, job } = makeHarness({
+        getMessageContent: () => ({ content: 'hi', sendStatus: 'enqueued', inputKind: 'human' }),
+        prepareHumanSend: async () => 'wait',
+      });
+      expect(await handler(job, {})).toMatchObject({ parked: 'no_network' });
+      expect(session.driveCalls).toBe(0);
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
+    });
+
+    it('a system message keeps its gates and never starts recovery', async () => {
+      const prepared: string[] = [];
+      const { handler, session, job } = makeHarness({
+        getSessionCooldownRetryAt: () => Date.now() + 60_000,
+        prepareHumanSend: async (sessionId) => {
+          prepared.push(sessionId);
+          return 'deliver';
+        },
+      });
+      expect(await handler(job, {})).toMatchObject({ parked: 'rate_limit_cooldown' });
+      expect(prepared).toEqual([]);
+      expect(session.driveCalls).toBe(0);
     });
 
     it('returns stale_attempt when the claim expires before parking for a cooldown', async () => {
