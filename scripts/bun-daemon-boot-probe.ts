@@ -137,7 +137,8 @@ try {
     params: [sessionId, 20],
   });
   assert.equal(live.ok, true);
-  await until(() => rows !== undefined, 5000);
+  assert.notEqual(rows, undefined, 'Snapshot must precede subscribe acknowledgement');
+  evidence.snapshotBeforeAck = true;
   assert.deepEqual(rows, []);
   evidence.liveEmpty = true;
   const db = new Database(join(run, 'data/daemon.db'), { readonly: true });
