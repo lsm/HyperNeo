@@ -7,6 +7,7 @@ PROOFS="$REPO_ROOT/.claude/skills/verify"
 mkdir "$EVIDENCE"
 cd "$REPO_ROOT"
 export VERIFY_PROOF_RUNTIME=bun
+bash "$PROOFS/proof-run.sh" "$EVIDENCE/bun-daemon-boot-probe" "$REPO_ROOT/scripts/bun-daemon-boot-probe.ts"
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/neo-settings-writer" "$PROOFS/neo-settings-writer.ts" verify
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-b-cleanup-enqueue" "$PROOFS/lane-b-cleanup-enqueue.ts"
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/workflow-identity-contract" "$PROOFS/workflow-identity-contract.ts" verify
@@ -128,4 +129,4 @@ bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-github-unwatch-timer" "$PROOFS/lan
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/lane-c-github-watch-timer" "$PROOFS/lane-c-github-watch-timer.ts"
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/bun-shared-reader-probe" "$REPO_ROOT/scripts/bun-shared-reader-probe.ts"
 bash "$PROOFS/proof-run.sh" "$EVIDENCE/bun-gateway-probe" "$REPO_ROOT/scripts/bun-gateway-probe.ts"
-echo 'Bun native smoke: registered batches passed (117 legacy helpers, 143 proof cases)'
+echo 'Bun native smoke: registered batches passed (117 legacy helpers, 144 proof cases)'
