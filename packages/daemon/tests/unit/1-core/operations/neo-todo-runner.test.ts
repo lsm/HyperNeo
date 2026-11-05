@@ -711,7 +711,7 @@ describe('neo todo runner', () => {
         h.setStatus({
           ok: true,
           value: {
-            status: 'running',
+            status: 'done',
             lastActivityAt: 1,
             recentInputs: [],
             model: 'claude-opus-5-5',
@@ -3090,6 +3090,149 @@ describe('worker blocker ownership', () => {
         h.store.listQuestions('ask').filter((q) => q.todoId === todo.id && q.state === 'open')
       ).toHaveLength(0);
       expect(h.store.getTodo(todo.id)?.blockedBy).not.toBe('needs-human');
+    } finally {
+      h.db.close();
+    }
+  });
+});
+
+describe('a todo for a busy worker', () => {
+  const MIN = 60_000;
+  const waitingOn = (h: ReturnType<typeof setup>, priority?: 'high') => {
+    const todo = h.add();
+    h.sessions.queueOn(todo.id, ref, 'Build the rows.');
+    return priority ? h.store.updateTodo(todo, { priority }, 2) : todo;
+  };
+  const sends = (h: ReturnType<typeof setup>) => h.calls.filter((c) => c.name === 'work.send');
+  const running = { ok: true, value: { status: 'running', lastActivityAt: 1 } };
+  const idle = { ok: true, value: { status: 'done', lastActivityAt: 2 } };
+
+  test('stays todo with its reason, then goes one per turn by priority', async () => {
+    const h = setup();
+    try {
+      const low = waitingOn(h);
+      const high = waitingOn(h, 'high');
+      h.setStatus(running);
+      await h.runner.refresh(() => {});
+      expect(sends(h)).toEqual([]);
+      for (const { id } of [low, high]) {
+        const todo = h.store.getTodo(id)!;
+        expect(todo).toMatchObject({ state: 'todo', startedAt: null });
+        expect(todo.reason).toBe(
+          'Waiting for worker hyperneo:worker-1, which is working on something outside a todo.'
+        );
+      }
+
+      h.setStatus(idle);
+      await h.runner.refresh(() => {});
+      expect(sends(h)).toHaveLength(1);
+      expect(sends(h)[0].input.todoId).toBe(high.id);
+      expect(h.store.getTodo(high.id)).toMatchObject({ state: 'doing', reason: null });
+      h.setStatus(running);
+      await h.runner.refresh(() => {});
+      expect(sends(h)).toHaveLength(1);
+      expect(h.store.getTodo(low.id)?.reason).toContain(`working on "${high.title}"`);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('queueOn says what it did with the message', () => {
+    const h = setup();
+    try {
+      const withInstruction = h.add();
+      expect(h.sessions.queueOn(withInstruction.id, ref, 'Other text')).toBe('instruction');
+      expect(h.store.getTodo(withInstruction.id)?.instruction).toBe('Build the rows.');
+      const empty = h.add(null, null);
+      expect(h.sessions.queueOn(empty.id, ref, 'New text')).toBe('message');
+      expect(h.store.getTodo(empty.id)?.instruction).toBe('New text');
+      const doing = h.store.updateTodo(h.add(), { state: 'doing', startedAt: 1 }, 1);
+      expect(h.sessions.queueOn(doing.id, ref, 'Lost text')).toBe('none');
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a todo counts as on its worker only while it is open there', () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      h.sessions.recordRef(todo.id, ref, 1);
+      const doing = h.store.updateTodo(todo, { state: 'doing', startedAt: 1 }, 1);
+      expect(h.sessions.sendsNow(doing.id, ref)).toBe(true);
+      const blocked = h.store.updateTodo(doing, { state: 'blocked', blockedBy: 'check' }, 2);
+      expect(h.sessions.sendsNow(blocked.id, ref)).toBe(true);
+      h.store.updateTodo(blocked, { state: 'failed', finishedAt: 3 }, 3);
+      expect(h.sessions.sendsNow(todo.id, ref)).toBe(false);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a send naming no todo is not a todo send, so it goes', () => {
+    const h = setup();
+    try {
+      expect(h.sessions.sendsNow('https://github.com/o/r/pull/1', ref)).toBe(true);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a wait keeps the mark that the todo was already moved once', async () => {
+    const h = setup();
+    try {
+      const todo = waitingOn(h);
+      h.sessions.recordNudge(todo.id, { since: 1, nudges: 0, redispatched: true });
+      h.setStatus(running);
+      await h.runner.refresh(() => {});
+      expect(h.sessions.readNudge(todo.id)?.redispatched).toBe(true);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a direct start waits too', async () => {
+    const h = setup();
+    try {
+      const todo = waitingOn(h);
+      h.setStatus(running);
+      const started = await h.runner.start(todo.id);
+      expect(started).toMatchObject({ ok: true, todo: { state: 'todo', startedAt: null } });
+      expect(sends(h)).toEqual([]);
+      expect(h.store.getTodo(todo.id)?.reason).toContain('Waiting for worker');
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a worker that stays busy tells Neo once, and the todo keeps waiting', async () => {
+    const h = setup();
+    const clock = vi.spyOn(Date, 'now');
+    const base = Date.now();
+    try {
+      const todo = waitingOn(h);
+      h.setStatus(running);
+      for (const minutes of [0, 59, 60, 61]) {
+        clock.mockReturnValue(base + minutes * MIN);
+        await h.runner.refresh(() => {});
+        expect(h.told.filter((note) => note.includes('is stalled'))).toHaveLength(
+          minutes < 60 ? 0 : 1
+        );
+      }
+      expect(h.store.getTodo(todo.id)?.state).toBe('todo');
+    } finally {
+      clock.mockRestore();
+      h.db.close();
+    }
+  });
+
+  test('a worker waiting on the human still gets its todo, as before', async () => {
+    const h = setup();
+    try {
+      waitingOn(h);
+      h.setStatus({ ok: true, value: { status: 'needs_you', lastActivityAt: 1 } });
+      await h.runner.refresh(() => {});
+      expect(sends(h)).toHaveLength(1);
     } finally {
       h.db.close();
     }

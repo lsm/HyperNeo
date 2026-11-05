@@ -7,6 +7,7 @@ type Queue = { candidates: WorkCandidate[]; running: RunningWork[] };
 
 export interface WorkQueueAdapter<Claim extends { plan: { kind: string } }> {
   queue(): Promise<Queue>;
+  waiting?(): Promise<Queue>;
   claim(id: string, now: number, mayMove: () => Promise<boolean>): Promise<Claim | null>;
   act(claim: Claim, now: number): Promise<unknown>;
   start(id: string): Promise<unknown>;
@@ -56,7 +57,7 @@ export function createWorkQueue<Claim extends { plan: { kind: string } }>(
 
   const fillQueue = (superpipe({})('work-queue.fill') as PipelineAPI)
     .input(['limits'])
-    .pipe(() => adapter.queue(), 'limits', 'queue')
+    .pipe(() => (adapter.waiting ?? adapter.queue)(), 'limits', 'queue')
     .pipe(
       (queue: Queue, caps: Limits) => planWorkQueue(queue.candidates, queue.running, caps).start,
       ['queue', 'limits'],

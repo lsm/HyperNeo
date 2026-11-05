@@ -58,6 +58,9 @@ function sessionLinks(row: StoredLinks | null | undefined) {
   };
 }
 
+export const neoWorkerKey = (ref: WorkRef | null | undefined) =>
+  ref ? `${ref.adapter}:${ref.id}${ref.daemon ? `@${ref.daemon}` : ''}` : null;
+
 export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   read(
     method: 'unrecordedStarts'
@@ -225,14 +228,13 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     const store = new NeoAskTodoRepository(this.db);
     const asks = store.listOpenAsks();
     const todos = store.listTodosForAsks(asks.map((ask) => ask.id));
-    const worker = (ref: WorkRef | null | undefined) =>
-      ref ? `${ref.adapter}:${ref.id}${ref.daemon ? `@${ref.daemon}` : ''}` : null;
     const running = todos.flatMap((todo) =>
       todo.state === 'doing'
         ? [
             {
               group: asks.find((ask) => ask.id === todo.askId)?.projectId ?? null,
-              worker: worker(this.readRef(todo.id)),
+              worker: neoWorkerKey(this.readRef(todo.id)),
+              title: todo.title,
               idle: this.workerIdle(todo.id),
             },
           ]
@@ -260,7 +262,8 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
               group: ask.projectId ?? null,
               priority: next.priority,
               createdAt: next.createdAt,
-              worker: target.verb === 'send' ? worker(target.ref) : null,
+              worker: target.verb === 'send' ? neoWorkerKey(target.ref) : null,
+              ref: target.verb === 'send' ? target.ref : null,
             },
           ]
         : []
@@ -365,6 +368,31 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
         title: string;
       } | null) ?? null
     );
+  }
+
+  sendsNow(todoId: string, ref: WorkRef): boolean {
+    const target = this.get(todoId);
+    const state = new NeoAskTodoRepository(this.db).getTodo(todoId)?.state;
+    const worker = neoWorkerKey(ref);
+    return (
+      !state ||
+      (neoWorkerKey(this.readRef(todoId)) === worker &&
+        (state === 'doing' || state === 'blocked')) ||
+      (target?.verb === 'send' && neoWorkerKey(target.ref) === worker && state === 'doing')
+    );
+  }
+
+  queueOn(todoId: string, ref: WorkRef, message: string): 'message' | 'instruction' | 'none' {
+    const store = new NeoAskTodoRepository(this.db);
+    const todo = store.getTodo(todoId);
+    if (todo?.state !== 'todo' || todo.startedAt !== null) return 'none';
+    this.db
+      .prepare(`INSERT INTO neo_todo_sessions (todo_id, target) VALUES (?, ?)
+        ON CONFLICT(todo_id) DO UPDATE SET target = excluded.target`)
+      .run(todoId, JSON.stringify({ verb: 'send', ref }));
+    if (todo.instruction) return 'instruction';
+    store.updateTodo(todo, { instruction: message }, Date.now());
+    return 'message';
   }
 
   create(todoId: string, target: NeoDriverTarget): void {
@@ -495,5 +523,6 @@ export const neoTodoSessionWrites = defineRepositoryOp(
     'finishNudge',
     'noteWorkerStatus',
     'markWorkerUnusable',
+    'queueOn',
   ]
 );

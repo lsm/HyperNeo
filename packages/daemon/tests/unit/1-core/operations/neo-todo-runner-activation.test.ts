@@ -47,6 +47,11 @@ describe('Runtime runner commits before external effects', () => {
         effects.push('tell');
       },
       invoke: async (_caller, name) => {
+        if (name === 'work.status' && store.getTodo('first')?.state === 'todo')
+          return {
+            kind: 'completed',
+            value: { ok: true, value: { status: 'done', lastActivityAt: 1 } },
+          };
         expect(store.getTodo('first')?.state).toBe('doing');
         effects.push(name);
         return {
