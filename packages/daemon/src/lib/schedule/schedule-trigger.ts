@@ -1,5 +1,5 @@
 import type { TaskSchedule } from '@hyperneo/shared';
-import { getNextRunAt, isValidCronExpression } from './cron-utils.ts';
+import { getNextRunAt, isValidCronExpression } from '../scheduler/cron-utils.ts';
 import type { CreateScheduleInput, UpdateScheduleInput } from './schedule-service.ts';
 
 export function validateCreateTrigger(input: CreateScheduleInput): void {
