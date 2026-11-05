@@ -4,9 +4,10 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import type { DbOp } from '../../../../src/storage/db-gateway/db-op';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops';
-import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
+import type { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
 import type { SpaceExternalEventSourceConfig } from '../../../../src/lib/external-events/types';
 import { createWatchedTable, insertWatchedRow } from '../../helpers/github-watched-read-fixture';
+import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 
 const name = 'github.space.filter.write';
 type Args = { method: string; args: [string, boolean, number] };
@@ -56,7 +57,7 @@ describe('atomic GitHub filter writer construction', () => {
       enabled: 0,
     });
     insertWatchedRow(db, { id: 'synthetic-other', space_id: 'synthetic-two' });
-    store = new ExternalEventExtensionConfigStore(db);
+    store = createExternalEventConfigStore(db);
     await store.setSpaceConfig('synthetic-one', 'github', {
       spaceId: 'synthetic-one',
       source: 'github',

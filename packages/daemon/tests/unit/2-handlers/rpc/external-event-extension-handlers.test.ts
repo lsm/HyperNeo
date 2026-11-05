@@ -1,7 +1,7 @@
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
-import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
+import type { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
 import { ExternalEventExtensionManager } from '../../../../src/lib/external-events/extension-manager';
 import type {
   ExternalEventExtensionContext,
@@ -10,6 +10,7 @@ import type {
 } from '../../../../src/lib/external-events/types';
 import { setupExternalEventExtensionHandlers } from '../../../../src/lib/rpc-handlers';
 import type { RPCHandlerDependencies } from '../../../../src/lib/rpc-handlers';
+import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 
 type RequestHandler = (data: unknown, context?: unknown) => unknown;
 
@@ -22,7 +23,7 @@ let handlers: Map<string, RequestHandler>;
 
 beforeEach(() => {
   db = new Database(':memory:');
-  configStore = new ExternalEventExtensionConfigStore(db);
+  configStore = createExternalEventConfigStore(db);
   extensionContext = {
     publisher: { publish: async () => ({ outcome: 'published', eventId: 'evt-1' }) },
     config: configStore,

@@ -121,6 +121,9 @@ import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repos
 import { SpaceGoalService } from '../goals/service.ts';
 import { mergeEvolutionPolicy } from '../evolution/scope-service.ts';
 import type { RPCHandlerDependencies } from './index.ts';
+import type { ExternalEventService } from '../external-events/external-event-service.ts';
+import type { ExternalEventStore } from '../external-events/external-event-store.ts';
+import type { ExternalEventDeliveryState } from '../external-events/types.ts';
 import type { SpaceRpcHost } from './space-rpc.ts';
 import { createSpaceSessionPort } from '../space/runtime/space-session-port.ts';
 import type { FamilyOperationContext } from './family-operations/context.ts';
@@ -164,6 +167,42 @@ function toEpochMs(value: unknown): number | null {
 
 export interface SpaceRpcDependencies extends RPCHandlerDependencies {
   spaceManager: SpaceManager;
+  externalEventStore: ExternalEventStore;
+  externalEventService: ExternalEventService;
+}
+
+const EXTERNAL_EVENT_DELIVERY_STATES: ExternalEventDeliveryState[] = [
+  'pending',
+  'delivered',
+  'failed',
+];
+
+function setupSpaceExternalEventHandlers(deps: SpaceRpcDependencies): void {
+  deps.messageHub.onRequest('space.externalEvents.listDeliveries', async (data) => {
+    const params = (data ?? {}) as {
+      spaceId?: string;
+      status?: ExternalEventDeliveryState;
+      eventId?: string;
+      agentName?: string;
+      limit?: number;
+      offset?: number;
+    };
+    if (!params.spaceId || typeof params.spaceId !== 'string') {
+      throw new Error('spaceId is required');
+    }
+    if (params.status && !EXTERNAL_EVENT_DELIVERY_STATES.includes(params.status)) {
+      throw new Error(`Invalid delivery status: ${params.status}`);
+    }
+    const deliveries = deps.externalEventStore.listDeliveryLog({
+      spaceId: params.spaceId,
+      status: params.status,
+      eventId: params.eventId,
+      agentName: params.agentName,
+      limit: params.limit,
+      offset: params.offset,
+    });
+    return { deliveries };
+  });
 }
 
 async function setupSpaceServices(
@@ -1410,6 +1449,7 @@ function completeSpaceSetup(
 }
 
 export async function createSpaceRpc(deps: SpaceRpcDependencies, host: SpaceRpcHost) {
+  setupSpaceExternalEventHandlers(deps);
   setupSpaceMcpHandlers(
     deps.messageHub,
     deps.internalEventBus,
@@ -1432,6 +1472,7 @@ export async function createSpaceRpc(deps: SpaceRpcDependencies, host: SpaceRpcH
   const family = {
     deps,
     spaceManager: deps.spaceManager,
+    externalEventStore: deps.externalEventStore,
     spaceRuntimeService: services.spaceRuntimeService,
     taskAgentManager,
     spaceTaskManagerFactory: services.spaceTaskManagerFactory,

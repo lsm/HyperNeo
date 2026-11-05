@@ -95,8 +95,6 @@ describe('setupRPCHandlers without a Space factory', () => {
       },
       internalEventBus: noopProxy(),
       commandBus: noopProxy(),
-      externalEventStore: noopProxy(),
-      externalEventService: noopProxy(),
       externalEventExtensionManager: noopProxy(),
       externalEventExtensionConfigStore: noopProxy(),
       externalEventExtensionContext: noopProxy(),

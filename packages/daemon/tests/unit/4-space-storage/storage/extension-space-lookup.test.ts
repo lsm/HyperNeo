@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
 import { vi } from 'vitest';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
+import type { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
+import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 
 async function lookup() {
   const path = new URL(
@@ -19,7 +20,7 @@ describe('Space extension configuration query extraction', () => {
     db.exec(
       "CREATE TABLE spaces(id TEXT PRIMARY KEY);INSERT INTO spaces VALUES('a'),('b'),('c'),('d')"
     );
-    store = new ExternalEventExtensionConfigStore(db);
+    store = createExternalEventConfigStore(db);
   });
   afterEach(() => {
     vi.restoreAllMocks();

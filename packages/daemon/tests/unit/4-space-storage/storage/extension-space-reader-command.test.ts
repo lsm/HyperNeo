@@ -4,11 +4,11 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import type { DbOp } from '../../../../src/storage/db-gateway/db-op';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops';
-import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
 import {
   lookupSpaceExtensionConfig,
   listEnabledSpaceExtensionConfigs,
 } from '../../../../src/storage/repositories/space-extension-config-lookup';
+import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 const names = ['extension.space.config.read', 'extension.space.enabled.read'];
 async function operations() {
   const path = new URL(
@@ -51,7 +51,7 @@ describe('Space extension configuration reader construction', () => {
     db.exec(
       "CREATE TABLE spaces(id TEXT PRIMARY KEY);INSERT INTO spaces VALUES('synthetic-a'),('synthetic-b'),('synthetic-c')"
     );
-    new ExternalEventExtensionConfigStore(db);
+    createExternalEventConfigStore(db);
     reader = new ControlledReader(':memory:', db);
     for (const [id, origin, enabled, settings] of [
       [spaceId, source, 1, JSON.stringify(expected.settings)],

@@ -3,7 +3,8 @@ import { vi } from 'vitest';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { DbGateway, bindGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import type { DbOp } from '../../../../src/storage/db-gateway/db-op';
-import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
+import type { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
+import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 class ControlledReader extends DbGateway {
   attempts = 0;
   rejectNext = false;
@@ -39,7 +40,7 @@ describe('Global extension configuration getter reader activation', () => {
     };
   beforeEach(() => {
     db = new Database(':memory:');
-    store = new ExternalEventExtensionConfigStore(db);
+    store = createExternalEventConfigStore(db);
     reader = new ControlledReader(':memory:', db);
     bindGateway(db, reader);
     db.prepare(

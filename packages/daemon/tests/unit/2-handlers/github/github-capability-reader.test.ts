@@ -10,8 +10,9 @@ import { DbGateway, bindGateway } from '../../../../src/storage/db-gateway/db-ga
 import type { DbOp } from '../../../../src/storage/db-gateway/db-op';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { GitHubEventExtension } from '../../../../src/lib/external-events/github/github-event-extension';
-import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
+import type { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
 import { InProcessTransport, MessageHub } from '@hyperneo/shared';
+import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 
 const readName = 'github.polling.capability.read',
   writeName = 'github.space.polling.write';
@@ -72,7 +73,7 @@ describe('GitHub capability callback reader wiring', () => {
     ).run(space, space, 'synthetic-workspace', space, 1, 1);
     gateway = new CapabilityGateway(':memory:', db);
     bindGateway(db, gateway);
-    store = new ExternalEventExtensionConfigStore(db);
+    store = createExternalEventConfigStore(db);
     await store.setGlobalConfig('github', {
       source: 'github',
       globallyEnabled: true,

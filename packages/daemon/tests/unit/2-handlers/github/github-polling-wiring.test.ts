@@ -12,8 +12,9 @@ import { DbGateway, bindGateway } from '../../../../src/storage/db-gateway/db-ga
 import type { DbOp } from '../../../../src/storage/db-gateway/db-op';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { GitHubEventExtension } from '../../../../src/lib/external-events/github/github-event-extension';
-import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
+import type { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
 import { InProcessTransport, MessageHub } from '@hyperneo/shared';
+import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 
 const opName = 'github.space.polling.write',
   spaceId = 'synthetic-polling-wire';
@@ -65,7 +66,7 @@ describe('GitHub polling RPC writer wiring', () => {
     ).run(spaceId, spaceId, 'synthetic-polling-workspace', 'Synthetic polling', 1, 1);
     gateway = new ControlledGateway(':memory:', db);
     bindGateway(db, gateway);
-    store = new ExternalEventExtensionConfigStore(db);
+    store = createExternalEventConfigStore(db);
     await store.setGlobalConfig('github', {
       source: 'github',
       globallyEnabled: true,
@@ -200,9 +201,9 @@ describe('GitHub polling RPC writer wiring', () => {
       const measured = JSON.parse(readFileSync(output, 'utf8'));
       expect(measured).toMatchObject({
         phase: 'wired',
-        fresh: 154,
+        fresh: 157,
         dataExcluded: 272,
-        ownedKnown: 426,
+        ownedKnown: 429,
         interfaceLines: 67,
       });
       expect(measured.data).toHaveLength(7);

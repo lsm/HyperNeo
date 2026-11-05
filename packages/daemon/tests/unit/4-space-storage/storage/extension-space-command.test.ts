@@ -4,9 +4,10 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import type { DbOp } from '../../../../src/storage/db-gateway/db-op';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops';
-import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
+import type { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
 import { persistSpaceExtensionConfig } from '../../../../src/storage/repositories/space-extension-config-persist';
 import type { SpaceExternalEventSourceConfig } from '../../../../src/lib/external-events/types';
+import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 
 const name = 'extension.space.config.write';
 type Args = { method: string; args: [string, string, SpaceExternalEventSourceConfig, number] };
@@ -52,7 +53,7 @@ describe('Space extension writer command construction', () => {
     db.exec(
       "PRAGMA foreign_keys=ON;CREATE TABLE spaces(id TEXT PRIMARY KEY);INSERT INTO spaces VALUES('synthetic-one'),('synthetic-two')"
     );
-    store = new ExternalEventExtensionConfigStore(db);
+    store = createExternalEventConfigStore(db);
     gateway = new FaultGateway(':memory:', db);
   });
   afterEach(async () => {

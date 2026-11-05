@@ -5,8 +5,9 @@ import { DbGateway, bindGateway } from '../../../../src/storage/db-gateway/db-ga
 import type { DbOp } from '../../../../src/storage/db-gateway/db-op';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { GitHubEventExtension } from '../../../../src/lib/external-events/github/github-event-extension';
-import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
+import type { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
 import { InProcessTransport, MessageHub } from '@hyperneo/shared';
+import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 
 const opName = 'github.space.enabled.write',
   spaceId = 'synthetic-wire-space';
@@ -57,7 +58,7 @@ describe('GitHub Space enable RPC writer wiring', () => {
     ).run(spaceId, spaceId, 'synthetic-wire-workspace', 'Synthetic wire', 1, 1);
     gateway = new ControlledGateway(':memory:', db);
     bindGateway(db, gateway);
-    store = new ExternalEventExtensionConfigStore(db);
+    store = createExternalEventConfigStore(db);
     await store.setGlobalConfig('github', {
       source: 'github',
       globallyEnabled: true,

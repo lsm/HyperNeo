@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
 import { vi } from 'vitest';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
+import type { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
 import type { ExternalEventExtensionConfig } from '../../../../src/lib/external-events/types';
+import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 
 type Persist = (
   db: Database,
@@ -32,7 +33,7 @@ describe('global extension configuration SQL extraction', () => {
   let store: ExternalEventExtensionConfigStore;
   beforeEach(() => {
     db = new Database(':memory:');
-    store = new ExternalEventExtensionConfigStore(db);
+    store = createExternalEventConfigStore(db);
   });
   afterEach(() => {
     vi.restoreAllMocks();
