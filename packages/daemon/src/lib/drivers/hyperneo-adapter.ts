@@ -134,7 +134,8 @@ export interface HyperneoAdapterDeps {
     message: string,
     from: string,
     messageUuid: string,
-    deliveryMode?: MailboxDeliveryMode
+    deliveryMode?: MailboxDeliveryMode,
+    once?: boolean
   ) => Promise<MailboxHandoffOutcome>;
   sessions: HyperneoSessionControl;
   neoFolder: () => string;
@@ -529,13 +530,14 @@ export async function deliverToHyperneo(
   deps: HyperneoAdapterDeps,
   deliveryMode?: MailboxDeliveryMode
 ): Promise<Result<WorkDelivery>> {
-  const inputId = crypto.randomUUID();
+  const inputId = context.idempotencyKey ?? crypto.randomUUID();
   const outcome = await deps.handoff(
     row.id,
     withReplyLine(message, context.from),
     context.from,
     inputId,
-    deliveryMode
+    deliveryMode,
+    !!context.idempotencyKey
   );
   if (outcome.kind === 'rejected') return reject('not_delivered', outcome.reason);
   return {

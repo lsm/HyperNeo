@@ -29,6 +29,7 @@ export interface MessagingOperationDependencies {
   resolveMessageAgent?: AgentTargetResolver;
   sessionSent?: SessionSentObserver;
   isNeo?: (sessionId: string) => boolean;
+  inNeoProject?: (sessionId: string) => boolean;
   workerReport?: SessionReportHandler;
 }
 
@@ -47,7 +48,8 @@ export function createDaemonOperationCatalog(
       messaging.sessionTitle,
       messaging.sessionSent,
       messaging.isNeo,
-      messaging.workerReport
+      messaging.workerReport,
+      messaging.inNeoProject
     ),
     createAttachDaemonOperation(remoteDaemons),
     createProbeDaemonOperation(remoteDaemons),

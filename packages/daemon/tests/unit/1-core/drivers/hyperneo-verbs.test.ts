@@ -97,6 +97,7 @@ describe('hyperneo adapter send and status', () => {
     from: string;
     messageUuid: string;
     deliveryMode?: string;
+    once?: boolean;
   }>;
   let outcome: MailboxHandoffOutcome;
   let events: string[];
@@ -175,13 +176,14 @@ describe('hyperneo adapter send and status', () => {
       db: () => db,
       machine: 'imac',
       searchChats: async () => [],
-      handoff: async (sessionId, message, from, messageUuid, deliveryMode) => {
+      handoff: async (sessionId, message, from, messageUuid, deliveryMode, once) => {
         handed.push({
           sessionId,
           message,
           from,
           messageUuid,
           ...(deliveryMode ? { deliveryMode } : {}),
+          ...(once ? { once } : {}),
         });
         return outcome;
       },
@@ -332,6 +334,19 @@ describe('hyperneo adapter send and status', () => {
       expect(handed).toEqual([]);
     }
   );
+
+  test('send uses the idempotency key as the input id and asks for one delivery', async () => {
+    const sent = await adapter().send!(ref('idle'), 'Once', {
+      from: 'session:neo',
+      caller: { source: 'internal', role: 'neo' },
+      idempotencyKey: 'answer-key',
+    });
+    expect(sent).toMatchObject({
+      ok: true,
+      value: { receipt: { executionId: 'idle', inputId: 'answer-key' } },
+    });
+    expect(handed.at(-1)).toMatchObject({ messageUuid: 'answer-key', once: true });
+  });
 
   test('queue does not return a submission receipt when mailbox admission fails', async () => {
     outcome = { kind: 'rejected', reason: 'mailbox unavailable' };

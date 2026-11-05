@@ -98,13 +98,13 @@ async function fixture(path = ':memory:', adapter = 'hyperneo') {
     sessions,
     async (_caller, name, input) => {
       if (unavailable)
-        return { kind: 'completed', value: { kind: 'rejected', reason: 'Unavailable' } };
+        return {
+          kind: 'completed',
+          value: { ok: false, reason: 'not_delivered', detail: 'Unavailable' },
+        };
       if (adapter !== 'hyperneo') return invokeOperation(native, name, input, _caller);
-      messages.set(String(input.idempotencyKey), String(input.text));
-      return {
-        kind: 'completed',
-        value: { kind: 'accepted', messageId: 'accepted-input', mailboxId: 'mailbox' },
-      };
+      messages.set(String(input.idempotencyKey), String(input.message));
+      return { kind: 'completed', value: { ok: true, value: { delivered: true } } };
     },
     async (_session, key, text) => {
       notes.set(key, String(text));

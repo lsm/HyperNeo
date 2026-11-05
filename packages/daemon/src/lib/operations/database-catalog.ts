@@ -21,6 +21,7 @@ import { createDaemonSnapshotOperation } from '../inventory/snapshot-operation.t
 import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
 import { createSessionInspectionOperation } from '../inventory/session-inspection.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
+import { neoFolderPath } from '../neo/folder.ts';
 import { NeoSessionMessageRepository } from '../../storage/repositories/neo-session-message-repository.ts';
 import { planNeoSessionMessage } from '../neo/session-messages.ts';
 import { listSessionMessages } from '../session/space-session-reads.ts';
@@ -38,7 +39,7 @@ export function contributeDefaultOperations(id: string, build: DefaultOperations
 
 function readSessionField(
   db: Database,
-  field: 'status' | 'title',
+  field: 'status' | 'title' | 'workspace_path',
   sessionId: string
 ): string | null {
   const row = db
@@ -64,6 +65,8 @@ export function createDatabaseOperationCatalog(
       sessionStatus: (sessionId) => readSessionField(db, 'status', sessionId),
       isNeo: (sessionId) =>
         new NeoRepository(db.getDatabase()).getBindingBySession(sessionId)?.kind === 'neo',
+      inNeoProject: (sessionId) =>
+        readSessionField(db, 'workspace_path', sessionId) === neoFolderPath(),
       sessionTitle: async (id) => {
         const title = readSessionField(db, 'title', id);
         return title !== null

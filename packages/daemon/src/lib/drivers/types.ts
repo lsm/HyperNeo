@@ -301,6 +301,7 @@ export interface StartRequest {
 export interface WorkCallContext {
   from: string;
   caller: OperationCaller;
+  idempotencyKey?: string;
 }
 
 export type WorkRenamed = { renamed: true; title: string };
