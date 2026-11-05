@@ -73,7 +73,10 @@ import type { EnsureSessionOutcome, SessionTarget } from '../../session-resoluti
 import { SpaceActorRegistryAdapter } from '../../messaging/actor-registry.ts';
 import type { OwnedAgentLookup } from '../../agents/unified-agent-events.ts';
 import { unifiedAgentRecordExists } from '../../agents/worker-long-horizon-mapper.ts';
-import { encodeActorIdComponent, resolveAgentSessionId } from '../long-term-agent-session.ts';
+import {
+  encodeActorIdComponent,
+  resolveAgentSessionId,
+} from '../../session-resolution/long-term-agent-session.ts';
 import { SpaceAgentTemplateManager } from '../../agents/template-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';

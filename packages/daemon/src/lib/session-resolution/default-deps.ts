@@ -8,7 +8,7 @@ import {
 import type { SessionManager } from '../session-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
 import type { TaskAgentManager } from '../space/runtime/task-agent-manager.ts';
-import { resolveAgentSessionId } from '../space/long-term-agent-session.ts';
+import { resolveAgentSessionId } from './long-term-agent-session.ts';
 import { type SessionResolutionDeps, workerTaskPhaseOf } from './deps.ts';
 import { resolveLiveSession, sessionUnavailable } from './session-lookup.ts';
 
