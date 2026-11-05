@@ -30,13 +30,15 @@ vi.mock('../NeoSessionPane.tsx', () => ({
   NeoSessionPane: ({
     sessionId,
     title,
+    label,
     onClose,
   }: {
     sessionId: string;
     title: string;
+    label?: string;
     onClose: () => void;
   }) => (
-    <div data-testid="neo-chat-panel" data-session-id={sessionId} data-title={title}>
+    <div data-testid="neo-chat-panel" data-session-id={sessionId} data-title={label ?? title}>
       <button type="button" onClick={onClose}>
         Close chat
       </button>

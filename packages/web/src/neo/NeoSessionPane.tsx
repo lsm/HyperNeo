@@ -64,10 +64,12 @@ function SessionEntryView({ entry }: { entry: SessionEntry }) {
 export function NeoSessionPane({
   sessionId,
   title,
+  label: callerLabel,
   onClose,
 }: {
   sessionId: string;
   title: string;
+  label?: string;
   onClose?: () => void;
 }) {
   const overlay = !!onClose;
@@ -137,7 +139,7 @@ export function NeoSessionPane({
       setLoadingOlder(false);
     }
   }
-  const label = store.sessionState.value?.worker?.label ?? title;
+  const label = callerLabel ?? store.sessionState.value?.worker?.label ?? title;
   useEffect(() => {
     if (!overlay) artifactPreviewWorkspace.update({ sessionId, title: label });
   }, [overlay, sessionId, label]);

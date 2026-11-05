@@ -1081,7 +1081,8 @@ export function NeoLive() {
           <NeoSessionPane
             key={chat.sessionId}
             sessionId={chat.sessionId}
-            title={chat.label ?? sessionTitle(chat.sessionId)}
+            title={sessionTitle(chat.sessionId)}
+            label={chat.label}
             onClose={closeChat}
           />
         )}
@@ -1196,17 +1197,19 @@ export function NeoLive() {
         }
         suspended={!!chat || referenceWork}
         work={columns ? { id: 'neo-preview-work-panel', count: workCount } : undefined}
-        renderSession={(sessionId) => (
-          <NeoSessionPane
-            key={sessionId}
-            sessionId={sessionId}
-            title={
-              artifactPreviewWorkspace.state.value.files.find(
-                (file) => file.sessionId === sessionId
-              )?.title ?? sessionTitle(sessionId)
-            }
-          />
-        )}
+        renderSession={(sessionId) => {
+          const named = artifactPreviewWorkspace.state.value.files.find(
+            (file) => file.sessionId === sessionId
+          )?.title;
+          return (
+            <NeoSessionPane
+              key={sessionId}
+              sessionId={sessionId}
+              title={sessionTitle(sessionId)}
+              label={named === sessionTitle(sessionId) ? undefined : named}
+            />
+          );
+        }}
         markdownClass="neo-message-assistant neo-markdown neo-markdown-assistant text-base leading-relaxed"
       />
     </div>
