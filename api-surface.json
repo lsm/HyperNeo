@@ -54475,6 +54475,12 @@
             "minLength": 1,
             "type": "string"
           },
+          "idempotencyKey": {
+            "description": "A repeat with the same key does not reach a HyperNeo session twice.",
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
           "message": {
             "minLength": 1,
             "type": "string"
@@ -55201,6 +55207,12 @@
         "properties": {
           "from": {
             "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "idempotencyKey": {
+            "description": "A repeat with the same key does not reach a HyperNeo session twice.",
+            "maxLength": 200,
             "minLength": 1,
             "type": "string"
           },

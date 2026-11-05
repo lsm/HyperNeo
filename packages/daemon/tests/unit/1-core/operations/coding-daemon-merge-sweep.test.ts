@@ -128,6 +128,7 @@ const sweep = (customSpawn: SpawnFn = spawn, overrides: Partial<CodingSweepDeps>
     ledger,
     new CodingPrEventRepository(db),
     {
+      host: 'github.com',
       tell: async () => {
         throw new Error('Unowned PR must route to Neo');
       },
@@ -602,7 +603,7 @@ test('daemon execution suppresses owner merge events and reminders', async () =>
     messages.push(args.map(String).join('\n'));
     return true;
   };
-  const delivery = { tell: receive, wake: receive };
+  const delivery = { host: 'github.com', tell: receive, wake: receive };
   await deliverCodingPrEvents(new CodingPrEventRepository(db), [], delivery);
   await sweepCodingPrs(new CodingPrSweepRepository(db), delivery, 20 * 60_000);
   expect(messages).toEqual([]);
@@ -1010,8 +1011,16 @@ test('an external merge after a failed attempt still notifies its owner through 
     return true;
   };
   const events = new CodingPrEventRepository(db);
-  await deliverCodingPrEvents(events, transitions, { tell: receive, wake: async () => false });
-  await deliverCodingPrEvents(events, [], { tell: receive, wake: async () => false });
+  await deliverCodingPrEvents(events, transitions, {
+    host: 'github.com',
+    tell: receive,
+    wake: async () => false,
+  });
+  await deliverCodingPrEvents(events, [], {
+    host: 'github.com',
+    tell: receive,
+    wake: async () => false,
+  });
   expect(notices).toEqual([expect.stringContaining('was merged on head')]);
   expect(merges()).toHaveLength(1);
 });

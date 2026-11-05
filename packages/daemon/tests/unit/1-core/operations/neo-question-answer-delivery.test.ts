@@ -23,7 +23,7 @@ import { createTables, runMigrations } from '../../../../src/storage/schema/inde
 import { createNeoQuestionAnswerDelivery } from '../../../../src/lib/neo/question-answer-delivery.ts';
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 import type { NeoTodoRunnerDeps } from '../../../../src/lib/neo/todo-runner.ts';
-import { createSendMessageOperation } from '../../../../src/lib/messaging/message-send.ts';
+import { handoffPromptToMailbox } from '../../../../src/lib/mailbox/handoff.ts';
 import { workInput, recentWorkInputs } from '../../../../src/lib/drivers/work-messages.ts';
 import { readHyperneoInputs } from '../../../../src/lib/drivers/hyperneo-adapter.ts';
 import { readWorkInputTurn } from '../../../../src/storage/work-turns.ts';
@@ -95,12 +95,13 @@ async function deliveryFixture() {
     _name,
     input
   ): Promise<OperationOutcome> => {
-    if (failed) return { kind: 'completed', value: { kind: 'rejected', reason: 'Unavailable' } };
-    inputs.set(String(input.idempotencyKey), String(input.text));
-    return {
-      kind: 'completed',
-      value: { kind: 'accepted', messageId: 'accepted-input', mailboxId: 'mailbox' },
-    };
+    if (failed)
+      return {
+        kind: 'completed',
+        value: { ok: false, reason: 'not_delivered', detail: 'Unavailable' },
+      };
+    inputs.set(String(input.idempotencyKey), String(input.message));
+    return { kind: 'completed', value: { ok: true, value: { delivered: true } } };
   };
   const flush = createNeoQuestionAnswerDelivery(
     f.store,
@@ -164,92 +165,32 @@ test('a refused HyperNeo admission stays held until a successful retry', async (
   }
 });
 
-test('a competing duplicate rejection cannot strand an admitted answer or its hold', async () => {
+test('a lost acknowledgement resends the same key and the mailbox admits it once', async () => {
   const f = await fixture();
   f.store.answerQuestion(f.question, ['Staging'], 'button', 4);
-  let entered!: () => void;
-  let release!: () => void;
-  const admitted = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  const barrier = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const registry = createOperationRegistry([
-    createSendMessageOperation(
-      new JobQueueRepository(f.db),
-      () => 'active',
-      undefined,
-      undefined,
-      async () => {
-        entered();
-        await barrier;
-        return 'Neo';
-      }
-    ),
-  ]);
-  const outcomes: OperationOutcome[] = [];
-  const flush = createNeoQuestionAnswerDelivery(
-    f.store,
-    new NeoTodoSessionRepository(f.db),
-    async (caller, name, input) => {
-      const outcome = await invokeOperation(registry, name, input, caller);
-      outcomes.push(outcome);
-      return outcome;
-    },
-    async () => {},
-    async (todo) => f.store.recompute(todo, {}, 8, { state: 'no_opinion' }, async () => {}),
-    (error) => {
-      throw error;
-    }
-  );
-  const winner = flush(f.question.id);
-  try {
-    await admitted;
-    await flush();
-    expect(outcomes).toMatchObject([
-      {
-        kind: 'completed',
-        value: { kind: 'rejected', reason: expect.stringContaining('duplicate') },
-      },
-    ]);
-    release();
-    await winner;
-    expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'accepted' }] });
-    expect(f.store.getTodo('todo')).toMatchObject({ state: 'doing', blockedBy: null });
-  } finally {
-    release();
-    await winner;
-    f.db.close();
-  }
-});
-
-test('a lost acknowledgement replays its durable HyperNeo receipt without another admission', async () => {
-  const f = await fixture();
-  f.store.answerQuestion(f.question, ['Staging'], 'button', 4);
-  let admissions = 0;
-  const registry = createOperationRegistry([
-    createSendMessageOperation(
-      new JobQueueRepository(f.db),
-      () => 'active',
-      undefined,
-      undefined,
-      () => {
-        admissions++;
-        return 'Neo';
-      }
-    ),
-  ]);
+  const jobQueue = new JobQueueRepository(f.db);
   let loseReply = true;
   const warnings: unknown[] = [];
   const createDelivery = () =>
     createNeoQuestionAnswerDelivery(
       f.store,
       new NeoTodoSessionRepository(f.db),
-      async (caller, name, input) => {
-        const outcome = await invokeOperation(registry, name, input, caller);
+      async (_caller, _name, input) => {
+        const admitted = await handoffPromptToMailbox({
+          to: 'session:worker',
+          origin: 'session:neo',
+          message: {
+            type: 'user',
+            message: { role: 'user', content: String(input.message) },
+            parent_tool_use_id: null,
+          },
+          messageUuid: String(input.idempotencyKey),
+          once: true,
+          jobQueue,
+        });
+        expect(admitted.kind).toBe('enqueued');
         if (loseReply) throw new Error('Synthetic lost acknowledgement');
-        return outcome;
+        return { kind: 'completed', value: { ok: true, value: { delivered: true } } };
       },
       async () => {},
       async (todo) => f.store.recompute(todo, {}, 8, { state: 'no_opinion' }, async () => {}),
@@ -266,7 +207,7 @@ test('a lost acknowledgement replays its durable HyperNeo receipt without anothe
     await createDelivery()();
     expect(await f.read()).toMatchObject({ answerDelivery: [{ state: 'accepted' }] });
     expect(f.store.getTodo('todo')).toMatchObject({ state: 'doing', blockedBy: null });
-    expect(admissions).toBe(1);
+    expect(jobQueue.listActiveByPayload('mailbox', { 'to.sessionId': 'worker' })).toHaveLength(1);
   } finally {
     f.db.close();
   }
@@ -589,15 +530,18 @@ test('a button answer never waits for an unrelated unavailable HyperNeo session'
     f.store,
     sessions,
     async (_caller, _name, input) => {
-      if (input.to !== f.source.id) {
+      if ((input.ref as { id: string }).id !== f.source.id) {
         announceStale();
         await blocked;
-        return { kind: 'completed', value: { kind: 'rejected', reason: 'Unavailable' } };
+        return {
+          kind: 'completed',
+          value: { ok: false, reason: 'not_delivered', detail: 'Unavailable' },
+        };
       }
       announceTarget();
       return {
         kind: 'completed',
-        value: { kind: 'accepted', messageId: 'target-input', mailboxId: 'target-mailbox' },
+        value: { ok: true, value: { delivered: true } },
       };
     },
     async () => {},

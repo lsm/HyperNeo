@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../../../../../../', import.meta.url));
 const runner = join(root, 'scripts/bun-native-smoke.sh');
 const proofs = [
+  ['bun-daemon-boot-probe'],
   ['neo-settings-writer', 'verify'],
   ['lane-b-cleanup-enqueue'],
   ['workflow-identity-contract', 'verify'],
@@ -213,7 +214,7 @@ describe('Bun native proof matrix registration', () => {
       const result = f.invoke();
       expect(result.status).toBe(0);
       expect(result.stdout).toContain('117 legacy helpers');
-      expect(result.stdout).toContain('143 proof cases');
+      expect(result.stdout).toContain('144 proof cases');
       expect(f.sequence()).toEqual(cases);
       const homes = [];
       for (const [name, ...mode] of proofs) {
@@ -231,7 +232,7 @@ describe('Bun native proof matrix registration', () => {
         expect(helper).toBe(
           join(
             root,
-            ['bun-shared-reader-probe', 'bun-gateway-probe'].includes(name)
+            ['bun-daemon-boot-probe', 'bun-shared-reader-probe', 'bun-gateway-probe'].includes(name)
               ? 'scripts'
               : '.claude/skills/verify',
             name + '.ts'
@@ -245,13 +246,14 @@ describe('Bun native proof matrix registration', () => {
         expect(existsSync(tmp)).toBe(false);
         expect(existsSync(data)).toBe(false);
       }
-      expect(new Set(homes).size).toBe(143);
+      expect(new Set(homes).size).toBe(144);
     } finally {
       f.cleanup();
     }
   });
 
   test.each([
+    'bun-daemon-boot-probe',
     'lane-c-provider-rpc-writes',
     'coding-daemon-merge-sweep-human-new-head',
     'task-schedule-pause-writer',

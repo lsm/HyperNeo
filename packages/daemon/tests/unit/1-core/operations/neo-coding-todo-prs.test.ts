@@ -449,16 +449,9 @@ describe('codingTodoOwnPrs', () => {
 
 describe('CodingTodoPrRepository.holder', () => {
   test('a PR url follows the configured GitHub host', () => {
-    const host = process.env.GH_HOST;
-    process.env.GH_HOST = 'github.example.test';
-    try {
-      expect(codingPrUrl({ repo: 'lsm/hyperneo', number: 9 })).toBe(
-        'https://github.example.test/lsm/hyperneo/pull/9'
-      );
-    } finally {
-      if (host === undefined) delete process.env.GH_HOST;
-      else process.env.GH_HOST = host;
-    }
+    expect(codingPrUrl('github.example.test', { repo: 'lsm/hyperneo', number: 9 })).toBe(
+      'https://github.example.test/lsm/hyperneo/pull/9'
+    );
   });
 
   test('finds the open todo on this session that holds the PR, not one that merely shares it', () => {
