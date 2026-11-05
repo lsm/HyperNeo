@@ -49,7 +49,7 @@ export function decideSessionProvider(
   };
 }
 
-async function isProviderOn(provider: Provider): Promise<boolean> {
+export async function isProviderOn(provider: Provider): Promise<boolean> {
   try {
     return await provider.isAvailable();
   } catch {

@@ -6148,6 +6148,18 @@ describe('AgentSession', () => {
   });
 
   describe('driveDeliveryTurn — admission decision table (A1c)', () => {
+    let providersOn: ReturnType<typeof spyOn>[] = [];
+
+    beforeEach(() => {
+      providersOn = initializeProviders()
+        .getAll()
+        .map((provider) => spyOn(provider, 'isAvailable').mockImplementation(async () => true));
+    });
+
+    afterEach(() => {
+      for (const spy of providersOn) spy.mockRestore();
+    });
+
     const steerUuid = 'steer-msg-uuid';
     const steerContent = 'steer-content';
     const sessionId = 'sess-steer-a1c';
@@ -6428,6 +6440,7 @@ describe('AgentSession', () => {
     it.each([
       ['a pinned', { provider: 'custom:removed' as Session['config']['provider'] }],
       ['an unpinned', { model: 'model-no-provider-owns' }],
+      ['a logged-out pinned', { provider: 'glm' as Session['config']['provider'] }],
     ])('keeps %s session waiting and says why once when no provider is on', async (_, config) => {
       const db = await createTestDb();
       const registry = initializeProviders();
@@ -6893,6 +6906,18 @@ describe('AgentSession', () => {
   });
 
   describe('delivery continuation hardening (A3a)', () => {
+    let providersOn: ReturnType<typeof spyOn>[] = [];
+
+    beforeEach(() => {
+      providersOn = initializeProviders()
+        .getAll()
+        .map((provider) => spyOn(provider, 'isAvailable').mockImplementation(async () => true));
+    });
+
+    afterEach(() => {
+      for (const spy of providersOn) spy.mockRestore();
+    });
+
     const hardUuid = 'hard-msg-uuid';
     const hardContent = 'hard-content';
 

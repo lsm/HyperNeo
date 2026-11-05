@@ -180,7 +180,11 @@ import {
   recordClassifiedProviderFailure,
 } from '../providers/provider-failure-store.ts';
 import { type ProviderRegistry, resolveAvailableQueryProvider } from '../providers/registry.ts';
-import { NO_PROVIDER_RETRY_MS, planSessionProvider } from '../session/session-provider-plan.ts';
+import {
+  isProviderOn,
+  NO_PROVIDER_RETRY_MS,
+  planSessionProvider,
+} from '../session/session-provider-plan.ts';
 import {
   AskUserQuestionHandler,
   type AskUserQuestionHandlerContext,
@@ -2780,7 +2784,7 @@ export class AgentSession
               this.session.config.model || 'sonnet',
               pinned
             );
-            if (!provider) {
+            if (!provider || !(await isProviderOn(provider))) {
               const blocked = await this.applySessionProviderPlan(registry, pinned);
               if (blocked) return blocked;
             } else {
