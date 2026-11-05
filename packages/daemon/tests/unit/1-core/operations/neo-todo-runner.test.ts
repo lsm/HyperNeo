@@ -3149,6 +3149,78 @@ describe('held sends', () => {
     }
   });
 
+  test('a send interrupted after it started is not repeated, and Neo is told', async () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      await h.sessions.held.hold(held(todo.id, 'a'), 1);
+      await h.sessions.held.setSending('a', 2);
+      h.setStatus({ ok: true, value: { status: 'done', lastActivityAt: 3 } });
+      await h.runner.refresh(() => {});
+      expect(sends(h)).toEqual([]);
+      expect(h.told.join()).toContain('may not have reached its worker');
+      expect(h.sessions.held.nextPerWorker()).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a send that throws is not repeated on the next refresh', async () => {
+    const h = setup(null, ':memory:', (name) => {
+      if (name === 'work.send') throw new Error('connection lost');
+    });
+    try {
+      const todo = h.add();
+      await h.sessions.held.hold(held(todo.id, 'a'), 1);
+      h.setStatus({ ok: true, value: { status: 'done', lastActivityAt: 2 } });
+      await h.runner.refresh(() => {});
+      expect(h.told).toEqual([]);
+      await h.runner.refresh(() => {});
+      expect(h.told.join()).toContain('may not have reached its worker');
+      expect(h.sessions.held.nextPerWorker()).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a refresh overlapping a send in flight leaves it alone', async () => {
+    let finish = () => {};
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const h = setup(null, ':memory:', (name) => (name === 'work.send' ? gate : undefined));
+    try {
+      const todo = h.add();
+      await h.sessions.held.hold(held(todo.id, 'a'), 1);
+      h.setStatus({ ok: true, value: { status: 'done', lastActivityAt: 2 } });
+      const first = h.runner.refresh(() => {});
+      while (!h.sessions.held.nextPerWorker()[0]?.sending)
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      await h.runner.refresh(() => {});
+      expect(h.told).toEqual([]);
+      finish();
+      await first;
+      expect(sends(h)).toHaveLength(1);
+      expect(h.sessions.held.nextPerWorker()).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a send the door holds again goes back to waiting', async () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      await h.sessions.held.hold(held(todo.id, 'a'), 1);
+      h.setStatus({ ok: true, value: { status: 'done', lastActivityAt: 2 } });
+      h.setSend({ ok: true, value: { delivered: false, held: true } });
+      await h.runner.refresh(() => {});
+      expect(h.sessions.held.nextPerWorker()[0]?.sending).toBe(false);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('a held send that cannot reach its worker tells Neo', async () => {
     const h = setup();
     try {
