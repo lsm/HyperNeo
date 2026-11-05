@@ -101,7 +101,7 @@ export function neoEvidenceRefusal(
   const path = isEvidence(check) ? check.params.path : null;
   if (!repo || typeof path !== 'string' || JSON.stringify(check) === JSON.stringify(previous))
     return null;
-  const inside = relative(userFolder, path);
+  const inside = relative(userFolder.toLowerCase(), path.toLowerCase());
   return inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)
     ? null
     : `evidence_in_user_folder: ${path} is in the human's folder, which holds only results they should see. Omit params.path; the daemon assigns one and gives it to the worker.`;
