@@ -49,6 +49,7 @@ describe('Bun daemon boot probe construction', () => {
         statusEmpty: true,
         pageEmpty: true,
         liveEmpty: true,
+        snapshotBeforeAck: true,
         shutdownCode: 0,
         shutdownSignal: null,
         gracefulShutdown: true,
@@ -61,6 +62,58 @@ describe('Bun daemon boot probe construction', () => {
         'Graceful shutdown complete'
       );
     } finally {
+      rmSync(run, { recursive: true, force: true });
+    }
+  }, 90000);
+  test('rejects a subscribe acknowledgement released before its held snapshot', async () => {
+    const run = realpathSync(mkdtempSync(join(tmpdir(), 'bun-boot-order-')));
+    const parent = spawn(
+      'bun',
+      [
+        '--preload',
+        fileURLToPath(new URL('../../fixtures/bun-boot-ack-order.mjs', import.meta.url)),
+        fileURLToPath(
+          new URL('../../../../../../scripts/bun-daemon-boot-probe.ts', import.meta.url)
+        ),
+        run,
+      ],
+      {
+        env: {
+          PATH: process.env.PATH,
+          HOME: join(run, 'home'),
+          TMPDIR: run,
+          NODE_ENV: 'test',
+          HYPERNEO_DATA_DIR: join(run, 'data'),
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }
+    );
+    let output = '';
+    parent.stdout?.on('data', (data) => {
+      output += data.toString();
+    });
+    parent.stderr?.on('data', (data) => {
+      output += data.toString();
+    });
+    const closed = new Promise<number | null>((done, reject) => {
+      parent.once('close', done);
+      parent.once('error', reject);
+    });
+    closed.catch(() => undefined);
+    const deadline = setTimeout(() => parent.kill('SIGTERM'), 60000);
+    try {
+      const code = await closed;
+      const order = JSON.parse(readFileSync(join(run, 'evidence/boot-frame-order.json'), 'utf8'));
+      expect(order.slice(0, 2)).toEqual(['snapshot-held', 'ack-released']);
+      expect(code, output).toBe(1);
+      const evidence = JSON.parse(readFileSync(join(run, 'evidence/bun-daemon-boot.json'), 'utf8'));
+      expect(evidence.pass).not.toBe(true);
+      expect(evidence.error).toContain('Snapshot must precede subscribe acknowledgement');
+      expect(evidence.childExited).toBe(true);
+      expect(() => process.kill(evidence.pid, 0)).toThrow();
+    } finally {
+      clearTimeout(deadline);
+      await stopOwnedProbe(parent, closed);
       rmSync(run, { recursive: true, force: true });
     }
   }, 90000);

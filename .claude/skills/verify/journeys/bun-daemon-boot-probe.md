@@ -12,7 +12,18 @@ a refusing GitHub stub; no model turn or live daemon is involved.
 Commit the unavailable-probe regression before construction. After construction,
 require HTTP 200, an authenticated local-credential WebSocket health response,
 empty manual-session SDK status/page/live-query results and >80 migrated tables.
-Open the database read-only only for the table count; do not seed or mutate it.
+The live snapshot must already be present when its subscribe acknowledgement
+arrives, matching the legacy Deno check. Record snapshotBeforeAck=true only after
+that assertion; do not wait for a late snapshot to turn an ordering failure into
+success. Open the database read-only only for the table count; do not seed or
+mutate it.
+
+The native regression preloads tests/unit/fixtures/bun-boot-ack-order.mjs from
+the daemon package into the probe process only. It holds the actual incoming
+snapshot at the client socket boundary, forwards the real acknowledgement and
+releases the snapshot later. That order must fail with the ordering assertion,
+pass unset and the owned daemon child reaped; a normal run must still pass.
+The daemon, local credential and RPC requests remain real and isolated.
 
 Send real SIGTERM to the owned child and require code 0 plus the graceful
 shutdown log, not a forced kill. Failure cleanup closes the owned socket and

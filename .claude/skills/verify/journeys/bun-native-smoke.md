@@ -6,7 +6,8 @@ entry point with one new absolute evidence directory:
     bash scripts/bun-native-smoke.sh /absolute/fresh/evidence-directory
 
 The existing Bun daemon boot probe runs first in its own fresh wrapper. Require
-HTTP 200, authenticated health/status/page/live reads, >80 migrated tables and
+HTTP 200, authenticated health/status/page/live reads with snapshot-before-ack
+ordering, >80 migrated tables and
 graceful SIGTERM with its child reaped. See
 [bun-daemon-boot-probe.md](bun-daemon-boot-probe.md). A boot failure must retain
 its evidence and status and prevent every later case from running.
