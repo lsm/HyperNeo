@@ -5,7 +5,7 @@ Space-extension tables. The core `space_github_*` tables stay in both modes beca
 Neo's PR watching uses them, so `spaceTables: 0` does not mean no `space_*` table. Run from the worktree root with no daemon or mock server needed:
 
 ```bash
-RUN=$(mktemp -d "${TMPDIR:-/tmp}/hyperneo-space-off-XXXXXX")
+RUN=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/hyperneo-space-off-XXXXXX")" && pwd -P)
 env -i HOME="$RUN/home" PATH="$PATH" TMPDIR="$RUN" NODE_ENV=test HYPERNEO_SPACE=off \
   HYPERNEO_DATA_DIR="$RUN/data" bun scripts/bun-daemon-boot-probe.ts "$RUN"
 ```
