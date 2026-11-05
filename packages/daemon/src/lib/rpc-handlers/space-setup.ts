@@ -1,3 +1,4 @@
+import { setupAgentMemoryHandlers } from './agent-memory-handlers.ts';
 import { createWorkflowTaskRecoveryExecutor } from '../tasks/recovery-executor.ts';
 import { recoverTaskExecution } from '../tasks/recover-task-execution.ts';
 import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
@@ -1449,6 +1450,7 @@ function completeSpaceSetup(
 }
 
 export async function createSpaceRpc(deps: SpaceRpcDependencies, host: SpaceRpcHost) {
+  setupAgentMemoryHandlers(deps.messageHub, { memoryRepo: deps.db.agentMemory });
   setupSpaceExternalEventHandlers(deps);
   setupSpaceMcpHandlers(
     deps.messageHub,

@@ -57,7 +57,7 @@ import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-quer
 import { setupRPCHandlers } from './lib/rpc-handlers/index.ts';
 import { createSpaceRpc } from './lib/rpc-handlers/space-setup.ts';
 import { DaemonExtensions } from './lib/extensions/contract.ts';
-import { registerSchemaExtension } from './storage/schema/extensions.ts';
+import { isSpaceEnabled, registerSchemaExtension } from './storage/schema/extensions.ts';
 import { SPACE_SCHEMA } from './storage/schema/space-schema.ts';
 import { createSpaceDaemonExtension } from './lib/space/daemon-extension.ts';
 import { createSpaceExternalEvents } from './lib/space/external-event-wiring.ts';
@@ -70,7 +70,7 @@ import { createWebSocketHandlers } from './routes/setup-websocket.ts';
 import { createGitHubService, type GitHubService } from './lib/github/github-service.ts';
 import {
   ExternalEventService,
-  ExternalEventStore,
+  type ExternalEventStore,
   routeExternalEventPublisher,
   SessionExternalEventStore,
   ingestSessionEvent,
@@ -374,15 +374,15 @@ export interface DaemonAppContext {
   commandBus: InternalCommandBus<DaemonCommandMap>;
   queryBus: ReturnType<typeof createInternalQueryBus<DaemonQueryMap>>;
   gitHubService: GitHubService | null;
-  externalEventStore: ExternalEventStore;
-  externalEventService: ExternalEventService;
+  externalEventStore?: ExternalEventStore;
+  externalEventService?: ExternalEventService;
   extensionManager: ExternalEventExtensionManager;
   reactiveDb: ReturnType<typeof createReactiveDatabase>;
   liveQueries: LiveQueryEngine;
-  spaceManager: SpaceManager;
-  spaceRuntimeService: SpaceRuntimeService;
-  taskAgentManager: TaskAgentManager;
-  spaceWorktreeManager: SpaceWorktreeManager;
+  spaceManager?: SpaceManager;
+  spaceRuntimeService?: SpaceRuntimeService;
+  taskAgentManager?: TaskAgentManager;
+  spaceWorktreeManager?: SpaceWorktreeManager;
   workflowHookStateRepository: WorkflowHookStateRepository;
   workflowHookRuntimeService: WorkflowHookRuntimeService;
   jobQueue: JobQueueRepository;
@@ -474,7 +474,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       }
     }
 
-    registerSchemaExtension(SPACE_SCHEMA);
+    const spaceEnabled = isSpaceEnabled();
+    if (spaceEnabled) registerSchemaExtension(SPACE_SCHEMA);
     const db = new Database(
       config.dbPath,
       config.sqlQueryObservability
@@ -488,19 +489,20 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const cutOffSessionIds = db.listProcessingSessionIds();
     const interruptedTurns = await db.markRestartInterruptedTurns();
     const liveQueries = new LiveQueryEngine(db.getDatabase(), reactiveDb);
-    const earlySpaceRepo = new SpaceRepository(db.getDatabase());
-    const earlyLogEvidenceService = new EvolutionLogEvidenceService({
-      evolutionRepo: db.evolution,
-      spaceRepo: earlySpaceRepo,
-    });
+    const logEvidenceService = spaceEnabled
+      ? new EvolutionLogEvidenceService({
+          evolutionRepo: db.evolution,
+          spaceRepo: new SpaceRepository(db.getDatabase()),
+        })
+      : undefined;
     const unsubscribeEarlyStructuredLogs = subscribeToStructuredLogs((event) => {
-      earlyLogEvidenceService.capture(event);
+      logEvidenceService?.capture(event);
       if (event.level === 'fatal') {
-        earlyLogEvidenceService.flush();
+        logEvidenceService?.flush();
       }
     });
     startupLogCaptureCleanup = () => {
-      earlyLogEvidenceService.flush();
+      logEvidenceService?.flush();
       unsubscribeEarlyStructuredLogs();
     };
 
@@ -584,8 +586,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       })
     );
 
-    const spaceRepo = earlySpaceRepo;
-    const spaceManager = new SpaceManager(db.getDatabase(), reactiveDb);
+    const spaceManager = spaceEnabled ? new SpaceManager(db.getDatabase(), reactiveDb) : undefined;
 
     const authManager = new AuthManager(db, config);
     await authManager.initialize();
@@ -687,7 +688,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     messageHub.registerRouter(router);
     const extensions = new DaemonExtensions(db.getDatabase(), messageHub);
-    contributeDefaultOperations('space', createSpaceDefaultOperations);
+    if (spaceEnabled) contributeDefaultOperations('space', createSpaceDefaultOperations);
     const logExtensionStopFailures = (failures: { id: string; error: unknown }[]) => {
       for (const { id, error } of failures)
         logError(`[Daemon] Extension ${id} failed to stop:`, error);
@@ -723,7 +724,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
       },
     });
-    const logEvidenceService = earlyLogEvidenceService;
     const unsubscribeStructuredLogs = unsubscribeEarlyStructuredLogs;
 
     const commandBus = createInternalCommandBus<DaemonCommandMap>();
@@ -899,12 +899,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const fileIndex = new FileIndex(config.workspaceRoot);
     void fileIndex.init();
 
-    const spaceExternalEvents = createSpaceExternalEvents(
-      db.getDatabase(),
-      reactiveDb,
-      internalEventBus
-    );
-    const { store: externalEventStore, service: externalEventService } = spaceExternalEvents;
+    const spaceExternalEvents = spaceEnabled
+      ? createSpaceExternalEvents(db.getDatabase(), reactiveDb, internalEventBus)
+      : undefined;
     const sessionExternalEventStore = new SessionExternalEventStore(db.getDatabase());
     const sessionExternalEventService = new ExternalEventService(
       sessionExternalEventStore,
@@ -984,7 +981,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       github: ['space_github_watched_repos'],
     };
     const extensionContext = {
-      publisher: routeExternalEventPublisher(externalEventService, sessionExternalEventService),
+      publisher: spaceExternalEvents
+        ? routeExternalEventPublisher(spaceExternalEvents.service, sessionExternalEventService)
+        : sessionExternalEventService,
       config: extensionConfigStore,
       onSourceConfigChanged(change: { source: string; spaceId?: string; kind: string }) {
         logInfo('[Daemon] Extension config changed', change);
@@ -1037,7 +1036,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           pullRequestNumbersOfTopics(
             watched.spaceId === SESSION_EVENT_SCOPE
               ? sessionEventSubscriptions.listAll().map((subscription) => subscription.topic)
-              : spaceExternalEvents.subscribedTopics(watched.spaceId),
+              : (spaceExternalEvents?.subscribedTopics(watched.spaceId) ?? []),
             watched.owner,
             watched.repo
           ),
@@ -1127,8 +1126,18 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         skillsManager,
         mcpImportService,
       },
-      (rpcDeps, host) =>
-        createSpaceRpc({ ...rpcDeps, spaceManager, externalEventStore, externalEventService }, host)
+      spaceManager && spaceExternalEvents
+        ? (rpcDeps, host) =>
+            createSpaceRpc(
+              {
+                ...rpcDeps,
+                spaceManager,
+                externalEventStore: spaceExternalEvents.store,
+                externalEventService: spaceExternalEvents.service,
+              },
+              host
+            )
+        : undefined
     );
     void recoverRestartCutTurns(cutOffSessionIds, restartRecoveryDeps)
       .then((results) => {
@@ -1153,41 +1162,33 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       return timer;
     });
     const { cleanup: rpcHandlerCleanup, space } = rpcHandlers;
-    if (!space) throw new Error('Space RPC setup did not run');
-    const {
-      spaceRuntimeService,
-      spaceWorktreeManager,
-      spaceGoalService,
-      goalAutomationService,
-      spaceAgentInactivityWatchdog,
-      cancelInactivityWatchdog,
-    } = space;
     wakePollingConcern = rpcHandlers.wakePollingConcern;
-    taskAgentManager = space.taskAgentManager;
+    taskAgentManager = space?.taskAgentManager ?? null;
 
     startupTimer.start('space runtime ready kickoff + HTTP/WS server bind');
-    const spaceRuntimeReadyPromise = spaceRuntimeService.ready();
-    extensions.register(
-      createSpaceDaemonExtension({
-        db,
-        reactiveDb,
-        jobQueue,
-        jobProcessor,
-        internalEventBus,
-        spaceManager,
-        spaceWorktreeManager,
-        spaceAgentInactivityWatchdog,
-        spaceRuntimeService,
-        spaceRuntimeReadyPromise,
-        spaceGoalService,
-        goalAutomationService,
-        cancelInactivityWatchdog,
-        logInfo,
-        logError,
-        sessionManager,
-        taskAgentManager: space.taskAgentManager,
-      })
-    );
+    const spaceRuntimeReadyPromise = space?.spaceRuntimeService.ready() ?? Promise.resolve();
+    if (space && spaceManager)
+      extensions.register(
+        createSpaceDaemonExtension({
+          db,
+          reactiveDb,
+          jobQueue,
+          jobProcessor,
+          internalEventBus,
+          spaceManager,
+          spaceWorktreeManager: space.spaceWorktreeManager,
+          spaceAgentInactivityWatchdog: space.spaceAgentInactivityWatchdog,
+          spaceRuntimeService: space.spaceRuntimeService,
+          spaceRuntimeReadyPromise,
+          spaceGoalService: space.spaceGoalService,
+          goalAutomationService: space.goalAutomationService,
+          cancelInactivityWatchdog: space.cancelInactivityWatchdog,
+          logInfo,
+          logError,
+          sessionManager,
+          taskAgentManager: space.taskAgentManager,
+        })
+      );
 
     const wsHandlers = createWebSocketHandlers(transport, sessionManager);
     const pairing = new DevicePairingRepository(db.getDatabase());
@@ -1243,7 +1244,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         () => messageDeliveryProcessor.stop(),
         () => messageHub.cleanup(),
         () => rpcHandlerCleanup(),
-        () => spaceRuntimeService.stop(),
+        () => space?.spaceRuntimeService.stop(),
         () => liveQueries.dispose(),
         () => gitHubService?.stop(),
         ...extensionManager
@@ -1378,9 +1379,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       });
     };
     void spaceRuntimeReadyPromise.then(openMessageSearchMergeGate, openMessageSearchMergeGate);
-    void spaceRuntimeReadyPromise.then(() => {
-      logInfo('[Daemon] Space runtime startup provisioning complete');
-    });
+    if (space)
+      void spaceRuntimeReadyPromise.then(() => {
+        logInfo('[Daemon] Space runtime startup provisioning complete');
+      });
     if (gitHubService && shouldEnableGitHub) {
       await gitHubService.start();
       logInfo('[Daemon] GitHub service started');
@@ -1394,10 +1396,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       JOB_QUEUE_CLEANUP,
       createCleanupHandler(jobQueue, (params) => cleanupJobsInBatches(db.gateway, params))
     );
-    jobProcessor.register(
-      MEMORY_CONSOLIDATION,
-      createMemoryConsolidationHandler(db.agentMemory, jobQueue)
-    );
+    if (spaceEnabled)
+      jobProcessor.register(
+        MEMORY_CONSOLIDATION,
+        createMemoryConsolidationHandler(db.agentMemory, jobQueue)
+      );
     registerMailboxJobs({
       jobQueue,
       jobProcessor,
@@ -1522,8 +1525,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       jobQueue.enqueue({ queue: JOB_QUEUE_CLEANUP, payload: {}, runAt: Date.now() });
       logInfo('[Daemon] Enqueued initial job_queue.cleanup job');
     }
-    enqueueMemoryConsolidationIfMissing(jobQueue, Date.now());
-    logInfo('[Daemon] Ensured initial memory_consolidation job');
+    if (spaceEnabled) {
+      enqueueMemoryConsolidationIfMissing(jobQueue, Date.now());
+      logInfo('[Daemon] Ensured initial memory_consolidation job');
+    }
     enqueueMailboxExpireIfMissing(jobQueue, Date.now());
     logInfo('[Daemon] Ensured initial mailbox.expire job');
     await extensions.start();
@@ -1628,7 +1633,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         logInfo('[Daemon] Job queue processor stopped');
         await mailboxExpireProcessor.stop();
         logInfo('[Daemon] Mailbox expiration job processor stopped');
-        await taskAgentManager.cleanupAll();
+        await taskAgentManager?.cleanupAll();
         const scratchChildrenAtExit = [
           ...scratchChildrenAtStartup,
           ...new AgentChildProcessRepository(db.getDatabase()).list(),
@@ -1670,7 +1675,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         fileIndex.dispose();
 
         stopEventLoopLagLog();
-        logEvidenceService.flush();
+        logEvidenceService?.flush();
         unsubscribeStructuredLogs();
         unsubscribeProviderFailureChanges?.();
         await invalidateInFlightModelLoads();
@@ -1681,7 +1686,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       } catch (error) {
         logError('Error during cleanup:', error);
         stopEventLoopLagLog();
-        logEvidenceService.flush();
+        logEvidenceService?.flush();
         unsubscribeStructuredLogs();
         unsubscribeProviderFailureChanges?.();
         await invalidateInFlightModelLoads();
@@ -1726,15 +1731,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       commandBus,
       queryBus,
       gitHubService,
-      externalEventStore,
-      externalEventService,
+      externalEventStore: spaceExternalEvents?.store,
+      externalEventService: spaceExternalEvents?.service,
       extensionManager,
       reactiveDb,
       liveQueries,
       spaceManager,
-      spaceRuntimeService,
-      taskAgentManager,
-      spaceWorktreeManager,
+      spaceRuntimeService: space?.spaceRuntimeService,
+      taskAgentManager: space?.taskAgentManager,
+      spaceWorktreeManager: space?.spaceWorktreeManager,
       workflowHookStateRepository,
       workflowHookRuntimeService,
       jobQueue,
