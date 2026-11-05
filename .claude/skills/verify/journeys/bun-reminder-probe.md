@@ -31,6 +31,7 @@ must preserve its marker and create no database. Close the gateway before the
 database. The wrapper removes temporary data after the helper exits.
 
 Schema, SQLite, gateway and repository implementations are reused without a
-full transitive ownership or performance audit. Native runner wiring and
-replacement CI gates follow separately. Keep Deno coverage enabled until the
+full transitive ownership or performance audit. The Bun native entry point runs this probe after incident coverage. A failure
+must retain its evidence and suppress the runner success marker, with temporary
+data removed. Replacement CI gates follow separately. Keep Deno coverage enabled until the
 remaining inline contracts and runtime adapters prove replacement parity.
