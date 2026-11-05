@@ -1121,7 +1121,7 @@ export class NeoAskTodoRepository {
   )
     .input(['store', 'question', 'now'])
     .pipe(
-      (store: NeoAskTodoRepository, question: NeoQuestion) => store.listFamilyTodos(question.askId),
+      (store: NeoAskTodoRepository, question: NeoQuestion) => store.startCardFamily(question),
       ['store', 'question'],
       'family'
     )
@@ -1181,6 +1181,13 @@ export class NeoAskTodoRepository {
     )
     .end('carded') as (store: NeoAskTodoRepository, askId: string, now: number) => void;
 
+  private startCardFamily(question: NeoQuestion): NeoTodo[] {
+    const members = (question.startTodos ?? []).flatMap((id) => this.getTodo(id) ?? []);
+    const asks = new Set([question.askId, ...members.map((todo) => todo.askId)]);
+    const todos = [...asks].flatMap((askId) => this.listFamilyTodos(askId));
+    return [...new Map(todos.map((todo) => [todo.id, todo])).values()];
+  }
+
   private rewriteStartCard(
     question: NeoQuestion,
     plan: Exclude<NeoQuestionPrune, { retire: string }>,
@@ -1227,7 +1234,7 @@ export class NeoAskTodoRepository {
       'question'
     )
     .pipe(
-      (store: NeoAskTodoRepository, question: NeoQuestion) => store.listFamilyTodos(question.askId),
+      (store: NeoAskTodoRepository, question: NeoQuestion) => store.startCardFamily(question),
       ['store', 'question'],
       'family'
     )
