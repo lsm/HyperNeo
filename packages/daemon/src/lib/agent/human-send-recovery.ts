@@ -23,12 +23,10 @@ export interface HumanSendFacts {
 export function isSessionAlive(facts: HumanSendFacts): boolean {
   if (facts.status === 'waiting_for_input') return true;
   if (facts.held) return false;
+  if (facts.status === 'idle') return true;
   if (facts.status !== 'processing' && facts.status !== 'queued') return false;
   return facts.openTools > 0 || facts.now - facts.lastActivityAt < facts.silenceMs;
 }
-
-export const isSessionReady = (facts: HumanSendFacts): boolean =>
-  facts.status === 'idle' && !facts.held;
 
 export type SilentSendPlan = 'answered' | 'resend' | 'give_up';
 
@@ -59,8 +57,6 @@ const gateNotAlive = (facts: HumanSendFacts) =>
 const probe = (effects: RecoveryEffects) => effects.reachable();
 const gateReachable = (reachable: boolean) =>
   reachable ? { value: 'recover' as const } : { reason: 'wait' as const };
-const gateNotReady = (facts: HumanSendFacts) =>
-  isSessionReady(facts) ? { reason: 'deliver' as const } : { value: 'recover' as const };
 const refresh = (effects: RecoveryEffects) => effects.refresh();
 const rebuild = (effects: RecoveryEffects) => effects.rebuild();
 const wake = (effects: RecoveryEffects) => effects.wake();
@@ -72,7 +68,6 @@ export const runHumanSendRecovery = (superpipe({})('human-send-recovery') as Pip
   .pipe(gateNotAlive, 'facts', 'result:route')
   .pipe(probe, 'effects', 'reachable')
   .pipe(gateReachable, 'reachable', 'result:route')
-  .pipe(gateNotReady, 'facts', 'result:route')
   .pipe(refresh, 'effects', 'refreshed')
   .pipe(rebuild, 'effects', 'rebuilt')
   .pipe(wake, 'effects', 'woken')
@@ -102,6 +97,7 @@ export interface HumanSendRecoveryDeps {
 export function createHumanSendRecovery(deps: HumanSendRecoveryDeps) {
   const lastSentAt = new Map<string, number>();
   const resends = new Map<string, number>();
+  const silent = new Set<string>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
   const key = (sessionId: string, messageUuid: string) => `${sessionId}\0${messageUuid}`;
 
@@ -111,8 +107,10 @@ export function createHumanSendRecovery(deps: HumanSendRecoveryDeps) {
     const route = await runHumanSendRecovery({
       facts: async () => {
         const facts = await session.humanSendFacts();
+        const stalled = silent.delete(sessionId);
         return {
           ...facts,
+          held: facts.held || stalled,
           lastActivityAt: Math.max(facts.lastActivityAt, lastSentAt.get(sessionId) ?? 0),
           now: Date.now(),
           silenceMs: getHumanSendSilenceMs(),
@@ -143,6 +141,7 @@ export function createHumanSendRecovery(deps: HumanSendRecoveryDeps) {
     });
     if (plan === 'resend') {
       resends.set(id, count + 1);
+      silent.add(sessionId);
       await deps.reopen(sessionId, messageUuid);
       return;
     }

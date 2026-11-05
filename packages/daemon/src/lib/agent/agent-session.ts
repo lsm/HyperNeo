@@ -1203,14 +1203,14 @@ export class AgentSession
         this.networkPause.isActive() ||
         this.rateLimitWatchdog.isRecoveryPending(),
       openTools: stream?.openTools.length ?? 0,
-      lastActivityAt: stream?.lastActivityAt ?? 0,
+      lastActivityAt: stream?.lastActivityAt ?? Date.now(),
     };
   }
 
   lastSdkOutputAt(): number {
     return this.queryRunner instanceof QueryRunner
       ? (this.queryRunner.streamFacts().lastOutputAt ?? 0)
-      : 0;
+      : Date.now();
   }
 
   providerId(): string {
@@ -2638,6 +2638,7 @@ export class AgentSession
     )
       this.networkPause.endOutage();
     if (isSDKResultSuccess(message) && message.is_error !== true) {
+      this.authRejected = false;
       const wasPending = this.rateLimitWatchdog.isPending();
       this.rateLimitWatchdog.reset();
       if (wasPending && this.stateManager.getState().status === 'rate_limit_cooldown') {

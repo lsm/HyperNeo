@@ -54,8 +54,7 @@ const blocks = (message: WatchedMessage, type: string, key: 'id' | 'tool_use_id'
 const MODEL_OUTPUT_TYPES: ReadonlySet<string> = new Set(['assistant', 'stream_event', 'result']);
 const isModelOutput = (message: WatchedMessage): boolean =>
   MODEL_OUTPUT_TYPES.has(message.type) ||
-  (message.type === 'system' &&
-    (message.subtype === 'api_retry' || message.status === 'compacting'));
+  (message.type === 'system' && message.status === 'compacting');
 
 export function noteStreamFed(state: StreamSilenceState, now: number): StreamSilenceState {
   return { ...state, lastActivityAt: Math.max(state.lastActivityAt, now) };

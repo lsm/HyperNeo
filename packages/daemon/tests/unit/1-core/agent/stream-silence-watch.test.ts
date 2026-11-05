@@ -81,6 +81,17 @@ describe('noteStreamMessage', () => {
       noteStreamMessage(quiet, { type: 'system', subtype: 'init' }, 5).lastOutputAt
     ).toBeUndefined();
     expect(noteStreamMessage(quiet, { type: 'user' }, 5).lastOutputAt).toBeUndefined();
+    expect(
+      noteStreamMessage(quiet, { type: 'system', subtype: 'api_retry' }, 5).lastOutputAt
+    ).toBeUndefined();
+    expect(
+      noteStreamMessage(quiet, { type: 'system', subtype: 'status', status: 'requesting' }, 5)
+        .lastOutputAt
+    ).toBeUndefined();
+    expect(
+      noteStreamMessage(quiet, { type: 'system', subtype: 'status', status: 'compacting' }, 5)
+        .lastOutputAt
+    ).toBe(5);
     expect(noteStreamMessage(quiet, { type: 'stream_event' }, 5).lastOutputAt).toBe(5);
   });
 });
