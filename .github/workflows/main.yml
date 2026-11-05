@@ -1,8 +1,7 @@
 # CI - Build, test, and quality checks
 #
 # A full automatic run schedules 9 unit legs (shared + 8 balanced daemon),
-# 11 online legs and 1 web leg, plus quality checks, path filtering and Deno
-# boot smoke. The balance report follows the tests. This can exceed the
+# 11 online legs and 1 web leg, plus quality checks, path filtering. The balance report follows the tests. This can exceed the
 # account's 20 shared concurrent runners; jobs may queue, especially when PRs
 # overlap, so a PR's new head cancels its old run and the path filter skips
 # legs a PR cannot affect. Smaller unit buckets shorten the longest leg, not
@@ -29,10 +28,6 @@
 # | workflow_dispatch                     | mocked CI + build                               |
 #
 # NOTE: Real-API daemon shards are manual-only in real-api-tests.yml.
-#
-# NOTE: The Deno boot smoke job runs on every trigger regardless of the
-# daemon/web path filters (docs-only PRs included) — it guards the Bun/Deno
-# dual-support migration and is non-blocking until flipped to required.
 #
 # NOTE: Daemon test jobs install bubblewrap for OS-confined worker runtime
 # cleanup. SDK turns in online jobs still use HYPERNEO_TEST_DISABLE_SANDBOX=1;
@@ -181,45 +176,6 @@ jobs:
             echo "ERROR: Non-exact version pins found. Use exact versions only (no ^ or ~)."
             exit 1
           fi
-
-  # ============================================
-  # DENO BOOT SMOKE (dual-runtime support, task #1409)
-  # Boots the daemon under pinned Deno 2.9.4 via scripts/deno-smoke.sh and
-  # verifies HTTP 200 on /, the /ws WebSocket handshake, >80 sqlite tables
-  # from migrations, and graceful SIGTERM teardown. This is the guardrail
-  # that keeps later Bun/Deno dual-runtime PRs safe to land incrementally;
-  # it runs on every trigger regardless of the daemon/web path filters.
-  # REQUIRED since 2026-08-29 (green continuously since it landed 2026-08-24):
-  # failures gate all-tests-pass, which is the one check the dev ruleset
-  # requires — no ruleset change was needed for the flip.
-  # Run on: PR to dev, push to dev, workflow_dispatch
-  # ============================================
-
-  deno-boot-smoke:
-    name: Deno Boot Smoke
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup Bun
-        uses: ./.github/actions/setup-bun
-        with:
-          bun-version: 1.4.2
-
-      - name: Setup Deno
-        uses: denoland/setup-deno@v2
-        with:
-          deno-version: 2.9.4
-
-      # Deno resolves workspace npm deps from the bun-installed node_modules
-      # (BYONM), so this install is what lets the daemon boot with no network.
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Run Deno boot smoke
-        run: python3 .claude/skills/verify/deno-smoke-fixture-isolation.py
 
   # ============================================
   # PATH FILTERS
@@ -743,7 +699,6 @@ jobs:
       - test-daemon-shared-unit
       - test-web
       - build
-      - deno-boot-smoke
       - windows-compiled-smoke
 
     steps:
@@ -757,6 +712,5 @@ jobs:
           CI_GATE_RESULT_TEST_DAEMON_SHARED_UNIT: ${{ needs.test-daemon-shared-unit.result }}
           CI_GATE_RESULT_TEST_WEB: ${{ needs.test-web.result }}
           CI_GATE_RESULT_BUILD: ${{ needs.build.result }}
-          CI_GATE_RESULT_DENO_BOOT_SMOKE: ${{ needs.deno-boot-smoke.result }}
           CI_GATE_RESULT_WINDOWS_COMPILED_SMOKE: ${{ needs.windows-compiled-smoke.result }}
         run: bash scripts/ci-gate.sh

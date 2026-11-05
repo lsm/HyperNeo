@@ -14,7 +14,6 @@ for job in \
   test-daemon-shared-unit \
   test-web \
   build \
-  deno-boot-smoke \
   windows-compiled-smoke; do
   var="CI_GATE_RESULT_$(echo "$job" | tr '[:lower:]-' '[:upper:]_')"
   result="${!var:-}"

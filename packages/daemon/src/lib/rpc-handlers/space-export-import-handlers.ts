@@ -34,7 +34,7 @@ import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts'
 import { exportBundle, normalizeOverride, validateExportBundle } from '../space/export-format.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../workflows/workflow-manager.ts';
-import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../space/slug.ts';
+import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../agents/slug.ts';
 
 const log = new Logger('space-export-import-handlers');
 const RESERVED_AGENT_HANDLE_SET = new Set<string>(RESERVED_SPACE_AGENT_HANDLES);

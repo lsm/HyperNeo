@@ -1,6 +1,6 @@
 import type { SpaceAgentAutonomyLevel, SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { OperationCaller } from '../operations/registry.ts';
-import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../space/slug.ts';
+import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from './slug.ts';
 
 export function displayNameTaken(
   agents: readonly SpaceLongHorizonAgent[],
