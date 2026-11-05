@@ -1,14 +1,27 @@
 import type { SpaceTask } from '@hyperneo/shared';
 import type { TaskRecoveryExecutor } from './recover-task-execution.ts';
-import type { SpaceRuntime } from '../space/runtime/space-runtime.ts';
-import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
+import type { TaskTransitionExpectation } from './task-manager.ts';
+
+export type WorkflowTaskRecoveryOptions = {
+  workflowNodeId?: string;
+  agentName?: string;
+  description?: string;
+  manualHandoff?: boolean;
+} & TaskTransitionExpectation;
+
+export interface WorkflowTaskRecoverer {
+  recoverWorkflowBackedTask(
+    spaceId: string,
+    taskId: string,
+    targetStatus: 'open' | 'in_progress',
+    options?: WorkflowTaskRecoveryOptions
+  ): Promise<SpaceTask | { task: SpaceTask }>;
+}
 
 export function createWorkflowTaskRecoveryExecutor(
   spaceId: string,
-  runtime:
-    | Pick<SpaceRuntimeService, 'recoverWorkflowBackedTask'>
-    | Pick<SpaceRuntime, 'recoverWorkflowBackedTask'>,
-  options?: Parameters<SpaceRuntimeService['recoverWorkflowBackedTask']>[3]
+  runtime: WorkflowTaskRecoverer,
+  options?: WorkflowTaskRecoveryOptions
 ): TaskRecoveryExecutor<SpaceTask> {
   return {
     recover: async (taskId, targetStatus) => {

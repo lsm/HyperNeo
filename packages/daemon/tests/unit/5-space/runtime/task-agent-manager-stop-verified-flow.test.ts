@@ -1,7 +1,7 @@
 import { Database as BunDatabase } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
-import type { VerifiedSessionStop } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import type { VerifiedSessionStop } from '../../../../src/lib/tasks/stop-verification-gates.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 
 interface FakeInterruptOptions {
