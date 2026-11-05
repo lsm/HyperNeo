@@ -22,6 +22,7 @@ import type { NeoWorkDriverReceipt } from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
 import { WorkDeliveryInputRepository } from './work-delivery-input-repository.ts';
+import { WorkHeldSendRepository } from './work-held-send-repository.ts';
 import { NeoDriverSessionRows } from './neo-driver-session-rows.ts';
 
 export function neoSafeSessionLink(
@@ -125,6 +126,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   }
 
   readonly inputs: WorkDeliveryInputRepository;
+  readonly held: WorkHeldSendRepository;
   readonly turnReports: NeoTurnReportReceipts;
   constructor(
     db: Database,
@@ -132,6 +134,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   ) {
     super(db, 'neo_todo_sessions', 'todo_id');
     this.inputs = new WorkDeliveryInputRepository(db);
+    this.held = new WorkHeldSendRepository(db);
     this.turnReports = new NeoTurnReportReceipts(db);
   }
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations.ts';
 import type { WorkAdapter } from '../../../../src/lib/drivers/types.ts';
+import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,

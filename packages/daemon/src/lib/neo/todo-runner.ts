@@ -1,21 +1,21 @@
-import { workerSandboxOn } from '../drivers/worker-sandbox.ts';
-import { withWorkerProvenance } from '../drivers/worker-provenance.ts';
-import { createWorkQueue } from '../work-queue/sweep.ts';
-import { neoTodoAwaitsHuman, neoTodoStalledCard } from './todo-state.ts';
-import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
-import { neoTodoRunnerWrites } from '../../storage/repositories/neo-todo-runner-state.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import type {
   NeoAskTodoRepository,
   NeoTodoPatch,
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
+import { neoTodoRunnerWrites } from '../../storage/repositories/neo-todo-runner-state.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import type { Place, WorkRef } from '../drivers/types.ts';
+import { type HeldWorkSend, isBusyWork } from '../drivers/work-operations.ts';
+import { withWorkerProvenance } from '../drivers/worker-provenance.ts';
+import { workerSandboxOn } from '../drivers/worker-sandbox.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
+import { createWorkQueue } from '../work-queue/sweep.ts';
 import {
   driverWorkCall,
   driverWorkCaller,
@@ -23,9 +23,9 @@ import {
   type NeoDriverTarget,
   neoCardSent,
   readDriverActivity,
+  readDriverFollowUp,
   readDriverIdentity,
   readDriverInputs,
-  readDriverFollowUp,
   readDriverLive,
   readDriverOpenedPrs,
   readDriverOutcome,
@@ -38,9 +38,10 @@ import type { NeoPack, NeoTodoCheckResult, NeoTodoJudgement } from './pack-contr
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
 import { sameNeoTodoCheck } from './todo-completion.ts';
 import { neoMoveTodo, neoTodoRepo } from './todo-repo.ts';
-import { planNeoTurnReportSweep } from './turn-report-sweep.ts';
+import { neoTodoAwaitsHuman, neoTodoStalledCard } from './todo-state.ts';
 import { neoTurnOrigin } from './turn-origin.ts';
 import { deliverNeoTurnReport } from './turn-report.ts';
+import { planNeoTurnReportSweep } from './turn-report-sweep.ts';
 
 type Rejection = { ok: false; reason: string };
 type Recorded = { ok: true; todo: NeoTodo; records: string[] };
@@ -75,6 +76,11 @@ export interface NeoTodoRunnerDeps {
   ): Promise<void>;
   changed(): void;
   limits(): { running: number; perGroup: number };
+}
+
+export function decideHeldSend(open: boolean, status: string | undefined) {
+  if (!open) return 'drop';
+  return isBusyWork(status) || status === 'needs_you' ? 'wait' : 'send';
 }
 
 const CARD_STATUS: Record<NeoTodo['state'], NeoWork['status']> = {
@@ -965,6 +971,65 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     now: number
   ) => Promise<{ stall: string } | null | void>;
 
+  const releaseHeld = (superpipe({})('neo.todo.release-held-send') as PipelineAPI)
+    .input(['held'])
+    .pipe(
+      ({ todoId }: HeldWorkSend) => {
+        const todo = store.getTodo(todoId);
+        const ask = todo && store.getAsk(todo.askId);
+        return todo && ask?.status === 'open' && ['todo', 'doing', 'blocked'].includes(todo.state)
+          ? { todo, ask }
+          : null;
+      },
+      'held',
+      'owner'
+    )
+    .pipe(
+      async (owner: { ask: NeoAsk } | null, { ref }: HeldWorkSend) =>
+        owner && readDriverLive(await deps.invoke(caller(owner.ask), 'work.status', { ref })),
+      ['owner', 'held'],
+      'live'
+    )
+    .pipe(
+      (owner: object | null, live: { status: string } | null) =>
+        decideHeldSend(!!owner, live?.status),
+      ['owner', 'live'],
+      'action'
+    )
+    .pipe(
+      async (
+        action: string,
+        held: HeldWorkSend,
+        owner: { todo: NeoTodo; ask: NeoAsk } | null
+      ): Promise<void> => {
+        if (action === 'wait') return;
+        const sent =
+          owner &&
+          action === 'send' &&
+          readDriverOutcome(
+            { verb: 'send', ref: held.ref },
+            await deps.invoke(caller(owner.ask), 'work.send', {
+              ref: held.ref,
+              message: held.message,
+              todoId: held.todoId,
+              idempotencyKey: held.key,
+            })
+          );
+        if (sent && 'delivery' in sent && sent.delivery?.held) return;
+        await sessions.held.remove(held.key);
+        if (owner && sent && 'failure' in sent)
+          await deps.tell(
+            owner.ask,
+            owner.todo,
+            `A held send for this todo could not reach its worker: ${sent.failure}`,
+            `held-send-failed:${held.key}`
+          );
+      },
+      ['action', 'held', 'owner'],
+      'released'
+    )
+    .endAsync('released') as (held: HeldWorkSend) => Promise<void>;
+
   const remindTodo = (superpipe({})('neo.todo.remind') as PipelineAPI)
     .input(['claim', 'now'])
     .pipe(
@@ -1408,6 +1473,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           warn('Stalled todo rescue pending', error)
         );
       }
+      for (const held of sessions.held.nextPerWorker())
+        await releaseHeld(held).catch((error) => warn('Held send pending', error));
       await fill().catch((error) => warn('Queued todo start pending', error));
       await sessions
         .read('queueFacts')

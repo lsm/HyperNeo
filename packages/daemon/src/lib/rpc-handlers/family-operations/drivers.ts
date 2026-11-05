@@ -20,6 +20,7 @@ import { mirrorNeoWorkspaceProjectsAsync } from '../../neo/project-mirror-async.
 import { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../storage/repositories/neo-ask-todo-repository.ts';
 import { WorkDeliveryInputRepository } from '../../../storage/repositories/work-delivery-input-repository.ts';
+import { WorkHeldSendRepository } from '../../../storage/repositories/work-held-send-repository.ts';
 import { readDriverOutcome } from '../../neo/driver-work.ts';
 import { existsSync, mkdirSync, statSync } from 'node:fs';
 import { codexStatePath } from '../../../storage/codex-desktop-read.ts';
@@ -625,6 +626,9 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
         ask.sessionId === sessionId
       );
     },
+    heldSends: {
+      hold: (send) => new WorkHeldSendRepository(db()).hold(send, Date.now()),
+    } satisfies WorkVerbDeps['heldSends'],
     workInputs: {
       accept: (todoId, from, target, message) =>
         new WorkDeliveryInputRepository(db()).accept(todoId, from, target, message, Date.now()),

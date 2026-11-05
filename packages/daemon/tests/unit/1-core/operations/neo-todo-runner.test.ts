@@ -1,20 +1,22 @@
-import { withCodingWorkerStartBrief } from '../../../../src/lib/neo/packs/coding/worker-worktree-brief';
-import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
-import { NEO_PACK_CODING_WORKER_RULES } from '@hyperneo/prompts';
-import { createNeoQuestionAnswerDelivery } from '../../../../src/lib/neo/question-answer-delivery.ts';
-import { driverExchangeReport, readDriverLanded } from '../../../../src/lib/neo/driver-work.ts';
-import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
-import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
-import { createNeoQuestionOperations } from '../../../../src/lib/neo/question-operations.ts';
-import { planNudge } from '../../../../src/lib/neo/nudge.ts';
-import { withCodingWorkerProvenance } from '../../../../src/lib/neo/packs/coding/worker-provenance.ts';
+import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, test } from 'bun:test';
-import { vi } from 'vitest';
+import { NEO_PACK_CODING_WORKER_RULES } from '@hyperneo/prompts';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import { vi } from 'vitest';
+import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
+import { qualifyRemoteOrigin, renderAddress } from '../../../../src/lib/mailbox/address.ts';
+import { sessionSender } from '../../../../src/lib/messaging/message-send.ts';
+import { driverExchangeReport, readDriverLanded } from '../../../../src/lib/neo/driver-work.ts';
+import { planNudge } from '../../../../src/lib/neo/nudge.ts';
 import type { NeoPack, NeoTodoCheckResult } from '../../../../src/lib/neo/pack-contract.ts';
+import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { withCodingWorkerProvenance } from '../../../../src/lib/neo/packs/coding/worker-provenance.ts';
+import { withCodingWorkerStartBrief } from '../../../../src/lib/neo/packs/coding/worker-worktree-brief';
+import { createNeoQuestionAnswerDelivery } from '../../../../src/lib/neo/question-answer-delivery.ts';
+import { createNeoQuestionOperations } from '../../../../src/lib/neo/question-operations.ts';
+import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
 import {
   createNeoTodoRunner,
   neoTodoNote,
@@ -22,16 +24,14 @@ import {
   planNeoTodoSettled,
   requireNeoTodoStartable,
 } from '../../../../src/lib/neo/todo-runner.ts';
-import { recordedWorkInvoke } from '../../helpers/recorded-work-invoke.ts';
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
-import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
-import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
-import { qualifyRemoteOrigin, renderAddress } from '../../../../src/lib/mailbox/address.ts';
-import { sessionSender } from '../../../../src/lib/messaging/message-send.ts';
+import { recordedWorkInvoke } from '../../helpers/recorded-work-invoke.ts';
 
 const ref = { adapter: 'hyperneo', id: 'worker-1' };
 const receipt = { executionId: ref.id, inputId: 'input-1' };
@@ -3090,6 +3090,75 @@ describe('worker blocker ownership', () => {
         h.store.listQuestions('ask').filter((q) => q.todoId === todo.id && q.state === 'open')
       ).toHaveLength(0);
       expect(h.store.getTodo(todo.id)?.blockedBy).not.toBe('needs-human');
+    } finally {
+      h.db.close();
+    }
+  });
+});
+
+describe('held sends', () => {
+  const held = (todoId: string, key: string) => ({ key, todoId, ref, message: `Task ${key}` });
+  const sends = (h: ReturnType<typeof setup>) => h.calls.filter((c) => c.name === 'work.send');
+
+  test('a held send waits for the turn to end, then one goes per worker in order', async () => {
+    const h = setup();
+    try {
+      const first = h.add();
+      const second = h.add();
+      await h.sessions.held.hold(held(first.id, 'a'), 1);
+      await h.sessions.held.hold(held(second.id, 'b'), 2);
+      h.setStatus({ ok: true, value: { status: 'running', lastActivityAt: 1 } });
+      await h.runner.refresh(() => {});
+      expect(sends(h)).toEqual([]);
+
+      h.setStatus({ ok: true, value: { status: 'done', lastActivityAt: 2 } });
+      await h.runner.refresh(() => {});
+      expect(sends(h).map((c) => c.input.message)).toEqual(['Task a']);
+      expect(sends(h)[0].input).toMatchObject({ todoId: first.id, idempotencyKey: 'a' });
+      expect(h.sessions.held.nextPerWorker().map((send) => send.key)).toEqual(['b']);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a send held again by a worker that just turned busy stays queued once', async () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      await h.sessions.held.hold(held(todo.id, 'a'), 1);
+      h.setStatus({ ok: true, value: { status: 'done', lastActivityAt: 2 } });
+      h.setSend({ ok: true, value: { delivered: false, held: true } });
+      await h.runner.refresh(() => {});
+      expect(h.sessions.held.nextPerWorker().map((send) => send.key)).toEqual(['a']);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a held send for a finished todo is dropped unsent', async () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      await h.sessions.held.hold(held(todo.id, 'a'), 1);
+      h.store.updateTodo(todo, { state: 'done' }, 2);
+      await h.runner.refresh(() => {});
+      expect(sends(h)).toEqual([]);
+      expect(h.sessions.held.nextPerWorker()).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a held send that cannot reach its worker tells Neo', async () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      await h.sessions.held.hold(held(todo.id, 'a'), 1);
+      h.setStatus({ ok: true, value: { status: 'done', lastActivityAt: 2 } });
+      h.setSend({ ok: false, reason: 'not_open', detail: 'Session ended.' });
+      await h.runner.refresh(() => {});
+      expect(h.told.join()).toContain('could not reach its worker: not_open: Session ended.');
+      expect(h.sessions.held.nextPerWorker()).toEqual([]);
     } finally {
       h.db.close();
     }

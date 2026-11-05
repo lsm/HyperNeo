@@ -54574,6 +54574,10 @@
                     ],
                     "type": "object"
                   },
+                  "held": {
+                    "const": true,
+                    "type": "boolean"
+                  },
                   "queuedSubmissionId": {
                     "minLength": 1,
                     "type": "string"
@@ -55308,6 +55312,10 @@
                       "detail"
                     ],
                     "type": "object"
+                  },
+                  "held": {
+                    "const": true,
+                    "type": "boolean"
                   },
                   "queuedSubmissionId": {
                     "minLength": 1,

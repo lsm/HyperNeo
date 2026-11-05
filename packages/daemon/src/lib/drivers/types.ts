@@ -162,6 +162,7 @@ export const WorkInputReceiptSchema = z.object({
 export const WorkDeliverySchema = z.object({
   desktopUI: DesktopUIEvidenceSchema.optional(),
   delivered: z.boolean(),
+  held: z.literal(true).optional(),
   unconfirmed: z.literal(true).optional(),
   receipt: WorkInputReceiptSchema.optional(),
   queuedSubmissionId: z.string().min(1).optional(),
