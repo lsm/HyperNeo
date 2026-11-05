@@ -1,6 +1,9 @@
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SpaceExternalEventSourceConfig } from '../../lib/external-events/types.ts';
+import { schemaTableExists } from '../schema/extensions.ts';
 import { parseJsonRecord } from './extension-config-json.ts';
+
+const SPACE_CONFIG_TABLE = 'space_external_event_source_configs';
 
 interface SpaceConfigRow {
   space_id: string;
@@ -14,6 +17,7 @@ export function lookupSpaceExtensionConfig(
   spaceId: string,
   source: string
 ): SpaceExternalEventSourceConfig | null {
+  if (!schemaTableExists(db, SPACE_CONFIG_TABLE)) return null;
   const row = db
     .prepare(`SELECT * FROM space_external_event_source_configs WHERE space_id = ? AND source = ?`)
     .get(spaceId, source) as SpaceConfigRow | undefined;
@@ -24,6 +28,7 @@ export function listEnabledSpaceExtensionConfigs(
   db: BunDatabase,
   source: string
 ): SpaceExternalEventSourceConfig[] {
+  if (!schemaTableExists(db, SPACE_CONFIG_TABLE)) return [];
   const rows = db
     .prepare(
       `SELECT * FROM space_external_event_source_configs

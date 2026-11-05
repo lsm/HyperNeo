@@ -1,3 +1,4 @@
+import { schemaTableExists } from '../../../storage/schema/extensions.ts';
 import {
   countGitHubSpacesWithPollingIntent,
   listGitHubPollingRepos,
@@ -103,6 +104,7 @@ export class GitHubEventExtensionRepository {
         'ALTER TABLE space_github_source_settings ADD COLUMN filter_current_user INTEGER NOT NULL DEFAULT 1'
       );
     }
+    if (!schemaTableExists(this.db, 'spaces')) return;
     const now = Date.now();
     this.db
       .prepare(

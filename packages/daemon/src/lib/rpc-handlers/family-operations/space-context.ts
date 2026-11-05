@@ -1,3 +1,4 @@
+import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
 import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { DirectTaskWorkerIdentity } from '../../tasks/direct-task-worker-identity.ts';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
@@ -37,6 +38,7 @@ import type { FamilyOperationContext } from './context.ts';
 
 export interface SpaceFamilyContext extends FamilyOperationContext {
   readonly spaceManager: SpaceManager;
+  readonly externalEventStore: ExternalEventStore;
   readonly spaceRuntimeService: SpaceRuntimeService;
   readonly taskAgentManager: TaskAgentManager;
   readonly spaceTaskManagerFactory: (spaceId: string) => SpaceTaskManager;

@@ -83,7 +83,7 @@ try {
   assert(existsSync(helper), 'Global extension SQL helper is unavailable');
   const { persistGlobalExtensionConfig } = await import(helper.href);
   scratch = new Database(':memory:');
-  new ExternalEventExtensionConfigStore(scratch);
+  (await import('../../../packages/daemon/tests/unit/helpers/external-event-config-store.ts')).createExternalEventConfigStore(scratch);
   persistGlobalExtensionConfig(scratch, source, config, 41);
   const saved = scratch.prepare('SELECT * FROM external_event_extension_configs WHERE source=?').get(source)!;
   assert.equal(saved.created_at, 41);

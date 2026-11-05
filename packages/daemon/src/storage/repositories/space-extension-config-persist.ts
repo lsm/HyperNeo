@@ -1,5 +1,6 @@
 import type { Database } from '../sqlite-compat.ts';
 import type { SpaceExternalEventSourceConfig } from '../../lib/external-events/types.ts';
+import { schemaTableExists } from '../schema/extensions.ts';
 
 export function persistSpaceExtensionConfig(
   db: Database,
@@ -8,6 +9,7 @@ export function persistSpaceExtensionConfig(
   config: SpaceExternalEventSourceConfig,
   now: number
 ): void {
+  if (!schemaTableExists(db, 'spaces')) return;
   db.prepare(
     `INSERT INTO space_external_event_source_configs (
 					space_id, source, enabled, settings_json, created_at, updated_at

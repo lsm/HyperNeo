@@ -8,10 +8,10 @@ function fakeContext(): SpaceFamilyContext {
   return {
     deps: {
       db: { getSession: () => null, getDatabase: () => ({}) },
-      externalEventStore: {},
       config: { dbPath: '/synthetic/family-operations.db' },
       jobProcessor: { register: () => {} },
     },
+    externalEventStore: {},
     spaceGoalService: {},
     longHorizonAgentRepo: {},
     nodeExecutionRepo: {},

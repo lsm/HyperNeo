@@ -30,8 +30,9 @@ import { upsertGitHubWatchedRepo } from '../../../../src/storage/repositories/gi
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import type { DbOp } from '../../../../src/storage/db-gateway/db-op';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops';
-import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
+import type { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
 import type { SpaceExternalEventSourceConfig } from '../../../../src/lib/external-events/types';
+import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 const name = 'github.space.polling.write';
 type Args = { spaceId: string; enabled: boolean };
 type Receipt = { config: SpaceExternalEventSourceConfig };
@@ -285,7 +286,7 @@ describe('atomic GitHub polling writer construction', () => {
       webhook_secret: null,
     });
     insertWatchedRow(db, { id: 'synthetic-peer', space_id: 'synthetic-two' });
-    store = new ExternalEventExtensionConfigStore(db);
+    store = createExternalEventConfigStore(db);
     await store.setSpaceConfig('synthetic-one', 'github', {
       spaceId: 'synthetic-one',
       source: 'github',

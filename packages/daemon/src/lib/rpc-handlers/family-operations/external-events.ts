@@ -11,7 +11,7 @@ export function registerExternalEventOperations(
 ): OperationDefinition[] {
   return [
     ...createExternalEventOperations({
-      eventStore: context.deps.externalEventStore,
+      eventStore: context.externalEventStore,
       getSession: (sessionId) => context.deps.db.getSession(sessionId),
       taskRepo: context.spaceTaskRepo,
       nodeExecutionRepo: context.nodeExecutionRepo,

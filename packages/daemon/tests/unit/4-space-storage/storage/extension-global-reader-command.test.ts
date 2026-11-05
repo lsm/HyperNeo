@@ -4,9 +4,9 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import type { DbOp } from '../../../../src/storage/db-gateway/db-op';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops';
-import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
 import { lookupGlobalExtensionConfig } from '../../../../src/storage/repositories/global-extension-config-lookup';
 import type { ExternalEventExtensionConfig } from '../../../../src/lib/external-events/types';
+import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 const name = 'extension.global.config.read';
 async function operation(): Promise<DbOp<{ source: string }, ExternalEventExtensionConfig>> {
   const path = new URL(
@@ -46,7 +46,7 @@ describe('Global extension configuration reader command', () => {
   };
   beforeEach(() => {
     db = new Database(':memory:');
-    new ExternalEventExtensionConfigStore(db);
+    createExternalEventConfigStore(db);
     reader = new ControlledReader(':memory:', db);
     db.prepare(
       'INSERT INTO external_event_extension_configs(source,globally_enabled,capabilities_json,secrets_ref,settings_json,created_at,updated_at)VALUES(?,?,?,?,?,1,1)'

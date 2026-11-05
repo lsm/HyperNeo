@@ -3,8 +3,9 @@ import { vi } from 'vitest';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { DbGateway, bindGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import type { DbOp } from '../../../../src/storage/db-gateway/db-op';
-import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
+import type { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
 import type { ExternalEventExtensionConfig } from '../../../../src/lib/external-events/types';
+import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 
 class ControlledGateway extends DbGateway {
   calls = 0;
@@ -41,7 +42,7 @@ describe('global extension setter writer activation', () => {
     db = new Database(':memory:');
     gateway = new ControlledGateway(':memory:', db);
     bindGateway(db, gateway);
-    store = new ExternalEventExtensionConfigStore(db);
+    store = createExternalEventConfigStore(db);
   });
   afterEach(async () => {
     await gateway.close();

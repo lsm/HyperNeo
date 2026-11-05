@@ -3,13 +3,13 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { SessionEventSubscriptionRepository } from '../../../../src/storage/repositories/session-event-subscription-repository.ts';
 import { GitHubEventExtension } from '../../../../src/lib/external-events/github/github-event-extension.ts';
-import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events';
 import {
   GitHubWatchInventory,
   reportGitHubWatchHealth,
 } from '../../../../src/lib/external-events/github/github-watch-inventory.ts';
 import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 
 describe('GitHub watch reconciliation', () => {
   test('startup and cycles restore subscriptions and todo-only watches', async () => {
@@ -33,7 +33,7 @@ describe('GitHub watch reconciliation', () => {
       sessionRepoReferenced: (owner, repo) => inventory.references(owner, repo),
       fetchImpl: (async () => Response.json([])) as typeof fetch,
     });
-    const config = new ExternalEventExtensionConfigStore(db);
+    const config = createExternalEventConfigStore(db);
     await config.setGlobalConfig('github', {
       source: 'github',
       globallyEnabled: true,
@@ -121,7 +121,7 @@ describe('GitHub watch reconciliation', () => {
       repo: 'finished',
       pollingEnabled: true,
     });
-    const config = new ExternalEventExtensionConfigStore(db);
+    const config = createExternalEventConfigStore(db);
     await config.setGlobalConfig('github', {
       source: 'github',
       globallyEnabled: true,

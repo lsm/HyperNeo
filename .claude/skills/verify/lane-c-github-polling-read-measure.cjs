@@ -37,7 +37,7 @@ const contracts = [
 ];
 const methods = units(repo), helpers = units(helper), names = contracts.map(row => row[0]);
 const untouched = methods.filter(row => !names.includes(row.name)).map(row => [row.name, row.sha256]);
-if (hash(JSON.stringify(untouched)) !== '0385048567753b5cef9f47f9bd42d99c60eb50b2d9d1071f66abd0ee0c0afef3') throw Error('Other repository method or constructor changed');
+if (hash(JSON.stringify(untouched)) !== 'b46cb6d413f64b86d4ee33227288d1fd0e3312ca2a8d224a61eb8329967fc49f') throw Error('Other repository method or constructor changed');
 if (hash(read(mapper)) !== '4c5945ea131459249bb302cdb27ee6a014fc6aadd5d15f9d402b3226972e6a95') throw Error('Complete mapper module changed');
 for (const [name, fn, expected, scoped] of contracts) {
   const extracted = helpers.find(row => row.name === fn), wrapper = methods.find(row => row.name === name);

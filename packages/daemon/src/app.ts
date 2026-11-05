@@ -1146,10 +1146,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         config,
         internalEventBus,
         commandBus,
-        externalEventStore,
         db,
         gitHubService: gitHubService ?? undefined,
-        externalEventService,
         externalEventExtensionManager: extensionManager,
         externalEventExtensionConfigStore: extensionConfigStore,
         externalEventExtensionContext: extensionContext,
@@ -1160,7 +1158,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         skillsManager,
         mcpImportService,
       },
-      (rpcDeps, host) => createSpaceRpc({ ...rpcDeps, spaceManager }, host)
+      (rpcDeps, host) =>
+        createSpaceRpc({ ...rpcDeps, spaceManager, externalEventStore, externalEventService }, host)
     );
     void recoverRestartCutTurns(cutOffSessionIds, restartRecoveryDeps)
       .then((results) => {

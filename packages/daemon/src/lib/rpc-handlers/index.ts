@@ -70,8 +70,6 @@ import type { UpgradeIdentity } from '../pairing/upgrade-auth.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { DaemonCommandMap, InternalCommandBus } from '../internal-command-bus.ts';
-import type { ExternalEventStore } from '../external-events/external-event-store.ts';
-import type { ExternalEventService } from '../external-events/external-event-service.ts';
 import type { SessionManager } from '../session-manager.ts';
 import type { AuthManager } from '../auth-manager.ts';
 import type { SettingsManager } from '../settings-manager.ts';
@@ -116,15 +114,7 @@ import {
   isRpcExtension,
   type ExternalEventExtensionManager,
 } from '../external-events/extension-manager.ts';
-import type {
-  ExternalEventDeliveryState,
-  ExternalEventExtensionContext,
-} from '../external-events/types.ts';
-const EXTERNAL_EVENT_DELIVERY_STATES: ExternalEventDeliveryState[] = [
-  'pending',
-  'delivered',
-  'failed',
-];
+import type { ExternalEventExtensionContext } from '../external-events/types.ts';
 
 export interface RPCHandlerDependencies {
   extensions: DaemonExtensions;
@@ -138,8 +128,6 @@ export interface RPCHandlerDependencies {
   config: Config;
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
   commandBus: InternalCommandBus<DaemonCommandMap>;
-  externalEventStore: ExternalEventStore;
-  externalEventService: ExternalEventService;
   externalEventExtensionManager: ExternalEventExtensionManager;
   externalEventExtensionConfigStore: ExternalEventExtensionConfigStore;
   externalEventExtensionContext: ExternalEventExtensionContext;
@@ -157,32 +145,6 @@ export interface RPCHandlerDependencies {
 const log = new Logger('rpc-handlers');
 
 export function setupExternalEventExtensionHandlers(deps: RPCHandlerDependencies): void {
-  deps.messageHub.onRequest('space.externalEvents.listDeliveries', async (data) => {
-    const params = (data ?? {}) as {
-      spaceId?: string;
-      status?: ExternalEventDeliveryState;
-      eventId?: string;
-      agentName?: string;
-      limit?: number;
-      offset?: number;
-    };
-    if (!params.spaceId || typeof params.spaceId !== 'string') {
-      throw new Error('spaceId is required');
-    }
-    if (params.status && !EXTERNAL_EVENT_DELIVERY_STATES.includes(params.status)) {
-      throw new Error(`Invalid delivery status: ${params.status}`);
-    }
-    const deliveries = deps.externalEventStore.listDeliveryLog({
-      spaceId: params.spaceId,
-      status: params.status,
-      eventId: params.eventId,
-      agentName: params.agentName,
-      limit: params.limit,
-      offset: params.offset,
-    });
-    return { deliveries };
-  });
-
   deps.messageHub.onRequest('externalEvents.extensions.list', async () => {
     const extensions = [];
     for (const extension of deps.externalEventExtensionManager.getAll()) {

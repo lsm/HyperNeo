@@ -4,9 +4,10 @@ import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import type { DbOp } from '../../../../src/storage/db-gateway/db-op';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
+import type { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
 import { persistGlobalExtensionConfig } from '../../../../src/storage/repositories/global-extension-config-persist';
 import type { ExternalEventExtensionConfig } from '../../../../src/lib/external-events/types';
+import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 
 const name = 'extension.global.config.write';
 type Args = { method: string; args: [string, ExternalEventExtensionConfig, number] };
@@ -49,7 +50,7 @@ describe('global extension writer command construction', () => {
   let gateway: FaultGateway;
   beforeEach(() => {
     db = new Database(':memory:');
-    store = new ExternalEventExtensionConfigStore(db);
+    store = createExternalEventConfigStore(db);
     gateway = new FaultGateway(':memory:', db);
   });
   afterEach(async () => {
