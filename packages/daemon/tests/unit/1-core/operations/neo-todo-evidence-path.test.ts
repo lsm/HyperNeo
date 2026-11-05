@@ -184,6 +184,12 @@ describe('neo.todo.add evidence paths', () => {
     expect(result.reason).toContain('Omit');
   });
 
+  test('a differently cased user folder is still the user folder', async () => {
+    const { add } = setup('lsm/hyperneo');
+    expect((await add({ path: join(userFolder.toLowerCase(), 'proof.md') })).ok).toBe(false);
+    expect((await add({ path: '/USERS/ME/RESULTS/proof.md' })).ok).toBe(false);
+  });
+
   test('an unchanged path on an existing todo keeps working', () => {
     const check = { pack: 'core', kind: 'evidence', params: { path: `${userFolder}/old.md` } };
     expect(neoEvidenceRefusal(check, 'lsm/hyperneo', userFolder, check)).toBeNull();
