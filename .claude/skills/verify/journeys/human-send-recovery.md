@@ -15,6 +15,8 @@ web listener. It uses `NODE_ENV=test`, its own HOME and DB, and no provider key.
 Each case starts from a stuck state with the model available again and sends
 exactly one `neo.message.send`. The model must answer that message.
 
+- `healthy_chat_send_is_not_rebuilt`: a plain chat send on a healthy session keeps
+  its session object
 - `failure_latch`, `network_pause`, `restored_rate_limit_cooldown`
 - `hung_process`: a turn is silent past the window before the message arrives
 - `swallowed_message`: the process takes the message and never answers, so the

@@ -23,8 +23,8 @@ export interface HumanSendFacts {
 export function isSessionAlive(facts: HumanSendFacts): boolean {
   if (facts.status === 'waiting_for_input') return true;
   if (facts.held) return false;
-  if (facts.status === 'idle') return true;
-  if (facts.status !== 'processing' && facts.status !== 'queued') return false;
+  if (facts.status === 'idle' || facts.status === 'queued') return true;
+  if (facts.status !== 'processing') return false;
   return facts.openTools > 0 || facts.now - facts.lastActivityAt < facts.silenceMs;
 }
 

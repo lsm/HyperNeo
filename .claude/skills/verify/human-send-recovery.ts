@@ -123,6 +123,14 @@ const parkedJobs = () => (daemon.app.db.getDatabase().prepare(
 ).get(Date.now(), root) as { n: number }).n;
 
 const cases: Record<string, (marker: string) => Promise<Record<string, unknown>>> = {
+  async healthy_chat_send_is_not_rebuilt(marker) {
+    const { sessionId } = await daemon.hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'home'), config: { model: 'haiku' } });
+    const first = await daemon.app.sessionManager.getSessionAsync(sessionId);
+    await daemon.hub.request('message.send', { sessionId, content: marker });
+    await until(() => served.some((body) => body.includes(marker)), 20_000, 'plain chat answered');
+    assert.equal(daemon.app.sessionManager.getCachedSession(sessionId), first);
+    return {};
+  },
   async failure_latch(marker) {
     await latch();
     await send(marker);

@@ -23,6 +23,7 @@ const facts = (over: Partial<HumanSendFacts> = {}): HumanSendFacts => ({
 describe('isSessionAlive', () => {
   test('allows only states that can answer', () => {
     expect(isSessionAlive(facts())).toBe(true);
+    expect(isSessionAlive(facts({ status: 'queued' }))).toBe(true);
     expect(isSessionAlive(facts({ status: 'waiting_for_input', held: true }))).toBe(true);
     expect(isSessionAlive(facts({ status: 'processing', lastActivityAt: 50_000 }))).toBe(true);
     expect(isSessionAlive(facts({ status: 'processing', openTools: 1 }))).toBe(true);
@@ -30,7 +31,6 @@ describe('isSessionAlive', () => {
 
   test('treats everything else as stuck, including states nobody listed', () => {
     expect(isSessionAlive(facts({ status: 'processing', lastActivityAt: 40_000 }))).toBe(false);
-    expect(isSessionAlive(facts({ status: 'queued', lastActivityAt: 40_000 }))).toBe(false);
     expect(isSessionAlive(facts({ status: 'rate_limit_cooldown' }))).toBe(false);
     expect(isSessionAlive(facts({ status: 'interrupted' }))).toBe(false);
     expect(isSessionAlive(facts({ held: true }))).toBe(false);
