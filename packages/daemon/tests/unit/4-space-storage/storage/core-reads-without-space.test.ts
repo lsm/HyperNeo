@@ -70,10 +70,12 @@ describe('core reads with Space tables absent', () => {
 
   it('AgentMemoryRepository skips the embedding backfill', () => {
     const embedder = { model: 'm', dimensions: 1 } as AgentMemoryEmbedder;
-    const repo = new AgentMemoryRepository(db, undefined, embedder);
-    const prepare = vi.spyOn(db, 'prepare');
+    const bare = new Database(':memory:');
+    const repo = new AgentMemoryRepository(bare, undefined, embedder);
+    const prepare = vi.spyOn(bare, 'prepare');
     repo.backfillPendingEmbeddings();
     expect(prepare.mock.calls.flat().join(' ')).not.toContain('memory_vectors');
+    bare.close();
   });
 
   it('GitHub polling reads that join spaces return nothing', () => {
