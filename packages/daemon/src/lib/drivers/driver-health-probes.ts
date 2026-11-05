@@ -5,7 +5,6 @@ import { promisify } from 'node:util';
 import daemonPackage from '../../../package.json' with { type: 'json' };
 import { BUILD_METADATA } from '../build-metadata.ts';
 import { codexStatePath } from '../../storage/codex-desktop-read.ts';
-import { COPILOT_CLI_VERSION } from './copilot-worker.ts';
 import { findAcpAgentBinary } from './acp-agent-adapter.ts';
 import type { WorkAdapter } from './types.ts';
 import type { DriverHealth } from '@hyperneo/shared/types/settings';
@@ -95,12 +94,6 @@ export function createDriverHealthProbe(deps: {
     let label = 'Client';
     try {
       versions = await (deps.versions?.(id) ?? clientVersions(id, deps.home));
-      if (id === 'copilot-cli' && versions.cli !== COPILOT_CLI_VERSION)
-        return {
-          status: 'degraded',
-          reason: `Copilot CLI ${versions.cli} is unsupported; this adapter requires ${COPILOT_CLI_VERSION}.`,
-          clientVersions: versions,
-        };
       const root =
         id === 'codex-desktop'
           ? codexStatePath(deps.home)

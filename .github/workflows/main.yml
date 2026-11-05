@@ -648,6 +648,9 @@ jobs:
         env:
           GLM_API_KEY: smoke-test
 
+      - name: Start the Copilot client from a folder with no node_modules
+        run: bun scripts/copilot-runtime-check.ts dist/bin/hyperneo-linux-x64
+
       - name: Compiled CLI device commands
         run: |
           run=$(mktemp -d)

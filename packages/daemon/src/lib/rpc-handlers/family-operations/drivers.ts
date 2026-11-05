@@ -33,6 +33,7 @@ import {
   recordStartedWork,
   type StartedWork,
 } from '../../../storage/work-started-sessions.ts';
+import { resolveCopilotRuntime } from '../../providers/anthropic-copilot/copilot-cli-resolver.ts';
 import {
   ACP_AGENTS,
   createAcpAgentAdapter,
@@ -408,7 +409,7 @@ function acpAgentAdapters(
     ];
     if (agent.id !== 'copilot-cli') return adapters;
     const adapter = createCopilotAdapter(adapters[0], {
-      cliPath: command,
+      resolveCliPath: async () => (await resolveCopilotRuntime(process.env)).path,
       directory,
       projectFolder: gitWorktreeProject,
       gitCheckout: readGitCheckout,

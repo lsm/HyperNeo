@@ -31,18 +31,6 @@ test('CLI health works without Bun using the same executable lookup as its adapt
   }
 });
 
-test('a Copilot CLI outside the supported pin is degraded before running discovery', async () => {
-  const probe = createDriverHealthProbe({
-    home: directories(join(tmpdir(), 'driver-health-')),
-    adapters: () => [],
-    versions: async () => ({ cli: '9.0.0', sdk: '1.0.28' }),
-  });
-  expect(await probe('copilot-cli')).toMatchObject({
-    status: 'degraded',
-    reason: expect.stringContaining('1.0.105'),
-  });
-});
-
 test('a missing Codex database reports its reason without running a discovery scan', async () => {
   const home = directories(join(tmpdir(), 'driver-health-'));
   let calls = 0;

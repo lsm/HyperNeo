@@ -269,6 +269,10 @@ jobs:
         env:
           GLM_API_KEY: smoke-test
 
+      - name: Start the Copilot client from a folder with no node_modules
+        if: matrix.smoke
+        run: bun scripts/copilot-runtime-check.ts ./dist/bin/${{ matrix.binary }}
+
       - name: Upload binary artifact
         uses: actions/upload-artifact@v7
         with:
