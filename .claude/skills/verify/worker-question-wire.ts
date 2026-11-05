@@ -1,3 +1,4 @@
+process.env.HYPERNEO_SPACE ??= 'on';
 import { gatewayFor } from '../../../packages/daemon/src/storage/db-gateway/db-gateway.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';

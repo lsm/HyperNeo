@@ -1,3 +1,4 @@
+process.env.HYPERNEO_SPACE ??= 'on';
 import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/runtime.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { publishCodingHumanMerge } from '../../../packages/daemon/src/lib/neo/packs/coding/human-merge-notice.ts';

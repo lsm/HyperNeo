@@ -1,3 +1,4 @@
+process.env.HYPERNEO_SPACE ??= 'on';
 import { strict as assert } from 'node:assert';
 import { createHash } from 'node:crypto';
 import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';

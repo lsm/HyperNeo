@@ -3,6 +3,7 @@ import { resolveSessionSpaceId } from '../../space/runtime/space-caller-scope.ts
 import { resolveSpaceMcpSessionPolicy } from '../../space/runtime/space-mcp-session-policy.ts';
 import { registerAgentOperations } from './agents.ts';
 import { registerArtifactOperations } from './artifacts.ts';
+import { registerAuditOperations } from './audit.ts';
 import type { FamilyOperationContext, SessionSpacePort } from './context.ts';
 import { registerEvolutionOperations } from './evolution.ts';
 import { registerExternalEventOperations } from './external-events.ts';
@@ -40,6 +41,7 @@ export function collectSpaceFamilyOperations(context: SpaceFamilyContext): Opera
   return [
     ...registerAgentOperations(context),
     ...registerArtifactOperations(context),
+    ...registerAuditOperations(context),
     ...registerEvolutionOperations(context),
     ...registerExternalEventOperations(context),
     ...registerGoalOperations(context),
