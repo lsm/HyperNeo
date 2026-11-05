@@ -287,11 +287,30 @@ const isTodoSend = (
 
 const isBusyWork = (status: string) => status === 'running' || status === 'queued';
 
-const sendingTo = new Map<string, QueuedInput>();
+const sendingTo = new Map<string, { input: QueuedInput; since: number }>();
+const queuedBehind = new Map<string, number>();
 const workerKey = ({ adapter, daemon, id }: WorkRef) => `${adapter}:${daemon ?? ''}:${id}`;
-const endTodoSend = (input: SendInput) => {
-  if (sendingTo.get(workerKey(input.ref)) === input) sendingTo.delete(workerKey(input.ref));
-};
+
+async function trackTodoSend(input: SendInput, sent: Promise<SendResult>) {
+  const target = workerKey(input.ref);
+  try {
+    const reply = await sent;
+    const mine = sendingTo.get(target);
+    if (mine?.input === input && reply.ok && !reply.value.delivered)
+      queuedBehind.set(target, mine.since);
+    return reply;
+  } finally {
+    if (sendingTo.get(target)?.input === input) sendingTo.delete(target);
+  }
+}
+
+function waitsBehindQueued(target: string, lastActivityAt: number) {
+  const since = queuedBehind.get(target);
+  if (since === undefined) return false;
+  if (lastActivityAt === since) return true;
+  queuedBehind.delete(target);
+  return false;
+}
 
 async function readTodoWorker(
   input: QueuedInput,
@@ -314,8 +333,9 @@ async function holdTodoSend<Value>(
   if (!worker || !isTodoSend(input, caller)) return { value: route };
   if (!worker.ok) return { reason: { ...worker, notSent: true } };
   const target = workerKey(input.ref);
-  if (!isBusyWork(worker.value.status) && !sendingTo.has(target)) {
-    sendingTo.set(target, input);
+  const { status, lastActivityAt } = worker.value;
+  if (!isBusyWork(status) && !sendingTo.has(target) && !waitsBehindQueued(target, lastActivityAt)) {
+    sendingTo.set(target, { input, since: lastActivityAt });
     return { value: route };
   }
   await deps.heldSends?.hold({
@@ -1116,8 +1136,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
       inputSchema: SendWorkInputSchema,
       resultSchema: SendWorkResultSchema,
       policy: { safetyClass: 'mutate' },
-      execute: (input, caller) =>
-        runSendWork(input, caller, deps).finally(() => endTodoSend(input)),
+      execute: (input, caller) => trackTodoSend(input, runSendWork(input, caller, deps)),
     }),
     defineOperation({
       name: 'work.queue',
@@ -1127,9 +1146,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
       resultSchema: SendWorkResultSchema,
       policy: { safetyClass: 'mutate' },
       execute: (input, caller) =>
-        (runQueuedInput(input, caller, deps) as Promise<SendResult>).finally(() =>
-          endTodoSend(input)
-        ),
+        trackTodoSend(input, runQueuedInput(input, caller, deps) as Promise<SendResult>),
     }),
     defineOperation({
       name: 'work.withdraw',
@@ -1138,8 +1155,12 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
       inputSchema: WithdrawWorkInputSchema,
       resultSchema: WithdrawWorkResultSchema,
       policy: { safetyClass: 'mutate' },
-      execute: (input, caller) =>
-        runQueuedInput(input, caller, deps) as Promise<z.infer<typeof WithdrawWorkResultSchema>>,
+      execute: (input, caller) => {
+        queuedBehind.delete(workerKey(input.ref));
+        return runQueuedInput(input, caller, deps) as Promise<
+          z.infer<typeof WithdrawWorkResultSchema>
+        >;
+      },
     }),
     defineOperation({
       name: 'work.status',
