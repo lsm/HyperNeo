@@ -1,6 +1,13 @@
 import { cleanup, render, screen } from '@testing-library/preact';
 import { afterEach, describe, expect, it } from 'vitest';
-import { registerWebExtension, type SpaceWebExtension } from '../../lib/web-extensions';
+import {
+  declareExtensionNav,
+  registerWebExtension,
+  type SpaceWebExtension,
+} from '../../lib/web-extensions';
+import { spaceNav } from '../../lib/space-nav';
+
+declareExtensionNav(spaceNav);
 import { SectionSwitcher } from '../SectionSwitcher';
 
 describe('SectionSwitcher', () => {

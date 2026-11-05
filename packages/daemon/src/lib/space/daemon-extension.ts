@@ -16,7 +16,7 @@ import {
   handleLongHorizonAgentReminderFire,
 } from '../job-handlers/long-horizon-agent-reminder-fire.handler.ts';
 import { readReminderOccurrenceState } from '../agents/reminder-delivery-registry.ts';
-import { resolveAgentSessionId } from '../space/long-term-agent-session.ts';
+import { resolveAgentSessionId } from '../session-resolution/long-term-agent-session.ts';
 import { TaskScheduleRepository } from '../../storage/repositories/task-schedule-repository.ts';
 import { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';

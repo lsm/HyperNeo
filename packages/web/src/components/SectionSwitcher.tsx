@@ -4,9 +4,9 @@ import {
   commandPaletteOpenSignal,
   navSectionSignal,
 } from '../lib/signals.ts';
-import { navigateToSessions, navigateToSpaces } from '../lib/router.ts';
+import { navigateToSessions } from '../lib/router.ts';
 import { cn } from '../lib/utils.ts';
-import { webExtensionDeclined } from '../lib/web-extensions.ts';
+import { extensionNav } from '../lib/web-extensions.ts';
 
 interface SectionSwitcherProps {
   onClose?: () => void;
@@ -14,11 +14,6 @@ interface SectionSwitcherProps {
   showDivider?: boolean;
   compact?: boolean;
 }
-
-const SECTIONS = [
-  { id: 'chats', label: 'Chats', onClick: navigateToSessions },
-  { id: 'spaces', label: 'Spaces', onClick: navigateToSpaces },
-] as const;
 
 export function SectionSwitcher({
   onClose,
@@ -28,6 +23,11 @@ export function SectionSwitcher({
 }: SectionSwitcherProps) {
   const navSection = navSectionSignal.value;
   const isTitlebar = variant === 'titlebar';
+  const extensions = extensionNav();
+  const sections = [
+    { id: 'chats', label: 'Chats', open: navigateToSessions },
+    ...extensions.map(({ section, label, open }) => ({ id: section, label, open })),
+  ];
   const openQuickOpen = () => {
     commandPaletteModeSignal.value = 'quick-open';
     commandPaletteOpenSignal.value = true;
@@ -44,7 +44,7 @@ export function SectionSwitcher({
       )}
       data-tauri-drag-region={isTitlebar ? true : undefined}
     >
-      {webExtensionDeclined('space') ? (
+      {extensions.length === 0 ? (
         <button
           type="button"
           onClick={() => {
@@ -63,7 +63,7 @@ export function SectionSwitcher({
           )}
           role="tablist"
         >
-          {SECTIONS.map((section) => {
+          {sections.map((section) => {
             const isActive = navSection === section.id;
             return (
               <button
@@ -72,7 +72,7 @@ export function SectionSwitcher({
                 role="tab"
                 aria-selected={isActive}
                 onClick={() => {
-                  section.onClick();
+                  section.open();
                   onClose?.();
                 }}
                 class={cn(
