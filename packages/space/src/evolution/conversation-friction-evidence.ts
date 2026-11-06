@@ -1,4 +1,4 @@
-import { uniqueStrings as unique } from '../../utils/unique-strings.ts';
+import { uniqueStrings as unique } from '../../../daemon/src/lib/utils/unique-strings.ts';
 import type { CreateEvidenceRefParams, SpaceTask } from '@hyperneo/shared';
 import type {
   ConversationFrictionAnalysis,
