@@ -63,9 +63,12 @@ import {
 } from '../../storage/repositories/neo-publication-repository.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
-import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
+import {
+  NeoTodoSessionRepository,
+  neoTodoSessionReads,
+} from '../../storage/repositories/neo-todo-session-repository.ts';
 import { createArtifactRefReader } from '../artifacts/read-operations.ts';
-import { readWorkerIdentity, sessionWorkerRef } from './worker-identity.ts';
+import { sessionWorkerRef } from './worker-identity.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import { WorkTurnRepository } from '../../storage/repositories/work-turn-repository.ts';
@@ -522,17 +525,10 @@ export class NeoService {
     await this.speech.dispose();
   }
 
-  readWorker(ref: WorkRef) {
+  async readWorker(ref: WorkRef) {
     if (ref.adapter === 'hyperneo' && !ref.daemon)
-      return Promise.resolve(workerIdentity(ref, this.db.getSession(ref.id)?.title ?? null));
-    return readWorkerIdentity(ref, (ref) =>
-      invokeOperation(
-        this.sessions.getOperationRegistry(),
-        'work.status',
-        { ref },
-        { source: 'internal' }
-      )
-    );
+      return workerIdentity(ref, this.db.getSession(ref.id)?.title ?? null);
+    return workerIdentity(ref, await this.db.gateway.call(neoTodoSessionReads, 'workerName', ref));
   }
 
   resolveSessionSource(session: string | WorkRef) {
