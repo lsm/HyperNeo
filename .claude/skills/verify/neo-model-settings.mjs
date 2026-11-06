@@ -34,6 +34,15 @@ const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_B
 const evidence = { catalog, primary, first, second, thresholdText, observations: [] };
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 1000 }, locale: 'en-US' });
+  const origin = `http://127.0.0.1:${port}`;
+  const pairing = rpc('device.pair.create', { kind: 'human', name: 'Settings journey browser' });
+  assert.equal(
+    (await page.request.post(`${origin}/pair`, {
+      headers: { origin },
+      data: { code: pairing.code, name: 'Settings journey browser' },
+    })).status(),
+    200
+  );
   await page.goto(`http://127.0.0.1:${port}/settings?tab=neo-model`);
   const section = page.getByRole('region', { name: 'Neo models', exact: true });
   await section.getByRole('button', { name: 'Add Neo model', exact: true }).click();
@@ -96,7 +105,7 @@ try {
   assert.equal(await page.getByRole('link', { name: 'Neo model settings', exact: true }).count(), 0);
   evidence.popoverListsModels = true;
   await page.goto(`http://127.0.0.1:${port}/settings?tab=models`);
-  await page.getByRole('heading', { name: 'Models', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'HyperNeo sessions', exact: true }).waitFor();
   assert.equal(await page.getByRole('region', { name: 'Neo models', exact: true }).count(), 0);
   evidence.ordinaryModelSettingsSeparate = true;
   console.log('PASS: actual Settings edit, thinking, provider list, order, persisted 70% reload, 90% reset, popover model list and separate ordinary controls.');

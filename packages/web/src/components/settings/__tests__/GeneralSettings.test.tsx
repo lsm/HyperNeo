@@ -15,13 +15,13 @@ describe('GeneralSettings', () => {
     updateGlobalSettings.mockClear();
   });
 
-  it('leaves the everyday items to Preferences', () => {
+  it('keeps only GitHub polling; the rest moved to Preferences and Sessions & Harness', () => {
     const { queryByText } = render(<GeneralSettings />);
     for (const label of ['Language', 'Default chat view', 'Show Archived Sessions'])
       expect(queryByText(label)).toBeNull();
-    expect(queryByText('Permission Mode')).toBeTruthy();
+    expect(queryByText('Permission Mode')).toBeNull();
+    expect(queryByText('Setting Sources')).toBeNull();
     expect(queryByText('GitHub polling interval (seconds)')).toBeTruthy();
-    expect(queryByText('Setting Sources')).toBeTruthy();
   });
 
   it('has no default thinking control; it lives beside the default model', () => {

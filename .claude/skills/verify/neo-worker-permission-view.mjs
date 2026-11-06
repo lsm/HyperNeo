@@ -21,7 +21,7 @@ try {
   const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
   const select = page.getByRole('combobox', { name: 'Claude worker permission' });
   const open = async () => {
-    await page.goto(`http://127.0.0.1:${port}/settings?tab=neo-model`);
+    await page.goto(`http://127.0.0.1:${port}/settings?tab=harness`);
     await select.waitFor({ timeout: 30000 });
     await page.waitForTimeout(800);
   };

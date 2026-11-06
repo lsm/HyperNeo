@@ -55,7 +55,7 @@ export type SettingsSection =
   | 'skills'
   | 'coding-pack'
   | 'neo-model'
-  | 'models'
+  | 'harness'
   | 'usage'
   | 'shortcuts'
   | 'about';

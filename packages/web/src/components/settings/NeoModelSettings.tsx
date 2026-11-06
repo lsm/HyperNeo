@@ -1,8 +1,6 @@
 import { ModelsSettings } from './ModelsSettings.tsx';
 import { NeoMutedSessionsSettings } from './NeoMutedSessionsSettings.tsx';
 import { NeoRulesSettings } from './NeoRulesSettings.tsx';
-import { NeoWorkerPermissionSettings } from './NeoWorkerPermissionSettings.tsx';
-import { DriverHealthSettings } from './DriverHealthSettings.tsx';
 
 export function NeoModelSettings() {
   return (
@@ -12,8 +10,6 @@ export function NeoModelSettings() {
         <NeoRulesSettings />
       </div>
       <NeoMutedSessionsSettings />
-      <NeoWorkerPermissionSettings />
-      <DriverHealthSettings />
     </>
   );
 }
