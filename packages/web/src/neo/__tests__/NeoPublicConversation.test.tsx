@@ -914,6 +914,50 @@ describe('durable public conversation presentation', () => {
   });
 });
 
+it('reveals a durable replacement without replaying arrival, while history still arrives', () => {
+  const store = {
+    agentState: signal({ status: 'idle' }),
+    error: signal(null),
+  } as unknown as SessionStore;
+  const view = render(
+    <NeoConversation
+      store={store}
+      sessionId={root}
+      publicConversation={conversation([], [])}
+      pendingAsks={[
+        {
+          requestId: 'new-send',
+          sessionId: root,
+          text: 'A new thought',
+          images: [],
+          state: 'sending',
+          createdAt: '2026-11-06T12:00:00Z',
+        },
+      ]}
+    />
+  );
+  view.rerender(
+    <NeoConversation
+      store={store}
+      sessionId={root}
+      pendingAsks={[]}
+      publicConversation={conversation(
+        [
+          ask({ requestId: 'new-send', content: 'A new thought' }),
+          ask({ requestId: 'history', sequence: 2, content: 'An older message' }),
+        ],
+        []
+      )}
+    />
+  );
+  expect(
+    view.container.querySelector('[data-message-ref="new-send"]')?.classList.contains('neo-arrive')
+  ).toBe(false);
+  expect(
+    view.container.querySelector('[data-message-ref="history"]')?.classList.contains('neo-arrive')
+  ).toBe(true);
+});
+
 describe('PendingAsk', () => {
   const pending = (state: 'sending' | 'accepted' | 'failed') => ({
     requestId: 'pending-1',
