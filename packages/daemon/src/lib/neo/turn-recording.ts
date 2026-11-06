@@ -9,11 +9,13 @@ type Deps = {
 };
 
 export const readRecordableTurns = (outcome: OperationOutcome): WorkTurnFact[] => {
-  const reply =
-    outcome.kind === 'completed'
-      ? (outcome.value as { ok?: boolean; value?: { turns?: WorkTurnFact[] } } | null)
-      : null;
-  return reply?.ok ? (reply.value?.turns ?? []) : [];
+  if (outcome.kind !== 'completed') throw new Error(outcome.message);
+  const reply = outcome.value as
+    | { ok: true; value: { turns: WorkTurnFact[] } }
+    | { ok: false; reason: string; detail: string };
+  if (reply.ok) return reply.value.turns;
+  if (reply.reason === 'unsupported') return [];
+  throw new Error(`${reply.reason}: ${reply.detail}`);
 };
 
 export const recordWorkerTurns = (superpipe({})('neo.work.record-turns') as PipelineAPI)
