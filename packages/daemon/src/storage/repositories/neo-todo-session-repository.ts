@@ -495,7 +495,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       : (this.db
           .prepare('SELECT name FROM work_sessions WHERE adapter = ? AND id = ?')
           .get(ref.adapter, ref.id) as { name: string } | null);
-    if (synced) return synced.name;
+    if (synced?.name) return synced.name;
     const todo = this.db
       .prepare(
         `SELECT t.title FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id

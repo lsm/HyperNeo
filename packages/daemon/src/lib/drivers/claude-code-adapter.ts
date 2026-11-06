@@ -3,7 +3,7 @@ import { readClaudeSenderMode } from './claude-receiver-mode.ts';
 import { requireClaudeCliOwner } from './claude-session-owner.ts';
 import { reject } from './work-operations.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
-import { readClaudeCliStatus } from './claude-cli-status.ts';
+import { claudeCliWorkStatus, readClaudeCliStatus } from './claude-cli-status.ts';
 import type { ClaudeDesktopRecord, ClaudeLiveSession } from './claude-desktop-adapter.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { basename } from 'node:path';
@@ -24,6 +24,7 @@ import type {
   WorkDelivery,
   Result,
   Rejected,
+  WorkSessionFact,
 } from './types.ts';
 
 const SESSIONS_PER_PLACE = 10;
@@ -284,6 +285,22 @@ const sendClaudeCodeMessage = (superpipe({})('send-claude-code-message') as Pipe
   deps: ClaudeCodeAdapterDeps
 ) => Promise<Result<WorkDelivery>>;
 
+export function claudeCodeSessions(
+  folders: readonly ClaudeFolder[],
+  live: readonly ClaudeLiveSession[]
+): WorkSessionFact[] {
+  const running = new Map(live.map((session) => [session.sessionId, session]));
+  return folders.map(({ sessionId, at }) => {
+    const session = running.get(sessionId);
+    return {
+      id: sessionId,
+      name: session?.name ?? '',
+      status: (session && claudeCliWorkStatus(session.status)) ?? 'stopped',
+      lastActivityAt: at,
+    };
+  });
+}
+
 export function createClaudeCodeAdapter(deps: ClaudeCodeAdapterDeps): WorkAdapter {
   const cache: FolderCache = new Map();
   const projectsDir = deps.projectsDir;
@@ -330,5 +347,10 @@ export function createClaudeCodeAdapter(deps: ClaudeCodeAdapterDeps): WorkAdapte
     ...(status ? { status } : {}),
     ...(turns ? { turns } : {}),
     find: (query) => runClaudeCodeFind(query, deps, scan),
+    ...(liveSessions
+      ? {
+          sessions: async () => claudeCodeSessions(await scan(), await liveSessions()),
+        }
+      : {}),
   };
 }

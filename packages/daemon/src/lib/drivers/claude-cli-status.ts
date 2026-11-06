@@ -26,6 +26,12 @@ type Source = {
   evidence: WorkDetail['inputEvidence'] | null;
 };
 
+export function claudeCliWorkStatus(status: string): LiveWork['status'] | null {
+  if (status === 'busy') return 'running';
+  if (status === 'waiting') return 'needs_you';
+  return ['idle', 'done', 'completed'].includes(status) ? 'done' : null;
+}
+
 export function requireClaudeCliStatus(
   ref: WorkRef,
   live: readonly ClaudeLiveSession[]
@@ -33,14 +39,7 @@ export function requireClaudeCliStatus(
   const owner = requireClaudeCliOwner(ref.id, live);
   if ('reason' in owner) return owner;
   const session = live.find((candidate) => candidate.sessionId === ref.id)!;
-  const status =
-    session.status === 'busy'
-      ? 'running'
-      : session.status === 'waiting'
-        ? 'needs_you'
-        : ['idle', 'done', 'completed'].includes(session.status)
-          ? 'done'
-          : null;
+  const status = claudeCliWorkStatus(session.status);
   return status
     ? { value: { session, status } }
     : { reason: reject('unreachable', `Unknown Claude CLI status: ${session.status}.`) };
