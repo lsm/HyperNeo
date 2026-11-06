@@ -22,9 +22,9 @@ const SessionsPage = lazy(() =>
 const GeneralSettings = lazy(() =>
   import('../components/settings/GeneralSettings.tsx').then((m) => ({ default: m.GeneralSettings }))
 );
-const AppearanceSettings = lazy(() =>
-  import('../components/settings/AppearanceSettings.tsx').then((m) => ({
-    default: m.AppearanceSettings,
+const PreferencesSettings = lazy(() =>
+  import('../components/settings/PreferencesSettings.tsx').then((m) => ({
+    default: m.PreferencesSettings,
   }))
 );
 const ProvidersSettings = lazy(() =>
@@ -170,10 +170,10 @@ export default function MainContent() {
           <div class="settings-theme scrollbar-dark min-h-0 flex-1 overflow-y-auto px-4 py-4 pr-3 sm:px-6 sm:py-5 sm:pr-4">
             <div class="mx-auto w-full max-w-5xl">
               <Suspense fallback={lazyFallback}>
+                {settingsSection === 'preferences' && <PreferencesSettings />}
                 {settingsSection === 'general' && <GeneralSettings />}
-                {settingsSection === 'appearance' && <AppearanceSettings />}
                 {isConnectionsSection(settingsSection) && (
-                  <ConnectionsServicesPage section={settingsSection}>
+                  <ConnectionsServicesPage section={settingsSection} fallback={lazyFallback}>
                     {settingsSection === 'providers' && <ProvidersSettings />}
                     {settingsSection === 'connections' && <ConnectionsSettings />}
                     {settingsSection === 'devices' && <DevicesSettings />}

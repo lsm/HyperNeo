@@ -18,13 +18,13 @@ const SETTINGS_SECTIONS: Array<{
   icon: string;
   accent: string;
 }> = [
-  { id: 'general', label: 'General', icon: 'settings', accent: 'text-accent-soft bg-accent/15' },
   {
-    id: 'appearance',
-    label: 'Appearance',
+    id: 'preferences',
+    label: 'Preferences',
     icon: 'palette',
     accent: 'text-cat-purple bg-cat-purple/15',
   },
+  { id: 'general', label: 'General', icon: 'settings', accent: 'text-accent-soft bg-accent/15' },
   {
     id: 'providers',
     label: 'Connections & Services',

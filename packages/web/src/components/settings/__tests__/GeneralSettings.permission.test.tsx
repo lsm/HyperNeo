@@ -68,12 +68,9 @@ describe('GeneralSettings SDK permission mode', () => {
   it('an unrelated save leaves a legacy permission value untouched', () => {
     globalStore.settings.value = { permissionMode: 'delegate' } as unknown as GlobalSettings;
     const { container } = render(<GeneralSettings />);
-    const language = [...container.querySelectorAll('select')].find((element) =>
-      [...element.options].some((option) => option.value === 'zh-Hans')
-    )!;
-    fireEvent.change(language, { target: { value: 'zh-Hans' } });
+    fireEvent.click(container.querySelector('input[type="checkbox"]')!);
     expect(updateGlobalSettings).toHaveBeenCalledTimes(1);
-    expect(updateGlobalSettings).toHaveBeenCalledWith({ language: 'zh-Hans' });
+    expect(updateGlobalSettings).toHaveBeenCalledWith({ settingSources: ['project', 'local'] });
     expect(permissionSelect(container).value).toBe('delegate');
   });
 

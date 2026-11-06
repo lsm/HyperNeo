@@ -98,6 +98,7 @@ try {
     await open(label, heading);
     assert(page.url().endsWith(`/settings?tab=${section}`), page.url());
   }
+  await page.waitForTimeout(200);
   await page.goBack();
   await open('Devices', 'Devices');
   await page.goForward();

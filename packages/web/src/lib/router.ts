@@ -10,8 +10,8 @@ const SESSION_ROUTE_PATTERN = /^\/session\/((?:neo:)?[a-f0-9-]+)$/i;
 const SESSIONS_ROUTE_PATTERN = /^\/sessions$/;
 const SETTINGS_ROUTE_PATTERN = /^\/settings$/;
 const SETTINGS_SECTIONS = new Set<SettingsSection>([
+  'preferences',
   'general',
-  'appearance',
   'providers',
   'connections',
   'voice',
@@ -75,9 +75,10 @@ function getCurrentPathWithSearch(): string {
 export function getSettingsSectionFromSearch(search: string): SettingsSection {
   const section = new URLSearchParams(search).get('tab');
   if (section === 'custom-endpoints') return 'providers';
+  if (section === 'appearance') return 'preferences';
   return section && SETTINGS_SECTIONS.has(section as SettingsSection)
     ? (section as SettingsSection)
-    : 'general';
+    : 'preferences';
 }
 
 export function createSessionPath(sessionId: string): string {
@@ -168,16 +169,16 @@ export function navigateToSettings(
   const targetPath = createSettingsPath(section);
   if (getCurrentPathWithSearch() === targetPath) {
     setSessionRoute(null);
-    settingsSectionSignal.value = section ?? 'general';
+    settingsSectionSignal.value = section ?? 'preferences';
     navSectionSignal.value = 'settings';
     return;
   }
 
   routerState.isNavigating = true;
   try {
-    pushPath(targetPath, { section: section ?? 'general' }, shouldReplace);
+    pushPath(targetPath, { section: section ?? 'preferences' }, shouldReplace);
     setSessionRoute(null);
-    settingsSectionSignal.value = section ?? 'general';
+    settingsSectionSignal.value = section ?? 'preferences';
     navSectionSignal.value = 'settings';
   } finally {
     finishNavigation();

@@ -1,4 +1,5 @@
 import type { ComponentChildren } from 'preact';
+import { Suspense } from 'preact/compat';
 import { t, type MessageKey } from '../../lib/i18n/index.ts';
 import { navigateToSettings } from '../../lib/router.ts';
 import type { SettingsSection } from '../../lib/signals.ts';
@@ -16,9 +17,11 @@ export const isConnectionsSection = (section: SettingsSection) =>
 
 export function ConnectionsServicesPage({
   section,
+  fallback,
   children,
 }: {
   section: SettingsSection;
+  fallback?: ComponentChildren;
   children: ComponentChildren;
 }) {
   return (
@@ -44,7 +47,7 @@ export function ConnectionsServicesPage({
           </button>
         ))}
       </nav>
-      {children}
+      <Suspense fallback={fallback}>{children}</Suspense>
     </>
   );
 }
