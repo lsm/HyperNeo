@@ -3,6 +3,8 @@ import type { WorkTurnRepository } from '../../storage/repositories/work-turn-re
 import type { WorkRef, WorkTurnFact } from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 
+const CATCH_UP_READS = 50;
+
 type Deps = {
   turns: Pick<WorkTurnRepository, 'cursor' | 'record'>;
   read(ref: WorkRef, cursor: string | null): Promise<OperationOutcome>;
@@ -34,3 +36,11 @@ export const recordWorkerTurns = (superpipe({})('neo.work.record-turns') as Pipe
     'recorded'
   )
   .endAsync('recorded') as (ref: WorkRef, deps: Deps) => Promise<void>;
+
+export async function catchUpWorkerTurns(ref: WorkRef, deps: Deps): Promise<void> {
+  for (let read = 0; read < CATCH_UP_READS; read += 1) {
+    const before = deps.turns.cursor(ref);
+    await recordWorkerTurns(ref, deps);
+    if (deps.turns.cursor(ref) === before) return;
+  }
+}
