@@ -7,7 +7,8 @@ vi.mock('../../components/voice/VoiceRecordingIndicator', () => ({
 }));
 
 import MainContent from '../MainContent';
-import { currentSessionIdSignal, currentSpaceIdSignal, navSectionSignal } from '../../lib/signals';
+import { currentSessionIdSignal, navSectionSignal } from '../../lib/signals';
+import { currentSpaceIdSignal } from '../../lib/space-signals';
 
 describe('MainContent while Space is still loading', () => {
   afterEach(() => cleanup());

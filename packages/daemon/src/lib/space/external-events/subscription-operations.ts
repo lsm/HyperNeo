@@ -4,9 +4,9 @@ import {
   defineOperation,
   type OperationCaller,
   type OperationDefinition,
-} from '../operations/registry.ts';
-import type { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
-import type { SpaceSessionEventSubscriptionRepository } from '../../storage/repositories/space-session-event-subscription-repository.ts';
+} from '../../operations/registry.ts';
+import type { SessionEventSubscriptionRepository } from '../../../storage/repositories/session-event-subscription-repository.ts';
+import type { SpaceSessionEventSubscriptionRepository } from '../../../storage/repositories/space-session-event-subscription-repository.ts';
 import {
   type AgentSubscriptionDependencies,
   type AgentSubscriptionScope,
@@ -33,7 +33,7 @@ import {
   subscribeOwnSession,
   TopicFields,
   unsubscribeOwnSession,
-} from './session-event-operations.ts';
+} from '../../external-events/session-event-operations.ts';
 
 export interface SubscriptionSlot extends Omit<WorkerNodeSlot, 'taskId'> {
   taskId: string;

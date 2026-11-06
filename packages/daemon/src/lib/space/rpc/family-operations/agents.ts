@@ -4,7 +4,7 @@ import {
   createAgentTemplateOperations,
 } from '../../../agents/agent-template-operations.ts';
 import type { CreateAgentDependencies } from '../../../agents/create-agent-operation.ts';
-import { createInactivityOperations } from '../../../agents/inactivity-operations.ts';
+import { createInactivityOperations } from '../../agents/inactivity-operations.ts';
 import { reminderOccurrenceIsClaimed } from '../../../agents/reminder-delivery-registry.ts';
 import { resolveAgentSessionId } from '../../../session-resolution/long-term-agent-session.ts';
 import { createAgentOperations } from '../../../agents/operations.ts';

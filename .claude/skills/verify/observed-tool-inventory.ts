@@ -56,12 +56,6 @@ try {
   evidence.push(inventory.snapshot());
   assert.equal(inventory.snapshot().state, 'not_running');
   assert.deepEqual(inventory.snapshot().mcpServers, []);
-  const acp = registry.allocate();
-  inventory.begin(acp, 'acp');
-  inventory.captureInit(acp, init);
-  evidence.push(inventory.snapshot());
-  assert.equal(inventory.snapshot().state, 'unverified');
-  assert.deepEqual(inventory.snapshot().tools, []);
   assert(!JSON.stringify(evidence).includes('/private/'));
   writeFileSync(join(run, 'evidence/inventory.json'), JSON.stringify({
     projectionContractVerified: true,

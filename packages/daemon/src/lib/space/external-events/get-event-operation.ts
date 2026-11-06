@@ -1,31 +1,17 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import type { ExternalEventStore } from './external-event-store.ts';
-import type { ExternalEvent, ExternalEventState } from './types.ts';
+import { defineOperation, type OperationCaller } from '../../operations/registry.ts';
+import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
+import type { ExternalEvent, ExternalEventState } from '../../external-events/types.ts';
+import {
+  ExternalEventSchema,
+  ExternalEventStateSchema,
+} from '../../external-events/event-schema.ts';
 import {
   admitEventCallerSpace,
   type EventCallerRejection,
   EXTERNAL_EVENT_READ_ROLES,
 } from './operation-admission.ts';
-
-export const ExternalEventSchema = z.object({
-  id: z.string(),
-  spaceId: z.string(),
-  topic: z.string(),
-  occurredAt: z.number(),
-  ingestedAt: z.number(),
-  source: z.string(),
-  sourceEventId: z.string().optional(),
-  summary: z.string(),
-  externalUrl: z.string().optional(),
-  payload: z.record(z.string(), z.json()),
-  dedupeKey: z.string(),
-  urgency: z.enum(['immediate', 'queued']).optional(),
-  render: z.string().optional(),
-});
-
-export const ExternalEventStateSchema = z.enum(['published', 'delivered', 'failed', 'ignored']);
 
 const inputSchema = z
   .object({

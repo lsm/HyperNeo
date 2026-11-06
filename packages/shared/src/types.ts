@@ -140,8 +140,7 @@ export type Provider =
   | 'ollama'
   | 'ollama-cloud'
   | 'anthropic-copilot'
-  | 'anthropic-codex'
-  | 'acp';
+  | 'anthropic-codex';
 
 export interface ProviderConfig {
   apiKey?: string;
@@ -201,7 +200,6 @@ export const PROVIDER_THINKING_MODES: Record<Provider, 'off' | 'on' | 'granular'
   'ollama-cloud': 'off',
   'anthropic-copilot': 'off',
   'anthropic-codex': 'granular',
-  acp: 'granular',
 };
 
 export function normalizeThinkingLevel(level: string | undefined | null): ThinkingLevel {
@@ -385,12 +383,8 @@ export interface SessionMetadata {
   costBaseline?: number;
   refusalRewindTargetUuid?: string | null;
   sdkCapabilities?: string[];
-  acpInstructionsSent?: boolean;
-  acpCommandIdentity?: string;
-  acpSessionCommand?: string;
   pastSdkSessionIds?: string[];
   pendingModelSwitch?: PendingModelSwitch | null;
-  acpContextUsageEstimate?: number;
   worktreeChoice?: {
     status: 'pending' | 'completed';
     choice?: 'worktree' | 'direct';

@@ -3,7 +3,8 @@ import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { getGoalStatusClasses, getGoalStatusConfig } from '../../lib/goal-status';
 import { navigateToSpaceTask } from '../../lib/router';
-import { currentSpaceGoalIdSignal, rightPanelTargetSignal } from '../../lib/signals';
+import { rightPanelTargetSignal } from '../../lib/signals';
+import { currentSpaceGoalIdSignal } from '../../lib/space-signals';
 import { spaceStore } from '../../lib/space-store';
 import { cn, getRelativeTime } from '../../lib/utils';
 import {

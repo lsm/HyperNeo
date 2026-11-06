@@ -241,12 +241,6 @@ export function signalDeliveryConsumed(sessionId: string, messageUuid: string): 
   for (const resolve of waiters) resolve();
 }
 
-export const ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS = 12 * 60 * 1000;
-
-export function deliveryConsumptionTimeoutMs(provider?: string): number | undefined {
-  return provider === 'acp' ? ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS : undefined;
-}
-
 export function deliveryConsumptionTimeoutOrDefault(timeoutMs?: number): number {
   const explicit = timeoutMs ?? Number(process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS);
   if (Number.isFinite(explicit) && explicit > 0) return explicit;

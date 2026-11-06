@@ -2,8 +2,6 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import type { CallContext } from '@hyperneo/shared';
 import { MessageHub, type Session } from '@hyperneo/shared';
 import { z } from 'zod';
-import { convertMcpServersForAcp } from '../../../../src/lib/acp/acp-query-runner';
-import { AcpMcpProxyBridge } from '../../../../src/lib/acp/mcp-proxy-bridge';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import {
   createOperationRegistry,
@@ -441,31 +439,6 @@ describe('session operation MCP attachment', () => {
       expect(db.getSession(source.id)?.config.mcpServers).toBeUndefined();
     }
   );
-
-  test('reserves the operations name and proxies operations for ACP sessions', async () => {
-    const source = createTestSession('acp-sender');
-    source.config.provider = 'acp';
-    source.config.mcpServers = {
-      'hyperneo-operations': { command: 'user-server' },
-      'hyperneo-operations-2': { command: 'another-user-server' },
-    };
-    await db.createSession(source);
-    const session = await restore(source.id);
-    session.mergeRuntimeMcpServers(source.config.mcpServers);
-    const effective = session.optionsBuilder.getEffectiveMcpServers();
-    expect(effective?.['hyperneo-operations']).toBe(session.getOperationMcpServer());
-    expect(effective?.['hyperneo-operations-2']).toEqual({ command: 'another-user-server' });
-    expect(effective?.['hyperneo-operations-3']).toEqual({ command: 'user-server' });
-    const bridge = new AcpMcpProxyBridge(effective as never);
-    expect(bridge.getToolsForServer('hyperneo-operations').map(({ name }) => name)).toEqual([
-      'invoke',
-    ]);
-    expect(convertMcpServersForAcp(effective, () => {}, bridge)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ name: 'hyperneo-operations', type: 'stdio' }),
-      ])
-    );
-  });
 
   test('rejects MCP attempts to claim human input provenance before persistence', async () => {
     await db.createSession(createTestSession('sender'));

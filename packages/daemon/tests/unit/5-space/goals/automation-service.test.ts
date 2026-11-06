@@ -7,7 +7,7 @@ import {
   requireAutomationThreshold,
   requireNoActiveAutomationReview,
   requireUnlockedAutomation,
-} from '../../../../src/lib/job-handlers/goal-automation-execute-admission';
+} from '../../../../src/lib/space/job-handlers/goal-automation-execute-admission';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
@@ -15,7 +15,7 @@ import { GOAL_AUTOMATION_EXECUTE } from '../../../../src/lib/job-queue-constants
 import {
   handleGoalAutomationExecute,
   type GoalAutomationExecutePayload,
-} from '../../../../src/lib/job-handlers/goal-automation-execute.handler';
+} from '../../../../src/lib/space/job-handlers/goal-automation-execute.handler';
 import {
   GoalAutomationService,
   externalEventTriggerKey,

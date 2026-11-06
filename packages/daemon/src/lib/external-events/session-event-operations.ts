@@ -11,7 +11,7 @@ import {
   type OperationCallerRole,
   type OperationDefinition,
 } from '../operations/registry.ts';
-import { ExternalEventSchema, ExternalEventStateSchema } from './get-event-operation.ts';
+import { ExternalEventSchema, ExternalEventStateSchema } from './event-schema.ts';
 import { sessionEventMessageUuid } from './session-event-delivery.ts';
 import type { SessionExternalEventStore } from './session-external-event-store.ts';
 import { validateGlobPattern } from './topic-validator.ts';

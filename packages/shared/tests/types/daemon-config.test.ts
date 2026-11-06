@@ -19,12 +19,7 @@ const EXPECTED_ENV_BY_FAMILY: Record<string, string[]> = {
     'HYPERNEO_MESSAGE_DELIVERY_MAX_CONCURRENT',
     'HYPERNEO_JOB_QUEUE_MAX_CONCURRENT',
   ],
-  sdkAcp: [
-    'HYPERNEO_SDK_STARTUP_MAX_CONCURRENT',
-    'HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS',
-    'HYPERNEO_ACP_MCP_PROXY_CALL_TIMEOUT_MS',
-    'HYPERNEO_ACP_CONTEXT_WINDOW',
-  ],
+  sdkAcp: ['HYPERNEO_SDK_STARTUP_MAX_CONCURRENT', 'HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS'],
   providersMisc: [
     'HYPERNEO_PROVIDER_MAX_RETRIES',
     'HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS',
@@ -84,13 +79,13 @@ describe('DAEMON_CONFIG_KEY_CATALOG', () => {
     expect(counts).toEqual({
       deliveryTiming: 5,
       deliveryPolicy: 3,
-      sdkAcp: 4,
+      sdkAcp: 2,
       providersMisc: 4,
       spaceEvents: 4,
       startup: 11,
       flags: 1,
     });
-    expect(DAEMON_CONFIG_KEY_CATALOG).toHaveLength(32);
+    expect(DAEMON_CONFIG_KEY_CATALOG).toHaveLength(30);
   });
 
   it('has globally unique keys and legacy env names', () => {
@@ -131,7 +126,6 @@ describe('DAEMON_CONFIG_KEY_CATALOG', () => {
       default: true,
       appliesAt: 'restart',
     });
-    expect(entryByKey('acpContextWindow')).toMatchObject({ default: 200000, min: 1 });
     expect(entryByKey('externalEventDigestCountCap')).toMatchObject({ default: 50 });
   });
 });
@@ -219,10 +213,10 @@ describe('resolveDaemonConfig', () => {
   it('falls back to defaults on invalid stored values', () => {
     const resolved = resolveDaemonConfig({
       deliveryTiming: { interruptControlTimeoutMs: 'abc' as unknown as number },
-      sdkAcp: { acpContextWindow: Number.NaN },
+      sdkAcp: { sdkStartInactivityTimeoutMs: Number.NaN },
     });
     expect(resolved.deliveryTiming?.interruptControlTimeoutMs).toBe(2000);
-    expect(resolved.sdkAcp?.acpContextWindow).toBe(200000);
+    expect(resolved.sdkAcp?.sdkStartInactivityTimeoutMs).toBe(600000);
   });
 
   it('coerces booleans including 1/0 and string forms', () => {

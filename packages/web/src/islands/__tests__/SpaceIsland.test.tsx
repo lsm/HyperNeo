@@ -77,8 +77,8 @@ const mockSpaceOverlayTaskContextSignal = signal<unknown>(null);
 configureTabBridge.signal = mockCurrentSpaceSettingsTabSignal;
 idBridge.signal = mockCurrentSpaceIdSignal;
 
-vi.mock('../../lib/signals', async (importOriginal) => {
-  const actual = await importOriginal();
+vi.mock('../../lib/space-signals', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/space-signals')>();
   return {
     ...actual,
     get currentSpaceIdSignal() {
@@ -114,6 +114,12 @@ vi.mock('../../lib/signals', async (importOriginal) => {
     get spaceOverlayTaskContextSignal() {
       return mockSpaceOverlayTaskContextSignal;
     },
+  };
+});
+vi.mock('../../lib/signals', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
   };
 });
 

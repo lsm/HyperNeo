@@ -48,6 +48,72 @@ function freshDb(): BunDatabase {
   return db;
 }
 
+describe('polling without the Space event tables', () => {
+  test('a completed check run on a watched PR does not fail the poll', async () => {
+    const db = freshDb();
+    db.exec('DROP TABLE space_external_event_deliveries; DROP TABLE space_external_events');
+    const pull = {
+      number: 8,
+      state: 'open',
+      title: 'Synthetic',
+      merged: false,
+      mergeable: true,
+      html_url: 'https://github.com/acme/widgets/pull/8',
+      updated_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      head: { sha: 'a'.repeat(40), ref: 'synthetic' },
+      base: { ref: 'dev' },
+      user: { login: 'author', type: 'User' },
+    };
+    const checkRun = {
+      id: 555,
+      name: 'ci',
+      status: 'completed',
+      conclusion: 'failure',
+      head_sha: 'a'.repeat(40),
+      html_url: 'https://github.com/acme/widgets/runs/555',
+      started_at: new Date(Date.now() + 60_000).toISOString(),
+      completed_at: new Date(Date.now() + 60_000).toISOString(),
+      pull_requests: [{ number: 8 }],
+    };
+    const urls: string[] = [];
+    const created = new GitHubEventExtension(db, 'token', {
+      getPollIntervalMs: () => 60_000,
+      fetchImpl: (async (url: string) => {
+        urls.push(url);
+        const body = url.includes('/check-runs')
+          ? { total_count: 1, check_runs: [checkRun] }
+          : /\/pulls\?/.test(url)
+            ? [pull]
+            : /\/pulls\/8$/.test(url)
+              ? pull
+              : url.endsWith('/user')
+                ? { login: 'self' }
+                : [];
+        return new Response(JSON.stringify(body), { status: 200 });
+      }) as unknown as typeof fetch,
+    });
+    extension = created;
+    const config = createExternalEventConfigStore(db);
+    await config.setGlobalConfig('github', {
+      source: 'github',
+      globallyEnabled: true,
+      capabilities: { polling: true },
+    });
+    await created.start({
+      publisher: { publish: async (event) => ({ outcome: 'published', eventId: event.id }) },
+      config,
+      onSourceConfigChanged() {},
+    });
+    await created.watchSessionRepo('acme', 'widgets');
+    await created.pollOnce();
+    expect(urls.some((url) => url.includes('/check-runs'))).toBe(true);
+    const [watched] = created.repo.listPollingRepos(SESSION_EVENT_SCOPE);
+    expect(watched.pollCursor?.lastPollError ?? null).toBeNull();
+    expect(watched.pollCursor?.lastPartialPollError ?? null).toBeNull();
+  });
+});
+
 describe('watchSessionRepo', () => {
   test('watches a repo for sessions with polling on and webhooks off, once', async () => {
     const db = new BunDatabase(':memory:');

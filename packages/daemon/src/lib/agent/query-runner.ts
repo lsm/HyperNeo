@@ -1076,15 +1076,13 @@ export class QueryRunner {
         logger.warn('Background fetch of models failed:', e);
       });
 
-      if (session.config.provider !== 'acp') {
-        const effectiveMcpServers = optionsBuilder.getEffectiveMcpServers() ?? {};
-        void queryObject.setMcpServers?.(effectiveMcpServers).catch((err) => {
-          logger.warn(
-            `QueryRunner.start: post-start MCP reconcile failed for session ${session.id}: ` +
-              `${err instanceof Error ? err.message : String(err)}`
-          );
-        });
-      }
+      const effectiveMcpServers = optionsBuilder.getEffectiveMcpServers() ?? {};
+      void queryObject.setMcpServers?.(effectiveMcpServers).catch((err) => {
+        logger.warn(
+          `QueryRunner.start: post-start MCP reconcile failed for session ${session.id}: ` +
+            `${err instanceof Error ? err.message : String(err)}`
+        );
+      });
 
       const queryStartTime = Date.now();
 

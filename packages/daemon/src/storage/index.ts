@@ -251,10 +251,6 @@ export class Database {
     return this.sessionRepo.listSessionsBySpaceAgent(spaceId, agentId);
   }
 
-  async clearAcpSessionIds(): Promise<void> {
-    return this.gateway.call(sessionWrites, 'clearAcpSessionIds');
-  }
-
   listProcessingSessionIds(): string[] {
     return this.sessionRepo.listProcessingSessionIds();
   }

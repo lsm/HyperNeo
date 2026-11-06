@@ -91,7 +91,6 @@ const runEnforceContextBudget = (
   superpipe({
     providerSkipsEnforcement: (ctx: ContextBudgetEnforcementCtx) =>
       !ctx.providerId ||
-      ctx.providerId === 'acp' ||
       (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(ctx.providerId) &&
         ctx.contextInfo.autoCompactPercentOverride === undefined),
     limitRecoveryOwnsTurn: (ctx: ContextBudgetEnforcementCtx) =>

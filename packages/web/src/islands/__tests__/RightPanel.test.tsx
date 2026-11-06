@@ -29,6 +29,7 @@ vi.mock('../../components/space/GoalDetailPanel', () => ({
   ),
 }));
 
+import { navSectionSignal, rightPanelTargetSignal } from '../../lib/signals';
 import {
   currentSpaceCanonicalIdSignal,
   currentSpaceGoalIdSignal,
@@ -36,9 +37,7 @@ import {
   currentSpaceScopeIdSignal,
   currentSpaceTaskIdSignal,
   currentSpaceViewModeSignal,
-  navSectionSignal,
-  rightPanelTargetSignal,
-} from '../../lib/signals';
+} from '../../lib/space-signals';
 import { sessionStore } from '../../lib/session-store';
 import type { Session } from '@hyperneo/shared';
 import { RightPanel, RightPanelToggle } from '../RightPanel';

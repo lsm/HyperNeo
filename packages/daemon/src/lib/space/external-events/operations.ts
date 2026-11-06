@@ -1,4 +1,4 @@
-import type { OperationDefinition } from '../operations/registry.ts';
+import type { OperationDefinition } from '../../operations/registry.ts';
 import {
   createGetExternalEventOperation,
   type GetExternalEventDependencies,

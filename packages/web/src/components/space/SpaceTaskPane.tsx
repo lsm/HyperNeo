@@ -13,7 +13,7 @@ import { useImageDropZone } from '../../hooks';
 import { useResolvedSpaceTask } from '../../hooks/useResolvedSpaceTask';
 import { getTaskStatusConfig } from '../../lib/task-status';
 import { pushOverlayHistory, pushOverlayHistoryForPendingAgent } from '../../lib/router';
-import { currentSpaceIdSignal } from '../../lib/signals';
+import { currentSpaceIdSignal } from '../../lib/space-signals';
 import { getTaskWorkspaceLabel } from '../../lib/space-task-helpers';
 import { spaceStore } from '../../lib/space-store';
 import { cn } from '../../lib/utils';

@@ -8,7 +8,8 @@ const { navigateToSpaceTasks, error } = vi.hoisted(() => ({
 vi.mock('../router.ts', () => ({ navigateToSpaceTasks }));
 vi.mock('../toast.ts', () => ({ toast: { error } }));
 
-import { commandPaletteOpenSignal, currentSpaceIdSignal } from '../signals';
+import { commandPaletteOpenSignal } from '../signals';
+import { currentSpaceIdSignal } from '../space-signals';
 import { SPACE_COMMANDS } from '../space-commands';
 
 const viewTasks = SPACE_COMMANDS.find((command) => command.id === 'space.tasks')!;

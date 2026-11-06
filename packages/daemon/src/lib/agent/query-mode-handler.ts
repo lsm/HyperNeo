@@ -178,7 +178,7 @@ export class QueryModeHandler {
       activeInJobQueue:
         jobQueue?.activeDeliveryMessageUuids?.(this.ctx.session.id) ?? new Set<string>(),
       slotResetsContext: this.ctx.slotResetsContext?.() ?? false,
-      hasPriorContext: !!(this.ctx.session.sdkSessionId || this.ctx.session.acpSessionId),
+      hasPriorContext: !!this.ctx.session.sdkSessionId,
       pendingTaskInput: options?.pendingTaskInput === true,
     });
   }

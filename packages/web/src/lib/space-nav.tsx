@@ -1,13 +1,13 @@
+import { navSectionSignal } from './signals.ts';
 import {
   currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,
   currentSpaceSessionIdSignal,
   currentSpaceTaskIdSignal,
   currentSpaceViewModeSignal,
-  navSectionSignal,
   spaceOverlayPendingAgentNameSignal,
   spaceOverlaySessionIdSignal,
-} from './signals.ts';
+} from './space-signals.ts';
 import {
   createSpaceSessionPath,
   createSpaceTaskPath,
@@ -19,6 +19,7 @@ import {
   navigateToSpaceTask,
   navigateToSpaceTasks,
 } from './router.ts';
+import { spaceCurrentRoute } from './space-route-sync.ts';
 import { voiceReturnTaskTargetSessionSignal } from './voice/voice-composer-registry.ts';
 import {
   openSpaceSearchResult,
@@ -186,6 +187,8 @@ export const spaceNav: ExtensionNav = {
   open: () => navigateToSpaces(),
   contextTabs: spaceContextTabs,
   contentKey: spaceContentKey,
+  currentRoute: spaceCurrentRoute,
+  holdsSessionSelection: () => currentSpaceSessionIdSignal.value !== null,
   voiceScope: () =>
     spaceVoiceScope(currentSpaceCanonicalIdSignal.value ?? currentSpaceIdSignal.value),
   paletteItems: spacePaletteItems,

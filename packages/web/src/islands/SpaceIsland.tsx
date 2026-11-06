@@ -14,7 +14,7 @@ import {
   pushOverlayHistory,
 } from '../lib/router';
 import { sessionStore } from '../lib/session-store';
-import type { SpaceViewMode } from '../lib/signals';
+import type { SpaceViewMode } from '../lib/space-signals';
 import {
   currentSpaceAgentHandleSignal,
   currentSpaceCanonicalIdSignal,
@@ -27,7 +27,7 @@ import {
   spaceOverlayPendingTaskIdSignal,
   spaceOverlaySessionIdSignal,
   spaceOverlayTaskContextSignal,
-} from '../lib/signals';
+} from '../lib/space-signals';
 import { spaceStore } from '../lib/space-store';
 import ChatContainer from './ChatContainer';
 import { SpaceAgentChat } from './SpaceAgentChat';

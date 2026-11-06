@@ -22,7 +22,6 @@ import {
   getSpaceTaskViewFromPath,
   initializeRouter,
   navigateBack,
-  navigateToHome,
   navigateToSession,
   navigateToSettings,
   navigateToSpace,
@@ -36,8 +35,8 @@ import {
   navigateToSpaceTask,
   navigateToSpaceTasks,
 } from '../router';
+import { currentSessionIdSignal, navSectionSignal, settingsSectionSignal } from '../signals';
 import {
-  currentSessionIdSignal,
   currentSpaceAgentHandleSignal,
   currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,
@@ -46,9 +45,7 @@ import {
   currentSpaceTaskIdSignal,
   currentSpaceTasksFilterTabSignal,
   currentSpaceViewModeSignal,
-  navSectionSignal,
-  settingsSectionSignal,
-} from '../signals';
+} from '../space-signals';
 
 const SESSION_ID = '550e8400-e29b-41d4-a716-446655440000';
 const SPACE_ID = 'demo-space';
@@ -360,7 +357,7 @@ describe('router', () => {
     expect(currentSessionIdSignal.value).toBeNull();
     finishNavigation();
 
-    navigateToHome();
+    navigateToSpacesPage();
     expect(navSectionSignal.value).toBe('spaces');
     expect(window.history.pushState).toHaveBeenLastCalledWith(
       { path: '/spaces', [IN_APP_HISTORY_DEPTH_KEY]: 3 },

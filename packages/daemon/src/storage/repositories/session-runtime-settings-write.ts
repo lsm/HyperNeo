@@ -1,7 +1,6 @@
 import type { ToolsConfig } from '@hyperneo/shared';
 import type { SQLiteValue } from '../types.ts';
 import type { SessionToolSelection } from '@hyperneo/shared/types/session-tool-choice';
-export const ACP_METADATA_CLEAR_PATHS = ['$.acpContextUsageEstimate', '$.acpSessionCommand'];
 
 export interface SessionRuntimeSettingsSnapshot {
   readonly id: string;
@@ -30,14 +29,11 @@ export interface RuntimeSettingsPatch {
   readonly model?: string;
   readonly provider?: string;
   readonly thinkingLevel?: string;
-  readonly clearAcpSession?: boolean;
   readonly clearSdkSession?: boolean;
 }
 
 export interface RuntimeSettingsPatchPlan {
   readonly configEntries: ReadonlyArray<readonly [path: string, value: string]>;
-  readonly clearAcpMetadata: boolean;
-  readonly clearAcpSession: boolean;
   readonly clearSdkSession: boolean;
 }
 
@@ -48,8 +44,6 @@ export interface SessionRuntimeSettingsWrite {
 
 const INCARNATION_GUARD =
   'EXISTS (SELECT 1 FROM session_incarnations i WHERE i.session_id = sessions.id AND i.incarnation = ?)';
-
-const quoteAll = (paths: readonly string[]): string => paths.map((path) => `'${path}'`).join(', ');
 
 const CONFIG_KEYS = ['model', 'provider', 'thinkingLevel'] as const;
 const CONFIG_PATH_BY_KEY = {
@@ -151,11 +145,8 @@ export function planRuntimeSettingsPatch(patch: RuntimeSettingsPatch): RuntimeSe
   if (patch.toolSelection !== undefined)
     configEntries.push(['$.toolSelection', JSON.stringify(patch.toolSelection)]);
   if (configEntries.length === 0) throw new Error('runtime settings write: nothing to write');
-  const clearAcpSession = patch.clearAcpSession === true;
   return {
     configEntries,
-    clearAcpMetadata: clearAcpSession,
-    clearAcpSession,
     clearSdkSession: patch.clearSdkSession === true,
   };
 }
@@ -172,9 +163,6 @@ export function buildSessionRuntimeSettingsWrite(
     .join(', ');
   const sets = [`config = json_set(config, ${paths})`];
   const values: SQLiteValue[] = plan.configEntries.map(([, value]) => value);
-  if (plan.clearAcpMetadata)
-    sets.push(`metadata = json_remove(metadata, ${quoteAll(ACP_METADATA_CLEAR_PATHS)})`);
-  if (plan.clearAcpSession) sets.push('acp_session_id = NULL');
   if (plan.clearSdkSession) sets.push('sdk_session_id = NULL', 'sdk_origin_path = NULL');
   values.push(snapshot.id);
   const guards: string[] = [];

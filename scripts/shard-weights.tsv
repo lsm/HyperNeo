@@ -95,6 +95,7 @@
 6	packages/daemon/tests/unit/1-core/agent/reconciler-sweep.test.ts
 10	packages/daemon/tests/unit/1-core/agent/repeated-tool-error-gates.test.ts
 20	packages/daemon/tests/unit/1-core/agent/repeated-tool-error-guardrail.test.ts
+2316	packages/daemon/tests/unit/1-core/agent/retired-session-provider.test.ts
 53	packages/daemon/tests/unit/1-core/agent/rewind-handler.test.ts
 219	packages/daemon/tests/unit/1-core/agent/runtime-settings-commit-owner.test.ts
 553	packages/daemon/tests/unit/1-core/agent/runtime-settings-commit.test.ts
@@ -283,8 +284,6 @@
 15	packages/daemon/tests/unit/1-core/operations/work-start-configuration.test.ts
 63	packages/daemon/tests/unit/1-core/process-fatal-logger.test.ts
 44	packages/daemon/tests/unit/1-core/process-watchdog.test.ts
-36	packages/daemon/tests/unit/1-core/providers/acp-command-probe.test.ts
-24	packages/daemon/tests/unit/1-core/providers/acp-provider.test.ts
 22	packages/daemon/tests/unit/1-core/providers/anthropic-copilot/conversation.test.ts
 5	packages/daemon/tests/unit/1-core/providers/anthropic-copilot/copilot-cli-resolver.test.ts
 14	packages/daemon/tests/unit/1-core/providers/anthropic-copilot/get-or-create-client.test.ts
@@ -361,7 +360,6 @@
 4	packages/daemon/tests/unit/1-core/session/tools-config.test.ts
 4	packages/daemon/tests/unit/1-core/startup-phase-timer.test.ts
 1094	packages/daemon/tests/unit/1-core/tasks/create-task.test.ts
-5	packages/daemon/tests/unit/1-core/work-queue/dependency-graph.test.ts
 11	packages/daemon/tests/unit/1-core/tasks/dependency-plan.test.ts
 1091	packages/daemon/tests/unit/1-core/tasks/edit-task.test.ts
 232	packages/daemon/tests/unit/1-core/tasks/list-tasks.test.ts
@@ -381,6 +379,7 @@
 7	packages/daemon/tests/unit/1-core/tasks/task-row.test.ts
 2657	packages/daemon/tests/unit/1-core/tasks/transition-task.test.ts
 12	packages/daemon/tests/unit/1-core/tasks/transitions.test.ts
+5	packages/daemon/tests/unit/1-core/work-queue/dependency-graph.test.ts
 13820	packages/daemon/tests/unit/2-handlers/db-query/db-query-integration.test.ts
 154	packages/daemon/tests/unit/2-handlers/db-query/db-query-worker-service.test.ts
 1271	packages/daemon/tests/unit/2-handlers/db-query/schema-parity-check.test.ts
@@ -1057,13 +1056,7 @@
 28	packages/daemon/tests/unit/helpers/dev-proxy.test.ts
 51	packages/daemon/tests/unit/lib/acp/acp-client.test.ts
 6	packages/daemon/tests/unit/lib/acp/acp-command.test.ts
-56	packages/daemon/tests/unit/lib/acp/acp-integration.test.ts
-16	packages/daemon/tests/unit/lib/acp/acp-message-translator.test.ts
-57	packages/daemon/tests/unit/lib/acp/acp-model-fetcher.test.ts
-18	packages/daemon/tests/unit/lib/acp/acp-query-adapter.test.ts
-6634	packages/daemon/tests/unit/lib/acp/acp-query-runner.test.ts
 11	packages/daemon/tests/unit/lib/acp/acp-safe-fs.test.ts
-780	packages/daemon/tests/unit/lib/acp/acp-terminal-manager.test.ts
 16	packages/daemon/tests/unit/lib/acp/acp-transport.test.ts
 10524	packages/daemon/tests/unit/lib/event-loop-watchdog.test.ts
 10	packages/daemon/tests/unit/lib/job-handlers/message-delivery-dead-letter.test.ts

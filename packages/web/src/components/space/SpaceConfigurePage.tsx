@@ -3,8 +3,8 @@ import { lazy, Suspense } from 'preact/compat';
 import { Tab, TabGroup, TabList } from '@hyperneo/ui';
 import type { Space, SpaceWorkflow } from '@hyperneo/shared';
 import { spaceStore } from '../../lib/space-store';
-import { currentSpaceIdSignal, currentSpaceSettingsTabSignal } from '../../lib/signals';
-import type { SpaceSettingsTab } from '../../lib/signals';
+import { currentSpaceIdSignal, currentSpaceSettingsTabSignal } from '../../lib/space-signals';
+import type { SpaceSettingsTab } from '../../lib/space-signals';
 import { navigateToSpaceConfigure } from '../../lib/router';
 import { cn } from '../../lib/utils';
 
