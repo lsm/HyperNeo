@@ -4,7 +4,7 @@ import { createEvolutionEvidenceAttachOperation } from '../../../../src/lib/spac
 import type {
   EvolutionAuditEntry,
   EvolutionAuditWriter,
-} from '../../../../src/lib/space/evolution/admission.ts';
+} from '../../../../../space/src/evolution/admission.ts';
 import { EvolutionScopeService } from '../../../../src/lib/space/evolution/scope-service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {

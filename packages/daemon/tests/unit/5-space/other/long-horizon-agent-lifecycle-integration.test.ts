@@ -7,8 +7,8 @@ import {
   GOAL_AUTOMATION_EXECUTE,
   TASK_SCHEDULE_FIRE,
 } from '../../../../src/lib/job-queue-constants';
-import { handleGoalAutomationExecute } from '../../../../src/lib/space/job-handlers/goal-automation-execute.handler';
-import { handleTaskScheduleFire } from '../../../../src/lib/space/job-handlers/task-schedule-fire.handler';
+import { handleGoalAutomationExecute } from '../../../../../space/src/job-handlers/goal-automation-execute.handler.ts';
+import { handleTaskScheduleFire } from '../../../../../space/src/job-handlers/task-schedule-fire.handler.ts';
 import { GoalAutomationService } from '../../../../src/lib/space/goals/automation-service';
 import { ScheduleService } from '../../../../src/lib/schedule/schedule-service';
 import { getLongHorizonAgentTemplate } from '../../../../src/lib/agents/long-horizon-templates';

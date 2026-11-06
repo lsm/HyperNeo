@@ -22,10 +22,10 @@ import type {
   ResolveScopeForGoalParams,
   ResolveScopeForTaskParams,
   SelectTaskLessonsParams,
-} from './scope-service-types.ts';
-import { mergeEvolutionPolicy } from './scope-policy.ts';
-import { rankLessonsByTaskRelevance } from './lesson-ranking.ts';
-import { buildPreflightContext } from './scope-preflight-context.ts';
+} from '../../../../../space/src/evolution/scope-service-types.ts';
+import { mergeEvolutionPolicy } from '../../../../../space/src/evolution/scope-policy.ts';
+import { rankLessonsByTaskRelevance } from '../../../../../space/src/evolution/lesson-ranking.ts';
+import { buildPreflightContext } from '../../../../../space/src/evolution/scope-preflight-context.ts';
 import {
   buildTaskResultEvidenceMetadata,
   buildTaskResultEvidenceSummary,
@@ -33,7 +33,7 @@ import {
   selectWorkflowEvidenceKind,
   summarizeArtifact,
   summarizeArtifactTypes,
-} from './scope-evidence-summaries.ts';
+} from '../../../../../space/src/evolution/scope-evidence-summaries.ts';
 import {
   createAutoEvidenceOnce,
   createProposalOriginEvidence,
@@ -55,13 +55,13 @@ import {
   requireScopeForWorkflowRun,
   requireScopeInSpace,
   requireSpace,
-} from './scope-resolution.ts';
+} from '../../../../../space/src/evolution/scope-resolution.ts';
 
-export { mergeEvolutionPolicy } from './scope-policy.ts';
+export { mergeEvolutionPolicy } from '../../../../../space/src/evolution/scope-policy.ts';
 export type {
   AddManualNoteEvidenceParams,
   EvolutionScopeServiceDeps,
-} from './scope-service-types.ts';
+} from '../../../../../space/src/evolution/scope-service-types.ts';
 
 const log = new Logger('evolution-scope-service');
 

@@ -5,6 +5,7 @@ import { sessionSdkPath } from '../../session/sdk-path.ts';
 import { sdkPendingRemoval } from '../../../storage/repositories/sdk-message-transactions.ts';
 import { copilotOwnsSession } from '../../drivers/copilot-find.ts';
 import { createDriverHealthRuntime } from '../../drivers/driver-health-runtime.ts';
+import { startCuChecker } from '../../drivers/codex-cu-reaper.ts';
 import { createCopilotAdapter } from '../../drivers/copilot-adapter.ts';
 import { dirname, resolve } from 'node:path';
 import { ensureCodexDesktopProject } from '../../drivers/codex-desktop-project.ts';
@@ -538,6 +539,9 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
         adapter: 'claude-code',
         marker,
       })
+  );
+  context.driverCleanup?.push(
+    startCuChecker(() => context.deps.db.getGlobalSettings().codexCuAutoReap !== false)
   );
   const codex = () =>
     codexDesktopAdapters(

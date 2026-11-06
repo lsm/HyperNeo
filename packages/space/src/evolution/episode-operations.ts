@@ -22,7 +22,7 @@ import {
   type EvolutionAdmissionDependencies,
   type EvolutionAuditWriter,
   type EvolutionGate,
-} from '../../../daemon/src/lib/space/evolution/admission.ts';
+} from './admission.ts';
 import {
   EvolutionEpisodeSchema,
   EvolutionEpisodeStatusSchema,
@@ -33,7 +33,7 @@ import {
   EvolutionPrioritySchema,
   EvolutionProposalSchema,
 } from './episode-schemas.ts';
-import { EvolutionMetricValuesSchema } from '../../../daemon/src/lib/space/evolution/result-schemas.ts';
+import { EvolutionMetricValuesSchema } from './result-schemas.ts';
 import type { EvolutionEpisodeService } from './episode-service.ts';
 import type { EvolutionScopeService } from '../../../daemon/src/lib/space/evolution/scope-service.ts';
 

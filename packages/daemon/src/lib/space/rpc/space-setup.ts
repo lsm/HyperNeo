@@ -64,8 +64,8 @@ import type { SpaceAgentLookup } from '../../workflows/workflow-manager.ts';
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
-import { createConversationFrictionEvidenceHandler } from '../job-handlers/conversation-friction-evidence.handler.ts';
-import { handleGoalAutomationExecute } from '../job-handlers/goal-automation-execute.handler.ts';
+import { createConversationFrictionEvidenceHandler } from '../../../../../space/src/job-handlers/conversation-friction-evidence.handler.ts';
+import { handleGoalAutomationExecute } from '../../../../../space/src/job-handlers/goal-automation-execute.handler.ts';
 import { GoalAutomationService } from '../goals/automation-service.ts';
 import {
   GOAL_AUTOMATION_EXECUTE,
@@ -136,7 +136,7 @@ import type { SpaceManager } from '../managers/space-manager.ts';
 import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { OperationRegistry } from '../../operations/registry.ts';
 
-import { validateGoalAutomationSelfNagPolicy } from '../evolution/evolution-policy-validation.ts';
+import { validateGoalAutomationSelfNagPolicy } from '../../../../../space/src/evolution/evolution-policy-validation.ts';
 import { syncGoalAutomationSelfNagScheduleForScope } from '../goals/automation-schedule-sync.ts';
 
 const log = new Logger('rpc-handlers');

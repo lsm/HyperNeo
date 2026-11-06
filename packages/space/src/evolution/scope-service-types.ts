@@ -1,13 +1,13 @@
 import type { CreateMetricSnapshotParams, EvidenceRef, EvolutionScope } from '@hyperneo/shared';
-import type { EvolutionRepository } from '../../../storage/repositories/evolution-repository.ts';
-import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
-import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
-import type { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
-import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
-import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
-import type { EvolutionTraceEvidenceService } from '../../../../../space/src/evolution/trace-evidence-service.ts';
-import type { TraceEvidenceDiagnostic } from '../../../../../space/src/evolution/trace-evidence-types.ts';
+import type { EvolutionRepository } from '../../../daemon/src/storage/repositories/evolution-repository.ts';
+import type { JobQueueRepository } from '../../../daemon/src/storage/repositories/job-queue-repository.ts';
+import type { SpaceGoalRepository } from '../../../daemon/src/storage/repositories/space-goal-repository.ts';
+import type { SpaceRepository } from '../../../daemon/src/storage/repositories/space-repository.ts';
+import type { SpaceTaskRepository } from '../../../daemon/src/storage/repositories/space-task-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../../daemon/src/storage/repositories/space-workflow-run-repository.ts';
+import type { WorkflowRunArtifactRepository } from '../../../daemon/src/storage/repositories/workflow-run-artifact-repository.ts';
+import type { EvolutionTraceEvidenceService } from './trace-evidence-service.ts';
+import type { TraceEvidenceDiagnostic } from './trace-evidence-types.ts';
 
 export interface EvolutionScopeServiceDeps {
   evolutionRepo: EvolutionRepository;
