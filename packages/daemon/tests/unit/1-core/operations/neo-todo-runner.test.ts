@@ -1485,7 +1485,7 @@ describe('neo todo runner', () => {
     expect(told).toEqual(['Todo "Rows" is done: #1 已合并']);
   });
 
-  test('a todo that starts in another repo moves to that repo’s child card first', async () => {
+  test('a todo starting in another repository stays on its original card', async () => {
     const { store, sessions, runner } = setup();
     const todo = store.addTodo(
       'moving',
@@ -1513,13 +1513,9 @@ describe('neo todo runner', () => {
       },
     });
     const started = await runner.start(todo.id);
-    const child = store.getAsk(started.ok ? started.todo.askId : '')!;
-    expect(child).toMatchObject({
-      title: 'iOS card · ops',
-      parentId: 'ask',
-      repo: 'github.com/lsm/ops',
-    });
-    expect(store.getTodo('moving')).toMatchObject({ state: 'doing', repo: 'github.com/lsm/ops' });
+    expect(started.ok && started.todo.askId).toBe('ask');
+    expect(store.getTodo('moving')).toMatchObject({ state: 'doing', askId: 'ask' });
+    expect(store.listChildAsks('ask')).toEqual([]);
   });
 
   test("a todo checked by a pack sends that pack's worker rules after its instruction", async () => {

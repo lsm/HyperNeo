@@ -69,3 +69,13 @@ it('keeps the missing-original placeholder as plain italic text', () => {
   expect(bar.querySelector('strong')).toBeNull();
   expect(bar.textContent).toContain('Original message unavailable');
 });
+
+it('keeps ready markdown on the first render after a quote remount', async () => {
+  const excerpt = '**History**\n' + 'Synthetic history line\n'.repeat(8);
+  const first = render(<NeoQuoteBar author="You" excerpt={excerpt} onOpen={() => {}} />);
+  await waitFor(() => expect(first.container.querySelector('strong')?.textContent).toBe('History'));
+  first.unmount();
+  const replacement = render(<NeoQuoteBar author="You" excerpt={excerpt} onOpen={() => {}} />);
+  expect(replacement.container.querySelector('strong')?.textContent).toBe('History');
+  expect(replacement.container.querySelector('.neo-quote-excerpt')).not.toBeNull();
+});

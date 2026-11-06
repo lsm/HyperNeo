@@ -1,12 +1,21 @@
-7. **A cross-repo request becomes one card per repo.** Launch with
-   `VERIFY_MOCK=neo-script-api.ts .claude/skills/verify/launch.sh 9311 "$RUN"`.
-   That mock plays root's model: when the human's message contains
-   `verify-cross-repo`, it calls `neo.ask.open` with todos for two repos
-   (`lsm/HyperNeo` and `lsm/open-agent-protocol`). Open root, then send
-   `neo.message.send {"sessionId":"<root>","requestId":"<uuid>","content":"Attach the open PRs (verify-cross-repo)"}`.
-   End state within ~20 s: `neo_asks` holds the request card `done` with outcome
-   `Filed 3 todos across hyperneo, open-agent-protocol cards.` and two open
-   child cards, `Attach open PRs · hyperneo` and `· open-agent-protocol`, each
-   with only its repo's todos (`neo_todos.repo`). On `/neo`, "Your work" lists
-   the two child cards, and Recent outcomes shows the request as Done with that
-   outcome under Details.
+# A cross-repository request stays on one card
+
+Journey 7 shares the metadata-only MCP proof in
+[Journey 8](08-a-todo-whose-pr-lands-in-another-repo-moves-to-that-repo-s-card.md).
+Use SKILL.md's guarded wrapper from the worktree root:
+
+```bash
+TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh \
+  /absolute/fresh/evidence-directory .claude/skills/verify/ask-bookkeeping-actions.ts
+```
+
+Through the agent-visible operation door, open one request with coding todos
+for two repositories. The reply must contain one open ask with both todos on
+that ask. No repository child is created and the parent stays open. Read the
+same ask through neo.ask.read before and after reopening the database, preserving
+both todos and their original ask IDs. The helper also reads historical child
+cards independently, so retaining old children does not create new splits.
+
+Keep observed.json and proof.log. The wrapper removes the synthetic database and
+HOME after saving evidence. This proof covers MCP and public read results. Web
+layout and a model-driven chat turn require separate observation.

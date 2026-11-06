@@ -1,4 +1,10 @@
+import type { NeoAttachment } from './neo-attachments.ts';
+
 export type NeoFlightRect = { x: number; y: number; width: number; height: number };
+
+export type NeoFlightOrigin = NeoFlightRect & {
+  media?: { target: string; from: NeoFlightRect; file: NeoAttachment }[];
+};
 
 export function neoFlightBox(from: NeoFlightRect, to: NeoFlightRect, progress: number) {
   if (progress <= 0)

@@ -43,6 +43,7 @@ export function NeoSentFiles({ files }: { files: NeoSentFile[] }) {
       {files.map((file, index) => (
         <button
           key={index}
+          data-flight={`file-${index}`}
           type="button"
           aria-label={t('chat.openFile', { name: file.name })}
           onClick={() => setOpened(file)}
@@ -72,6 +73,7 @@ export function NeoAttachments({
       {files.map((file) => (
         <li
           key={file.id}
+          data-attachment={file.id}
           class="flex max-w-full items-center gap-2 rounded-xl border border-line bg-surface px-2 py-2"
         >
           <NeoFileChip

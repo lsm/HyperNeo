@@ -83,6 +83,7 @@ try {
           .locator('[data-public-entry].neo-message-user')
           .first()
           .getByRole('button', { name: 'Reply to your message', exact: true });
+        await reply.evaluate((element) => element.scrollIntoView({ block: 'center' }));
         if (touch) await reply.tap();
         else await reply.click();
         await page.locator('form [data-quote-bar]').waitFor();
@@ -104,8 +105,9 @@ try {
           let tracked;
           const frame = () =>
             setTimeout(() => {
-              const ghost = document.querySelector('[data-send-flight]');
-              if (ghost) tracked = ghost.dataset.sendFlight;
+              const overlay = document.querySelector('[data-send-flight]');
+              const ghost = overlay?.querySelector('[data-flight-words]');
+              if (overlay) tracked = overlay.dataset.sendFlight;
               const row = tracked
                 ? document.querySelector(
                     `[data-pending-ask="${CSS.escape(tracked)}"], [data-message-ref="${CSS.escape(tracked)}"]`
@@ -273,6 +275,7 @@ try {
       .locator('[data-public-entry].neo-message-user')
       .first()
       .getByRole('button', { name: 'Reply to your message', exact: true });
+    await firstReply.evaluate((element) => element.scrollIntoView({ block: 'center' }));
     if (touch) await firstReply.tap();
     else await firstReply.click();
     await input.fill('The first quoted send');
@@ -290,6 +293,7 @@ try {
       .locator('[data-public-entry].neo-message-user')
       .nth(1)
       .getByRole('button', { name: 'Reply to your message', exact: true });
+    await nextReply.evaluate((element) => element.scrollIntoView({ block: 'center' }));
     if (touch) await nextReply.tap();
     else await nextReply.click();
     const selectedBefore = await page.locator('form [data-quote-bar]').textContent();

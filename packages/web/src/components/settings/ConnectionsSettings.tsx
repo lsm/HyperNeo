@@ -121,7 +121,7 @@ export function ConnectionsSettings() {
     error || readError || (view.attempt.state === 'failed' ? view.attempt.reason : '');
   return (
     <SettingsSection
-      title={t('connections.title')}
+      title={t('connections.tabAccounts')}
       description={t('connections.description')}
       actions={
         <Button disabled={busy} onClick={() => setSetup({})}>

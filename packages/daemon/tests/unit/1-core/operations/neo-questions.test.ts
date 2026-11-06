@@ -287,22 +287,14 @@ describe('neo.question operations', () => {
           if (!result.ok) throw new Error(result.reason);
           joinedId = result.todo.id;
         } else {
-          store.openAsk({
-            id: 'other',
-            sessionId: 'neo-a',
-            projectId: null,
-            originMessageId: null,
-            title: 'Other work',
-            request: 'Other work',
-            createdAt: 1,
-          });
           const todo = store.addTodo(
-            'moved',
-            'other',
+            'recorded',
+            'ask',
             { ...draft, doneWhen: 'Observed result' },
             1
           );
-          joinedId = store.moveTodo(todo, 'ask', '', 2).id;
+          store.joinStartQuestion(todo, 2);
+          joinedId = todo.id;
         }
         expect(await call('neo.question.get', { questionId: question.id }, human)).toMatchObject({
           ok: true,
@@ -730,25 +722,11 @@ describe('NeoAskTodoRepository start question pruning', () => {
     expect(store.getQuestion('q-start')).toMatchObject({ state: 'open', startTodos: ['t2'] });
   });
 
-  test('a todo started elsewhere or moved to another ask leaves it, and a moved one is asked there', () => {
+  test('a todo started elsewhere leaves its unstarted peer on the start card', () => {
     const { store, fix, rows } = setup();
     startQuestion(store, [fix.id, rows.id]);
     store.claimStart(fix, 2);
-    expect(store.getQuestion('q-start')?.startTodos).toEqual(['t2']);
-    store.openAsk({
-      id: 'other',
-      projectId: null,
-      sessionId: 'neo-a',
-      originMessageId: 'm2',
-      title: 'Other',
-      request: 'Other',
-      createdAt: 1,
-    });
-    store.moveTodo(rows, 'other', 'lsm/other', 3);
-    expect(store.getQuestion('q-start')).toMatchObject({ state: 'retired', startTodos: [] });
-    expect(store.listQuestions('other')).toMatchObject([
-      { kind: 'start', state: 'open', startTodos: ['t2'], text: 'Start "Todo rows"?' },
-    ]);
+    expect(store.getQuestion('q-start')).toMatchObject({ state: 'open', startTodos: [rows.id] });
   });
 
   test('once every todo it lists is done or removed, it is retired and the ask stops waiting', () => {
@@ -1099,7 +1077,7 @@ describe('todo-owned question cards', () => {
         createdAt: 1,
       });
       h.store.updateTodo(h.fix, { state: 'removed' }, 3);
-      h.store.moveTodo(h.rows, 'foreign', '/synthetic/repo', 3);
+      h.db.prepare('UPDATE neo_todos SET ask_id = ? WHERE id = ?').run('foreign', h.rows.id);
       for (const todoId of ['unknown', h.fix.id, h.rows.id]) {
         const result = await h.call('neo.question.ask', {
           askId: 'ask',

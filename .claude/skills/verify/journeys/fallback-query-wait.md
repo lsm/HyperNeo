@@ -29,6 +29,10 @@ The online convo regression invokes the same helper in a scrubbed temporary home
 This verifies the RPC/SDK lifecycle with a scripted provider; upstream model
 behavior, browser rendering and deployment remain unverified.
 
+Repeat with --override before the run directory: a model-specific override for the
+source model then wins, and the session must end with the override row's level. Without
+the flag the override belongs to another model, so the default chain's level must win.
+
 Repeat with --cancel before the run directory (the wrapper forwards arguments).
 That case cancels through session.cancelRateLimitRetry while recovery is pending,
 releases only the synthetic old stream, and requires the original model with no

@@ -358,6 +358,19 @@ function OverrideEditorModal({
                 isUpdating={false}
                 onMove={handleMoveChain}
                 onRemove={handleRemoveChain}
+                controls={(entry, index) => (
+                  <FallbackThinkingSelect
+                    entry={entry}
+                    label={`Override fallback ${index + 1} thinking`}
+                    model={findSameModel(availableModels, entry)}
+                    disabled={false}
+                    onChange={(level) =>
+                      setChain(
+                        chain.map((item, i) => (i === index ? withThinking(item, level) : item))
+                      )
+                    }
+                  />
+                )}
               />
             )}
             <button
@@ -677,6 +690,11 @@ function thinkingChoices(model: Pick<ModelInfo, 'provider' | 'thinkingModes'> | 
   };
 }
 
+function withThinking(entry: FallbackModelEntry, level: ThinkingLevel | undefined) {
+  const { thinkingLevel: _previous, ...rest } = entry;
+  return level ? { ...rest, thinkingLevel: level } : rest;
+}
+
 function FallbackThinkingSelect({
   entry,
   label,
@@ -955,11 +973,7 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
 
   const handleThinking = async (index: number, level: ThinkingLevel | undefined) => {
     await saveFallbackModels(
-      fallbackModels.map((entry, i) => {
-        if (i !== index) return entry;
-        const { thinkingLevel: _previous, ...rest } = entry;
-        return level ? { ...rest, thinkingLevel: level } : rest;
-      })
+      fallbackModels.map((entry, i) => (i === index ? withThinking(entry, level) : entry))
     );
   };
 
