@@ -1,8 +1,9 @@
 export type NeoFlightRect = { x: number; y: number; width: number; height: number };
 
 export function neoFlightBox(from: NeoFlightRect, to: NeoFlightRect, progress: number) {
-  if (progress <= 0) return { ...from, chrome: 0 };
-  if (progress >= 1) return { ...to, chrome: 1 };
+  if (progress <= 0)
+    return { x: from.x, y: from.y, width: from.width, height: from.height, chrome: 0 };
+  if (progress >= 1) return { x: to.x, y: to.y, width: to.width, height: to.height, chrome: 1 };
   const cubic = (t: number, a: number, b: number) =>
     3 * (1 - t) ** 2 * t * a + 3 * (1 - t) * t ** 2 * b + t ** 3;
   let low = 0;
