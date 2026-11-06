@@ -22,6 +22,7 @@ import {
 } from './status-codes.ts';
 import { NeoQuestionSchema } from './question-operations.ts';
 import { NeoTodoSchema } from './todo-operations.ts';
+import { todoEvidenceFile } from '../work-locations.ts';
 
 const NEO_TODO_STATUS_EN = {
   'todo.replaced': 'Replaced by "{title}"',
@@ -167,6 +168,12 @@ function projectNeoTodoEntries(
 ): NeoTodoEntry[] {
   return shown.map((todo) => ({
     ...todo,
+    doneWhen:
+      todo.check?.pack === 'core' &&
+      todo.check.kind === 'evidence' &&
+      todo.check.params.path === todoEvidenceFile(todo.id)
+        ? ''
+        : todo.doneWhen,
     ...neoTodoStatusLine(
       todo,
       todos,
