@@ -2443,17 +2443,20 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
   private async githubFetch(path: string, init: RequestInit = {}): Promise<Response> {
     const requestGeneration = this.credentialGeneration;
-    const token = await this.resolveToken();
-    if (!token) {
+    const { token, readFailed } = await this.resolveTokenOrFail();
+    const useCli =
+      !token && !readFailed && !this.options.fetchImpl && (init.method ?? 'GET') === 'GET';
+    if (!token && !useCli) {
       throw new Error('GITHUB_TOKEN is required for GitHub API requests');
     }
-    const response = await (this.options.fetchImpl ?? fetch)(`${GITHUB_API_BASE}${path}`, {
+    const fetchImpl = useCli ? fetchGitHubViaCli : (this.options.fetchImpl ?? fetch);
+    const response = await fetchImpl(`${GITHUB_API_BASE}${path}`, {
       ...init,
       signal: init.signal ?? AbortSignal.timeout(GITHUB_WEBHOOK_REQUEST_TIMEOUT_MS),
       headers: {
         Accept: 'application/vnd.github+json',
         ...(init.body ? { 'Content-Type': 'application/json' } : {}),
-        Authorization: `Bearer ${token}`,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         'User-Agent': 'HyperNeo-Space-GitHub/1.0',
         'X-GitHub-Api-Version': '2022-11-28',
         ...init.headers,

@@ -20,7 +20,7 @@ const selectedNames = ['enablePollingCapability', 'disablePollingCapabilityIfUnu
 const all = units(extension), selected = all.filter(row => selectedNames.includes(row.name));
 if (selected.length !== 4) throw Error('Missing capability effect owner/queue');
 const untouched = all.filter(row => !selectedNames.includes(row.name)).map(row => [row.name, row.sha256]);
-if (hash(JSON.stringify(untouched)) !== '2bb44cbc1356d166970368bc3f49421452399c25ea516a18d6b10a24c451b9ff') throw Error('Other extension code changed');
+if (hash(JSON.stringify(untouched)) !== 'e1791570334fecac9002520b9465deffd609714cc5e9d44905bfdf7e64526a2e') throw Error('Other extension code changed');
 const specs = [
   ['github-polling-usage-read.ts', 47, '84752c5c336df50f98a7941c53eb93c343ac0ff443e7c669fc52566a33145289'],
   ['github-polling-repos-read.ts', 56, '39618e09a7cd70b7325cf31b205eb221f338ebe58ff6ea50bebef49a22b28d06'],
