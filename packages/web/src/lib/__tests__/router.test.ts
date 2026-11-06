@@ -22,7 +22,6 @@ import {
   getSpaceTaskViewFromPath,
   initializeRouter,
   navigateBack,
-  navigateToHome,
   navigateToSession,
   navigateToSettings,
   navigateToSpace,
@@ -360,7 +359,7 @@ describe('router', () => {
     expect(currentSessionIdSignal.value).toBeNull();
     finishNavigation();
 
-    navigateToHome();
+    navigateToSpacesPage();
     expect(navSectionSignal.value).toBe('spaces');
     expect(window.history.pushState).toHaveBeenLastCalledWith(
       { path: '/spaces', [IN_APP_HISTORY_DEPTH_KEY]: 3 },

@@ -46,6 +46,11 @@ export interface ExtensionPaletteItem {
   open(): void;
 }
 
+export interface ExtensionRoute {
+  path: string;
+  open(): void;
+}
+
 export interface ExtensionNav {
   extension: keyof WebExtensions;
   section: string;
@@ -54,6 +59,8 @@ export interface ExtensionNav {
   open(): void;
   contextTabs(): { label: string; tabs: ExtensionNavTab[] } | null;
   contentKey(): string | null;
+  currentRoute(): ExtensionRoute | null;
+  holdsSessionSelection(): boolean;
   voiceScope(): string | null;
   paletteItems(query: string): ExtensionPaletteItem[];
   warmPalette(): void;
