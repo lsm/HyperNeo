@@ -1,6 +1,6 @@
-import { McpAuditLogRepository } from '../../../../storage/repositories/mcp-audit-log-repository.ts';
-import { createGoalOperations } from '../../../../../../space/src/goals/operations.ts';
-import type { OperationDefinition } from '../../../operations/registry.ts';
+import { McpAuditLogRepository } from '../../../../daemon/src/storage/repositories/mcp-audit-log-repository.ts';
+import { createGoalOperations } from '../../goals/operations.ts';
+import type { OperationDefinition } from '../../../../daemon/src/lib/operations/registry.ts';
 import type { SpaceFamilyContext } from './space-context.ts';
 
 export function registerGoalOperations(context: SpaceFamilyContext): OperationDefinition[] {
