@@ -67,7 +67,7 @@ external session. Shared SKILL.md and journey discovery remain unchanged.
 Review regressions have separate helper modes, each requiring a fresh run:
 
 ```bash
-for MODE in search peek external-failure boundary emoji; do
+for MODE in search peek external-failure boundary emoji runtime-wait; do
   TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh \
     "/absolute/fresh/evidence-$MODE" .claude/skills/verify/copilot-history-find.ts 9386 "$MODE"
 done
@@ -94,3 +94,5 @@ done
 - `emoji`: a turn whose 4,000th UTF-16 unit is the first half of an emoji is
   clipped to the 3,999 whole characters before it (textComplete:false), so the
   preview never ends in half a surrogate pair or a replacement character.
+
+- `runtime-wait`: the runtime resolver sees a stalled synthetic download. Its supplied wait budget is scaled by 1,000 for this proof. Public find must report the runtime downloading under unreachable before the one-second RPC watchdog. No download or worker process runs. An omitted resolver budget leaves the request pending and fails the proof.

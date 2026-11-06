@@ -31,6 +31,13 @@ globalThis.fetch = (() => { throw new Error('External HTTP disabled'); }) as typ
 mkdirSync(join(run, 'home/evidence'), { recursive: true });
 writeFileSync(join(run, 'home/copilot-list.json'), '[]');
 const observations: unknown[] = [];
+if (mode === 'runtime-wait') {
+  const { mock } = await import('bun:test');
+  const runtime = await import('../../../packages/daemon/src/lib/providers/anthropic-copilot/copilot-cli-resolver.ts');
+  const { waitForDownload } = await import('../../../packages/daemon/src/lib/agent/npm-package-download.ts');
+  const pending = new Promise<never>(() => {});
+  mock.module('../../../packages/daemon/src/lib/providers/anthropic-copilot/copilot-cli-resolver.ts', () => ({ ...runtime, resolveCopilotRuntime: (_env: unknown, waitMs?: number) => waitMs === undefined ? pending : waitForDownload(pending, waitMs / 1000, 'Copilot runtime') }));
+}
 process.chdir(run);
 const config = getConfig({ port, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') });
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
@@ -43,7 +50,7 @@ async function connect() {
 function rpc(name: string, input: unknown): Promise<unknown> {
   return new Promise((done, fail) => {
     const id = crypto.randomUUID();
-    const timer = setTimeout(() => { ws!.removeEventListener('message', receive); fail(new Error(`${name} timeout`)); }, 20000);
+    const timer = setTimeout(() => { ws!.removeEventListener('message', receive); fail(new Error(`${name} timeout`)); }, mode === 'runtime-wait' ? 1000 : 20000);
     const receive = (event: MessageEvent) => {
       const reply = JSON.parse(String(event.data));
       if (reply.id !== id && reply.requestId !== id) return;
@@ -68,7 +75,12 @@ try {
   assert(!adapters.value.some(adapter => adapter.id === 'opencode'));
   const copilot = adapters.value.find(adapter => adapter.id === 'copilot-cli');
   for (const capability of ['find', 'start', 'send', 'queue', 'status', 'stop']) assert(copilot?.capabilities.includes(capability));
-  if (mode === 'boundary') {
+  if (mode === 'runtime-wait') {
+    const found = await rpc('work.find', { adapters: ['copilot-cli'], localOnly: true }) as { places: unknown[]; unreachable: { reason: string }[] };
+    assert.deepEqual(found.places, []);
+    assert(found.unreachable.some(source => source.reason.includes('Copilot runtime is still downloading')), JSON.stringify(found));
+    observations.push({ boundedRuntimeWait: true, found });
+  } else if (mode === 'boundary') {
     const work = await start('history');
     const file = join(run, 'data/copilot-workers', work.ref.id, 'session-state', work.ref.id, 'events.jsonl');
     appendFileSync(file, JSON.stringify({ type: 'assistant.message', timestamp: new Date().toISOString(), data: { messageId: 'boundary-turn', content: 'BOUNDARY'.repeat(600) } }) + '\n');
