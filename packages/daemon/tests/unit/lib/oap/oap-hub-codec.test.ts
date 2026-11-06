@@ -3,6 +3,21 @@ import { describe, expect, test } from 'bun:test';
 const codec = () => import('../../../../src/lib/oap/oap-hub-codec');
 
 describe('OAP hub wire codec', () => {
+  test('decodes a real hub refusal that also carries a null result', async () => {
+    const { decodeOapHubLine } = await codec();
+    expect(
+      decodeOapHubLine(
+        '{"id":2,"ok":false,"result":null,"error":{"code":"unknown_session","message":"Synthetic missing session"}}'
+      )
+    ).toEqual({
+      kind: 'refusal',
+      id: 2,
+      code: 'unknown_session',
+      message: 'Synthetic missing session',
+      retryable: false,
+    });
+  });
+
   test('ok:false preserves its refusal code and only busy permits resending', async () => {
     const { decodeOapHubLine } = await codec();
     for (const code of ['busy', 'unknown_session', 'internal', 'invalid_request']) {
