@@ -55,6 +55,7 @@ describe('readClaudeTurnFacts', () => {
       complete: true,
     });
     expect(turn.urls.toSorted()).toEqual(['https://example.com/report', PR]);
+    expect(turn.finalUrls).toEqual(['https://example.com/report']);
   });
 
   test('a message queued during a turn is an input of that turn, by the id its receipt holds', async () => {

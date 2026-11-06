@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { createAgentReadGuard } from '../../../../src/lib/pairing/agent-read.ts';
-import { runMigration479 } from '../../../../src/storage/schema/m479-agent-devices.ts';
+import { runMigration481 } from '../../../../src/storage/schema/m481-agent-devices.ts';
 import { runMigrations } from '../../../../src/storage/schema/migrations.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
@@ -18,14 +18,14 @@ function legacy(db = new Database(':memory:')) {
   return db;
 }
 
-describe('runMigration479', () => {
+describe('runMigration481', () => {
   test('retains credentials, revocation and pending codes while enabling agent devices', () => {
     const db = legacy();
     try {
       const devices = db.prepare('SELECT * FROM paired_devices').all();
       const codes = db.prepare('SELECT * FROM pairing_codes').all();
-      runMigration479(db);
-      runMigration479(db);
+      runMigration481(db);
+      runMigration481(db);
       expect(db.prepare('SELECT * FROM paired_devices').all()).toEqual(devices);
       expect(db.prepare('SELECT * FROM pairing_codes').all()).toEqual(codes);
       db.exec(
@@ -52,8 +52,9 @@ describe('agent migration registry', () => {
     try {
       runMigrations(db, () => {});
       db.exec(`DROP TABLE paired_devices; DROP TABLE pairing_codes;
-        DELETE FROM migration_markers WHERE key = 'migration_479';
-        INSERT INTO work_sessions VALUES ('synthetic', 'worker', 'Worker', 'idle', 1);`);
+        DELETE FROM migration_markers WHERE key = 'migration_481';
+        INSERT INTO work_sessions (adapter, id, name, status, updated_at, last_activity_at)
+        VALUES ('synthetic', 'worker', 'Worker', 'idle', 1, 7);`);
       legacy(db);
       runMigrations(db, () => {});
       db.exec(
@@ -65,8 +66,11 @@ describe('agent migration registry', () => {
       expect(db.prepare("SELECT id FROM pairing_codes WHERE id='code'").get()).toEqual({
         id: 'code',
       });
-      expect(db.prepare("SELECT status FROM work_sessions WHERE id='worker'").get()).toEqual({
+      expect(
+        db.prepare("SELECT status, last_activity_at FROM work_sessions WHERE id='worker'").get()
+      ).toEqual({
         status: 'idle',
+        last_activity_at: 7,
       });
     } finally {
       db.close();
@@ -77,7 +81,7 @@ describe('agent migration registry', () => {
 describe('createAgentReadGuard', () => {
   test('refuses other routes even for revoked agent credentials before public handlers', async () => {
     const db = legacy();
-    runMigration479(db);
+    runMigration481(db);
     const credential = 'a'.repeat(43);
     db.prepare("INSERT INTO paired_devices VALUES ('reader','Reader','agent',?,1,NULL,NULL,2)").run(
       createHash('sha256').update(credential).digest('hex')

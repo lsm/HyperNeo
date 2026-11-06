@@ -2,7 +2,7 @@ import type { TaskScheduleFirePayload } from '../../../daemon/src/lib/schedule/s
 import type { Database as BunDatabase } from '../../../daemon/src/storage/sqlite-compat.ts';
 import type { SpaceGoal, TaskSchedule } from '@hyperneo/shared';
 import { TASK_SCHEDULE_FIRE } from '../../../daemon/src/lib/job-queue-constants.ts';
-import { readSelfNagScheduleScopeId } from '../../../daemon/src/lib/space/goals/automation-schedule-sync.ts';
+import { readSelfNagScheduleScopeId } from '../goals/automation-schedule-sync.ts';
 import { Logger } from '../../../daemon/src/lib/logger.ts';
 import { getNextRunAt } from '../../../daemon/src/lib/scheduler/cron-utils.ts';
 import type { TaskScheduleRepository } from '../../../daemon/src/storage/repositories/task-schedule-repository.ts';
@@ -12,8 +12,8 @@ import type {
 } from '../../../daemon/src/storage/repositories/job-queue-repository.ts';
 import type { SpaceRepository } from '../../../daemon/src/storage/repositories/space-repository.ts';
 import type { SpaceTaskRepository } from '../../../daemon/src/storage/repositories/space-task-repository.ts';
-import type { SpaceGoalService } from '../../../daemon/src/lib/space/goals/service.ts';
-import type { GoalAutomationService } from '../../../daemon/src/lib/space/goals/automation-service.ts';
+import type { SpaceGoalService } from '../goals/service.ts';
+import type { GoalAutomationService } from '../goals/automation-service.ts';
 import type { SpaceGoalRepository } from '../../../daemon/src/storage/repositories/space-goal-repository.ts';
 
 const log = new Logger('task-schedule-fire-handler');

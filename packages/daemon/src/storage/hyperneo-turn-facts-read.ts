@@ -44,6 +44,7 @@ function planTurnFact(
     ended: terminal.ended ?? 'unknown',
     inputs: inputs.map((input) => input.id),
     urls: readTurnUrls(bodies.flatMap((body) => body ?? [])),
+    finalUrls: readTurnUrls([bodies.at(-1) ?? '']),
     complete: bodies.every((body) => !!body),
     cursor: JSON.stringify(position),
   };

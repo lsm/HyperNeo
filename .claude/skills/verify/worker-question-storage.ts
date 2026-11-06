@@ -63,7 +63,7 @@ try {
     askId: todo.askId, todoId: todo.id, kind: 'reply', text: 'A distinct new question',
   });
   assert.equal(distinct.ok, false, 'a distinct question must be refused, never silently replaced by the old card');
-  assert.match(distinct.reason, /^todo_question_open:/);
+  assert.match(distinct.reason, /^card_open:/);
   const snapshot = await rpc('neo.snapshot', {});
   const entry = snapshot.todoAsks.find((e: { ask: { id: string } }) => e.ask.id === todo.askId);
   assert(entry, JSON.stringify(snapshot));

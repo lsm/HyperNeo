@@ -23,7 +23,7 @@ try {
     fixture.exec(row.sql.replace(table, old).replace(/,\s*'agent'/, ''));
     fixture.exec(`INSERT INTO ${old} SELECT * FROM ${table}; DROP TABLE ${table}; ALTER TABLE ${old} RENAME TO ${table}`);
   }
-  fixture.exec("DELETE FROM migration_markers WHERE key='migration_479'; INSERT INTO work_sessions VALUES ('synthetic','worker','Worker','idle',1)");
+  fixture.exec("DELETE FROM migration_markers WHERE key='migration_481'; INSERT INTO work_sessions (adapter,id,name,status,updated_at,last_activity_at) VALUES ('synthetic','worker','Worker','idle',1,7)");
   assert(fixture.prepare("SELECT 1 FROM migration_markers WHERE key='migration_478'").get());
   assert.throws(() => fixture.exec("INSERT INTO paired_devices VALUES ('test','Reader','agent','test-hash',1,NULL,NULL,NULL)"));
 } finally {
@@ -45,9 +45,9 @@ try {
   assert.equal(response.status, 200);
   const db = app.db.getDatabase();
   assert.deepEqual(db.prepare("SELECT id, secret_hash FROM paired_devices WHERE kind='human' ORDER BY id").all(), hashes);
-  assert.deepEqual(db.prepare("SELECT status FROM work_sessions WHERE id='worker'").get(), { status: 'idle' });
-  for (const key of ['migration_478', 'migration_479']) assert(db.prepare('SELECT 1 FROM migration_markers WHERE key=?').get(key));
-  writeFileSync(join(run, 'evidence/agent-upgrade.json'), JSON.stringify({ passed: true, fromWorkSessions478: true, agentMigration479: true, cliExit: exit, cardRead: true, humanRead: response.status, humanCredentialsPreserved: true, workSessionsPreserved: true }));
+  assert.deepEqual(db.prepare("SELECT status, last_activity_at FROM work_sessions WHERE id='worker'").get(), { status: 'idle', last_activity_at: 7 });
+  for (const key of ['migration_478', 'migration_479', 'migration_480', 'migration_481']) assert(db.prepare('SELECT 1 FROM migration_markers WHERE key=?').get(key));
+  writeFileSync(join(run, 'evidence/agent-upgrade.json'), JSON.stringify({ passed: true, fromWorkSessions478: true, agentMigration481: true, cliExit: exit, cardRead: true, humanRead: response.status, humanCredentialsPreserved: true, workSessionsPreserved: true }));
 } finally {
   await app.cleanup();
   writeFileSync(join(run, 'evidence/upgrade-cleanup.json'), JSON.stringify({ daemonStopped: true }));

@@ -72,10 +72,10 @@ token with 401. Inspect startup-race.json, both daemon cleanup receipts and
 race-cleanup.json. The pause changes only syscall scheduling at the publication
 boundary. Credential issuance, HTTP admission and CLI reading use production code.
 
-For an existing database whose work-session migration 478 is complete, run
+For an existing database whose work-session migrations through 480 are complete, run
 `agent-migration-upgrade.ts` with the shared wrapper. It builds a synthetic
 pre-agent device schema while retaining the work-session record and marker,
-then starts the actual daemon. Agent migration 479 must run separately. The real
+then starts the actual daemon. Agent migration 481 must run separately. The real
 CLI must read the card, the existing human must still read it, and both human
 credential hashes and the work-session record must survive. Inspect
 agent-upgrade.json and upgrade-cleanup.json.

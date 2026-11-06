@@ -369,7 +369,7 @@ test('a relay uses the staged question once, whatever the language is by then', 
   try {
     await send(input);
     db.updateGlobalSettings({ language: input.question.language === 'en' ? 'zh-Hans' : 'en' });
-    const words = { todoId: 'todo', title: 'Deploy where?', options: ['Staging', 'Production'] };
+    const words = { todoId: 'todo', title: '部署到哪里?', options: ['预发', '生产'] };
     expect(await service.relayWorkerQuestion(words, 'neo')).toMatchObject({ ok: true });
     expect(await service.relayWorkerQuestion(words, 'neo')).toMatchObject({
       ok: false,

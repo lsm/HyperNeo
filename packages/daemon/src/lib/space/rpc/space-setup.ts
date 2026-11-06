@@ -66,7 +66,7 @@ import { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-
 import { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import { createConversationFrictionEvidenceHandler } from '../../../../../space/src/job-handlers/conversation-friction-evidence.handler.ts';
 import { handleGoalAutomationExecute } from '../../../../../space/src/job-handlers/goal-automation-execute.handler.ts';
-import { GoalAutomationService } from '../goals/automation-service.ts';
+import { GoalAutomationService } from '../../../../../space/src/goals/automation-service.ts';
 import {
   GOAL_AUTOMATION_EXECUTE,
   SPACE_CONVERSATION_FRICTION_ANALYZE,
@@ -108,19 +108,19 @@ import { TaskScheduleRepository } from '../../../storage/repositories/task-sched
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
 import { setupTaskScheduleHandlers } from './task-schedule-handlers.ts';
 import { setupSpaceGoalHandlers } from './space-goal-handlers.ts';
-import { subscribeAgentActivationOutcomeRedelivery } from '../goals/agent-activation-outcome-redelivery.ts';
-import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../goals/owner-change-outcome-redelivery.ts';
+import { subscribeAgentActivationOutcomeRedelivery } from '../../../../../space/src/goals/agent-activation-outcome-redelivery.ts';
+import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../../../../../space/src/goals/owner-change-outcome-redelivery.ts';
 import { setupEvolutionHandlers } from './evolution-handlers.ts';
 import { EvolutionConversationAnalysisService } from '../../../../../space/src/evolution/conversation-analysis-service.ts';
 import { EvolutionEpisodeService } from '../../../../../space/src/evolution/episode-service.ts';
-import { EvolutionScopeService } from '../evolution/scope-service.ts';
+import { EvolutionScopeService } from '../../../../../space/src/evolution/scope-service.ts';
 import { EvolutionTraceEvidenceService } from '../../../../../space/src/evolution/trace-evidence-service.ts';
 import { ScheduleService } from '../../schedule/schedule-service.ts';
 import { SpaceGoalEventRepository } from '../../../storage/repositories/space-goal-event-repository.ts';
 import { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
 import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
-import { SpaceGoalService } from '../goals/service.ts';
-import { mergeEvolutionPolicy } from '../evolution/scope-service.ts';
+import { SpaceGoalService } from '../../../../../space/src/goals/service.ts';
+import { mergeEvolutionPolicy } from '../../../../../space/src/evolution/scope-service.ts';
 import type { RPCHandlerDependencies } from '../../rpc-handlers/index.ts';
 import type { ExternalEventService } from '../../external-events/external-event-service.ts';
 import type { ExternalEventStore } from '../external-events/external-event-store.ts';
@@ -137,7 +137,7 @@ import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { OperationRegistry } from '../../operations/registry.ts';
 
 import { validateGoalAutomationSelfNagPolicy } from '../../../../../space/src/evolution/evolution-policy-validation.ts';
-import { syncGoalAutomationSelfNagScheduleForScope } from '../goals/automation-schedule-sync.ts';
+import { syncGoalAutomationSelfNagScheduleForScope } from '../../../../../space/src/goals/automation-schedule-sync.ts';
 
 const log = new Logger('rpc-handlers');
 

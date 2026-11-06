@@ -8,7 +8,7 @@ import {
   codingRemoteRepo,
   planCodingPrOwner,
 } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
-import { codingPrKey } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
+import { codingPrKey } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-key.ts';
 
 if (process.argv.includes('--synthetic')) {
   const { verifySyntheticPrOwners } = await import('./pr-owners-synthetic.ts');

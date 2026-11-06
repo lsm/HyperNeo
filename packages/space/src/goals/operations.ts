@@ -1,0 +1,51 @@
+import type { OperationDefinition } from '../../../daemon/src/lib/operations/registry.ts';
+import { type CreateGoalDependencies, createCreateGoalOperation } from './create-goal-operation.ts';
+import {
+  createGetGoalOwnerOperation,
+  type GetGoalOwnerDependencies,
+} from './get-goal-owner-operation.ts';
+import { createGetGoalOperation, type GetGoalDependencies } from './get-goal-operation.ts';
+import {
+  createTriggerGoalTaskOperation,
+  type GoalStateDependencies,
+} from './goal-state-operations.ts';
+import {
+  createListGoalEventsOperation,
+  type ListGoalEventsDependencies,
+} from './list-goal-events-operation.ts';
+import {
+  createListGoalTasksOperation,
+  type ListGoalTasksDependencies,
+} from './list-goal-tasks-operation.ts';
+import { createListGoalsOperation, type ListGoalsDependencies } from './list-goals-operation.ts';
+import {
+  createListGoalOutcomeNotificationsOperation,
+  createResolveGoalOutcomeOperation,
+  type ReviewGoalOutcomeDependencies,
+} from './review-goal-outcome-operation.ts';
+import { createUpdateGoalOperation, type UpdateGoalDependencies } from './update-goal-operation.ts';
+
+export type GoalOperationDependencies = ListGoalsDependencies &
+  GetGoalDependencies &
+  GetGoalOwnerDependencies &
+  ListGoalTasksDependencies &
+  ListGoalEventsDependencies &
+  CreateGoalDependencies &
+  UpdateGoalDependencies &
+  GoalStateDependencies &
+  ReviewGoalOutcomeDependencies;
+
+export function createGoalOperations(deps: GoalOperationDependencies): OperationDefinition[] {
+  return [
+    createListGoalsOperation(deps),
+    createGetGoalOperation(deps),
+    createGetGoalOwnerOperation(deps),
+    createListGoalTasksOperation(deps),
+    createListGoalEventsOperation(deps),
+    createCreateGoalOperation(deps),
+    createUpdateGoalOperation(deps),
+    createTriggerGoalTaskOperation(deps),
+    createListGoalOutcomeNotificationsOperation(deps),
+    createResolveGoalOutcomeOperation(deps),
+  ];
+}

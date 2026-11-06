@@ -60,6 +60,7 @@ describe('readCodexTurnFacts', () => {
           'https://example.com/a',
           'https://github.com/o/r/pull/2',
         ],
+        finalUrls: ['https://github.com/o/r/pull/2'],
         complete: true,
         cursor: expect.any(String),
       },

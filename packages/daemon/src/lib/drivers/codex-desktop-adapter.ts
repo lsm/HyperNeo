@@ -1394,6 +1394,7 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
         id: thread.id,
         name: thread.title,
         status: codexStatus(thread, deps.now()),
+        lastActivityAt: thread.updatedAt,
       })),
     resolveStartConfiguration: (request) =>
       withCodexAppServer({ appServer: deps.bootstrapServer }, (server) =>

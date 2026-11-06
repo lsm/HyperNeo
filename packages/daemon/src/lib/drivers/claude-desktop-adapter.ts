@@ -1788,6 +1788,7 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
         id: record.sessionId,
         name: record.title,
         status: claudeDesktopWorkStatus(record, live),
+        lastActivityAt: record.lastActivityAt,
       }));
     },
     start: (request, context) => runClaudeDesktopStart(request, deps, cache, context),
