@@ -32,6 +32,14 @@ const snapshot = (open: number, done: number): NeoSnapshot => ({
 const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value), 'utf8');
 
 describe('fitNeoSnapshotBudget', () => {
+  test('open asks are never dropped', () => {
+    const full = snapshot(12, 3);
+    const fitted = fitNeoSnapshotBudget(full, 4_000);
+    expect(fitted.todoAsks?.map((item) => item.ask.id)).toEqual(
+      full.todoAsks?.filter((item) => item.ask.status === 'open').map((item) => item.ask.id)
+    );
+  });
+
   test('leaves a snapshot under budget untouched', () => {
     const small = snapshot(1, 1);
     expect(fitNeoSnapshotBudget(small, 1_000_000)).toBe(small);
