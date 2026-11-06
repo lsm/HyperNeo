@@ -1,8 +1,9 @@
 import { expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { removeTempDir } from '../../../../../scripts/remove-temp-dir.ts';
 import { runtimeWorkerUrl } from '../../../src/lib/runtime-worker-url.ts';
 
 test.each([
@@ -56,6 +57,6 @@ test('source and compiled node workers execute TypeScript entrypoints as JavaScr
       'compiled-worker-ready'
     );
   } finally {
-    rmSync(run, { recursive: true, force: true });
+    removeTempDir(run);
   }
 }, 50_000);
