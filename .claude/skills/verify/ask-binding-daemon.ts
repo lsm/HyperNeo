@@ -43,10 +43,11 @@ try {
     const ids = app.db.getDatabase().prepare('SELECT id FROM sdk_messages WHERE session_id=? AND sdk_uuid=?').all(root, send.requestId) as { id: string }[];
     await app.db.writeSDKMessage('updateMessageStatus', ids.map((row) => row.id), 'consumed');
   }
-  const question = await call('neo.question.ask', { input: fresh, askId: 'slow-sql', kind: 'reply', text: 'Which Open button should stay?' });
+  const mismatch = await call('neo.question.ask', { input: fresh, askId: 'slow-sql', kind: 'reply', text: 'Which Open button should stay?', retireWhen: { pack: 'core', kind: 'evidence', params: { path: join(run, 'answered.md') } } });
+  assert(!mismatch.ok && mismatch.reason.startsWith('ask_mismatch'), JSON.stringify(mismatch));
+  const question = await call('neo.question.ask', { input: fresh, kind: 'reply', text: 'Which Open button should stay?', retireWhen: { pack: 'core', kind: 'evidence', params: { path: join(run, 'answered.md') } } });
   assert(question.ok, JSON.stringify(question));
   assert.notEqual(question.question.askId, 'slow-sql');
-  assert(question.records.some((line: string) => line.startsWith('ask_rebound')));
   const opened = store.getAsk(question.question.askId)!;
   assert.equal(opened.originMessageId, fresh);
   assert.equal(opened.request, 'The card shows two Open buttons');
