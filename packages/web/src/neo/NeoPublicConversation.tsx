@@ -460,6 +460,7 @@ function ReplyQuote({
 
 function PublicEntry({
   entry,
+  arrive = true,
   onEditUndelivered,
   replyLabels,
   onQuote,
@@ -469,6 +470,7 @@ function PublicEntry({
   status,
 }: {
   entry: NeoPublicEntry;
+  arrive?: boolean;
   status?: NeoMessageStatus;
   onOpenWork?: (anchor: string, cardReply?: NeoCardReply) => void;
   onOpenSession?: (link: string, label: string) => void;
@@ -543,7 +545,7 @@ function PublicEntry({
       id={anchor || undefined}
       data-message-ref={messageId || undefined}
       data-public-entry={entry.key}
-      class={`neo-arrive neo-message w-fit break-words focus:outline-none ${ask ? 'neo-message-user ml-auto max-w-[88%]' : 'neo-message-assistant mr-auto max-w-[94%] max-md:w-full max-md:max-w-full'}`}
+      class={`${arrive ? 'neo-arrive ' : ''}neo-message w-fit break-words focus:outline-none ${ask ? 'neo-message-user ml-auto max-w-[88%]' : 'neo-message-assistant mr-auto max-w-[94%] max-md:w-full max-md:max-w-full'}`}
       {...(copyText.trim() ? menu.bind : {})}
     >
       <div
@@ -936,6 +938,7 @@ export function PendingAsk({
 
 export function NeoPublicConversation({
   conversation,
+  skipArrival,
   statuses,
   onRetry,
   onLoadEarlier,
@@ -947,6 +950,7 @@ export function NeoPublicConversation({
   onQuote,
 }: {
   conversation: Conversation;
+  skipArrival?: ReadonlySet<string>;
   replyLabels?: ReadonlyMap<string, { label: string; askId: string }>;
   statuses?: ReadonlyMap<string, NeoMessageStatus>;
   onQuote?: (quote: NeoQuote) => void;
@@ -1051,6 +1055,7 @@ export function NeoPublicConversation({
           <PublicEntry
             key={entry.key}
             entry={entry}
+            arrive={entry.kind !== 'ask' || !skipArrival?.has(entry.ask.requestId)}
             onOpenWork={onOpenWork}
             onOpenSession={onOpenSession}
             onEditUndelivered={onEditUndelivered}

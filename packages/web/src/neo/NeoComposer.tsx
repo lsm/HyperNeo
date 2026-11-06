@@ -1,3 +1,4 @@
+import type { NeoFlightRect } from './neo-send-flight.ts';
 import './neo-composer.css';
 import { useCallback, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { Button } from '../components/ui/Button.tsx';
@@ -74,7 +75,10 @@ export function NeoComposer({
   onDraft: (value: string) => void;
   onError: (message: string) => void;
   onTranscript: (text: string) => void;
-  onSend: ReturnType<typeof createNeoIntakeClient>['send'];
+  onSend: (
+    input: Parameters<ReturnType<typeof createNeoIntakeClient>['send']>[0],
+    from?: NeoFlightRect
+  ) => ReturnType<ReturnType<typeof createNeoIntakeClient>['send']>;
 }) {
   const idSuffix = forSession ? '-session' : '';
   const [sending, setSending] = useState(false);
@@ -147,6 +151,7 @@ export function NeoComposer({
   const fileInput = useRef<HTMLInputElement>(null);
   const inFlight = useRef(false);
   const sendingText = useRef<string | null>(null);
+  const sendingQuote = useRef<NeoQuote | undefined>(undefined);
   const alive = useRef(true);
   const currentSession = useRef(sessionId);
   currentSession.current = sessionId;
@@ -195,6 +200,7 @@ export function NeoComposer({
     }
     if (sendingText.current === submitted) return;
     sendingText.current = submitted;
+    sendingQuote.current = quote;
     inFlight.current = true;
     setSending(true);
     onError('');
@@ -202,17 +208,27 @@ export function NeoComposer({
     try {
       const images = files.flatMap((file) => (file.kind === 'image' ? [file.image] : []));
       const content = attachmentMessage(submitted, files);
+      const box = thought.current?.getBoundingClientRect();
+      const top = quote
+        ? thought.current?.form?.querySelector('[data-quote-bar]')?.getBoundingClientRect().y
+        : box?.y;
+      const from =
+        !forSession && box?.width && box.height
+          ? { x: box.x, y: top ?? box.y, width: box.width, height: box.bottom - (top ?? box.y) }
+          : undefined;
       attachments.remove(files.map((file) => file.id));
-      await onSend({
+      const input = {
         sessionId,
         text: content,
         images,
         ...(quote ? { quote } : {}),
         ...(boundPreview ? { previewContext: boundPreview } : {}),
-      }).catch(() => undefined);
+      };
+      await (from ? onSend(input, from) : onSend(input)).catch(() => undefined);
     } finally {
       if (sendingText.current === submitted) {
         sendingText.current = null;
+        sendingQuote.current = undefined;
         inFlight.current = false;
         if (current()) setSending(false);
       }
@@ -280,6 +296,7 @@ export function NeoComposer({
       if (alive.current) setSending(false);
     }
   }
+  const showQuote = quote && (!sending || quote !== sendingQuote.current);
   return (
     <form
       onSubmit={(event) => {
@@ -327,7 +344,7 @@ export function NeoComposer({
             {t('composer.usePreview')}
           </button>
         )}
-      {quote && (
+      {showQuote && (
         <div
           role="region"
           aria-label={t('composer.replyingToExcerpt', {
@@ -393,7 +410,7 @@ export function NeoComposer({
           ref={thought}
           id={`neo-thought${idSuffix}`}
           aria-label={forSession ? t('session.message') : t('composer.message')}
-          aria-describedby={quote ? `neo-quote-label${idSuffix}` : undefined}
+          aria-describedby={showQuote ? `neo-quote-label${idSuffix}` : undefined}
           value={draft}
           onInput={(event) => onDraft(event.currentTarget.value)}
           onPaste={(event) => {
