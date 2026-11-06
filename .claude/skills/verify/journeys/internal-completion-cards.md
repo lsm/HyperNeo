@@ -10,6 +10,10 @@ through the real Neo MCP door. The real `neo.ask.read` WebSocket response must
 carry an empty string for the internal todo's doneWhen, while its stored check,
 worker completion sentence and the external report sentence stay intact. Before
 the fix the RPC assertion fails with the hidden completion sentence.
+Reword the assigned todo through neo.todo.edit with a human condition that has
+no internal path. The real card read must retain that wording. Reword it with
+the assigned internal path and require an empty string again, then restore the
+generated completion for the browser and completion-check steps.
 The hidden file read must remain forbidden, the report read must succeed, and
 writing the internal evidence file must still let the real completion check pass.
 

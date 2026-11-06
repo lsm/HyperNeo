@@ -182,7 +182,8 @@ function projectNeoTodoEntries(
     doneWhen:
       todo.check?.pack === 'core' &&
       todo.check.kind === 'evidence' &&
-      todo.check.params.path === todoEvidenceFile(todo.id)
+      todo.check.params.path === todoEvidenceFile(todo.id) &&
+      todo.doneWhen.includes(todoEvidenceFile(todo.id))
         ? ''
         : todo.doneWhen,
     evidence: internalCompletionEvidence(todo) ? null : todo.evidence,
