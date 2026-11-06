@@ -1,4 +1,4 @@
-import { runMigration478 } from './m478-agent-devices.ts';
+import { runMigration479 } from './m479-agent-devices.ts';
 import { runMigration476 } from './m476-neo-todo-approved-at.ts';
 import { runMigration477 } from './m477-work-turns.ts';
 import { runMigration478 } from './m478-work-sessions.ts';
@@ -989,6 +989,7 @@ export function runMigrations(
   run(migrationMarkerKey(476), () => runMigration476(db));
   run(migrationMarkerKey(477), () => runMigration477(db));
   run(migrationMarkerKey(478), () => runMigration478(db));
+  run(migrationMarkerKey(479), () => runMigration479(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
