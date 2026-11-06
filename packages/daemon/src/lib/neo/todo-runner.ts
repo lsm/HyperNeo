@@ -1,25 +1,24 @@
-import { workerSandboxOn } from '../drivers/worker-sandbox.ts';
-import { withWorkerProvenance } from '../drivers/worker-provenance.ts';
-import { createWorkQueue } from '../work-queue/sweep.ts';
-import { neoTodoAwaitsHuman, neoTodoStalledCard } from './todo-state.ts';
-import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
-import { neoTodoRunnerWrites } from '../../storage/repositories/neo-todo-runner-state.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import type {
   NeoAskTodoRepository,
   NeoTodoPatch,
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
+import { neoTodoRunnerWrites } from '../../storage/repositories/neo-todo-runner-state.ts';
 import {
-  neoWorkerKey,
   type NeoTodoSessionRepository,
+  neoWorkerKey,
 } from '../../storage/repositories/neo-todo-session-repository.ts';
 import type { Place, WorkRef } from '../drivers/types.ts';
 import { isBusyWork } from '../drivers/work-operations.ts';
+import { withWorkerProvenance } from '../drivers/worker-provenance.ts';
+import { workerSandboxOn } from '../drivers/worker-sandbox.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
+import { createWorkQueue } from '../work-queue/sweep.ts';
 import {
   driverWorkCall,
   driverWorkCaller,
@@ -27,9 +26,9 @@ import {
   type NeoDriverTarget,
   neoCardSent,
   readDriverActivity,
+  readDriverFollowUp,
   readDriverIdentity,
   readDriverInputs,
-  readDriverFollowUp,
   readDriverLive,
   readDriverOpenedPrs,
   readDriverOutcome,
@@ -38,15 +37,16 @@ import {
   readDriverTurnEnds,
   withWorkGoal,
 } from './driver-work.ts';
+import { planNudge } from './nudge.ts';
 import type { NeoPack, NeoTodoCheckResult, NeoTodoJudgement } from './pack-contract.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
 import { sameNeoTodoCheck } from './todo-completion.ts';
 import { neoMoveTodo, neoTodoRepo } from './todo-repo.ts';
-import { planNudge } from './nudge.ts';
+import { neoTodoAwaitsHuman, neoTodoStalledCard } from './todo-state.ts';
 import { isNeoTodoWorkerWait, planNeoTodoWaits } from './todo-worker-wait.ts';
-import { planNeoTurnReportSweep } from './turn-report-sweep.ts';
 import { neoTurnOrigin } from './turn-origin.ts';
 import { deliverNeoTurnReport } from './turn-report.ts';
+import { planNeoTurnReportSweep } from './turn-report-sweep.ts';
 
 type Rejection = { ok: false; reason: string };
 type Recorded = { ok: true; todo: NeoTodo; records: string[] };
@@ -1366,6 +1366,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       sent && { ...sent, receipt: delivered.receipt, delivery: delivered.delivery }
     );
     restartLadder(todo.id, Date.now());
+    if (todo.blockedBy === 'needs-human')
+      for (const card of store.listQuestions(ask.id))
+        if (card.state === 'open' && card.todoId === todo.id)
+          store.retireQuestion(card, 'Neo sent the worker on.', null, Date.now());
     const next = store.updateTodo(
       todo,
       { state: 'doing', report: null, evidence: null, finishedAt: null },
