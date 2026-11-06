@@ -25,7 +25,7 @@ export function VoiceRecordingIndicator({ inOverlay = false }: { inOverlay?: boo
   const recordingScopeId = voiceRecorderStore.recordingScopeId.value;
   const recordingTaskId = voiceRecorderStore.recordingTaskId.value;
   const primarySessionId = currentSessionIdSignal.value;
-  const focus = extensionNav().flatMap((nav) => nav.sessionFocus())[0];
+  const focus = extensionNav().flatMap((nav) => nav.sessionFocus() ?? [])[0];
   const overlaySessionId = focus?.overlaySessionId ?? null;
   const overlayOpen = focus?.overlayOpen ?? false;
   if (!inOverlay && overlayOpen) return null;
@@ -52,8 +52,9 @@ export function VoiceRecordingIndicator({ inOverlay = false }: { inOverlay?: boo
     const extensionReturn =
       recordingScopeId === null
         ? undefined
-        : extensionNav().flatMap((nav) =>
-            nav.recordingReturn(recordingScopeId, recordingSessionId, recordingTaskId)
+        : extensionNav().flatMap(
+            (nav) =>
+              nav.recordingReturn(recordingScopeId, recordingSessionId, recordingTaskId) ?? []
           )[0];
     const targetPath = extensionReturn?.path ?? createSessionPath(recordingSessionId);
     if (overlayOpen) {

@@ -130,21 +130,27 @@ function spaceContextTabs(): ReturnType<ExtensionNav['contextTabs']> {
   };
 }
 
+const SPACE_SCOPE_PREFIX = 'space:';
+
+export function spaceVoiceScope(spaceId: string | null): string | null {
+  return spaceId ? `${SPACE_SCOPE_PREFIX}${spaceId}` : null;
+}
+
 function spaceSessionFocus(): ReturnType<ExtensionNav['sessionFocus']> {
   const overlaySessionId = spaceOverlaySessionIdSignal.value;
   const overlayPending = spaceOverlayPendingAgentNameSignal.value !== null;
-  return {
-    overlayOpen: overlaySessionId !== null || overlayPending,
-    overlaySessionId,
-    sessionId: overlaySessionId ?? (overlayPending ? null : currentSpaceSessionIdSignal.value),
-  };
+  const overlayOpen = overlaySessionId !== null || overlayPending;
+  const sessionId = overlaySessionId ?? (overlayPending ? null : currentSpaceSessionIdSignal.value);
+  return overlayOpen || sessionId !== null ? { overlayOpen, overlaySessionId, sessionId } : null;
 }
 
 function spaceRecordingReturn(
-  spaceId: string,
+  scopeId: string,
   sessionId: string,
   taskId: string | null
 ): ReturnType<ExtensionNav['recordingReturn']> {
+  if (!scopeId.startsWith(SPACE_SCOPE_PREFIX)) return null;
+  const spaceId = scopeId.slice(SPACE_SCOPE_PREFIX.length);
   if (taskId === null)
     return {
       path: createSpaceSessionPath(spaceId, sessionId),

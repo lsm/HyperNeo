@@ -3,6 +3,7 @@ import type { MessageDeliveryMode, MessageImage } from '@hyperneo/shared';
 import { Portal } from '../ui/Portal';
 import { setupFocusTrap } from '../ui/Modal';
 import { PendingAgentChat } from './PendingAgentChat.tsx';
+import { spaceVoiceScope } from '../../lib/space-nav.tsx';
 import { VoiceRecordingIndicator } from '../voice/VoiceRecordingIndicator.tsx';
 import { VoiceSurfaceContext } from '../../hooks/useVoiceRecorder';
 import ChatContainer from '../../islands/ChatContainer';
@@ -157,7 +158,7 @@ export function AgentOverlayChat({
       <VoiceSurfaceContext.Provider
         value={{
           surfaceId: 'agent-overlay',
-          scopeId: voiceSurfaceSpaceId,
+          scopeId: spaceVoiceScope(voiceSurfaceSpaceId),
           taskId: taskContext?.taskId ?? null,
         }}
       >

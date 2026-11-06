@@ -214,7 +214,7 @@ export default function MainContent() {
 
   return (
     <VoiceSurfaceContext.Provider
-      value={{ surfaceId: 'primary', scopeId: spaceId ?? null, taskId: null }}
+      value={{ surfaceId: 'primary', scopeId: spaceId ? `space:${spaceId}` : null, taskId: null }}
     >
       <div key={contentKey} class="flex-1 flex flex-col overflow-hidden animate-fadeIn-200">
         {renderContent()}

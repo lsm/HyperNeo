@@ -96,7 +96,7 @@ declareExtensionNav(spaceNav);
 const renderBase = () => render(<VoiceRecordingIndicator />);
 const renderInOverlay = () =>
   render(
-    <VoiceSurfaceContext.Provider value={{ surfaceId: 'agent-overlay', scopeId: 'space-9' }}>
+    <VoiceSurfaceContext.Provider value={{ surfaceId: 'agent-overlay', scopeId: 'space:space-9' }}>
       <VoiceRecordingIndicator inOverlay />
     </VoiceSurfaceContext.Provider>
   );
@@ -219,7 +219,7 @@ describe('VoiceRecordingIndicator', () => {
   it('returns through the recording Space when a recording is elsewhere while a Space view is open', () => {
     voiceRecorderStore.isRecording.value = true;
     voiceRecorderStore.recordingSessionId.value = 'space-session-2';
-    voiceRecorderStore.recordingScopeId.value = 'space-9';
+    voiceRecorderStore.recordingScopeId.value = 'space:space-9';
     routerState.currentSessionId = null;
     routerState.spaceSessionId = 'space-session-1';
     routerState.spaceId = 'space-9';
@@ -232,7 +232,7 @@ describe('VoiceRecordingIndicator', () => {
   it('returns a task-scoped recording to the TASK thread (task messaging path)', () => {
     voiceRecorderStore.isRecording.value = true;
     voiceRecorderStore.recordingSessionId.value = 'task-agent-session';
-    voiceRecorderStore.recordingScopeId.value = 'space-9';
+    voiceRecorderStore.recordingScopeId.value = 'space:space-9';
     voiceRecorderStore.recordingTaskId.value = 'task-42';
     routerState.currentSessionId = null;
     routerState.spaceSessionId = 'space-session-1';
@@ -350,7 +350,7 @@ describe('VoiceRecordingIndicator', () => {
   it('clears the overlay synchronously and replaces its history entry when returning past it', () => {
     voiceRecorderStore.isRecording.value = true;
     voiceRecorderStore.recordingSessionId.value = 'space-session-2';
-    voiceRecorderStore.recordingScopeId.value = 'space-9';
+    voiceRecorderStore.recordingScopeId.value = 'space:space-9';
     routerState.currentSessionId = null;
     routerState.spaceSessionId = 'space-session-1';
     routerState.spaceId = 'space-9';
@@ -365,7 +365,7 @@ describe('VoiceRecordingIndicator', () => {
   it('pops the duplicate overlay entry when the destination URL already matches', () => {
     voiceRecorderStore.isRecording.value = true;
     voiceRecorderStore.recordingSessionId.value = 'space-session-1';
-    voiceRecorderStore.recordingScopeId.value = 'space-9';
+    voiceRecorderStore.recordingScopeId.value = 'space:space-9';
     routerState.currentSessionId = null;
     routerState.spaceSessionId = 'space-session-1';
     routerState.spaceId = 'space-9';
@@ -381,7 +381,7 @@ describe('VoiceRecordingIndicator', () => {
   it('pops a task same-path overlay entry (thread view matches the navigation)', () => {
     voiceRecorderStore.isRecording.value = true;
     voiceRecorderStore.recordingSessionId.value = 'task-agent-session';
-    voiceRecorderStore.recordingScopeId.value = 'space-9';
+    voiceRecorderStore.recordingScopeId.value = 'space:space-9';
     voiceRecorderStore.recordingTaskId.value = 'task-42';
     routerState.currentSessionId = null;
     routerState.spaceSessionId = 'space-session-1';
@@ -398,7 +398,7 @@ describe('VoiceRecordingIndicator', () => {
   it('routes through the Space surface when only spaceId remains (overview/task pages)', () => {
     voiceRecorderStore.isRecording.value = true;
     voiceRecorderStore.recordingSessionId.value = 'space-session-2';
-    voiceRecorderStore.recordingScopeId.value = 'space-9';
+    voiceRecorderStore.recordingScopeId.value = 'space:space-9';
     routerState.currentSessionId = null;
     routerState.spaceSessionId = null;
     routerState.spaceId = 'space-9';
@@ -414,5 +414,17 @@ describe('VoiceRecordingIndicator', () => {
     routerState.currentSessionId = null;
     const { container } = renderBase();
     expect(container.querySelector('[data-testid="voice-recording-elsewhere"]')).toBeTruthy();
+  });
+
+  it('returns to the plain session when no extension owns the recording scope', () => {
+    voiceRecorderStore.isRecording.value = true;
+    voiceRecorderStore.recordingSessionId.value = 'session-other';
+    voiceRecorderStore.recordingScopeId.value = 'other:scope-1';
+    renderBase();
+
+    fireEvent.click(screen.getByTestId('voice-recording-elsewhere'));
+
+    expect(routerState.navigatedTo).toBe('session-other');
+    expect(routerState.navigatedSpace).toBeNull();
   });
 });

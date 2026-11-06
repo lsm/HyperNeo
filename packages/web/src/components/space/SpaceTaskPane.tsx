@@ -30,6 +30,7 @@ import { TaskBlockedBanner } from './TaskBlockedBanner';
 import { TaskHeaderMeta } from './TaskHeaderMeta';
 import { TaskReadyPanel } from './TaskReadyPanel';
 import { VoiceSurfaceContext } from '../../hooks/useVoiceRecorder';
+import { spaceVoiceScope } from '../../lib/space-nav.tsx';
 import { voiceReturnTaskTargetSessionSignal } from '../../lib/voice/voice-composer-registry';
 import { TaskSessionChatComposer } from './TaskSessionChatComposer';
 import { TaskRunComposer } from './TaskRunComposer';
@@ -1112,7 +1113,7 @@ export function SpaceTaskPane({
             <VoiceSurfaceContext.Provider
               value={{
                 surfaceId: 'primary',
-                scopeId: spaceId ?? null,
+                scopeId: spaceVoiceScope(spaceId ?? null),
                 taskId: task.id,
               }}
             >

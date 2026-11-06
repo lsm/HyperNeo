@@ -41,12 +41,12 @@ export interface ExtensionNav {
     overlayOpen: boolean;
     overlaySessionId: string | null;
     sessionId: string | null;
-  };
+  } | null;
   recordingReturn(
     scopeId: string,
     sessionId: string,
     taskId: string | null
-  ): { path: string; open(replace: boolean): void };
+  ): { path: string; open(replace: boolean): void } | null;
 }
 
 export interface SpaceWebExtension {
