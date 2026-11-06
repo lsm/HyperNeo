@@ -187,8 +187,8 @@
       "maxLines": 931,
       "followUp": "M10 cleanup split when touched"
     },
-    "packages/daemon/src/lib/space/rpc/space-export-import-handlers.ts": {
-      "maxLines": 1440,
+    "packages/space/src/rpc/space-export-import-handlers.ts": {
+      "maxLines": 1453,
       "followUp": "M2/M4 fabric bridge split"
     },
     "packages/ui/src/components/listbox/listbox.tsx": {
@@ -239,8 +239,8 @@
       "maxLines": 816,
       "followUp": "M8 focused read-model stores"
     },
-    "packages/daemon/src/lib/space/rpc/space-workflow-handlers.ts": {
-      "maxLines": 770,
+    "packages/space/src/rpc/space-workflow-handlers.ts": {
+      "maxLines": 773,
       "followUp": "M2/M4 fabric bridge split"
     },
     "packages/daemon/src/storage/repositories/space-task-repository.ts": {
@@ -331,8 +331,8 @@
       "maxLines": 696,
       "followUp": "M10 cleanup split when touched"
     },
-    "packages/daemon/src/lib/space/rpc/space-task-message-handlers.ts": {
-      "maxLines": 899,
+    "packages/space/src/rpc/space-task-message-handlers.ts": {
+      "maxLines": 905,
       "followUp": "M2/M4 fabric bridge split"
     },
     "packages/daemon/src/lib/db-query/scope-config.ts": {

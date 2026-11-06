@@ -1,11 +1,17 @@
 import type { MessageHub, MessageImage, MessageInputKind } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { parseAddress } from '../../../../../messaging/src/address.ts';
-import type { Database } from '../../../storage/database.ts';
-import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
-import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
-import { Logger } from '../../logger.ts';
-import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
+import { parseAddress } from '../../../messaging/src/address.ts';
+import type { Database } from '../../../daemon/src/storage/database.ts';
+import { SpaceTaskRepository } from '../../../daemon/src/storage/repositories/space-task-repository.ts';
+import type {
+  DaemonInternalEventMap,
+  InternalEventBus,
+} from '../../../daemon/src/lib/internal-event-bus.ts';
+import { Logger } from '../../../daemon/src/lib/logger.ts';
+import type {
+  EnsureSessionOutcome,
+  SessionTarget,
+} from '../../../daemon/src/lib/session-resolution/target.ts';
 
 const log = new Logger('space-task-message-handlers');
 

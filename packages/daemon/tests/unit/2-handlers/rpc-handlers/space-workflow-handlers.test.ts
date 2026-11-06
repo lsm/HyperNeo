@@ -4,7 +4,7 @@ import type { DuplicateDriftReport, Space, SpaceWorkflow } from '@hyperneo/share
 import {
   setupSpaceWorkflowHandlers,
   checkBuiltInWorkflowDriftOnStartup,
-} from '../../../../src/lib/space/rpc/space-workflow-handlers';
+} from '../../../../../space/src/rpc/space-workflow-handlers';
 import type { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager';
 import type { SpaceWorkflowSummary } from '@hyperneo/shared';
 import {
@@ -18,7 +18,7 @@ import type { SpaceManager } from '../../../../../space/src/managers/space-manag
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { getPresetAgentTemplates } from '../../../../src/lib/agents/seed-agents';
-import { restampBuiltInWorkflowsOnStartup } from '../../../../src/lib/space/rpc/space-workflow-handlers';
+import { restampBuiltInWorkflowsOnStartup } from '../../../../../space/src/rpc/space-workflow-handlers';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import type {
   DaemonInternalEventMap,
