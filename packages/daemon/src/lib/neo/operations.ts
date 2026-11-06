@@ -465,7 +465,7 @@ export function createNeoOperations(service: NeoService) {
       preferences: service.modelPreference(),
       packPreferences: listPackPreferences(service.db.getDatabase()),
       todoAsks: detailed ? entries.map(summarizeNeoAskEntry) : entries,
-      ...neoWorkCounts(openWork.todos, openWork.questions),
+      ...neoWorkCounts(openWork.todos, openWork.questions, openWork.awaitingNeo),
       ...(detailed ? { historyCursor } : {}),
       ...(unlisted > 0 ? { omitted: { asks: unlisted } } : {}),
       packRows: service.packs().flatMap((pack) => {

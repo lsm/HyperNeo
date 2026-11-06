@@ -302,7 +302,7 @@ export class NeoAskTodoRepository {
         startTodos: string | null;
       })[]
     ).map((row) => ({ ...row, startTodos: parsed<string[]>(row.startTodos) }));
-    return { todos, questions };
+    return { todos, questions, awaitingNeo: this.listAwaitingNeoDecision() };
   }
 
   askFacts(input: { askId?: string; todoId?: string; questionId?: string }) {

@@ -717,6 +717,14 @@ describe('fitNeoSnapshotBudget with packRows', () => {
 });
 
 describe('neoWorkCounts', () => {
+  test('counts a todo waiting on a cancelled prerequisite once', () => {
+    const stalled = { id: 'both', askId: 'a', state: 'blocked', blockedBy: 'stalled' } as const;
+    expect(neoWorkCounts([stalled], [], [{ id: 'both' }, { id: 'waiting' }])).toEqual({
+      needsYou: 0,
+      neoUnhandled: 2,
+    });
+  });
+
   test('counts open asks by who holds them, across projects and past the list limit', () => {
     const db = new Database(':memory:');
     runMigrations(db, () => {});
@@ -776,12 +784,12 @@ describe('neoWorkCounts', () => {
     );
     store.settleAsk(store.getAsk('settled')!, 'dropped', 'Not needed', 3);
     const { openWork } = store.snapshot(undefined, 1, true);
-    expect(neoWorkCounts(openWork.todos, openWork.questions)).toEqual({
+    expect(neoWorkCounts(openWork.todos, openWork.questions, openWork.awaitingNeo)).toEqual({
       needsYou: 3,
       neoUnhandled: 4,
     });
     const scoped = store.snapshot('another-project', 1, true).openWork;
-    expect(neoWorkCounts(scoped.todos, scoped.questions)).toEqual({
+    expect(neoWorkCounts(scoped.todos, scoped.questions, scoped.awaitingNeo)).toEqual({
       needsYou: 3,
       neoUnhandled: 4,
     });
