@@ -108,8 +108,8 @@ import { TaskScheduleRepository } from '../../../storage/repositories/task-sched
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
 import { setupTaskScheduleHandlers } from './task-schedule-handlers.ts';
 import { setupSpaceGoalHandlers } from './space-goal-handlers.ts';
-import { subscribeAgentActivationOutcomeRedelivery } from '../goals/agent-activation-outcome-redelivery.ts';
-import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../goals/owner-change-outcome-redelivery.ts';
+import { subscribeAgentActivationOutcomeRedelivery } from '../../../../../space/src/goals/agent-activation-outcome-redelivery.ts';
+import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../../../../../space/src/goals/owner-change-outcome-redelivery.ts';
 import { setupEvolutionHandlers } from './evolution-handlers.ts';
 import { EvolutionConversationAnalysisService } from '../../../../../space/src/evolution/conversation-analysis-service.ts';
 import { EvolutionEpisodeService } from '../../../../../space/src/evolution/episode-service.ts';
@@ -137,7 +137,7 @@ import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { OperationRegistry } from '../../operations/registry.ts';
 
 import { validateGoalAutomationSelfNagPolicy } from '../../../../../space/src/evolution/evolution-policy-validation.ts';
-import { syncGoalAutomationSelfNagScheduleForScope } from '../goals/automation-schedule-sync.ts';
+import { syncGoalAutomationSelfNagScheduleForScope } from '../../../../../space/src/goals/automation-schedule-sync.ts';
 
 const log = new Logger('rpc-handlers');
 

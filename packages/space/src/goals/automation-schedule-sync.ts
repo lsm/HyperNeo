@@ -1,7 +1,7 @@
 import type { EvolutionScope } from '@hyperneo/shared';
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
-import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
-import type { ScheduleService } from '../../schedule/schedule-service.ts';
+import type { Database as BunDatabase } from '../../../daemon/src/storage/sqlite-compat.ts';
+import type { SpaceGoalRepository } from '../../../daemon/src/storage/repositories/space-goal-repository.ts';
+import type { ScheduleService } from '../../../daemon/src/lib/schedule/schedule-service.ts';
 import { readAutomationPolicyForScope } from './automation-policy.ts';
 
 export function readSelfNagScheduleScopeId(schedule: {

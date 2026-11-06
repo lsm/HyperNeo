@@ -1,12 +1,12 @@
 import type { SpaceGoal, UpdateSpaceGoalParams } from '@hyperneo/shared';
-import type { ScheduleService } from '../../schedule/schedule-service.ts';
+import type { ScheduleService } from '../../../daemon/src/lib/schedule/schedule-service.ts';
 import { pauseScheduleStrict } from './automation-schedule-sync.ts';
 import { recordGoalEvent } from './event-recording.ts';
 import type {
   PublicSpaceGoalUpdateParams,
   SpaceGoalMutationContext,
   SpaceGoalServiceDeps,
-} from './service.ts';
+} from '../../../daemon/src/lib/space/goals/service.ts';
 import { buildTaskDescription, goalTaskLabels } from './task-template.ts';
 
 export function pauseLinkedScheduleOrClear(deps: SpaceGoalServiceDeps, goal: SpaceGoal): void {

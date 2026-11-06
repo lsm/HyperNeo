@@ -12,7 +12,7 @@ import { handleTaskScheduleFire } from '../../../../../space/src/job-handlers/ta
 import { GoalAutomationService } from '../../../../src/lib/space/goals/automation-service';
 import { ScheduleService } from '../../../../src/lib/schedule/schedule-service';
 import { getLongHorizonAgentTemplate } from '../../../../src/lib/agents/long-horizon-templates';
-import { syncGoalAutomationSelfNagScheduleForScope } from '../../../../src/lib/space/goals/automation-schedule-sync.ts';
+import { syncGoalAutomationSelfNagScheduleForScope } from '../../../../../space/src/goals/automation-schedule-sync.ts';
 import { GoalAutomationCursorRepository } from '../../../../src/storage/repositories/goal-automation-cursor-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository';

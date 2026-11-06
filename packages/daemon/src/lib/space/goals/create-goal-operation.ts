@@ -12,10 +12,10 @@ import {
   recordGoalAudit,
   type GoalCallerContext,
   type GoalRejection,
-} from './goal-operation-scope.ts';
+} from '../../../../../space/src/goals/goal-operation-scope.ts';
 import { GOAL_WRITE_POLICY } from '../../goals/goal-contract.ts';
-import { SpaceGoalSchema } from './goal-result-schemas.ts';
-import { decideGoalOwnershipMutationAdmission } from './ownership-gates.ts';
+import { SpaceGoalSchema } from '../../../../../space/src/goals/goal-result-schemas.ts';
+import { decideGoalOwnershipMutationAdmission } from '../../../../../space/src/goals/ownership-gates.ts';
 import type { SpaceGoalService } from './service.ts';
 import { GoalWritableFieldsShape } from './update-goal-operation.ts';
 

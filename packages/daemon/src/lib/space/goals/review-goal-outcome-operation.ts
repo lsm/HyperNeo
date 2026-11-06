@@ -11,9 +11,12 @@ import {
   type GoalCallerContext,
   type GoalRejection,
   type GoalRejectionReason,
-} from './goal-operation-scope.ts';
+} from '../../../../../space/src/goals/goal-operation-scope.ts';
 import { GOAL_OWNER_POLICY, GoalMetricsSchema } from '../../goals/goal-contract.ts';
-import { GoalOutcomeNotificationSchema, SpaceGoalSchema } from './goal-result-schemas.ts';
+import {
+  GoalOutcomeNotificationSchema,
+  SpaceGoalSchema,
+} from '../../../../../space/src/goals/goal-result-schemas.ts';
 import type { SpaceGoalService } from './service.ts';
 
 const DISCOVERY_LIMIT = 100;

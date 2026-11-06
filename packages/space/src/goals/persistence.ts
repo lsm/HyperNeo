@@ -1,5 +1,5 @@
 import type { SpaceGoal } from '@hyperneo/shared';
-import type { SpaceGoalServiceDeps } from './service.ts';
+import type { SpaceGoalServiceDeps } from '../../../daemon/src/lib/space/goals/service.ts';
 
 export function runAtomic<T>(deps: SpaceGoalServiceDeps, fn: () => T): T {
   if (!deps.db) return fn();
