@@ -120,9 +120,10 @@ try {
     writeFileSync(join(out, 'reader.json'), JSON.stringify(observations, null, 2));
     await page.screenshot({ path: join(out, `${kind}-after.png`) });
     assert.equal(result.after.dialogs, 1, 'Reader did not open on a normal held pointer click');
+    const pressed = result.events.find((event) => event.type === 'pointerdown');
     const released = result.events.find((event) => event.type === 'pointerup');
     assert.equal(released?.label, label, 'Pointer-up missed its reader trigger');
-    assert(Math.abs(released.card.y - before.card.y) < 1, 'Reader moved before pointer-up');
+    assert(Math.abs(released.card.y - pressed.card.y) < 1, 'Reader moved before pointer-up');
     const dialog = page.getByRole('dialog', {
       name: kind === 'file' ? 'notes.txt' : 'Attached photo 1',
       exact: true,

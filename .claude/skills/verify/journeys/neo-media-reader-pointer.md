@@ -16,8 +16,8 @@ origin and no model is configured.
 At 390px, send synthetic history, quote a message and send words with a photo and
 file. Keep the empty composer focused. Open the file and photo readers with a
 100ms held pointer click, recording pointer/focus events and reader bounds.
-Require pointer-up to retain the same reader trigger and its y coordinate within
-1px. Require the corresponding dialog and exact file text. Close it, focus the
+Require pointer-up to retain the same reader trigger and its pointer-down y
+coordinate within 1px. Require the corresponding dialog and exact file text. Close it, focus the
 reader by keyboard and activate it with Enter too. Retain reader.json and the
 before/after/keyboard screenshots for both readers.
 
