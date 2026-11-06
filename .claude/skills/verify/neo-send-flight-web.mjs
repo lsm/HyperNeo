@@ -246,6 +246,49 @@ try {
       'Reduced-motion send hid its destination'
     );
     await page.screenshot({ path: join(out, `reduced-motion-${touch ? 'touch' : 'fine'}.png`) });
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    const firstReply = page
+      .locator('[data-public-entry].neo-message-user')
+      .first()
+      .getByRole('button', { name: 'Reply to your message', exact: true });
+    if (touch) await firstReply.tap();
+    else await firstReply.click();
+    await input.fill('The first quoted send');
+    delay = 2500;
+    await send();
+    const pending = page.locator('[data-pending-ask]').last();
+    await pending.waitFor({ state: 'attached' });
+    const pendingId = await pending.getAttribute('data-pending-ask');
+    assert.equal(
+      await page.locator('form [data-quote-bar]').count(),
+      0,
+      'Submitted quote stayed in the composer'
+    );
+    const nextReply = page
+      .locator('[data-public-entry].neo-message-user')
+      .nth(1)
+      .getByRole('button', { name: 'Reply to your message', exact: true });
+    if (touch) await nextReply.tap();
+    else await nextReply.click();
+    const selectedBefore = await page.locator('form [data-quote-bar]').textContent();
+    assert(selectedBefore.includes('History 1'), 'A newer quote was hidden by the older send');
+    assert(await pending.count(), 'The older receipt arrived before the newer selection check');
+    await input.fill('Keep the next draft');
+    await page.waitForFunction(
+      (id) => !!document.querySelector(`[data-public-entry][data-message-ref="${CSS.escape(id)}"]`),
+      pendingId
+    );
+    delay = 0;
+    const selectedAfter = await page.locator('form [data-quote-bar]').textContent();
+    assert.equal(selectedAfter, selectedBefore, 'Late acceptance cleared the newer quote');
+    assert.equal(
+      await input.inputValue(),
+      'Keep the next draft',
+      'Late acceptance cleared the newer words'
+    );
+    evidence.push({ kind: 'newer-quote', touch, width: 390, selectedBefore, selectedAfter });
+    writeFileSync(join(out, 'evidence.json'), JSON.stringify(evidence, null, 2));
+    await page.screenshot({ path: join(out, `newer-quote-${touch ? 'touch' : 'fine'}.png`) });
     await context.close();
   }
   console.log(

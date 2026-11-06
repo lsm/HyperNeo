@@ -29,6 +29,12 @@ pinning, less than 3px bubble movement across delayed acceptance, and no repeate
 arrival fade on the durable row. Keep per-frame evidence.json and mid-flight and
 landed screenshots for every case, and inspect wide and narrow touch screenshots.
 
+At 390px, also enable reduced motion and require a visible accepted row with no
+flight overlay. Then delay another receipt while selecting a different quote and
+typing the next draft. The submitted quote must leave immediately, the newer
+selection must remain visible during the old send, and late acceptance must
+preserve both the new quote and its words. Retain those screenshots and results.
+
 Run the approved plan's original baseline driver separately for plain words,
 quoted words, photos, files and sending while scrolled up. Unit/component
 regressions cover the pure phone path/easing, source rectangle capture, payload

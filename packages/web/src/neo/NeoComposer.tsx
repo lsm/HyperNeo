@@ -151,6 +151,7 @@ export function NeoComposer({
   const fileInput = useRef<HTMLInputElement>(null);
   const inFlight = useRef(false);
   const sendingText = useRef<string | null>(null);
+  const sendingQuote = useRef<NeoQuote | undefined>(undefined);
   const alive = useRef(true);
   const currentSession = useRef(sessionId);
   currentSession.current = sessionId;
@@ -199,6 +200,7 @@ export function NeoComposer({
     }
     if (sendingText.current === submitted) return;
     sendingText.current = submitted;
+    sendingQuote.current = quote;
     inFlight.current = true;
     setSending(true);
     onError('');
@@ -226,6 +228,7 @@ export function NeoComposer({
     } finally {
       if (sendingText.current === submitted) {
         sendingText.current = null;
+        sendingQuote.current = undefined;
         inFlight.current = false;
         if (current()) setSending(false);
       }
@@ -340,7 +343,7 @@ export function NeoComposer({
             {t('composer.usePreview')}
           </button>
         )}
-      {quote && !sending && (
+      {quote && (!sending || quote !== sendingQuote.current) && (
         <div
           role="region"
           aria-label={t('composer.replyingToExcerpt', {
