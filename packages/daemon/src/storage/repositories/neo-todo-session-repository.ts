@@ -478,9 +478,15 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     const todo = this.db
       .prepare(
         `SELECT t.title FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
-         WHERE s.ref IN (?, ?) ORDER BY t.updated_at DESC LIMIT 1`
+         WHERE s.ref IN (?1, ?2) OR (s.ref IS NULL
+           AND json_extract(s.target, '$.ref.adapter') = ?3
+           AND json_extract(s.target, '$.ref.id') = ?4
+           AND json_extract(s.target, '$.ref.daemon') IS ?5)
+         ORDER BY t.updated_at DESC LIMIT 1`
       )
-      .get(...storedRefForms(ref)) as { title: string } | null;
+      .get(...storedRefForms(ref), ref.adapter, ref.id, ref.daemon ?? null) as {
+      title: string;
+    } | null;
     return todo?.title ?? null;
   }
 

@@ -100,6 +100,12 @@ describe('workerName', () => {
     expect(repository.workerName({ adapter: 'codex-desktop', id: 'b', daemon: 'other' })).toBe(
       'Remote todo'
     );
+    todo.run('t4', 'Queued todo', 4);
+    db.prepare('INSERT INTO neo_todo_sessions (todo_id, target) VALUES (?, ?)').run(
+      't4',
+      JSON.stringify({ ref: { adapter: 'claude-code', id: 'queued' } })
+    );
+    expect(repository.workerName({ adapter: 'claude-code', id: 'queued' })).toBe('Queued todo');
     new workSessionWrites.Repository(db).saveSessions(
       [{ ...ref, name: 'Synced', status: 'done' }],
       1
