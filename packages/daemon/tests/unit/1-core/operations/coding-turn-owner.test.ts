@@ -111,7 +111,9 @@ describe('coding turn ownership', () => {
 
   test('a Codex send owns the turn by its native turn id', () => {
     expect(
-      planCodingTurnOwner({ url, createdAt: 150 }, [turn({ inputs: [] })], { [key]: { t1: 'todo-b' } })
+      planCodingTurnOwner({ url, createdAt: 150 }, [turn({ inputs: [] })], {
+        [key]: { t1: 'todo-b' },
+      })
     ).toEqual({ state: 'placed', session, todo: 'todo-b' });
   });
 
