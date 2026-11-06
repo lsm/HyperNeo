@@ -305,7 +305,7 @@ export interface TaskAgentManagerConfig {
   };
   goalService?: import('../../../../../space/src/goals/service.ts').SpaceGoalService;
   evolutionScopeService?: EvolutionScopeService;
-  externalEventStore?: import('../external-events/external-event-store.ts').ExternalEventStore;
+  externalEventStore?: import('../../../../../space/src/external-events/external-event-store.ts').ExternalEventStore;
 }
 
 type CompletionCallbackMap = Map<string, Array<() => Promise<void>>>;

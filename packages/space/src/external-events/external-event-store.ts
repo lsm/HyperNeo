@@ -1,12 +1,12 @@
-import { gatewayFor } from '../../../storage/db-gateway/db-gateway.ts';
-import { externalEventSweeps } from '../../../storage/repositories/space-external-event-sweep-repository.ts';
-import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
+import { gatewayFor } from '../../../daemon/src/storage/db-gateway/db-gateway.ts';
+import { externalEventSweeps } from '../../../daemon/src/storage/repositories/space-external-event-sweep-repository.ts';
+import type { ReactiveDatabase } from '../../../daemon/src/storage/reactive-database.ts';
+import type { Database as BunDatabase } from '../../../daemon/src/storage/sqlite-compat.ts';
 import type { DeliveryTerminalEvent, PendingDeliverySummary } from './queue-health-metrics.ts';
 import {
   ExternalEventValidationError,
   validateExternalEvent,
-} from '../../external-events/event-validation.ts';
+} from '../../../daemon/src/lib/external-events/event-validation.ts';
 import {
   type DeliveryFailure,
   type DeliveryTarget,
@@ -21,7 +21,7 @@ import {
   type StoreResult,
   TERMINAL_DELIVERY_STATES,
   TERMINAL_EVENT_STATES,
-} from '../../external-events/types.ts';
+} from '../../../daemon/src/lib/external-events/types.ts';
 
 interface ExternalEventRow {
   id: string;

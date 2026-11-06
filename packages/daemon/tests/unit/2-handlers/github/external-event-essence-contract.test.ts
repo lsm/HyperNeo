@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
-import { ExternalEventStore } from '../../../../src/lib/space/external-events/external-event-store.ts';
+import { ExternalEventStore } from '../../../../../space/src/external-events/external-event-store.ts';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
 import {
   normalizeGitHubPollingRow,
