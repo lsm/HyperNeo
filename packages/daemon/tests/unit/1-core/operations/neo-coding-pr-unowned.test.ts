@@ -167,7 +167,9 @@ describe('coding pack newly unowned PR notifications', () => {
     const { db, cycle } = setup();
     try {
       markWorkerRunning(db, 'doing');
-      new CodingTodoPrRepository(db).claim('todo', [{ url, claim: 'named' }], ship);
+      db.prepare("UPDATE neo_todos SET check_json = ? WHERE id = 'todo'").run(
+        JSON.stringify({ pack: 'coding', kind: 'pr_merged', params: { urls: [url] } })
+      );
       await new WorkTurnRepository(db).record({ adapter: 'codex-desktop', id: 'producer' }, [
         turn(url, true),
       ]);

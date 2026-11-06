@@ -335,7 +335,6 @@ try {
     sessions.recordRef(legacy.id, { adapter: 'codex-desktop', id: 'flow' }, clock);
     store.updateTodo(legacy, { state: 'doing', report: 'Waiting for CI', startedAt: clock }, clock);
     const prs = new CodingTodoPrRepository(app!.db.getDatabase());
-    prs.claim(legacy.id, [{ url: legacyUrl, claim: 'named' }], clock);
     prs.record(
       legacy.id,
       [{ url: legacyUrl, state: 'OPEN', checks: 'failing', review: 'none' }],
@@ -393,7 +392,6 @@ try {
     assert.equal(starts(), beforeLedger + 1, 'unchanged ledger facts must not resend');
     const delivered = calls.filter((call: any) => call.method === 'thread-follower-start-turn').slice(beforeLedger);
     assert.match(JSON.stringify(delivered), /synthetic\/plan#9.*has failing CI/);
-    assert.equal(db.prepare("SELECT count(*) AS n FROM pack_coding_pr_claims WHERE todo_id='legacy'").get().n, 1);
     evidence.ledgerClaimDelivery = { beforeFrames: beforeLedger, afterFrames: starts(), delivered };
     evidence.verified = true;
     console.log(

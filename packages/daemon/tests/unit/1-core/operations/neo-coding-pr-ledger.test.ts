@@ -427,9 +427,10 @@ describe('CodingPrLedgerRepository owners and snapshot', () => {
       '{}',
       ref ? JSON.stringify(ref) : null
     );
-    db.prepare(
-      "INSERT INTO pack_coding_pr_claims (todo_id, url, claim, claimed_at) VALUES (?, ?, 'branch', 1)"
-    ).run(todo, url);
+    db.prepare('UPDATE neo_todos SET check_json = ? WHERE id = ?').run(
+      JSON.stringify({ pack: 'coding', kind: 'pr_merged', params: { urls: [url] } }),
+      todo
+    );
   };
 
   test('takes the owner from the open todo that claims the PR, and leaves an unclaimed PR unassigned', async () => {
@@ -477,13 +478,8 @@ describe('CodingPrLedgerRepository owners and snapshot', () => {
       VALUES ('live', 'ask', 0, 'T', 'D', 'doing', 1, 1)`);
     const todoPrs = new CodingTodoPrRepository(db);
     const url = (n: number) => `https://github.com/lsm/hyperneo/pull/${n}`;
-    todoPrs.claim(
-      'live',
-      [
-        { url: url(1), claim: 'named' },
-        { url: url(2), claim: 'branch' },
-      ],
-      1
+    db.prepare("UPDATE neo_todos SET check_json = ? WHERE id = 'live'").run(
+      JSON.stringify({ pack: 'coding', kind: 'pr_merged', params: { urls: [url(1)] } })
     );
     todoPrs.record('live', [{ url: url(1), state: 'OPEN', checks: 'passing', review: 'none' }], 1);
     const coding = createCodingPack({

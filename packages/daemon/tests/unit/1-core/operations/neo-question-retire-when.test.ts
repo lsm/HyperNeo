@@ -400,7 +400,6 @@ test('an unlinked coding check uses its existing reader without inventing a todo
       state: 'retired',
       retiredReason: '#78 merged',
     });
-    expect(f.db.prepare('SELECT COUNT(*) AS n FROM pack_coding_pr_claims').get()).toEqual({ n: 0 });
     expect(f.store.getTodo(card.question.id)).toBeNull();
   } finally {
     f.db.close();
@@ -493,10 +492,13 @@ test('a linked coding default checks an existing branch claim before any todo ca
     pack.schema(f.db);
     const todo = f.store.updateTodo(
       f.todo,
-      { state: 'doing', startedAt: 1, check: { pack: 'coding', kind: 'pr_merged', params: {} } },
+      {
+        state: 'doing',
+        startedAt: 1,
+        check: { pack: 'coding', kind: 'pr_merged', params: { urls: [url] } },
+      },
       1
     );
-    repository.claim(todo.id, [{ url, claim: 'branch' }], 2);
     const card = await f.ask({ todoId: todo.id });
     const retire = createQuestionRetirement(f.store, () => [
       { id: 'coding', describe: 'Coding', instructions: () => null, todos: pack },
@@ -576,61 +578,6 @@ test('a committed retirement keeps its pending Neo notice across a database rest
   }
 });
 
-test.each(['outside-window', 'other-owner'] as const)(
-  'a linked question keeps its todo PR ownership rules: %s',
-  async (conflict) => {
-    const f = fixture();
-    try {
-      const url = 'https://github.com/synthetic/project/pull/78';
-      const repository = new CodingTodoPrRepository(f.db);
-      const pack = createCodingTodoPack(repository, async () => [
-        {
-          url,
-          state: 'MERGED',
-          checks: 'passing',
-          review: 'approved',
-          title: 'Another change',
-          blockers: [],
-          createdAt: conflict === 'outside-window' ? 2 : 12,
-          mergedAt: 20,
-        },
-      ]);
-      pack.schema(f.db);
-      const todo = f.store.updateTodo(
-        f.todo,
-        { state: 'doing', startedAt: 10, check: { pack: 'coding', kind: 'pr_merged', params: {} } },
-        10
-      );
-      repository.claim(todo.id, [{ url, claim: 'branch' }], 11);
-      if (conflict === 'other-owner') {
-        const peer = f.store.addTodo(
-          'peer',
-          'ask',
-          {
-            title: 'Owns that PR',
-            doneWhen: 'Merged',
-            check: null,
-            instruction: null,
-            named: null,
-          },
-          1
-        );
-        repository.claim(peer.id, [{ url, claim: 'named' }], 1);
-      }
-      expect(await pack.check(todo)).toMatchObject({ done: false });
-      const card = await f.ask({ todoId: todo.id });
-      const retire = createQuestionRetirement(f.store, () => [
-        { id: 'coding', describe: 'Coding', instructions: () => null, todos: pack },
-      ]);
-      expect(await retire(card.question, todo, 30)).toBeNull();
-      expect(f.store.getQuestion(card.question.id)?.state).toBe('open');
-      expect(f.notes).toEqual([]);
-    } finally {
-      f.db.close();
-    }
-  }
-);
-
 test.each(['linked', 'standalone'] as const)(
   'an explicit %s condition does not change the real todo check',
   async (scope) => {
@@ -656,22 +603,6 @@ test.each(['linked', 'standalone'] as const)(
         { state: 'doing', startedAt: 10, check: { pack: 'coding', kind: 'pr_merged', params: {} } },
         10
       );
-      repository.claim(todo.id, [{ url, claim: 'branch' }], 11);
-      if (scope === 'standalone') {
-        const peer = f.store.addTodo(
-          'peer',
-          'ask',
-          {
-            title: 'Owns the explicit PR',
-            doneWhen: 'Merged',
-            check: null,
-            instruction: null,
-            named: null,
-          },
-          1
-        );
-        repository.claim(peer.id, [{ url, claim: 'named' }], 1);
-      }
       const card = await f.ask({
         ...(scope === 'linked' ? { todoId: todo.id } : {}),
         retireWhen: { pack: 'coding', kind: 'pr_merged', params: { urls: [url] } },

@@ -44,12 +44,8 @@ export interface NeoTodoFactJudge<Facts = unknown> {
 
 export interface NeoTodoPack {
   schema(db: Database): void;
-  check(
-    todo: NeoTodo,
-    context?: { readOnly: true; detached: boolean }
-  ): Promise<NeoTodoCheckResult | null>;
+  check(todo: NeoTodo, context?: { readOnly: true }): Promise<NeoTodoCheckResult | null>;
   statusLine(todo: NeoTodo): NeoStatusLine | null;
-  openedPrs?(todo: NeoTodo, urls: readonly string[]): Promise<void>;
   repository?(draft: Pick<NeoTodo, 'check' | 'named'> & { id?: string }): string | null;
   waiting?(todo: NeoTodo): boolean | Promise<boolean>;
   doneWhen?(check: NeoTodoCheck): string | null;

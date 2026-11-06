@@ -20,7 +20,7 @@ const now = Date.now();
 const db = new Database(`${run}/data/daemon.db`);
 db.query(`INSERT INTO neo_asks (id,session_id,title,request,status,created_at,updated_at) VALUES (?,?,'One PR owner','Verify existing PR ownership','open',?,?)`).run(askId, opened.sessionId, now, now);
 db.query(`INSERT INTO neo_todos (id,ask_id,position,title,done_when,check_json,instruction,state,created_at,updated_at,started_at) VALUES ('claim-original',?,0,'Original fix','PR merged',?,'Land the fix','doing',?,?,?)`).run(askId, JSON.stringify(check), now, now, now);
-db.query(`INSERT INTO pack_coding_pr_claims (todo_id,url,claim,claimed_at) VALUES ('claim-original',?,'branch',?)`).run(url, now);
+db.query(`UPDATE neo_todos SET check_json = ? WHERE id = 'claim-original'`).run(JSON.stringify({ ...check, params: { urls: [url] } }));
 const pr = { url, number: 14, state: 'OPEN', createdAt: new Date(now).toISOString(), mergedAt: null, headRefOid: 'verify-head', reviews: [], statusCheckRollup: [], title: 'Synthetic fix' };
 await writeFile(`${run}/pr.json`, JSON.stringify(pr));
 const duplicate = await rpc('neo.todo.add', { askId, title: 'Pin PR link', doneWhen: 'Merged', check: { ...check, params: { urls: [url] } } });

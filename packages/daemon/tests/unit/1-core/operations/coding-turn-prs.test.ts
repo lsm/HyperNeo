@@ -176,14 +176,11 @@ describe('coding turn PRs', () => {
       ...todo('a'),
       check: { pack: 'coding', kind: 'pr_merged', params: { urls: [url] } },
     };
-    await pack.readFacts(named as NeoTodo);
-    expect(db.prepare('SELECT claim FROM pack_coding_pr_claims').all()).toEqual([
-      { claim: 'named' },
-    ]);
+    expect((await pack.readFacts(named as NeoTodo))?.prs.map((pr) => pr.url)).toEqual([url]);
     db.close();
   });
 
-  test('a todo is linked only to the PR its own turn produced, whatever its claims say', () => {
+  test('a todo is linked only to the PR its own turn produced', () => {
     const { db, send, record } = setup();
     db.exec('PRAGMA foreign_keys = OFF');
     send('d1', 'a', 'receipt-a');
@@ -191,7 +188,6 @@ describe('coding turn PRs', () => {
     record(fact('t1', ['receipt-a'], [url], 100), fact('t2', ['receipt-b'], [url], 200));
     ledger(db, 105);
     const prs = new CodingTodoPrRepository(db);
-    prs.claim('b', [{ url, claim: 'branch' }], 1, 'additive');
     expect(prs.linked('a', url)).toBe(true);
     expect(prs.linked('b', url)).toBe(false);
     db.close();
@@ -202,15 +198,6 @@ describe('coding turn PRs', () => {
     send('d1', 'a', 'receipt-a');
     record(fact('t1', ['receipt-a'], [url], 100));
     expect(new CodingTodoPrRepository(db).linked('a', url)).toBe(false);
-    db.close();
-  });
-
-  test('a todo with no turns keeps its claims', () => {
-    const { db } = setup();
-    db.exec('PRAGMA foreign_keys = OFF');
-    const prs = new CodingTodoPrRepository(db);
-    prs.claim('a', [{ url, claim: 'branch' }], 1, 'additive');
-    expect(prs.linked('a', url)).toBe(true);
     db.close();
   });
 

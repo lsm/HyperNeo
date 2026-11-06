@@ -30,17 +30,6 @@ const rows = live
     'SELECT repo, number, branch, owner FROM pack_coding_pr_ledger WHERE closed_at IS NULL ORDER BY repo, number'
   )
   .all() as { repo: string; number: number; branch: string; owner: string | null }[];
-const claims = new Map(
-  (
-    live
-      .prepare(
-        `SELECT c.url, s.ref FROM pack_coding_pr_claims c
-           JOIN neo_todo_sessions s ON s.todo_id = c.todo_id JOIN neo_todos t ON t.id = c.todo_id
-          WHERE s.ref IS NOT NULL ORDER BY t.state IN ('todo', 'doing'), COALESCE(t.started_at, 0)`
-      )
-      .all() as { url: string; ref: string }[]
-  ).map((row) => [row.url, row.ref])
-);
 const remotes = new Map<string, string[]>();
 const repos = async (folder: string | null | undefined) => {
   if (!folder) return [];
@@ -118,10 +107,10 @@ sessions.sort((a, b) => b.active - a.active);
 
 const before = rows.filter((row) => row.owner).length;
 const changes = rows.flatMap((row) => {
-  const next = planCodingPrOwner(row, claims, sessions);
+  const next = planCodingPrOwner(row, sessions);
   return next === row.owner ? [] : [{ pr: `${row.repo}#${row.number}`, from: row.owner, to: next }];
 });
-const after = rows.filter((row) => planCodingPrOwner(row, claims, sessions) !== null).length;
+const after = rows.filter((row) => planCodingPrOwner(row, sessions) !== null).length;
 console.log(
   `open rows ${rows.length}; owned before ${before}; owned after ${after}; sessions ${sessions.length}`
 );
@@ -132,7 +121,7 @@ if (process.argv.includes('--debug')) {
   console.log(
     'unowned',
     rows
-      .filter((r) => !planCodingPrOwner(r, claims, sessions))
+      .filter((r) => !planCodingPrOwner(r, sessions))
       .map((r) => `${r.repo}#${r.number}:${r.branch}`)
       .join(' ')
   );

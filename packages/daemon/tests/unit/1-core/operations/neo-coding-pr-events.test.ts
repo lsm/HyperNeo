@@ -399,9 +399,13 @@ describe('PR ledger events', () => {
       `INSERT INTO neo_todos (id, ask_id, position, title, done_when, state, created_at, updated_at)
        VALUES ('t', 'ask', 0, 'T', 'D', 'doing', 1, 1)`
     ).run();
-    db.prepare(
-      "INSERT INTO pack_coding_pr_claims (todo_id, url, claim, claimed_at) VALUES ('t', 'https://github.com/lsm/a/pull/2', 'named', 1)"
-    ).run();
+    db.prepare("UPDATE neo_todos SET check_json = ? WHERE id = 't'").run(
+      JSON.stringify({
+        pack: 'coding',
+        kind: 'pr_merged',
+        params: { urls: ['https://github.com/lsm/a/pull/2'] },
+      })
+    );
     db.prepare('UPDATE pack_coding_pr_ledger SET owner = ? WHERE number = 2').run(
       JSON.stringify(owner)
     );

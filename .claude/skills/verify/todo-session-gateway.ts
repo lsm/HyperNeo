@@ -8,7 +8,6 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
-import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 
 const [mode, directory] = process.argv.slice(2);
 assert(['before', 'verify', 'reproduce-race', 'reproduce-state-race'].includes(mode));
@@ -91,8 +90,6 @@ try {
   const live = sessions.readLiveStatus('gateway-todo');
   assert(live, 'real worker status was recorded');
   report.liveStatus = live;
-  const prs = new CodingTodoPrRepository(db);
-  report.window = mode === 'before' ? prs.window('gateway-todo') : await prs.readWindow('gateway-todo');
   report.mainQueries = mainQueries;
   report.snapshot = await rpc('operation.invoke', { name: 'neo.snapshot', input: {} });
   assert(JSON.stringify(report.snapshot).includes('Observe synthetic worker'), 'Neo snapshot returns the seeded work card');
