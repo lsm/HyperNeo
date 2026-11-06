@@ -327,22 +327,6 @@ export class SessionRepository {
     );
   }
 
-  clearAcpSessionIds(): void {
-    this.db
-      .prepare(
-        `UPDATE sessions
-         SET acp_session_id = NULL,
-             metadata = CASE
-           WHEN json_valid(metadata) THEN json_remove(metadata, '$.acpContextUsageEstimate')
-           ELSE metadata
-         END
-         WHERE acp_session_id IS NOT NULL
-           AND json_valid(config)
-           AND json_extract(config, '$.provider') = 'acp'`
-      )
-      .run();
-  }
-
   listAcpSessionIds(): Array<{ sessionId: string; acpSessionId: string }> {
     const rows = this.db
       .prepare(
@@ -889,7 +873,6 @@ export const sessionWrites = defineRepositoryOp('sessions.write', 'write', Sessi
   'detachFromParent',
   'setParent',
   'setLastError',
-  'clearAcpSessionIds',
   'markRestartInterruptedTurns',
   'takeRestartCooldownResume',
   'casSessionInputDraft',

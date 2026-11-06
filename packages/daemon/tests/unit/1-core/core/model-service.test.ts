@@ -615,26 +615,6 @@ describe('Model Service', () => {
       }
     });
 
-    it('stays dormant for definitive ACP spawn failures', async () => {
-      const { refreshModels } = await import('../../../../src/lib/model-service');
-      jest.useFakeTimers();
-      try {
-        const { getModels } = registerGlmProvider(async () => {
-          throw new Error('ACP agent process error: spawn acp-agent ENOENT');
-        });
-
-        await refreshModels();
-        expect(getProviderFailure('glm')?.errorKind).toBe('credential');
-
-        jest.advanceTimersByTime(180_001);
-        await flushMicrotasks();
-
-        expect(getModels).toHaveBeenCalledTimes(1);
-      } finally {
-        jest.useRealTimers();
-      }
-    });
-
     it('cancels a pending transient retry when a later load classifies the failure as definitive', async () => {
       const { refreshModels } = await import('../../../../src/lib/model-service');
       jest.useFakeTimers();
@@ -6406,19 +6386,6 @@ describe('Model Service', () => {
       await refreshProviderModels();
 
       expect(getProviderFailure('glm')).toBeUndefined();
-    });
-
-    it('accepts an explicitly curated empty provider catalog', async () => {
-      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
-      const { AcpProvider } = await import('../../../../src/lib/providers/acp-provider');
-      const provider = new AcpProvider({ HYPERNEO_ACP_COMMAND: 'claude --acp' }, async () => {});
-      provider.setCuratedModels([]);
-      getProviderRegistry().register(provider);
-
-      await refreshProviderModels();
-
-      expect(getProviderFailure('acp')).toBeUndefined();
-      expect(getAvailableModels('global').some((model) => model.provider === 'acp')).toBe(false);
     });
 
     it('propagates a recorded remote rejection into the provider auth status', async () => {

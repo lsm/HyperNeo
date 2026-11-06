@@ -19,7 +19,7 @@ function orderedOwnerCandidates(
   const coldCatalogCandidates: Provider[] = [];
   const shorthandOwnerId = inferProviderForModel(modelId);
   for (const provider of ordered) {
-    if (provider.id === 'anthropic' || provider.id === 'acp') continue;
+    if (provider.id === 'anthropic') continue;
     if (
       anthropicFamily &&
       (provider.id === 'anthropic-copilot' || provider.id.startsWith('custom:'))
@@ -271,15 +271,12 @@ export interface SpawnRouteDecision {
 }
 
 export async function inferAvailableSpawnRoute(modelId: string): Promise<SpawnRouteDecision> {
-  if (inferProviderForModel(modelId) === 'acp') return { provider: 'acp', fallback: false };
   const resolved = await resolveAvailableQueryProvider(getProviderRegistry(), modelId, undefined);
   return { provider: resolved.provider?.id, fallback: resolved.fallback };
 }
 
 export function inferProviderForModel(modelId: string): ProviderIdStr {
   const normalizedModelId = modelId.toLowerCase();
-
-  if (normalizedModelId.startsWith('acp-') || normalizedModelId === 'acp') return 'acp';
 
   const kimiCheckId = normalizedModelId.replace(/\[1m\]$/, '');
   if (

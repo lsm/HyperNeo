@@ -6,7 +6,6 @@ const WRITERS: Array<[file: string, method: string]> = [
     'createSession',
     'updateSession',
     'deleteSession',
-    'clearAcpSessionIds',
     'detachSessionFromParent',
     'setSessionParent',
     'setSessionLastError',

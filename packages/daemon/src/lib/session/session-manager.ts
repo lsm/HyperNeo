@@ -841,51 +841,22 @@ export class SessionManager {
     const sessions = this.db
       .listSessions({ includeArchived: true, includeSpaceSessions: true })
       .filter((session) => session.config.provider === providerId);
-    const sessionsById = new Map(sessions.map((session) => [session.id, session]));
-    const sessionIds = new Set(sessionsById.keys());
+    const sessionIds = new Set(sessions.map((session) => session.id));
     for (const [sessionId, agentSession] of this.sessionCache.entries()) {
       const session = agentSession.getSessionData();
       if (session.config.provider === providerId) {
         sessionIds.add(sessionId);
-        if (!sessionsById.has(sessionId)) sessionsById.set(sessionId, session);
       }
     }
     await Promise.all(
       Array.from(sessionIds, async (sessionId) => {
-        const session = sessionsById.get(sessionId);
-        await this.interruptProviderSession(sessionId, session);
+        await this.interruptInMemorySession(sessionId);
       })
     );
   }
 
   async interruptProviderSessionsById(sessionIds: string[]): Promise<void> {
-    const sessionIdSet = new Set(sessionIds);
-    const sessionsById = new Map(
-      this.db
-        .listSessions({ includeArchived: true, includeSpaceSessions: true })
-        .filter((session) => sessionIdSet.has(session.id))
-        .map((session) => [session.id, session])
-    );
-    await Promise.all(
-      sessionIds.map((sessionId) =>
-        this.interruptProviderSession(sessionId, sessionsById.get(sessionId))
-      )
-    );
-  }
-
-  private async interruptProviderSession(sessionId: string, session?: Session): Promise<void> {
-    await this.db.updateSession(sessionId, {
-      acpSessionId: undefined,
-      ...(session?.metadata?.acpContextUsageEstimate !== undefined
-        ? {
-            metadata: {
-              ...session.metadata,
-              acpContextUsageEstimate: undefined,
-            },
-          }
-        : {}),
-    });
-    await this.interruptInMemorySession(sessionId);
+    await Promise.all(sessionIds.map((sessionId) => this.interruptInMemorySession(sessionId)));
   }
 
   getActiveSessions(): number {

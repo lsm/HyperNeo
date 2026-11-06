@@ -10,7 +10,6 @@ import type {
 import type { SkillEnablementOverride } from '@hyperneo/shared';
 import { isScopedBashToolEntry } from '@hyperneo/shared';
 import { Logger } from '../logger.ts';
-import { inferProviderForModel } from '../providers/registry.js';
 import { buildPromptProvenance, resolveCustomAgentPrompt } from './custom-agent-prompt.ts';
 import type { CustomAgentConfig, SlotOverrides, UnifiedSpaceAgent } from './custom-agent-types.ts';
 import { SUB_SESSION_FEATURES } from './seed-agents.ts';
@@ -54,10 +53,9 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
   const model =
     slotOverrides?.model ?? customAgent.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
   const thinkingLevel = slotOverrides?.thinkingLevel ?? customAgent.thinkingLevel ?? undefined;
-  const acpProviderId = inferProviderForModel(model) === 'acp' ? 'acp' : undefined;
   const provider = slotOverrides?.model
-    ? (slotOverrides?.provider ?? acpProviderId)
-    : (slotOverrides?.provider ?? customAgent.provider ?? acpProviderId);
+    ? slotOverrides?.provider
+    : (slotOverrides?.provider ?? customAgent.provider ?? undefined);
 
   const resolvedPrompt = resolveCustomAgentPrompt(customAgent, slotOverrides);
   const visiblePrompt = resolvedPrompt.value;

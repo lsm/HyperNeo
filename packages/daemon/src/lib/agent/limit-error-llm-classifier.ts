@@ -256,7 +256,7 @@ export class LimitErrorLlmClassifier {
   private async resolveClassifierProvider(): Promise<string | null> {
     const providerService = this.deps.providerService;
     const available = await providerService.getAvailableProviders();
-    const usable = available.filter((p) => p.id !== 'acp');
+    const usable = available;
     const ordered = [
       ...usable.filter((p) => p.id !== this.deps.excludeProvider),
       ...usable.filter((p) => p.id === this.deps.excludeProvider),

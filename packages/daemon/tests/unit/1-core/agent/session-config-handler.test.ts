@@ -167,17 +167,6 @@ describe('SessionConfigHandler', () => {
       expect(mockSession.worktree).toEqual(worktree);
     });
 
-    it('should clear the cached ACP session id', async () => {
-      mockSession.acpSessionId = 'remote-session';
-
-      await handler.updateMetadata({ acpSessionId: undefined });
-
-      expect(mockSession.acpSessionId).toBeUndefined();
-      expect(updateSessionSpy).toHaveBeenCalledWith(mockSession.id, {
-        acpSessionId: undefined,
-      });
-    });
-
     it('should merge metadata fields', async () => {
       mockSession.metadata = { existingField: 'value', toUpdate: 'old' };
 

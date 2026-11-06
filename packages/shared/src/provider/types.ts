@@ -70,7 +70,6 @@ export interface CuratedModel {
 
 export interface ListRemoteModelsOptions {
   force?: boolean;
-  command?: string;
   baseUrl?: string;
   discoveryOnly?: boolean;
 }

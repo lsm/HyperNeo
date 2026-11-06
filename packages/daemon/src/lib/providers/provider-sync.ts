@@ -2,7 +2,6 @@ import type { ProviderRecord, CustomEndpointConfig } from '@hyperneo/shared';
 import type { CuratedModel, ProviderCredentials } from '@hyperneo/shared/provider';
 import { getProviderRegistry } from './registry.js';
 import { initializeProviders, registerBuiltInProvider } from './factory.js';
-import { AcpProvider } from './acp-provider.js';
 import { bumpProviderCatalogEpoch } from '../model-service.js';
 import { CustomEndpointProvider, customProviderIdFor } from './custom-endpoint-provider.js';
 import { Logger } from '../logger.js';
@@ -12,13 +11,11 @@ import { resolveKimiRegion } from './kimi-provider.js';
 const logger = new Logger('providers:sync');
 
 export function parseProviderConfig(configJson: string | undefined): {
-  command?: string;
   models?: CuratedModel[];
 } {
   if (!configJson) return {};
   try {
-    const parsed = JSON.parse(configJson) as { command?: unknown; models?: unknown };
-    const command = typeof parsed.command === 'string' ? parsed.command : undefined;
+    const parsed = JSON.parse(configJson) as { models?: unknown };
     let models: CuratedModel[] | undefined;
     if (Array.isArray(parsed.models)) {
       if (parsed.models.length === 0) {
@@ -36,7 +33,7 @@ export function parseProviderConfig(configJson: string | undefined): {
         models = valid.length > 0 ? valid : undefined;
       }
     }
-    return { command, models };
+    return { models };
   } catch {
     return {};
   }
@@ -64,11 +61,7 @@ export async function syncProviderToRegistry(
       (provider as { setDefaultRegion: (r: 'china' | 'global') => void }).setDefaultRegion(region);
       logger.info(`Kimi provider region set to '${region}'`);
     }
-    const { command, models } = parseProviderConfig(record.configJson);
-    if (provider instanceof AcpProvider) {
-      provider.setAcpCommand(command);
-      logger.info(`ACP provider command ${command ? 'configured' : 'reset to env default'}`);
-    }
+    const { models } = parseProviderConfig(record.configJson);
     provider?.setCuratedModels?.(models);
     registry.setCuratedModels(record.providerId, models);
     if (models !== undefined) {

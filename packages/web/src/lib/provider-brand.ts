@@ -12,7 +12,6 @@ export const PROVIDER_BRAND_COLORS: Record<string, string> = {
   deepseek: '#4D6BFE',
   ollama: '#CBD5E1',
   gemini: '#4285F4',
-  acp: '#F97316',
 };
 
 const PROVIDER_BRAND_COLORS_LIGHT: Record<string, string> = {
@@ -27,7 +26,6 @@ const PROVIDER_BRAND_COLORS_LIGHT: Record<string, string> = {
   deepseek: '#3730a3',
   ollama: '#475569',
   gemini: '#1d4ed8',
-  acp: '#c2410c',
 };
 
 const DEFAULT_BRAND_COLOR = '#9CA3AF';

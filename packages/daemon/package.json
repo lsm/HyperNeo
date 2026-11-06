@@ -21,7 +21,6 @@
     "./lib/internal-event-bus": "./src/lib/internal-event-bus.ts",
     "./lib/internal-command-bus": "./src/lib/internal-command-bus.ts",
     "./lib/internal-query-bus": "./src/lib/internal-query-bus.ts",
-    "./lib/acp/mcp-proxy-entry": "./src/lib/acp/mcp-proxy-entry.ts",
     "./lib/drivers/copilot-worker": "./src/lib/drivers/copilot-worker.ts",
     "./lib/agent/sdk-runtime-check": "./src/lib/agent/sdk-runtime-check.ts"
   },

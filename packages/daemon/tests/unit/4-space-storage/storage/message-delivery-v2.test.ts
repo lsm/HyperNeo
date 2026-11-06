@@ -1020,11 +1020,6 @@ describe('deliveryConsumptionTimeoutOrDefault — timeout validation', () => {
     expect(deliveryConsumptionTimeoutOrDefault(-1)).toBe(30_000);
     expect(deliveryConsumptionTimeoutOrDefault(Number.NaN)).toBe(30_000);
   });
-
-  it('exposes the ACP consumption timeout constant for ACP providers', () => {
-    expect(ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS).toBe(12 * 60 * 1000);
-    expect(MESSAGE_DELIVERY_PARK_MS).toBe(5_000);
-  });
 });
 
 describe('isTerminalTurnError — auth failures dead-letter immediately (Codex #2)', () => {

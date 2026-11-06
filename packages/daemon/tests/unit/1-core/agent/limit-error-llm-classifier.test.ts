@@ -367,26 +367,6 @@ describe('LimitErrorLlmClassifier', () => {
     expect(seenThinking).toEqual([{ type: 'enabled', budgetTokens: 16000 }]);
   });
 
-  it('never selects the acp provider for the SDK classification query', async () => {
-    const seenProviders: string[] = [];
-    const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
-    const originalApply = deps.providerService.getIsolatedEnvForModel;
-    deps.providerService = {
-      ...deps.providerService,
-      getAvailableProviders: async () => [
-        { id: 'acp', name: 'ACP', models: ['some-model'], available: true },
-        { id: 'glm', name: 'GLM', models: ['some-model'], available: true },
-      ],
-      getIsolatedEnvForModel: async (providerId: string, modelId: string) => {
-        seenProviders.push(providerId);
-        return originalApply(providerId, modelId);
-      },
-    };
-    const classifier = new LimitErrorLlmClassifier('s1', { ...deps, excludeProvider: 'anthropic' });
-    await classifier.classify('acp never classifies this wall');
-    expect(seenProviders).toEqual(['glm']);
-  });
-
   it('passes the provider env to the SDK query without touching process.env', async () => {
     const events: string[] = [];
     let lastQueryEnv: Record<string, string | undefined> | undefined;

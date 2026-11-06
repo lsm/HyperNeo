@@ -47278,8 +47278,7 @@
               "ollama",
               "ollama-cloud",
               "anthropic-copilot",
-              "anthropic-codex",
-              "acp"
+              "anthropic-codex"
             ],
             "type": "string"
           },

@@ -146,15 +146,6 @@ describe('SessionRepository', () => {
       expect(retrieved?.sdkSessionId).toBe('sdk-123');
     });
 
-    it('should create a session with ACP session ID', () => {
-      const session = createDefaultSession({ acpSessionId: 'acp-123' });
-
-      repository.createSession(session);
-
-      const retrieved = repository.getSession('session-1');
-      expect(retrieved?.acpSessionId).toBe('acp-123');
-    });
-
     it('should create a session with available commands', () => {
       const session = createDefaultSession({ availableCommands: ['/help', '/clear'] });
 
@@ -714,32 +705,6 @@ describe('SessionRepository', () => {
       expect(session?.acpSessionId).toBeUndefined();
     });
 
-    it('should clear persisted ACP session ids only for ACP providers', () => {
-      repository.createSession(
-        createDefaultSession({
-          id: 'acp-session',
-          config: { ...createDefaultSession().config, provider: 'acp' },
-          acpSessionId: 'remote-acp-session',
-          metadata: { acpContextUsageEstimate: 12000, preserved: true },
-        })
-      );
-      repository.createSession(
-        createDefaultSession({
-          id: 'other-session',
-          config: { ...createDefaultSession().config, provider: 'anthropic' },
-          acpSessionId: 'unrelated-session',
-        })
-      );
-
-      repository.clearAcpSessionIds();
-
-      const cleared = repository.getSession('acp-session');
-      expect(cleared?.acpSessionId).toBeUndefined();
-      expect(cleared?.metadata?.acpContextUsageEstimate).toBeUndefined();
-      expect((cleared?.metadata as Record<string, unknown> | undefined)?.preserved).toBe(true);
-      expect(repository.getSession('other-session')?.acpSessionId).toBe('unrelated-session');
-    });
-
     it('marks turns still processing or cooling down at startup as interrupted', () => {
       const states = {
         busy: { status: 'processing', messageId: 'm1', phase: 'thinking' },
@@ -832,30 +797,6 @@ describe('SessionRepository', () => {
       const persisted = JSON.parse(row.metadata) as Record<string, unknown>;
       expect('acpContextUsageEstimate' in persisted).toBe(false);
       expect(persisted.messageCount).toBe(0);
-    });
-
-    it('clears ACP session ids even when another row has malformed metadata', () => {
-      repository.createSession(
-        createDefaultSession({
-          id: 'acp-session',
-          config: { ...createDefaultSession().config, provider: 'acp' },
-          acpSessionId: 'remote-acp-session',
-          metadata: { acpContextUsageEstimate: 12000, preserved: true },
-        })
-      );
-      db.prepare(
-        `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, acp_session_id)
-         VALUES ('malformed', 'Malformed', '/workspace', 't', 't', 'active', ?, 'not-json', 'malformed-acp')`
-      ).run(JSON.stringify({ ...createDefaultSession().config, provider: 'acp' }));
-
-      repository.clearAcpSessionIds();
-
-      expect(repository.getSession('acp-session')).toMatchObject({ acpSessionId: undefined });
-      const malformed = db
-        .prepare(`SELECT metadata, acp_session_id FROM sessions WHERE id = 'malformed'`)
-        .get() as { metadata: string; acp_session_id: string | null };
-      expect(malformed.metadata).toBe('not-json');
-      expect(malformed.acp_session_id).toBeNull();
     });
 
     it('should update availableCommands', () => {
