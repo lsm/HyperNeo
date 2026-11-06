@@ -125,7 +125,8 @@ export async function readClaudeTurnFacts(path: string, cursor?: string): Promis
         continue;
       }
       addRow(turn, row);
-      if (row.type !== 'assistant' || !claudeTurnEnded(row)) continue;
+      if (row.type !== 'assistant' || !claudeTurnEnded(row) || !Number.isFinite(rowTime(row)))
+        continue;
       for (const url of readTurnUrls([assistantText(line) ?? ''])) turn.urls.add(url);
       end = { row, offset };
     }

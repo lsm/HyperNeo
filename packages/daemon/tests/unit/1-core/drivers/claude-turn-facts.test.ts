@@ -204,6 +204,14 @@ describe('readClaudeTurnFacts', () => {
     expect(turns.map((turn) => turn.id)).toEqual(['end-1', 'end-2']);
   });
 
+  test('an end row with no time does not end the turn', async () => {
+    const { timestamp: _none, ...untimed } = reply('no-time', 2, 'Part');
+    const turns = await readClaudeTurnFacts(
+      file([human('in-1', 1, 'Work'), untimed, reply('end-1', 3, 'Done')])
+    );
+    expect(turns.map((turn) => turn.id)).toEqual(['end-1']);
+  });
+
   test('a turn with no input starts at its first timed row', async () => {
     const [turn] = await readClaudeTurnFacts(file([tool(1, PR), reply('end-1', 2, 'Done')]));
     expect(turn).toMatchObject({ inputs: [], startedAt: Date.parse(at(1)) });
