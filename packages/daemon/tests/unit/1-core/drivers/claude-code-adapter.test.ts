@@ -28,6 +28,26 @@ const chat = (sessionId: string, text: string, role = 'user'): WorkChatMatch => 
   snippets: [{ match: 'exact', messageId: `${sessionId}-m`, sessionId, role, at: 500, text }],
 });
 
+describe('Claude Code turns', () => {
+  test('a session id that is not a plain name cannot leave the projects folder', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'claude-code-turns-'));
+    try {
+      mkdirSync(join(root, 'projects'));
+      writeFileSync(join(root, 'outside.jsonl'), '');
+      const adapter = createClaudeCodeAdapter({
+        machine: 'test',
+        projectsDir: join(root, 'projects'),
+      });
+      expect(await adapter.turns!({ adapter: 'claude-code', id: '../outside' })).toMatchObject({
+        ok: false,
+        reason: 'not_found',
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('buildClaudeCodeGroups', () => {
   test('lists CLI sessions found by content, leaving Desktop sessions to their adapter', () => {
     const groups = buildClaudeCodeGroups(
@@ -96,7 +116,7 @@ describe('createClaudeCodeAdapter', () => {
         desktopSessions: async () => new Set(),
         liveSessions: async () => [{ sessionId, pid: 456, owner, status }],
       });
-      expect(adapter.capabilities).toEqual(['find', 'status']);
+      expect(adapter.capabilities).toEqual(['find', 'status', 'turns']);
       expect(await adapter.status!(ref, 0, receipt)).toMatchObject({
         ok: true,
         value: {

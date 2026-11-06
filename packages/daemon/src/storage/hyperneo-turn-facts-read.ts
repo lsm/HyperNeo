@@ -4,7 +4,7 @@ import { sdkMessageBodyAt } from './repositories/sdk-message-body-read.ts';
 import type { Database as BunDatabase } from './sqlite-compat.ts';
 
 const TURNS_PER_READ = 10;
-const URL_PATTERN = /https?:\/\/[^\s"'<>\\)\]]+/g;
+const URL_PATTERN = /https?:\/\/[^\s"'<>\\)\]`]+/g;
 
 type Position = { seq: number; consumed: number; at: number | null };
 type Terminal = {
@@ -20,7 +20,7 @@ export const readTurnUrls = (bodies: readonly string[]) => [
   ...new Set(
     bodies
       .flatMap((body) => body.match(URL_PATTERN) ?? [])
-      .map((url) => url.replace(/[.,;:]+$/, ''))
+      .map((url) => url.replace(/[.,;:*]+$/, ''))
   ),
 ];
 
