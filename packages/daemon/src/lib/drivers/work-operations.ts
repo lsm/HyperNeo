@@ -166,10 +166,7 @@ export const SendWorkInputSchema = z.object({
   from: ForwardedOriginSchema,
 });
 export const WorkRefInputSchema = z.object({ ref: WorkRefSchema });
-const TurnCursorSchema = z.union([
-  z.object({ seq: z.number(), consumed: z.number() }),
-  z.object({ offset: z.number().int().nonnegative() }),
-]);
+const TurnCursorSchema = z.object({ seq: z.number(), consumed: z.number() });
 const isTurnCursor = (cursor: string) => {
   try {
     return TurnCursorSchema.safeParse(JSON.parse(cursor)).success;

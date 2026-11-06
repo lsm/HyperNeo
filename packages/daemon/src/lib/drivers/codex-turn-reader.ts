@@ -39,7 +39,7 @@ const turnFact = (
   inputs: turn.inputs,
   urls: [...turn.urls],
   complete,
-  cursor: JSON.stringify({ offset }),
+  cursor: JSON.stringify({ seq: offset, consumed: 0 }),
 });
 
 export function foldCodexTurnLine(
@@ -81,7 +81,7 @@ export async function readCodexTurnFacts(path: string, cursor?: string): Promise
   const facts: WorkTurnFact[] = [];
   try {
     const chunk = Buffer.allocUnsafe(READ_BYTES);
-    let lineStart = cursor ? (JSON.parse(cursor) as { offset: number }).offset : 0;
+    let lineStart = cursor ? (JSON.parse(cursor) as { seq: number }).seq : 0;
     let position = lineStart;
     let pending = Buffer.alloc(0);
     let turn: CodexOpenTurn | null = null;
