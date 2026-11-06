@@ -4,7 +4,7 @@ import {
   readHyperneoInputs,
   readHyperneoLastResult,
 } from '../../../../src/lib/drivers/hyperneo-adapter';
-import { readSpaceStartReceipt } from '../../../../src/lib/drivers/space-adapter';
+import { readSpaceStartReceipt } from '../../../../src/lib/space/drivers/space-adapter';
 import { readSessionInputEvidence } from '../../../../src/lib/drivers/space-input-evidence';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { runMigration416 } from '../../../../src/storage/schema/m416-sdk-message-filter-indexes';

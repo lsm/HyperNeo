@@ -7,7 +7,7 @@ import {
   spaceAgentWorkStatus,
   spaceTaskWorkStatus,
   spaceWorkRefForSession,
-} from '../../../../src/lib/drivers/space-adapter';
+} from '../../../../src/lib/space/drivers/space-adapter';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns';
 import type { WorkChatMatch } from '../../../../src/storage/work-chat-search';

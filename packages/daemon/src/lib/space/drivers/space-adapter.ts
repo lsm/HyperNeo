@@ -1,16 +1,16 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
-import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
-import type { OperationCaller } from '../operations/registry.ts';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
+import type { WorkChatMatch } from '../../../storage/work-chat-search.ts';
+import type { OperationCaller } from '../../operations/registry.ts';
 import {
   hyperneoWorkStatus,
   readHyperneoInputs,
   readHyperneoExchange,
   readHyperneoLastResult,
-} from './hyperneo-adapter.ts';
-import { withExchange, workEntryTime } from './work-messages.ts';
-import { readSpaceInputEvidence } from './space-input-evidence.ts';
-import { withChatEvidence } from './places.ts';
+} from '../../drivers/hyperneo-adapter.ts';
+import { withExchange, workEntryTime } from '../../drivers/work-messages.ts';
+import { readSpaceInputEvidence } from '../../drivers/space-input-evidence.ts';
+import { withChatEvidence } from '../../drivers/places.ts';
 import type {
   FindQuery,
   PlaceGroup,
@@ -24,14 +24,14 @@ import type {
   WorkRef,
   WorkStatus,
   WorkSummary,
-} from './types.ts';
-import { reject } from './work-operations.ts';
-import { invokeOperation } from '../operations/invoke.ts';
-import type { SessionManager } from '../session/session-manager.ts';
-import type { Database } from '../../storage/database.ts';
-import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
-import type { TaskAgentManager } from '../space/runtime/task-agent-manager.ts';
-import { matchChatsBy } from './match-chats.ts';
+} from '../../drivers/types.ts';
+import { reject } from '../../drivers/work-operations.ts';
+import { invokeOperation } from '../../operations/invoke.ts';
+import type { SessionManager } from '../../session/session-manager.ts';
+import type { Database } from '../../../storage/database.ts';
+import type { SpaceRuntimeService } from '../runtime/space-runtime-service.ts';
+import type { TaskAgentManager } from '../runtime/task-agent-manager.ts';
+import { matchChatsBy } from '../../drivers/match-chats.ts';
 
 const OPEN_TASK = `status IN ('draft', 'open', 'in_progress', 'review', 'approved', 'blocked', 'rate_limited', 'usage_limited')`;
 const TASKS_PER_SPACE = 20;
