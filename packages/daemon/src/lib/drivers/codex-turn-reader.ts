@@ -19,10 +19,10 @@ export type CodexOpenTurn = {
 
 type Folded = { turn: CodexOpenTurn | null; fact?: WorkTurnFact };
 
-const noteUrls = (turn: CodexOpenTurn, text: unknown) => {
-  if (!text) return;
+const withUrls = (turn: CodexOpenTurn, text: unknown): CodexOpenTurn => {
+  if (!text) return turn;
   const body = typeof text === 'string' ? text : JSON.stringify(text);
-  for (const url of readTurnUrls([body])) turn.urls.add(url);
+  return { ...turn, urls: new Set([...turn.urls, ...readTurnUrls([body])]) };
 };
 
 const turnFact = (
@@ -64,14 +64,14 @@ export function foldCodexTurnLine(
   }
   if (!turn) return { turn: null };
   if (entry.type === 'event_msg' && payload.type === 'task_complete') {
-    noteUrls(turn, payload.last_agent_message);
+    const final = withUrls(turn, payload.last_agent_message);
     const ended = payload.error ? 'errored' : 'completed';
-    return { turn: null, fact: turnFact(turn, ended, turn.lastAt, turn.complete, lineEnd) };
+    return { turn: null, fact: turnFact(final, ended, final.lastAt, final.complete, lineEnd) };
   }
   if (entry.type === 'event_msg' && payload.type === 'turn_aborted')
     return { turn: null, fact: turnFact(turn, 'aborted', turn.lastAt, turn.complete, lineEnd) };
   if (entry.type !== 'response_item') return { turn };
-  if (TOOL_OUTPUTS.has(String(payload.type))) noteUrls(turn, payload.output);
+  if (TOOL_OUTPUTS.has(String(payload.type))) return { turn: withUrls(turn, payload.output) };
   const input = codexUserInput(entry);
   return { turn: input ? { ...turn, inputs: [...turn.inputs, input.id] } : turn };
 }

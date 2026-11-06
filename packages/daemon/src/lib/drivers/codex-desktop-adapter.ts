@@ -56,6 +56,7 @@ import type {
   WorkRef,
   WorkStarted,
   WorkStatus,
+  WorkTurnFact,
   WorkSummary,
   WorkWithdrawal,
 } from './types.ts';
@@ -1346,6 +1347,23 @@ const runCodexStop = (superpipe({})('codex-stop-work') as PipelineAPI)
   deps: CodexDesktopAdapterDeps
 ) => Promise<Result<{ stopped: boolean }>>;
 
+const runCodexTurns = (superpipe({})('codex-turns') as PipelineAPI)
+  .input(['ref', 'cursor', 'deps'])
+  .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
+  .pipe(
+    async (detail: CodexThreadDetail, cursor: string | undefined) => ({
+      ok: true as const,
+      value: { turns: await readCodexTurnFacts(detail.thread.rolloutPath, cursor) },
+    }),
+    ['outcome', 'cursor'],
+    'outcome'
+  )
+  .endAsync('outcome') as (
+  ref: WorkRef,
+  cursor: string | undefined,
+  deps: CodexDesktopAdapterDeps
+) => Promise<Result<{ turns: WorkTurnFact[] }>>;
+
 export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAdapter {
   const readOpenedPrs = createCodexPrReader();
   return {
@@ -1400,12 +1418,7 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
       ),
     withdraw: (ref, queuedSubmissionId) => runCodexWithdraw(ref, queuedSubmissionId, deps),
     status: (ref, since, receipt) => runCodexStatus(ref, deps, since, receipt, readOpenedPrs),
-    turns: async (ref, cursor) => {
-      const found = requireCodexThread(ref, deps);
-      if ('reason' in found) return found.reason;
-      const turns = await readCodexTurnFacts(found.value.thread.rolloutPath, cursor);
-      return { ok: true, value: { turns } };
-    },
+    turns: (ref, cursor) => runCodexTurns(ref, cursor, deps),
     stop: (ref) => runCodexStop(ref, deps),
     archive: async (ref, admit) => {
       const found = requireCodexThread(ref, deps);
