@@ -24,8 +24,8 @@ import type { WorkflowRunArtifactRepository } from '../../../../storage/reposito
 import type { SpaceAgentTemplateManager } from '../../../agents/template-manager.ts';
 import type { EvolutionEpisodeService } from '../../../../../../space/src/evolution/episode-service.ts';
 import type { EvolutionScopeService } from '../../evolution/scope-service.ts';
-import type { GoalAutomationService } from '../../goals/automation-service.ts';
-import type { SpaceGoalService } from '../../goals/service.ts';
+import type { GoalAutomationService } from '../../../../../../space/src/goals/automation-service.ts';
+import type { SpaceGoalService } from '../../../../../../space/src/goals/service.ts';
 import type { ReplyRoutingRegistry } from '../../../messaging/reply-routing-registry.ts';
 import type { ScheduleService } from '../../../schedule/schedule-service.ts';
 import type { SpaceRuntimeService } from '../../runtime/space-runtime-service.ts';

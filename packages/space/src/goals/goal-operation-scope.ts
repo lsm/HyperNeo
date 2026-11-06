@@ -5,7 +5,7 @@ import type { OperationCaller } from '../../../daemon/src/lib/operations/registr
 import type { GoalAccess } from '../../../daemon/src/lib/goals/goal-contract.ts';
 import { resolveSessionSpaceId } from '../../../daemon/src/lib/session-resolution/space-caller-scope.ts';
 import type { SpaceMcpSessionPolicyContext } from '../../../daemon/src/lib/session-resolution/space-mcp-session-policy.ts';
-import type { SpaceGoalMutationContext } from '../../../daemon/src/lib/space/goals/service.ts';
+import type { SpaceGoalMutationContext } from './service.ts';
 
 export const GOAL_REJECTION_REASONS = [
   'space_unresolved',

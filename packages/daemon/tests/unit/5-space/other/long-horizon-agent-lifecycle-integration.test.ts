@@ -9,7 +9,7 @@ import {
 } from '../../../../src/lib/job-queue-constants';
 import { handleGoalAutomationExecute } from '../../../../../space/src/job-handlers/goal-automation-execute.handler.ts';
 import { handleTaskScheduleFire } from '../../../../../space/src/job-handlers/task-schedule-fire.handler.ts';
-import { GoalAutomationService } from '../../../../src/lib/space/goals/automation-service';
+import { GoalAutomationService } from '../../../../../space/src/goals/automation-service';
 import { ScheduleService } from '../../../../src/lib/schedule/schedule-service';
 import { getLongHorizonAgentTemplate } from '../../../../src/lib/agents/long-horizon-templates';
 import { syncGoalAutomationSelfNagScheduleForScope } from '../../../../../space/src/goals/automation-schedule-sync.ts';
