@@ -109,7 +109,7 @@ import {
   sanitizeAgentNameForId,
   taskIdFromSubSessionIdentity,
 } from '../../session/sub-session-identity.ts';
-import { buildWorkerDispatcherContractTools } from '../actions/worker-contract-tools.ts';
+import { buildWorkerDispatcherContractTools } from '../../../../../space/src/actions/worker-contract-tools.ts';
 import {
   buildCustomAgentTaskMessage,
   DEFAULT_CUSTOM_AGENT_MODEL,

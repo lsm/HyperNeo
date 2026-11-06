@@ -4,12 +4,13 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import { invokeOperation } from '../lib/operations.ts';
 import { sessions } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
+import { extensionOwnsSession } from '../lib/web-extensions.ts';
 import { Modal } from './ui/Modal.tsx';
 
 type MoveResult = { accepted: true } | { accepted: false; message: string };
 
 export function movableSession(session: Session): boolean {
-  return !session.id.startsWith('neo:') && !session.context?.spaceId;
+  return !session.id.startsWith('neo:') && !extensionOwnsSession(session);
 }
 
 export function parentCandidates(session: Session, all: readonly Session[]): Session[] {

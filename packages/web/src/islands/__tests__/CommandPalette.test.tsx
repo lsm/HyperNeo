@@ -45,7 +45,7 @@ describe('CommandPalette', () => {
       id: 'space.overview',
       extension: 'space',
       label: 'Space: Overview',
-      category: 'space',
+      category: 'Spaces',
       run: () => {},
     });
     commandPaletteOpenSignal.value = true;
