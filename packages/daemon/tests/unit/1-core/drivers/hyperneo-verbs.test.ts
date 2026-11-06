@@ -170,6 +170,7 @@ describe('hyperneo adapter send and status', () => {
   ) {
     fillSdkMessageFixtureColumns(db);
     return createHyperneoAdapter({
+      readTurnFacts: async () => [],
       readTurnEnds: async (id, since) => readHyperneoTurnEnds(db, id, since),
       prepareExecution,
       worktreeBaseDir: () => projectBase,
@@ -826,6 +827,7 @@ describe('hyperneo adapter start and stop', () => {
   function adapter(overrides: Partial<HyperneoSessionControl> = {}) {
     const controls = control(db, events);
     return createHyperneoAdapter({
+      readTurnFacts: async () => [],
       readTurnEnds: async (id, since) => readHyperneoTurnEnds(db, id, since),
       db: () => db,
       machine: 'imac',

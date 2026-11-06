@@ -27,6 +27,7 @@ import {
   WorkDeliverySchema,
   WorkInputReceiptSchema,
   WorkRefSchema,
+  WorkTurnFactSchema,
   WorkStartedSchema,
   workResultSchema,
   type Rejected,
@@ -46,6 +47,7 @@ type RoutedVerb =
   | 'queue'
   | 'withdraw'
   | 'status'
+  | 'turns'
   | 'stop'
   | 'archive';
 type Route<Verb extends RoutedVerb> =
@@ -164,6 +166,19 @@ export const SendWorkInputSchema = z.object({
   from: ForwardedOriginSchema,
 });
 export const WorkRefInputSchema = z.object({ ref: WorkRefSchema });
+const TurnCursorSchema = z.object({ seq: z.number(), consumed: z.number() });
+const isTurnCursor = (cursor: string) => {
+  try {
+    return TurnCursorSchema.safeParse(JSON.parse(cursor)).success;
+  } catch {
+    return false;
+  }
+};
+const WorkTurnsInputSchema = z.object({
+  ref: WorkRefSchema,
+  cursor: z.string().min(1).max(200).refine(isTurnCursor).optional(),
+});
+const WorkTurnsResultSchema = workResultSchema(z.object({ turns: z.array(WorkTurnFactSchema) }));
 const WithdrawWorkInputSchema = z.object({
   ref: WorkRefSchema,
   queuedSubmissionId: z.string().min(1).max(500),
@@ -209,6 +224,7 @@ const RoutedCapabilitySchema = z.enum([
   'queue',
   'withdraw',
   'status',
+  'turns',
   'stop',
   'archive',
 ]);
@@ -907,6 +923,32 @@ const runWorkStatus = (superpipe({})('work-status') as PipelineAPI)
   .pipe(presentWorkIdentity, 'outcome', 'outcome')
   .endAsync('outcome') as (input: StatusInput, deps: WorkVerbDeps) => Promise<StatusResult>;
 
+type TurnsInput = z.infer<typeof WorkTurnsInputSchema>;
+type TurnsResult = z.infer<typeof WorkTurnsResultSchema>;
+
+const runWorkTurns = (superpipe({})('work-turns') as PipelineAPI)
+  .input(['input', 'deps'])
+  .pipe(
+    (input: TurnsInput, deps: WorkVerbDeps) => pickRoute('turns', input.ref, deps.adapters()),
+    ['input', 'deps'],
+    'result:outcome'
+  )
+  .pipe(
+    async (route: Route<'turns'>, input: TurnsInput, deps: WorkVerbDeps): Promise<TurnsResult> =>
+      'local' in route
+        ? route.local(input.ref, input.cursor)
+        : forwardWork(
+            route.daemon,
+            'work.turns',
+            { ...input, ref: localRef(input.ref) },
+            WorkTurnsResultSchema,
+            deps.remote
+          ),
+    ['outcome', 'input', 'deps'],
+    'outcome'
+  )
+  .endAsync('outcome') as (input: TurnsInput, deps: WorkVerbDeps) => Promise<TurnsResult>;
+
 type QueuedInput = SendInput | z.infer<typeof WithdrawWorkInputSchema>;
 type QueuedResult = SendResult | z.infer<typeof WithdrawWorkResultSchema>;
 function routeQueuedInput(input: QueuedInput, deps: WorkVerbDeps) {
@@ -1074,7 +1116,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.adapters',
       description:
-        'List work adapters on this daemon, or the attached daemon named by daemon, with their available capabilities: find, start, rename, send, steer, queue, withdraw, status, stop, archive. Local client health includes status, reason, installed and verified versions, and check time; unavailable unregistered clients appear with no capabilities. Avoid assigning degraded or unavailable clients. An unverified version remains usable when health is ok. steer means work.send accepts mode steer on that adapter; it is listed only when declared and implemented. Optional unsupportedCapabilities maps unavailable capabilities to their limitation; explicit unsupported requests return that explanation. Archive uses neo.session.archive and requires a human request in a live turn. Use only capabilities listed for the chosen adapter.',
+        'List work adapters on this daemon, or the attached daemon named by daemon, with their available capabilities: find, start, rename, send, steer, queue, withdraw, status, turns, stop, archive. Local client health includes status, reason, installed and verified versions, and check time; unavailable unregistered clients appear with no capabilities. Avoid assigning degraded or unavailable clients. An unverified version remains usable when health is ok. steer means work.send accepts mode steer on that adapter; it is listed only when declared and implemented. Optional unsupportedCapabilities maps unavailable capabilities to their limitation; explicit unsupported requests return that explanation. Archive uses neo.session.archive and requires a human request in a live turn. Use only capabilities listed for the chosen adapter.',
       inputSchema: z.object({ daemon: z.string().min(1).optional() }),
       resultSchema: WorkAdaptersResultSchema,
       policy: { safetyClass: 'read' },
@@ -1125,6 +1167,15 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
       resultSchema: WorkStatusResultSchema,
       policy: { safetyClass: 'read' },
       execute: (input) => runWorkStatus(input, deps),
+    }),
+    defineOperation({
+      name: 'work.turns',
+      description:
+        'Read finished turns of work by ref, oldest first and a few at a time: when each ran, how it ended, the inputs in it and the URLs in its final message and tool output. complete false means its output could not be fully read. Pass the last turn cursor to continue. Only some adapters report turns; others return unsupported.',
+      inputSchema: WorkTurnsInputSchema,
+      resultSchema: WorkTurnsResultSchema,
+      policy: { safetyClass: 'read' },
+      execute: (input) => runWorkTurns(input, deps),
     }),
     defineOperation({
       name: 'work.stop',

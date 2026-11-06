@@ -97,6 +97,7 @@ import {
   recordNeoSessionMessage,
   sentDuringTurn,
 } from '../repositories/neo-session-message-repository.ts';
+import { recordWorkTurns } from '../repositories/work-turn-repository.ts';
 import {
   acceptWorkDeliveryInput,
   recordWorkDeliveryOutcome,
@@ -269,6 +270,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     sentDuringTurn,
     acceptWorkDeliveryInput,
     recordWorkDeliveryOutcome,
+    recordWorkTurns,
     jobEnqueueWrites,
     enqueueMailboxAdmission,
     cancelRateLimitDelivery,

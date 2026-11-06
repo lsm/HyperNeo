@@ -10,5 +10,6 @@ export const WORK_OPERATION_NAMES = [
   'work.start',
   'work.status',
   'work.stop',
+  'work.turns',
   'work.withdraw',
 ] as const;

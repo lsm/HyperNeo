@@ -1,6 +1,7 @@
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
+import { isBusyWork } from '../drivers/work-operations.ts';
 import type { PlaceGroup, WorkRef, WorkStatus } from '../drivers/types.ts';
 import type { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
 import type { Logger } from '../logger.ts';
@@ -39,6 +40,7 @@ export type NeoSessionWatcherDeps = {
   sessionBranchPrs: (ref: WorkRef) => Promise<string[]>;
   readRemotes: (folder: string) => Promise<string[]>;
   observeSessions: (sessions: NeoSessionFacts[]) => Promise<void>;
+  recordTurns: (ref: WorkRef) => Promise<void>;
   notifyChanged: () => void;
 };
 
@@ -135,6 +137,10 @@ export class NeoSessionWatcher {
             );
             const live = readDriverLive(outcome);
             const facts = live ? readDriverSessionFacts(outcome) : null;
+            if (live && !isBusyWork(live.status))
+              await this.deps
+                .recordTurns(session.ref)
+                .catch((error) => this.deps.log.warn('Worker turns pending', error));
             return live && facts
               ? {
                   detail: { status: live.status, lastInputAt: readDriverLastInputAt(outcome) },

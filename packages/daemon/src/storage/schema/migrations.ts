@@ -1,4 +1,5 @@
 import { runMigration476 } from './m476-neo-todo-approved-at.ts';
+import { runMigration477 } from './m477-work-turns.ts';
 import { runMigration475 } from './m475-work-delivery-optional-todo.ts';
 import { runMigration474 } from './m474-trim-sdk-message-indexes.ts';
 import { runMigration473 } from './m473-drop-inbox-items.ts';
@@ -984,6 +985,7 @@ export function runMigrations(
   run(migrationMarkerKey(474), () => runMigration474(db));
   run(migrationMarkerKey(475), () => runMigration475(db));
   run(migrationMarkerKey(476), () => runMigration476(db));
+  run(migrationMarkerKey(477), () => runMigration477(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

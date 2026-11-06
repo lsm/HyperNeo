@@ -53484,6 +53484,7 @@
                           "queue",
                           "withdraw",
                           "status",
+                          "turns",
                           "stop",
                           "archive"
                         ],
@@ -53562,6 +53563,7 @@
                           "queue",
                           "withdraw",
                           "status",
+                          "turns",
                           "stop",
                           "archive"
                         ],
@@ -56742,6 +56744,180 @@
                 },
                 "required": [
                   "stopped"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "ok",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "detail": {
+                "type": "string"
+              },
+              "notSent": {
+                "const": true,
+                "description": "Proves no input was accepted: no dispatch or an explicit precondition refusal. Otherwise reconcile before retrying.",
+                "type": "boolean"
+              },
+              "ok": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "enum": [
+                  "unsupported_model",
+                  "unsupported_effort",
+                  "unsupported_preparation",
+                  "preparation_failed",
+                  "unknown_adapter",
+                  "worker_busy",
+                  "unsupported",
+                  "not_supported",
+                  "not_found",
+                  "not_open",
+                  "not_delivered",
+                  "claude_cli_login_expired",
+                  "unreachable",
+                  "invalid_place",
+                  "busy",
+                  "human_only",
+                  "live_todo",
+                  "todo_required"
+                ],
+                "type": "string"
+              },
+              "uncertainDesktopInputId": {
+                "description": "Client input ID of an uncertain Desktop handoff; not a delivery receipt. Reconcile before retrying.",
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "ok",
+              "reason",
+              "detail"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "cursor": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "ref": {
+            "properties": {
+              "adapter": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "daemon": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "adapter",
+              "id"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "ref"
+        ],
+        "type": "object"
+      },
+      "name": "work.turns",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": true,
+                "type": "boolean"
+              },
+              "records": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "value": {
+                "additionalProperties": false,
+                "properties": {
+                  "turns": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "complete": {
+                          "type": "boolean"
+                        },
+                        "cursor": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "ended": {
+                          "type": "string"
+                        },
+                        "endedAt": {
+                          "type": "number"
+                        },
+                        "id": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "inputs": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "startedAt": {
+                          "type": "number"
+                        },
+                        "urls": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "startedAt",
+                        "endedAt",
+                        "ended",
+                        "inputs",
+                        "urls",
+                        "complete",
+                        "cursor"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "turns"
                 ],
                 "type": "object"
               }

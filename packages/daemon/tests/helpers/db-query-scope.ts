@@ -42,6 +42,7 @@ export const EXCLUDED_TABLE_NAMES: string[] = [
   'neo_session_messages',
   'neo_todo_sessions',
   'work_delivery_inputs',
+  'work_turns',
   'work_started_sessions',
   'neo_questions',
   'neo_pack_preferences',
