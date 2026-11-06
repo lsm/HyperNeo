@@ -40,15 +40,20 @@ export function planCodingTurnOwner(
   todos: CodingTurnTodos
 ): CodingTurnOwner {
   const key = codingPrKey(pr.url);
-  const shown = turns.filter((turn) => turn.urls.some((url) => codingPrKey(url) === key));
+  const isPr = (url: string) => codingPrKey(url) === key;
+  const shown = turns.filter((turn) => turn.urls.some(isPr));
   const { createdAt } = pr;
   if (createdAt === undefined) return shown.length ? { state: 'unknown' } : { state: 'none' };
   const inside = shown.filter((turn) => turn.startedAt <= createdAt && createdAt <= turn.endedAt);
   if (!inside.length) return { state: 'none' };
   if (inside.some((turn) => !turn.complete)) return { state: 'unknown' };
-  if (new Set(inside.map((turn) => sessionKey(turn.ref))).size > 1) return { state: 'unknown' };
-  const owners = [...new Set(inside.flatMap((turn) => codingTurnTodos(turn, todos)))];
-  return { state: 'placed', session: inside[0].ref, todo: owners.length === 1 ? owners[0] : null };
+  const reported = inside.filter((turn) => turn.finalUrls.some(isPr));
+  const placing = reported.length ? reported : inside;
+  if (new Set(placing.map((turn) => sessionKey(turn.ref))).size > 1) return { state: 'unknown' };
+  if (!reported.length && (inside.length > 1 || inside[0].finalUrls.some(codingPrKey)))
+    return { state: 'unknown' };
+  const owners = [...new Set(placing.flatMap((turn) => codingTurnTodos(turn, todos)))];
+  return { state: 'placed', session: placing[0].ref, todo: owners.length === 1 ? owners[0] : null };
 }
 
 export const planCodingTurnUrls = (

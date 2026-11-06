@@ -11,8 +11,8 @@ export const recordWorkTurns = defineDbOp({
   mode: 'write',
   run: (db: Database, { ref, turns }: { ref: WorkRef; turns: readonly WorkTurnFact[] }): void => {
     const write = db.prepare(`INSERT OR REPLACE INTO work_turns
-      (ref, id, started_at, ended_at, ended, inputs, urls, complete, cursor)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      (ref, id, started_at, ended_at, ended, inputs, urls, final_urls, complete, cursor)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const clear = db.prepare('DELETE FROM work_turn_urls WHERE ref = ? AND turn_id = ?');
     const index = db.prepare(
       'INSERT OR IGNORE INTO work_turn_urls (url, ref, turn_id) VALUES (?, ?, ?)'
@@ -28,6 +28,7 @@ export const recordWorkTurns = defineDbOp({
         turn.ended,
         JSON.stringify(turn.inputs),
         JSON.stringify(turn.urls),
+        JSON.stringify(turn.finalUrls),
         Number(turn.complete),
         turn.cursor
       );
@@ -35,9 +36,10 @@ export const recordWorkTurns = defineDbOp({
   },
 });
 
-type TurnRow = Omit<WorkTurnFact, 'inputs' | 'urls' | 'complete'> & {
+type TurnRow = Omit<WorkTurnFact, 'inputs' | 'urls' | 'finalUrls' | 'complete'> & {
   inputs: string;
   urls: string;
+  finalUrls: string;
   complete: number;
 };
 
@@ -47,12 +49,13 @@ export type WorkTurnMention = WorkTurnFact & {
 };
 
 const TURN_COLUMNS = `id, started_at AS startedAt, ended_at AS endedAt, ended, inputs, urls,
-  complete, cursor`;
+  final_urls AS finalUrls, complete, cursor`;
 
 const readTurnRow = (row: TurnRow): WorkTurnFact => ({
   ...row,
   inputs: JSON.parse(row.inputs),
   urls: JSON.parse(row.urls),
+  finalUrls: JSON.parse(row.finalUrls),
   complete: !!row.complete,
 });
 

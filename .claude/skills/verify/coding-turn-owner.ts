@@ -25,6 +25,10 @@ const prs = [
   { number: 104, state: 'MERGED', slot: 6 },
   { number: 105, state: 'MERGED', slot: 8 },
   { number: 106, state: 'MERGED', slot: 9 },
+  { number: 107, state: 'MERGED', slot: 10 },
+  { number: 108, state: 'MERGED', slot: 10 },
+  { number: 109, state: 'MERGED', slot: 11 },
+  { number: 110, state: 'MERGED', slot: 11 },
 ];
 await Bun.$`mkdir -p ${run}/prs`;
 for (const { number, state, slot } of prs) {
@@ -55,6 +59,9 @@ const expected: Record<string, { state: 'done' | 'doing'; report?: number; why: 
   'shared-1': { state: 'doing', report: 105, why: 'two todos shared the turn that made PR 105' },
   'shared-2': { state: 'doing', report: 105, why: 'two todos shared the turn that made PR 105' },
   unreadable: { state: 'doing', report: 106, why: 'the turn that made PR 106 is not fully read' },
+  displayed: { state: 'done', why: 'PR 108 was only displayed here and another session reported it' },
+  reporter: { state: 'done', why: 'this turn reported PR 108' },
+  'unclaimed-display': { state: 'doing', why: 'PR 110 is in tool output beside reported PR 109, so it stays unknown' },
 };
 db.prepare(`INSERT INTO neo_asks (id,session_id,title,request,status,created_at,updated_at) VALUES ('turn-ask',?,'Turn owners','Place PRs by turn','open',?,?)`).run(opened.sessionId, now, now);
 Object.entries(expected).forEach(([id, { report }], position) => {
@@ -62,11 +69,11 @@ Object.entries(expected).forEach(([id, { report }], position) => {
     .run(id, position, id, JSON.stringify({ pack: 'coding', kind: 'pr_merged', params: {} }), report ? `Merged ${pull(report)}` : null, now, now, now);
 });
 
-const turn = (id: string, slot: number, inputs: string[], urls: string[], change = {}) => ({ id, startedAt: at(slot), endedAt: at(slot) + 30_000, ended: 'success', inputs, urls, complete: true, cursor: String(slot), ...change });
+const turn = (id: string, slot: number, inputs: string[], urls: string[], change = {}) => ({ id, startedAt: at(slot), endedAt: at(slot) + 30_000, ended: 'success', inputs, urls, finalUrls: urls, complete: true, cursor: String(slot), ...change });
 const workers = [
   { worker: 'reused', sends: { 'reuse-a': 'in-a', 'reuse-b': 'in-b', 'old-mention': 'in-c' }, turns: [
     turn('t1', 1, ['in-a'], [pull(101)]),
-    turn('t2', 2, ['in-b'], [pull(102), pull(101)]),
+    turn('t2', 2, ['in-b'], [pull(102), pull(101)], { finalUrls: [pull(102)] }),
     turn('t3', 3, ['in-c'], [pull(90)]),
   ] },
   { worker: 'stopped', sends: { aborted: 'in-d' }, turns: [
@@ -75,10 +82,19 @@ const workers = [
   ] },
   { worker: 'typed', sends: { human: 'in-e' }, turns: [
     turn('t6', 6, ['typed-by-a-person'], [pull(104)]),
-    turn('t7', 7, ['in-e'], [pull(104)]),
+    turn('t7', 7, ['in-e'], [pull(104)], { finalUrls: [] }),
   ] },
   { worker: 'shared', sends: { 'shared-1': 'in-f', 'shared-2': 'in-g' }, turns: [
     turn('t8', 8, ['in-f', 'in-g'], [pull(105)]),
+  ] },
+  { worker: 'lister', sends: { displayed: 'in-i' }, turns: [
+    turn('t10', 10, ['in-i'], [pull(107), pull(108)], { finalUrls: [pull(107)] }),
+  ] },
+  { worker: 'maker', sends: { reporter: 'in-j' }, turns: [
+    turn('t11', 10, ['in-j'], [pull(108)]),
+  ] },
+  { worker: 'ambiguous', sends: { 'unclaimed-display': 'in-k' }, turns: [
+    turn('t12', 11, ['in-k'], [pull(109), pull(110)], { finalUrls: [pull(109)] }),
   ] },
   { worker: 'partial', sends: { unreadable: 'in-h' }, turns: [
     turn('t9', 9, ['in-h'], [pull(106)], { complete: false, ended: 'unknown' }),
@@ -99,7 +115,7 @@ const swept = async () => {
   return prs.every(({ number }) => text.includes(`/pull/${number} `));
 };
 const deadline = Date.now() + 240_000;
-while (Date.now() < deadline && !(await swept() && states().filter((row) => row.state === 'done').length >= 2)) await Bun.sleep(1_000);
+while (Date.now() < deadline && !(await swept() && states().filter((row) => row.state === 'done').length >= 4)) await Bun.sleep(1_000);
 await Bun.sleep(20_000);
 
 const final = states();

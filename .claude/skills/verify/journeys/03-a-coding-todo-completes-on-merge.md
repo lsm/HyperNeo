@@ -34,7 +34,8 @@
    Evidence: `evidence/todo-pr-concurrency.json`.
    To verify turn ownership, run `bun .claude/skills/verify/coding-turn-owner.ts <port> "$RUN"`
    on a fresh isolated daemon. It seeds synthetic turn rows and sends, then lets the real
-   sweep read a per-URL gh stub. A reused worker's own PR and the no-input turn after an
-   aborted turn close their todos. An old PR mention, a human turn, a shared turn and an
-   unreadable turn stay open, even when the todo's report names a merged PR. Evidence:
+   sweep read a per-URL gh stub. A reused worker's own PR, the no-input turn after an
+   aborted turn, and a PR one session reported while another only displayed it close their
+   todos. An old PR mention, a human turn, a shared turn, an unreadable turn and a PR only in
+   tool output beside a reported PR stay open, even when the todo's report names a merged PR. Evidence:
    `evidence/coding-turn-owner.json`. The rows are seeded, so this does not prove the readers.
