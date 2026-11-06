@@ -1,3 +1,7 @@
+import {
+  clearGitHubWebhookRegistration,
+  clearGitHubWebhookDeliveryHistory,
+} from '../../../storage/repositories/github-webhook-clear-persist.ts';
 import { schemaTableExists } from '../../../storage/schema/extensions.ts';
 import {
   countGitHubSpacesWithPollingIntent,
@@ -141,16 +145,7 @@ export class GitHubEventExtensionRepository {
   }
 
   clearWebhookRegistration(id: string, options: { clearSecret?: boolean } = {}): void {
-    this.db
-      .prepare(
-        `UPDATE space_github_watched_repos
-         SET webhook_secret = CASE WHEN ? THEN NULL ELSE webhook_secret END,
-             webhook_remote_id = NULL, webhook_url = NULL, webhook_auto_registered = 0, webhook_active = NULL,
-             webhook_last_checked_at = NULL, webhook_last_error = NULL, webhook_configured_at = NULL,
-             last_webhook_at = NULL, updated_at = ?
-         WHERE id = ?`
-      )
-      .run(options.clearSecret ? 1 : 0, Date.now(), id);
+    clearGitHubWebhookRegistration(this.db, id, options.clearSecret);
   }
 
   setRepoEnabled(spaceId: string, enabled: boolean): number {
@@ -327,11 +322,7 @@ export class GitHubEventExtensionRepository {
   }
 
   clearWebhookDeliveryHistory(id: string): void {
-    this.db
-      .prepare(
-        `UPDATE space_github_watched_repos SET last_webhook_at = NULL, updated_at = ? WHERE id = ?`
-      )
-      .run(Date.now(), id);
+    clearGitHubWebhookDeliveryHistory(this.db, id);
   }
 
   updatePollCursor(id: string, cursor: PollCursor): void {

@@ -136,7 +136,7 @@ describe('watchRepo atomic config writer', () => {
     expect(notices).toEqual(['watched_repo_changed']);
   });
 
-  test('a failed clear rolls back the preceding upsert and cursor changes', async () => {
+  test('a failed clear rolls back the complete preceding upsert', async () => {
     const before = row();
     db.exec(
       "CREATE TRIGGER reject_config_clear BEFORE UPDATE OF webhook_auto_registered ON space_github_watched_repos WHEN NEW.webhook_auto_registered=0 BEGIN SELECT RAISE(ABORT,'synthetic clear refusal'); END"
