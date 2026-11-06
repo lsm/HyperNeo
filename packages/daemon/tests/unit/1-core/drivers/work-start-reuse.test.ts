@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
+import {
+  createWorkVerbOperations,
+  type WorkVerbDeps,
+} from '../../../../src/lib/drivers/work-operations';
 import { workStartConfiguration } from '../../../../src/lib/drivers/start-configuration';
 import type { WorkAdapter, WorkRef, WorkStatus } from '../../../../src/lib/drivers/types';
 import {
@@ -28,7 +31,8 @@ function harness(
     provider?: string;
     requestedProvider?: string;
     unresolvedDefault?: boolean;
-  }
+  },
+  history?: ReadonlyMap<string, { sameAskAt: number | null; settledAt: number | null }>
 ) {
   const sent: string[] = [];
   const messages: string[] = [];
@@ -122,14 +126,17 @@ function harness(
       adapters: () => [adapter],
       remote: { list: () => [], invoke: async () => ({}) },
       daemonName: 'imac',
-      freeWorkers: () => new Set(free),
+      freeWorkers: (() =>
+        history
+          ? new Map(free.map((id) => [id, history.get(id) ?? { sameAskAt: null, settledAt: null }]))
+          : new Set(free)) as unknown as NonNullable<WorkVerbDeps['freeWorkers']>,
       markUnusable: (ref) => void unusable.push(ref),
     })
   );
   const start = async (
     caller: OperationCaller = neo,
     provenance = false,
-    request: { model?: string; effort?: string; excludeRefs?: WorkRef[] } = {}
+    request: { model?: string; effort?: string; excludeRefs?: WorkRef[]; todoId?: string } = {}
   ) => {
     const outcome = await invokeOperation(
       registry,
@@ -151,6 +158,92 @@ function harness(
 }
 
 describe('work.start reuses an idle worker', () => {
+  test('offers a follow-up to its most recently used same-ask worker first', async () => {
+    const run = harness(
+      [
+        { id: 'affinity-other', status: 'done' },
+        { id: 'affinity-older', status: 'done' },
+        { id: 'affinity-latest', status: 'done' },
+      ],
+      ['affinity-other', 'affinity-older', 'affinity-latest'],
+      undefined,
+      new Map([
+        ['affinity-other', { sameAskAt: null, settledAt: 1 }],
+        ['affinity-older', { sameAskAt: 10, settledAt: null }],
+        ['affinity-latest', { sameAskAt: 20, settledAt: null }],
+      ])
+    );
+    expect((await run.start(neo, false, { todoId: 'follow-up' })).value?.ref.id).toBe(
+      'affinity-latest'
+    );
+    expect(run.sent).toEqual(['affinity-latest']);
+    expect(run.started).toEqual([]);
+  });
+
+  test('skips a busy same-ask worker and offers another free same-ask worker', async () => {
+    const run = harness(
+      [
+        { id: 'busy-other', status: 'done' },
+        { id: 'busy-latest', status: 'done', liveStatus: 'running' },
+        { id: 'busy-previous', status: 'done' },
+      ],
+      ['busy-other', 'busy-latest', 'busy-previous'],
+      undefined,
+      new Map([
+        ['busy-other', { sameAskAt: null, settledAt: 1 }],
+        ['busy-latest', { sameAskAt: 30, settledAt: null }],
+        ['busy-previous', { sameAskAt: 20, settledAt: null }],
+      ])
+    );
+    expect((await run.start(neo, false, { todoId: 'busy-follow-up' })).value?.ref.id).toBe(
+      'busy-previous'
+    );
+    expect(run.sent).toEqual(['busy-previous']);
+  });
+
+  test('for a different ask prefers the worker whose latest ask settled longest ago', async () => {
+    const run = harness(
+      [
+        { id: 'settled-recent', status: 'done' },
+        { id: 'settled-unknown', status: 'done' },
+        { id: 'settled-oldest', status: 'done' },
+      ],
+      ['settled-recent', 'settled-unknown', 'settled-oldest'],
+      undefined,
+      new Map([
+        ['settled-recent', { sameAskAt: null, settledAt: 500 }],
+        ['settled-oldest', { sameAskAt: null, settledAt: 100 }],
+      ])
+    );
+    expect((await run.start(neo, false, { todoId: 'different-ask' })).value?.ref.id).toBe(
+      'settled-oldest'
+    );
+    expect(run.started).toEqual([]);
+  });
+
+  test('an excluded author cannot win same-ask affinity over an independent reviewer', async () => {
+    const run = harness(
+      [
+        { id: 'independence-author', status: 'done' },
+        { id: 'independence-other', status: 'done' },
+        { id: 'independence-reviewer', status: 'done' },
+      ],
+      ['independence-author', 'independence-other', 'independence-reviewer'],
+      undefined,
+      new Map([
+        ['independence-author', { sameAskAt: 30, settledAt: null }],
+        ['independence-other', { sameAskAt: null, settledAt: 1 }],
+        ['independence-reviewer', { sameAskAt: 20, settledAt: null }],
+      ])
+    );
+    const result = await run.start(neo, false, {
+      todoId: 'review-follow-up',
+      excludeRefs: [{ adapter: 'claude-desktop', id: 'independence-author' }],
+    });
+    expect(result.value?.ref.id).toBe('independence-reviewer');
+    expect(run.sent).toEqual(['independence-reviewer']);
+  });
+
   test('sends to an idle free worker in the same place instead of starting one', async () => {
     const run = harness([{ id: 'idle', status: 'done' }], ['idle']);
     const result = await run.start();
