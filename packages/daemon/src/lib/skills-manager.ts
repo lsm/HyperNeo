@@ -107,9 +107,7 @@ const SKILL_FETCH_MAX_FILES = 100;
 const BUILTIN_SKILL_ASSET_DIRS: Record<string, string> = {
   'space-coordination': join(
     dirname(fileURLToPath(import.meta.url)),
-    'space',
-    'skills',
-    'space-coordination'
+    '../../../space/src/skills/space-coordination'
   ),
 };
 
