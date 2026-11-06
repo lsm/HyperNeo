@@ -28,7 +28,7 @@ awaited time and cannot by itself attribute an event-loop block.
 | Rate-limit startup retry | 60 s one-shot retry; other cooldowns vary | `timer:rate_limit_retry` | `lib/agent/rate-limit-watchdog.ts`, `scheduleStartupFailureRetry` |
 | Copilot stale conversation cleanup | 10 min timeout, reset by activity | `timer:copilot_conversation_expiry` | `lib/providers/anthropic-copilot/conversation.ts`, `scheduleCleanup` |
 | Coding pack sweep/reconciliation | durable job, **5 min** | `job:neo.pack.sweep` | `lib/neo/pack-sweep.ts` |
-| Coding PR recheck | **10 min cache gate**, no independent timer | enclosing `job:neo.work.driver.refresh` / `job:neo.pack.sweep` | `lib/neo/session-ask-links.ts`, `NEO_SESSION_PR_RECHECK_MS` |
+| Coding PR recheck | **10 min cache gate**, no independent timer | enclosing `job:neo.work.driver.refresh` / `job:neo.pack.sweep` | `lib/neo/session-ask-links.ts`, `NEO_SESSION_RECHECK_MS` |
 | Coding workspace rules refresh | **10 min cache**, no independent timer | enclosing work/pack job or RPC | `lib/neo/packs/coding/work-prs.ts`, `RULES_MS` |
 | Search index flush | **2 s**, not 60 s | `search:index_flush` | `storage/index.ts` |
 | Search FTS merge dispatch | **30 s**, worker owns merge | `timer:search_merge_worker_start` | `storage/database-core.ts` |

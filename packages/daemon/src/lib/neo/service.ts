@@ -70,7 +70,6 @@ import {
 } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { createArtifactRefReader } from '../artifacts/read-operations.ts';
 import { sessionWorkerRef } from './worker-identity.ts';
-import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import { WorkTurnRepository } from '../../storage/repositories/work-turn-repository.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
@@ -181,14 +180,6 @@ export class NeoService {
       followedCardRefs: (now) => this.followedCardRefs(now),
       recordTurns: (ref) => recordWorkerTurns(ref, this.turnRecording()),
       mutedSessions: () => this.db.getGlobalSettings?.().neo?.mutedSessions,
-      sessionBranchPrs: async (ref) =>
-        (
-          await Promise.all(this.installedPacks().map((pack) => pack.sessionLinks?.(ref) ?? []))
-        ).flat(),
-      readRemotes: async (folder) => (await readWorkspaceIdentity(folder)).remotes ?? [],
-      observeSessions: async (sessions) => {
-        for (const pack of this.packs()) await pack.observeSessions?.(sessions, Date.now());
-      },
       notifyChanged: () => this.notifyChanged(),
     });
     this.repo = new NeoRepository(db.getDatabase(), this.notifyChanged);

@@ -217,7 +217,8 @@ describe('bound todos', () => {
       { repo: 'acme/app', number: 7, createdAt: 150 },
       { turns: [shown], todos }
     );
-    expect(planCodingRowOwner({ owner: null }, undefined, placed, () => 'guess')).toBeNull();
+    expect(planCodingRowOwner({ owner: null }, undefined, placed)).toBeNull();
+    expect(planCodingRowOwner({ owner: 'kept' }, undefined, placed)).toBe('kept');
   });
 });
 
