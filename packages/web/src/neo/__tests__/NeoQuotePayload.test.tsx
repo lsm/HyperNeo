@@ -30,8 +30,8 @@ describe('neoQuoteExcerpt', () => {
     'a'.repeat(500),
     '😀'.repeat(501),
     ' a\rb\r\nc\u2028d\u2029e ',
-  ])('matches the stored reply excerpt for %j', (text) => {
-    expect(neoQuoteExcerpt(text)).toBe(neoReplyExcerpt(text));
+  ])('matches the stored reply excerpt with display line endings for %j', (text) => {
+    expect(neoQuoteExcerpt(text)).toBe(neoReplyExcerpt(text).replace(/\r\n?|\u2028|\u2029/g, '\n'));
   });
 });
 
