@@ -6929,7 +6929,9 @@ describe('GitHubEventExtension', () => {
   test('polling scopes legacy check-run key when owner was seeded by webhook', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
-    const extension = new GitHubEventExtension(db, 'token');
+    const extension = new GitHubEventExtension(db, 'token', {
+      spaceEvents: new ExternalEventStore(db),
+    });
     await extension.start({
       publisher: service,
       config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
@@ -7298,7 +7300,9 @@ describe('GitHubEventExtension', () => {
   test('polling honors recorded legacy owner during fan-out regardless of order', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
-    const extension = new GitHubEventExtension(db, 'token');
+    const extension = new GitHubEventExtension(db, 'token', {
+      spaceEvents: new ExternalEventStore(db),
+    });
     await extension.start({
       publisher: service,
       config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),

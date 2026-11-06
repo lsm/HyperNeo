@@ -1012,6 +1012,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     extensionManager.register(
       new GitHubEventExtension(db.getDatabase(), process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN, {
         collectPollPage: collectGitHubPollPage,
+        spaceEvents: spaceExternalEvents?.store,
         replaySessionTerminals: replayRecordedTerminals,
         recordSessionClosure: async (event) => {
           const result = await db.gateway.run(ingestSessionEvent, event);
@@ -1023,7 +1024,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         syncReadCheckout: createNeoReadCheckoutSync(),
         getPollIntervalMs: () => getGitHubPollingIntervalSeconds() * 1000,
         credentialStore: credentialManager.getCredentialStore(),
-        reactiveDb,
         autoReconcileWebhooks: true,
         sessionWatchRepos: () => watchInventory.list(),
         sessionRepoReferenced: (owner, repo) => watchInventory.references(owner, repo),

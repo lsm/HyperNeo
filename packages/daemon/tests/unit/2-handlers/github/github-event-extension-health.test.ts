@@ -155,6 +155,7 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     const db = setupDb();
     const configStore = new HealthConfigStore();
     const extension = new GitHubEventExtension(db, 'ghp_token', {
+      spaceEvents: new ExternalEventStore(db),
       pollIntervalMs: 90_000,
       fetchImpl: fakeUserFetch('octocat'),
     });
@@ -459,6 +460,7 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     const db = setupDb();
     seedSpace(db, 'space-1');
     const extension = new GitHubEventExtension(db, 'ghp_token', {
+      spaceEvents: new ExternalEventStore(db),
       fetchImpl: fakeUserFetch('octocat'),
     });
     const store = new ExternalEventStore(db);
@@ -516,6 +518,7 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     const db = setupDb();
     seedSpace(db, 'space-1');
     const extension = new GitHubEventExtension(db, 'ghp_token', {
+      spaceEvents: new ExternalEventStore(db),
       fetchImpl: fakeUserFetch('octocat'),
     });
     const store = new ExternalEventStore(db);
@@ -1975,6 +1978,7 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     const db = setupDb();
     seedSpace(db, 'space-1');
     const extension = new GitHubEventExtension(db, 'ghp_token', {
+      spaceEvents: new ExternalEventStore(db),
       fetchImpl: fakeUserFetch('octocat'),
     });
     const store = new ExternalEventStore(db);
