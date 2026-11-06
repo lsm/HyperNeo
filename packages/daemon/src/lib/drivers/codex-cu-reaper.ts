@@ -112,11 +112,11 @@ export function createCuChecker(effects: Effects) {
             continue;
           seen.add(key);
           log.warn(text, { automatic: true });
-          effects.signal(candidate.pid);
+          if (!closed) effects.signal(candidate.pid);
         } else {
           seen.add(key);
           log.warn(text, { automatic: false });
-          await effects.notify(text);
+          if (!closed) await effects.notify(text);
         }
       }
     })()
@@ -131,7 +131,6 @@ export function createCuChecker(effects: Effects) {
     close: async () => {
       closed = true;
       clearInterval(timer);
-      await checking;
     },
   };
 }

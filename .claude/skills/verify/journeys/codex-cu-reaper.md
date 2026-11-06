@@ -39,6 +39,12 @@ synthetic service PID. Young assertions, recent Created records and command
 failures must issue no signal; a failed signal is attempted once, without
 escalation. Concurrent ticks share one check, close clears the timer, and
 non-macOS setup creates no timer. Keep observed.json and proof.log.
+Close must return while an OS observation is held, with its timer cleared.
+Release the held observation afterward and require zero new notifications or
+signals. Closing from an action-log subscriber must also suppress the following
+notification or signal. Close does not await already-running OS commands;
+those retain their existing individual timeouts, and their later results cannot
+cause a notification or signal after close.
 Two independent checker fixtures must each notify once. A young assertion on
 the final read must produce neither a signal nor an automatic kill-action log.
 Register the actual driver with a numeric timer handle too: startup, the check
