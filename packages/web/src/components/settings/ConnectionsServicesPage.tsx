@@ -10,6 +10,7 @@ const TABS: Array<{ section: SettingsSection; label: MessageKey }> = [
   { section: 'connections', label: 'connections.tabAccounts' },
   { section: 'devices', label: 'connections.tabDevices' },
   { section: 'remote-daemons', label: 'connections.tabRemoteDaemons' },
+  { section: 'exa', label: 'connections.tabAdvanced' },
 ];
 
 export const isConnectionsSection = (section: SettingsSection) =>

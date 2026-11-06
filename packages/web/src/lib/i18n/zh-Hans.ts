@@ -6,6 +6,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'connections.tabAccounts': '账号',
   'connections.tabDevices': '设备',
   'connections.tabRemoteDaemons': '远程 Daemon',
+  'connections.tabAdvanced': '高级',
   'connections.description': '为此实例连接 Google 账号。',
   'connections.connect': '连接 Google',
   'connections.reconnect': '重新连接',

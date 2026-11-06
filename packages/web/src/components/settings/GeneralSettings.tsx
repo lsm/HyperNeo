@@ -4,7 +4,6 @@ import { updateGlobalSettings } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
 import { FORM_CHECKBOX_CLASS } from '../ui/FormField.tsx';
 import { type PermissionMode, type SettingSource } from '@hyperneo/shared';
-import { MAX_GITHUB_POLLING_INTERVAL_SECONDS } from '@hyperneo/shared';
 import { SettingsSection, SettingsGroup, SettingsRow, SettingsSelect } from './SettingsSection.tsx';
 
 const PERMISSION_MODE_OPTIONS = [
@@ -26,9 +25,6 @@ export function GeneralSettings() {
   const [localPermissionMode, setLocalPermissionMode] = useState<PermissionMode>(
     settings?.permissionMode ?? 'default'
   );
-  const [localGitHubPollingInterval, setLocalGitHubPollingInterval] = useState(
-    String(settings?.githubPollingInterval ?? 120)
-  );
   const [localSettingSources, setLocalSettingSources] = useState<SettingSource[]>(
     settings?.settingSources ?? ['user', 'project', 'local']
   );
@@ -37,7 +33,6 @@ export function GeneralSettings() {
   useEffect(() => {
     if (settings) {
       setLocalPermissionMode(settings.permissionMode ?? 'default');
-      setLocalGitHubPollingInterval(String(settings.githubPollingInterval ?? 120));
       setLocalSettingSources(settings.settingSources ?? ['user', 'project', 'local']);
     }
   }, [settings]);
@@ -51,45 +46,6 @@ export function GeneralSettings() {
     } catch {
       toast.error('Failed to update permission mode');
       setLocalPermissionMode(settings?.permissionMode ?? 'default');
-    } finally {
-      setIsUpdating(false);
-    }
-  };
-
-  const handleGitHubPollingIntervalChange = (value: string) => {
-    setLocalGitHubPollingInterval(value);
-  };
-
-  const handleGitHubPollingIntervalBlur = async () => {
-    const trimmed = localGitHubPollingInterval.trim();
-    const current = settings?.githubPollingInterval ?? 120;
-    if (trimmed === '') {
-      setLocalGitHubPollingInterval(String(current));
-      return;
-    }
-
-    const interval = Number(trimmed);
-    if (
-      !Number.isInteger(interval) ||
-      interval < 0 ||
-      interval > MAX_GITHUB_POLLING_INTERVAL_SECONDS
-    ) {
-      toast.error(
-        `GitHub polling interval must be a whole number between 0 and ${MAX_GITHUB_POLLING_INTERVAL_SECONDS}`
-      );
-      setLocalGitHubPollingInterval(String(current));
-      return;
-    }
-
-    setLocalGitHubPollingInterval(String(interval));
-    if (interval === current) return;
-
-    setIsUpdating(true);
-    try {
-      await updateGlobalSettings({ githubPollingInterval: interval });
-    } catch {
-      toast.error('Failed to update GitHub polling interval');
-      setLocalGitHubPollingInterval(String(current));
     } finally {
       setIsUpdating(false);
     }
@@ -123,26 +79,6 @@ export function GeneralSettings() {
             onChange={handlePermissionModeChange}
             options={permissionModeOptions(localPermissionMode)}
             disabled={isUpdating}
-          />
-        </SettingsRow>
-
-        <SettingsRow
-          label="GitHub polling interval (seconds)"
-          description="How often to poll watched GitHub repositories; 0 disables polling."
-        >
-          <input
-            type="number"
-            min="0"
-            max={MAX_GITHUB_POLLING_INTERVAL_SECONDS}
-            step="1"
-            placeholder="120"
-            value={localGitHubPollingInterval}
-            onInput={(event) =>
-              handleGitHubPollingIntervalChange((event.target as HTMLInputElement).value)
-            }
-            onBlur={handleGitHubPollingIntervalBlur}
-            disabled={isUpdating}
-            class="w-24 rounded-md border border-line bg-surface px-2.5 py-1 text-[13px] text-fg-soft focus:border-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
           />
         </SettingsRow>
 

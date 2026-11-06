@@ -20,7 +20,7 @@ describe('GeneralSettings', () => {
     for (const label of ['Language', 'Default chat view', 'Show Archived Sessions'])
       expect(queryByText(label)).toBeNull();
     expect(queryByText('Permission Mode')).toBeTruthy();
-    expect(queryByText('GitHub polling interval (seconds)')).toBeTruthy();
+    expect(queryByText('GitHub polling interval (seconds)')).toBeNull();
     expect(queryByText('Setting Sources')).toBeTruthy();
   });
 
