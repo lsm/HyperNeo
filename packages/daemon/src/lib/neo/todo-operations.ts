@@ -32,7 +32,12 @@ import {
 } from './todo-completion.ts';
 import { neoTodoHome, neoTodoRepo } from './todo-repo.ts';
 import { isNeoTodoStartable, planNeoTodoAwaitingStart } from './todo-runner.ts';
-import { NEO_TODO_NOT_APPROVED, neoTodoStartRefusal } from './todo-start-gate.ts';
+import {
+  NEO_TODO_NOT_APPROVED,
+  neoTodoCancellationPending,
+  neoTodoProceedPatch,
+  neoTodoStartRefusal,
+} from './todo-start-gate.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -519,6 +524,14 @@ export function planNeoTodoRemove(
 }
 
 const Continue = z.object({ todoId: Text, message: Text });
+const Proceed = z.object({ todoId: Text });
+
+export function planNeoTodoProceed(todo: NeoTodo, family: readonly NeoTodo[]): Gate<TodoPlan> {
+  if (!neoTodoCancellationPending(todo, family))
+    return fail('no_cancelled_prerequisite: this todo is not waiting on a cancelled prerequisite.');
+  if (todo.instruction && todo.approvedAt === null) return fail(NEO_TODO_NOT_APPROVED);
+  return { value: { todo, patch: neoTodoProceedPatch(todo, family, Date.now()) } };
+}
 const Retry = z.object({ todoId: Text });
 const Close = z.object({ todoId: Text, reason: Text });
 
@@ -770,6 +783,18 @@ export function createNeoTodoOperations(
     caller: OperationCaller
   ) => Promise<TodoReceipt | Rejection>;
 
+  const proceedPastCancelled = owned(superpipe({})('neo.todo.proceed') as PipelineAPI)
+    .pipe(
+      (todo: NeoTodo) => planNeoTodoProceed(todo, todos.listFamilyTodos(todo.askId)),
+      'outcome',
+      'result:outcome'
+    )
+    .pipe(write, 'outcome', 'outcome')
+    .endAsync('outcome') as (
+    input: z.infer<typeof Proceed>,
+    caller: OperationCaller
+  ) => Promise<TodoReceipt | Rejection>;
+
   const retry = owned(superpipe({})('neo.todo.retry') as PipelineAPI)
     .pipe((todo: NeoTodo) => controls.retry(todo.id).then(ran), 'outcome', 'outcome')
     .endAsync('outcome') as (
@@ -830,7 +855,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.remove',
       description:
-        'Remove a todo from an open ask you own, with the reason; its session stops if it is running, unless the todo only follows a session the human tracked. An invalid replacedBy is recorded while removal proceeds without a replacement link. Unstarted dependents stop and ask the human once: approval removes only this prerequisite, decline removes the dependent. replacedBy names the todo that replaces it; approved dependents wait for it instead. A removed todo stays listed, struck through.',
+        'Remove a todo from an open ask you own, with the reason; its session stops if it is running, unless the todo only follows a session the human tracked. An invalid replacedBy is recorded while removal proceeds without a replacement link. Unstarted dependents wait and you are told once: neo.todo.proceed continues one, neo.todo.remove stops it. replacedBy names the todo that replaces it; a dependent you continue waits for it instead. A removed todo stays listed, struck through.',
       inputSchema: Remove,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -844,6 +869,15 @@ export function createNeoTodoOperations(
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => present(await proceed(input, caller)),
+    }),
+    defineOperation({
+      name: 'neo.todo.proceed',
+      description:
+        'Continue an unstarted todo whose prerequisite was cancelled. It drops the cancelled prerequisite, or waits for its replacement, and keeps its other prerequisites. A step the human has not approved is refused: it stays on its Start card. Nothing else clears this wait, so a cancelled prerequisite never starts the next step by itself.',
+      inputSchema: Proceed,
+      resultSchema: TodoResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: async (input, caller) => present(await proceedPastCancelled(input, caller)),
     }),
     defineOperation({
       name: 'neo.todo.retry',

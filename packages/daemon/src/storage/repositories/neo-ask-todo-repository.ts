@@ -32,7 +32,7 @@ import {
   neoStartCardText,
   neoTodoAwaitsApproval,
   neoTodoOnStartCard,
-  neoTodosAwaitingCancellationCard,
+  neoTodosAwaitingNeoDecision,
   planNeoQuestionPrune,
   planNeoStartRelease,
   type NeoQuestionPrune,
@@ -1152,34 +1152,7 @@ export class NeoAskTodoRepository {
       ['store', 'askId', 'now'],
       'pruned'
     )
-    .pipe(
-      (store: NeoAskTodoRepository, askId: string) => store.getAsk(askId),
-      ['store', 'askId'],
-      'ask'
-    )
-    .pipe(
-      (store: NeoAskTodoRepository, askId: string) => store.listFamilyTodos(askId),
-      ['store', 'askId'],
-      'family'
-    )
-    .pipe(
-      (store: NeoAskTodoRepository, askId: string) => store.listQuestions(askId),
-      ['store', 'askId'],
-      'questions'
-    )
-    .pipe(neoTodosAwaitingCancellationCard, ['family', 'ask', 'questions'], 'awaiting')
-    .pipe(
-      (store: NeoAskTodoRepository, awaiting: readonly NeoTodo[], now: number) => {
-        for (const todo of awaiting) {
-          store.joinStartQuestion(todo, now);
-          if (todo.state === 'todo')
-            store.writeTodo(todo, { state: 'blocked', blockedBy: 'question' }, now);
-        }
-      },
-      ['store', 'awaiting', 'now'],
-      'carded'
-    )
-    .end('carded') as (store: NeoAskTodoRepository, askId: string, now: number) => void;
+    .end('pruned') as (store: NeoAskTodoRepository, askId: string, now: number) => void;
 
   private startCardFamily(question: NeoQuestion): NeoTodo[] {
     const members = (question.startTodos ?? []).flatMap((id) => this.getTodo(id) ?? []);
@@ -1200,6 +1173,12 @@ export class NeoAskTodoRepository {
       .run(JSON.stringify(plan.kept), plan.text, plan.state, plan.retiredReason, question.id);
     for (const todo of plan.released) this.writeTodo(todo, { state: 'todo' }, now);
     return true;
+  }
+
+  listAwaitingNeoDecision(): NeoTodo[] {
+    return this.listOpenAsks().flatMap((ask) =>
+      neoTodosAwaitingNeoDecision(this.listFamilyTodos(ask.id), ask, this.listQuestions(ask.id))
+    );
   }
 
   cardUnapprovedTodos(now: number): void {
@@ -1322,6 +1301,7 @@ export const neoTodoReads = defineRepositoryOp(
     'doneTodoFacts',
     'askFacts',
     'listCheckable',
+    'listAwaitingNeoDecision',
     'listOpenAsks',
     'listTodosForAsks',
     'followedRefs',

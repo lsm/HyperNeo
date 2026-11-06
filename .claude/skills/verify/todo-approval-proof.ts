@@ -287,20 +287,20 @@ try {
     await refresh();
     const stopped = await read(b.askId);
     evidence.removedStopped = stopped;
-    assert.equal(state(stopped, b.id), 'blocked');
-    assert.equal(cards(stopped, b.id).length, 1);
+    assert.equal(state(stopped, b.id), 'todo');
+    assert.equal(cards(stopped, b.id).length, 0);
     assert.equal(starts(), before);
     const denied = await call('neo.todo.edit', { todoId: b.id, after: [] }, false);
     assert.match(denied.reason, /cancelled_dependency/);
-    assert.equal(cards(await read(b.askId), b.id).length, 1);
-    assert.equal((await rpc('neo.question.answer', { questionId: (cards(stopped, b.id)[0] as unknown as { id: string }).id, answer: [b.id] })).ok, true);
+    assert.equal(starts(), before);
+    await call('neo.todo.proceed', { todoId: b.id });
     await refresh();
     const approved = await read(b.askId);
     evidence.removedApproved = approved;
     assert.equal(state(approved, b.id), 'doing');
     assert.equal(starts(), before + 1);
     evidence.verified = true;
-    console.log('PASS: one Start answer ran the chain in order, the held step stayed held, a removed prerequisite stopped its dependent with one card');
+    console.log('PASS: one Start answer ran the chain in order, the held step stayed held, a removed prerequisite stopped its dependent until Neo proceeded');
   }
 } finally {
   ws?.close();

@@ -63,6 +63,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.todo.bind',
   'neo.todo.close',
   'neo.todo.continue',
+  'neo.todo.proceed',
   'neo.todo.edit',
   'neo.todo.hold',
   'neo.todo.remove',

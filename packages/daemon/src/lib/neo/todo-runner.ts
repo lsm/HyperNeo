@@ -2,6 +2,8 @@ import { workerSandboxOn } from '../drivers/worker-sandbox.ts';
 import { withWorkerProvenance } from '../drivers/worker-provenance.ts';
 import { createWorkQueue } from '../work-queue/sweep.ts';
 import { neoTodoAwaitsHuman, neoTodoStalledCard } from './todo-state.ts';
+import { neoTodoCancelledDependencies } from './todo-dependencies.ts';
+import { neoCancelledPrerequisiteNote } from './todo-start-gate.ts';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { neoTodoRunnerWrites } from '../../storage/repositories/neo-todo-runner-state.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -610,6 +612,17 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'told'
     )
     .endAsync('told') as (facts: { unworked: readonly string[] }) => Promise<void>;
+  const tellCancelledPrerequisites = async () => {
+    for (const todo of await store.read('listAwaitingNeoDecision')) {
+      const family = store.listFamilyTodos(todo.askId);
+      const gone = neoTodoCancelledDependencies(family, todo.id).map(({ id }) => id);
+      const key = `neo-todo-prereq:${todo.id}:${gone.join(',')}`;
+      const ask = store.getAsk(todo.askId);
+      if (noted.has(key) || !ask) continue;
+      await deps.tell(ask, todo, neoCancelledPrerequisiteNote(todo, family), key);
+      noted.add(key);
+    }
+  };
   const advance = () => fill().catch(() => undefined);
 
   const start = async (todoId: string) => {
@@ -1461,6 +1474,9 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         await recoverStart(todoId).catch((error) => warn('Todo start recovery pending', error));
       }
       await deps.write(neoTodoRunnerWrites, { method: 'cardUnapproved', args: [Date.now()] });
+      await tellCancelledPrerequisites().catch((error) =>
+        warn('Cancelled prerequisite note pending', error)
+      );
       const candidates = [];
       for (const { todoId, ref } of await sessions.read('awaitingReports')) {
         const todo = store.getTodo(todoId);
