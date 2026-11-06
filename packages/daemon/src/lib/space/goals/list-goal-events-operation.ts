@@ -8,9 +8,9 @@ import {
   GoalSpaceScopeShape,
   type GoalCallerContext,
   type GoalRejection,
-} from './goal-operation-scope.ts';
+} from '../../../../../space/src/goals/goal-operation-scope.ts';
 import { GOAL_READ_POLICY } from '../../goals/goal-contract.ts';
-import { SpaceGoalEventSchema } from './goal-result-schemas.ts';
+import { SpaceGoalEventSchema } from '../../../../../space/src/goals/goal-result-schemas.ts';
 import type { SpaceGoalService } from './service.ts';
 
 const inputSchema = z

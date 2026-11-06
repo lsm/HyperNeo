@@ -7,7 +7,10 @@ import type {
   SpaceGoalEventType,
 } from '@hyperneo/shared';
 import { requireGoal } from './persistence.ts';
-import type { SpaceGoalMutationContext, SpaceGoalServiceDeps } from './service.ts';
+import type {
+  SpaceGoalMutationContext,
+  SpaceGoalServiceDeps,
+} from '../../../daemon/src/lib/space/goals/service.ts';
 
 export type GoalCadence = { checkInCronExpression: string | null; checkInTimezone: string | null };
 

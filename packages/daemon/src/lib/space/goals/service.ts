@@ -21,23 +21,27 @@ import type { SpaceAgentGoalScopeRepository } from '../../../storage/repositorie
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository.ts';
 import type { ScheduleService } from '../../schedule/schedule-service.ts';
 import type { GoalAutomationService } from './automation-service.ts';
-import { updateScheduledCheckIn } from './check-in-schedule.ts';
-import type { ClaimAdmissionDenyReason } from './claim-admission-gates.ts';
-import { listGoalEvents } from './event-recording.ts';
-import { createGoal, resolveGoalWorkspacePath, updateGoal } from './lifecycle.ts';
+import { updateScheduledCheckIn } from '../../../../../space/src/goals/check-in-schedule.ts';
+import type { ClaimAdmissionDenyReason } from '../../../../../space/src/goals/claim-admission-gates.ts';
+import { listGoalEvents } from '../../../../../space/src/goals/event-recording.ts';
+import {
+  createGoal,
+  resolveGoalWorkspacePath,
+  updateGoal,
+} from '../../../../../space/src/goals/lifecycle.ts';
 import {
   applyOutcomeGoalUpdate,
   claimOutcomeNotification,
   listClaimableOutcomeNotifications,
   supersedeOutcomeNotificationsForTask,
-} from './outcome-notifications.ts';
+} from '../../../../../space/src/goals/outcome-notifications.ts';
 import {
   canClaimScheduledTask,
   claimScheduledTask,
   createImmediateTask,
   handleTaskTerminal,
   retryQueuedRunsForSpace,
-} from './task-pointers.ts';
+} from '../../../../../space/src/goals/task-pointers.ts';
 
 export type PublicSpaceGoalUpdateParams = Pick<
   UpdateSpaceGoalParams,

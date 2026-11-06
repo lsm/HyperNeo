@@ -1,4 +1,4 @@
-import { uniqueJobMatchPayload } from './automation-job-payload.ts';
+import { uniqueJobMatchPayload } from '../../../../../space/src/goals/automation-job-payload.ts';
 import type {
   EvidenceRef,
   EvolutionScope,
@@ -20,7 +20,7 @@ import {
   findMatchingSubscription,
   readAutomationPolicyForScope,
   readCompletedTaskThreshold,
-} from './automation-policy.ts';
+} from '../../../../../space/src/goals/automation-policy.ts';
 
 const DEFAULT_MAX_EVIDENCE_PER_EPISODE = 12;
 const log = new Logger('goal-automation-service');

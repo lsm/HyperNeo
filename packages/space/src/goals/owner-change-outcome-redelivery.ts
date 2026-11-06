@@ -1,5 +1,8 @@
-import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
-import { Logger } from '../../logger.ts';
+import type {
+  DaemonInternalEventMap,
+  InternalEventBus,
+} from '../../../daemon/src/lib/internal-event-bus.ts';
+import { Logger } from '../../../daemon/src/lib/logger.ts';
 
 const log = new Logger('goal-owner-change-outcome-redelivery');
 

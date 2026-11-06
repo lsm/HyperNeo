@@ -3,8 +3,8 @@ import type {
   GoalEvolutionAutomationEventSubscription,
   GoalEvolutionAutomationPolicy,
 } from '@hyperneo/shared';
-import { eventMatchesFilter } from '../../external-events/event-filter.ts';
-import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service.ts';
+import { eventMatchesFilter } from '../../../daemon/src/lib/external-events/event-filter.ts';
+import type { ExternalEventPublishedPayload } from '../../../daemon/src/lib/external-events/external-event-service.ts';
 
 export const DEFAULT_COMPLETED_TASK_THRESHOLD = 10;
 

@@ -1,6 +1,6 @@
 import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
 import { createDirectTaskStarter } from '../../../../src/lib/tasks/start-direct-task';
-import { classifyReportableTerminal } from '../../../../src/lib/space/goals/reportable-terminal-gates.ts';
+import { classifyReportableTerminal } from '../../../../../space/src/goals/reportable-terminal-gates.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
