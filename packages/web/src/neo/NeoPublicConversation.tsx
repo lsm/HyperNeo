@@ -75,7 +75,10 @@ function SentMedia({
 }) {
   if (!photos.length && !files.length) return null;
   return (
-    <div class="mb-3 flex flex-wrap justify-end gap-2">
+    <div
+      class="mb-3 flex flex-wrap justify-end gap-2"
+      onPointerDown={(event) => event.preventDefault()}
+    >
       {photos.map((photo, index) =>
         photo.kind === 'ref' ? (
           <RefPhoto
