@@ -1,5 +1,5 @@
-import { createNodeMessagingOperations } from '../../messaging/node-messaging-operations.ts';
-import type { OperationDefinition } from '../../operations/registry.ts';
+import { createNodeMessagingOperations } from '../../../messaging/node-messaging-operations.ts';
+import type { OperationDefinition } from '../../../operations/registry.ts';
 import type { SpaceFamilyContext } from './space-context.ts';
 
 export function registerMessagingOperations(context: SpaceFamilyContext): OperationDefinition[] {

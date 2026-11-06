@@ -1,6 +1,6 @@
-import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
-import { createArtifactOperations } from '../../artifacts/artifact-operations.ts';
-import type { OperationDefinition } from '../../operations/registry.ts';
+import { McpAuditLogRepository } from '../../../../storage/repositories/mcp-audit-log-repository.ts';
+import { createArtifactOperations } from '../../../artifacts/artifact-operations.ts';
+import type { OperationDefinition } from '../../../operations/registry.ts';
 import type { SpaceFamilyContext } from './space-context.ts';
 
 export function registerArtifactOperations(context: SpaceFamilyContext): OperationDefinition[] {
