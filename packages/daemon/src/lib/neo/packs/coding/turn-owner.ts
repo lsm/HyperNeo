@@ -56,15 +56,19 @@ export function planCodingTurnOwner(
   return { state: 'placed', session: placing[0].ref, todo: owners.length === 1 ? owners[0] : null };
 }
 
-export const planCodingTurnUrls = (
+const MAX_TURN_PRS = 8;
+
+export function planCodingTurnUrls(
   todo: Pick<NeoTodo, 'check'>,
-  own: readonly Pick<CodingTurn, 'urls'>[]
-) => [
-  ...new Set([
-    ...namedPrKeys(todo),
-    ...own.flatMap((turn) => turn.urls.flatMap((url) => codingPrKey(url) ?? [])),
-  ]),
-];
+  own: readonly Pick<CodingTurn, 'urls' | 'finalUrls'>[]
+) {
+  const keys = (urls: readonly string[]) => urls.flatMap((url) => codingPrKey(url) ?? []);
+  const reported = new Set([...namedPrKeys(todo), ...keys(own.flatMap((turn) => turn.finalUrls))]);
+  const shown = [...new Set(keys(own.flatMap((turn) => turn.urls)))].filter(
+    (url) => !reported.has(url)
+  );
+  return [...reported, ...shown.slice(0, Math.max(0, MAX_TURN_PRS - reported.size))];
+}
 
 export function planCodingTurnFacts(
   todo: Pick<NeoTodo, 'id' | 'check'>,

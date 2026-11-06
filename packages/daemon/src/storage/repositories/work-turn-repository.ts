@@ -13,12 +13,10 @@ export const recordWorkTurns = defineDbOp({
     const write = db.prepare(`INSERT OR REPLACE INTO work_turns
       (ref, id, started_at, ended_at, ended, inputs, urls, final_urls, complete, cursor)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-    const clear = db.prepare('DELETE FROM work_turn_urls WHERE ref = ? AND turn_id = ?');
     const index = db.prepare(
       'INSERT OR IGNORE INTO work_turn_urls (url, ref, turn_id) VALUES (?, ?, ?)'
     );
     for (const turn of turns) {
-      clear.run(storedRef(ref), turn.id);
       for (const url of turn.urls) index.run(url.toLowerCase(), storedRef(ref), turn.id);
       write.run(
         storedRef(ref),
