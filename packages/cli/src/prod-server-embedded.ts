@@ -166,6 +166,8 @@ export async function startProdServer(config: Config) {
 
       const markdown = await daemonContext.handleAskMarkdown(req, client?.remoteAddress ?? null);
       if (markdown) return markdown;
+      const image = await daemonContext.handleMessageImage(req, client?.remoteAddress ?? null);
+      if (image) return image;
 
       const entry = resolveNeoEntry(url);
       if (entry?.kind === 'redirect') {

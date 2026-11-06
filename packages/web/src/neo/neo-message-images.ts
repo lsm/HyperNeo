@@ -29,8 +29,22 @@ export function projectNeoMessageImageSources(blocks: unknown[]): string[] {
   });
 }
 
-export const neoMessageImageSources = (superpipe({})('neo-message-images') as PipelineAPI)
+export function messageImageFullUrl(block: unknown): string | undefined {
+  const full = (block as { full?: { url?: unknown } } | null)?.full;
+  return typeof full?.url === 'string' ? full.url : undefined;
+}
+
+function projectNeoMessagePhotos(blocks: unknown[]) {
+  return blocks.flatMap((block) =>
+    projectNeoMessageImageSources([block]).map((src) => ({
+      src,
+      fullSrc: messageImageFullUrl(block),
+    }))
+  );
+}
+
+export const neoMessagePhotos = (superpipe({})('neo-message-images') as PipelineAPI)
   .input(['message'])
   .pipe(selectNeoMessageImageBlocks, 'message', 'blocks')
-  .pipe(projectNeoMessageImageSources, 'blocks', 'sources')
-  .end('sources') as (message: ChatMessage) => string[];
+  .pipe(projectNeoMessagePhotos, 'blocks', 'photos')
+  .end('photos') as (message: ChatMessage) => { src: string; fullSrc?: string }[];

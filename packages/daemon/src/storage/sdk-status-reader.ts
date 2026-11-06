@@ -139,12 +139,14 @@ export function readSDKMessagePage(
     page.since,
     page.beforeRowid,
     page.sinceRowid,
-    capSdkMessage
+    capSdkMessage(sessionId)
   );
   return {
     sdkMessages: selected.messages,
     hasMore: selected.hasMore,
-    backgroundTaskMessages: repository.getBackgroundTaskMessages(sessionId).map(capSdkMessage),
+    backgroundTaskMessages: repository
+      .getBackgroundTaskMessages(sessionId)
+      .map(capSdkMessage(sessionId)),
   };
 }
 

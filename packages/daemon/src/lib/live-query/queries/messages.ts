@@ -3,7 +3,8 @@ import { toSqlStringList } from '../../../storage/sql-string-list.ts';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import type { TableChangeScope } from '../../../storage/reactive-database.ts';
 import { activeDeliveryJobsCtes } from './task-delivery.ts';
-import { capMessageOutput } from '../../rpc-handlers/message-output-cap.ts';
+import { linkMessageImages } from '../../rpc-handlers/message-image-link.ts';
+import { capSdkMessage } from '../../rpc-handlers/message-output-cap.ts';
 import { thinMessage } from '../../rpc-handlers/message-thinning.ts';
 import { sendStatusToDeliveryStatus } from '@hyperneo/shared';
 
@@ -237,19 +238,25 @@ SELECT
   body.origin AS origin,
   t.rowid AS rowid,
   t.message_type AS messageType,
-  t.deliveryRetryInfo AS deliveryRetryInfo
+  t.deliveryRetryInfo AS deliveryRetryInfo,
+  body.session_id AS sessionId
 FROM top_level t
 JOIN sdk_messages body ON body.rowid = t.rowid
 LEFT JOIN sdk_message_bodies split_body ON split_body.seq = t.rowid
 ORDER BY timestamp ASC, rowid ASC
 `.trim();
 
+const rowSession = (row: Record<string, unknown>) =>
+  typeof row.sessionId === 'string' ? row.sessionId : null;
+
 export function mapMessageRow(row: Record<string, unknown>): Record<string, unknown> {
-  return mapMessageRowAs(row, capMessageOutput);
+  return mapMessageRowAs(row, capSdkMessage(rowSession(row)));
 }
 
 export function mapThinMessageRow(row: Record<string, unknown>): Record<string, unknown> {
-  return mapMessageRowAs(row, thinMessage);
+  return mapMessageRowAs(row, (message) =>
+    linkMessageImages(thinMessage(message), rowSession(row))
+  );
 }
 
 function mapMessageRowAs(

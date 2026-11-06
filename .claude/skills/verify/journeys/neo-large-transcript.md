@@ -10,8 +10,8 @@ NODE_PATH=<directory-containing-playwright> VERIFY_BROWSER=<chromium-executable>
   bash .claude/skills/verify/neo-large-transcript.sh /tmp/hyperneo-large-transcript-fresh 9474
 ```
 
-`messages.bySession` must fail with MESSAGE_TOO_LARGE, proving the fixture is
-over the outbound limit. A paired browser then opens `/neo`. The composer must
+The stored rows are over the outbound limit, and `messages.bySession` must still
+answer without MESSAGE_TOO_LARGE, because large images leave the window as links. A paired browser then opens `/neo`. The composer must
 render, a typed message must stay on the page after a pause and a reload, and
 its ask must reach
 `neo_conversation_asks`. Evidence is `evidence/observed.json`, `neo-page.png`,
