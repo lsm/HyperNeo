@@ -1,5 +1,6 @@
 import { PhotoThumbnail } from '../components/PhotoLightbox.tsx';
-import { neoSentWords } from './neo-attachments.ts';
+import { neoSentWords, neoSplitSentMessage, type NeoSentFile } from './neo-attachments.ts';
+import { NeoSentFiles } from './NeoAttachments.tsx';
 import { previewLinkedReferenceCandidates } from '@hyperneo/shared/types/artifact-reference';
 import type { NeoReplyTo } from '@hyperneo/shared/types/neo-ask';
 import type {
@@ -63,8 +64,16 @@ function publicAskPhotos(content: NeoAskItem['content']): AskPhoto[] {
   );
 }
 
-function SentMedia({ photos, conversationId }: { photos: AskPhoto[]; conversationId: string }) {
-  if (!photos.length) return null;
+function SentMedia({
+  photos,
+  files,
+  conversationId,
+}: {
+  photos: AskPhoto[];
+  files: NeoSentFile[];
+  conversationId: string;
+}) {
+  if (!photos.length && !files.length) return null;
   return (
     <div class="mb-3 flex flex-wrap justify-end gap-2">
       {photos.map((photo, index) =>
@@ -83,6 +92,7 @@ function SentMedia({ photos, conversationId }: { photos: AskPhoto[]; conversatio
           />
         )
       )}
+      <NeoSentFiles files={files} />
     </div>
   );
 }
@@ -485,13 +495,18 @@ function PublicEntry({
   const full = publication?.fullText.trim() ?? '';
   const hasDetails = !!short && !!full && full !== short && publication?.verbatim !== true;
   const photos = ask ? publicAskPhotos(ask.content) : [];
+  const sent = neoSplitSentMessage(ask ? publicAskText(ask.content) : '');
   const copyText = ask
     ? neoSentWords(publicAskText(ask.content), photos.length > 0)
     : hasDetails
       ? `${short}\n\n${full}`
       : full || short;
-  const text = ask ? copyText : hasDetails ? short : full || short;
-  const quoteText = publication ? neoPublicationQuoteExcerpt(publication) : text;
+  const text = ask
+    ? neoSentWords(sent.words, photos.length > 0)
+    : hasDetails
+      ? short
+      : full || short;
+  const quoteText = publication ? neoPublicationQuoteExcerpt(publication) : text || copyText;
   const references = useMemo(
     () => ({
       text: publication ? previewLinkedReferenceCandidates(text).map((item) => item.reference) : [],
@@ -592,7 +607,7 @@ function PublicEntry({
           </span>
         )}
       </div>
-      <SentMedia photos={photos} conversationId={ask?.conversationId ?? ''} />
+      <SentMedia photos={photos} files={sent.files} conversationId={ask?.conversationId ?? ''} />
       {(!ask || text || ask.replyTo || ask.previewContext) && (
         <div
           class={`neo-message-bubble rounded-2xl border px-4 py-3 ${ask ? 'rounded-tr-sm' : 'rounded-tl-sm'} ${undelivered ? '!border-danger' : ''}`}
@@ -747,7 +762,7 @@ function PublicEntry({
         <CopyButton
           text={copyText}
           label={t(ask ? 'chat.copyYours' : 'chat.copyNeo')}
-          disabled={!text.trim()}
+          disabled={!copyText.trim()}
           copiedAt={copiedAt}
         />
         {onQuote && quoteText.trim() && (
@@ -813,7 +828,8 @@ export function PendingAsk({
     kind: 'inline',
     src: `data:${image.media_type};base64,${image.data}`,
   }));
-  const words = neoSentWords(ask.text, photos.length > 0);
+  const sent = neoSplitSentMessage(ask.text);
+  const words = neoSentWords(sent.words, photos.length > 0);
   const failed = ask.state === 'failed';
   const [showReason, setShowReason] = useState(false);
   const time = messageTime(ask.createdAt);
@@ -859,7 +875,7 @@ export function PendingAsk({
           </span>
         )}
       </div>
-      <SentMedia photos={photos} conversationId={ask.sessionId} />
+      <SentMedia photos={photos} files={sent.files} conversationId={ask.sessionId} />
       {(words || ask.quote || ask.previewContext) && (
         <div
           class={`neo-message-bubble rounded-2xl rounded-tr-sm border px-4 py-3 ${failed ? '!border-danger' : ''}`}

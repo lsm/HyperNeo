@@ -1,3 +1,4 @@
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -25,7 +26,7 @@ const raw = app.db.getDatabase();
 const prepare = raw.prepare.bind(raw);
 let mainReads = 0;
 try {
-  socket = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  socket = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`, { headers: { authorization: `Bearer ${await readLocalCredential()}` } } as never);
   await new Promise<void>((resolve, reject) => { socket!.onopen = () => resolve(); socket!.onerror = () => reject(new Error('RPC socket failed')); });
   const pending = new Map<string, { resolve(value: unknown): void; reject(error: Error): void }>();
   socket.onmessage = ({ data }) => { const reply = JSON.parse(String(data)), entry = pending.get(reply.requestId ?? reply.id); if (entry) { pending.delete(reply.requestId ?? reply.id); reply.error ? entry.reject(new Error(JSON.stringify(reply.error))) : entry.resolve(reply.data); } };

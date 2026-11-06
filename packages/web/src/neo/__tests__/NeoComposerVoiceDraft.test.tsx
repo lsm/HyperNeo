@@ -1,5 +1,5 @@
 import { signal } from '@preact/signals';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { useEffect } from 'preact/hooks';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ComponentProps } from 'preact';
@@ -95,7 +95,7 @@ describe('Neo composer draft while voice is active', () => {
     'shows the draft read-only at the same height during %s, then editable and focused',
     (phase) => {
       const { rerender } = render(composer());
-      fireEvent.focus(textarea());
+      act(() => textarea().focus());
       const idleHeight = textarea().style.height;
       expect(idleHeight).not.toBe('');
 
@@ -172,7 +172,7 @@ describe('Neo composer focus layout', () => {
     const textarea = () =>
       screen.getByRole('textbox', { name: 'Message Neo' }) as HTMLTextAreaElement;
     expect(textarea().getAttribute('rows')).toBe('1');
-    fireEvent.focus(textarea());
+    act(() => textarea().focus());
     expect(textarea().getAttribute('rows')).toBe('2');
     fireEvent.focusOut(textarea(), { relatedTarget: document.body });
     expect(textarea().getAttribute('rows')).toBe('1');
@@ -181,7 +181,7 @@ describe('Neo composer focus layout', () => {
 
   it('keeps the expanded layout while moving focus to a composer control', () => {
     render(composer());
-    fireEvent.focus(textarea());
+    act(() => textarea().focus());
     fireEvent.focusOut(textarea(), {
       relatedTarget: screen.getByRole('button', { name: 'Send message' }),
     });
@@ -195,7 +195,7 @@ describe('Neo composer focus layout', () => {
       const input = screen.getByRole('textbox', { name: 'Message Neo' }) as HTMLTextAreaElement;
       expect(input.getAttribute('rows')).toBe('2');
       expect(input.value).toBe(draft);
-      fireEvent.focus(input);
+      act(() => input.focus());
       expect(input.getAttribute('rows')).toBe('2');
       fireEvent.focusOut(input, { relatedTarget: document.body });
       expect(input.getAttribute('rows')).toBe('2');
