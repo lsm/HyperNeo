@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { NEO_STANDING_RULE_MAX_CHARS, neoStandingRules } from '@hyperneo/shared/types/settings';
 import { applyNeoRuleAnswer } from '../../storage/repositories/neo-rule-answer.ts';
 import { defineOperation } from '../operations/registry.ts';
+import { openHumanCard } from './human-card.ts';
 import { planNeoRuleEdit } from './saved-rules.ts';
 import type { NeoService } from './service.ts';
 
@@ -56,7 +57,8 @@ export function createNeoRuleQuestions(service: NeoService) {
           if ('reason' in valid) return valid.reason;
           const questionId = crypto.randomUUID();
           const text = `Apply these standing-rule changes?\n\n${JSON.stringify(edit)}`;
-          store.askQuestion(
+          openHumanCard(
+            store,
             questionId,
             input.askId,
             {

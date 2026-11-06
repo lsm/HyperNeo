@@ -2,6 +2,7 @@ import { coreTodoPolicy } from './core-todo-checks.ts';
 import { planNeoTodoDraft, type NeoTodoPolicy } from './todo-operations.ts';
 import { neoTodoDependencyNodes, neoTodoReady } from './todo-dependencies.ts';
 import { isNeoTodoStalledCard } from './todo-state.ts';
+import { openHumanCard, replaceHumanCard } from './human-card.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { WorkRefSchema, type WorkRef } from '../drivers/types.ts';
@@ -188,7 +189,8 @@ export function createNeoWorkerQuestionWriter(
           const existing = daemonCard ? null : open;
           const card =
             existing ??
-            store.askQuestion(
+            openHumanCard(
+              store,
               crypto.randomUUID(),
               todo.askId,
               {
@@ -777,8 +779,8 @@ export function createNeoQuestionOperations(
           }
           const id = reply.mutationId;
           return plan.replaced
-            ? store.replaceQuestion(plan.replaced, id, plan.draft, Date.now())
-            : store.askQuestion(id, plan.ask.id, plan.draft, Date.now());
+            ? replaceHumanCard(store, plan.replaced, id, plan.draft, Date.now())
+            : openHumanCard(store, id, plan.ask.id, plan.draft, Date.now());
         });
         if (question && reply.context) publicationChanged(reply.context.conversationId);
         return question
