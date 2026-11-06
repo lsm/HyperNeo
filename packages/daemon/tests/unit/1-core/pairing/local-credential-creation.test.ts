@@ -56,6 +56,8 @@ describe('local credential creation', () => {
       peer.kill('SIGTERM');
       await stopped;
     }
+    await ensureLocalCredential(db, 'agent', 'http://127.0.0.1:9312');
+    expect(readLocalCredential(file, 'http://127.0.0.1:9312')).toBe(credential);
   });
 
   test('a fresh agent credential remains readable during temporary-file writes', async () => {

@@ -1371,6 +1371,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       },
     });
 
+    removeRuntimeDescriptorFile =
+      process.env.NODE_ENV === 'test' ? () => {} : writeRuntimeDescriptor(config.host, server.port);
     if (process.env.NODE_ENV !== 'test' || process.env.HYPERNEO_DATA_DIR)
       await ensureLocalCredential(
         db.gateway,
@@ -1382,8 +1384,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     void db.startSdkMessageColumnsBackfill(() => {
       void stateManager.broadcastSystemChange();
     });
-    removeRuntimeDescriptorFile =
-      process.env.NODE_ENV === 'test' ? () => {} : writeRuntimeDescriptor(config.host, server.port);
     const openMessageSearchMergeGate = (): void => {
       if (startupAborted) return;
       db.startMessageSearchMerges();

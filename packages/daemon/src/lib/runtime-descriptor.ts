@@ -42,6 +42,11 @@ function readDescriptorPid(path: string): number | undefined {
   }
 }
 
+export function hasOtherRuntimeOwner(dataDir: string = getDataDir()): boolean {
+  const pid = readDescriptorPid(descriptorFilePath(dataDir));
+  return pid !== undefined && pid !== process.pid && isProcessAlive(pid);
+}
+
 export function writeRuntimeDescriptor(
   bindHost: string,
   port: number,
@@ -58,8 +63,7 @@ export function writeRuntimeDescriptor(
     startedAt: Date.now(),
   };
 
-  const existingPid = readDescriptorPid(path);
-  if (existingPid !== undefined && existingPid !== process.pid && isProcessAlive(existingPid)) {
+  if (hasOtherRuntimeOwner(dataDir)) {
     return () => {};
   }
 

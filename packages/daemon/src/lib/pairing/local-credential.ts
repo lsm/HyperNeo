@@ -4,6 +4,7 @@ import { mkdir, open, link, rm, rename, writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { getDataDir } from '../data-dir.ts';
+import { hasOtherRuntimeOwner } from '../runtime-descriptor.ts';
 import type { DbGateway } from '../../storage/db-gateway/db-gateway.ts';
 import { enrollLocalDevice } from '../../storage/repositories/device-pairing-repository.ts';
 import { checkWindowsCredential } from './local-credential-permissions.ts';
@@ -58,6 +59,7 @@ export async function ensureLocalCredential(
   kind: 'human' | 'agent' = 'human',
   origin?: string
 ): Promise<void> {
+  if (kind === 'agent' && hasOtherRuntimeOwner()) return;
   await mkdir(getDataDir(), { recursive: true, mode: 0o700 });
   const path = kind === 'agent' ? agentReadCredentialPath() : localCredentialPath();
   const temporary = `${path}.${randomBytes(8).toString('hex')}.tmp`;
@@ -74,11 +76,11 @@ export async function ensureLocalCredential(
       await link(temporary, path);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    }
-    if (kind === 'agent') {
-      const credential = readLocalCredential(path, null);
-      await writeFile(temporary, JSON.stringify({ credential, origin }));
-      await rename(temporary, path);
+      if (kind === 'agent') {
+        const credential = readLocalCredential(path, null);
+        await writeFile(temporary, JSON.stringify({ credential, origin }));
+        await rename(temporary, path);
+      }
     }
   } finally {
     await rm(temporary, { force: true });

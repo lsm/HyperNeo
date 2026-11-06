@@ -50,3 +50,12 @@ owner-only agent-read.credential JSON file with both `credential` and `origin`
 in its configured data directory. The CLI validates the link origin against that
 same file before any request, then reads the card and refuses redirects. It never falls back
 to local-rpc.credential. No credential belongs in a link.
+
+For concurrent-startup credential ownership, run the same wrapper with
+`agent-credential-ownership.ts`. It starts two real daemon processes with separate
+synthetic databases and a shared data directory. The second startup must preserve
+the first daemon's origin binding. The first CLI read must still print the card,
+and the second daemon must reject the first credential with 401. Inspect
+ownership.json and both cleanup receipts. The focused credential-creation tests
+also pause a temporary-file rewrite to prove a fresh published file stays readable,
+and verify that a dead descriptor owner permits a later origin rebind.
