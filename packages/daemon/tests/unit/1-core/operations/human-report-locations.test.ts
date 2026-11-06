@@ -8,7 +8,7 @@ describe('human report locations', () => {
   test('the delivered worker brief separates reports from private completion evidence', () => {
     const brief = workerWorkLocationsBrief('/repo');
     expect(brief).toContain('~/HyperNeo/<matter>/');
-    expect(brief).toContain('never link');
+    expect(brief).toMatch(/never link/i);
     expect(brief).toContain('full absolute path');
     expect(NEO_ROOT_PROMPT).toContain('~/HyperNeo/<matter>/');
     expect(NEO_ROOT_PROMPT).toContain('~/.hyperneo/work');

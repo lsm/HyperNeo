@@ -109,7 +109,9 @@ describe('neo.todo.add evidence paths', () => {
     const added = await add({});
     if (!added.ok) throw new Error(added.reason);
     const report = `Read ${join(userFolder, 'Travel', 'report.md')}`;
-    expect((await edit({ todoId: added.todo.id, done: 'reported', evidence: report })).ok).toBe(true);
+    expect((await edit({ todoId: added.todo.id, done: 'reported', evidence: report })).ok).toBe(
+      true
+    );
     expect(store.getTodo(added.todo.id)?.report).toBe(report);
     expect(store.getTodo(added.todo.id)?.check).toEqual(added.todo.check);
   });
