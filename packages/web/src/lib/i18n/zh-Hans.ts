@@ -181,6 +181,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'live.searchFailed': '未能搜索工作，请关闭搜索后重试。',
   'live.noMatchingWork': '没有匹配的工作',
   'live.noWork': '还没有工作。',
+  'live.neoUnhandled': 'Neo 还有 {count} 件没处理',
   'live.attachWait': '等对话加载完再添加文件。',
   'live.photosFailed': '这条消息的照片加载失败，请重试。',
   'chat.you': '你',

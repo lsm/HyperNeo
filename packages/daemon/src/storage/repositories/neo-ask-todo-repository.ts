@@ -263,9 +263,14 @@ export class NeoAskTodoRepository {
     ]);
     const last = asks.filter((ask) => ask.status !== 'open' && !attention.has(ask.id)).at(-1);
     const unlisted = this.countAsks(projectId) - asks.length;
+    const openIds = this.listOpenAsks().map((ask) => ask.id);
     return {
       asks,
       unlisted,
+      openWork: {
+        todos: this.listTodosForAsks(openIds),
+        questions: this.listQuestionsForAsks(openIds),
+      },
       historyCursor:
         work && unlisted > 0 && last ? { updatedAt: last.updatedAt, id: last.id } : null,
       facts: {

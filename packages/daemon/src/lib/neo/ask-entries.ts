@@ -22,6 +22,7 @@ import {
 } from './status-codes.ts';
 import { NeoQuestionSchema } from './question-operations.ts';
 import { NeoTodoSchema } from './todo-operations.ts';
+import { neoTodoAwaitsHuman } from './todo-state.ts';
 import { todoEvidenceFile } from '../work-locations.ts';
 
 function internalCompletionEvidence(todo: NeoTodo): boolean {
@@ -90,6 +91,27 @@ export function neoAskEntryState(
   if (todos.some((todo) => todo.state === 'doing' || todo.state === 'blocked')) return 'doing';
   const live = todos.filter((todo) => todo.state !== 'removed');
   return live.length && live.every((todo) => todo.state === 'done') ? 'done' : 'todo';
+}
+
+const neoHandlesBlocker = (todo: NeoTodo) =>
+  todo.state === 'blocked' && (todo.blockedBy === 'needs-human' || todo.blockedBy === 'stalled');
+
+export function neoWorkCounts(
+  openTodos: readonly NeoTodo[],
+  openQuestions: readonly NeoQuestion[]
+): { needsYou: number; neoUnhandled: number } {
+  const cards = openQuestions.filter((question) => question.state === 'open');
+  return {
+    needsYou: new Set(cards.map((question) => question.askId)).size,
+    neoUnhandled: openTodos.filter(
+      (todo) =>
+        neoHandlesBlocker(todo) &&
+        !neoTodoAwaitsHuman(
+          todo,
+          cards.filter((question) => question.askId === todo.askId)
+        )
+    ).length,
+  };
 }
 
 export const NEO_DONE_TODOS_SHOWN = 3;

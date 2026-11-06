@@ -198,6 +198,8 @@ export interface NeoSnapshot {
   omitted?: { asks?: number };
   working?: NeoWorkingSession[];
   todoAsks?: NeoAskEntry[];
+  needsYou?: number;
+  neoUnhandled?: number;
   historyCursor?: { updatedAt: number; id: string } | null;
   packRows?: NeoPackRows[];
   preferences?: (NeoModelPreference & { saved: boolean }) | null;

@@ -390,8 +390,8 @@ export function NeoLive() {
     surface: shell,
     sheet: sceneSheet,
   });
-  const attention = sceneGroups.find((group) => group.key === 'attention');
-  const attentionCount = attention?.entries.length ?? 0;
+  const attentionCount = view?.needsYou ?? 0;
+  const neoUnhandled = view?.neoUnhandled ?? 0;
   const ready =
     !!neo.sessionId &&
     neo.store.messagesLoaded.value &&
@@ -981,6 +981,11 @@ export function NeoLive() {
               {t('chat.cardUnavailable')}
             </p>
           )}
+          {neoUnhandled > 0 && (
+            <p class="mt-3 text-xs text-fg-muted">
+              {t('live.neoUnhandled', { count: neoUnhandled })}
+            </p>
+          )}
           <NeoGoals sessionId={neo.sessionId} />
           {publicConversation && <NeoWorkSearch query={workQuery} onQuery={setWorkQuery} />}
           {!!workQuery.trim() && (search.pending || search.failed || !search.results.length) && (
@@ -1011,7 +1016,8 @@ export function NeoLive() {
                 data-scene-group={group.key}
               >
                 <h2 class="text-xs font-medium text-fg-muted">
-                  {group.label} · {group.entries.length}
+                  {group.label} ·{' '}
+                  {group.key === 'attention' ? attentionCount : group.entries.length}
                 </h2>
                 {group.entries.map((entry) => (
                   <NeoAskTodos

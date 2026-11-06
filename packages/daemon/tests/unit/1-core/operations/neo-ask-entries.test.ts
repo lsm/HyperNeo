@@ -13,6 +13,7 @@ import {
   neoAskEntryState,
   neoSnapshotAskEntries,
   neoTodoStatusLine,
+  neoWorkCounts,
   projectNeoAskEntries,
 } from '../../../../src/lib/neo/ask-entries.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
@@ -698,6 +699,75 @@ describe('fitNeoSnapshotBudget with packRows', () => {
       'lsm/hyperneo#1001',
       'lsm/hyperneo#1002',
     ]);
+  });
+});
+
+describe('neoWorkCounts', () => {
+  test('counts open asks by who holds them, across projects and past the list limit', () => {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    const store = new NeoAskTodoRepository(db);
+    const draft = { doneWhen: 'Merged', check: null, instruction: 'Do', named: null };
+    const ask = (
+      id: string,
+      blockedBy: NeoTodo['blockedBy'],
+      cards: number,
+      cardTodo: string | null = null
+    ) => {
+      store.openAsk({
+        id,
+        projectId: null,
+        sessionId: 'neo',
+        originMessageId: null,
+        title: id,
+        request: id,
+        createdAt: 1,
+      });
+      const row = store.addTodo(`${id}-t`, id, { ...draft, title: id }, 1);
+      if (blockedBy) store.updateTodo(row, { state: 'blocked', blockedBy }, 2);
+      for (let card = 0; card < cards; card += 1)
+        store.askQuestion(
+          `${id}-q${card}`,
+          id,
+          {
+            text: 'Which one?',
+            kind: 'reply',
+            options: null,
+            multiple: false,
+            noLabel: null,
+            yesLabel: null,
+            startTodos: null,
+            todoId: cardTodo,
+          },
+          2
+        );
+    };
+    ask('two-cards', null, 2);
+    ask('carded', 'needs-human', 1, 'carded-t');
+    ask('needs-neo', 'needs-human', 0);
+    ask('stalled', 'stalled', 0);
+    ask('held', 'held', 0);
+    ask('check', 'check', 0);
+    ask('running', null, 0);
+    ask('settled', 'needs-human', 1);
+    store.addTodo('other-todo', 'carded', { ...draft, title: 'Other' }, 1);
+    store.updateTodo(
+      store.getTodo('other-todo')!,
+      { state: 'blocked', blockedBy: 'needs-human' },
+      2
+    );
+    store.settleAsk(store.getAsk('settled')!, 'dropped', 'Not needed', 3);
+    const { openWork } = store.snapshot(undefined, 1, true);
+    expect(neoWorkCounts(openWork.todos, openWork.questions)).toEqual({
+      needsYou: 2,
+      neoUnhandled: 3,
+    });
+    const scoped = store.snapshot('another-project', 1, true).openWork;
+    expect(neoWorkCounts(scoped.todos, scoped.questions)).toEqual({
+      needsYou: 2,
+      neoUnhandled: 3,
+    });
   });
 });
 

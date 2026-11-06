@@ -183,6 +183,7 @@ export const en = {
   'live.searchFailed': 'Could not search work. Close and reopen search to retry.',
   'live.noMatchingWork': 'No matching work',
   'live.noWork': 'No work yet.',
+  'live.neoUnhandled': 'Neo has {count} still to handle',
   'live.attachWait': 'Wait for the conversation to load before attaching files.',
   'live.photosFailed': 'Could not load this message’s photos. Please try again.',
   'chat.you': 'You',
