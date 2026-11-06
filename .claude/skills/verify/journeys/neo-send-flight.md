@@ -17,7 +17,9 @@ The driver seeds synthetic conversation history, quotes a long message, scrolls
 up and sends words. At 1280px and 390px, independently test fine-pointer and real
 hasTouch contexts, assert the actual coarse-pointer media query, and use the
 visible send button's tap interaction for touch. Use a four-line reply in the
-delayed case and check the words’ final height against their destination as well as the outer box. Delay the actual send RPC by
+fast-acceptance and delayed cases and check the words’ final height and computed
+line height against their destination paragraph as well as the outer box. Retain
+a plain fast-acceptance reply too. Delay the actual send RPC by
 250ms for a mid-flight pending/durable swap, then by 1000ms for acceptance after
 landing. Forward the real response without replacing it.
 

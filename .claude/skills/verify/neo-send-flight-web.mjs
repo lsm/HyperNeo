@@ -74,7 +74,11 @@ try {
       }
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 900 });
-      for (const acceptDelay of [250, 1000]) {
+      for (const [acceptDelay, multiline] of [
+        [250, false],
+        [250, true],
+        [1000, true],
+      ]) {
         const reply = page
           .locator('[data-public-entry].neo-message-user')
           .first()
@@ -84,7 +88,7 @@ try {
         await page.locator('form [data-quote-bar]').waitFor();
         const words =
           `Flying words at ${width}, delay ${acceptDelay}` +
-          (acceptDelay === 1000 ? '\nSecond line\nThird line\nFourth line' : '');
+          (multiline ? '\nSecond line\nThird line\nFourth line' : '');
         await input.fill(words);
         await page.evaluate(() => {
           const rail = document.querySelector('.neo-chat-rail');
@@ -120,6 +124,12 @@ try {
                 ghost: box(ghost),
                 ghostWords: box(ghost?.lastElementChild),
                 targetWords: box(row?.querySelector('.neo-clamped-text p')),
+                targetLineHeight: row?.querySelector('.neo-clamped-text p')
+                  ? getComputedStyle(row.querySelector('.neo-clamped-text p')).lineHeight
+                  : null,
+                ghostLineHeight: ghost?.lastElementChild
+                  ? getComputedStyle(ghost.lastElementChild).lineHeight
+                  : null,
                 ghostVisible: ghost ? getComputedStyle(ghost).visibility : null,
                 ghostText: ghost?.textContent,
                 bubble: box(row?.querySelector('.neo-message-bubble')),
@@ -143,15 +153,21 @@ try {
         await send();
         await page.waitForTimeout(150);
         await page.screenshot({
-          path: join(out, `flight-mid-${touch ? 'touch' : 'fine'}-${acceptDelay}-${width}.png`),
+          path: join(
+            out,
+            `flight-mid-${touch ? 'touch' : 'fine'}-${acceptDelay}-${multiline ? 'multiline' : 'plain'}-${width}.png`
+          ),
         });
         await page.waitForTimeout(1750);
         delay = 0;
         const frames = await page.evaluate(() => window.flightFrames);
-        evidence.push({ width, touch, coarse, acceptDelay, frames });
+        evidence.push({ width, touch, coarse, acceptDelay, multiline, frames });
         writeFileSync(join(out, 'evidence.json'), JSON.stringify(evidence, null, 2));
         await page.screenshot({
-          path: join(out, `flight-landed-${touch ? 'touch' : 'fine'}-${acceptDelay}-${width}.png`),
+          path: join(
+            out,
+            `flight-landed-${touch ? 'touch' : 'fine'}-${acceptDelay}-${multiline ? 'multiline' : 'plain'}-${width}.png`
+          ),
         });
         const moving = frames.filter(
           (f) => f.ghost && f.ghost.width > 0 && f.ghostVisible === 'visible'
@@ -194,6 +210,12 @@ try {
         assert(
           Math.abs(last.ghostWords.height - last.targetWords.height) < 2,
           'Words changed line height at landing'
+        );
+        assert(
+          Math.abs(
+            Number.parseFloat(last.ghostLineHeight) - Number.parseFloat(last.targetLineHeight)
+          ) < 0.02,
+          'Ghost terminal line height differs from the actual destination paragraph'
         );
         const settled = frames.filter((f) => f.ms > 650 && f.bubble);
         assert(
