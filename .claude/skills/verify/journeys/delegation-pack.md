@@ -11,7 +11,9 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
 The helper boots the real isolated daemon on a free port, without providers or
 model turns. It selects an explicit coding-only pack list, reads conservative
 delegation defaults through Neo MCP, and starts a coding todo through the real
-core operations and runner. An authenticated human RPC changes payment to
+core operations and runner. Its deliberately long instruction is cropped to the
+existing message limit while retaining shared delegation guidance and data.
+An authenticated human RPC changes payment to
 fillStop. Neo reads the new value, and the next coding worker delivery contains
 it. An agent write is refused. Both todo bindings and input journals are checked.
 
