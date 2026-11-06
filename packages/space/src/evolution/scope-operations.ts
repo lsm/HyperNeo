@@ -8,16 +8,16 @@ import type {
 } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
-import { syncGoalAutomationSelfNagScheduleForScope } from '../../../../../space/src/goals/automation-schedule-sync.ts';
-import { validateGoalAutomationSelfNagPolicy } from '../../../../../space/src/evolution/evolution-policy-validation.ts';
+import type { SpaceGoalRepository } from '../../../daemon/src/storage/repositories/space-goal-repository.ts';
+import type { Database as BunDatabase } from '../../../daemon/src/storage/sqlite-compat.ts';
+import { syncGoalAutomationSelfNagScheduleForScope } from '../goals/automation-schedule-sync.ts';
+import { validateGoalAutomationSelfNagPolicy } from './evolution-policy-validation.ts';
 import {
   defineOperation,
   type OperationCaller,
   type OperationPolicy,
-} from '../../operations/registry.ts';
-import type { ScheduleService } from '../../schedule/schedule-service.ts';
+} from '../../../daemon/src/lib/operations/registry.ts';
+import type { ScheduleService } from '../../../daemon/src/lib/schedule/schedule-service.ts';
 import {
   admitEvolutionMutator,
   admitEvolutionReader,
@@ -28,7 +28,7 @@ import {
   type EvolutionAuditWriter,
   type EvolutionGate,
   requireEvolutionSpace,
-} from '../../../../../space/src/evolution/admission.ts';
+} from './admission.ts';
 import {
   EvolutionEvidenceRefSchema,
   EvolutionMetadataSchema,
@@ -38,8 +38,8 @@ import {
   EvolutionPolicySchema,
   EvolutionScopeKindSchema,
   EvolutionScopeSchema,
-} from '../../../../../space/src/evolution/result-schemas.ts';
-import { mergeEvolutionPolicy } from '../../../../../space/src/evolution/scope-policy.ts';
+} from './result-schemas.ts';
+import { mergeEvolutionPolicy } from './scope-policy.ts';
 import type { EvolutionScopeService } from './scope-service.ts';
 
 export interface EvolutionScopeOperationDependencies extends EvolutionAdmissionDependencies {

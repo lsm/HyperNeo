@@ -1,9 +1,9 @@
 import type { SpaceGoal } from '@hyperneo/shared';
-import type { OperationDefinition } from '../../operations/registry.ts';
+import type { OperationDefinition } from '../../../daemon/src/lib/operations/registry.ts';
 import {
   createEvolutionEpisodeOperations,
   type EvolutionEpisodeOperationDependencies,
-} from '../../../../../space/src/evolution/episode-operations.ts';
+} from './episode-operations.ts';
 import {
   createEvolutionEvidenceAttachOperation,
   type EvolutionEvidenceAttachDependencies,
