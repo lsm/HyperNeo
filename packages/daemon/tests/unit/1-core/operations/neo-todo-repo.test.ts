@@ -88,6 +88,17 @@ describe('neoTodoRepo', () => {
     );
     expect(neoTodoRepo(draft, [coding], { repo: null })).toBeNull();
   });
+
+  test('a place with no git remote does not inherit the ask’s repo', () => {
+    const folder = { ...place, remotes: undefined };
+    const started = {
+      ...draft,
+      check: pendingTodoCheck,
+      instruction: 'Go',
+      target: { verb: 'start' as const, adapter: 'hyperneo', place: folder },
+    };
+    expect(neoTodoRepo(started, [coding], { repo: 'github.com/lsm/ops' })).toBeNull();
+  });
 });
 
 describe('neo.todo.add repo', () => {
@@ -135,6 +146,15 @@ describe('neo.todo.add repo', () => {
     expect(store.getAsk('ask')?.repo).toBe('github.com/lsm/hyperneo');
     const second = await call({ askId: 'ask', ...draft, title: 'Deploy' });
     expect(second.todo.repo).toBe('github.com/lsm/hyperneo');
+    const placed = await call({
+      askId: 'ask',
+      ...draft,
+      title: 'iOS work',
+      instruction: 'Go',
+      target: { verb: 'start', adapter: 'hyperneo', place: { ...place, remotes: undefined } },
+    });
+    expect(placed.todo).toMatchObject({ askId: 'ask', repo: null });
+    expect(store.getAsk('ask')?.repo).toBe('github.com/lsm/hyperneo');
     db.close();
   });
 });
