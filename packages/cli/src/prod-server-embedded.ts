@@ -163,6 +163,9 @@ export async function startProdServer(config: Config) {
         return new Response('WebSocket upgrade failed', { status: 500 });
       }
 
+      const markdown = await daemonContext.handleAskMarkdown(req, client?.remoteAddress ?? null);
+      if (markdown) return markdown;
+
       const entry = resolveNeoEntry(url);
       if (entry?.kind === 'redirect') {
         return new Response(null, {
