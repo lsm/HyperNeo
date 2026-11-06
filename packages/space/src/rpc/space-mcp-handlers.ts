@@ -1,4 +1,4 @@
-import { writeSpaceMcpDefault } from '../../tools/write-tool-defaults.ts';
+import { writeSpaceMcpDefault } from '../../../daemon/src/lib/tools/write-tool-defaults.ts';
 import type {
   MessageHub,
   SpaceMcpSetEnabledRequest,
@@ -8,12 +8,15 @@ import type {
   McpImportsRefreshRequest,
   McpImportsRefreshResponse,
 } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
-import type { Database } from '../../../storage/database.ts';
-import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
+import type {
+  DaemonInternalEventMap,
+  InternalEventBus,
+} from '../../../daemon/src/lib/internal-event-bus.ts';
+import type { Database } from '../../../daemon/src/storage/database.ts';
+import type { SpaceManager } from '../managers/space-manager.ts';
 import { resolve } from 'node:path';
-import type { ImportResult, McpImportService } from '../../mcp/index.ts';
-import { Logger } from '../../logger.ts';
+import type { ImportResult, McpImportService } from '../../../daemon/src/lib/mcp/index.ts';
+import { Logger } from '../../../daemon/src/lib/logger.ts';
 
 const log = new Logger('space-mcp-handlers');
 
