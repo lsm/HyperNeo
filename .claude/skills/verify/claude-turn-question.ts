@@ -37,6 +37,7 @@ const read = async (name: string, input: unknown) => {
 const ref = { adapter: 'claude-desktop', id: 'local_fixture' };
 const observed: unknown[] = [];
 try {
+  await app.jobProcessor.stop();
   const asked = (await read('work.status', { ref })).value!;
   observed.push({ asked: { status: asked.status, waitingFor: asked.waitingFor, turnQuestion: asked.turnQuestion } });
   assert.equal(asked.status, 'needs_you');
