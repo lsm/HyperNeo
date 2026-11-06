@@ -119,7 +119,7 @@
       "maxLines": 1165,
       "followUp": "M8/UI focused view split"
     },
-    "packages/daemon/src/lib/rpc-handlers/space-workflow-run-handlers.ts": {
+    "packages/daemon/src/lib/space/rpc/space-workflow-run-handlers.ts": {
       "maxLines": 1150,
       "followUp": "M2/M4 fabric bridge split"
     },
@@ -191,7 +191,7 @@
       "maxLines": 931,
       "followUp": "M10 cleanup split when touched"
     },
-    "packages/daemon/src/lib/rpc-handlers/space-export-import-handlers.ts": {
+    "packages/daemon/src/lib/space/rpc/space-export-import-handlers.ts": {
       "maxLines": 904,
       "followUp": "M2/M4 fabric bridge split"
     },
@@ -243,7 +243,7 @@
       "maxLines": 816,
       "followUp": "M8 focused read-model stores"
     },
-    "packages/daemon/src/lib/rpc-handlers/space-workflow-handlers.ts": {
+    "packages/daemon/src/lib/space/rpc/space-workflow-handlers.ts": {
       "maxLines": 811,
       "followUp": "M2/M4 fabric bridge split"
     },
@@ -339,7 +339,7 @@
       "maxLines": 692,
       "followUp": "M7 agent runtime boundary split"
     },
-    "packages/daemon/src/lib/rpc-handlers/space-task-message-handlers.ts": {
+    "packages/daemon/src/lib/space/rpc/space-task-message-handlers.ts": {
       "maxLines": 683,
       "followUp": "M2/M4 fabric bridge split"
     },
@@ -459,11 +459,11 @@
       "maxLines": 562,
       "followUp": "M8/UI focused view split"
     },
-    "packages/daemon/src/lib/job-handlers/goal-automation-execute.handler.ts": {
+    "packages/daemon/src/lib/space/job-handlers/goal-automation-execute.handler.ts": {
       "maxLines": 560,
       "followUp": "M10 cleanup split when touched"
     },
-    "packages/daemon/src/lib/rpc-handlers/space-handlers.ts": {
+    "packages/daemon/src/lib/space/rpc/space-handlers.ts": {
       "maxLines": 551,
       "followUp": "M2/M4 fabric bridge split"
     },
