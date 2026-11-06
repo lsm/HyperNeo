@@ -23,7 +23,7 @@ than create another card. Worker failure before dispatch must reject without a
 main fallback. Losing a committed worker reply must report outcome unknown;
 the public reader must find exactly one todo and an explicit repeat must fail.
 Unit coverage also checks settled-ask no-change receipts, current PR-peer
-bookkeeping and child-ask rollback.
+bookkeeping and cross-repository additions staying on the supplied ask.
 
 The main-SQL guard wraps cached statement execution before startup, proves its
 canary fails, and requires zero target SQL during writer jobs. Hold a synthetic
