@@ -114,8 +114,8 @@ export function createCuChecker(effects: Effects) {
           seen.add(key);
           effects.signal(candidate.pid);
         } else {
-          await effects.notify(text);
           seen.add(key);
+          await effects.notify(text);
         }
       }
     })()

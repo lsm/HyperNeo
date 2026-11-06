@@ -148,7 +148,7 @@ try {
   await startCuChecker(() => true)();
   assert.equal(timers.length, beforeNonMac);
   assert(events.length > 0, 'Automatic actions, opt-out alerts and refusals must be logged');
-  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ pass: true, notices, signals, commands, timers: timers.map(({ callback: _callback, ...timer }) => timer), events, realMachineProof: 'not run; separate human approval required' }, null, 2));
+  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ pass: true, notices, signals, commands, timers: timers.map(({ callback: _callback, ...timer }) => timer), events, realMachineProof: 'not covered by this synthetic helper' }, null, 2));
   process.stdout.write('PASS: synthetic macOS command adapter, automatic default, opt-out alert, reread, failures, cadence, overlap and cleanup\n');
 } finally {
   for (const close of closeAll) await close();

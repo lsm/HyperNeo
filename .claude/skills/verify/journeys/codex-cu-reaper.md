@@ -22,7 +22,8 @@ real 60-second callback, parses pmset and ps fixtures, and captures the actual
 notification arguments a human would receive. Register the actual driver
 operations with omitted, false and true settings: the default must send one
 SIGTERM; only false must alert with the exact action and zero signals. Repeat
-ticks must deduplicate both. Automatic mode requires a fresh second observation
+ticks must deduplicate both, including a failed notification attempt. A new
+process birth may receive a new alert. Automatic mode requires a fresh second observation
 and issues only SIGTERM to the exact
 synthetic service PID. Young assertions, recent Created records and command
 failures must issue no signal; a failed signal is attempted once, without
@@ -36,14 +37,17 @@ history from before process birth and a PID replacement on the final read.
 
 This verifies synthetic driver effects, not macOS notification visibility,
 actual assertion release, natural display sleep or service relaunch. Those
-remain unverified and require separate human approval on a disposable test
-Mac: retain assertion/log/PID-birth evidence, induce a leak in a sacrificial
-session, explicitly opt out to observe alert mode first, then remove the opt-out
+remain unverified until a separately approved real-machine run. First retain
+assertion/log/PID-birth evidence and run the pure decision on those observations.
+If no qualifying leak exists and reproducing one would require driving the
+human's GUI apps, stop and report that limitation. Never signal a healthy helper
+or substitute a synthetic assertion for this proof. With an approved qualifying
+leak, explicitly opt out to observe alert mode first, then remove the opt-out
 and wait for five minutes without a new same-name Created. Confirm only the verified helper receives
 SIGTERM, assertions disappear, the display sleeps under its existing settings,
 and a later real Computer Use action succeeds with an on-demand service
 relaunch. Do not change power settings, kill the main app, escalate signals or
-run this test on the human's live daemon without that approval.
+restart the human's live daemon. Exercise the checker from the candidate source.
 
 The predicate uses the assertion history, not a global turn/admission barrier.
 A new action starting between the final observation and SIGTERM can fail once;
