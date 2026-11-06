@@ -14,7 +14,7 @@ import { createTables, runMigrations } from '../../../../src/storage/schema/inde
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { WorkTurnRepository } from '../../../../src/storage/repositories/work-turn-repository.ts';
 import { runMigration477 } from '../../../../src/storage/schema/m477-work-turns.ts';
-import { runMigration479 } from '../../../../src/storage/schema/m479-work-turn-urls.ts';
+import { runMigration480 } from '../../../../src/storage/schema/m480-work-turn-urls.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 const ship = Date.now();
@@ -334,7 +334,7 @@ describe('coding pack unowned PR persistence', () => {
       createNeoPackPreferencesTable(db);
       createCodingPackTables(db, cutoff + 600_000);
       runMigration477(db);
-      runMigration479(db);
+      runMigration480(db);
       db.exec(
         `CREATE TABLE IF NOT EXISTS neo_todos (id TEXT, state TEXT);
            CREATE TABLE IF NOT EXISTS neo_todo_sessions (todo_id TEXT, ref TEXT, live_status TEXT);`
@@ -362,7 +362,7 @@ describe('coding pack unowned PR persistence', () => {
       createNeoPackPreferencesTable(db);
       createCodingPackTables(db, 10);
       runMigration477(db);
-      runMigration479(db);
+      runMigration480(db);
       db.exec(
         `CREATE TABLE IF NOT EXISTS neo_todos (id TEXT, state TEXT);
            CREATE TABLE IF NOT EXISTS neo_todo_sessions (todo_id TEXT, ref TEXT, live_status TEXT);`
@@ -376,7 +376,7 @@ describe('coding pack unowned PR persistence', () => {
       createNeoPackPreferencesTable(db);
       createCodingPackTables(db, 30);
       runMigration477(db);
-      runMigration479(db);
+      runMigration480(db);
       db.exec(
         `CREATE TABLE IF NOT EXISTS neo_todos (id TEXT, state TEXT);
            CREATE TABLE IF NOT EXISTS neo_todo_sessions (todo_id TEXT, ref TEXT, live_status TEXT);`
@@ -419,7 +419,7 @@ describe('coding pack unowned PR persistence', () => {
       createNeoPackPreferencesTable(db);
       createCodingPackTables(db, 2);
       runMigration477(db);
-      runMigration479(db);
+      runMigration480(db);
       db.exec(
         `CREATE TABLE IF NOT EXISTS neo_todos (id TEXT, state TEXT);
            CREATE TABLE IF NOT EXISTS neo_todo_sessions (todo_id TEXT, ref TEXT, live_status TEXT);`
