@@ -3,7 +3,7 @@ import type { SpaceTask } from '@hyperneo/shared';
 import {
   createDefaultSessionResolutionDeps,
   type DefaultSessionResolutionServices,
-} from '../../../../src/lib/space/runtime/session-resolution-deps';
+} from '../../../../../space/src/runtime/session-resolution-deps';
 import type { SessionResolutionDeps } from '../../../../src/lib/session-resolution/deps';
 
 interface FakeSession {

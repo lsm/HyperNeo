@@ -1,7 +1,7 @@
 import type { NodeExecution, Space, SpaceTask, SpaceWorkflowRun } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { AgentSession } from '../../agent/agent-session.ts';
-import { isCanonicalTaskTerminalForSpawn } from '../../workflows/run-spawn-decisions.ts';
+import type { AgentSession } from '../../../daemon/src/lib/agent/agent-session.ts';
+import { isCanonicalTaskTerminalForSpawn } from '../../../daemon/src/lib/workflows/run-spawn-decisions.ts';
 
 export interface ProvisioningOptions {
   startQuery?: boolean;

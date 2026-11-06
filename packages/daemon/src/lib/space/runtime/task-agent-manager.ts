@@ -61,7 +61,7 @@ import {
 } from '../../providers/registry.js';
 import { validateImageSizes } from '../../session/message-persistence.ts';
 import { CleanupState, type SessionManager } from '../../session-manager.ts';
-import { createDefaultSessionResolutionDeps } from './session-resolution-deps.ts';
+import { createDefaultSessionResolutionDeps } from '../../../../../space/src/runtime/session-resolution-deps.ts';
 import { ensureSession } from '../../session-resolution/ensure-session.ts';
 import type { SkillsManager } from '../../skills-manager.ts';
 import { getLongHorizonAgentTemplate } from '../../agents/long-horizon-templates.ts';
@@ -170,15 +170,15 @@ import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from '../../tasks/veri
 import {
   runLiveWorkspaceSyncFlow,
   type LiveWorkspaceSyncFlowDeps,
-} from './live-workspace-sync-flow.ts';
+} from '../../../../../space/src/runtime/live-workspace-sync-flow.ts';
 import {
   runSelfHealWorkspaceFlow,
   type SelfHealWorkspaceFlowDeps,
-} from './self-heal-workspace-flow.ts';
+} from '../../../../../space/src/runtime/self-heal-workspace-flow.ts';
 import {
   runProvisionWorkflowSessionFlow,
   type ProvisioningFlowDeps,
-} from './provision-workflow-session-flow.ts';
+} from '../../../../../space/src/runtime/provision-workflow-session-flow.ts';
 import {
   clearAllRetryableHookActionTimers,
   HookEngine,

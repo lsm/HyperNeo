@@ -133,7 +133,7 @@ import {
   MAX_BLOCKED_RUN_RETRIES,
   MAX_TASK_AGENT_CRASH_RETRIES,
   MAX_TERMINAL_ERROR_CONTINUE_RETRIES,
-} from './constants.ts';
+} from '../../../../../space/src/runtime/constants.ts';
 import {
   createAgentStuckRecoveryState,
   decideStuckLadderAction,

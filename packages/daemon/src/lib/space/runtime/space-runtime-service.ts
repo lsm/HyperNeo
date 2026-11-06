@@ -64,7 +64,7 @@ import {
 } from '../../mailbox/entry.ts';
 import type { SessionManager } from '../../session-manager.ts';
 import { buildAgentSessionConfig } from '../../session-resolution/agent-session-config.ts';
-import { createDefaultSessionResolutionDeps } from './session-resolution-deps.ts';
+import { createDefaultSessionResolutionDeps } from '../../../../../space/src/runtime/session-resolution-deps.ts';
 import type { SessionResolutionDeps } from '../../session-resolution/deps.ts';
 import { ensureSession } from '../../session-resolution/ensure-session.ts';
 import { resolveAgentDeliverySession } from '../../session-resolution/resolve-agent-delivery-session.ts';

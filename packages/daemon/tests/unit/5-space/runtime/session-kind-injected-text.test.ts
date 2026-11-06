@@ -27,8 +27,8 @@ import type {
   AuthoredCapabilityContribution,
   ScopeContribution,
 } from '../../../../src/lib/briefings/contribution.ts';
-import { spaceScopeContribution } from '../../../../src/lib/space/runtime/space-scope-contribution.ts';
-import { createSpaceScopeResolver } from '../../../../src/lib/space/runtime/space-scope-resolver.ts';
+import { spaceScopeContribution } from '../../../../../space/src/runtime/space-scope-contribution.ts';
+import { createSpaceScopeResolver } from '../../../../../space/src/runtime/space-scope-resolver.ts';
 import {
   isBuiltInMcpServer,
   isBuiltInMcpServerName,
