@@ -52,6 +52,7 @@ import {
 } from '../../drivers/claude-desktop-adapter.ts';
 import { readHyperneoSdkSessions } from '../../drivers/claude-feed.ts';
 import { createClaudeCodeAdapter } from '../../drivers/claude-code-adapter.ts';
+import { startWorkSessionSync } from '../../drivers/work-session-sync.ts';
 import { withClaudeRemoteControl } from '../../drivers/claude-remote-control.ts';
 import {
   connectCodexAppServer,
@@ -608,6 +609,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     ];
   };
   const health = createDriverHealthRuntime(context, currentAdapters);
+  startWorkSessionSync(context.deps.db.gateway, context.deps.jobProcessor, currentAdapters);
   const deps = {
     adapters: currentAdapters,
     health: health.read,
