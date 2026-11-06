@@ -229,7 +229,7 @@ resultSchema: z.discriminatedUnion('accepted', [
 
 So `const { goals } = await hub.request(...)` becomes a check on `accepted` and a branch that
 turns `reason` into a message. That is the bulk of the per-call-site cost, and it is why
-`lib/operations.ts` already carries per-operation wrappers rather than a single generic call —
+`lib/space-task-operations.ts` already carries per-operation wrappers rather than a single generic call —
 `setPreferredWorkflow` maps three rejection reasons to prose in 15 lines.
 
 **`spaceId` stops being free.** `resolveGoalSpaceId` in #4618 short-circuits for non-MCP

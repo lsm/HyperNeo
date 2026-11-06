@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getPriorityIndicatorTone } from './priority-tokens.js';
+import { getPriorityIndicatorTone } from './space-priority-tokens.js';
 
 describe('priority-tokens', () => {
   it('maps high to warning', () => {

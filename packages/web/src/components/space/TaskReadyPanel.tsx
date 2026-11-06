@@ -1,7 +1,7 @@
 import type { SpaceTask } from '@hyperneo/shared';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
-import { getTaskStatusConfig } from '../../lib/task-status';
+import { getTaskStatusConfig } from '../../lib/space-task-status';
 import { StatusBadge } from '../ui/StatusBadge';
 
 function readiness(

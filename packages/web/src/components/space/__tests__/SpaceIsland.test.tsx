@@ -300,7 +300,7 @@ vi.mock('../../../lib/space-store', () => ({
   },
 }));
 
-vi.mock('../../../lib/memory-store', () => ({
+vi.mock('../../../lib/space-memory-store', () => ({
   get memoryStore() {
     return {
       memories: signal([]),

@@ -29,7 +29,7 @@ import {
   spacePaletteSource,
   warmSpacePalette,
 } from './space-palette.tsx';
-import { isActionRequired, isActiveTask } from '../../lib/task-filters.ts';
+import { isActionRequired, isActiveTask } from '../../lib/space-task-filters.ts';
 import { type ExtensionNav, webExtension } from '../../lib/web-extensions.ts';
 
 const SpacesIcon = () => (

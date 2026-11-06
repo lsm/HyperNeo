@@ -28017,6 +28017,16 @@
                 "maxItems": 200,
                 "type": "array"
               },
+              "needsYou": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "neoUnhandled": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
               "ok": {
                 "const": true,
                 "type": "boolean"
@@ -36233,6 +36243,16 @@
                 },
                 "maxItems": 200,
                 "type": "array"
+              },
+              "needsYou": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "neoUnhandled": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
               },
               "ok": {
                 "const": true,

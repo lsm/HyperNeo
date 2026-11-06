@@ -9,7 +9,7 @@ vi.mock('../connection-manager', () => ({
   },
 }));
 
-import { memoryStore } from '../memory-store';
+import { memoryStore } from '../space-memory-store';
 
 function makeMemory(key: string, overrides: Partial<AgentMemoryEntry> = {}): AgentMemoryEntry {
   return {

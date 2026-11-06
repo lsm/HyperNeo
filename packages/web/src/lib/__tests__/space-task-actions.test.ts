@@ -6,7 +6,7 @@ import {
   dropStatusOnlyStarts,
   filterDirectAttemptTargets,
   getTransitionActions,
-} from '../task-actions';
+} from '../space-task-actions';
 
 const statuses = Object.keys(VALID_TASK_TRANSITIONS) as SpaceTaskStatus[];
 

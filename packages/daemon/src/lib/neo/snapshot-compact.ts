@@ -130,6 +130,8 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(snapshot: T, budget:
       .slice(0, SKELETON_LIST_LIMIT)
       .map((project) => ({ ...project, summary: '', context: '' })),
     standingRules: fitted.standingRules,
+    needsYou: fitted.needsYou,
+    neoUnhandled: fitted.neoUnhandled,
     todoAsks: fitted.todoAsks?.map((entry) => ({
       ...entry,
       todos: entry.todos.slice(0, SKELETON_LIST_LIMIT).map((todo) => ({

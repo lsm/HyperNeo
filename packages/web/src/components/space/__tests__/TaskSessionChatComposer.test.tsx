@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup, fireEvent, render } from '@testing-library/preact';
 import type { ChatComposerProps } from '../../ChatComposer';
 
-vi.mock('../../../hooks', () => ({
+vi.mock('../useTargetSessionContext', () => ({
   useTargetSessionContext: () => ({
     targetSessionId: 'target-session-id',
     currentModel: 'claude-sonnet-4-6',
@@ -16,6 +16,9 @@ vi.mock('../../../hooks', () => ({
     switchModel: vi.fn(async () => {}),
     setThinkingLevel: vi.fn(async () => {}),
   }),
+}));
+
+vi.mock('../../../hooks', () => ({
   useModelSwitcher: () => ({
     currentModel: 'claude-sonnet-4-6',
     currentModelInfo: null,

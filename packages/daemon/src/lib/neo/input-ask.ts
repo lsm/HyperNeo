@@ -12,9 +12,7 @@ export type NeoInputReads = {
 
 export const noNeoInputReads: NeoInputReads = { input: () => null, publication: () => null };
 
-type Binding =
-  | { value: { askId: string; records: string[] } }
-  | { reason: { ok: false; reason: string } };
+type Binding = { value: { askId: string } } | { reason: { ok: false; reason: string } };
 
 const words = (content: NeoConversationAsk['content']) =>
   typeof content === 'string'
@@ -39,6 +37,11 @@ function repliedAskId(
   return told?.cardReply?.askId ?? origin?.id ?? null;
 }
 
+const neoInputAskRefusal = (input: string, askId: string | undefined, owner: string | null) =>
+  askId && askId !== owner
+    ? `ask_mismatch: input ${input} belongs to ${owner ? `ask ${owner}` : 'no ask yet'}, not ${askId}. Pass only input for that human message, or only askId for follow-up work with no human input.`
+    : null;
+
 export function resolveNeoInputAsk(
   store: NeoAskTodoRepository,
   reads: NeoInputReads,
@@ -48,7 +51,7 @@ export function resolveNeoInputAsk(
 ): Binding {
   if (!request.input)
     return request.askId
-      ? { value: { askId: request.askId, records: [] } }
+      ? { value: { askId: request.askId } }
       : {
           reason: {
             ok: false,
@@ -65,9 +68,14 @@ export function resolveNeoInputAsk(
       },
     };
   const { sessionId, messageId } = human.askOrigin;
-  const askId =
+  const owner =
     (human.replyTo && repliedAskId(store, reads, sessionId, human.replyTo)) ??
     store.findAsk(sessionId, messageId, null)?.id ??
+    null;
+  const refusal = neoInputAskRefusal(request.input, request.askId, owner);
+  if (refusal) return { reason: { ok: false, reason: refusal } };
+  const askId =
+    owner ??
     store.openAsk({
       id: crypto.randomUUID(),
       projectId: null,
@@ -82,11 +90,5 @@ export function resolveNeoInputAsk(
       request: words(human.content) || title,
       createdAt: Date.now(),
     }).id;
-  const records =
-    request.askId && request.askId !== askId
-      ? [
-          `ask_rebound: human input ${request.input} belongs to ask ${askId}, not ${request.askId}; used ${askId}.`,
-        ]
-      : [];
-  return { value: { askId, records } };
+  return { value: { askId } };
 }

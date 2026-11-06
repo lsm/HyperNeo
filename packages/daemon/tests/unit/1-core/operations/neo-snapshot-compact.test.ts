@@ -50,6 +50,15 @@ describe('fitNeoSnapshotBudget', () => {
     expect(fitted.trimmed).toMatch(/older open asks are also left out|only open asks/);
   });
 
+  test('keeps the daemon counts when the snapshot falls back to its skeleton', () => {
+    const fitted = fitNeoSnapshotBudget(
+      { ...snapshot(40, 0), needsYou: 3, neoUnhandled: 2 },
+      4_000
+    );
+    expect(fitted.needsYou).toBe(3);
+    expect(fitted.neoUnhandled).toBe(2);
+  });
+
   test('the trimmed note never pushes the result past the budget', () => {
     for (const budget of [2_000, 6_000, 20_000]) {
       const fitted = fitNeoSnapshotBudget(snapshot(30, 30), budget);

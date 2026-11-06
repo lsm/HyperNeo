@@ -2,7 +2,7 @@ import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NodeExecutionStatus, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
-import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store';
+import { ExternalEventStore } from '../../../../src/lib/space/external-events/external-event-store';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types';
 import { createInternalCommandBus } from '../../../../src/lib/internal-command-bus';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';

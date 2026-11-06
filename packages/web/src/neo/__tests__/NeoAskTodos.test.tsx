@@ -969,7 +969,7 @@ describe('NeoAskTodos', () => {
               state: 'blocked',
               blockedReason: 'CI 一直红',
               nextAction: '修好测试再推',
-              blockedBy: 'check',
+              blockedBy: 'failure',
               status: '卡住了：CI 一直红',
             }),
             todo('b', { state: 'blocked', blockedReason: '等人', status: '卡住了：等人' }),
@@ -987,6 +987,30 @@ describe('NeoAskTodos', () => {
     const rowB = app.container.querySelector('[data-ask-todo="b"]')!;
     expect(rowB.querySelector('[data-todo-next-action]')).toBeNull();
     expect(app.getByText('卡住了：等人').className).toContain('text-warning');
+  });
+
+  it('shows no next action for a todo waiting on its check', () => {
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          state: 'doing',
+          todos: [
+            todo('a', {
+              state: 'blocked',
+              blockedBy: 'check',
+              status: 'Waiting for its result',
+              statusCodes: [{ code: 'todo.waitingResult', params: {} }],
+              nextAction: 'fix a wrong check with neo.todo.edit',
+            }),
+          ],
+        })}
+        onAnswer={() => {}}
+      />
+    );
+    const row = app.container.querySelector('[data-ask-todo="a"]')!;
+    expect(row.querySelector('[data-todo-next-action]')).toBeNull();
+    expect(row.textContent).toContain('等结果');
+    expect(row.textContent).not.toContain('neo.todo.edit');
   });
 
   it('keeps a non-blocked status muted and shows no next action', () => {
@@ -1170,15 +1194,15 @@ describe('neoQuestionAnswerLabel', () => {
 
 describe('neoAskEntryGroup', () => {
   it('puts waiting asks first and finished ones last', () => {
-    expect(neoAskEntryGroup({ state: 'waiting', todos: [] })).toBe('attention');
-    expect(neoAskEntryGroup({ state: 'doing', todos: [] })).toBe('running');
-    expect(neoAskEntryGroup({ state: 'dropped', todos: [] })).toBe('outcomes');
+    expect(neoAskEntryGroup({ state: 'waiting' })).toBe('attention');
+    expect(neoAskEntryGroup({ state: 'doing' })).toBe('running');
+    expect(neoAskEntryGroup({ state: 'dropped' })).toBe('outcomes');
   });
 
   it('keeps waiting cards above blocked work', () => {
     const blocked = entry({ state: 'doing', todos: [todo('b', { state: 'blocked' })] });
     const waiting = entry({ state: 'waiting' });
-    expect(neoAskEntryGroup(blocked)).toBe('attention');
+    expect(neoAskEntryGroup(blocked)).toBe('running');
     expect(neoAskEntryGroup({ ...blocked, state: 'done' })).toBe('outcomes');
     expect(neoAskEntryGroup({ ...blocked, state: 'dropped' })).toBe('outcomes');
     expect(neoAskEntriesInOrder([waiting, blocked, entry({ state: 'doing' })])).toEqual([

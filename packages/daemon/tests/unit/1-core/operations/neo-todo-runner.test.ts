@@ -658,6 +658,39 @@ describe('neo todo runner', () => {
     }
   );
 
+  test('sending the worker on closes the card its todo waited on', async () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      await h.runner.start(todo.id);
+      const question = h.store.askQuestion(
+        'waiting-card',
+        todo.askId,
+        {
+          text: 'Approve the step?',
+          kind: 'reply',
+          options: null,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+          startTodos: null,
+          todoId: todo.id,
+        },
+        Date.now()
+      );
+      h.store.updateTodo(
+        h.store.getTodo(todo.id)!,
+        { state: 'blocked', blockedBy: 'needs-human', blockedReason: 'Awaiting approval' },
+        Date.now()
+      );
+      await h.runner.proceed(todo.id, 'Carry on without approval.');
+      expect(h.store.getQuestion(question.id)).toMatchObject({ state: 'retired' });
+      expect(h.store.getTodo(todo.id)).toMatchObject({ state: 'doing', blockedBy: null });
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('Codex identity-silent follow-ups retain the pair confirmed at start', async () => {
     const h = setup();
     try {

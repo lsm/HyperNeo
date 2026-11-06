@@ -1380,6 +1380,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       sent && { ...sent, receipt: delivered.receipt, delivery: delivered.delivery }
     );
     restartLadder(todo.id, Date.now());
+    if (todo.blockedBy === 'needs-human')
+      for (const card of store.listQuestions(ask.id))
+        if (card.state === 'open' && card.todoId === todo.id)
+          store.retireQuestion(card, 'Neo sent the worker on.', null, Date.now());
     const next = store.updateTodo(
       todo,
       { state: 'doing', report: null, evidence: null, finishedAt: null },

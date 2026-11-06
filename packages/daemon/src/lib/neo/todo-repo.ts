@@ -22,7 +22,7 @@ export function neoTodoRepo(
   return (
     packs.map((pack) => pack.todos?.repository?.(draft) ?? null).find(Boolean) ??
     place?.remotes?.map(neoGitRepo).find(Boolean) ??
-    ask.repo
+    (place ? null : ask.repo)
   );
 }
 

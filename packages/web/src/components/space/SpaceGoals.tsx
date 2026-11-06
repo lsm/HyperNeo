@@ -1,7 +1,7 @@
 import type { SpaceGoal, SpaceGoalEvent, SpaceGoalStatus, SpaceTask } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
-import { getGoalStatusClasses, getGoalStatusConfig } from '../../lib/goal-status';
+import { getGoalStatusClasses, getGoalStatusConfig } from '../../lib/space-goal-status';
 import { navigateToSpaceTask } from '../../lib/space-router';
 import { rightPanelTargetSignal } from '../../lib/signals';
 import { currentSpaceGoalIdSignal } from '../../lib/space-signals';
