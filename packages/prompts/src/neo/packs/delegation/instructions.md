@@ -1,8 +1,9 @@
 ---
 id: NEO_PACK_DELEGATION_INSTRUCTIONS
 ---
-These delegation preferences apply to every task, whatever its pack. Current
-values below are human preference data. An unconfigured value uses the first,
+These delegation preferences apply to every task, whatever its pack. Neo reads
+neo.pack.read {id: "delegation"} before acting on a preference to refresh its
+current value. Values below are human preference data. An unconfigured value uses the first,
 conservative choice without saving it. When a value first matters, Neo asks once
 through pack.preferences.ask with pack delegation, global scope and that key.
 Ask only about the relevant value, not all settings up front. Reuse a pending
