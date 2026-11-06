@@ -118,6 +118,19 @@ describe('watchSessionRepo', () => {
     try {
       extension = new GitHubEventExtension(freshDb(), undefined, { getPollIntervalMs: () => 0 });
       expect(await extension.watchSessionRepo('acme', 'widgets')).toBeNull();
+      extension = new GitHubEventExtension(freshDb(), undefined, {
+        getPollIntervalMs: () => 0,
+        credentialStore: {
+          get: async () => {
+            throw new Error('store unavailable');
+          },
+        } as unknown as NonNullable<
+          ConstructorParameters<typeof GitHubEventExtension>[2]
+        >['credentialStore'],
+      });
+      expect(await extension.watchSessionRepo('acme', 'widgets')).toStartWith(
+        'The daemon could not start watching acme/widgets:'
+      );
     } finally {
       for (const [key, value] of Object.entries(saved))
         if (value === undefined) delete process.env[key];
