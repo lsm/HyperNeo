@@ -5,12 +5,12 @@ import type { SpaceAgentGoalScopeRepository } from '../../storage/repositories/s
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import {
   admitGoalAccess,
-  GOAL_READ_POLICY,
   GoalRejectionSchema,
   GoalSpaceScopeShape,
   type GoalCallerContext,
   type GoalRejection,
 } from './goal-operation-scope.ts';
+import { GOAL_READ_POLICY } from './goal-contract.ts';
 import { GoalOwnerResolutionSchema } from './goal-result-schemas.ts';
 import type { SpaceGoalService } from './service.ts';
 

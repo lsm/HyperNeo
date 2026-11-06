@@ -5,7 +5,6 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import { TaskWithSpaceFieldsSchema } from '../tasks/get-operation.ts';
 import {
   admitGoalAccess,
-  GOAL_WRITE_POLICY,
   goalMutationContext,
   GoalRejectionSchema,
   GoalSpaceScopeShape,
@@ -13,6 +12,7 @@ import {
   type GoalCallerContext,
   type GoalRejection,
 } from './goal-operation-scope.ts';
+import { GOAL_WRITE_POLICY } from './goal-contract.ts';
 import { SpaceGoalSchema } from './goal-result-schemas.ts';
 import type { SpaceGoalService } from './service.ts';
 

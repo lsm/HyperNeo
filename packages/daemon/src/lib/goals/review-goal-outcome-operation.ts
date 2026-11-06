@@ -4,7 +4,6 @@ import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import {
   admitGoalSpace,
-  GOAL_OWNER_POLICY,
   GOAL_REJECTION_REASONS,
   goalDenial,
   GoalSpaceScopeShape,
@@ -13,11 +12,9 @@ import {
   type GoalRejection,
   type GoalRejectionReason,
 } from './goal-operation-scope.ts';
-import {
-  GoalMetricsSchema,
-  GoalOutcomeNotificationSchema,
-  SpaceGoalSchema,
-} from './goal-result-schemas.ts';
+import { GOAL_OWNER_POLICY } from './goal-contract.ts';
+import { GoalOutcomeNotificationSchema, SpaceGoalSchema } from './goal-result-schemas.ts';
+import { GoalMetricsSchema } from './goal-contract.ts';
 import type { SpaceGoalService } from './service.ts';
 
 const DISCOVERY_LIMIT = 100;

@@ -4,13 +4,14 @@ import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import {
   admitGoalSpace,
-  GOAL_READ_POLICY,
   GoalRejectionSchema,
   GoalSpaceScopeShape,
   type GoalCallerContext,
   type GoalRejection,
 } from './goal-operation-scope.ts';
-import { GoalStatusSchema, SpaceGoalSchema } from './goal-result-schemas.ts';
+import { GOAL_READ_POLICY } from './goal-contract.ts';
+import { SpaceGoalSchema } from './goal-result-schemas.ts';
+import { GoalStatusSchema } from './goal-contract.ts';
 import type { SpaceGoalService } from './service.ts';
 
 const inputSchema = z
