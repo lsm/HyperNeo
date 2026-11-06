@@ -70,9 +70,9 @@ describe('planTurnCatchUp', () => {
   });
 
   test('new activity reads it again', () => {
-    expect(planTurnCatchUp([{ ref, lastActivityAt: 8 }], new Map([[JSON.stringify(ref), 7]]))).toEqual(
-      [{ ref, lastActivityAt: 8 }]
-    );
+    expect(
+      planTurnCatchUp([{ ref, lastActivityAt: 8 }], new Map([[JSON.stringify(ref), 7]]))
+    ).toEqual([{ ref, lastActivityAt: 8 }]);
   });
 
   test('a worker with no synced activity is always read', () => {
