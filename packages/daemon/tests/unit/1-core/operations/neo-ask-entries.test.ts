@@ -146,6 +146,19 @@ describe('neoTodoStatusLine', () => {
     ).toEqual(coded('Session reported; checking', 'todo.checking'));
   });
 
+  test('a todo blocked on its check reads as waiting, without the words written for Neo', () => {
+    const blocked = {
+      state: 'blocked' as const,
+      blockedReason: 'check_unmet: "Merged" has not passed.',
+    };
+    expect(neoTodoStatusLine(todo({ ...blocked, blockedBy: 'check' }), [], null)).toEqual(
+      coded('Waiting for its result', 'todo.waitingResult')
+    );
+    expect(
+      neoTodoStatusLine(todo({ ...blocked, blockedBy: 'needs-human' }), [], null).status
+    ).toContain('check_unmet');
+  });
+
   test('the pack line wins over the core state', () => {
     expect(neoTodoStatusLine(todo({ state: 'doing' }), [], packLine)).toEqual(packLine);
   });

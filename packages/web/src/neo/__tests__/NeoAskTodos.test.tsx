@@ -969,7 +969,7 @@ describe('NeoAskTodos', () => {
               state: 'blocked',
               blockedReason: 'CI 一直红',
               nextAction: '修好测试再推',
-              blockedBy: 'check',
+              blockedBy: 'failure',
               status: '卡住了：CI 一直红',
             }),
             todo('b', { state: 'blocked', blockedReason: '等人', status: '卡住了：等人' }),
@@ -987,6 +987,30 @@ describe('NeoAskTodos', () => {
     const rowB = app.container.querySelector('[data-ask-todo="b"]')!;
     expect(rowB.querySelector('[data-todo-next-action]')).toBeNull();
     expect(app.getByText('卡住了：等人').className).toContain('text-warning');
+  });
+
+  it('shows no next action for a todo waiting on its check', () => {
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          state: 'doing',
+          todos: [
+            todo('a', {
+              state: 'blocked',
+              blockedBy: 'check',
+              status: 'Waiting for its result',
+              statusCodes: [{ code: 'todo.waitingResult', params: {} }],
+              nextAction: 'fix a wrong check with neo.todo.edit',
+            }),
+          ],
+        })}
+        onAnswer={() => {}}
+      />
+    );
+    const row = app.container.querySelector('[data-ask-todo="a"]')!;
+    expect(row.querySelector('[data-todo-next-action]')).toBeNull();
+    expect(row.textContent).toContain('等结果');
+    expect(row.textContent).not.toContain('neo.todo.edit');
   });
 
   it('keeps a non-blocked status muted and shows no next action', () => {

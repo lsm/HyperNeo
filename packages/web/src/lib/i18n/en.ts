@@ -131,6 +131,7 @@ export const en = {
   'todo.notStarted': 'Not started',
   'todo.doing': 'In progress',
   'todo.blocked': 'Blocked: {reason}',
+  'todo.waitingResult': 'Waiting for its result',
   'todo.nextAction': 'Next: {action}',
   'todo.checking': 'Session reported; checking',
   'todo.awaitingNeo': 'Turn finished; waiting for Neo to check',

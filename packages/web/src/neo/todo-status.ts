@@ -16,11 +16,15 @@ export function neoQuestionText(question: Pick<NeoQuestionEntry, 'text' | 'textC
   return neoCodedText(question.text, question.textCodes);
 }
 
+export function neoTodoNextAction(
+  todo: Pick<NeoTodoEntry, 'state' | 'blockedBy' | 'nextAction'>
+): string | null {
+  return todo.state === 'blocked' && todo.blockedBy !== 'check' ? todo.nextAction : null;
+}
+
 export function neoTodoHasMore(todo: NeoTodoEntry): boolean {
   return (
-    neoTodoDetail(todo).length > 0 ||
-    (todo.artifacts?.length ?? 0) > 0 ||
-    (todo.state === 'blocked' && !!todo.nextAction)
+    neoTodoDetail(todo).length > 0 || (todo.artifacts?.length ?? 0) > 0 || !!neoTodoNextAction(todo)
   );
 }
 

@@ -78,7 +78,8 @@ try {
       blocked(store.getTodo(ids.pr)!, 'check_unmet:');
       blocked(store.getTodo(ids.evidence)!, 'check_unmet:');
       const read = JSON.stringify(await invoke('neo.ask.read', { askId: store.getTodo(ids.pr)!.askId }));
-      assert(read.includes('Blocked: check_unmet:'), read);
+      assert(read.includes('Waiting for its result'), read);
+      assert(!read.includes('Blocked: check_unmet:'), read);
       assert(!read.includes('Closed unverified'), read);
       assert(!JSON.stringify(await invoke('neo.snapshot', {})).includes('"doneCount":1'));
       if (phase === 'restart') {

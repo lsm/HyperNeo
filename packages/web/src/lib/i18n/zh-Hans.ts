@@ -131,6 +131,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'todo.notStarted': '没开始',
   'todo.doing': '在做',
   'todo.blocked': '卡住了：{reason}',
+  'todo.waitingResult': '等结果',
   'todo.nextAction': '下一步：{action}',
   'todo.checking': '会话回报了，正在检查',
   'todo.awaitingNeo': '这轮做完了，等 Neo 核对',
