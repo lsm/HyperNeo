@@ -166,9 +166,17 @@ export const SendWorkInputSchema = z.object({
   from: ForwardedOriginSchema,
 });
 export const WorkRefInputSchema = z.object({ ref: WorkRefSchema });
+const isCursorObject = (cursor: string) => {
+  try {
+    const parsed: unknown = JSON.parse(cursor);
+    return typeof parsed === 'object' && parsed !== null;
+  } catch {
+    return false;
+  }
+};
 const WorkTurnsInputSchema = z.object({
   ref: WorkRefSchema,
-  cursor: z.string().min(1).max(200).optional(),
+  cursor: z.string().min(1).max(200).refine(isCursorObject).optional(),
 });
 const WorkTurnsResultSchema = workResultSchema(z.object({ turns: z.array(WorkTurnFactSchema) }));
 const WithdrawWorkInputSchema = z.object({

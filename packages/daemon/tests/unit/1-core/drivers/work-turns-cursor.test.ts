@@ -27,6 +27,6 @@ describe('work.turns cursor', () => {
   });
 
   test.each(['not json', 'null', '7'])('%s is refused as invalid input', async (cursor) => {
-    expect(await read(cursor)).toMatchObject({ kind: 'invalid_input' });
+    expect(await read(cursor)).toMatchObject({ kind: 'failed', code: 'invalid_input' });
   });
 });
