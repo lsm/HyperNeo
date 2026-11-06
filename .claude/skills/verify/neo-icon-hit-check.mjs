@@ -22,7 +22,7 @@ export async function verifyIconHitAreas(page, fixture, { phase, evidence, touch
     await control.scrollIntoViewIfNeeded();
     const box = await control.boundingBox();
     assert(box);
-    if (phase === 'after' && (touch || ['message copy', 'reply'].includes(name))) assert(box.width >= 44 && box.height >= 44, JSON.stringify({ name, box }));
+    if (phase === 'after' && (touch || ['message copy', 'reply', 'retry', 'edit'].includes(name))) assert(box.width >= 44 && box.height >= 44, JSON.stringify({ name, box }));
     else assert(box.width < 44 && box.height < 44, JSON.stringify({ name, box }));
     observations.push({ name, width: box.width, height: box.height });
   };
@@ -63,6 +63,8 @@ export async function verifyIconHitAreas(page, fixture, { phase, evidence, touch
   const retry = page.getByRole('button', { name: 'Retry', exact: true });
   await retry.waitFor();
   await measure('retry', retry);
+  const edit = page.getByRole('button', { name: 'Edit', exact: true });
+  await measure('edit', edit);
   const prior = refusedSends;
   await use(retry);
   await page.waitForFunction(() => document.querySelector('button[aria-label="Retry"]') !== null);
@@ -70,5 +72,9 @@ export async function verifyIconHitAreas(page, fixture, { phase, evidence, touch
   await retry.scrollIntoViewIfNeeded();
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await page.screenshot({ path: `${evidence}/${phase}-${touch ? 'mobile' : 'desktop'}-retry.png`, scale: 'css' });
-  return { touch, observations, codeClipboardExact: true, retrySendsOnce: true, controlledTransportFailure: true };
+  await page.locator('[data-pending-ask]').filter({ has: retry }).screenshot({ path: `${evidence}/${phase}-${touch ? 'mobile' : 'desktop'}-failed-footer.png`, scale: 'css' });
+  await use(edit);
+  assert.equal(await page.getByRole('textbox', { name: 'Message Neo', exact: true }).inputValue(), 'Synthetic retry hit area');
+  assert.equal(refusedSends, prior + 1);
+  return { touch, observations, codeClipboardExact: true, retrySendsOnce: true, editRestoresWithoutSending: true, controlledTransportFailure: true };
 }
