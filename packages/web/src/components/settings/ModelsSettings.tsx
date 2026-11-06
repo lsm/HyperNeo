@@ -15,6 +15,7 @@ import {
   findSameModel,
   normalizeThinkingLevel,
   PROVIDER_THINKING_MODES,
+  THINKING_LEVEL_EFFORT,
   THINKING_LEVEL_LABELS,
   THINKING_OPTIONS,
   type FallbackModelEntry,
@@ -360,9 +361,9 @@ function OverrideEditorModal({
                 onRemove={handleRemoveChain}
                 controls={(entry, index) => (
                   <FallbackThinkingSelect
-                    entry={entry}
+                    saved={entry.thinkingLevel}
                     label={`Override fallback ${index + 1} thinking`}
-                    model={findSameModel(availableModels, entry)}
+                    capability={findSameModel(availableModels, entry) ?? entry}
                     disabled={false}
                     onChange={(level) =>
                       setChain(
@@ -500,26 +501,6 @@ function NeoModelSettings({
   const providers = [...groupedModels.entries()]
     .filter(([, models]) => models.some((model) => model.available !== false))
     .map(([id]) => PROVIDER_LABELS[id] || getProviderLabel(id));
-  function thinking(
-    entry: FallbackModelEntry,
-    label: string,
-    change: (thinkingLevel: ThinkingLevel) => void
-  ) {
-    const options = THINKING_OPTIONS;
-    return (
-      <select
-        aria-label={label}
-        class="rounded border border-line bg-surface px-2 py-1 text-xs text-fg"
-        value={entry.thinkingLevel ?? 'off'}
-        disabled={busy || !options.length}
-        onChange={(event) => change(event.currentTarget.value as ThinkingLevel)}
-      >
-        {(options.length ? options : [{ value: 'off', label: 'Off' }]).map((option) => (
-          <option value={option.value}>{option.label}</option>
-        ))}
-      </select>
-    );
-  }
   async function save() {
     if (!draft || busy) return;
     if (
@@ -617,9 +598,18 @@ function NeoModelSettings({
                 <span class="whitespace-nowrap">Make primary</span>
               </Button>
             )}
-            {thinking(entry, `Neo model ${index + 1} thinking`, (thinkingLevel) =>
-              setList(list.map((item, i) => (i === index ? { ...item, thinkingLevel } : item)))
-            )}
+            <FallbackThinkingSelect
+              saved={entry.thinkingLevel ?? 'off'}
+              label={`Neo model ${index + 1} thinking`}
+              capability={loading ? null : (findSameModel(availableModels, entry) ?? entry)}
+              disabled={busy}
+              inherits={false}
+              onChange={(level = 'off') =>
+                setList(
+                  list.map((item, i) => (i === index ? { ...item, thinkingLevel: level } : item))
+                )
+              }
+            />
             <input
               type="number"
               aria-label={`Neo model ${index + 1} auto-compact percentage`}
@@ -680,12 +670,19 @@ function NeoModelSettings({
   );
 }
 
-function thinkingChoices(model: Pick<ModelInfo, 'provider' | 'thinkingModes'> | null | undefined) {
+type ThinkingCapability = Pick<ModelInfo, 'provider' | 'thinkingModes' | 'effortLevels'>;
+
+function thinkingChoices(model: ThinkingCapability | null | undefined) {
   const mode =
     model?.thinkingModes ??
     PROVIDER_THINKING_MODES[model?.provider as keyof typeof PROVIDER_THINKING_MODES];
+  const efforts = model?.effortLevels;
   return {
-    options: mode === 'off' ? THINKING_OPTIONS.slice(0, 1) : THINKING_OPTIONS,
+    options: THINKING_OPTIONS.filter(({ value }) => {
+      const effort = THINKING_LEVEL_EFFORT[value];
+      if (!effort) return true;
+      return mode !== 'off' && (!efforts?.length || efforts.includes(effort));
+    }),
     unknown: Boolean(model && !mode),
   };
 }
@@ -696,20 +693,21 @@ function withThinking(entry: FallbackModelEntry, level: ThinkingLevel | undefine
 }
 
 function FallbackThinkingSelect({
-  entry,
+  saved,
   label,
-  model,
+  capability,
   disabled,
+  inherits = true,
   onChange,
 }: {
-  entry: FallbackModelEntry;
+  saved: ThinkingLevel | undefined;
   label: string;
-  model: ModelInfo | undefined;
+  capability: ThinkingCapability | null;
   disabled: boolean;
+  inherits?: boolean;
   onChange: (level: ThinkingLevel | undefined) => void;
 }) {
-  const saved = entry.thinkingLevel;
-  const { options, unknown } = thinkingChoices(model ?? entry);
+  const { options, unknown } = thinkingChoices(capability);
   const unsupported = saved !== undefined && !options.some((option) => option.value === saved);
   return (
     <>
@@ -722,7 +720,7 @@ function FallbackThinkingSelect({
           onChange((event.currentTarget.value || undefined) as ThinkingLevel | undefined)
         }
       >
-        <option value="">Use default</option>
+        {inherits && <option value="">Use default</option>}
         {options.map((option) => (
           <option value={option.value}>{option.label}</option>
         ))}
@@ -1188,9 +1186,9 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
               onRemove={handleRemove}
               controls={(entry, index) => (
                 <FallbackThinkingSelect
-                  entry={entry}
+                  saved={entry.thinkingLevel}
                   label={`Fallback ${index + 1} thinking`}
-                  model={findSameModel(availableModels, entry)}
+                  capability={findSameModel(availableModels, entry) ?? entry}
                   disabled={isUpdating}
                   onChange={(level) => handleThinking(index, level)}
                 />
