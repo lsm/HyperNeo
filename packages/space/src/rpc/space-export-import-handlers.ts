@@ -37,11 +37,7 @@ import {
   publishUnifiedAgentUpdated,
 } from '../../../daemon/src/lib/agents/unified-agent-events.ts';
 import { isRunnableUnifiedAgent } from '../../../daemon/src/lib/agents/worker-long-horizon-mapper.ts';
-import {
-  exportBundle,
-  normalizeOverride,
-  validateExportBundle,
-} from '../../../daemon/src/lib/space/export-format.ts';
+import { exportBundle, normalizeOverride, validateExportBundle } from '../export-format.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../../../daemon/src/lib/workflows/workflow-manager.ts';
 import {

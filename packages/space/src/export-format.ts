@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { validateGlobPattern } from '../external-events/topic-validator.ts';
+import { validateGlobPattern } from '../../daemon/src/lib/external-events/topic-validator.ts';
 import { MAX_NODE_HANDOFF_TRANSITIONS, THINKING_LEVELS, modelPoolEntryKey } from '@hyperneo/shared';
 import type {
   SpaceLongHorizonAgent,
@@ -12,8 +12,8 @@ import type {
   ExportedHandoffTransition,
   SpaceExportBundle,
 } from '@hyperneo/shared';
-import { validateSlug } from '../agents/slug.ts';
-import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../workflows/agent-slot-limits.ts';
+import { validateSlug } from '../../daemon/src/lib/agents/slug.ts';
+import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../../daemon/src/lib/workflows/agent-slot-limits.ts';
 
 const _workflowConditionSchema = z
   .object({

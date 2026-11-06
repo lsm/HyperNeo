@@ -9,7 +9,7 @@ import {
   type ImportPreviewResult,
   setupSpaceExportImportHandlers,
 } from '../../../../../space/src/rpc/space-export-import-handlers';
-import { exportBundle, validateExportBundle } from '../../../../src/lib/space/export-format';
+import { exportBundle, validateExportBundle } from '../../../../../space/src/export-format';
 import type { SpaceManager } from '../../../../../space/src/managers/space-manager';
 import {
   createSpaceAgentLookup,

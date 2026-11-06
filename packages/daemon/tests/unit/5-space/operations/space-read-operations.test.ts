@@ -5,7 +5,7 @@ import {
   createOperationRegistry,
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
-import { createSpaceReadOperations } from '../../../../src/lib/space/space-read-operations.ts';
+import { createSpaceReadOperations } from '../../../../../space/src/space-read-operations.ts';
 import type { SpaceFamilyContext } from '../../../../../space/src/rpc/family-operations/space-context.ts';
 import { registerSpaceOperations } from '../../../../../space/src/rpc/family-operations/spaces.ts';
 

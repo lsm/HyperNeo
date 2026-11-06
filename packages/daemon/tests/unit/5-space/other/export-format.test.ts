@@ -7,7 +7,7 @@ import {
   validateExportedWorkflow,
   validateExportBundle,
   normalizeOverride,
-} from '../../../../src/lib/space/export-format.ts';
+} from '../../../../../space/src/export-format.ts';
 import type { SpaceLongHorizonAgent, SpaceWorkflow } from '@hyperneo/shared';
 import { MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
 

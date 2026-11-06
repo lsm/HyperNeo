@@ -26,10 +26,7 @@ import type { SpaceWorkflowRunRepository } from '../../../daemon/src/storage/rep
 import type { SessionManager } from '../../../daemon/src/lib/session-manager.ts';
 import type { SpaceRuntimeService } from '../runtime/space-runtime-service.ts';
 import { runSpaceDeletion, type DeleteSpaceResult } from '../managers/delete-space-pipeline.ts';
-import {
-  createSpace,
-  type CreateSpaceDeps,
-} from '../../../daemon/src/lib/space/create-space-pipeline.ts';
+import { createSpace, type CreateSpaceDeps } from '../create-space-pipeline.ts';
 import { seedBuiltInWorkflows } from '../../../daemon/src/lib/workflows/seed-built-in-workflows.ts';
 import { Logger } from '../../../daemon/src/lib/logger.ts';
 import { assertNoToolSelectionDefaults } from '../../../daemon/src/lib/tools/session-tool-choice.ts';
