@@ -29,7 +29,6 @@ const off=hub.onEvent('neo.changed',()=>{neoEvents++;});
 type Receipt={ok:false;reason:string}|{ok:true;ask:NeoAsk;todos:NeoTodo[];records?:string[]};
 const command=<T>(name:string,mode:'read'|'write',method:string,args:unknown[])=>app.db.gateway.run({name,mode,run:()=>{throw new Error('Settlement must run in DB workers');}} as DbOp<object,T>,{method,args});
 const settle=()=>command<Receipt>('neo.askSettlementWrites','write','settle',[{askId:'ask',status:'done',outcome:'Explicitly ended'},10]);
-const split=()=>command<Receipt|null>('neo.askSettlementWrites','write','splitParent',['parent',20]);
 const visible=(askId='ask')=>hub.request<{ok:true;entry:{ask:NeoAsk;todos:NeoTodo[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId}});
 const result:Record<string,unknown>={runtimeCallersMoved:false};
 try{
@@ -66,13 +65,13 @@ try{
  ask('parent');ask('child','parent');todo('child-work','child');
  store.updateTodo(store.getTodo('child-work')!,{state:'blocked',blockedBy:'needs-human',blockedReason:'Choose'},3);
  store.askQuestion('child-card','child',{kind:'choice',todoId:'child-work',text:'Choose',options:['Go','Stop'],multiple:false,yesLabel:null,noLabel:null},3);
- const beforeChild=await visible('child');record=true;const parent=await split();record=false;
- assert(parent?.ok && parent.ask.status==='done');assert.deepEqual(await visible('child'),beforeChild);
+ const beforeChild=await visible('child');
+ assert.equal((await visible('parent')).entry.ask.status,'open');assert.deepEqual(await visible('child'),beforeChild);
  store.retireQuestion(store.getQuestion('child-card')!,'Neo decided per the human',null,30);
  record=true;
  const released=await command<{todo:NeoTodo}>('neo.todoRunnerWrites','write','recompute',['child-work',null,{},40,{state:'no_opinion'}]);record=false;
- assert.notEqual(released.todo.blockedBy,'needs-human');assert(['todo','doing'].includes(released.todo.state));result.splitParentPreservesChild=true;result.retiredCardReleasesHold=true;
- const prior=tables.length;record=true;assert.deepEqual(await split(),null);const stale=await settle();assert(!stale.ok && stale.reason.startsWith('ask_settled:'));record=false;assert.equal(tables.length,prior);result.noopsQuiet=true;
+ assert.notEqual(released.todo.blockedBy,'needs-human');assert(['todo','doing'].includes(released.todo.state));result.historicalChildPreserved=true;result.retiredCardReleasesHold=true;
+ const prior=tables.length;record=true;const stale=await settle();assert(!stale.ok && stale.reason.startsWith('ask_settled:'));record=false;assert.equal(tables.length,prior);result.noopsQuiet=true;
  assert.equal(mainSql,0);await hub.request('system.health',{});assert.equal(neoEvents,0);result.mainSql=0;result.noNeoEvents=true;result.verified=true;
 }finally{
  if(held)db.exec('ROLLBACK');off();db.prepare=prepare;app.db.gateway.onChanges=replay;

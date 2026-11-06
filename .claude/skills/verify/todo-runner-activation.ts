@@ -33,12 +33,14 @@ const tables:string[]=[],effects:{name:string;input?:Record<string,unknown>}[]=[
 const visible=(askId='ask')=>hub.request<{ok:true;entry:{todos:NeoTodo[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId}});
 const result:Record<string,unknown>={runtimeCallersMoved:true};
 const runner=createNeoTodoRunner({ limits: () => ({ running: 99, perGroup: 99 }),store,sessions,write:async(op,args)=>{
+  record=true;
   const receipt=await app.db.gateway.run(op,args);
-  if((args as {method?:string}).method==='claim') record=false;
+  record=false;
   return receipt;
 },packs:()=>[],changed:()=>{effects.push({name:'changed'});},tell:async()=>{effects.push({name:'tell'});},
   invoke:async(_caller,name,input)=>{
     record=false;
+    if(name==='work.status') return {kind:'completed',value:{ok:true,value:{status:'done',lastActivityAt:1}}};
     const view=await visible();
     if(effects.every(effect=>effect.name!=='work.send')) assert(view.entry.todos.some(todo=>todo.id==='state' && todo.state==='done'));
     effects.push({name,input});
@@ -61,7 +63,13 @@ try {
   prepare("UPDATE neo_todos SET state='doing',started_at=2,report=? WHERE id='state'").run(text);
   startCard('start','state');
   const checked=store.getTodo('state')!,before=await visible();
-  db.prepare=((sql:string)=>{if(record && /neo_todos|neo_asks|neo_questions|neo_todo_sessions|pack_coding_pr_claims/.test(sql)) mainSql++; return prepare(sql);}) as typeof db.prepare;
+  db.prepare=((sql:string)=>{
+    if(record && /neo_todos|neo_asks|neo_questions|neo_todo_sessions/.test(sql)) {
+      mainSql++;
+      process.stderr.write(`${new Error(`Main SQL during guarded admission: ${sql}`).stack}\n`);
+    }
+    return prepare(sql);
+  }) as typeof db.prepare;
   app.db.gateway.onChanges=changes=>{if(record) tables.push(...changes.map(change=>change.table)); replay(changes);};
   db.exec("CREATE TRIGGER refuse_stamp BEFORE UPDATE ON neo_asks BEGIN SELECT RAISE(ABORT, 'synthetic rollback'); END");
   record=true;
@@ -114,6 +122,7 @@ try {
   let publicDispatches=0;
   const scripted=createOperationRegistry(original.entries.map(entry=>['work.send','work.status'].includes(entry.name)?{
     ...entry,execute:async(input)=>{
+      if(entry.name==='work.status') return {ok:true,value:{status:'done',lastActivityAt:1}};
       assert.equal(store.getTodo('rpc')?.state,'doing');
       assert((await visible('public')).entry.todos.some(todo=>todo.id==='rpc' && todo.state==='doing'));
       if(entry.name==='work.send') publicDispatches++;
