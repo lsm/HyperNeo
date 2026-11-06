@@ -1,6 +1,6 @@
 import type { NodeExecution, SpaceTask, SpaceWorkflowRun } from '@hyperneo/shared';
-import { DEFAULT_EXTERNAL_EVENT_QUEUE_TTL_MS } from './event-delivery-rules.ts';
-import type { ExternalEventPublishedPayload } from './external-event-service.ts';
+import { DEFAULT_EXTERNAL_EVENT_QUEUE_TTL_MS } from '../../external-events/event-delivery-rules.ts';
+import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service.ts';
 
 export interface WorkflowTargetKey {
   workflowRunId: string;

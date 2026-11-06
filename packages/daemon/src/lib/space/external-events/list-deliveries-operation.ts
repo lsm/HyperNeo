@@ -1,7 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../../operations/registry.ts';
-import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
+import type { ExternalEventStore } from './external-event-store.ts';
 import { ExternalEventStateSchema } from '../../external-events/event-schema.ts';
 import {
   admitEventCallerSpace,

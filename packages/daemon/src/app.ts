@@ -71,11 +71,11 @@ import { createWebSocketHandlers } from './routes/setup-websocket.ts';
 import { createGitHubService, type GitHubService } from './lib/github/github-service.ts';
 import {
   ExternalEventService,
-  type ExternalEventStore,
   routeExternalEventPublisher,
   SessionExternalEventStore,
   ingestSessionEvent,
 } from './lib/external-events/index.ts';
+import type { ExternalEventStore } from './lib/space/external-events/external-event-store.ts';
 import { mailSessionEvent } from './lib/external-events/session-event-delivery.ts';
 import { readLatestSessionPrState } from './lib/external-events/session-external-event-store.ts';
 import { replaySessionTerminals } from './lib/external-events/session-terminal-replay.ts';
