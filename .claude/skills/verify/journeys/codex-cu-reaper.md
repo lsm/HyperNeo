@@ -1,12 +1,18 @@
 # Codex Computer Use display-sleep assertion fallback
 
-This macOS-only driver checker automatically attempts one SIGTERM per observed
+This macOS-only driver checker automatically attempts one SIGTERM per checker per observed
 PID/birth after the conservative leak predicate and final recheck pass. No
 setting is needed to enable it. Explicit `codexCuAutoReap: false` through the
 existing settings.global.update RPC opts out into an OS notification and log
 with the single-PID action `kill -TERM <pid>`. Omitted or true means automatic.
 It checks every 60 seconds, without keeping the process alive, and closes with
 the driver's cleanup. No live-daemon restart is part of this journey.
+
+Deduplication is local to each checker. Same-user daemons observing the same
+helper can each notify once or race SIGTERM attempts after their final rechecks.
+Each checker records a failed attempt once. This slice has no machine-wide
+action lock. Automatic kill-action logs record attempts only after the final
+recheck passes, immediately before signalling, and never imply successful exit.
 
 Use the shared SKILL.md resource guard and synthetic-home wrapper:
 
@@ -29,6 +35,8 @@ synthetic service PID. Young assertions, recent Created records and command
 failures must issue no signal; a failed signal is attempted once, without
 escalation. Concurrent ticks share one check, close clears the timer, and
 non-macOS setup creates no timer. Keep observed.json and proof.log.
+Two independent checker fixtures must each notify once. A young assertion on
+the final read must produce neither a signal nor an automatic kill-action log.
 
 Run the focused codex-cu-reaper unit suite too: five-minute boundary, ordinary
 0–60-second interactions, 11–20-hour leaks, multiple assertions, recent

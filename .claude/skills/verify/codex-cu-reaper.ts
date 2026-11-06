@@ -124,6 +124,15 @@ try {
     'A cancelled final recheck must not log a kill attempt');
   await closeCancelled();
   becomeYoungAfterRead = young = false;
+  const beforeIndependentNotices = notices.length, beforeIndependentSignals = signals.length;
+  for (let instance = 0; instance < 2; instance++) {
+    const closeIndependent = startCuChecker(() => false); closeAll.push(closeIndependent);
+    const independentTimer = timers.at(-1)!;
+    independentTimer.callback(); await settle(); independentTimer.callback(); await settle();
+    await closeIndependent();
+  }
+  assert.equal(notices.length - beforeIndependentNotices, 2, 'Deduplication belongs to each checker');
+  assert.equal(signals.length, beforeIndependentSignals);
   let release!: () => void;
   hold = new Promise<void>((resolve) => { release = resolve; });
   const end = startCuChecker(() => false); closeAll.push(end);

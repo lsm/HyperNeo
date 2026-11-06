@@ -101,7 +101,6 @@ export function createCuChecker(effects: Effects) {
           key = `${candidate.pid}:${candidate.birth}:${auto}`;
         if (closed || seen.has(key)) continue;
         const text = `Computer Use display-sleep assertion leak; action: kill -TERM ${candidate.pid} (SkyComputerUseService only).`;
-        log.warn(text, { automatic: auto });
         if (auto) {
           if (
             !decideCuReap(await effects.read()).some(
@@ -112,9 +111,11 @@ export function createCuChecker(effects: Effects) {
           )
             continue;
           seen.add(key);
+          log.warn(text, { automatic: true });
           effects.signal(candidate.pid);
         } else {
           seen.add(key);
+          log.warn(text, { automatic: false });
           await effects.notify(text);
         }
       }
