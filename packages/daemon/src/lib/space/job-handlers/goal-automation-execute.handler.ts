@@ -23,23 +23,26 @@ export type {
   GoalAutomationExecuteResult,
 } from './goal-automation-execute-admission.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { uniqueJobMatchPayload } from '../space/goals/automation-job-payload.ts';
-import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import { uniqueJobMatchPayload } from '../goals/automation-job-payload.ts';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import type { EvidenceRef, SpaceTask } from '@hyperneo/shared';
-import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
-import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
-import type { GoalAutomationCursorRepository } from '../../storage/repositories/goal-automation-cursor-repository.ts';
-import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
-import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
-import type { EvolutionEpisodeService } from '../evolution/episode-service.ts';
-import { readAutomationPolicyForScope } from '../space/goals/automation-policy.ts';
+import type {
+  Job,
+  JobQueueRepository,
+} from '../../../storage/repositories/job-queue-repository.ts';
+import type { EvolutionRepository } from '../../../storage/repositories/evolution-repository.ts';
+import type { GoalAutomationCursorRepository } from '../../../storage/repositories/goal-automation-cursor-repository.ts';
+import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import type { EvolutionEpisodeService } from '../../evolution/episode-service.ts';
+import { readAutomationPolicyForScope } from '../goals/automation-policy.ts';
 import {
   maxCompletedTaskTimestamp,
   maxEvidenceCursor,
   selectEvidenceAfterCursor,
-} from '../space/goals/automation-service.ts';
-import { GOAL_AUTOMATION_EXECUTE } from '../job-queue-constants.ts';
-import { Logger } from '../logger.ts';
+} from '../goals/automation-service.ts';
+import { GOAL_AUTOMATION_EXECUTE } from '../../job-queue-constants.ts';
+import { Logger } from '../../logger.ts';
 
 const log = new Logger('goal-automation-execute');
 const MAX_ACTIVE_REVIEW_REQUEUES = 60;
