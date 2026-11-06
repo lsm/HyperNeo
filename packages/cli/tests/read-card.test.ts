@@ -39,7 +39,9 @@ describe('hyperneo read', () => {
   test('reads without a session identity using only the agent credential', async () => {
     const { dir, requests, credential, base } = await fixture();
     const output = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
-    expect(await runSessionCommand(['read', `${base}/ask/card.md`], { HYPERNEO_DATA_DIR: dir })).toBe(0);
+    expect(
+      await runSessionCommand(['read', `${base}/ask/card.md`], { HYPERNEO_DATA_DIR: dir })
+    ).toBe(0);
     expect(output).toHaveBeenCalledWith('# A card\n\nStatus: doing\n');
     expect(requests).toEqual([{ path: '/ask/card.md', auth: `Bearer ${credential}` }]);
   });
@@ -47,19 +49,40 @@ describe('hyperneo read', () => {
   test('never follows a redirect with the credential', async () => {
     const { dir, requests, base } = await fixture();
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(await runSessionCommand(['read', `${base}/ask/redirect.md`], { HYPERNEO_DATA_DIR: dir })).toBe(1);
+    expect(
+      await runSessionCommand(['read', `${base}/ask/redirect.md`], { HYPERNEO_DATA_DIR: dir })
+    ).toBe(1);
     expect(requests.map((req) => req.path)).toEqual(['/ask/redirect.md']);
+  });
+
+  test('refuses sending its credential to a different origin than its daemon', async () => {
+    const owner = await fixture();
+    const other = await fixture();
+    await writeFile(join(owner.dir, 'runtime.json'), JSON.stringify({ url: owner.base }));
+    vi.spyOn(process.stdout, 'write').mockReturnValue(true);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const code = await runSessionCommand(['read', `${other.base}/ask/card.md`], {
+      HYPERNEO_DATA_DIR: owner.dir,
+    });
+    expect({ code, requests: other.requests }).toEqual({ code: 1, requests: [] });
   });
 
   test('missing agent credentials never fall back to the human credential', async () => {
     const { dir, requests, base } = await fixture();
     await rm(join(dir, 'agent-read.credential'));
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(await runSessionCommand(['read', `${base}/ask/card.md`], { HYPERNEO_DATA_DIR: dir })).toBe(1);
+    expect(
+      await runSessionCommand(['read', `${base}/ask/card.md`], { HYPERNEO_DATA_DIR: dir })
+    ).toBe(1);
     expect(requests).toEqual([]);
   });
 
-  test.each(['http://localhost/ws', 'file:///ask/card.md', 'http://user:secret@localhost/ask/card.md', 'http://localhost/ask/card.md?key=secret'])('refuses an invalid card link %s', async (link) => {
+  test.each([
+    'http://localhost/ws',
+    'file:///ask/card.md',
+    'http://user:secret@localhost/ask/card.md',
+    'http://localhost/ask/card.md?key=secret',
+  ])('refuses an invalid card link %s', async (link) => {
     const fetch = vi.spyOn(globalThis, 'fetch');
     vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await runSessionCommand(['read', link], {})).toBe(1);

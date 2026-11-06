@@ -9,6 +9,8 @@ import { enrollLocalDevice } from '../../storage/repositories/device-pairing-rep
 import { checkWindowsCredential } from './local-credential-permissions.ts';
 
 export const localCredentialPath = () => join(getDataDir(), 'local-rpc.credential');
+export const agentReadCredentialPath = (dataDir = getDataDir()) =>
+  join(dataDir, 'agent-read.credential');
 
 export function readLocalCredential(path = localCredentialPath()): string {
   if (lstatSync(path).isSymbolicLink()) throw new Error('Local credential cannot be a symlink.');
@@ -42,9 +44,13 @@ export function createLocalSocket(url: string, path = localCredentialPath()): We
   }) as unknown as WebSocket;
 }
 
-export async function ensureLocalCredential(db: DbGateway): Promise<void> {
+export async function ensureLocalCredential(
+  db: DbGateway,
+  kind: 'human' | 'agent' = 'human'
+): Promise<void> {
   await mkdir(getDataDir(), { recursive: true, mode: 0o700 });
-  const temporary = `${localCredentialPath()}.${randomBytes(8).toString('hex')}.tmp`;
+  const path = kind === 'agent' ? agentReadCredentialPath() : localCredentialPath();
+  const temporary = `${path}.${randomBytes(8).toString('hex')}.tmp`;
   try {
     const file = await open(temporary, 'wx', 0o600);
     try {
@@ -53,11 +59,11 @@ export async function ensureLocalCredential(db: DbGateway): Promise<void> {
     } finally {
       await file.close();
     }
-    await link(temporary, localCredentialPath());
+    await link(temporary, path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
   } finally {
     await rm(temporary, { force: true });
   }
-  await db.run(enrollLocalDevice, { credential: await readLocalCredential(), now: Date.now() });
+  await db.run(enrollLocalDevice, { credential: readLocalCredential(path), now: Date.now(), kind });
 }

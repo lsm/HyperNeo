@@ -6621,7 +6621,8 @@
                       "enum": [
                         "human",
                         "relay",
-                        "daemon"
+                        "daemon",
+                        "agent"
                       ],
                       "type": "string"
                     },
@@ -6753,7 +6754,8 @@
             "enum": [
               "human",
               "relay",
-              "daemon"
+              "daemon",
+              "agent"
             ],
             "type": "string"
           },
@@ -6857,7 +6859,8 @@
                       "enum": [
                         "human",
                         "relay",
-                        "daemon"
+                        "daemon",
+                        "agent"
                       ],
                       "type": "string"
                     },

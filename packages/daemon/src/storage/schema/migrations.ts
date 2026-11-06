@@ -1,3 +1,4 @@
+import { runMigration477 } from './m477-agent-devices.ts';
 import { runMigration476 } from './m476-neo-todo-approved-at.ts';
 import { runMigration477 } from './m477-work-turns.ts';
 import { runMigration475 } from './m475-work-delivery-optional-todo.ts';

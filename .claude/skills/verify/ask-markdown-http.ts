@@ -39,7 +39,8 @@ async function checkHttp(base: string, mode: string, credential: string) {
   receipts.push(denied);
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(receipts, null, 2));
   assert.equal(denied.status, 401);
-  assert.equal(denied.body, 'Device pairing required');
+  assert(denied.body.startsWith('Device pairing required'));
+  assert(denied.body.includes('hyperneo read'));
   const headers = { authorization: `Bearer ${credential}` };
   const response = await fetch(`${base}/ask/synthetic.md`, { headers });
   assert.equal(response.status, 200);
@@ -57,6 +58,20 @@ async function checkHttp(base: string, mode: string, credential: string) {
   const missing = await fetch(`${base}/ask/missing.md`, { headers });
   assert.equal(missing.status, 404);
   assert.equal(missing.headers.get('cache-control'), 'no-store');
+  const agent = readLocalCredential(join(run, 'data/agent-read.credential'));
+  assert.notEqual(agent, credential);
+  const agentHeaders = { authorization: `Bearer ${agent}` };
+  const agentCard = await fetch(`${base}/ask/synthetic.md`, { headers: agentHeaders });
+  assert.equal(agentCard.status, 200);
+  assert.equal(await agentCard.text(), markdown);
+  for (const [path, method] of [
+    ['/', 'GET'], ['/ws', 'GET'], ['/pair', 'POST'], ['/neo-peer/pair', 'POST'],
+    ['/neo-peer/message', 'POST'], ['/hello', 'GET'], ['/assets/main.js', 'GET'],
+    ['/ask/synthetic.md', 'POST'], ['/ask/synthetic.md', 'HEAD'], ['/ask/synthetic.md', 'OPTIONS'],
+  ]) {
+    assert.equal((await fetch(`${base}${path}`, { method, headers: agentHeaders })).status, 401, `${mode} must refuse agent ${method} ${path}`);
+  }
+  receipts.push({ mode, agentCard: 200, forbiddenRoutes: 10 });
   const ws = await fetch(`${base}/ws`, { headers });
   assert.equal(ws.status, 204);
   writeFileSync(join(run, `evidence/${mode}.md`), markdown);

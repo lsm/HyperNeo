@@ -20,6 +20,7 @@ import { createAskMarkdownHandler } from './lib/neo/ask-markdown.ts';
 import { createRequestGuard } from './lib/pairing/origin-host.ts';
 import { createUpgradeAuthenticator, type UpgradeIdentity } from './lib/pairing/upgrade-auth.ts';
 import { ensureLocalCredential } from './lib/pairing/local-credential.ts';
+import { createAgentReadGuard } from './lib/pairing/agent-read.ts';
 import { daemonPairingLimiter } from './lib/pairing/pairing-limiter.ts';
 import { DevicePairingRepository } from './storage/repositories/device-pairing-repository.ts';
 import { Database } from './storage/database.ts';
@@ -359,7 +360,7 @@ export interface DaemonAppContext {
     req: Request,
     remoteAddress: string | null
   ) => Promise<UpgradeIdentity | null>;
-  guardRequest: (req: Request) => Response | null;
+  guardRequest: (req: Request) => Promise<Response | null>;
   db: Database;
   messageHub: MessageHub;
   sessionManager: SessionManager;
@@ -1200,11 +1201,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     });
     const handleAskMarkdown = createAskMarkdownHandler(
       () => sessionManager.getOperationRegistry(),
-      authenticateUpgrade
+      createUpgradeAuthenticator({ db: () => db.gateway, now: Date.now, agentRead: true })
     );
-    if (process.env.NODE_ENV !== 'test' || process.env.HYPERNEO_DATA_DIR)
+    if (process.env.NODE_ENV !== 'test' || process.env.HYPERNEO_DATA_DIR) {
       await ensureLocalCredential(db.gateway);
-    const guardRequest = createRequestGuard({
+      await ensureLocalCredential(db.gateway, 'agent');
+    }
+    const guardOrigin = createRequestGuard({
       db: () => db.gateway,
       allowedHosts: () => settingsManager.getGlobalSettings().allowedHosts ?? [],
       exempt: (req) =>
@@ -1213,6 +1216,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           .some((route) => route.path === new URL(req.url).pathname),
       now: Date.now,
     });
+    const guardAgent = createAgentReadGuard(() => db.gateway);
+    const guardRequest = async (req: Request) => guardOrigin(req) ?? (await guardAgent(req));
 
     let server: ServerHandle | undefined;
     let removeRuntimeDescriptorFile = () => {};
@@ -1267,7 +1272,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
       async fetch(req, upgrade, client) {
         const url = new URL(req.url);
-        const refused = guardRequest(req);
+        const refused = await guardRequest(req);
         if (refused) return refused;
 
         if (req.method === 'OPTIONS') {

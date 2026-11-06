@@ -10,7 +10,8 @@ TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evid
 The helper seeds one synthetic card with a todo, an open choice question, an
 answered question and an outcome. It reads the public entry through the real
 `neo.ask.read` WebSocket operation and compares its fields with the HTTP Markdown.
-An unpaired GET must return 401 with `Device pairing required`. Paired bearer
+An unpaired GET must return 401 with `Device pairing required` and the
+`hyperneo read <link>` hint. Paired bearer
 and cookie requests return Markdown with `Cache-Control: no-store`. Pairing uses
 the production POST /pair endpoint and its browser cookie response. An unknown
 card returns 404. The existing ordinary GET /ws remains authenticated with 204.
@@ -24,6 +25,12 @@ module in the owning checkout and removes it afterward. It refuses to overwrite
 an existing generated module. The real embedded HTTP handler runs unchanged.
 The development entrypoint runs its actual Vite server. All child daemons and
 Vite servers must stop before the wrapper saves evidence and removes the data.
+
+Each public entrypoint also accepts its startup-created agent credential on the
+card GET and rejects ten other route/method combinations, including /ws, public
+assets, peer routes and POST/HEAD/OPTIONS on the read page. The credential is
+different from the human one. The agent-read-pages journey additionally verifies
+the real CLI, human-approved remote pairing and persistent revocation.
 
 Inspect `observed.json`, `rpc-card.json`, the four Markdown files and the CLI
 logs. The final receipt must say `passed` and `allServersStopped`. The baseline

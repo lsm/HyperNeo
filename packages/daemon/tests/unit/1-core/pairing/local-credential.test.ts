@@ -24,7 +24,9 @@ describe('local owner credential', () => {
       await gateway.run(enrollLocalDevice, { credential: 'h'.repeat(43), now: 1 });
       await gateway.run(enrollLocalDevice, { credential: 'a'.repeat(43), now: 1, kind: 'agent' });
       expect(new DevicePairingRepository(db).countDevices()).toEqual({ all: 0, humans: 0 });
-    } finally { db.close(); }
+    } finally {
+      db.close();
+    }
   });
   let dir: string;
   let file: string;

@@ -65,8 +65,13 @@ describe('device pairing', () => {
   test('an agent code cannot use the first-human pairing bootstrap', async () => {
     const { db, call } = setup();
     try {
-      expect(await call('device.pair.create', { kind: 'agent' }, door)).toMatchObject({ ok: false, reason: NO_HUMAN_DEVICE });
-    } finally { db.close(); }
+      expect(await call('device.pair.create', { kind: 'agent' }, door)).toMatchObject({
+        ok: false,
+        reason: NO_HUMAN_DEVICE,
+      });
+    } finally {
+      db.close();
+    }
   });
   test('remote agent pairing waits for a human and cannot issue or approve codes', async () => {
     const { db, call, pair, repo } = setup();

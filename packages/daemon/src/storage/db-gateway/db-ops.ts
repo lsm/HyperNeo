@@ -68,6 +68,7 @@ import { codingTodoPrWrites } from '../../lib/neo/packs/coding/todo-prs.ts';
 import { codingDeliveryWrites } from '../../lib/neo/packs/coding/delivery-facts.ts';
 import {
   enrollLocalDevice,
+  deviceKindByCredential,
   recordUnpaired,
   recordWouldRefuse,
   touchDevice,
@@ -230,6 +231,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     ...SDK_MESSAGE_TRANSACTIONS,
     recordWouldRefuse,
     enrollLocalDevice,
+    deviceKindByCredential,
     touchDevice,
     recordUnpaired,
     jobQueueWrites,
