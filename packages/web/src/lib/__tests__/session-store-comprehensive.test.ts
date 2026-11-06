@@ -1168,6 +1168,24 @@ describe('SessionStore - Comprehensive Coverage', () => {
       expect(ids).not.toContain(`row-${100 + LIMIT - 1}`);
     });
 
+    it('removes a filtered oldest row when an older row refills the window', async () => {
+      const hub = installLiveQueryHubCapturing();
+      await sessionStore.select('session-1');
+      const subscriptionId = hub.subscriptionId!;
+      hub.fire('liveQuery.snapshot', { subscriptionId, rows: windowRows(100, LIMIT) });
+      sessionStore.prependMessages(windowRows(50, LIMIT));
+
+      hub.fire('liveQuery.delta', {
+        subscriptionId,
+        added: [...windowRows(99, 1), ...windowRows(100 + LIMIT, 1)],
+        removed: windowRows(100, 2),
+        rowCount: LIMIT,
+      });
+
+      const ids = sessionStore.sdkMessages.value.map((row) => (row as { id?: string }).id);
+      expect(ids).not.toContain('row-100');
+    });
+
     it('stays false after history is exhausted until a row really slides out', async () => {
       const hub = installLiveQueryHubCapturing();
       await sessionStore.select('session-1');
