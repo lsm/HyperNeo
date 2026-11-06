@@ -88,6 +88,7 @@ describe('NeoSendFlight', () => {
     expect(pending.style.visibility).toBe('hidden');
     pending.remove();
     const accepted = row('accepted');
+    expect(getComputedStyle(accepted).visibility).toBe('hidden');
     tick(300);
     expect(pending.style.height).toBe('150px');
     expect(pending.style.visibility).toBe('');
