@@ -79,3 +79,17 @@ then starts the actual daemon. Agent migration 479 must run separately. The real
 CLI must read the card, the existing human must still read it, and both human
 credential hashes and the work-session record must survive. Inspect
 agent-upgrade.json and upgrade-cleanup.json.
+
+
+Each data directory supplies one local agent credential bound to its runtime
+owner's origin. Parallel daemons use separate HYPERNEO_DATA_DIR values, and the
+reader uses the issuing daemon's data directory. A second daemon sharing an
+owned directory keeps the first binding. Its other origin is refused by the
+same credential. This limit is intentional and covered by both ownership proofs.
+
+Run `agent-ipv6-origin.ts` through the shared wrapper to verify a real daemon
+bound to expanded IPv6 loopback. Its actual CLI must read the card. Inspect
+ipv6-origin.json and ipv6-cleanup.json. Host-vector tests also cover a global IPv6
+literal's URL formatting. The browser-agent pairing regression checks that its
+response returns the agent credential in JSON and preserves the browser's device
+cookie. Existing human pairing retains its HttpOnly cookie behavior.
