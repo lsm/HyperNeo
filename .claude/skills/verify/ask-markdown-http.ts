@@ -146,6 +146,13 @@ for (const mode of ['production', 'embedded', 'development']) {
       await Bun.sleep(100);
     }
     assert(ready, `${mode} must start its public listener`);
+    const advertised = readFileSync(logPath, 'utf8').match(/(?:Local:\s+|UI:\s+)(http:\/\/\S+)/)?.[1];
+    assert(advertised, `${mode} must advertise its local URL`);
+    const reader = Bun.spawn([process.execPath, 'packages/cli/main.ts', 'read', `${advertised}/ask/synthetic.md`], { stdout: 'pipe', stderr: 'pipe' });
+    const [stdout, stderr, exit] = await Promise.all([new Response(reader.stdout).text(), new Response(reader.stderr).text(), reader.exited]);
+    writeFileSync(join(run, `evidence/${mode}-advertised.json`), JSON.stringify({ advertised, exit, stderr }, null, 2));
+    assert.equal(exit, 0, `${mode} advertised card link must work: ${stderr}`);
+    assert(stdout.startsWith('# Plan the visit\n'));
     await checkHttp(base, mode, await readLocalCredential());
   } finally {
     child.kill('SIGTERM');
