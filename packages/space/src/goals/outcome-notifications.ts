@@ -16,7 +16,7 @@ import type {
   ClaimOutcomeNotificationParams,
   ClaimOutcomeNotificationResult,
   SpaceGoalServiceDeps,
-} from '../../../daemon/src/lib/space/goals/service.ts';
+} from './service.ts';
 
 export function supersedeOutcomeNotificationsForTask(
   deps: SpaceGoalServiceDeps,

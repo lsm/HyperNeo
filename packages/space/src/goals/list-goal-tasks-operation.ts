@@ -1,18 +1,21 @@
 import type { SpaceGoal, SpaceTaskCompact } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
-import { defineOperation, type OperationCaller } from '../../operations/registry.ts';
-import { TaskCoreSchema } from '../../tasks/get-operation.ts';
+import type { SpaceTaskRepository } from '../../../daemon/src/storage/repositories/space-task-repository.ts';
+import {
+  defineOperation,
+  type OperationCaller,
+} from '../../../daemon/src/lib/operations/registry.ts';
+import { TaskCoreSchema } from '../../../daemon/src/lib/tasks/get-operation.ts';
 import {
   admitGoalAccess,
   GoalRejectionSchema,
   GoalSpaceScopeShape,
   type GoalCallerContext,
   type GoalRejection,
-} from '../../../../../space/src/goals/goal-operation-scope.ts';
-import { GOAL_READ_POLICY } from '../../goals/goal-contract.ts';
-import { SpaceTaskCompactSchema } from '../../../../../space/src/goals/goal-result-schemas.ts';
+} from './goal-operation-scope.ts';
+import { GOAL_READ_POLICY } from '../../../daemon/src/lib/goals/goal-contract.ts';
+import { SpaceTaskCompactSchema } from './goal-result-schemas.ts';
 import type { SpaceGoalService } from './service.ts';
 
 const inputSchema = z

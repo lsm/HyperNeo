@@ -6,7 +6,7 @@ import type {
   PublicSpaceGoalUpdateParams,
   SpaceGoalMutationContext,
   SpaceGoalServiceDeps,
-} from '../../../daemon/src/lib/space/goals/service.ts';
+} from './service.ts';
 import { createImmediateTaskInternal, emitTaskCreated } from './task-pointers.ts';
 import { buildTaskDescription, goalTaskLabels } from './task-template.ts';
 

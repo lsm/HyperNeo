@@ -12,8 +12,8 @@ import type {
 } from '../../../daemon/src/storage/repositories/job-queue-repository.ts';
 import type { SpaceRepository } from '../../../daemon/src/storage/repositories/space-repository.ts';
 import type { SpaceTaskRepository } from '../../../daemon/src/storage/repositories/space-task-repository.ts';
-import type { SpaceGoalService } from '../../../daemon/src/lib/space/goals/service.ts';
-import type { GoalAutomationService } from '../../../daemon/src/lib/space/goals/automation-service.ts';
+import type { SpaceGoalService } from '../goals/service.ts';
+import type { GoalAutomationService } from '../goals/automation-service.ts';
 import type { SpaceGoalRepository } from '../../../daemon/src/storage/repositories/space-goal-repository.ts';
 
 const log = new Logger('task-schedule-fire-handler');
