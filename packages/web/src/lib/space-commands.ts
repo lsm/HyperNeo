@@ -4,7 +4,7 @@ import {
   navigateToSpaceConfigure,
   navigateToSpacesPage,
   navigateToSpaceTasks,
-} from './router.ts';
+} from './space-router.ts';
 import { commandPaletteOpenSignal, navSectionSignal } from './signals.ts';
 import { currentSpaceIdSignal } from './space-signals.ts';
 import { toast } from './toast.ts';

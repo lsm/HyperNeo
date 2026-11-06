@@ -4,15 +4,15 @@ import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
 import { SpaceCreateTaskDialog } from '../components/space/SpaceCreateTaskDialog';
 import { GlassRouteShell } from '../components/space/glass-workspace';
 import { SpacePageHeader } from '../components/space/SpacePageHeader';
+import { navigateBack } from '../lib/router';
 import {
   closeOverlayHistory,
-  navigateBack,
   navigateToSpace,
   navigateToSpaceAgent,
   navigateToSpaceSession,
   navigateToSpaceTask,
   pushOverlayHistory,
-} from '../lib/router';
+} from '../lib/space-router';
 import { sessionStore } from '../lib/session-store';
 import type { SpaceViewMode } from '../lib/space-signals';
 import {

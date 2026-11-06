@@ -1,7 +1,11 @@
 import { CheckGlyph, ChevronRightGlyph } from '../components/icons/common-glyphs.tsx';
 import type { ComponentChildren } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
-import { navigateToSpace, navigateToSpaceTask, navigateToSpaceSession } from '../lib/router.ts';
+import {
+  navigateToSpace,
+  navigateToSpaceTask,
+  navigateToSpaceSession,
+} from '../lib/space-router.ts';
 import { spaceStore } from '../lib/space-store.ts';
 import { isActionRequired, isActiveTask } from '../lib/task-filters.ts';
 import { getTaskStatusClasses, getTaskStatusConfig } from '../lib/task-status.ts';

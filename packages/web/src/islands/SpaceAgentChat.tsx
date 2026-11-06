@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import { navigateToSpaceAgent } from '../lib/router';
+import { navigateToSpaceAgent } from '../lib/space-router';
 import { spaceStore } from '../lib/space-store';
 import ChatContainer from './ChatContainer';
 

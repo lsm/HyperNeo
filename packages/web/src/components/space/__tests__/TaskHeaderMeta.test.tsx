@@ -17,6 +17,10 @@ vi.mock('../../../lib/space-store', () => ({
     fetchEvolutionScope: vi.fn(async () => null),
   },
 }));
+vi.mock('../../../lib/space-router', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../../../lib/router')),
+}));
 vi.mock('../../../lib/router', () => ({
   navigateToSpaceGoals,
   navigateToSpaceEvolve: vi.fn(),

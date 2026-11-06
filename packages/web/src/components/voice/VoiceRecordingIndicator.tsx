@@ -6,13 +6,7 @@ import {
 } from '../../lib/voice/voice-composer-registry.ts';
 import { VoiceSurfaceContext } from '../../hooks/useVoiceRecorder.ts';
 import { currentSessionIdSignal } from '../../lib/signals.ts';
-import {
-  clearOverlaySignals,
-  closeOverlayHistory,
-  createSessionPath,
-  getCurrentPath,
-  navigateToSession,
-} from '../../lib/router.ts';
+import { createSessionPath, getCurrentPath, navigateToSession } from '../../lib/router.ts';
 import { extensionNav } from '../../lib/web-extensions.ts';
 
 export function VoiceRecordingIndicator({ inOverlay = false }: { inOverlay?: boolean }) {
@@ -46,7 +40,7 @@ export function VoiceRecordingIndicator({ inOverlay = false }: { inOverlay?: boo
 
   const returnToRecording = () => {
     if (recordingBehindThisOverlay) {
-      closeOverlayHistory();
+      focus?.closeOverlay();
       return;
     }
     const extensionReturn =
@@ -59,9 +53,9 @@ export function VoiceRecordingIndicator({ inOverlay = false }: { inOverlay?: boo
     const targetPath = extensionReturn?.path ?? createSessionPath(recordingSessionId);
     if (overlayOpen) {
       if (getCurrentPath() === targetPath) {
-        closeOverlayHistory();
+        focus?.closeOverlay();
       } else {
-        clearOverlaySignals();
+        focus?.clearOverlay();
       }
     }
     const replace = overlayOpen;

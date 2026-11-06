@@ -18,7 +18,7 @@ import type {
 import { ToolIcon } from '../../../sdk/tools/ToolIcon';
 import { humanizeSystemSubtype, buildFeedTurns } from './feed-builders.ts';
 import { isSDKResultError } from '@hyperneo/shared/sdk/type-guards';
-import { pushOverlayHistory } from '../../../../lib/router';
+import { pushOverlayHistory } from '../../../../lib/space-router';
 import { SpaceTaskThreadMessageActions } from '../../../sdk/SpaceTaskThreadMessageActions';
 import { useVisibleTick } from '../../../../hooks/useVisibleTick';
 import { formatDuration, formatClock, agentInitial, shortAgentName } from './minimal-mock-data';

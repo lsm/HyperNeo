@@ -9,6 +9,8 @@ import {
   spaceOverlaySessionIdSignal,
 } from './space-signals.ts';
 import {
+  clearOverlaySignals,
+  closeOverlayHistory,
   createSpaceSessionPath,
   createSpaceTaskPath,
   navigateToSpace,
@@ -18,7 +20,7 @@ import {
   navigateToSpaceSession,
   navigateToSpaceTask,
   navigateToSpaceTasks,
-} from './router.ts';
+} from './space-router.ts';
 import { spaceCurrentRoute } from './space-route-sync.ts';
 import { voiceReturnTaskTargetSessionSignal } from './voice/voice-composer-registry.ts';
 import {
@@ -149,7 +151,15 @@ function spaceSessionFocus(): ReturnType<ExtensionNav['sessionFocus']> {
   const overlayPending = spaceOverlayPendingAgentNameSignal.value !== null;
   const overlayOpen = overlaySessionId !== null || overlayPending;
   const sessionId = overlaySessionId ?? (overlayPending ? null : currentSpaceSessionIdSignal.value);
-  return overlayOpen || sessionId !== null ? { overlayOpen, overlaySessionId, sessionId } : null;
+  return overlayOpen || sessionId !== null
+    ? {
+        overlayOpen,
+        overlaySessionId,
+        sessionId,
+        closeOverlay: closeOverlayHistory,
+        clearOverlay: clearOverlaySignals,
+      }
+    : null;
 }
 
 function spaceRecordingReturn(

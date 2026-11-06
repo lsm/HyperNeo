@@ -58,6 +58,10 @@ vi.mock('../../../lib/signals.ts', () => ({
 }));
 const closeOverlayHistory = vi.hoisted(() => vi.fn());
 const clearOverlaySignals = vi.hoisted(() => vi.fn());
+vi.mock('../../../lib/space-router.ts', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../../../lib/router.ts')),
+}));
 vi.mock('../../../lib/router.ts', () => ({
   navigateToSession: vi.fn((sessionId: string) => {
     routerState.navigatedTo = sessionId;
@@ -87,13 +91,13 @@ import {
   unregisterVoiceComposer,
   voiceReturnTaskTargetSessionSignal,
 } from '../../../lib/voice/voice-composer-registry.ts';
+import { navigateToSession } from '../../../lib/router.ts';
 import {
   clearOverlaySignals,
   closeOverlayHistory,
-  navigateToSession,
   navigateToSpaceSession,
   navigateToSpaceTask,
-} from '../../../lib/router.ts';
+} from '../../../lib/space-router.ts';
 
 declareExtensionNav(spaceNav);
 
