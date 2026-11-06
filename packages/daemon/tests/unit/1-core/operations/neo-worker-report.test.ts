@@ -335,6 +335,7 @@ test('only Neo turns a worker question into a card, in its own words, keeping th
   try {
     await send(input);
     expect(service.todos.listQuestions('ask')).toEqual([]);
+    expect(service.todos.getTodo('todo')?.nextAction).toContain('relay the question');
     const wake = db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'neo' });
     expect(JSON.stringify(wake)).toContain('neo.question.relay');
     const words = { todoId: 'todo', title: 'Deploy where?', options: ['Staging', 'Production'] };
@@ -345,6 +346,18 @@ test('only Neo turns a worker question into a card, in its own words, keeping th
     });
     const [card] = service.todos.listQuestions('ask');
     expect(service.todos.questionAnswers.list(card.id)).toHaveLength(1);
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
+test('a staged question tells a zh-Hans human the next step in Chinese', async () => {
+  const { db, service, send } = await setup();
+  try {
+    db.updateGlobalSettings({ language: 'zh-Hans' });
+    await send({ ...input, question: { ...input.question, language: 'zh-Hans' } });
+    expect(service.todos.getTodo('todo')?.nextAction).toBe('Neo 需要回复工人,或把问题转给人。');
   } finally {
     service.dispose();
     db.close();
@@ -416,6 +429,15 @@ test('a new worker question on the same todo wakes Neo again, and a repeat does 
     await send({ ...input, question: { ...input.question, title: 'Which region?' } });
     expect(wakes()).toHaveLength(2);
     expect(JSON.stringify(wakes()[1].payload)).toContain('Which region?');
+    await service.todoSessions.inputs.accept(
+      'todo',
+      'neo',
+      { verb: 'send', ref: { adapter: 'hyperneo', id: 'worker' } },
+      'Next step',
+      Date.now()
+    );
+    await send(input);
+    expect(wakes()).toHaveLength(3);
   } finally {
     service.dispose();
     db.close();

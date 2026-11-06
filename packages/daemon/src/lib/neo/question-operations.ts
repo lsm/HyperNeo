@@ -62,7 +62,7 @@ export function stageNeoWorkerQuestion(
   ref: WorkRef,
   raw: unknown,
   language: LanguageSetting | undefined,
-  staged: (todo: NeoTodo, question: StagedWorkerQuestion) => void
+  staged: (todo: NeoTodo, question: StagedWorkerQuestion, reportId: string) => void
 ): { ok: true } | Rejection {
   const parsed = WorkerQuestion.safeParse(raw);
   if (!parsed.success)
@@ -94,22 +94,26 @@ export function stageNeoWorkerQuestion(
         state: 'blocked',
         blockedBy: 'needs-human',
         blockedReason: question.title,
-        nextAction: 'Neo must answer the worker or relay the question to the human.',
+        nextAction:
+          question.language === 'zh-Hans'
+            ? 'Neo 需要回复工人,或把问题转给人。'
+            : 'Neo must answer the worker or relay the question to the human.',
         report: question.report,
       },
       now
     );
+    const reportId = neoDerivedId(JSON.stringify([dispatchId, question.title, question.options]));
     sessions.recordNudge(todoId, {
       ...(sessions.readNudge(todoId) ?? { since: now, nudges: 0 }),
       blockerReport: {
-        id: neoDerivedId(JSON.stringify([dispatchId, question])),
+        id: reportId,
         dispatchId,
         at: now,
         triagedAt: blocked.updatedAt,
       },
       workerQuestion: question,
     });
-    staged(blocked, question);
+    staged(blocked, question, reportId);
     return { ok: true };
   });
 }
