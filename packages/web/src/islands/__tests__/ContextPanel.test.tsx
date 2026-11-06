@@ -153,6 +153,9 @@ vi.mock('../../lib/signals.ts', async (importOriginal) => {
     get currentSpaceSessionIdSignal() {
       return mockCurrentSpaceSessionIdSignal;
     },
+    get currentSpaceTaskIdSignal() {
+      return mockCurrentSpaceSessionIdSignal;
+    },
     get currentSpaceTasksFilterTabSignal() {
       return mockCurrentSpaceTasksFilterTabSignal;
     },
@@ -175,6 +178,7 @@ vi.mock('../../lib/state.ts', () => ({
 vi.mock('../../lib/space-store.ts', () => ({
   get spaceStore() {
     return {
+      tasks: { value: [] },
       spacesWithTasks: mockSpacesWithTasksSignal,
       space: mockSpaceSignal,
       initGlobalList: mockInitGlobalList,

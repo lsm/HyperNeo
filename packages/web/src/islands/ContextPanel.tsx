@@ -1,32 +1,15 @@
 import { t } from '../lib/i18n/index.ts';
-import { CheckGlyph, ChevronLeftGlyph } from '../components/icons/common-glyphs.tsx';
-import { useState, useEffect, useMemo } from 'preact/hooks';
 import {
   navSectionSignal,
   contextPanelOpenSignal,
-  currentSpaceIdSignal,
-  currentSpaceCanonicalIdSignal,
-  currentSpaceSettingsTabSignal,
-  currentSpaceTasksFilterTabSignal,
-  currentSpaceViewModeSignal,
   settingsSectionSignal,
   type SettingsSection,
 } from '../lib/signals.ts';
-import {
-  navigateToSettings,
-  navigateToSpaces,
-  navigateToSpace,
-  navigateToSpaceAgent,
-  navigateToSpaceConfigure,
-  navigateToSpaceGoals,
-  navigateToSpaceEvolve,
-  navigateToSpaceMemories,
-  navigateToSpaceTasks,
-} from '../lib/router.ts';
+import { navigateToSettings } from '../lib/router.ts';
 import { cn } from '../lib/utils.ts';
 import { SectionSwitcher } from '../components/SectionSwitcher.tsx';
 import { SessionsSidebar } from './SessionsSidebar.tsx';
-import { webExtension } from '../lib/web-extensions.ts';
+import { extensionNav, shellExtensions } from '../lib/web-extensions.ts';
 
 const SETTINGS_SECTIONS: Array<{
   id: SettingsSection;
@@ -234,61 +217,13 @@ function SectionIcon({ type }: { type: string }) {
 }
 
 export function ContextPanel() {
-  const [createSpaceOpen, setCreateSpaceOpen] = useState(false);
-
   const navSection = navSectionSignal.value;
   const isPanelOpen = contextPanelOpenSignal.value;
-  const spaceExt = webExtension('space');
-
-  useEffect(() => {
-    if (navSection === 'spaces') {
-      spaceExt?.store.initGlobalList().catch(() => {});
-    }
-  }, [navSection, spaceExt]);
   const activeSettingsSection = settingsSectionSignal.value;
-  const currentSpaceId = currentSpaceIdSignal.value;
-  const currentSpaceCanonicalId = currentSpaceCanonicalIdSignal.value;
-  const detailPanelSpaceId = currentSpaceCanonicalId ?? currentSpaceId;
-  const currentSpaceSettingsTab = currentSpaceSettingsTabSignal.value;
-  const currentSpaceTasksFilterTab = currentSpaceTasksFilterTabSignal.value;
-  const currentSpaceViewMode = currentSpaceViewModeSignal.value;
-  const isSpaceDetail = navSection === 'spaces' && currentSpaceId !== null;
-  const headerTitle = spaceExt?.store.space.value?.name ?? 'Space';
+  const inExtensionContext = extensionNav().some((nav) => nav.contextTabs() !== null);
+  const sidebars = shellExtensions().flatMap((extension) => extension.sidebar(navSection) ?? []);
 
   const handlePanelClose = () => {
-    contextPanelOpenSignal.value = false;
-  };
-
-  const handleSpaceSwitch = (spaceId: string) => {
-    switch (currentSpaceViewMode) {
-      case 'agents':
-        navigateToSpaceAgent(spaceId);
-        break;
-      case 'tasks':
-        navigateToSpaceTasks(spaceId, currentSpaceTasksFilterTab);
-        break;
-      case 'goals':
-        navigateToSpaceGoals(spaceId);
-        break;
-      case 'memories':
-        navigateToSpaceMemories(spaceId);
-        break;
-      case 'forge':
-        navigateToSpaceEvolve(spaceId);
-        break;
-      case 'configure':
-        navigateToSpaceConfigure(spaceId, currentSpaceSettingsTab);
-        break;
-      case 'overview':
-      default:
-        navigateToSpace(spaceId);
-        break;
-    }
-    contextPanelOpenSignal.value = false;
-  };
-
-  const handleCreateSpace = () => {
-    setCreateSpaceOpen(true);
     contextPanelOpenSignal.value = false;
   };
 
@@ -296,103 +231,6 @@ export function ContextPanel() {
     navigateToSettings(section);
     contextPanelOpenSignal.value = false;
   };
-
-  const spacesWithTasks = spaceExt?.store.spacesWithTasks.value;
-  const activeSpaces = useMemo(
-    () => (spacesWithTasks ?? []).filter((space) => space.status === 'active'),
-    [spacesWithTasks]
-  );
-
-  const spaceSwitcherContent = (
-    <div class="flex-1 overflow-y-auto py-2" data-testid="space-switcher">
-      {activeSpaces.length === 0 ? (
-        <div class="px-4 py-8 text-center">
-          <svg
-            class="w-10 h-10 mx-auto text-fg-muted mb-3"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width={1.5}
-              d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
-            />
-          </svg>
-          <p class="text-sm font-medium text-fg-soft">No spaces yet</p>
-          <p class="text-xs text-fg-muted mt-1">
-            Create a Space to organize agents, missions, and project context.
-          </p>
-        </div>
-      ) : (
-        <nav class="px-2 space-y-1" aria-label="Switch spaces">
-          {activeSpaces.map((space) => {
-            const isCurrent = space.id === currentSpaceId;
-            return (
-              <button
-                key={space.id}
-                type="button"
-                onClick={() => handleSpaceSwitch(space.slug)}
-                aria-current={isCurrent ? 'page' : undefined}
-                class={cn(
-                  'w-full rounded-lg px-3 py-3 flex items-center gap-3 text-left transition-colors',
-                  isCurrent
-                    ? 'bg-fill border border-transparent text-fg'
-                    : 'border border-transparent text-fg-muted hover:bg-fill-soft hover:text-fg'
-                )}
-              >
-                <svg
-                  class="w-5 h-5 flex-shrink-0 text-fg-muted"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width={1.75}
-                    d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
-                  />
-                </svg>
-                <div class="min-w-0 flex-1">
-                  <div class="text-sm font-medium truncate">{space.name}</div>
-                  {space.description && (
-                    <div class="text-xs text-fg-muted truncate mt-0.5">{space.description}</div>
-                  )}
-                </div>
-                {isCurrent && (
-                  <CheckGlyph
-                    class="w-4 h-4 text-fg-soft flex-shrink-0"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  />
-                )}
-              </button>
-            );
-          })}
-        </nav>
-      )}
-      <div class="px-4 pt-4 pb-6">
-        <button
-          type="button"
-          onClick={handleCreateSpace}
-          class="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border border-dashed border-line-strong hover:border-line-strong hover:bg-fill-soft text-sm text-fg-muted hover:text-fg transition-colors"
-        >
-          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width={2}
-              d="M12 4v16m8-8H4"
-            />
-          </svg>
-          Create Space
-        </button>
-      </div>
-    </div>
-  );
 
   return (
     <>
@@ -422,66 +260,19 @@ export function ContextPanel() {
           <SectionSwitcher onClose={handlePanelClose} variant="titlebar" />
         </div>
         <div class="desktop-standard-switcher">
-          <SectionSwitcher onClose={handlePanelClose} showDivider compact={isSpaceDetail} />
+          <SectionSwitcher onClose={handlePanelClose} showDivider compact={inExtensionContext} />
         </div>
 
-        {isSpaceDetail && (
-          <div class="hidden h-9 items-center gap-1 px-4 pt-1 md:flex">
-            <button
-              type="button"
-              onClick={() => navigateToSpaces()}
-              class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-fill-soft hover:text-fg"
-              title="Back to Spaces"
-              aria-label="Back to Spaces"
-            >
-              <ChevronLeftGlyph
-                class="h-5 w-5"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              />
-            </button>
-            <h2 class="min-w-0 flex-1 text-sm font-semibold text-fg truncate">{headerTitle}</h2>
-          </div>
-        )}
-
         <div
-          key={navSection + (isSpaceDetail ? '-space-detail' : '')}
+          key={navSection + (inExtensionContext ? '-extension-detail' : '')}
           class="flex-1 overflow-hidden flex flex-col animate-fadeIn"
         >
           {navSection === 'chats' && (
             <SessionsSidebar onSessionSelect={() => (contextPanelOpenSignal.value = false)} />
           )}
-          {navSection === 'spaces' && !isSpaceDetail && spaceSwitcherContent}
-          {navSection === 'spaces' && isSpaceDetail && (
-            <div class="flex-1 flex flex-col overflow-hidden">
-              <div class="md:hidden px-2 pt-2 pb-1 flex-shrink-0">
-                <button
-                  type="button"
-                  onClick={() => {
-                    navigateToSpaces();
-                    contextPanelOpenSignal.value = false;
-                  }}
-                  class="flex items-center gap-1.5 px-2 py-1.5 rounded-lg w-full text-sm text-fg-muted hover:text-fg hover:bg-fill-soft transition-colors"
-                >
-                  <ChevronLeftGlyph
-                    class="w-4 h-4 flex-shrink-0"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  />
-                  All Spaces
-                </button>
-              </div>
-              {spaceExt && (
-                <spaceExt.SpaceDetailPanel
-                  spaceId={detailPanelSpaceId!}
-                  navigationSpaceId={currentSpaceId!}
-                  onNavigate={() => (contextPanelOpenSignal.value = false)}
-                />
-              )}
-            </div>
-          )}
+          {sidebars.map((Sidebar) => (
+            <Sidebar key={navSection} onClose={handlePanelClose} />
+          ))}
           {navSection === 'settings' && (
             <div class="flex-1 overflow-y-auto scrollbar-dark px-2 py-3">
               <div class="px-2 pb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-fg-muted">
@@ -550,12 +341,6 @@ export function ContextPanel() {
           </button>
         </div>
       </div>
-      {spaceExt && (
-        <spaceExt.SpaceCreateDialog
-          isOpen={createSpaceOpen}
-          onClose={() => setCreateSpaceOpen(false)}
-        />
-      )}
     </>
   );
 }
