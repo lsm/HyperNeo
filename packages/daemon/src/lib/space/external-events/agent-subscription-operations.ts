@@ -1,19 +1,19 @@
 import type { SpaceLongHorizonAgentEventSubscription } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import type { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
-import type { SpaceAgentSubscriptionRepository } from '../../storage/repositories/space-agent-subscription-repository.ts';
+import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
+import type { SpaceAgentSubscriptionRepository } from '../../../storage/repositories/space-agent-subscription-repository.ts';
 import {
   defineOperation,
   type OperationCaller,
   type OperationDefinition,
-} from '../operations/registry.ts';
+} from '../../operations/registry.ts';
 import {
   admitEventCallerSpace,
   AGENT_EVENT_ROLES,
   type EventCallerDependencies,
 } from './operation-admission.ts';
-import { validateGlobPattern } from './topic-validator.ts';
+import { validateGlobPattern } from '../../external-events/topic-validator.ts';
 
 export type AgentSubscriptionRepo = Pick<
   SpaceAgentSubscriptionRepository,

@@ -1,7 +1,7 @@
 import { McpAuditLogRepository } from '../../../../storage/repositories/mcp-audit-log-repository.ts';
-import { createAgentSubscriptionOperations } from '../../../external-events/agent-subscription-operations.ts';
-import { createExternalEventOperations } from '../../../external-events/operations.ts';
-import { createSubscriptionOperations } from '../../../external-events/subscription-operations.ts';
+import { createAgentSubscriptionOperations } from '../../external-events/agent-subscription-operations.ts';
+import { createExternalEventOperations } from '../../external-events/operations.ts';
+import { createSubscriptionOperations } from '../../external-events/subscription-operations.ts';
 import type { OperationDefinition } from '../../../operations/registry.ts';
 import type { SpaceFamilyContext } from './space-context.ts';
 import { SessionEventSubscriptionRepository } from '../../../../storage/repositories/session-event-subscription-repository.ts';
