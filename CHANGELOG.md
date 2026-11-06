@@ -4,10 +4,13 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
-## [0.55.1] - 2026-11-06
+## [0.55.2] - 2026-11-06
+
+The v0.55.1 tag was never published: its desktop build failed on a wrong lockfile entry. This release carries the same changes.
 
 ### Web
 
+- Web sessions load 50 messages at a time, and older ones through load-more (#10044).
 - The Neo page keeps its input box when a session's raw transcript is too large to load (#10042).
 - Sent photos show above the words, and sent text files show as cards (#10038, #10040).
 
