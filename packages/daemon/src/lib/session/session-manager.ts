@@ -1,7 +1,7 @@
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
-import { NO_CALLER_SCOPE, type CallerScopeResolver } from '../operations/caller.ts';
+import { PLAIN_SESSION_SCOPE, type CallerScopeResolver } from '../operations/caller.ts';
 import type { ScopeContribution } from '../briefings/contribution.ts';
 import { NO_SESSION_SCOPE, type SessionScopeResolver } from '../briefings/scope-resolver.ts';
 import type {
@@ -93,7 +93,7 @@ export class SessionManager {
   private messagePersistence: MessagePersistence;
   private spaceRuntimeMcpProvider?: SpaceRuntimeMcpProvider;
   private operationRegistryProvider?: OperationRegistryProvider;
-  private callerScopeResolver: CallerScopeResolver = NO_CALLER_SCOPE;
+  private callerScopeResolver: CallerScopeResolver = PLAIN_SESSION_SCOPE;
 
   private spaceScopeResolver: SessionScopeResolver = NO_SESSION_SCOPE;
   private defaultOperationRegistryProvider?: OperationRegistryProvider;

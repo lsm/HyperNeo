@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { GitHubEventExtension } from '../../../../src/lib/external-events/github';
 import { SESSION_EVENT_SCOPE } from '../../../../src/lib/external-events/session-external-event-store';
-import { githubRepoOfTopic } from '../../../../src/lib/external-events/subscription-operations';
+import { githubRepoOfTopic } from '../../../../src/lib/external-events/session-event-operations';
 import { SessionEventSubscriptionRepository } from '../../../../src/storage/repositories/session-event-subscription-repository';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { runMigration329 } from '../../../../src/storage/schema/m329-session-event-subscriptions';

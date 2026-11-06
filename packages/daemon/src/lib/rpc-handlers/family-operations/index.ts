@@ -1,6 +1,7 @@
 import type { OperationDefinition } from '../../operations/registry.ts';
 import { registerClientOperations } from './clients.ts';
 import { registerDriverOperations } from './drivers.ts';
+import { registerSessionEventOperations } from './external-events.ts';
 import type { FamilyOperationContext } from './context.ts';
 import { registerSessionOperations } from './session.ts';
 import { registerSettingsOperations } from './settings.ts';
@@ -13,6 +14,7 @@ export function collectFamilyOperations(context: FamilyOperationContext): Operat
     createProjectFolderOperation(context.deps.db.workspaceHistory),
     ...registerClientOperations(context),
     ...registerDriverOperations(context),
+    ...registerSessionEventOperations(context),
     ...registerSessionOperations(context),
     ...registerSettingsOperations(context),
   ];

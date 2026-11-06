@@ -45,6 +45,10 @@ function payloadText(payload: Record<string, unknown>, key: string): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+export function sessionEventMessageUuid(eventId: string, sessionId: string): string {
+  return buildImmediateEventMessageUuid(eventId, `session:${sessionId}`);
+}
+
 export function sessionEventHeadline(event: ExternalEvent): string {
   const action = externalEventTopicSuffix(event.topic)
     .replace(/_polled$/, '')
@@ -96,7 +100,7 @@ export function planSessionEventDeliveries(
   return {
     value: sessionIds.map((sessionId) => ({
       sessionId,
-      messageUuid: buildImmediateEventMessageUuid(event.id, `session:${sessionId}`),
+      messageUuid: sessionEventMessageUuid(event.id, sessionId),
       text,
       mode: urgent || !isSessionBusy(sessionId) ? 'immediate' : 'defer',
     })),

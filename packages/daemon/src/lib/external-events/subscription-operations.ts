@@ -1,6 +1,5 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { buildPrEventTopicPattern, parseGitHubTopic, parsePrUrl } from '../github/parse-pr-url.ts';
 import {
   defineOperation,
   type OperationCaller,
@@ -24,7 +23,17 @@ import {
   resolveWorkerNodeSlot,
   type WorkerNodeSlot,
 } from './operation-admission.ts';
-import { validateGlobPattern } from './topic-validator.ts';
+import {
+  invalidPattern,
+  listOwnSubscriptions,
+  type Outcome,
+  OutcomeSchema,
+  resolveTopicPattern,
+  StoredSubscriptionSchema,
+  subscribeOwnSession,
+  TopicFields,
+  unsubscribeOwnSession,
+} from './session-event-operations.ts';
 
 export interface SubscriptionSlot extends Omit<WorkerNodeSlot, 'taskId'> {
   taskId: string;
@@ -51,12 +60,6 @@ export interface SubscriptionDependencies extends AgentSubscriptionDependencies 
   watchSessionRepo?: (owner: string, repo: string) => Promise<string | null>;
 }
 
-export function githubRepoOfTopic(topic: string): { owner: string; repo: string } | null {
-  const parsed = parseGitHubTopic(topic);
-  if (!parsed || parsed.owner.includes('*') || parsed.repo.includes('*')) return null;
-  return { owner: parsed.owner, repo: parsed.repo };
-}
-
 const REJECTIONS = z.enum(['caller_denied', 'session_inactive', 'node_unresolved']);
 type Rejection = z.infer<typeof REJECTIONS>;
 
@@ -69,12 +72,6 @@ const SUBJECT_REJECTIONS = z.enum([
   'refresh_failed',
 ]);
 type SubjectRejection = z.infer<typeof SUBJECT_REJECTIONS>;
-
-const OutcomeSchema = z.union([
-  z.object({ ok: z.literal(true), topicPattern: z.string() }),
-  z.object({ ok: z.literal(false), error: z.string() }),
-]);
-type Outcome = z.infer<typeof OutcomeSchema>;
 
 const AgentSubscribeOutcomeSchema = z.object({
   ok: z.literal(true),
@@ -96,36 +93,6 @@ export type SubscriptionSubject =
   | { kind: 'session'; spaceId: string | null; sessionId: string };
 
 type SubscriptionScope = { spaceId: string | null };
-
-function resolveTopicPattern<Input extends { topicPattern?: string; prUrl?: string }>(
-  input: Input,
-  ctx: z.RefinementCtx
-): Omit<Input, 'prUrl' | 'topicPattern'> & { topicPattern: string } {
-  const { prUrl, topicPattern, ...rest } = input;
-  if ((topicPattern === undefined) === (prUrl === undefined)) {
-    ctx.addIssue({ code: 'custom', message: 'Pass exactly one of topicPattern or prUrl.' });
-    return z.NEVER;
-  }
-  if (topicPattern !== undefined) return { ...rest, topicPattern };
-  const parsed = parsePrUrl(prUrl ?? '');
-  if (!parsed) {
-    ctx.addIssue({ code: 'custom', message: `Could not parse GitHub PR URL: ${prUrl}` });
-    return z.NEVER;
-  }
-  if (parsed.host.toLowerCase() !== 'github.com') {
-    ctx.addIssue({
-      code: 'custom',
-      message: `Only github.com pull requests can be followed: ${prUrl}`,
-    });
-    return z.NEVER;
-  }
-  return { ...rest, topicPattern: buildPrEventTopicPattern(parsed) };
-}
-
-const TopicFields = {
-  topicPattern: z.string().min(1).optional(),
-  prUrl: z.string().min(1).optional(),
-};
 
 const SubscribeInput = z
   .object({
@@ -274,31 +241,25 @@ type ReaderScope =
   | { spaceId: string; workflowRunId: string }
   | { spaceId: string | null; owner: { type: 'agent' | 'session'; id: string } };
 
-const StoredSubscriptionSchema = z.object({
-  topic: z.string(),
-  label: z.string().nullable(),
-  createdAt: z.number(),
-});
-
 function readStoredSubscriptions(
   scope: { spaceId: string | null; owner: { type: 'agent' | 'session'; id: string } },
   subs: SubscriptionDependencies
 ) {
+  if (scope.spaceId === null)
+    return listOwnSubscriptions(scope.owner.id, {
+      subscriptions: subs.unscopedSessionSubscriptions,
+    });
   const rows =
-    scope.spaceId === null
-      ? subs.unscopedSessionSubscriptions
-          .listBySession(scope.owner.id)
-          .map(({ topic, label, createdAt }) => ({ topic, label, createdAt }))
-      : scope.owner.type === 'agent'
-        ? subs.subscriptionRepo.listSubscriptions(scope.owner.id).map((row) => ({
-            topic: row.topic,
-            label: typeof row.filter.label === 'string' ? row.filter.label : null,
-            createdAt: row.createdAt,
-          }))
-        : subs.sessionSubscriptions
-            .listBySpace(scope.spaceId)
-            .filter((row) => row.sessionId === scope.owner.id)
-            .map((row) => ({ topic: row.topic, label: row.label, createdAt: row.createdAt }));
+    scope.owner.type === 'agent'
+      ? subs.subscriptionRepo.listSubscriptions(scope.owner.id).map((row) => ({
+          topic: row.topic,
+          label: typeof row.filter.label === 'string' ? row.filter.label : null,
+          createdAt: row.createdAt,
+        }))
+      : subs.sessionSubscriptions
+          .listBySpace(scope.spaceId)
+          .filter((row) => row.sessionId === scope.owner.id)
+          .map((row) => ({ topic: row.topic, label: row.label, createdAt: row.createdAt }));
   return { ok: true as const, owner: scope.owner, stored: rows, scope: { spaceId: scope.spaceId } };
 }
 
@@ -334,11 +295,6 @@ function applyOutcome(topicPattern: string, outcome: RunOutcome): Outcome {
     : { ok: false, error: outcome.error ?? 'Subscription rejected.' };
 }
 
-function invalidPattern(topicPattern: string): Outcome | null {
-  const validation = validateGlobPattern(topicPattern.trim());
-  return validation.valid ? null : { ok: false, error: validation.reason ?? 'invalid pattern' };
-}
-
 function subscribeTopic(
   slot: SubscriptionSlot,
   input: z.infer<typeof SubscribeInput>,
@@ -368,22 +324,13 @@ async function subscribeSession(
   input: { topicPattern: string; label?: string },
   subs: SubscriptionDependencies
 ): Promise<Outcome | SubjectRejection> {
+  if (subject.spaceId === null)
+    return subscribeOwnSession(subject.sessionId, input, {
+      subscriptions: subs.unscopedSessionSubscriptions,
+      watchSessionRepo: subs.watchSessionRepo,
+    });
   const topicPattern = input.topicPattern.trim();
   if (invalidPattern(topicPattern)) return 'invalid_pattern';
-  if (subject.spaceId === null) {
-    subs.unscopedSessionSubscriptions.upsert({
-      sessionId: subject.sessionId,
-      topic: topicPattern,
-      label: input.label,
-    });
-    const watched = githubRepoOfTopic(topicPattern);
-    const failure = watched
-      ? await subs
-          .watchSessionRepo?.(watched.owner, watched.repo)
-          .catch((error: unknown) => (error instanceof Error ? error.message : String(error)))
-      : null;
-    return failure ? { ok: false, error: failure } : { ok: true, topicPattern };
-  }
   const stored = subs.sessionSubscriptions.upsert({
     spaceId: subject.spaceId,
     sessionId: subject.sessionId,
@@ -399,12 +346,12 @@ function unsubscribeSession(
   input: { topicPattern: string },
   subs: SubscriptionDependencies
 ): Outcome | SubjectRejection {
+  if (subject.spaceId === null)
+    return unsubscribeOwnSession(subject.sessionId, input, {
+      subscriptions: subs.unscopedSessionSubscriptions,
+    });
   const topicPattern = input.topicPattern.trim();
   if (invalidPattern(topicPattern)) return 'invalid_pattern';
-  if (subject.spaceId === null) {
-    subs.unscopedSessionSubscriptions.delete(subject.sessionId, topicPattern);
-    return { ok: true, topicPattern };
-  }
   const stored = subs.sessionSubscriptions
     .listBySpace(subject.spaceId)
     .find((row) => row.sessionId === subject.sessionId && row.topic === topicPattern);

@@ -1411,7 +1411,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       isSessionHeldByTaskLimit: (sessionId) =>
         taskAgentManager?.isSessionHeldByTaskRateLimit(sessionId) ?? false,
       getSession: (sessionId) => resolveMailboxSession(sessionId, sessionManager, taskAgentManager),
-      captureAdmission: (entry) => captureDirectMailboxAdmission(db.getDatabase(), entry),
+      captureAdmission: spaceEnabled
+        ? (entry) => captureDirectMailboxAdmission(db.getDatabase(), entry)
+        : undefined,
       isSessionArchived: (sessionId: string) =>
         reactiveDb?.db.getSession(sessionId)?.status === 'archived',
       logError: (message) => mailboxLog.error(message),

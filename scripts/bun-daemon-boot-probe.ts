@@ -10,6 +10,28 @@ import { MessageHub, WebSocketClientTransport } from '../packages/shared/src/mod
 
 const run = resolve(process.argv[2] ?? '');
 const spaceOff = process.env.HYPERNEO_SPACE !== 'on';
+async function waitForMailboxJob(dbPath: string) {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    const read = () =>
+      db.prepare("SELECT status, error FROM job_queue WHERE queue = 'mailbox' LIMIT 1").get() as
+        | { status: string; error: string | null }
+        | undefined;
+    for (let attempt = 0; attempt < 100 && read()?.status !== 'completed'; attempt++)
+      await new Promise((done) => setTimeout(done, 50));
+    return read();
+  } finally {
+    db.close();
+  }
+}
+
+const SESSION_EVENT_OPERATIONS = [
+  'event.external.subscribe',
+  'event.external.unsubscribe',
+  'event.external.subscription.list',
+  'event.external.get',
+  'event.external.delivery.list',
+];
 const tableNames = (db: Database) =>
   (
     db
@@ -121,6 +143,15 @@ try {
   await transport.initialize();
   assert.equal((await hub.request<{ status: string }>('system.health', {})).status, 'ok');
   evidence.health = 'ok';
+  if (spaceOff) {
+    const listed = await hub.request<{ name: string }[]>('operation.invoke', {
+      name: 'operations.list',
+      input: { all: true, query: 'event.external' },
+    });
+    const names = listed.map((operation) => operation.name);
+    for (const name of SESSION_EVENT_OPERATIONS) assert(names.includes(name), `${name} is missing`);
+    evidence.sessionEventOperations = SESSION_EVENT_OPERATIONS;
+  }
   const { sessionId } = await hub.request<{ sessionId: string }>('session.create', {
     workspacePath: join(run, 'workspace'),
     config: { queryMode: 'manual' },
@@ -160,6 +191,14 @@ try {
   evidence.snapshotBeforeAck = true;
   assert.deepEqual(rows, []);
   evidence.liveEmpty = true;
+  if (spaceOff) {
+    await hub.request('operation.invoke', {
+      name: 'message.send',
+      input: { to: sessionId, text: 'Space-off mailbox probe', from: 'session:boot-probe' },
+    });
+    evidence.mailbox = await waitForMailboxJob(join(run, 'data/daemon.db'));
+    assert.deepEqual(evidence.mailbox, { status: 'completed', error: null });
+  }
   const db = new Database(join(run, 'data/daemon.db'), { readonly: true });
   try {
     const tables = Number(
