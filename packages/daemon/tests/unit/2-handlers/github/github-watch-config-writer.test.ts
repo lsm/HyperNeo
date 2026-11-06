@@ -38,6 +38,7 @@ describe('watchRepo atomic config writer', () => {
   let db: Database, gateway: ConfigGateway, extension: GitHubEventExtension;
   let left: InProcessTransport, right: InProcessTransport, client: MessageHub;
   let store: ReturnType<typeof createExternalEventConfigStore>;
+  let pollInterval = 0;
   const notices: string[] = [],
     space = 'synthetic-config-writer';
   const params = {
@@ -49,6 +50,7 @@ describe('watchRepo atomic config writer', () => {
   };
   const pending = new Set<Promise<unknown>>();
   beforeEach(async () => {
+    pollInterval = 0;
     db = new Database(':memory:');
     createTables(db);
     runMigrations(db, () => {});
@@ -64,7 +66,7 @@ describe('watchRepo atomic config writer', () => {
       capabilities: { rpcConfig: true, polling: false, webhooks: false },
     });
     extension = new GitHubEventExtension(db, undefined, {
-      getPollIntervalMs: () => 0,
+      getPollIntervalMs: () => pollInterval,
       autoReconcileWebhooks: false,
     });
     extension.repo.upsertWatchedRepo({
@@ -168,6 +170,108 @@ describe('watchRepo atomic config writer', () => {
     await new Promise((done) => setTimeout(done, 60));
     expect(gateway.writes).toBe(1);
     expect(row()).toEqual(committed);
+    expect(notices).toEqual([]);
+  });
+
+  const snapshot = () => {
+    const saved = db
+      .prepare(
+        'SELECT settings_json FROM space_external_event_source_configs WHERE space_id=? AND source=?'
+      )
+      .get(space, 'github');
+    return saved ? JSON.parse(String(saved.settings_json)) : null;
+  };
+  const intent = () =>
+    db
+      .prepare('SELECT polling_intent FROM space_github_source_settings WHERE space_id=?')
+      .get(space)?.polling_intent;
+  test('polling intent and the saved snapshot avoid main repository methods', async () => {
+    extension.repo.upsertWatchedRepo({
+      spaceId: space,
+      owner: 'Mixed',
+      repo: 'repo',
+      pollingEnabled: true,
+    });
+    extension.repo.setPollingIntent(space, true);
+    for (const method of [
+      'setPollingIntent',
+      'listAllPollingConfiguredRepos',
+      'listWatchedRepos',
+      'isSpaceEnabled',
+      'getPollingIntent',
+      'getFilterCurrentUser',
+    ] as const)
+      vi.spyOn(extension.repo, method).mockImplementation(() => {
+        throw new Error('Main polling repository call');
+      });
+    await request();
+    expect(intent()).toBe(0);
+    expect(snapshot()).toMatchObject({
+      pollingIntent: false,
+      watchedRepos: [{ pollingEnabled: false }],
+    });
+    expect(notices).toEqual(['watched_repo_changed']);
+  });
+  test('configured disabled siblings retain intent until the last configured row is disabled', async () => {
+    extension.repo.upsertWatchedRepo({
+      spaceId: space,
+      owner: 'Mixed',
+      repo: 'repo',
+      pollingEnabled: true,
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: space,
+      owner: 'sibling',
+      repo: 'repo',
+      pollingEnabled: true,
+      enabled: false,
+    });
+    extension.repo.setPollingIntent(space, true);
+    vi.spyOn(extension.repo, 'listAllPollingConfiguredRepos').mockImplementation(() => {
+      throw new Error('Main configured query');
+    });
+    await request();
+    expect(intent()).toBe(1);
+    expect(snapshot()).toMatchObject({ pollingIntent: true });
+    expect(snapshot().watchedRepos).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ owner: 'sibling', enabled: false, pollingEnabled: true }),
+      ])
+    );
+    await request({ ...params, owner: 'sibling' });
+    expect(intent()).toBe(0);
+    expect(snapshot().pollingIntent).toBe(false);
+    expect(gateway.writes).toBe(2);
+  });
+  test('a failed snapshot rolls back the watched mutation and polling intent', async () => {
+    pollInterval = 60_000;
+    extension.repo.setPollingIntent(space, false);
+    const before = row();
+    db.exec(
+      "CREATE TRIGGER reject_watch_snapshot BEFORE INSERT ON space_external_event_source_configs BEGIN SELECT RAISE(ABORT,'synthetic snapshot refusal'); END"
+    );
+    await expect(
+      request({ ...params, pollingEnabled: true, webhookEnabled: false })
+    ).rejects.toThrow('synthetic snapshot refusal');
+    expect(row()).toEqual(before);
+    expect(intent()).toBe(0);
+    expect(snapshot()).toBeNull();
+    expect(notices).toEqual([]);
+  });
+  test('lost committed receipts include polling intent and the saved snapshot without replay', async () => {
+    pollInterval = 60_000;
+    extension.repo.setPollingIntent(space, false);
+    gateway.lose = true;
+    await expect(
+      request({ ...params, pollingEnabled: true, webhookEnabled: false })
+    ).rejects.toThrow('synthetic config outcome unknown');
+    expect(intent()).toBe(1);
+    expect(snapshot()).toMatchObject({
+      pollingIntent: true,
+      watchedRepos: [{ pollingEnabled: true }],
+    });
+    await new Promise((done) => setTimeout(done, 60));
+    expect(gateway.writes).toBe(1);
     expect(notices).toEqual([]);
   });
 
