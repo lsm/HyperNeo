@@ -255,7 +255,7 @@ jobs:
             # tooling count as web-relevant — they feed the web build; the web
             # never imports packages/prompts)
             case "$f" in
-              packages/daemon/*|packages/cli/*|packages/skills/*|packages/desktop/*|packages/prompts/*) ;;
+              packages/daemon/*|packages/space/*|packages/cli/*|packages/skills/*|packages/desktop/*|packages/prompts/*) ;;
               *) web=true ;;
             esac
           done <<< "$files"
