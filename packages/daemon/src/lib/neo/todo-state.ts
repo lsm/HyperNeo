@@ -19,9 +19,6 @@ export interface TodoStateFacts {
 export const NEO_TODO_STALLED_CARD_TAIL =
   ' has nobody working on it, and HyperNeo cannot restart it on its own. Where should it continue, or should it close?';
 
-export const neoTodoStalledCard = (todo: Pick<NeoTodo, 'title'>) =>
-  `"${todo.title}"${NEO_TODO_STALLED_CARD_TAIL}`;
-
 export const isNeoTodoStalledCard = (text: string) => text.endsWith(NEO_TODO_STALLED_CARD_TAIL);
 
 export function neoTodoAwaitsHuman(
