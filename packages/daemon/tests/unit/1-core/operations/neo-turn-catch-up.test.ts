@@ -52,6 +52,20 @@ describe('catchUpWorkerTurns', () => {
     expect(recorded).toHaveLength(3);
   });
 
+  test('a transcript that is gone counts as caught up, not as a failure', async () => {
+    const { deps } = reader(0);
+    const gone = { ok: false, reason: 'not_found', detail: 'No transcript' };
+    const read = async () => ({ kind: 'completed' as const, value: gone });
+    expect(await catchUpWorkerTurns(ref, { ...deps, read } as never)).toBe(true);
+  });
+
+  test('an unreachable worker is tried again', async () => {
+    const { deps } = reader(0);
+    const down = { ok: false, reason: 'unreachable', detail: 'Offline' };
+    const read = async () => ({ kind: 'completed' as const, value: down });
+    await expect(catchUpWorkerTurns(ref, { ...deps, read } as never)).rejects.toThrow('unreachable');
+  });
+
   test('a full read is not caught up', async () => {
     const { deps } = reader(500);
     expect(await catchUpWorkerTurns(ref, deps as never)).toBe(false);
@@ -99,6 +113,7 @@ describe('openWorkerRefs', () => {
     todo('a', 'open', 'doing');
     todo('b', 'open', 'done');
     todo('c', 'shut', 'doing');
+    todo('e', 'open', 'failed');
     const send = (id: string, todoId: string, outcome: object | null) =>
       db
         .prepare(
@@ -114,6 +129,7 @@ describe('openWorkerRefs', () => {
     send('d3', 'a', null);
     send('d4', 'b', { ref: { adapter: 'hyperneo', id: 'done' } });
     send('d5', 'c', { ref: { adapter: 'hyperneo', id: 'shut' } });
+    send('d6', 'e', { ref: { adapter: 'hyperneo', id: 'failed' } });
     expect(new WorkDeliveryInputRepository(db).openWorkerRefs()).toEqual([
       { ref, lastActivityAt: 9 },
     ]);
