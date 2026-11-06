@@ -8,8 +8,8 @@ bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/ask-se
 ```
 
 This owns an isolated daemon with real reader/writer workers. Call the actual
-`neo.ask.settle` WebSocket RPC and agent MCP handler for `neo.ask.open` split
-activation; read full public Work cards through `neo.ask.read`. Only work.stop
+`neo.ask.settle` WebSocket RPC and agent MCP handler for reopening historical
+parents with `neo.ask.open`; read full public Work cards through `neo.ask.read`. Only work.stop
 is scripted, using the production operation schema and invocation boundary.
 No live daemon, provider, external GitHub request or real worker process is used.
 Before activation the first public settle fails on main-thread settlement SQL.
@@ -33,16 +33,15 @@ settlement must not be overwritten or announced as this operation's success.
 
 Retain #9072: an open question and a pending answer each keep the human hold;
 retirement with no pending answer releases it; explicit settlement closes the
-work unverified. The MCP split path settles only an empty parent, retains child
-asks/todos/reports/cards unchanged, announces once and stays quiet on repetition.
-Late root work keeps its parent open; a late parent-card failure rolls back.
+work unverified. Reopening a historical parent through MCP keeps it open and
+retains child asks/todos/reports/cards unchanged, without a settlement write or notice.
+Work on the parent stays active too.
 Unit tests also pin failed-stop/concurrent-settlement diagnostics and publication
 only after the writer receipt is delivered.
 
-Trace explicit settlement SQL and require zero matching main-thread calls. The split-open
-command/decision is off main, but the rest of ask.open still has existing
-creation/routing/family-response SQL outside this slice. No broader main-thread claim is
-made. Keep #8998/#9002/#8712 open.
+Trace explicit settlement SQL and require zero matching main-thread calls.
+Ask.open still has existing creation/family-response SQL outside explicit
+settlement. No broader main-thread claim is made. Keep #8998/#9002/#8712 open.
 
 The helper saves `ask-settlement-activation.json`, stops all owned transports,
 workers and daemon in finally, and the wrapper removes temporary proof data

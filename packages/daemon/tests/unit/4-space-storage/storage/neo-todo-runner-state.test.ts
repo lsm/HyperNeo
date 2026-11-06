@@ -205,7 +205,7 @@ describe('Data-only atomic runner state commands', () => {
     expect(changes).toEqual([]);
   });
 
-  test('claim relocation returns the current child ask and preserves the report', async () => {
+  test('claim keeps the original ask and preserves the report across repositories', async () => {
     db.prepare("UPDATE neo_asks SET repo='github.com/synthetic/base' WHERE id='ask'").run();
     const report = 'Full report before claim';
     store.updateTodo(
@@ -223,37 +223,13 @@ describe('Data-only atomic runner state commands', () => {
     const result = await run<Claim>('claim', ['first', 10]);
     expect(result).toMatchObject({
       ok: true,
-      todo: { state: 'doing', repo: 'github.com/synthetic/other', report },
-      ask: { repo: 'github.com/synthetic/other', parentId: 'ask' },
+      todo: { state: 'doing', askId: 'ask', report },
+      ask: { id: 'ask', repo: 'github.com/synthetic/base', parentId: null },
       changed: true,
     });
-    expect(result.ok && result.todo.askId).not.toBe('ask');
-    expect(store.listChildAsks('ask')).toHaveLength(1);
-    expect(sessions.readRef('first')).toBeNull();
-  });
-
-  test('a failed relocation rolls the earlier claim and card pruning back too', async () => {
-    db.prepare("UPDATE neo_asks SET repo='github.com/synthetic/base' WHERE id='ask'").run();
-    store.updateTodo(
-      store.getTodo('first')!,
-      {
-        check: {
-          pack: 'coding',
-          kind: 'pr_merged',
-          params: { urls: ['https://github.com/synthetic/other/pull/1'] },
-        },
-      },
-      2
-    );
-    startCard();
-    const before = snapshot();
-    db.exec(
-      "CREATE TRIGGER refuse_child BEFORE INSERT ON neo_asks WHEN NEW.parent_id='ask' BEGIN SELECT RAISE(ABORT, 'relocation rollback'); END"
-    );
-    await expect(run<Claim>('claim', ['first', 10])).rejects.toThrow('relocation rollback');
-    expect(snapshot()).toEqual(before);
+    expect(result.ok && result.todo.askId).toBe('ask');
     expect(store.listChildAsks('ask')).toEqual([]);
-    expect(changes).toEqual([]);
+    expect(sessions.readRef('first')).toBeNull();
   });
 
   test.each(['claim', 'recompute'] as const)(

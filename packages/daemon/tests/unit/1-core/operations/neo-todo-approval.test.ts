@@ -4,7 +4,6 @@ import { createNeoAskRecordOperations } from '../../../../src/lib/neo/ask-record
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
 import { wireNeoTodoMutations } from '../../../../src/lib/neo/todo-mutation-operation.ts';
-import { neoMoveTodo } from '../../../../src/lib/neo/todo-repo.ts';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
@@ -218,7 +217,7 @@ describe('todo approval', () => {
     }
   });
 
-  test('moves and edits never touch approval or take a step off its card', async () => {
+  test('edits never touch approval or take a step off its card', async () => {
     const { db, store, invoke, step, runner, sent, work } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
@@ -231,8 +230,6 @@ describe('todo approval', () => {
       expect(await invoke('neo.todo.edit', { todoId: a.id, after: [x.id] })).toMatchObject({
         ok: true,
       });
-      neoMoveTodo(store, store.getTodo(x.id)!, 'synthetic/first');
-      neoMoveTodo(store, store.getTodo(b.id)!, 'synthetic/second');
       await runner.refresh(() => {});
       for (const todo of [a, b]) {
         expect(store.getTodo(todo.id)).toMatchObject({
@@ -316,8 +313,16 @@ describe('todo approval', () => {
         todos: [step('A', []), { ...step('B', []), ...work }],
       });
       const [a, b] = opened.todos;
-      neoMoveTodo(store, store.getTodo(a.id)!, 'synthetic/first');
-      neoMoveTodo(store, store.getTodo(b.id)!, 'synthetic/second');
+      const child = store.openAsk({
+        ...store.getAsk(a.askId)!,
+        id: 'historical-child',
+        parentId: a.askId,
+        repo: 'synthetic/second',
+      });
+      db.prepare('UPDATE neo_todos SET ask_id = ? WHERE id = ?').run(child.id, b.id);
+      store.retireQuestions(a.askId, Date.now());
+      store.joinStartQuestion(store.getTodo(a.id)!, Date.now());
+      store.joinStartQuestion(store.getTodo(b.id)!, Date.now());
       const parent = crypto.randomUUID();
       store.askQuestion(
         parent,
