@@ -33,7 +33,7 @@ import type { TaskAgentManager } from '../../runtime/task-agent-manager.ts';
 import type { SpaceTaskManager } from '../../../tasks/task-manager.ts';
 import type { CodingArtifactProfile } from '../../../workflows/coding-artifact-profile.ts';
 import type { SpaceWorkflowManager } from '../../../workflows/workflow-manager.ts';
-import type { SpaceManager } from '../../managers/space-manager.ts';
+import type { SpaceManager } from '../../../../../../space/src/managers/space-manager.ts';
 import type { FamilyOperationContext } from '../../../rpc-handlers/family-operations/context.ts';
 
 export interface SpaceFamilyContext extends FamilyOperationContext {

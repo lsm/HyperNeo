@@ -14,7 +14,7 @@ import {
   setupAppMcpHandlers,
 } from '../../../../src/lib/rpc-handlers/app-mcp-handlers.ts';
 import { setupSpaceMcpHandlers } from '../../../../src/lib/space/rpc/space-mcp-handlers.ts';
-import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import { noOpReactiveDb } from '../../../helpers/reactive-database.ts';
 import { createTestSession } from '../../../helpers/database.ts';

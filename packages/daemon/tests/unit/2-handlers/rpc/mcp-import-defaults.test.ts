@@ -16,7 +16,7 @@ import { setupSpaceMcpHandlers } from '../../../../src/lib/space/rpc/space-mcp-h
 import { noOpReactiveDb } from '../../../helpers/reactive-database.ts';
 import { createTestSession } from '../../../helpers/database.ts';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
-import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 
 let raw: Database;
 let gateway: DbGateway;

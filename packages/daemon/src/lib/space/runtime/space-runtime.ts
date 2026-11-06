@@ -104,7 +104,7 @@ import { Logger } from '../../logger.ts';
 import type { SpaceActorRegistryAdapter } from '../../messaging/actor-registry.ts';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../../workflows/agent-slot-limits.ts';
 import { unifiedAgentRecordExists } from '../../agents/worker-long-horizon-mapper.ts';
-import type { SpaceManager } from '../managers/space-manager.ts';
+import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 import {
   assertValidSpaceTaskTransition,
   isValidSpaceTaskTransition,

@@ -13,7 +13,7 @@ import { decideGoalOwnershipMutationAdmission } from '../../../../../space/src/g
 import type { SpaceGoalService } from '../../../../../space/src/goals/service.ts';
 import { invokeOperationFromHandler } from '../../operations/handler-invoker.ts';
 import type { OperationRegistrySource } from '../../operations/registry.ts';
-import type { SpaceManager } from '../managers/space-manager.ts';
+import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 
 export interface SpaceGoalHandlerDeps {
   goalService: SpaceGoalService;

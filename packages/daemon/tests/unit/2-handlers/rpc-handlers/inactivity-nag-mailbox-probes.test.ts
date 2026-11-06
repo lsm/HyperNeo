@@ -9,7 +9,7 @@ import type {
 } from '../../../../src/lib/rpc-handlers';
 import { setupRPCHandlers } from '../../../../src/lib/rpc-handlers';
 import { createSpaceRpc } from '../../../../src/lib/space/rpc/space-setup.ts';
-import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 import { Database } from '../../../../src/storage/index';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import {

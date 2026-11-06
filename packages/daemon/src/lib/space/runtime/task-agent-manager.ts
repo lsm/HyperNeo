@@ -67,7 +67,7 @@ import type { SkillsManager } from '../../skills-manager.ts';
 import { getLongHorizonAgentTemplate } from '../../agents/long-horizon-templates.ts';
 import { resolveEffectiveSpaceAgentTemplate } from '../../agents/template-manager.ts';
 import { isRunnableUnifiedAgent } from '../../agents/worker-long-horizon-mapper.ts';
-import type { SpaceManager } from '../managers/space-manager.ts';
+import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
 import {
   type SpaceWorktreeManager,

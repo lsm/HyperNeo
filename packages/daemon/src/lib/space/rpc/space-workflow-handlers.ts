@@ -8,7 +8,7 @@ import type {
   SpaceWorkflowSyncDiff,
 } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
-import type { SpaceManager } from '../managers/space-manager.ts';
+import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
 import {
   getBuiltInWorkflows,
