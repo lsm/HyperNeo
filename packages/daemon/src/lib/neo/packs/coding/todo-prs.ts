@@ -666,7 +666,10 @@ export function createCodingTodoPack(
         : null;
     if (placed) {
       if (persist && !placed.incomplete) {
-        const claims = placed.prs.map((pr) => ({ url: pr.url, claim: 'branch' as const }));
+        const claims = [
+          ...planCodingTodoClaims(todo, null, []),
+          ...placed.prs.map((pr) => ({ url: pr.url, claim: 'branch' as const })),
+        ];
         await repo.write('claim', todo.id, claims, placed.observedAt, 'additive');
         await repo.write('record', todo.id, [...placed.prs], placed.observedAt);
       }

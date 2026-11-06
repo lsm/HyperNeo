@@ -157,9 +157,14 @@ describe('coding turn PRs', () => {
     send('d1', 'a', 'receipt-a');
     record(fact('t1', ['receipt-a'], [url], 100));
     const pack = createCodingTodoPack(new CodingTodoPrRepository(db), async () => [merged(105)]);
-    const named = { ...todo('a'), check: { pack: 'coding', kind: 'pr_merged', params: { urls: [url] } } };
+    const named = {
+      ...todo('a'),
+      check: { pack: 'coding', kind: 'pr_merged', params: { urls: [url] } },
+    };
     await pack.readFacts(named as NeoTodo);
-    expect(db.prepare('SELECT claim FROM pack_coding_pr_claims').all()).toEqual([{ claim: 'named' }]);
+    expect(db.prepare('SELECT claim FROM pack_coding_pr_claims').all()).toEqual([
+      { claim: 'named' },
+    ]);
     db.close();
   });
 
