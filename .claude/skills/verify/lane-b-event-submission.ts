@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { ingestSessionEvent, SessionExternalEventStore, SESSION_EVENT_SCOPE } from '../../../packages/daemon/src/lib/external-events/session-external-event-store.ts';
 import { sessionEventText, mailSessionEvent } from '../../../packages/daemon/src/lib/external-events/session-event-delivery.ts';
 import { SessionEventSubscriptionRepository } from '../../../packages/daemon/src/storage/repositories/session-event-subscription-repository.ts';
-import { buildImmediateEventMessageUuid } from '../../../packages/daemon/src/lib/external-events/immediate-delivery-pipeline.ts';
+import { buildImmediateEventMessageUuid } from '../../../packages/daemon/src/lib/external-events/event-delivery-rules.ts';
 import type { ExternalEvent } from '../../../packages/daemon/src/lib/external-events/types.ts';
 
 const run = resolve(process.argv[2]);
