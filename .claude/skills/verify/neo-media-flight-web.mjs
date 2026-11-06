@@ -259,6 +259,51 @@ try {
           }
         }
     }
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const count = await page.locator('[data-public-entry].neo-message-user').count();
+    await page
+      .locator('input[type=file]')
+      .first()
+      .setInputFiles([photo(0), file, photo(1)]);
+    await page.waitForFunction(
+      () => document.querySelectorAll('[aria-label="Attachments"] > li').length === 3
+    );
+    await input.fill('');
+    await page.evaluate(() => {
+      window.mediaFlightSeen = false;
+      window.mediaFlightObserver = new MutationObserver(() => {
+        if (document.querySelector('[data-send-flight]')) window.mediaFlightSeen = true;
+      });
+      window.mediaFlightObserver.observe(document.body, { childList: true, subtree: true });
+    });
+    await send();
+    await page.waitForFunction(
+      (n) => document.querySelectorAll('[data-public-entry].neo-message-user').length > n,
+      count
+    );
+    await page.waitForTimeout(300);
+    const reduced = await page.evaluate(() => {
+      window.mediaFlightObserver.disconnect();
+      const row = [...document.querySelectorAll('[data-public-entry].neo-message-user')].at(-1);
+      return {
+        matches: matchMedia('(prefers-reduced-motion: reduce)').matches,
+        flightSeen: window.mediaFlightSeen,
+        targets: row.querySelectorAll('[data-flight]').length,
+        bubble: !!row.querySelector('.neo-message-bubble'),
+        visibility: getComputedStyle(row).visibility,
+      };
+    });
+    results.push({ mode: 'reduced-motion', touch, width: 390, reduced });
+    writeFileSync(join(out, 'evidence.json'), JSON.stringify(results, null, 2));
+    await page.screenshot({ path: join(out, `reduced-${touch ? 'touch' : 'fine'}-390.png`) });
+    assert(
+      reduced.matches &&
+        !reduced.flightSeen &&
+        reduced.targets === 3 &&
+        !reduced.bubble &&
+        reduced.visibility === 'visible',
+      'Reduced motion hid media or produced an overlay'
+    );
     await context.close();
   }
   console.log(

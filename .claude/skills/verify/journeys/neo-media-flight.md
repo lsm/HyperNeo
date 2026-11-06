@@ -31,7 +31,10 @@ row during flight, roughly 550ms travel, and final bounds within 5px of each
 live target. After landing, require less than 3px movement in each target bound,
 continued bottom pinning, and no dummy bubble for media alone. Open the landed
 photo or file reader to check restored interaction and exact file contents.
-Inspect mid-flight/landed screenshots and evidence.json, including narrow touch.
+At 390px, also enable reduced motion and send mixed media alone. Require all
+three visible targets, an absent words bubble, and zero flight overlays. Inspect
+mid-flight/landed and reduced-motion screenshots and evidence.json, including
+narrow touch.
 
 Component regressions cover thumbnail versus whole-chip capture, interleaved
 category order, retained payloads, media-only/mixed rendering, row replacement,

@@ -90,14 +90,14 @@ export function NeoSendFlight({
           const node = mediaGhosts.current[index];
           const target = targets[index];
           if (!node || !target) return;
-          const frame = neoFlightBox(item.from, target, progress);
+          const mediaBox = neoFlightBox(item.from, target, progress);
           Object.assign(node.style, {
             visibility: 'visible',
-            left: `${frame.x}px`,
-            top: `${frame.y}px`,
-            width: `${frame.width}px`,
-            height: `${frame.height}px`,
-            borderRadius: `${item.file.kind === 'image' ? 8 + 4 * frame.chrome : 12}px`,
+            left: `${mediaBox.x}px`,
+            top: `${mediaBox.y}px`,
+            width: `${mediaBox.width}px`,
+            height: `${mediaBox.height}px`,
+            borderRadius: `${item.file.kind === 'image' ? 8 + 4 * mediaBox.chrome : 12}px`,
           });
         });
         if (progress === 1) {
