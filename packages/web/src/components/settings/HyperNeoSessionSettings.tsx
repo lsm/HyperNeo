@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'preact/hooks';
-import { globalSettings } from '../../lib/state.ts';
+import type { PermissionMode, SettingSource } from '@hyperneo/shared';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
+import { globalSettings } from '../../lib/state.ts';
 import { toast } from '../../lib/toast.ts';
 import { FORM_CHECKBOX_CLASS } from '../ui/FormField.tsx';
-import { type PermissionMode, type SettingSource } from '@hyperneo/shared';
-import { SettingsSection, SettingsGroup, SettingsRow, SettingsSelect } from './SettingsSection.tsx';
+import { SettingsGroup, SettingsRow, SettingsSection, SettingsSelect } from './SettingsSection.tsx';
 
 const PERMISSION_MODE_OPTIONS = [
   { value: 'default', label: 'bypassPermissions (Default)' },
@@ -20,7 +20,7 @@ function permissionModeOptions(saved: string) {
   return [...PERMISSION_MODE_OPTIONS, { value: saved, label }];
 }
 
-export function GeneralSettings() {
+export function HyperNeoSessionSettings() {
   const settings = globalSettings.value;
   const [localPermissionMode, setLocalPermissionMode] = useState<PermissionMode>(
     settings?.permissionMode ?? 'default'
@@ -68,7 +68,7 @@ export function GeneralSettings() {
   };
 
   return (
-    <SettingsSection title="General">
+    <SettingsSection title="HyperNeo session permissions">
       <SettingsGroup>
         <SettingsRow
           label="Permission Mode"

@@ -481,7 +481,10 @@ export class QueryRunner {
   }
 
   private readonly failures: QueryFailureGovernor;
-  constructor(private ctx: QueryRunnerContext) {
+  constructor(
+    private ctx: QueryRunnerContext,
+    private queryFactory: (args: Parameters<typeof query>[0]) => QueryLike = query
+  ) {
     this.failures = new QueryFailureGovernor(ctx.session, ctx.db);
   }
   resetFailureEpisode() {
@@ -1059,7 +1062,7 @@ export class QueryRunner {
       );
       recoveryState.startGuard?.();
       const queryObject = runLagPhase('sdk:query_create', () =>
-        query({
+        this.queryFactory({
           prompt: this.createMessageGeneratorWrapper(
             queryGeneration,
             recoveryState.startGuard,

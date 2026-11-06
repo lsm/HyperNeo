@@ -115,14 +115,14 @@ export const DEFAULT_COMMANDS: readonly CommandDescriptor[] = [
   },
   {
     id: 'settings.models',
-    label: 'Settings: Models',
+    label: 'Settings: Sessions & Harness',
     category: 'settings',
     keywords: ['model', 'switch'],
     run: () => {
       closePalette();
       navSectionSignal.value = 'settings';
-      settingsSectionSignal.value = 'models';
-      navigateToSettings('models');
+      settingsSectionSignal.value = 'harness';
+      navigateToSettings('harness');
     },
   },
   {

@@ -45,6 +45,7 @@ export const CREATE_SESSION_CONFIG_FIELD_POLICY: Record<
   chatDisplayMode: 'carried',
   workerOperations: 'carried',
 
+  harness: 'rejected',
   cwd: 'rejected',
   env: 'rejected',
   executable: 'rejected',

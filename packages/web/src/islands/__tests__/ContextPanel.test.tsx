@@ -35,7 +35,7 @@ let mockCurrentSpaceTasksFilterTabSignal!: Signal<
 >;
 let mockCurrentSpaceViewModeSignal!: Signal<'overview' | 'goals' | 'tasks' | 'configure'>;
 let mockSettingsSectionSignal!: Signal<
-  | 'general'
+  | 'preferences'
   | 'providers'
   | 'connections'
   | 'devices'
@@ -78,7 +78,7 @@ function initSignals() {
   mockCurrentSpaceSessionIdSignal = signal(null);
   mockCurrentSpaceTasksFilterTabSignal = signal('active');
   mockCurrentSpaceViewModeSignal = signal('overview');
-  mockSettingsSectionSignal = signal('general');
+  mockSettingsSectionSignal = signal('preferences');
   mockConnectionStateSignal = signal('connected');
   mockSpacesWithTasksSignal = signal([
     { ...makeSpace('space-1', { name: 'Alpha' }), tasks: [], sessions: [] },

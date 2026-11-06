@@ -24,7 +24,6 @@ const SETTINGS_SECTIONS: Array<{
     icon: 'palette',
     accent: 'text-cat-purple bg-cat-purple/15',
   },
-  { id: 'general', label: 'General', icon: 'settings', accent: 'text-accent-soft bg-accent/15' },
   {
     id: 'providers',
     label: 'Connections & Services',
@@ -46,7 +45,12 @@ const SETTINGS_SECTIONS: Array<{
     accent: 'text-cat-violet bg-cat-violet/15',
   },
   { id: 'neo-model', label: 'Neo model', icon: 'swap', accent: 'text-cat-cyan bg-cat-cyan/15' },
-  { id: 'models', label: 'Models', icon: 'swap', accent: 'text-cat-cyan bg-cat-cyan/15' },
+  {
+    id: 'harness',
+    label: 'Sessions & Harness',
+    icon: 'swap',
+    accent: 'text-cat-cyan bg-cat-cyan/15',
+  },
   { id: 'usage', label: 'Usage', icon: 'chart', accent: 'text-warning bg-warning/15' },
   { id: 'shortcuts', label: 'Shortcuts', icon: 'keyboard', accent: 'text-cat-pink bg-pink-500/15' },
   { id: 'about', label: 'About', icon: 'info', accent: 'text-fg-soft bg-fill' },
@@ -54,23 +58,6 @@ const SETTINGS_SECTIONS: Array<{
 
 function SectionIcon({ type }: { type: string }) {
   switch (type) {
-    case 'settings':
-      return (
-        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width={2}
-            d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-          />
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width={2}
-            d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-          />
-        </svg>
-      );
     case 'server':
       return (
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

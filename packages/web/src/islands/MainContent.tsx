@@ -19,9 +19,6 @@ const SessionsPage = lazy(() =>
   import('./SessionsPage.tsx').then((m) => ({ default: m.SessionsPage }))
 );
 
-const GeneralSettings = lazy(() =>
-  import('../components/settings/GeneralSettings.tsx').then((m) => ({ default: m.GeneralSettings }))
-);
 const PreferencesSettings = lazy(() =>
   import('../components/settings/PreferencesSettings.tsx').then((m) => ({
     default: m.PreferencesSettings,
@@ -76,9 +73,9 @@ const NeoModelSettings = lazy(() =>
     default: m.NeoModelSettings,
   }))
 );
-const ModelsSettings = lazy(() =>
-  import('../components/settings/ModelsSettings.tsx').then((m) => ({
-    default: m.ModelsSettings,
+const SessionsHarnessSettings = lazy(() =>
+  import('../components/settings/SessionsHarnessSettings.tsx').then((m) => ({
+    default: m.SessionsHarnessSettings,
   }))
 );
 const UsageAnalytics = lazy(() =>
@@ -176,7 +173,6 @@ export default function MainContent() {
             <div class="mx-auto w-full max-w-5xl">
               <Suspense fallback={lazyFallback}>
                 {settingsSection === 'preferences' && <PreferencesSettings />}
-                {settingsSection === 'general' && <GeneralSettings />}
                 {isConnectionsSection(settingsSection) && (
                   <ConnectionsServicesPage section={settingsSection} fallback={lazyFallback}>
                     {settingsSection === 'providers' && <ProvidersSettings />}
@@ -196,7 +192,7 @@ export default function MainContent() {
                 {settingsSection === 'skills' && <SkillsRegistry />}
                 {settingsSection === 'coding-pack' && <PackSettings />}
                 {settingsSection === 'neo-model' && <NeoModelSettings />}
-                {settingsSection === 'models' && <ModelsSettings />}
+                {settingsSection === 'harness' && <SessionsHarnessSettings />}
                 {settingsSection === 'usage' && <UsageAnalytics />}
                 {settingsSection === 'shortcuts' && <ShortcutsSettings />}
                 {settingsSection === 'about' && <AboutSection />}
