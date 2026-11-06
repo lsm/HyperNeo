@@ -221,6 +221,28 @@ describe('human send recovery wiring', () => {
     }
   });
 
+  test('a resend also reopens every other message held by the same hung turn', async () => {
+    process.env.HYPERNEO_HUMAN_SEND_SILENCE_MS = '5';
+    const { calls, recovery } = setup({
+      humanSendFacts: async () => ({
+        status: 'processing',
+        held: false,
+        openTools: 0,
+        lastActivityAt: 0,
+      }),
+      providerReachable: async () => false,
+    });
+    try {
+      recovery.watch('s', 'first');
+      recovery.watch('s', 'second');
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(calls.slice(0, 2)).toEqual(['reopen first', 'reopen second']);
+    } finally {
+      recovery.stop();
+      delete process.env.HYPERNEO_HUMAN_SEND_SILENCE_MS;
+    }
+  });
+
   test('a silent send that cannot be reopened tells the human at once', async () => {
     process.env.HYPERNEO_HUMAN_SEND_SILENCE_MS = '5';
     const calls: string[] = [];

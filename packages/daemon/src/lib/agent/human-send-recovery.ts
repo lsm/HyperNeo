@@ -130,6 +130,7 @@ export function createHumanSendRecovery(deps: HumanSendRecoveryDeps) {
   const lastSentAt = new Map<string, number>();
   const resends = new Map<string, number>();
   const silent = new Set<string>();
+  const watched = new Map<string, Set<string>>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
   const key = (sessionId: string, messageUuid: string) => `${sessionId}\0${messageUuid}`;
 
@@ -162,9 +163,13 @@ export function createHumanSendRecovery(deps: HumanSendRecoveryDeps) {
   }
 
   async function checkSilence(sessionId: string, messageUuid: string, sentAt: number) {
-    const session = await deps.getSession(sessionId);
-    if (!session) return;
     const id = key(sessionId, messageUuid);
+    const session = await deps.getSession(sessionId);
+    if (!session) {
+      resends.delete(id);
+      unwatch(sessionId, messageUuid);
+      return;
+    }
     const count = resends.get(id) ?? 0;
     const { status, held, openTools } = await session.humanSendFacts();
     const turn = {
@@ -191,11 +196,21 @@ export function createHumanSendRecovery(deps: HumanSendRecoveryDeps) {
     if (plan === 'resend') {
       resends.set(id, count + 1);
       silent.add(sessionId);
-      if (await deps.reopen(sessionId, messageUuid)) return;
+      const others = [...(watched.get(sessionId) ?? [])].filter((uuid) => uuid !== messageUuid);
+      const reopened = await deps.reopen(sessionId, messageUuid);
+      for (const uuid of others) await deps.reopen(sessionId, uuid);
+      if (reopened) return;
       silent.delete(sessionId);
     }
     resends.delete(id);
+    unwatch(sessionId, messageUuid);
     if (plan !== 'answered') await session.showNotice(HUMAN_SEND_GAVE_UP_NOTICE);
+  }
+
+  function unwatch(sessionId: string, messageUuid: string): void {
+    const uuids = watched.get(sessionId);
+    uuids?.delete(messageUuid);
+    if (!uuids?.size) watched.delete(sessionId);
   }
 
   function arm(sessionId: string, messageUuid: string, sentAt: number, delayMs: number): void {
@@ -212,12 +227,15 @@ export function createHumanSendRecovery(deps: HumanSendRecoveryDeps) {
   function watch(sessionId: string, messageUuid: string): void {
     const sentAt = Date.now();
     lastSentAt.set(sessionId, sentAt);
+    watched.set(sessionId, (watched.get(sessionId) ?? new Set()).add(messageUuid));
     arm(sessionId, messageUuid, sentAt, getHumanSendSilenceMs());
   }
 
   function stop(): void {
     for (const timer of timers) clearTimeout(timer);
     timers.clear();
+    for (const entries of [lastSentAt, resends, watched]) entries.clear();
+    silent.clear();
   }
 
   return { prepare, watch, stop };

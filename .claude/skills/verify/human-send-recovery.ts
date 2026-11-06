@@ -184,6 +184,17 @@ const cases: Record<string, (marker: string) => Promise<Record<string, unknown>>
     const userTurns = (JSON.parse(recovered) as { messages: { role: string; content: unknown }[] }).messages.filter((message) => message.role === 'user' && JSON.stringify(message.content).includes(marker));
     return { requestsSeen: seen.filter((body) => body.includes(marker)).length, copiesInRecoveredRequest: userTurns.length };
   },
+  async two_messages_in_a_hang(marker) {
+    const second = `second-${crypto.randomUUID().slice(0, 8)}`;
+    hang = { marker, until: Date.now() + 6_200 };
+    await send(marker);
+    await Bun.sleep(1_000);
+    hang = { marker: second, until: hang.until };
+    await send(second);
+    await answered(second, 40_000);
+    await until(() => served.some((body) => body.includes(marker)), 10_000, 'first message answered too');
+    return {};
+  },
   async parked_deliveries(marker) {
     await latch();
     const ids = [await systemTurn(`${marker} parked one`), await systemTurn(`${marker} parked two`)];

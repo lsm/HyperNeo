@@ -24,6 +24,7 @@ exactly one `neo.message.send`. The model must answer that message.
   inside the stall bound finishes on the same session object
 - `swallowed_message`: the process takes the message and never answers, so the
   watchdog recovers it
+- `two_messages_in_a_hang`: a second message sent during the hang also gets through
 - `parked_deliveries`: system deliveries parked behind a latch run right after
 - `expired_token_401`: the refresh runs once and the turn succeeds
 - `daemon_restart_mid_outage`
