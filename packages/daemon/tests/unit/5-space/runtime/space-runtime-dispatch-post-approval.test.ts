@@ -24,8 +24,8 @@ import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/reposit
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
-import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import { SpaceRuntime } from '../../../../../space/src/runtime/space-runtime.ts';
+import type { SpaceRuntimeConfig } from '../../../../../space/src/runtime/space-runtime.ts';
 import type { SpaceTask } from '@hyperneo/shared';
 import { createPinnedWorkflowRun } from '../../helpers/create-pinned-workflow-run.ts';
 import { runDbOpOn } from '../../helpers/run-db-op';

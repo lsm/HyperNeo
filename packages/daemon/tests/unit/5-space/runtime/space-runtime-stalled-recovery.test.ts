@@ -6,8 +6,8 @@ import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
-import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import type { SpaceRuntimeConfig } from '../../../../../space/src/runtime/space-runtime.ts';
+import { SpaceRuntime } from '../../../../../space/src/runtime/space-runtime.ts';
 import { PermanentSpawnError } from '../../../../src/lib/workflows/node-execution-validation.ts';
 import {
   ChannelCycleRepository,

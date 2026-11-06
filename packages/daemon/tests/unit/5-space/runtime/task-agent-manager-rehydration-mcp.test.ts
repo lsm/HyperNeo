@@ -179,7 +179,7 @@ function makeManager(): {
     spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
     spaceRuntimeService: {
       getSpaceRuntime: () =>
-        ({}) as unknown as import('../../../../src/lib/space/runtime/space-runtime.ts').SpaceRuntime,
+        ({}) as unknown as import('../../../../../space/src/runtime/space-runtime.ts').SpaceRuntime,
       isWorkflowRunActive: () => true,
       activateWorkflowNode: async () => [],
       ensureToolTargetSession: async () =>

@@ -7,8 +7,8 @@
       "maxLines": 10860,
       "followUp": "M3 schema migration split"
     },
-    "packages/daemon/src/lib/space/runtime/space-runtime.ts": {
-      "maxLines": 6599,
+    "packages/space/src/runtime/space-runtime.ts": {
+      "maxLines": 6605,
       "followUp": "M9 runtime component extraction"
     },
     "packages/daemon/src/lib/space/tools/space-agent-tools.ts": {

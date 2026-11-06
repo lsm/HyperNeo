@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { WorkflowNode } from '@hyperneo/shared';
 import { resolveNodeAgents } from '@hyperneo/shared';
 import { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
-import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import type { SpaceRuntimeConfig } from '../../../../../space/src/runtime/space-runtime.ts';
+import { SpaceRuntime } from '../../../../../space/src/runtime/space-runtime.ts';
 import type { SpaceAgentLookup } from '../../../../src/lib/workflows/workflow-manager.ts';
 import {
   SpaceWorkflowManager,

@@ -115,7 +115,7 @@ import {
   resolveSpaceMcpSessionPolicy,
   type SpaceMcpSessionPolicy,
 } from '../../../daemon/src/lib/session-resolution/space-mcp-session-policy.ts';
-import { SpaceRuntime } from '../../../daemon/src/lib/space/runtime/space-runtime.ts';
+import { SpaceRuntime } from './space-runtime.ts';
 import type { TaskAgentManager } from './task-agent-manager.ts';
 import { canTransition as canTransitionRunStatus } from '../../../daemon/src/lib/workflows/run-status-machine.ts';
 
