@@ -19,6 +19,7 @@ export function NeoSendFlight({
 }) {
   const ghost = useRef<HTMLDivElement>(null);
   const selector = `[data-pending-ask="${CSS.escape(flight.id)}"], [data-message-ref="${CSS.escape(flight.id)}"]`;
+  const hiddenRule = `${selector} { visibility: hidden !important; }`;
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   useLayoutEffect(() => {
     if (reduced) {
@@ -99,7 +100,7 @@ export function NeoSendFlight({
       class="neo-send-flight neo-message-user"
       style={{ visibility: 'hidden' }}
     >
-      <style>{`${selector} { visibility: hidden !important; }`}</style>
+      <style>{hiddenRule}</style>
       {flight.quote && (
         <NeoQuoteBar author={flight.quote.author} excerpt={neoQuoteExcerpt(flight.quote.text)} />
       )}

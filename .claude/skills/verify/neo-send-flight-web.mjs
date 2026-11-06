@@ -212,6 +212,40 @@ try {
         );
       }
     }
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const count = await page.locator('[data-public-entry].neo-message-user').count();
+    await input.fill('A send with reduced motion');
+    await page.evaluate(() => {
+      window.reducedFlightSeen = false;
+      window.reducedFlightObserver = new MutationObserver(() => {
+        if (document.querySelector('[data-send-flight]')) window.reducedFlightSeen = true;
+      });
+      window.reducedFlightObserver.observe(document.body, { childList: true, subtree: true });
+    });
+    await send();
+    await page.waitForFunction(
+      (n) => document.querySelectorAll('[data-public-entry].neo-message-user').length > n,
+      count
+    );
+    await page.waitForTimeout(650);
+    const reduced = await page.evaluate(() => {
+      window.reducedFlightObserver.disconnect();
+      const row = [...document.querySelectorAll('[data-public-entry].neo-message-user')].at(-1);
+      return {
+        matches: matchMedia('(prefers-reduced-motion: reduce)').matches,
+        flightSeen: window.reducedFlightSeen,
+        visibility: getComputedStyle(row).visibility,
+        height: row.getBoundingClientRect().height,
+      };
+    });
+    evidence.push({ kind: 'reduced-motion', touch, width: 390, reduced });
+    writeFileSync(join(out, 'evidence.json'), JSON.stringify(evidence, null, 2));
+    assert(reduced.matches && !reduced.flightSeen, 'Reduced motion still produced a flight');
+    assert(
+      reduced.visibility === 'visible' && reduced.height > 0,
+      'Reduced-motion send hid its destination'
+    );
+    await page.screenshot({ path: join(out, `reduced-motion-${touch ? 'touch' : 'fine'}.png`) });
     await context.close();
   }
   console.log(

@@ -16,15 +16,15 @@ No model or live daemon is needed.
 The driver seeds synthetic conversation history, quotes a long message, scrolls
 up and sends words. At 1280px and 390px, independently test fine-pointer and real
 hasTouch contexts, assert the actual coarse-pointer media query, and use the
-visible send button's tap interaction for touch. Use a four-line reply in the delayed case and check the words’ final height
-against their destination as well as the outer box. Delay the actual send RPC by
+visible send button's tap interaction for touch. Use a four-line reply in the
+delayed case and check the words’ final height against their destination as well as the outer box. Delay the actual send RPC by
 250ms for a mid-flight pending/durable swap, then by 1000ms for acceptance after
 landing. Forward the real response without replacing it.
 
 Sample ghost and destination boxes after each animation frame's layout work.
 Require words and quote to travel together for roughly 550ms, the composer quote
-to disappear, and the destination row to stay hidden during flight, including replacement before the next frame. The last
-visible ghost must match its target within 5px. After landing, require bottom
+to disappear, and the destination row to stay hidden during flight, including
+replacement before the next frame. The last visible ghost must match its target within 5px. After landing, require bottom
 pinning, less than 3px bubble movement across delayed acceptance, and no repeated
 arrival fade on the durable row. Keep per-frame evidence.json and mid-flight and
 landed screenshots for every case, and inspect wide and narrow touch screenshots.
