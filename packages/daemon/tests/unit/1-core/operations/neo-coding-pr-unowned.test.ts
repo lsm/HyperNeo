@@ -152,6 +152,19 @@ describe('coding pack newly unowned PR notifications', () => {
     }
   });
 
+  test('a turn recorded after owners were assigned does not announce its PR as unowned', async () => {
+    const { db, cycle } = setup();
+    try {
+      const turns = new WorkTurnRepository(db);
+      await turns.record(worker, [turn(url, false)]);
+      await cycle([pr(1)]);
+      await turns.record(worker, [turn(url, true)]);
+      expect(new CodingPrEventRepository(db).pendingUnowned(ship + 120_000)).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
   test('a PR opened while a worker turn runs waits for that turn to end', async () => {
     const { db, wakes, cycle } = setup();
     try {
