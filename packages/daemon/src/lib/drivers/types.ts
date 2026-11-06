@@ -328,6 +328,12 @@ export const WorkArchivedSchema = z.object({
 });
 export type WorkArchived = z.infer<typeof WorkArchivedSchema>;
 
+export interface WorkSessionFact {
+  id: string;
+  name: string;
+  status: WorkStatus;
+}
+
 export interface WorkAdapter {
   readonly id: string;
   readonly capabilities: readonly WorkVerb[];
@@ -340,6 +346,7 @@ export interface WorkAdapter {
   readonly supportsStartEffort?: boolean;
   readonly supportsStartPreparation?: boolean;
   find(query: FindQuery): PlaceGroup[] | Promise<PlaceGroup[]>;
+  readonly sessions?: () => Promise<readonly WorkSessionFact[]>;
   readonly readInput?: (sessionId: string, marker: string) => Promise<WorkTurn | null>;
   readonly readTurns?: (
     sessionId: string,

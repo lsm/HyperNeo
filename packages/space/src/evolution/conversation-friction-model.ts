@@ -1,9 +1,9 @@
 import { EVOLUTION_CONVERSATION_FRICTION_PROMPT, fillPrompt } from '@hyperneo/prompts';
-import type { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
-import { oneShotModelIds, runOneShotModel } from '../../agent/one-shot-model.ts';
-import { getAvailableModels } from '../../model-service.ts';
-import { getProviderService } from '../../provider-service.ts';
-import { inferProviderForModel } from '../../providers/registry.ts';
+import type { SpaceRepository } from '../../../daemon/src/storage/repositories/space-repository.ts';
+import { oneShotModelIds, runOneShotModel } from '../../../daemon/src/lib/agent/one-shot-model.ts';
+import { getAvailableModels } from '../../../daemon/src/lib/model-service.ts';
+import { getProviderService } from '../../../daemon/src/lib/provider-service.ts';
+import { inferProviderForModel } from '../../../daemon/src/lib/providers/registry.ts';
 import type {
   ConversationFrictionAnalysis,
   ConversationFrictionPromptInput,

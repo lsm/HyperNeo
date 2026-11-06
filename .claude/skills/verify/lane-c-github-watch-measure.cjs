@@ -21,8 +21,8 @@ function walk(node) {
       const body = callback.getText(sf);
       if (!body.includes('await this.stopIdlePollingOnReader();')) throw Error('Watch caller does not await timer ownership');
       const before = body.replace('await this.stopIdlePollingOnReader();', 'this.maybeStopPolling();');
-      if (hash(before) !== '082321be509c5b73df3550c835e211046e690b28372fd44df1198596943e0223') throw Error('Watch caller changed beyond one awaited timer call');
-      caller = { file, name, lines: lines(callback), sha256: hash(body), onlyAwaitedTimerCallChanged: true };
+      if (hash(before) !== 'e864551004da9d8c466e34128893fd2074fce59550280a594a28f9c3ad978851') throw Error('Watch caller changed beyond reviewed reader calls');
+      caller = { file, name, lines: lines(callback), sha256: hash(body), reviewedReaderCallsOnly: true };
     } else otherRpcs.push([name, hash(callback.getText(sf))]);
   }
   ts.forEachChild(node, walk);

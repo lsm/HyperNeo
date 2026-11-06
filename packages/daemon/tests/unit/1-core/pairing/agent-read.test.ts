@@ -2,11 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { createAgentReadGuard } from '../../../../src/lib/pairing/agent-read.ts';
 import { runMigration478 } from '../../../../src/storage/schema/m478-agent-devices.ts';
+import { runMigrations } from '../../../../src/storage/schema/migrations.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 
-function legacy() {
-  const db = new Database(':memory:');
+function legacy(db = new Database(':memory:')) {
   db.exec(`CREATE TABLE paired_devices (id TEXT PRIMARY KEY, name TEXT NOT NULL,
     kind TEXT NOT NULL CHECK (kind IN ('human', 'relay', 'daemon')), secret_hash TEXT NOT NULL UNIQUE,
     created_at INTEGER NOT NULL, last_seen_at INTEGER, last_seen_host TEXT, revoked_at INTEGER);
@@ -40,6 +40,34 @@ describe('runMigration478', () => {
       expect(() =>
         db.exec("UPDATE pairing_codes SET kind='administrator' WHERE id='agent-code'")
       ).toThrow();
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('agent migration registry', () => {
+  test('upgrades devices after the work-session migration has already completed', () => {
+    const db = new Database(':memory:');
+    try {
+      runMigrations(db, () => {});
+      db.exec(`DROP TABLE paired_devices; DROP TABLE pairing_codes;
+        DELETE FROM migration_markers WHERE key = 'migration_479';
+        INSERT INTO work_sessions VALUES ('synthetic', 'worker', 'Worker', 'idle', 1);`);
+      legacy(db);
+      runMigrations(db, () => {});
+      db.exec(
+        "INSERT INTO paired_devices VALUES ('reader','Reader','agent','new-hash',1,NULL,NULL,NULL)"
+      );
+      expect(db.prepare("SELECT revoked_at FROM paired_devices WHERE id='phone'").get()).toEqual({
+        revoked_at: 3,
+      });
+      expect(db.prepare("SELECT id FROM pairing_codes WHERE id='code'").get()).toEqual({
+        id: 'code',
+      });
+      expect(db.prepare("SELECT status FROM work_sessions WHERE id='worker'").get()).toEqual({
+        status: 'idle',
+      });
     } finally {
       db.close();
     }

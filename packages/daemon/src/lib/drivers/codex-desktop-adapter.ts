@@ -1389,6 +1389,12 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
         deps,
         query.text && !query.spaceId && deps.searchChats ? await deps.searchChats(query.text) : []
       ),
+    sessions: async () =>
+      (await loadCodexSnapshot({ includeClosed: true, limit: 0 }, deps)).threads.map((thread) => ({
+        id: thread.id,
+        name: thread.title,
+        status: codexStatus(thread, deps.now()),
+      })),
     resolveStartConfiguration: (request) =>
       withCodexAppServer({ appServer: deps.bootstrapServer }, (server) =>
         selectCodexConfiguration({ model: request.model, effort: request.effort }, server)

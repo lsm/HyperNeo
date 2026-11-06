@@ -1,5 +1,6 @@
 import type { NeoAskTodoRepository } from '../../../storage/repositories/neo-ask-todo-repository.ts';
 import { neoDerivedId } from '../derived-id.ts';
+import { openHumanCard } from '../human-card.ts';
 import { readNeoQuestion } from '../question-operations.ts';
 import type { HomeSavePlan } from './save.ts';
 
@@ -31,7 +32,8 @@ export function reportHomeConflict<T extends { ok: boolean }>(
         request: 'Review both preserved versions before proposing a resolution.',
         createdAt: Date.now(),
       });
-    store.askQuestion(
+    openHumanCard(
+      store,
       questionId,
       askId,
       {

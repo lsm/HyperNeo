@@ -1,6 +1,7 @@
 import { runMigration478 } from './m478-agent-devices.ts';
 import { runMigration476 } from './m476-neo-todo-approved-at.ts';
 import { runMigration477 } from './m477-work-turns.ts';
+import { runMigration478 } from './m478-work-sessions.ts';
 import { runMigration475 } from './m475-work-delivery-optional-todo.ts';
 import { runMigration474 } from './m474-trim-sdk-message-indexes.ts';
 import { runMigration473 } from './m473-drop-inbox-items.ts';

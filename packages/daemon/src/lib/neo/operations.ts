@@ -807,7 +807,8 @@ export function createNeoOperations(service: NeoService) {
       (questionId) => service.deliverQuestionAnswers(questionId),
       () => neoStandingRules(service.db.getGlobalSettings().neo),
       inputReads,
-      () => service.installedPacks()
+      () => service.installedPacks(),
+      (input, caller) => service.relayWorkerQuestion(input, caller.sessionId)
     ),
     defineOperation({
       name: 'neo.open',

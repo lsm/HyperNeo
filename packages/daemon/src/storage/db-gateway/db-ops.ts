@@ -1,3 +1,4 @@
+import { gitHubWatchedRepoRead } from '../repositories/github-watched-repo-read.ts';
 import { peerReads, peerWrites } from '../repositories/neo-peer-repository.ts';
 import { neoStallReminderWrite } from '../repositories/neo-stall-reminder-write.ts';
 import { historySnapshotReads } from '../repositories/sdk-history-snapshot-read.ts';
@@ -60,6 +61,7 @@ import {
   readLatestSessionPrState,
 } from '../../lib/external-events/session-external-event-store.ts';
 import { sdkMessageWrites } from '../repositories/sdk-message-writes.ts';
+import { workSessionWrites } from '../repositories/work-session-repository.ts';
 import { claudeDesktopOutboxWrites } from '../repositories/claude-desktop-outbox-repository.ts';
 import { codingLedgerReads, codingLedgerWrites } from '../../lib/neo/packs/coding/pr-ledger.ts';
 import { codingAssignmentWrites } from '../../lib/neo/packs/coding/assignments.ts';
@@ -239,6 +241,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     jobQueueReads,
     parkDeliveryJob,
     externalEventSweeps,
+    workSessionWrites,
     messageSearchIndexWrites,
     cleanupJobs,
     ingestSessionEvent,
@@ -339,5 +342,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     gitHubPollingWrites,
     gitHubPollingCapabilityReads,
     gitHubPollingTimerReads,
+    gitHubWatchedRepoRead,
   ].map((op) => [op.name, op])
 );
