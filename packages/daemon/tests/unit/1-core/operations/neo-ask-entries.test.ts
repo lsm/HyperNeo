@@ -43,6 +43,20 @@ const ask = (status: NeoAsk['status'] = 'open') => ({ status }) as NeoAsk;
 const question = (state: NeoQuestion['state']) => ({ state }) as NeoQuestion;
 
 describe('human-facing completion conditions', () => {
+  test('keeps custom wording on a todo with an assigned evidence check', () => {
+    const original = todo({
+      askId: 'ask',
+      doneWhen: 'The human has reviewed the summary.',
+      check: { pack: 'core', kind: 'evidence', params: { path: todoEvidenceFile('t') } },
+    });
+    const [entry] = projectNeoAskEntries(
+      [{ id: 'ask', status: 'open' } as NeoAsk],
+      { todos: [original], questions: [], links: new Map() },
+      []
+    );
+    expect(entry.todos[0].doneWhen).toBe(original.doneWhen);
+  });
+
   test.each(['assigned', 'external', 'different-todo', 'different-pack', 'no-check'])(
     'projects %s evidence without changing the stored completion',
     (kind) => {

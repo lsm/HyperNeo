@@ -85,6 +85,17 @@ try {
   assert.equal((await read(external, report)).accepted, true);
   assert.equal(store.getTodo(internal.id)?.doneWhen, internal.doneWhen);
   assert.deepEqual(store.getTodo(internal.id)?.check, internal.check);
+  const editCompletion = async (doneWhen: string) => {
+    const edited = JSON.parse((await invoke({ name: 'neo.todo.edit', input: { todoId: internal.id, doneWhen } })).content[0].text);
+    assert.equal(edited.ok, true, JSON.stringify(edited));
+    const updated = await rpc<{ ok: boolean; entry: NeoAskEntry }>('neo.ask.read', { askId: 'synthetic-ask' });
+    assert(updated.ok);
+    return updated.entry.todos.find(todo => todo.id === internal.id)!.doneWhen;
+  };
+  const custom = 'The human has reviewed the summary.';
+  assert.equal(await editCompletion(custom), custom, 'Custom human wording must survive the card projection');
+  assert.equal(await editCompletion(`Internal proof is saved at ${hidden}`), '');
+  assert.equal(await editCompletion(internal.doneWhen), '');
   const browserAt = process.argv.indexOf('--browser');
   if (browserAt >= 0) {
     const control = resolve(process.argv[browserAt + 1]);
