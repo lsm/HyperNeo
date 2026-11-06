@@ -33,7 +33,12 @@ import {
 } from './todo-completion.ts';
 import { neoTodoHome, neoTodoRepo } from './todo-repo.ts';
 import { isNeoTodoStartable, planNeoTodoAwaitingStart } from './todo-runner.ts';
-import { NEO_TODO_NOT_APPROVED, neoTodoStartRefusal } from './todo-start-gate.ts';
+import {
+  NEO_TODO_NOT_APPROVED,
+  neoTodoCancellationPending,
+  neoTodoProceedPatch,
+  neoTodoStartRefusal,
+} from './todo-start-gate.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -520,6 +525,18 @@ export function planNeoTodoRemove(
 }
 
 const Continue = z.object({ todoId: Text, message: Text });
+const Proceed = z.object({ todoId: Text });
+
+export function planNeoTodoProceed(
+  todo: NeoTodo,
+  family: readonly NeoTodo[],
+  now: number
+): Gate<TodoPlan> {
+  if (!neoTodoCancellationPending(todo, family))
+    return fail('no_cancelled_prerequisite: this todo is not waiting on a cancelled prerequisite.');
+  if (todo.instruction && todo.approvedAt === null) return fail(NEO_TODO_NOT_APPROVED);
+  return { value: { todo, patch: neoTodoProceedPatch(todo, family, now) } };
+}
 const Retry = z.object({ todoId: Text });
 const Close = z.object({ todoId: Text, reason: Text });
 
@@ -764,6 +781,18 @@ export function createNeoTodoOperations(
     caller: OperationCaller
   ) => Promise<TodoReceipt | Rejection>;
 
+  const proceedPastCancelled = owned(superpipe({})('neo.todo.proceed') as PipelineAPI)
+    .pipe(
+      (todo: NeoTodo) => planNeoTodoProceed(todo, todos.listFamilyTodos(todo.askId), Date.now()),
+      'outcome',
+      'result:outcome'
+    )
+    .pipe(write, 'outcome', 'outcome')
+    .endAsync('outcome') as (
+    input: z.infer<typeof Proceed>,
+    caller: OperationCaller
+  ) => Promise<TodoReceipt | Rejection>;
+
   const retry = owned(superpipe({})('neo.todo.retry') as PipelineAPI)
     .pipe((todo: NeoTodo) => controls.retry(todo.id).then(ran), 'outcome', 'outcome')
     .endAsync('outcome') as (
@@ -806,7 +835,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.edit',
       description:
-        'Change a todo on an open ask you own: title or check {pack, kind, params}; the completion sentence is generated from the check, or reword it directly with doneWhen. addUrls appends PR URLs to its PR-merge check. Duplicate claims and URLs unsupported by the check are recorded without blocking the edit. Prefer editing to adding a duplicate PR todo. Or record completion evidence (done met for what you read, reported for a claim you cannot read); without a passed outcome check it stays open, blocked by its check, and finishes by itself once the check passes; give a working document or evidence file as its absolute path on the owning daemon with one sentence of evidence, not the pasted document. Preview only files on this daemon. Remote files return owner_unavailable; identify their owner rather than re-publishing their paths as local. The artifacts field remains for existing saved attachments and fixed-head Git references. A todo with an unanswered card is refused until the human answers it. Worker final-line blockers are recorded automatically: needs_human first wakes Neo: answer the worker and continue if you can; otherwise ask the human with neo.question.ask (yesno or choice with options) linked to the todo. A blocker you leave alone is never shown to the human: you get one reminder after 60 minutes. Handle environment blockers by retrying or escalating their cause. To hold or release a todo use neo.todo.hold. after is refused while a prerequisite is cancelled: only the human answering its card clears it. priority changes where waiting work starts in the queue. A check-only todo queued without instruction or target reminds Neo daily after 24 hours: provide both, or hold/remove it. instruction with target gives a todo that has not started and has no instruction its work; the queue then starts it like any approved step. A start target for a coding todo needs target.place from work.find.',
+        'Change a todo on an open ask you own: title or check {pack, kind, params}; the completion sentence is generated from the check, or reword it directly with doneWhen. addUrls appends PR URLs to its PR-merge check. Duplicate claims and URLs unsupported by the check are recorded without blocking the edit. Prefer editing to adding a duplicate PR todo. Or record completion evidence (done met for what you read, reported for a claim you cannot read); without a passed outcome check it stays open, blocked by its check, and finishes by itself once the check passes; give a working document or evidence file as its absolute path on the owning daemon with one sentence of evidence, not the pasted document. Preview only files on this daemon. Remote files return owner_unavailable; identify their owner rather than re-publishing their paths as local. The artifacts field remains for existing saved attachments and fixed-head Git references. A todo with an unanswered card is refused until the human answers it. Worker final-line blockers are recorded automatically: needs_human first wakes Neo: answer the worker and continue if you can; otherwise ask the human with neo.question.ask (yesno or choice with options) linked to the todo. A blocker you leave alone is never shown to the human: you get one reminder after 60 minutes. Handle environment blockers by retrying or escalating their cause. To hold or release a todo use neo.todo.hold. after is refused while a prerequisite is cancelled: neo.todo.proceed clears it. priority changes where waiting work starts in the queue. A check-only todo queued without instruction or target reminds Neo daily after 24 hours: provide both, or hold/remove it. instruction with target gives a todo that has not started and has no instruction its work; the queue then starts it like any approved step. A start target for a coding todo needs target.place from work.find.',
       inputSchema: Edit,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -825,7 +854,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.remove',
       description:
-        'Remove a todo from an open ask you own, with the reason: this is how to cancel or replace one, started or not; neo.todo.close is only for work really done. Its session stops if it is running, unless the todo only follows a session the human tracked. An invalid replacedBy is recorded while removal proceeds without a replacement link. Unstarted dependents stop and ask the human once: approval removes only this prerequisite, decline removes the dependent. replacedBy names the todo that replaces it; approved dependents wait for it instead. A removed todo stays listed, struck through.',
+        'Remove a todo from an open ask you own, with the reason: this is how to cancel or replace one, started or not; neo.todo.close is only for work really done. Its session stops if it is running, unless the todo only follows a session the human tracked. An invalid replacedBy is recorded while removal proceeds without a replacement link. Unstarted dependents wait and you are told once: neo.todo.proceed continues one, neo.todo.remove stops it. replacedBy names the todo that replaces it; a dependent you continue waits for it instead. A removed todo stays listed, struck through.',
       inputSchema: Remove,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -839,6 +868,15 @@ export function createNeoTodoOperations(
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => present(await proceed(input, caller)),
+    }),
+    defineOperation({
+      name: 'neo.todo.proceed',
+      description:
+        'Continue an unstarted todo whose prerequisite was cancelled. It drops the cancelled prerequisite, or waits for its replacement, and keeps its other prerequisites. A step the human has not approved is refused: it stays on its Start card. Nothing else clears this wait, so a cancelled prerequisite never starts the next step by itself.',
+      inputSchema: Proceed,
+      resultSchema: TodoResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: async (input, caller) => present(await proceedPastCancelled(input, caller)),
     }),
     defineOperation({
       name: 'neo.todo.retry',

@@ -105,16 +105,18 @@ const neoHandlesBlocker = (todo: Pick<NeoTodo, 'state' | 'blockedBy'>) =>
 
 export function neoWorkCounts(
   openTodos: readonly Pick<NeoTodo, 'id' | 'askId' | 'state' | 'blockedBy'>[],
-  openQuestions: readonly Pick<NeoQuestion, 'askId' | 'state' | 'kind' | 'todoId' | 'startTodos'>[]
+  openQuestions: readonly Pick<NeoQuestion, 'askId' | 'state' | 'kind' | 'todoId' | 'startTodos'>[],
+  awaitingNeo: readonly Pick<NeoTodo, 'id'>[]
 ): { needsYou: number; neoUnhandled: number } {
   const cards = openQuestions.filter((question) => question.state === 'open');
+  const blocked = openTodos.filter(
+    (todo) =>
+      neoHandlesBlocker(todo) &&
+      !cards.some((card) => card.askId === todo.askId && neoQuestionCoversTodo(card, todo))
+  );
   return {
     needsYou: new Set(cards.map((question) => question.askId)).size,
-    neoUnhandled: openTodos.filter(
-      (todo) =>
-        neoHandlesBlocker(todo) &&
-        !cards.some((card) => card.askId === todo.askId && neoQuestionCoversTodo(card, todo))
-    ).length,
+    neoUnhandled: new Set([...blocked, ...awaitingNeo].map((todo) => todo.id)).size,
   };
 }
 
