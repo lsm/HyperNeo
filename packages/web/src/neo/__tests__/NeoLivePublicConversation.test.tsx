@@ -31,12 +31,23 @@ vi.mock('../neo-attachments.ts', async (original) => ({
   restoreNeoImages: restoreImages,
 }));
 vi.mock('../NeoComposer.tsx', () => ({
-  NeoComposer: (props: { draft: string; onDraft: (value: string) => void }) => (
-    <textarea
-      aria-label="Draft"
-      value={props.draft}
-      onInput={(event) => props.onDraft(event.currentTarget.value)}
-    />
+  NeoComposer: (props: {
+    draft: string;
+    onDraft: (value: string) => void;
+    onSend: (input: { text: string }) => void;
+  }) => (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        props.onSend({ text: props.draft });
+      }}
+    >
+      <textarea
+        aria-label="Draft"
+        value={props.draft}
+        onInput={(event) => props.onDraft(event.currentTarget.value)}
+      />
+    </form>
   ),
 }));
 
@@ -169,7 +180,7 @@ beforeEach(async () => {
     store.messagesLoaded.value = true;
     sessionId.value = root;
   });
-  sendMock = vi.fn(async () => undefined);
+  sendMock = vi.fn(async () => ({ ok: true }));
   useNeoMock.mockImplementation(() => {
     const rootSnapshot = source.value;
     const conversation = projectNeoPublicConversation(
@@ -196,6 +207,7 @@ beforeEach(async () => {
       open,
       retry: vi.fn(),
       send: sendMock,
+      sendRequestId: () => undefined,
       act: vi.fn(),
       busyWork: null,
     };
@@ -469,11 +481,6 @@ describe('NeoLive durable conversation activation', () => {
     expect(await within(publicView()).findByText('a-reply', { selector: 'strong' })).toBeTruthy();
     expect(screen.getByText('Native session controls could not be loaded.')).toBeTruthy();
     expect(screen.queryByText('Opening your conversation…')).toBeNull();
-    expect(screen.queryByLabelText('Draft')).toBeNull();
-    await act(async () => {
-      store.loadErrorKind.value = null;
-      store.messagesLoaded.value = true;
-    });
     expect(screen.getByLabelText('Draft')).toBeTruthy();
     await act(async () => {
       store.activeSessionId.value = 'stale-native-owner';
@@ -487,7 +494,8 @@ describe('NeoLive durable conversation activation', () => {
     render(<NeoLive />);
     const draft = (await screen.findByLabelText('Draft')) as HTMLTextAreaElement;
     fireEvent.input(draft, { target: { value: 'still here' } });
-    fireEvent.click(await screen.findByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(draft.value).toBe('still here'));
+    fireEvent.submit(draft.closest('form')!);
     await waitFor(() => expect(sendMock).toHaveBeenCalledOnce());
     expect(JSON.stringify(sendMock.mock.calls[0])).toContain('still here');
   });
