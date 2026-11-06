@@ -24,7 +24,15 @@ export async function verifyIconHitAreas(page, fixture, { phase, evidence, touch
     assert(box);
     if (phase === 'after' && (touch || ['message copy', 'reply', 'retry', 'edit'].includes(name))) assert(box.width >= 44 && box.height >= 44, JSON.stringify({ name, box }));
     else assert(box.width < 44 && box.height < 44, JSON.stringify({ name, box }));
-    observations.push({ name, width: box.width, height: box.height });
+    const icon = await control.evaluate(button => {
+      const box = button.querySelector('svg').getBoundingClientRect();
+      return { width: box.width, height: box.height };
+    });
+    if (phase === 'after' && ['retry', 'edit'].includes(name)) {
+      assert.equal(icon.width, 16);
+      assert.equal(icon.height, 16);
+    }
+    observations.push({ name, width: box.width, height: box.height, iconWidth: icon.width, iconHeight: icon.height });
   };
   const footer = await entry.getByRole('button', { name: 'Copy Neo’s message', exact: true }).elementHandle();
   await measure('message copy', footer);
