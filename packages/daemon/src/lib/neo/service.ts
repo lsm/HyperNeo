@@ -848,8 +848,8 @@ export class NeoService {
 
   private async catchUpOpenTodoTurns(): Promise<void> {
     if (this.catchingUpTurns) return;
-    this.catchingUpTurns = true;
     const workers = new WorkDeliveryInputRepository(this.db.getDatabase()).openWorkerRefs();
+    this.catchingUpTurns = true;
     try {
       for (const { ref, lastActivityAt } of planTurnCatchUp(workers, this.turnsSeen)) {
         const caughtUp = await catchUpWorkerTurns(ref, this.turnRecording()).catch((error) => {
@@ -865,7 +865,9 @@ export class NeoService {
   }
 
   async sweepPacks(): Promise<void> {
-    await this.catchUpOpenTodoTurns();
+    await this.catchUpOpenTodoTurns().catch((error) =>
+      this.log.warn('Worker turns pending', error)
+    );
     for (const pack of this.packs())
       await pack
         .sweep?.(Date.now())
