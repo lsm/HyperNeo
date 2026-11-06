@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { runMigration478 } from '../../../../src/storage/schema/m478-work-sessions';
+import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository';
 import { workSessionWrites } from '../../../../src/storage/repositories/work-session-repository';
 import { syncWorkSessions, workSessionRows } from '../../../../src/lib/drivers/work-session-sync';
 import type { WorkAdapter } from '../../../../src/lib/drivers/types';
@@ -58,6 +60,45 @@ describe('saveSessions', () => {
       name: 'Beta',
       at: 3,
     });
+    db.close();
+  });
+});
+
+describe('workerName', () => {
+  function database() {
+    const db = new Database(':memory:');
+    createTables(db);
+    runMigrations(db, () => {});
+    db.exec('PRAGMA foreign_keys = OFF');
+    return db;
+  }
+
+  test('prefers the synced name, then the latest todo title, else nothing', () => {
+    const db = database();
+    const repository = new NeoTodoSessionRepository(db);
+    const ref = { adapter: 'claude-code', id: 'a' };
+    const session = db.prepare(
+      'INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES (?, ?, ?)'
+    );
+    const todo = db.prepare(
+      `INSERT INTO neo_todos (id, ask_id, position, title, done_when, created_at, updated_at)
+       VALUES (?, 'ask', 0, ?, 'Seen', 0, ?)`
+    );
+    for (const [id, title, at] of [
+      ['t1', 'Older todo', 1],
+      ['t2', 'Newer todo', 2],
+    ] as const) {
+      todo.run(id, title, at);
+      session.run(id, '{}', JSON.stringify(ref));
+    }
+    expect(repository.workerName({ adapter: 'claude-code', id: 'none' })).toBeNull();
+    expect(repository.workerName(ref)).toBe('Newer todo');
+    new workSessionWrites.Repository(db).saveSessions(
+      [{ ...ref, name: 'Synced', status: 'done' }],
+      1
+    );
+    expect(repository.workerName(ref)).toBe('Synced');
+    expect(repository.workerName({ ...ref, daemon: 'other' })).toBeNull();
     db.close();
   });
 });

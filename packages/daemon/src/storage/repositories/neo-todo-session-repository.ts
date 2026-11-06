@@ -462,6 +462,22 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     return new Map(rows.map((row) => [row.todoId, sessionLinks(row)]));
   }
 
+  workerName(ref: WorkRef): string | null {
+    const synced = ref.daemon
+      ? null
+      : (this.db
+          .prepare('SELECT name FROM work_sessions WHERE adapter = ? AND id = ?')
+          .get(ref.adapter, ref.id) as { name: string } | null);
+    if (synced) return synced.name;
+    const todo = this.db
+      .prepare(
+        `SELECT t.title FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
+         WHERE s.ref = ? ORDER BY t.updated_at DESC LIMIT 1`
+      )
+      .get(JSON.stringify(ref)) as { title: string } | null;
+    return todo?.title ?? null;
+  }
+
   stopContext(id: string) {
     const store = new NeoAskTodoRepository(this.db);
     const todo = store.getTodo(id);
@@ -506,7 +522,7 @@ export const neoTodoSessionReads = defineRepositoryOp(
   'neo.todoSessionReads',
   'read',
   NeoTodoSessionRepository,
-  ['unrecordedStarts', 'awaitingReports', 'nudgeContext', 'stopContext', 'queueFacts']
+  ['unrecordedStarts', 'awaitingReports', 'nudgeContext', 'stopContext', 'queueFacts', 'workerName']
 );
 export const neoTodoSessionWrites = defineRepositoryOp(
   'neo.todoSessionWrites',

@@ -2,8 +2,8 @@ import { createLiveFileRead } from '../artifacts/live-file-read.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { createConnectionList } from '../connections/list-operation.ts';
 import { createGoogleConnectionOperations } from '../connections/operations.ts';
-import { readWorkerIdentity, sessionWorkerRef } from '../neo/worker-identity.ts';
-import { invokeOperation } from './invoke.ts';
+import { sessionWorkerRef } from '../neo/worker-identity.ts';
+import { neoTodoSessionReads } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { createArtifactReadOperations } from '../artifacts/read-operations.ts';
 import { createArtifactReferenceResolve } from '../artifacts/resolve-operation.ts';
 import { createBuildOperation } from '../system/build-operation.ts';
@@ -71,10 +71,9 @@ export function createDatabaseOperationCatalog(
         const title = readSessionField(db, 'title', id);
         return title !== null
           ? workerIdentity({ adapter: 'hyperneo', id }, title).label
-          : (
-              await readWorkerIdentity(sessionWorkerRef(id, false), (ref) =>
-                invokeOperation(registry, 'work.status', { ref }, { source: 'internal' })
-              )
+          : workerIdentity(
+              sessionWorkerRef(id, false),
+              await db.gateway.call(neoTodoSessionReads, 'workerName', sessionWorkerRef(id, false))
             ).label;
       },
       sessionSent: async (sent) => {
