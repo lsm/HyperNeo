@@ -1036,8 +1036,8 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
   if (neoOnly)
     return (
       <SettingsSection
-        title="Neo model"
-        description="Model, provider, thinking and compaction for Neo and its projects. Compaction changes apply when Neo is idle."
+        title="Coordinator"
+        description="Model, provider, thinking and compaction for Neo and its projects. It is not a default for workers or for your own sessions. Compaction changes apply when Neo is idle."
       >
         {loadError && (
           <p role="alert" class="text-sm text-danger">
