@@ -83,8 +83,8 @@ export function neoSplitSentMessage(text: string): { words: string; files: NeoSe
     const close = `\n${head[2]}`;
     let end = body.indexOf(close);
     while (end >= 0) {
-      const after = body.slice(end + close.length);
-      if (!after || after.startsWith(`\n\n${marker}`)) break;
+      const after = end + close.length;
+      if (after === body.length || body.startsWith(`\n\n${marker}`, after)) break;
       end = body.indexOf(close, end + close.length);
     }
     if (end < 0) return whole;
