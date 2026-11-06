@@ -7,14 +7,12 @@ import type {
 } from '@hyperneo/shared';
 import { z } from 'zod';
 import { TaskCoreSchema } from '../tasks/get-operation.ts';
-
-export const GoalStatusSchema = z.enum(['active', 'paused', 'completed', 'archived']);
-export const GoalTypeSchema = z.enum(['one_shot', 'measurable', 'recurring']);
-export const GoalPrioritySchema = z.enum(['low', 'normal', 'high', 'urgent']);
-export const GoalMetricsSchema = z.record(
-  z.string(),
-  z.union([z.string(), z.number(), z.boolean(), z.null()])
-);
+import {
+  GoalMetricsSchema,
+  GoalPrioritySchema,
+  GoalStatusSchema,
+  GoalTypeSchema,
+} from './goal-contract.ts';
 
 export const SpaceGoalSchema = z.object({
   id: z.string(),

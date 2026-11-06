@@ -1,4 +1,3 @@
-import type { SpaceGoalEventSource } from '@hyperneo/shared';
 import type {
   GoalJournalDraft,
   SessionGoal,
@@ -12,16 +11,17 @@ import {
   isAgentSessionCaller,
   type OperationCaller,
 } from '../operations/registry.ts';
-import { GOAL_READ_POLICY, GOAL_WRITE_POLICY } from './goal-operation-scope.ts';
-import { SessionScheduleCadenceSchema } from '../scheduler/operations.ts';
-import { requireValidCadence } from '../scheduler/session-schedules.ts';
-import type { SessionGoalSchedules } from './session-goal-schedules.ts';
 import {
+  GOAL_READ_POLICY,
+  GOAL_WRITE_POLICY,
   GoalMetricsSchema,
   GoalPrioritySchema,
   GoalStatusSchema,
   GoalTypeSchema,
-} from './goal-result-schemas.ts';
+} from './goal-contract.ts';
+import { SessionScheduleCadenceSchema } from '../scheduler/operations.ts';
+import { requireValidCadence } from '../scheduler/session-schedules.ts';
+import type { SessionGoalSchedules } from './session-goal-schedules.ts';
 
 type Rejection = { accepted: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -209,10 +209,6 @@ export function requireGoalDoneTest<T>(
     : refuse('done_test_required: give the goal metrics or a written doneTest.');
 }
 
-function eventSource(caller: OperationCaller): SpaceGoalEventSource {
-  return caller.source === 'mcp' ? 'neo' : 'human';
-}
-
 function patchOf(input: z.infer<typeof Update>): SessionGoalPatch {
   const { goalId: _goalId, ownerSessionId: _owner, ...patch } = input;
   return Object.fromEntries(
@@ -261,7 +257,7 @@ export function createSessionGoalOperations({
     .pipe(
       (owned: string, input: z.infer<typeof Create>, caller: OperationCaller) => {
         const { ownerSessionId: _owner, cadence, nudgeEvery, ...draft } = input;
-        const goal = goals.create(owned, draft, eventSource(caller), Date.now(), (created) =>
+        const goal = goals.create(owned, draft, Date.now(), (created) =>
           schedules.sync(created, cadence, nudgeEvery)
         );
         audit(caller, 'goal.session.create', { goalId: goal.id, ownerSessionId: owned });
@@ -304,7 +300,7 @@ export function createSessionGoalOperations({
         const patch = patchOf(input);
         audit(caller, 'goal.session.update', { goalId: goal.id, fields: Object.keys(patch) });
         return done(
-          goals.update(goal, patch, eventSource(caller), Date.now(), (updated) => {
+          goals.update(goal, patch, Date.now(), (updated) => {
             if (patch.status) schedules.sync(updated);
           })
         );

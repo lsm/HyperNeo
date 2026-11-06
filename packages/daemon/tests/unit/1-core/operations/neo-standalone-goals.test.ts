@@ -14,12 +14,7 @@ describe('standalone Neo goals', () => {
   test('session goals never create a Space goal or Space event', () => {
     const { db, goals } = setup();
     try {
-      const goal = goals.create(
-        'neo:root',
-        { title: 'Independent', doneTest: 'Measured' },
-        'neo',
-        1
-      );
+      const goal = goals.create('neo:root', { title: 'Independent', doneTest: 'Measured' }, 1);
       expect(goals.get(goal.id)).toMatchObject({
         ownerSessionId: 'neo:root',
         title: 'Independent',
@@ -27,7 +22,7 @@ describe('standalone Neo goals', () => {
       expect(db.prepare('SELECT COUNT(*) AS n FROM space_goals').get()).toEqual({ n: 0 });
       expect(db.prepare('SELECT COUNT(*) AS n FROM space_goal_events').get()).toEqual({ n: 0 });
       expect(db.prepare('SELECT id FROM neo_goals').all()).toEqual([{ id: goal.id }]);
-      goals.update(goal, { progress: 40 }, 'human', 2);
+      goals.update(goal, { progress: 40 }, 2);
       expect(db.prepare('SELECT COUNT(*) AS n FROM space_goal_events').get()).toEqual({ n: 0 });
     } finally {
       db.close();
@@ -36,12 +31,7 @@ describe('standalone Neo goals', () => {
   test('journal retries, compaction and saved wake settings retain the session goal', () => {
     const { db, goals } = setup();
     try {
-      const goal = goals.create(
-        'neo:root',
-        { title: 'Independent', doneTest: 'Measured' },
-        'neo',
-        1
-      );
+      const goal = goals.create('neo:root', { title: 'Independent', doneTest: 'Measured' }, 1);
       goals.appendJournal(
         goal.id,
         'neo:root',
@@ -58,7 +48,7 @@ describe('standalone Neo goals', () => {
         cadence: { kind: 'every', everyMs: 900000 },
         nudgeEvery: 2,
       });
-      goals.update(goal, { worksNote: 'Examples help' }, 'neo', 4);
+      goals.update(goal, { worksNote: 'Examples help' }, 4);
       expect(goals.factState(goal.id)).toMatchObject({
         note: 'Examples help',
         through: 1,

@@ -247,8 +247,8 @@ describe('neo.ask.open and neo.ask.settle', () => {
 
   test('an ask links any existing goal; retries and repo splits retain that goal', async () => {
     const { store, goals, call, started } = setup();
-    const mine = goals.create('neo-a', { title: 'Ship', doneTest: 'Released' }, 'neo', 1);
-    const other = goals.create('neo-other', { title: 'Other', doneTest: 'Released' }, 'neo', 1);
+    const mine = goals.create('neo-a', { title: 'Ship', doneTest: 'Released' }, 1);
+    const other = goals.create('neo-other', { title: 'Other', doneTest: 'Released' }, 1);
     expect(await call('neo.ask.open', { ...opening, goalId: 'missing' }, turn('m1'))).toMatchObject(
       {
         ok: false,

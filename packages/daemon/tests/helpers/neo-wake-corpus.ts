@@ -12,7 +12,6 @@ export function seedNeoWake(db: Database, conversationId: string, additions = tr
   const goal = goals.create(
     sessionId,
     { title: 'Publish the guide', doneTest: 'Published' },
-    'neo',
     Date.now()
   );
   const scheduleId = crypto.randomUUID();

@@ -109,7 +109,6 @@ test('a standalone goal wake retains its title and journal addition', () => {
   const goal = goals.create(
     `neo:${conversationId}`,
     { title: 'Independent goal', doneTest: 'Published' },
-    'neo',
     at
   );
   put('goal-wake', 0, {

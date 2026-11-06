@@ -4,7 +4,6 @@ import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import {
   admitGoalAccess,
-  GOAL_WRITE_POLICY,
   type GoalCallerContext,
   type GoalRejection,
   GoalRejectionSchema,
@@ -13,12 +12,13 @@ import {
   recordGoalAudit,
 } from './goal-operation-scope.ts';
 import {
+  GOAL_WRITE_POLICY,
   GoalMetricsSchema,
   GoalPrioritySchema,
   GoalStatusSchema,
   GoalTypeSchema,
-  SpaceGoalSchema,
-} from './goal-result-schemas.ts';
+} from './goal-contract.ts';
+import { SpaceGoalSchema } from './goal-result-schemas.ts';
 import type { SpaceGoalService } from './service.ts';
 
 export const GoalWritableFieldsShape = {

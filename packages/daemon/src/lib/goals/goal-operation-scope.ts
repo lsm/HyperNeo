@@ -1,11 +1,8 @@
 import type { Session, SpaceGoal } from '@hyperneo/shared';
 import { z } from 'zod';
 import type { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
-import type {
-  OperationCaller,
-  OperationCallerRole,
-  OperationPolicy,
-} from '../operations/registry.ts';
+import type { OperationCaller } from '../operations/registry.ts';
+import type { GoalAccess } from './goal-contract.ts';
 import { resolveSessionSpaceId } from '../session-resolution/space-caller-scope.ts';
 import type { SpaceMcpSessionPolicyContext } from '../session-resolution/space-mcp-session-policy.ts';
 import type { SpaceGoalMutationContext } from './service.ts';
@@ -23,29 +20,6 @@ export const GOAL_REJECTION_REASONS = [
 ] as const;
 
 export type GoalRejectionReason = (typeof GOAL_REJECTION_REASONS)[number];
-
-export type GoalAccess = 'read' | 'mutate' | 'owner';
-
-const GOAL_ACCESS_ROLE_LISTS: Record<GoalAccess, readonly OperationCallerRole[]> = {
-  read: ['long_term_agent', 'neo', 'workflow_worker', 'direct_task_worker'],
-  mutate: ['long_term_agent', 'neo', 'workflow_worker', 'direct_task_worker'],
-  owner: ['long_term_agent', 'neo', 'workflow_worker', 'direct_task_worker'],
-};
-
-export const GOAL_READ_POLICY = {
-  safetyClass: 'read',
-  roles: GOAL_ACCESS_ROLE_LISTS.read,
-} as const satisfies OperationPolicy;
-
-export const GOAL_WRITE_POLICY = {
-  safetyClass: 'mutate',
-  roles: GOAL_ACCESS_ROLE_LISTS.mutate,
-} as const satisfies OperationPolicy;
-
-export const GOAL_OWNER_POLICY = {
-  safetyClass: 'mutate',
-  roles: GOAL_ACCESS_ROLE_LISTS.owner,
-} as const satisfies OperationPolicy;
 
 export const GoalRejectionSchema = z.object({
   accepted: z.literal(false),
