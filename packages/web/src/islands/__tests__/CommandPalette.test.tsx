@@ -74,6 +74,30 @@ describe('CommandPalette', () => {
     expect(screen.getAllByText('Navigation')).toHaveLength(1);
   });
 
+  it('runs the command shown at the selected row when a category is merged', async () => {
+    const run = vi.fn();
+    const command = (id: string, category: 'navigation' | 'settings') => ({
+      id,
+      label: id,
+      category,
+      run: () => run(id),
+    });
+    commandRegistry.registerAll([
+      command('nav.first', 'navigation'),
+      command('settings.one', 'settings'),
+      command('nav.second', 'navigation'),
+    ]);
+    commandPaletteOpenSignal.value = true;
+    render(<CommandPalette />);
+    await screen.findByText('nav.second');
+    const input = screen.getByTestId('command-palette-input');
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(run).toHaveBeenCalledWith('nav.second');
+  });
+
   it('keeps commands of an extension whose id only contains a loaded one hidden', async () => {
     declareExtensionNav(spaceNav);
     registerWebExtension('space', {

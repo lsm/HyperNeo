@@ -360,7 +360,7 @@ export function CommandPalette() {
   const extensions: string[] = extensionNav().map((nav) => nav.extension);
   const extensionsKey = extensions.join();
 
-  const items = useMemo(() => {
+  const rankedItems = useMemo(() => {
     const forcedCommand = query.trimStart().startsWith('>');
     const commandQuery = forcedCommand ? query.trimStart().slice(1).trimStart() : query;
     const commands = commandItems(
@@ -384,7 +384,7 @@ export function CommandPalette() {
 
   const groupedItems = useMemo(() => {
     const groups: Array<{ key: PaletteItem['group']; items: PaletteItem[] }> = [];
-    for (const item of items) {
+    for (const item of rankedItems) {
       const last = groups.find((group) => group.key === item.group);
       if (last) {
         last.items.push(item);
@@ -393,7 +393,8 @@ export function CommandPalette() {
       }
     }
     return groups;
-  }, [items]);
+  }, [rankedItems]);
+  const items = useMemo(() => groupedItems.flatMap((group) => group.items), [groupedItems]);
 
   useEffect(() => {
     setSelectedIndex((index) => Math.min(index, Math.max(items.length - 1, 0)));
