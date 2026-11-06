@@ -110,6 +110,30 @@ describe('coding pack newly unowned PR notifications', () => {
   const worker = { adapter: 'claude-desktop', id: 'worker' };
   const url = 'https://github.com/synthetic/a/pull/1';
 
+  const markWorkerRunning = (db: Database, state: 'doing' | 'blocked') => {
+    const store = new NeoAskTodoRepository(db);
+    store.openAsk({
+      id: 'ask',
+      projectId: null,
+      sessionId: 'neo',
+      originMessageId: null,
+      title: 'Work',
+      request: 'Work',
+      createdAt: 1,
+    });
+    store.addTodo(
+      'todo',
+      'ask',
+      { title: 'Work', doneWhen: 'Done', check: null, instruction: 'Go', named: null },
+      1
+    );
+    store.updateTodo(store.getTodo('todo')!, { state, startedAt: 2 }, 2);
+    db.prepare(
+      `INSERT INTO neo_todo_sessions (todo_id, target, ref, live_status)
+       VALUES ('todo', '{}', ?, 'running')`
+    ).run(JSON.stringify(worker));
+  };
+
   test('the turn that produced a PR makes its session the owner, ahead of a branch guess', async () => {
     const { db, ledger, wakes, cycle } = setup();
     try {
@@ -168,27 +192,7 @@ describe('coding pack newly unowned PR notifications', () => {
   test('a PR opened while a worker turn runs waits for that turn to end', async () => {
     const { db, wakes, cycle } = setup();
     try {
-      const store = new NeoAskTodoRepository(db);
-      store.openAsk({
-        id: 'ask',
-        projectId: null,
-        sessionId: 'neo',
-        originMessageId: null,
-        title: 'Work',
-        request: 'Work',
-        createdAt: 1,
-      });
-      store.addTodo(
-        'todo',
-        'ask',
-        { title: 'Work', doneWhen: 'Done', check: null, instruction: 'Go', named: null },
-        1
-      );
-      store.updateTodo(store.getTodo('todo')!, { state: 'doing', startedAt: 2 }, 2);
-      db.prepare(
-        `INSERT INTO neo_todo_sessions (todo_id, target, ref, live_status)
-         VALUES ('todo', '{}', ?, 'running')`
-      ).run(JSON.stringify(worker));
+      markWorkerRunning(db, 'doing');
       await cycle([pr(1)]);
       expect(wakes).toEqual([]);
 
@@ -196,6 +200,17 @@ describe('coding pack newly unowned PR notifications', () => {
         { ...turn('https://example.com', true), endedAt: ship + 100_000 },
       ]);
       await cycle([pr(1)], ship + 180_000);
+      expect(wakes[0].text).toContain('synthetic/a#1');
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a worker blocked on its check does not hold the notice, since nothing refreshes its status', async () => {
+    const { db, wakes, cycle } = setup();
+    try {
+      markWorkerRunning(db, 'blocked');
+      await cycle([pr(1)]);
       expect(wakes[0].text).toContain('synthetic/a#1');
     } finally {
       db.close();
