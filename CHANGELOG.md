@@ -4,6 +4,19 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.55.1] - 2026-11-06
+
+### Web
+
+- The Neo page keeps its input box when a session's raw transcript is too large to load (#10042).
+- Sent photos show above the words, and sent text files show as cards (#10038, #10040).
+
+### Neo and workers
+
+- Sign-in, verification codes, forms, payment and commitments are now shared human preferences that every pack and worker follows; each defaults to the most cautious choice and Neo asks once when it first matters (#10036).
+- A started todo waits for its unfinished prerequisites (#10022).
+- Worker turn records no longer stop advancing after a compaction replays old timestamps (#10025).
+
 ## [0.55.0] - 2026-11-06
 
 ### Before upgrading
