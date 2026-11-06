@@ -187,6 +187,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'live.attachWait': '等对话加载完再添加文件。',
   'live.photosFailed': '这条消息的照片加载失败，请重试。',
   'chat.you': '你',
+  'chat.openFile': '打开文件：{name}',
   'chat.openNamed': '打开 {name}',
   'chat.photo': '照片',
   'chat.loadingPhoto': '正在加载照片',

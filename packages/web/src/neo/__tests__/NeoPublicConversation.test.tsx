@@ -275,7 +275,13 @@ describe('durable public conversation presentation', () => {
       'does not mean work is complete'
     );
     expect(article.querySelector('strong')?.textContent).toBe('fictional sources');
-    expect(article.querySelector('pre code')?.textContent).toContain('Unchanged attached text');
+    expect(article.querySelector('pre code')).toBeNull();
+    const card = within(article).getByRole('button', { name: 'Open file: notes.txt' });
+    expect(card.closest('.neo-message-bubble')).toBeNull();
+    fireEvent.click(card);
+    const reader = await screen.findByRole('dialog', { name: 'notes.txt' });
+    expect(reader.querySelector('pre')?.textContent).toBe('Unchanged attached text');
+    fireEvent.click(within(reader).getByRole('button', { name: 'Close modal' }));
     expect(article.querySelector('time')?.dateTime).toBe(new Date(value.createdAt).toISOString());
     expect(article.querySelector('time')?.closest('.neo-message-bubble')).toBeNull();
     expect(within(article).getByText('You').closest('.neo-message-bubble')).toBeNull();

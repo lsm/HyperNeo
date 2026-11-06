@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-OUT=${1:?usage: neo-sent-photos.sh <absolute-evidence-directory>}
+OUT=${1:?usage: neo-sent-photos.sh <absolute-evidence-directory> [browser-helper]}
+WEB=${2:-.claude/skills/verify/neo-sent-photos-web.mjs}
 [[ "$OUT" = /* ]] || { echo 'Evidence directory must be absolute'; exit 64; }
 mkdir -p "$OUT"
 OUT=$(cd "$OUT" && pwd)
@@ -26,5 +27,5 @@ read -r PORT MOCK_PORT <<< "$ports"
 VERIFY_MOCK_PORT="$MOCK_PORT" VERIFY_NORMAL_PRIORITY=1 bash .claude/skills/verify/launch.sh "$PORT" "$RUN" &
 job=$!; wait "$job"; job=''
 PAIR_CODE=$(env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" VERIFY_PORT="$PORT" bun .claude/skills/verify/rpc.ts device.pair.create '{"kind":"human","name":"Synthetic browser"}' | node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{const r=JSON.parse(s).reply;if(!r.ok)throw Error(JSON.stringify(r));console.log(r.code)})')
-PAIR_CODE="$PAIR_CODE" node .claude/skills/verify/neo-sent-photos-web.mjs "$PORT" "$OUT" &
+PAIR_CODE="$PAIR_CODE" node "$WEB" "$PORT" "$OUT" &
 job=$!; wait "$job"; job=''
