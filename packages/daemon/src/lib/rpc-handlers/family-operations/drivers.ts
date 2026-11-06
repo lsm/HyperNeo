@@ -39,11 +39,11 @@ import {
 } from '../../../storage/work-started-sessions.ts';
 import { resolveCopilotRuntime } from '../../providers/anthropic-copilot/copilot-cli-resolver.ts';
 import {
-  ACP_AGENTS,
-  createAcpAgentAdapter,
-  listAcpAgentSessions,
-  reuseAcpSessionList,
-} from '../../drivers/acp-agent-adapter.ts';
+  COPILOT_CLIENT,
+  createCopilotDiscovery,
+  listCopilotSessions,
+  reuseCopilotSessionList,
+} from '../../drivers/copilot-discovery.ts';
 import {
   createClaudeDesktopAdapter,
   readClaudeDesktopRecords,
@@ -387,48 +387,42 @@ function claudeDesktopAdapters(
   return [withClaudeRemoteControl(createClaudeDesktopAdapter(deps), deps)];
 }
 
-function acpAgentAdapters(
+function copilotAdapters(
   ownSessions: () => ReadonlySet<string>,
   context: FamilyOperationContext
 ): WorkAdapter[] {
-  return ACP_AGENTS.flatMap((agent) => {
-    const command = findExecutable(agent.bin);
-    if (!command) return [];
-    const directory = join(dirname(resolve(context.deps.config.dbPath)), 'copilot-workers');
-    const adapters = [
-      createAcpAgentAdapter({
-        agent,
-        machine: hostname(),
-        now: Date.now,
-        listSessions: reuseAcpSessionList(() => listAcpAgentSessions(command, agent), Date.now),
-        ownSessions: () => {
-          const ids = ownSessions();
-          return {
-            has: (id: string) =>
-              ids.has(id) || (agent.id === 'copilot-cli' && copilotOwnsSession(directory, id)),
-          };
-        },
-        projectFolder: gitWorktreeProject,
-        ...(agent.app && existsSync(agent.app.path) ? { link: agent.app.link } : {}),
-      }),
-    ];
-    if (agent.id !== 'copilot-cli') return adapters;
-    const adapter = createCopilotAdapter(adapters[0], {
-      resolveCliPath: async () => (await resolveCopilotRuntime(process.env)).path,
-      directory,
-      projectFolder: gitWorktreeProject,
-      gitCheckout: readGitCheckout,
-      spawn: spawnProcess,
-      worktreesDir: join(directory, 'worktrees'),
-      machine: hostname(),
-      env: process.env,
-      homeDir: homedir(),
-      folderExists: existsSync,
-      makeFolder: (folder) => mkdirSync(folder),
-    });
-    context.driverCleanup?.push(() => adapter.close());
-    return [adapter];
+  if (!findExecutable(COPILOT_CLIENT.bin)) return [];
+  const directory = join(dirname(resolve(context.deps.config.dbPath)), 'copilot-workers');
+  const resolveCliPath = async () => (await resolveCopilotRuntime(process.env)).path;
+  const discovery = createCopilotDiscovery({
+    machine: hostname(),
+    now: Date.now,
+    listSessions: reuseCopilotSessionList(
+      async () => listCopilotSessions(await resolveCliPath()),
+      Date.now
+    ),
+    ownSessions: () => {
+      const ids = ownSessions();
+      return { has: (id: string) => ids.has(id) || copilotOwnsSession(directory, id) };
+    },
+    projectFolder: gitWorktreeProject,
+    ...(existsSync(COPILOT_CLIENT.app.path) ? { link: COPILOT_CLIENT.app.link } : {}),
   });
+  const adapter = createCopilotAdapter(discovery, {
+    resolveCliPath,
+    directory,
+    projectFolder: gitWorktreeProject,
+    gitCheckout: readGitCheckout,
+    spawn: spawnProcess,
+    worktreesDir: join(directory, 'worktrees'),
+    machine: hostname(),
+    env: process.env,
+    homeDir: homedir(),
+    folderExists: existsSync,
+    makeFolder: (folder) => mkdirSync(folder),
+  });
+  context.driverCleanup?.push(() => adapter.close());
+  return [adapter];
 }
 
 function codexDesktopAdapters(
@@ -592,7 +586,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       context.claudeInbox,
       desktop[0]
     ),
-    ...acpAgentAdapters(
+    ...copilotAdapters(
       () => new Set(context.deps.db.listAcpSessionIds().map((session) => session.acpSessionId)),
       context
     ),

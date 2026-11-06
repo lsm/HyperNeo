@@ -8,7 +8,9 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import type { Result, WorkStarted } from '../../../packages/daemon/src/lib/drivers/types.ts';
 
-const [portText, runText, mode = 'all'] = process.argv.slice(2);
+const [portText, ...args] = process.argv.slice(2);
+const runText = args.pop();
+const [mode = 'all'] = args;
 assert(runText);
 const run = resolve(runText);
 const port = Number(portText);
@@ -21,8 +23,7 @@ assert.equal(process.env.PATH?.split(':')[0], join(run, 'bin'));
 for (const dir of ['bin', 'evidence', 'workspace']) mkdirSync(join(run, dir), { recursive: true });
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 const fixture = fileURLToPath(new URL('../../../packages/daemon/tests/fixtures/copilot-sdk.ts', import.meta.url));
-const acp = fileURLToPath(new URL('../../../packages/daemon/tests/fixtures/copilot-acp.ts', import.meta.url));
-writeFileSync(join(run, 'bin/copilot'), `#!/usr/bin/env bun\nif (process.argv.includes('--acp')) await import(${JSON.stringify(acp)}); else { process.argv.push('--production-version', '--durable-inputs'); await import(${JSON.stringify(fixture)}); }\n`, { mode: 0o700 });
+writeFileSync(join(run, 'bin/copilot'), `#!/usr/bin/env bun\nprocess.argv.push('--production-version', '--durable-inputs'); await import(${JSON.stringify(fixture)});\n`, { mode: 0o700 });
 writeFileSync(join(run, 'bin/opencode'), '#!/bin/sh\nexit 19\n', { mode: 0o700 });
 process.env.COPILOT_CLI_PATH = join(run, 'bin/copilot');
 const network = globalThis.fetch;
@@ -174,17 +175,20 @@ try {
   assert(receipt.ok && receipt.value.lastReply === 'HISTORY_REPLY');
   const external = await rpc('work.send', { ref: { adapter: 'copilot-cli', id: 'external-read-only' }, message: 'must not send' }) as Result<unknown>;
   assert(!external.ok && external.reason === 'not_found');
-  const acpCalls = readFileSync(join(run, 'home/evidence/calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line).method);
-  assert(acpCalls.every(method => ['initialize', 'session/list'].includes(method)));
-  observations.push({ acpCalls });
+  const discoveryCalls = readFileSync(join(run, 'home/calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line).method);
+  assert(discoveryCalls.includes('session.list'));
+  assert(!discoveryCalls.some(method => ['session.create', 'session.resume', 'session.send'].includes(method)));
+  observations.push({ discoveryCalls });
   }
   console.log(`PASS (${mode}): owned Copilot work.read/find through isolated daemon; evidence ${run}/evidence/observed.json`);
 } finally {
   ws?.close(); await app?.cleanup(); globalThis.fetch = network;
-  const pids = existsSync(join(run, 'workspace/calls.jsonl')) ? [...new Set(calls().map(c => c.pid))] : [];
+  const ownedPids = existsSync(join(run, 'workspace/calls.jsonl')) ? calls().map(c => c.pid) : [];
+  const listedPids = existsSync(join(run, 'home/calls.jsonl')) ? readFileSync(join(run, 'home/calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line).pid) : [];
+  const pids = [...new Set([...ownedPids, ...listedPids])];
   await new Promise(done => setTimeout(done, 100));
   const remaining = pids.filter(pid => { try { process.kill(pid, 0); return true; } catch { return false; } });
-  observations.push({ ownedPids: pids, remaining });
+  observations.push({ ownedPids, listedPids: [...new Set(listedPids)], remaining });
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(observations, null, 2));
   assert.deepEqual(remaining, []);
 }

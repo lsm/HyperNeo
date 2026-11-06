@@ -151,7 +151,7 @@
 14	packages/daemon/tests/unit/1-core/credentials/oauth-refresh-scheduler.test.ts
 10	packages/daemon/tests/unit/1-core/credentials/provider-credential-manager.test.ts
 5	packages/daemon/tests/unit/1-core/credentials/refresh-due-gate.test.ts
-13	packages/daemon/tests/unit/1-core/drivers/acp-agent-adapter.test.ts
+13	packages/daemon/tests/unit/1-core/drivers/copilot-discovery-groups.test.ts
 16	packages/daemon/tests/unit/1-core/drivers/claude-code-adapter.test.ts
 104	packages/daemon/tests/unit/1-core/drivers/claude-desktop-adapter.test.ts
 48	packages/daemon/tests/unit/1-core/drivers/claude-desktop-start.test.ts
@@ -1054,7 +1054,6 @@
 19	packages/daemon/tests/unit/5-space/workspaces/workspace-manager.test.ts
 15656	packages/daemon/tests/unit/5-space/workspaces/worktree-manager.test.ts
 28	packages/daemon/tests/unit/helpers/dev-proxy.test.ts
-51	packages/daemon/tests/unit/lib/acp/acp-client.test.ts
 6	packages/daemon/tests/unit/lib/safe-process-env.test.ts
 11	packages/daemon/tests/unit/lib/safe-fs.test.ts
 16	packages/daemon/tests/unit/lib/process-json-rpc-env.test.ts

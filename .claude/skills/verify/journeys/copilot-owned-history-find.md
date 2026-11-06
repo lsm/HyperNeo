@@ -9,7 +9,7 @@ TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh \
 ```
 
 The actual isolated daemon's public operation.invoke door drives the pinned
-SDK against synthetic framed-JSON-RPC and ACP processes. The helper authenticates
+SDK against synthetic SDK framed-JSON-RPC processes. The helper authenticates
 with the synthetic daemon's owner-only credential, closes its socket and daemon,
 and checks its fixture PIDs have exited. The wrapper preserves observed.json and
 proof.log, then removes the synthetic HOME, database and transcripts.
@@ -24,12 +24,12 @@ Observe:
   assistant text, stable prefixed message IDs and no duplicate assistant record.
   Unknown events do not become visible messages. After daemon restart the same
   history is readable without `session.create`, `session.resume` or `session.send`.
-- `work.find` lists a completed owned session once as done despite a fresh ACP
-  timestamp, and permission-blocked work once as needs_you despite an old ACP
+- `work.find` lists a completed owned session once as done despite a fresh SDK discovery
+  timestamp, and permission-blocked work once as needs_you despite an old SDK discovery
   timestamp. Twenty-five additional owned duplicates cannot hide the external
-  session behind ACP's 20-item place window: ownership exclusion happens before
+  session behind the 20-item place window: ownership exclusion happens before
   that window. External discovery retains its existing age heuristic and never
-  calls ACP load/prompt/cancel. External send remains not_found.
+  creates, resumes or sends to a session while listing. External send remains not_found.
 - History pages read at most 256 KiB from the known owned CLI transcript, return
   up to 21 entries and clip each entry to 4,000 characters with textComplete:false.
   Cursor continuation reads older entries. A partial final line is ignored and
@@ -48,9 +48,9 @@ started. Receipt evidence retains that distinction.
 Owned listing reads directory batches of 64, scans at most 4,096 entries and
 loads the 200 most recently modified ownership records, then applies existing
 place/text filters and the 20-work-per-place window. Concurrent directory scans
-share an in-flight read; ACP retains its existing in-flight/60-second listing
+share an in-flight read; SDK discovery retains its existing in-flight/60-second listing
 reuse. This is a bounded discovery window, not exhaustive search or a retention
-policy. Old ownership still suppresses ACP duplicates even outside that window.
+policy. Old ownership still suppresses SDK discovery duplicates even outside that window.
 No ownership, receipt or transcript files are deleted. `around` searches only
 the current bounded byte window; an unlocated anchor reports reply_unavailable.
 Clipped history is a preview; full final reports remain receipt-bound, and
@@ -68,21 +68,18 @@ Review regressions have separate helper modes, each requiring a fresh run:
 
 ```bash
 for MODE in search peek external-failure boundary emoji; do
-  RUN=$(mktemp -d /private/tmp/hn-copilot-find-review-XXXXXX)
-  mkdir -p "$RUN/home"
-  env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin" \
-    NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
-    bun .claude/skills/verify/copilot-history-find.ts 9386 "$RUN" "$MODE"
+  TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh \
+    "/absolute/fresh/evidence-$MODE" .claude/skills/verify/copilot-history-find.ts 9386 "$MODE"
 done
 ```
 
 - `search`: an older external title match survives twenty-five newer sessions in
-  the same place, because text reaches ACP filtering before the result window.
+  the same place, because text reaches SDK discovery filtering before the result window.
 - `peek`: after starting synthetic held work, the fixture withholds ping replies.
   Browsing find must send no ping/shutdown, leave its ownership record byte-for-byte
   unchanged and retain the live PID. Releasing the fixture gate and sending a
   follow-up must complete the original receipt; browsing never stops the worker.
-- `external-failure`: after restart, a cold ACP list fails explicitly. The stored
+- `external-failure`: after restart, a cold SDK discovery list fails explicitly. The stored
   owned result remains discoverable as done, with a watchHint saying external
   discovery is unavailable and the list contains owned work only. No resume occurs.
   If no owned results are available either, find retains its adapter-unreachable
