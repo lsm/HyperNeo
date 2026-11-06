@@ -22,3 +22,5 @@ waits for its daemon, then lets with-run.sh remove its temporary data. Retain
 the before failure where `/` opens the legacy app and becomes `/sessions`.
 The shared resolver unit tests cover all three servers' entry decision. Run
 the legacy router tests too, including its home navigation to `/sessions`.
+The same run starts the standalone web package server and checks its root and
+Neo HTML entries, legacy fallback and canonical redirect with query parameters.

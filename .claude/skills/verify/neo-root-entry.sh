@@ -3,7 +3,9 @@ set -euo pipefail
 EVIDENCE=${1:?absolute evidence directory required}
 : "${RUN:?run through with-run.sh}"
 [[ "$EVIDENCE" = /* ]] || exit 64
-bash .claude/skills/verify/resource-check.sh
+if [[ $(uname -s) == Darwin ]]; then
+  bash .claude/skills/verify/resource-check.sh
+fi
 mkdir "$EVIDENCE"
 mkdir -p "$RUN/home" "$RUN/tmp" "$RUN/data" "$RUN/bin" "$RUN/evidence"
 touch "$RUN/.preserve-run"
