@@ -6,6 +6,8 @@ import type { Database } from '../sqlite-compat.ts';
 const storedRef = ({ adapter, daemon, id }: WorkRef) =>
   JSON.stringify({ adapter, id, ...(daemon ? { daemon } : {}) });
 
+const urlKey = (url: string) => url.toLowerCase().replace(/^https?:\/\//, '');
+
 export const recordWorkTurns = defineDbOp({
   name: 'work.turn.record',
   mode: 'write',
@@ -17,7 +19,7 @@ export const recordWorkTurns = defineDbOp({
       'INSERT OR IGNORE INTO work_turn_urls (url, ref, turn_id) VALUES (?, ?, ?)'
     );
     for (const turn of turns) {
-      for (const url of turn.urls) index.run(url.toLowerCase(), storedRef(ref), turn.id);
+      for (const url of turn.urls) index.run(urlKey(url), storedRef(ref), turn.id);
       write.run(
         storedRef(ref),
         turn.id,
@@ -85,9 +87,9 @@ export class WorkTurnRepository {
       WHERE url >= ? AND url <= ?`);
     const before = this.db.prepare(`SELECT ${TURN_COLUMNS} FROM work_turns
       WHERE ref = ? AND ended_at < ? ORDER BY ended_at DESC LIMIT 1`);
-    const found = prefixes.flatMap(
-      (prefix) => find.all(prefix, `${prefix}\uffff`) as (TurnRow & { ref: string })[]
-    );
+    const found = prefixes
+      .map(urlKey)
+      .flatMap((prefix) => find.all(prefix, `${prefix}\uffff`) as (TurnRow & { ref: string })[]);
     const unique = new Map(found.map((row) => [`${row.ref}\n${row.id}`, row]));
     return [...unique.values()].map(({ ref, ...row }) => {
       const fact = readTurnRow(row);
