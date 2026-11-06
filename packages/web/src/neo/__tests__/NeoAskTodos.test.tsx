@@ -229,33 +229,38 @@ describe('NeoAskTodos', () => {
   });
 
   it.each([
-    ['en', 'Ask actions', 'Copy link', 'open'],
-    ['zh-Hans', '更多操作', '复制链接', 'done'],
-    ['en', 'Ask actions', 'Copy link', 'dropped'],
-  ] as const)('copies the card link in %s for a %s card', async (language, menu, label, status) => {
-    locale.value = language;
-    const copy = vi.spyOn(clipboard, 'copyToClipboard').mockResolvedValue(true);
-    const data = entry({});
-    data.ask.status = status;
-    data.ask.title = 'Review [iOS] \\ API\nnext step';
-    const url = location.href;
-    const answer = vi.fn();
-    const app = render(<NeoAskTodos entry={data} onAnswer={answer} disabled />);
-    try {
-      fireEvent.click(app.getByRole('button', { name: menu }));
-      fireEvent.click(app.getByRole('menuitem', { name: label }));
-      await waitFor(() =>
-        expect(copy).toHaveBeenCalledWith(
-          '[Review \\[iOS\\] \\\\ API next step](hyperneo://ask/ask)'
-        )
-      );
-      await waitFor(() => expect(app.queryByRole('menuitem', { name: label })).toBeNull());
-      expect(location.href).toBe(url);
-      expect(answer).not.toHaveBeenCalled();
-    } finally {
-      copy.mockRestore();
+    ['en', 'Ask actions', 'Copy link', 'open', 'https://cards.example.test'],
+    ['zh-Hans', '更多操作', '复制链接', 'done', 'http://127.0.0.1:43210'],
+    ['en', 'Ask actions', 'Copy link', 'dropped', 'https://other.example.test:9443'],
+  ] as const)(
+    'copies the card link (%s, %s, %s, %s, %s)',
+    async (language, menu, label, status, origin) => {
+      vi.stubGlobal('location', new URL(`${origin}/neo?key=synthetic#card`));
+      locale.value = language;
+      const copy = vi.spyOn(clipboard, 'copyToClipboard').mockResolvedValue(true);
+      const data = entry({});
+      data.ask.status = status;
+      data.ask.title = 'Review [iOS] \\ API\nnext step';
+      const url = location.href;
+      const answer = vi.fn();
+      const app = render(<NeoAskTodos entry={data} onAnswer={answer} disabled />);
+      try {
+        fireEvent.click(app.getByRole('button', { name: menu }));
+        fireEvent.click(app.getByRole('menuitem', { name: label }));
+        await waitFor(() =>
+          expect(copy).toHaveBeenCalledWith(
+            `[Review \\[iOS\\] \\\\ API next step](${origin}/ask/ask.md)`
+          )
+        );
+        await waitFor(() => expect(app.queryByRole('menuitem', { name: label })).toBeNull());
+        expect(location.href).toBe(url);
+        expect(answer).not.toHaveBeenCalled();
+      } finally {
+        copy.mockRestore();
+        vi.unstubAllGlobals();
+      }
     }
-  });
+  );
 
   it('copies a plain Unicode card title verbatim', async () => {
     const copy = vi.spyOn(clipboard, 'copyToClipboard').mockResolvedValue(true);
@@ -265,7 +270,9 @@ describe('NeoAskTodos', () => {
       fireEvent.click(app.getByRole('button', { name: '更多操作' }));
       fireEvent.click(app.getByRole('menuitem', { name: '复制链接' }));
       await waitFor(() =>
-        expect(copy).toHaveBeenCalledWith(`[${data.ask.title}](hyperneo://ask/${data.ask.id})`)
+        expect(copy).toHaveBeenCalledWith(
+          `[${data.ask.title}](${location.origin}/ask/${data.ask.id}.md)`
+        )
       );
     } finally {
       copy.mockRestore();
