@@ -18,6 +18,7 @@ export function NeoSendFlight({
   onDone: () => void;
 }) {
   const ghost = useRef<HTMLDivElement>(null);
+  const selector = `[data-pending-ask="${CSS.escape(flight.id)}"], [data-message-ref="${CSS.escape(flight.id)}"]`;
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   useLayoutEffect(() => {
     if (reduced) {
@@ -42,9 +43,7 @@ export function NeoSendFlight({
         finish();
         return;
       }
-      const row = document.querySelector<HTMLElement>(
-        `[data-pending-ask="${CSS.escape(flight.id)}"], [data-message-ref="${CSS.escape(flight.id)}"]`
-      );
+      const row = document.querySelector<HTMLElement>(selector);
       if (row !== held) {
         release();
         held = row;
@@ -100,6 +99,7 @@ export function NeoSendFlight({
       class="neo-send-flight neo-message-user"
       style={{ visibility: 'hidden' }}
     >
+      <style>{`${selector} { visibility: hidden !important; }`}</style>
       {flight.quote && (
         <NeoQuoteBar author={flight.quote.author} excerpt={neoQuoteExcerpt(flight.quote.text)} />
       )}

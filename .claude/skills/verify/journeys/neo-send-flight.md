@@ -23,7 +23,7 @@ landing. Forward the real response without replacing it.
 
 Sample ghost and destination boxes after each animation frame's layout work.
 Require words and quote to travel together for roughly 550ms, the composer quote
-to disappear, and the destination row to stay hidden during flight. The last
+to disappear, and the destination row to stay hidden during flight, including replacement before the next frame. The last
 visible ghost must match its target within 5px. After landing, require bottom
 pinning, less than 3px bubble movement across delayed acceptance, and no repeated
 arrival fade on the durable row. Keep per-frame evidence.json and mid-flight and
