@@ -15,6 +15,7 @@ import type { NeoAskState } from '../useNeoConversationAsks.ts';
 import type { NeoPublicationState } from '../useNeoPublications.ts';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
+let sendMock: ReturnType<typeof vi.fn>;
 const transport = vi.hoisted(() => ({ hub: null as unknown }));
 vi.mock('../useNeo.ts', () => ({ useNeo: useNeoMock }));
 vi.mock('../../lib/connection-manager.ts', () => ({
@@ -168,6 +169,7 @@ beforeEach(async () => {
     store.messagesLoaded.value = true;
     sessionId.value = root;
   });
+  sendMock = vi.fn(async () => undefined);
   useNeoMock.mockImplementation(() => {
     const rootSnapshot = source.value;
     const conversation = projectNeoPublicConversation(
@@ -193,7 +195,7 @@ beforeEach(async () => {
       setError: (value: string) => (error.value = value),
       open,
       retry: vi.fn(),
-      send: vi.fn(),
+      send: sendMock,
       act: vi.fn(),
       busyWork: null,
     };
@@ -478,6 +480,16 @@ describe('NeoLive durable conversation activation', () => {
     });
     expect(screen.queryByLabelText('Public conversation')).toBeNull();
     expect(screen.queryByLabelText('Draft')).toBeNull();
+  });
+
+  it('shows the composer and sends when the raw transcript never loads', async () => {
+    store.messagesLoaded.value = false;
+    render(<NeoLive />);
+    const draft = (await screen.findByLabelText('Draft')) as HTMLTextAreaElement;
+    fireEvent.input(draft, { target: { value: 'still here' } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(sendMock).toHaveBeenCalledOnce());
+    expect(JSON.stringify(sendMock.mock.calls[0])).toContain('still here');
   });
 
   it('labels holder replies as Neo without author navigation', async () => {
