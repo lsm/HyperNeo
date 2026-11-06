@@ -89,6 +89,36 @@ describe('local credential creation', () => {
       await pending;
     }
   });
+  test('an existing agent record remains readable while its new origin is staged', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'agent-hardlink-'));
+    process.env.HYPERNEO_DATA_DIR = dir;
+    const db = { run: vi.fn() } as unknown as DbGateway;
+    const origin = 'http://127.0.0.1:9311';
+    const file = join(dir, 'agent-read.credential');
+    let writing!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((done) => {
+      writing = done;
+    });
+    const resume = new Promise<void>((done) => {
+      release = done;
+    });
+    rewrite.mockImplementationOnce(async (path: string) => {
+      const handle = await open(path, 'w');
+      await handle.close();
+      writing();
+      await resume;
+    });
+    const pending = ensureLocalCredential(db, 'agent', origin);
+    try {
+      await Promise.race([started, pending]);
+      expect(rewrite).toHaveBeenCalledTimes(1);
+      expect(readLocalCredential(file, origin)).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    } finally {
+      release();
+      await pending;
+    }
+  });
   test('an agent credential without an issuer origin cannot be enrolled', async () => {
     dir = await mkdtemp(join(tmpdir(), 'agent-origin-'));
     process.env.HYPERNEO_DATA_DIR = dir;
