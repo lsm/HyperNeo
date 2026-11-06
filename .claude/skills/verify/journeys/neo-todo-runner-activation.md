@@ -19,8 +19,8 @@ runner must preserve the complete Unicode report and dispatch its successor
 once, using the current stored target. Pruning alone announces a change;
 repeated no-ops and a settled ask remain quiet and retain successful receipts.
 Competing claims dispatch once. Admission/recomputation execute without main
-SQL inside the guarded writer-command window, which ends when the committed
-writer receipt returns. The following worker-availability scan, dispatch preparation
+SQL inside the guarded writer-command window. Each writer call arms that guard;
+the window ends when its committed receipt returns. The following worker-availability scan, dispatch preparation
 and session observation use existing main-thread reads outside that window. A
 failure prints the guarded SQL and call stack for diagnosis.
 

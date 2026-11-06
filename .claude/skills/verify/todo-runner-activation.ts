@@ -33,6 +33,7 @@ const tables:string[]=[],effects:{name:string;input?:Record<string,unknown>}[]=[
 const visible=(askId='ask')=>hub.request<{ok:true;entry:{todos:NeoTodo[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId}});
 const result:Record<string,unknown>={runtimeCallersMoved:true};
 const runner=createNeoTodoRunner({ limits: () => ({ running: 99, perGroup: 99 }),store,sessions,write:async(op,args)=>{
+  record=true;
   const receipt=await app.db.gateway.run(op,args);
   record=false;
   return receipt;
