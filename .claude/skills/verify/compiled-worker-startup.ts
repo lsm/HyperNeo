@@ -82,7 +82,7 @@ try {
     const commands: Record<string, unknown> = { help: { exit: help.exit, listsPair: help.out.includes('hyperneo pair'), listsDevices: help.out.includes('hyperneo devices') }, devices: { exit: empty.exit, error: empty.err }, pair: { exit: pair.exit, error: pair.err } };
     writeFileSync(join(run, 'evidence/commands.json'), JSON.stringify(commands, null, 2));
     assert.equal(help.exit, 0); assert(help.out.includes('hyperneo pair') && help.out.includes('hyperneo devices'), 'Compiled --help must list device commands');
-    assert.equal(empty.exit, 0, empty.err); assert.deepEqual(JSON.parse(empty.out).devices.map((d: {name:string})=>d.name), ['Local tools']);
+    assert.equal(empty.exit, 0, empty.err); assert.deepEqual(JSON.parse(empty.out).devices.map((d: {name:string})=>d.name), ['Local tools', 'Local agent reader']);
     assert.equal(pair.exit, 0, pair.err);
     const code = JSON.parse(pair.out);
     assert.equal(code.ok, true); assert.equal(code.approval, 'approved'); assert.equal(typeof code.code, 'string');
@@ -92,7 +92,7 @@ try {
     assert.equal(paired.kind, 'human');
     const listed = await cli(['devices']); assert.equal(listed.exit, 0, listed.err);
     const devices = JSON.parse(listed.out).devices as { id: string; name: string; kind: string }[];
-    assert.deepEqual(devices.filter(d=>!d.id.startsWith('local-rpc:')).map(({ id, name, kind }) => ({ id, name, kind })), [{ id: paired.deviceId, name: 'Synthetic phone', kind: 'human' }]);
+    assert.deepEqual(devices.filter(d=>!d.id.startsWith('local-rpc:') && !d.id.startsWith('agent-read:')).map(({ id, name, kind }) => ({ id, name, kind })), [{ id: paired.deviceId, name: 'Synthetic phone', kind: 'human' }]);
     assert(!listed.out.includes(paired.credential));
     const revoked = await cli(['devices', 'revoke', paired.deviceId]); assert.equal(revoked.exit, 0, revoked.err); assert.equal(JSON.parse(revoked.out).ok, true);
     const final = await cli(['devices']); assert.equal(final.exit, 0, final.err); assert.equal(typeof JSON.parse(final.out).devices.find((d:{id:string})=>d.id===paired.deviceId).revokedAt, 'number');
