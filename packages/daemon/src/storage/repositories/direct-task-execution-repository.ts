@@ -1,4 +1,5 @@
 import type { Database } from '../sqlite-compat.ts';
+import { schemaTableExists } from '../schema/extensions.ts';
 
 export interface DirectTaskAttempt {
   id: string;
@@ -18,6 +19,7 @@ export class DirectTaskExecutionRepository {
   constructor(private db: Database) {}
 
   hasSessionProvenance(sessionId: string): boolean {
+    if (!schemaTableExists(this.db, 'direct_task_session_provenance')) return false;
     return !!this.db
       .prepare('SELECT 1 FROM direct_task_session_provenance WHERE session_id = ?')
       .get(sessionId);

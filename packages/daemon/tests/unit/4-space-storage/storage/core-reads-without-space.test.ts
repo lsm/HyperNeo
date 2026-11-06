@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { MailboxEntry } from '../../../../src/lib/mailbox/entry.ts';
+import { captureDirectMailboxAdmission } from '../../../../src/lib/tasks/direct-mailbox-admission.ts';
 import {
   AgentMemoryRepository,
   type AgentMemoryEmbedder,
@@ -75,6 +77,13 @@ describe('core reads with Space tables absent', () => {
     const prepare = vi.spyOn(bare, 'prepare');
     repo.backfillPendingEmbeddings();
     expect(prepare.mock.calls.flat().join(' ')).not.toContain('memory_vectors');
+    bare.close();
+  });
+
+  it('mailbox delivery admits a session without the direct task tables', () => {
+    const bare = new Database(':memory:');
+    const entry = { to: { kind: 'session', sessionId: 'worker' } } as MailboxEntry;
+    expect(captureDirectMailboxAdmission(bare, entry)).toBeUndefined();
     bare.close();
   });
 
