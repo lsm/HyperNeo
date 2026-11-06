@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
-import { createEvolutionOperations } from '../../../../src/lib/space/evolution/operations.ts';
+import { createEvolutionOperations } from '../../../../../space/src/evolution/operations.ts';
 import type {
   EvolutionAuditEntry,
   EvolutionAuditWriter,
 } from '../../../../../space/src/evolution/admission.ts';
 import { EvolutionEpisodeService } from '../../../../../space/src/evolution/episode-service.ts';
-import { EvolutionScopeService } from '../../../../src/lib/space/evolution/scope-service.ts';
+import { EvolutionScopeService } from '../../../../../space/src/evolution/scope-service.ts';
 import { SpaceGoalService } from '../../../../../space/src/goals/service.ts';
 import { ScheduleService } from '../../../../src/lib/schedule/schedule-service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';

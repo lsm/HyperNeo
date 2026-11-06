@@ -8,14 +8,14 @@ import type {
 } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../../daemon/src/storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceTaskRepository } from '../../../daemon/src/storage/repositories/space-task-repository.ts';
 import {
   defineOperation,
   type OperationCaller,
   type OperationPolicy,
-} from '../../operations/registry.ts';
-import type { EvolutionEpisodeService } from '../../../../../space/src/evolution/episode-service.ts';
+} from '../../../daemon/src/lib/operations/registry.ts';
+import type { EvolutionEpisodeService } from './episode-service.ts';
 import {
   admitEvolutionReader,
   denyEvolution,
@@ -25,19 +25,19 @@ import {
   type EvolutionAuditWriter,
   type EvolutionGate,
   type EvolutionSpaceScope,
-} from '../../../../../space/src/evolution/admission.ts';
+} from './admission.ts';
 import {
   EvolutionEpisodeSchema,
   EvolutionLessonSchema,
   EvolutionLessonStatusSchema,
   EvolutionProposalSchema,
   EvolutionProposalStatusSchema,
-} from '../../../../../space/src/evolution/episode-schemas.ts';
+} from './episode-schemas.ts';
 import {
   EvolutionEvidenceRefSchema,
   EvolutionMetricSnapshotSchema,
   EvolutionScopeSchema,
-} from '../../../../../space/src/evolution/result-schemas.ts';
+} from './result-schemas.ts';
 import { findEvolutionScopeInSpace } from './scope-operations.ts';
 import type { EvolutionScopeService } from './scope-service.ts';
 

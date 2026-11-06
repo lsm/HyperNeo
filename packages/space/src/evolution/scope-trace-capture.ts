@@ -1,8 +1,8 @@
 import type { EvidenceRef } from '@hyperneo/shared';
-import { Logger } from '../../logger.ts';
-import { SPACE_CONVERSATION_FRICTION_ANALYZE } from '../../job-queue-constants.ts';
-import type { EvolutionScopeServiceDeps } from '../../../../../space/src/evolution/scope-service-types.ts';
-import type { TraceEvidenceDiagnostic } from '../../../../../space/src/evolution/trace-evidence-types.ts';
+import { Logger } from '../../../daemon/src/lib/logger.ts';
+import { SPACE_CONVERSATION_FRICTION_ANALYZE } from '../../../daemon/src/lib/job-queue-constants.ts';
+import type { EvolutionScopeServiceDeps } from './scope-service-types.ts';
+import type { TraceEvidenceDiagnostic } from './trace-evidence-types.ts';
 import {
   clearTraceDiagnosticEvidence,
   createTraceDiagnosticEvidence,

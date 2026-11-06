@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import type { EpisodeJudgePromptInput } from '../../../../../space/src/evolution/episode-service';
 import { EvolutionEpisodeService } from '../../../../../space/src/evolution/episode-service';
-import { EvolutionScopeService } from '../../../../src/lib/space/evolution/scope-service';
+import { EvolutionScopeService } from '../../../../../space/src/evolution/scope-service';
 import {
   GOAL_AUTOMATION_EXECUTE,
   TASK_SCHEDULE_FIRE,

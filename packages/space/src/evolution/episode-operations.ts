@@ -35,7 +35,7 @@ import {
 } from './episode-schemas.ts';
 import { EvolutionMetricValuesSchema } from './result-schemas.ts';
 import type { EvolutionEpisodeService } from './episode-service.ts';
-import type { EvolutionScopeService } from '../../../daemon/src/lib/space/evolution/scope-service.ts';
+import type { EvolutionScopeService } from './scope-service.ts';
 
 export interface EvolutionEpisodeOperationDependencies extends EvolutionAdmissionDependencies {
   readonly episodeService: Pick<
