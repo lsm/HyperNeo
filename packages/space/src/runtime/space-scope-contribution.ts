@@ -7,8 +7,8 @@ import {
   SPACE_SCOPE_ROLE_WORKFLOW_WORKER,
   SPACE_SCOPE_STANDING_INSTRUCTIONS,
 } from '@hyperneo/prompts';
-import type { ScopeContribution } from '../../briefings/contribution.ts';
-import type { OperationCallerRole } from '../../operations/registry.ts';
+import type { ScopeContribution } from '../../../daemon/src/lib/briefings/contribution.ts';
+import type { OperationCallerRole } from '../../../daemon/src/lib/operations/registry.ts';
 
 export type SpaceScopeRole = Exclude<OperationCallerRole, 'universal_read' | 'neo'>;
 

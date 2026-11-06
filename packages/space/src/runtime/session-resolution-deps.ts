@@ -1,16 +1,22 @@
-import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
-import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import type { NodeExecutionRepository } from '../../../daemon/src/storage/repositories/node-execution-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../../daemon/src/storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceTaskRepository } from '../../../daemon/src/storage/repositories/space-task-repository.ts';
 import {
   hasRuntimeWorkerOperations,
   isWorkflowSubSessionIdentity,
-} from '../../session/sub-session-identity.ts';
-import type { SessionManager } from '../../session-manager.ts';
-import type { SpaceRuntimeService } from './space-runtime-service.ts';
-import type { TaskAgentManager } from './task-agent-manager.ts';
-import { resolveAgentSessionId } from '../../session-resolution/long-term-agent-session.ts';
-import { type SessionResolutionDeps, workerTaskPhaseOf } from '../../session-resolution/deps.ts';
-import { resolveLiveSession, sessionUnavailable } from '../../session-resolution/session-lookup.ts';
+} from '../../../daemon/src/lib/session/sub-session-identity.ts';
+import type { SessionManager } from '../../../daemon/src/lib/session-manager.ts';
+import type { SpaceRuntimeService } from '../../../daemon/src/lib/space/runtime/space-runtime-service.ts';
+import type { TaskAgentManager } from '../../../daemon/src/lib/space/runtime/task-agent-manager.ts';
+import { resolveAgentSessionId } from '../../../daemon/src/lib/session-resolution/long-term-agent-session.ts';
+import {
+  type SessionResolutionDeps,
+  workerTaskPhaseOf,
+} from '../../../daemon/src/lib/session-resolution/deps.ts';
+import {
+  resolveLiveSession,
+  sessionUnavailable,
+} from '../../../daemon/src/lib/session-resolution/session-lookup.ts';
 
 export interface DefaultSessionResolutionServices {
   sessionManager: SessionManager;

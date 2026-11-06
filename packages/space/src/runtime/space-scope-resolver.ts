@@ -1,11 +1,11 @@
 import type { Session, Space } from '@hyperneo/shared';
-import type { ScopeContribution } from '../../briefings/contribution.ts';
-import type { SessionScopeResolver } from '../../briefings/scope-resolver.ts';
-import { resolveSessionSpaceId } from '../../session-resolution/space-caller-scope.ts';
+import type { ScopeContribution } from '../../../daemon/src/lib/briefings/contribution.ts';
+import type { SessionScopeResolver } from '../../../daemon/src/lib/briefings/scope-resolver.ts';
+import { resolveSessionSpaceId } from '../../../daemon/src/lib/session-resolution/space-caller-scope.ts';
 import {
   resolveSpaceMcpSessionPolicy,
   type SpaceMcpSessionPolicyContext,
-} from '../../session-resolution/space-mcp-session-policy.ts';
+} from '../../../daemon/src/lib/session-resolution/space-mcp-session-policy.ts';
 import { spaceScopeContribution, spaceScopeRole } from './space-scope-contribution.ts';
 
 export interface SpaceScopeDependencies extends SpaceMcpSessionPolicyContext {

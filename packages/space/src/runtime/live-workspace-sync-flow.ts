@@ -1,7 +1,10 @@
 import type { NodeExecution, Space, SpaceTask } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { AgentSession } from '../../agent/agent-session.ts';
-import { resolveSpawnWorkspace, resolveTaskWorkspace } from '../../tasks/spawn-slot-resolution.ts';
+import type { AgentSession } from '../../../daemon/src/lib/agent/agent-session.ts';
+import {
+  resolveSpawnWorkspace,
+  resolveTaskWorkspace,
+} from '../../../daemon/src/lib/tasks/spawn-slot-resolution.ts';
 
 export interface LiveWorkspaceSyncRequest {
   task: SpaceTask;

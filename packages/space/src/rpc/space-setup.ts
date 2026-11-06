@@ -4,14 +4,14 @@ import { recoverTaskExecution } from '../../../daemon/src/lib/tasks/recover-task
 import { createCompletionGateBindings } from '../../../daemon/src/lib/tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../../../daemon/src/lib/workflows/post-approval-router.ts';
 import { createSpaceCallerScopeResolver } from '../../../daemon/src/lib/session-resolution/space-caller-scope.ts';
-import { createSpaceScopeResolver } from '../../../daemon/src/lib/space/runtime/space-scope-resolver.ts';
+import { createSpaceScopeResolver } from '../runtime/space-scope-resolver.ts';
 import { createDatabaseDirectTaskWorkerResolver } from '../../../daemon/src/lib/tasks/direct-task-worker-identity.ts';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import type { AgentSession } from '../../../daemon/src/lib/agent/agent-session.ts';
 import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers.ts';
-import { createDefaultSessionResolutionDeps } from '../../../daemon/src/lib/space/runtime/session-resolution-deps.ts';
+import { createDefaultSessionResolutionDeps } from '../runtime/session-resolution-deps.ts';
 import { ensureSession } from '../../../daemon/src/lib/session-resolution/ensure-session.ts';
 import { TaskAgentManager } from '../../../daemon/src/lib/space/runtime/task-agent-manager.ts';
 import { spaceTaskWriter } from '../../../daemon/src/storage/repositories/space-task-repository.ts';
@@ -100,7 +100,7 @@ import { SpaceAgentTemplateManager } from '../../../daemon/src/lib/agents/templa
 import { createAgentTemplateResolverFactory } from '../../../daemon/src/lib/workflows/run-template-snapshot.ts';
 import type { EvolutionRepository } from '../../../daemon/src/storage/repositories/evolution-repository.ts';
 import { SpaceRuntimeService } from '../../../daemon/src/lib/space/runtime/space-runtime-service.ts';
-import { GOAL_OUTCOME_WAKE_ENABLED } from '../../../daemon/src/lib/space/runtime/goal-outcome-wake-flag.ts';
+import { GOAL_OUTCOME_WAKE_ENABLED } from '../runtime/goal-outcome-wake-flag.ts';
 import { SpaceAgentInactivityWatchdogService } from '../../../daemon/src/lib/agents/inactivity-watchdog-service.ts';
 import type { InactivityWatchdogSessionSnapshot } from '../../../daemon/src/lib/agents/inactivity-watchdog-service.ts';
 import {
@@ -129,7 +129,7 @@ import type { ExternalEventService } from '../../../daemon/src/lib/external-even
 import type { ExternalEventStore } from '../external-events/external-event-store.ts';
 import type { ExternalEventDeliveryState } from '../../../daemon/src/lib/external-events/types.ts';
 import type { SpaceRpcHost } from '../../../daemon/src/lib/rpc-handlers/space-rpc.ts';
-import { createSpaceSessionPort } from '../../../daemon/src/lib/space/runtime/space-session-port.ts';
+import { createSpaceSessionPort } from '../runtime/space-session-port.ts';
 import type { FamilyOperationContext } from '../../../daemon/src/lib/rpc-handlers/family-operations/context.ts';
 import { collectSpaceFamilyOperations, createSessionSpacePort } from './family-operations/space.ts';
 import { setupSpaceMcpHandlers } from './space-mcp-handlers.ts';
