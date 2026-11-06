@@ -721,6 +721,61 @@ describe('NeoComposer and NeoVoice send integration', () => {
   });
 });
 
+describe('Send during recording captures the whole composition', () => {
+  it.each(['plain', 'quote', 'image', 'file', 'quote-image', 'quote-file', 'quote-image-file'])(
+    '%s submits once after the held transcript without leaving a draft',
+    async (composition) => {
+      let release: (value: Record<string, unknown>) => void = () => {};
+      hubRequest.mockImplementation(async (method, payload) =>
+        method === 'voice.transcribe'
+          ? new Promise((resolve) => {
+              release = resolve;
+            })
+          : defaultHub(method, payload)
+      );
+      if (composition.includes('image'))
+        attachmentFiles.current.push({
+          id: 'photo1',
+          kind: 'image',
+          name: 'photo.png',
+          image: { data: 'aGk=', media_type: 'image/png' },
+        });
+      if (composition.includes('file'))
+        attachmentFiles.current.push({
+          id: 'file1',
+          kind: 'text',
+          name: 'notes.txt',
+          text: 'file words',
+        });
+      const quote = composition.includes('quote')
+        ? {
+            author: 'Neo' as const,
+            anchor: 'source',
+            text: 'quoted words',
+            replyTo: { kind: 'message' as const, id: 'source', excerpt: 'quoted words' },
+          }
+        : undefined;
+      const view = renderComposer('typed first', quote);
+      await waitFor(() => expect(stopControl().disabled).toBe(false));
+      fireEvent.submit(document.querySelector('form')!);
+      await waitFor(() =>
+        expect(hubRequest.mock.calls.some(([method]) => method === 'voice.transcribe')).toBe(true)
+      );
+      expect(asks()).toHaveLength(0);
+      release({ text: 'spoken second' });
+      await waitFor(() => expect(asks()).toHaveLength(1));
+      const input = asks()[0][1].input;
+      expect(JSON.stringify(input.content)).toContain('typed first\\nspoken second');
+      if (composition.includes('quote')) expect(input).toHaveProperty('replyTo', quote?.replyTo);
+      if (composition.includes('file'))
+        expect(JSON.stringify(input.content)).toContain('file words');
+      if (composition.includes('image')) expect(JSON.stringify(input.content)).toContain('aGk=');
+      expect(view.onTranscript).not.toHaveBeenCalled();
+      expect(view.current.value).toBe('');
+    }
+  );
+});
+
 describe('Send accepted while final transcription is pending', () => {
   it.each(['plain', 'empty', 'attachment', 'reply', 'preview', 'photo'] as const)(
     'sends the completed %s composition once without another tap',
