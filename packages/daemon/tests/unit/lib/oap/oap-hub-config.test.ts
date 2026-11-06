@@ -31,4 +31,14 @@ describe('buildOapHubConfig', () => {
     });
     expect(JSON.stringify(result.config)).not.toContain('/synthetic/codex-home');
   });
+  test('rejects paths that could resolve against a shared working directory', () => {
+    const valid = {
+      stateDirectory: '/synthetic/hub',
+      codexExecutable: '/synthetic/bin/codex',
+      codexHome: '/synthetic/codex-home',
+    };
+    for (const key of ['stateDirectory', 'codexExecutable', 'codexHome'] as const) {
+      expect(() => buildOapHubConfig({ ...valid, [key]: 'relative' })).toThrow('absolute');
+    }
+  });
 });
