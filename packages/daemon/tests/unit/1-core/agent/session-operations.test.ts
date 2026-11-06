@@ -195,7 +195,11 @@ describe('session operation MCP attachment', () => {
       ).not.toBe(true);
       expect(existing.getOperationMcpServer()).toBe(cachedServer);
       expect(await operationInvoke(cachedServer)({ name: 'first' }, {})).toMatchObject({
-        content: [{ text: JSON.stringify({ sessionId: 'existing', source: 'mcp' }) }],
+        content: [
+          {
+            text: JSON.stringify({ sessionId: 'existing', role: 'universal_read', source: 'mcp' }),
+          },
+        ],
       });
       await db.createSession(createTestSession('resumed'));
       const resumed = manager.getSession('resumed')!;

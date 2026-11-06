@@ -50,7 +50,7 @@ import { Logger } from '../logger.ts';
 import { reservedMcpRenameSource } from '../mcp/built-in-servers.ts';
 import {
   type CallerScopeResolver,
-  NO_CALLER_SCOPE,
+  PLAIN_SESSION_SCOPE,
   resolveCallerIdentity,
 } from '../operations/caller.ts';
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
@@ -298,7 +298,7 @@ export class AgentSession
   private operationMcpServerRole?: OperationCallerRole;
 
   private operationRegistryProvider?: () => OperationRegistry | undefined;
-  private callerScopeResolver: CallerScopeResolver = NO_CALLER_SCOPE;
+  private callerScopeResolver: CallerScopeResolver = PLAIN_SESSION_SCOPE;
   private defaultOperationRegistry?: OperationRegistry;
   private spaceScopeResolver: SessionScopeResolver = NO_SESSION_SCOPE;
   private attachedCapabilities: readonly AuthoredCapabilityContribution[] = [];
@@ -510,7 +510,7 @@ export class AgentSession
     private readonly runtimeOptions: AgentSessionRuntimeOptions = {}
   ) {
     this.operationRegistryProvider = runtimeOptions.operationRegistryProvider;
-    this.callerScopeResolver = runtimeOptions.callerScopeResolver ?? NO_CALLER_SCOPE;
+    this.callerScopeResolver = runtimeOptions.callerScopeResolver ?? PLAIN_SESSION_SCOPE;
     this.spaceScopeResolver = runtimeOptions.spaceScopeResolver ?? NO_SESSION_SCOPE;
     this.errorManager = new ErrorManager(this.messageHub, this.internalEventBus);
     this.logger = new Logger(`AgentSession ${session.id}`);
