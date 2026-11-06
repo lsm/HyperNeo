@@ -105,6 +105,34 @@ describe('device pairing', () => {
       db.close();
     }
   });
+  test('remote agent redemption leaves public-origin recording to the pairing client', async () => {
+    const { db, repo } = setup();
+    try {
+      const route = createPairRoute({
+        repo,
+        limiter: createPairingLimiter(),
+        now: () => 1_000_000,
+      });
+      const made = repo.createCode('agent', null, true, 1_000_000);
+      const response = await route(
+        new Request('http://127.0.0.1:9283/pair', {
+          method: 'POST',
+          headers: { 'x-forwarded-proto': 'https', 'x-forwarded-host': 'daemon.example' },
+          body: JSON.stringify({ code: made.code, name: 'Remote reader' }),
+        })
+      );
+      expect(response.status).toBe(200);
+      const paired = await response.json();
+      expect(paired).toMatchObject({
+        kind: 'agent',
+        credential: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+      });
+      expect(paired).not.toHaveProperty('origin');
+    } finally {
+      db.close();
+    }
+  });
+
   test('a code pairs one device once, with the kind fixed when the code was made', async () => {
     const { db, call, pair } = setup();
     const made = await call('device.pair.create', { kind: 'relay', name: 'Push relay' }, door);
