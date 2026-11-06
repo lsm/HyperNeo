@@ -21,6 +21,7 @@ import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts'
 import type { CredentialStore } from '../../credentials/credential-store.js';
 import { Logger } from '../../logger.ts';
 import { isRateLimitError } from '../../session/rate-limit-detector.ts';
+import { schemaTableExists } from '../../../storage/schema/extensions.ts';
 import { ExternalEventStore } from '../external-event-store.ts';
 import { SESSION_EVENT_SCOPE } from '../session-external-event-store.ts';
 import type {
@@ -317,7 +318,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private pollCycleCredentialSource: string | null = null;
   private pollCycleAccessible = false;
   private readonly credentialStore?: CredentialStore;
-  private readonly eventStore: ExternalEventStore;
+  private readonly eventStore: ExternalEventStore | null;
 
   constructor(
     private readonly db: BunDatabase,
@@ -325,7 +326,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     private readonly options: GitHubEventExtensionOptions = {}
   ) {
     this.repo = new GitHubEventExtensionRepository(db);
-    this.eventStore = new ExternalEventStore(db, options.reactiveDb);
+    this.eventStore = schemaTableExists(db, 'space_external_events')
+      ? new ExternalEventStore(db, options.reactiveDb)
+      : null;
     this.credentialStore = options.credentialStore;
   }
 
@@ -722,7 +725,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             if (!ok) dropped++;
           },
           storedEventPrNumber: (spaceId: string, dedupeKey: string) => {
-            const prNumber = this.eventStore.getByDedupe(spaceId, this.sourceId, dedupeKey)?.event
+            const prNumber = this.eventStore?.getByDedupe(spaceId, this.sourceId, dedupeKey)?.event
               .payload.prNumber;
             return typeof prNumber === 'number' ? prNumber : undefined;
           },
@@ -1752,26 +1755,28 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
     const rateLimitInfo = this.lastRateLimitInfo;
     const recentCutoff = now - HEALTH_RECENT_ERROR_WINDOW_MS;
-    const recentDeliveries = this.eventStore
-      .listDeliveryLog({
+    const recentDeliveries = (
+      this.eventStore?.listDeliveryLog({
         spaceId,
         status: 'failed',
         source: 'github',
         limit: 5,
-      })
-      .filter((delivery) => delivery.updatedAt >= recentCutoff);
-    const recentErrorTotal = this.eventStore.countDeliveryLog({
-      spaceId,
-      status: 'failed',
-      source: 'github',
-      updatedSince: recentCutoff,
-    });
+      }) ?? []
+    ).filter((delivery) => delivery.updatedAt >= recentCutoff);
+    const recentErrorTotal =
+      this.eventStore?.countDeliveryLog({
+        spaceId,
+        status: 'failed',
+        source: 'github',
+        updatedSince: recentCutoff,
+      }) ?? 0;
 
-    const eventTypeBuckets = this.eventStore.listEventCountsByTopic({
-      spaceId,
-      source: 'github',
-      since: recentCutoff,
-    });
+    const eventTypeBuckets =
+      this.eventStore?.listEventCountsByTopic({
+        spaceId,
+        source: 'github',
+        since: recentCutoff,
+      }) ?? [];
     const eventTypeAccumulators = GITHUB_HEALTH_EVENT_TYPES.reduce(
       (acc, { key }) => {
         acc[key] = { count: 0, lastAt: 0 };
@@ -3032,7 +3037,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               const unscopedDedupeKey = `${watched.owner.toLowerCase()}/${watched.repo.toLowerCase()}:check_run:${checkRunId}:${conclusion}`;
               const existingEvent =
                 recordedLegacyPr === undefined
-                  ? this.eventStore.getByDedupe(watched.spaceId, this.sourceId, unscopedDedupeKey)
+                  ? (this.eventStore?.getByDedupe(
+                      watched.spaceId,
+                      this.sourceId,
+                      unscopedDedupeKey
+                    ) ?? null)
                   : null;
               const existingLegacyPr =
                 existingEvent && typeof existingEvent.event.payload.prNumber === 'number'
