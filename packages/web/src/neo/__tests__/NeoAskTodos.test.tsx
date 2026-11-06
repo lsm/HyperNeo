@@ -228,6 +228,35 @@ describe('NeoAskTodos', () => {
     expect(app.container.querySelector('[data-ask-details]')).toBeNull();
   });
 
+  it.each([
+    ['en', 'Ask actions', 'Copy link', 'open'],
+    ['zh-Hans', '更多操作', '复制链接', 'done'],
+    ['en', 'Ask actions', 'Copy link', 'dropped'],
+  ] as const)('copies the card link in %s for a %s card', async (language, menu, label, status) => {
+    locale.value = language;
+    const copy = vi.spyOn(clipboard, 'copyToClipboard').mockResolvedValue(true);
+    const data = entry({});
+    data.ask.status = status;
+    data.ask.title = 'Review [iOS] \\ API\nnext step';
+    const url = location.href;
+    const answer = vi.fn();
+    const app = render(<NeoAskTodos entry={data} onAnswer={answer} disabled />);
+    try {
+      fireEvent.click(app.getByRole('button', { name: menu }));
+      fireEvent.click(app.getByRole('menuitem', { name: label }));
+      await waitFor(() =>
+        expect(copy).toHaveBeenCalledWith(
+          '[Review \\[iOS\\] \\\\ API next step](hyperneo://ask/ask)'
+        )
+      );
+      expect(app.queryByRole('menuitem', { name: label })).toBeNull();
+      expect(location.href).toBe(url);
+      expect(answer).not.toHaveBeenCalled();
+    } finally {
+      copy.mockRestore();
+    }
+  });
+
   it('copies a quote after expanding and reopening a collapsed card', async () => {
     locale.value = 'en';
     const copy = vi.spyOn(clipboard, 'copyToClipboard').mockResolvedValue(true);
