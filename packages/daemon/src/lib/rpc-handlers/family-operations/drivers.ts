@@ -34,7 +34,7 @@ import { simpleGit } from 'simple-git';
 import type { WorkChatKind, WorkChatMatch } from '../../../storage/work-chat-search.ts';
 import {
   markWorkUnusable,
-  readFreeWorkers,
+  readReusableWorkers,
   recordStartedWork,
   type StartedWork,
 } from '../../../storage/work-started-sessions.ts';
@@ -656,7 +656,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
         ),
     } satisfies WorkVerbDeps['workInputs'],
     recordStarted: (ref: StartedWork) => recordStartedWork(db(), ref),
-    freeWorkers: (adapter: string) => readFreeWorkers(db(), adapter),
+    freeWorkers: (adapter: string, todoId?: string, sessionId?: string) =>
+      readReusableWorkers(db(), adapter, todoId, sessionId),
     markUnusable: (ref: StartedWork) => markWorkUnusable(db(), ref),
     reportUncertain: async (report: WorkSendUncertainty) => {
       const to = sessionSender(report.from) ?? new NeoRepository(db()).defaultBinding()?.sessionId;

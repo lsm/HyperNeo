@@ -6,6 +6,7 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import {
   markWorkUnusable,
   readFreeWorkers,
+  readReusableWorkers,
   recordStartedWork,
 } from '../../../../src/storage/work-started-sessions.ts';
 
@@ -13,10 +14,10 @@ describe('readFreeWorkers', () => {
   let db: Database;
   let store: NeoAskTodoRepository;
   let sessions: NeoTodoSessionRepository;
-  const bind = (todoId: string, id: string, state: 'done' | 'doing') => {
+  const bind = (todoId: string, id: string, state: 'done' | 'doing', askId = 'ask', at = 1) => {
     store.addTodo(
       todoId,
-      'ask',
+      askId,
       { title: todoId, doneWhen: 'Observed', check: null, instruction: 'Go', named: null },
       1
     );
@@ -26,7 +27,7 @@ describe('readFreeWorkers', () => {
       place: { machine: 'synthetic', name: 'Fixture', folder: '/synthetic' },
     });
     sessions.recordRef(todoId, { adapter: 'claude-desktop', id });
-    store.updateTodo(store.getTodo(todoId)!, { state }, 2);
+    store.updateTodo(store.getTodo(todoId)!, { state, startedAt: at }, 2);
   };
 
   beforeEach(() => {
@@ -74,5 +75,56 @@ describe('readFreeWorkers', () => {
     markWorkUnusable(db, { adapter: 'claude-desktop', id: 'w-done' });
 
     expect([...readFreeWorkers(db, 'claude-desktop')]).toEqual([]);
+  });
+
+  describe('readReusableWorkers', () => {
+    test('legacy engine birth cannot make a later todo look older than its creation', () => {
+      bind('legacy-prior', 'legacy', 'done', 'ask', 20);
+      store.addTodo(
+        'legacy-new',
+        'ask',
+        { title: 'Later', doneWhen: 'Observed', check: null, instruction: 'Go', named: null },
+        50
+      );
+      sessions.create('legacy-new', { verb: 'start', adapter: 'claude-desktop' });
+      sessions.recordRef('legacy-new', { adapter: 'claude-desktop', id: 'legacy' }, 1);
+      store.updateTodo(store.getTodo('legacy-new')!, { state: 'done' }, 60);
+      expect(
+        readReusableWorkers(db, 'claude-desktop', 'legacy-new', 'neo').get('legacy')?.sameAskAt
+      ).toBe(50);
+    });
+
+    test('reads same-ask recency from legacy bindings without a started-work row', () => {
+      bind('first', 'worker', 'done', 'ask', 10);
+      bind('latest', 'worker', 'done', 'ask', 30);
+      expect(readReusableWorkers(db, 'claude-desktop', 'latest', 'neo').get('worker')).toEqual({
+        sameAskAt: 30,
+        settledAt: null,
+      });
+      expect(
+        readReusableWorkers(db, 'claude-desktop', 'latest', 'another-neo').get('worker')?.sameAskAt
+      ).toBeNull();
+      expect(
+        readReusableWorkers(db, 'claude-desktop', 'missing', 'neo').get('worker')?.sameAskAt
+      ).toBeNull();
+    });
+
+    test('borrowing uses the latest associated ask, not any old settled ask', () => {
+      store.openAsk({
+        id: 'older',
+        projectId: null,
+        sessionId: 'neo',
+        originMessageId: null,
+        title: 'Older',
+        request: 'Older',
+        createdAt: 1,
+      });
+      bind('old-work', 'shared', 'done', 'older', 10);
+      store.settleAsk(store.getAsk('older')!, 'done', 'Observed', 100);
+      bind('new-work', 'shared', 'done', 'ask', 20);
+      expect(readReusableWorkers(db, 'claude-desktop').get('shared')?.settledAt).toBeNull();
+      store.settleAsk(store.getAsk('ask')!, 'done', 'Observed', 300);
+      expect(readReusableWorkers(db, 'claude-desktop').get('shared')?.settledAt).toBe(300);
+    });
   });
 });

@@ -1,8 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  createWorkVerbOperations,
-  type WorkVerbDeps,
-} from '../../../../src/lib/drivers/work-operations';
+import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
 import { workStartConfiguration } from '../../../../src/lib/drivers/start-configuration';
 import type { WorkAdapter, WorkRef, WorkStatus } from '../../../../src/lib/drivers/types';
 import {
@@ -126,10 +123,10 @@ function harness(
       adapters: () => [adapter],
       remote: { list: () => [], invoke: async () => ({}) },
       daemonName: 'imac',
-      freeWorkers: (() =>
+      freeWorkers: () =>
         history
           ? new Map(free.map((id) => [id, history.get(id) ?? { sameAskAt: null, settledAt: null }]))
-          : new Set(free)) as unknown as NonNullable<WorkVerbDeps['freeWorkers']>,
+          : new Set(free),
       markUnusable: (ref) => void unusable.push(ref),
     })
   );
