@@ -35,6 +35,9 @@ The same MCP proof pins coding placement before the core/pack split. A start
 without a place is refused without adding a todo. Its own local place keeps a
 null repo instead of inheriting the ask's repo. A historical child card remains
 readable by ask id and todo id, preserving parent, repo and work after DB reopen.
+Opening one request with two repositories must retain one open ask and both
+steps on it. Read that same card after database reopen. Creating repository
+children or automatically settling the parent makes this proof fail.
 On reviewed head 734269ad, the two guidance assertions fail: the catalog omits
 stale todo behavior and the settled-ask record omits the different-title remedy.
 

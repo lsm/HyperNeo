@@ -127,14 +127,14 @@ describe('activated ask settlement', () => {
       },
       3
     );
-  const split = () =>
+  const reopen = () =>
     ops
       .find((op) => op.name === 'neo.ask.open')!
       .execute(
         { title: 'Work', request: 'Keep work', todos: [] },
         { source: 'mcp', role: 'neo', sessionId: 'neo' }
       ) as Promise<Receipt>;
-  const makeSplit = () => {
+  const historicalChild = () => {
     db.prepare('DELETE FROM neo_todos WHERE id=?').run('first');
     store.openAsk({
       id: 'child',
@@ -298,28 +298,26 @@ describe('activated ask settlement', () => {
     expect(effects).toEqual(['stop:first']);
   });
 
-  test('split-parent settlement retains child reports and cards and announces once', async () => {
-    makeSplit();
+  test('reopening a parent leaves it open and retains historical child reports and cards', async () => {
+    historicalChild();
     const child = store.getTodo('child-work'),
       card = store.getQuestion('child-card');
-    expect(await split()).toMatchObject({
+    expect(await reopen()).toMatchObject({
       ok: true,
-      ask: { status: 'done' },
+      ask: { status: 'open' },
       todos: [{ id: 'child-work', report: child!.report }],
     });
     expect(store.getTodo('child-work')).toEqual(child);
     expect(store.getQuestion('child-card')).toEqual(card);
-    expect(effects).toEqual(['changed']);
-    await split();
-    expect(effects).toEqual(['changed']);
+    expect(effects).toEqual([]);
+    await reopen();
+    expect(effects).toEqual([]);
   });
 
-  test('a split parent gaining root work before commit remains open', async () => {
-    makeSplit();
-    beforeWrite = () => {
-      seed('root-late');
-    };
-    expect(await split()).toMatchObject({ ok: true, ask: { status: 'open' } });
+  test('reopening a historical parent retains its own work', async () => {
+    historicalChild();
+    seed('root-late');
+    expect(await reopen()).toMatchObject({ ok: true, ask: { status: 'open' } });
     expect(store.getTodo('root-late')!.state).toBe('doing');
     expect(effects).toEqual([]);
   });

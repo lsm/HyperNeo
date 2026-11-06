@@ -20,7 +20,7 @@ receipt preserves the entire Unicode report and returns only a successor
 candidate; no work is started.
 
 Two competing start claims must yield one winner. The winner uses the current
-stored target, atomically relocates the todo to its repository card, and
+stored target, keeps the todo on its original ask across repositories, and
 returns the committed todo/ask/target without opening a worker. A pruning-only
 change must set `changed` and announce the question table; unchanged/missing
 state work must stay quiet. No Neo event or runtime dispatch occurs in this

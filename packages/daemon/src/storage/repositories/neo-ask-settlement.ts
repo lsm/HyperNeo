@@ -2,7 +2,6 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { WorkRef } from '../../lib/drivers/types.ts';
 import { requireNeoOpenAsk } from '../../lib/neo/todo-operations.ts';
-import { neoSplitOutcome } from '../../lib/neo/todo-repo.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import type { Database } from '../sqlite-compat.ts';
@@ -101,37 +100,6 @@ const settle = (superpipe({})('neo.ask.commit-settlement') as PipelineAPI)
   changes: Changes
 ) => Receipt | Rejection;
 
-const splitParent = (superpipe({})('neo.ask.commit-split-parent') as PipelineAPI)
-  .input(['store', 'sessions', 'id', 'now', 'changes'])
-  .pipe(
-    (store: NeoAskTodoRepository, id: string): { value: Input } | { reason: null } => {
-      const parent = store.getAsk(id);
-      const children = store.listChildAsks(id);
-      return parent?.status === 'open' && children.length && !store.listTodos(id).length
-        ? {
-            value: {
-              askId: id,
-              status: 'done',
-              outcome: neoSplitOutcome(
-                children,
-                children.reduce((count, child) => count + store.listTodos(child.id).length, 0)
-              ),
-            },
-          }
-        : { reason: null };
-    },
-    ['store', 'id'],
-    'result:outcome'
-  )
-  .pipe(settle, ['store', 'sessions', 'outcome', 'now', 'changes'], 'outcome')
-  .end('outcome') as (
-  store: NeoAskTodoRepository,
-  sessions: NeoTodoSessionRepository,
-  id: string,
-  now: number,
-  changes: Changes
-) => Receipt | Rejection | null;
-
 class NeoAskSettlement {
   private readonly store: NeoAskTodoRepository;
   private readonly sessions: NeoTodoSessionRepository;
@@ -148,9 +116,6 @@ class NeoAskSettlement {
   settle(input: Input, now: number) {
     return settle(this.store, this.sessions, input, now, this.changes);
   }
-  splitParent(id: string, now: number) {
-    return splitParent(this.store, this.sessions, id, now, this.changes);
-  }
 }
 
 export const neoAskSettlementReads = defineRepositoryOp(
@@ -163,5 +128,5 @@ export const neoAskSettlementWrites = defineRepositoryOp(
   'neo.askSettlementWrites',
   'write',
   NeoAskSettlement,
-  ['settle', 'splitParent']
+  ['settle']
 );

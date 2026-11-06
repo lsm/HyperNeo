@@ -53,7 +53,7 @@ describe('Whole todo-add writer', () => {
     const op = DB_OPS.get('neo.todoAddWrites') as DbOp<object, Receipt> | undefined;
     expect(op).toBeDefined();
     if (!op) throw new Error('Whole todo-add command unavailable');
-    return gateway.run(op, { askId: 'ask', todoId: id, draft: input, now: 10, split: false });
+    return gateway.run(op, { askId: 'ask', todoId: id, draft: input, now: 10 });
   };
   test('commits target, complete instruction and one shared start question', async () => {
     const input = { ...draft(), instruction: '完整工作 🦊\n'.repeat(20000) };
@@ -67,6 +67,20 @@ describe('Whole todo-add writer', () => {
     ]);
     expect(new NeoTodoSessionRepository(db).get('one')).toMatchObject(input.target);
     expect(changes).toContain('neo_questions');
+  });
+  test('different repositories commit to the same ask without creating children', async () => {
+    const first = await add('one', { ...draft(), named: { repository: 'synthetic/first' } });
+    const second = await add('two', { ...draft(), named: { repository: 'synthetic/second' } });
+    expect(first).toMatchObject({
+      ok: true,
+      todo: { askId: 'ask', repo: 'github.com/synthetic/first' },
+    });
+    expect(second).toMatchObject({
+      ok: true,
+      todo: { askId: 'ask', repo: 'github.com/synthetic/second' },
+    });
+    expect(store.getAsk('ask')?.status).toBe('open');
+    expect(store.listChildAsks('ask')).toEqual([]);
   });
   test('late question failure rolls back todo, target and all notifications', async () => {
     db.exec(

@@ -44,7 +44,6 @@ import {
 import type { NeoPack, NeoTodoCheckResult, NeoTodoJudgement } from './pack-contract.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
 import { sameNeoTodoCheck } from './todo-completion.ts';
-import { neoMoveTodo, neoTodoRepo } from './todo-repo.ts';
 import { planNudge } from './nudge.ts';
 import { isNeoTodoWorkerWait, planNeoTodoWaits } from './todo-worker-wait.ts';
 import { planNeoTurnReportSweep } from './turn-report-sweep.ts';
@@ -371,13 +370,6 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     if (next.state === 'done' || next.state === 'failed' || next.state === 'blocked')
       await deps.tell(ask, next, neoTodoNote(next));
     return next;
-  };
-
-  const relocate = (id: string) => {
-    const todo = store.getTodo(id);
-    const repo = todo && neoTodoRepo({ ...todo, target: sessions.get(id) }, deps.packs(), todo);
-    if (todo && neoMoveTodo(store, todo, repo)) deps.changed();
-    return store.getTodo(id) ?? todo;
   };
 
   const dispatch = async ({ todo, ask, target }: Startable) => {
@@ -782,7 +774,6 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       )
         await deps.tell(ask, next, neoTodoNote(next));
     }
-    relocate(todo.id);
     deps.changed();
   };
 
@@ -791,7 +782,6 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     if (todo)
       for (const pack of deps.packs())
         await pack.todos?.openedPrs?.(todo, readDriverOpenedPrs(outcome));
-    if (todo) relocate(id);
     const turns = readDriverTurnEnds(outcome);
     if (!turns.length) return;
     const ask = todo && store.getAsk(todo.askId);

@@ -18,7 +18,6 @@ import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/n
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { SessionGoalRepository } from '../../../../src/storage/repositories/session-goal-repository.ts';
-import { neoTodoHome } from '../../../../src/lib/neo/todo-repo.ts';
 
 const turn = (_messageId: string, _human = true): OperationCaller => ({
   source: 'mcp',
@@ -268,7 +267,12 @@ describe('neo.ask.open and neo.ask.settle', () => {
     });
     const independent = await call('neo.ask.open', { ...opening, todos: [] }, turn('m1'));
     expect(independent.ok && independent.ask.id).not.toBe(result.ask.id);
-    const child = neoTodoHome(store, result.ask, 'github.com/verify/second', true);
+    const child = store.openAsk({
+      ...result.ask,
+      id: 'historical-child',
+      parentId: result.ask.id,
+      repo: 'github.com/verify/second',
+    });
     expect(child.goalId).toBe(mine.id);
     expect(store.listGoalAsks(mine.id).map((ask) => ask.id)).toEqual(
       expect.arrayContaining([result.ask.id, child.id])

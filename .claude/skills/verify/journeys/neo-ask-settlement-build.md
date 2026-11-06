@@ -20,14 +20,13 @@ Unicode report remains in the receipt and public card. Current stop context
 must retain the actual ask, worker ref, adopted status and live state without
 stopping anything.
 
-Split-parent settlement ends only an empty parent with children, leaving
-child work and human cards unchanged. A retired child card with no pending
-answer must release its needs-human hold through the existing #9072 state
-policy. Units also pin a pending child answer retaining that hold, explicit
+Historical parents remain open and their child work and human cards remain
+unchanged. A retired child card with no pending answer must release its
+needs-human hold through the existing #9072 state policy. Units also pin a pending child answer retaining that hold, explicit
 settlement overriding it, late changes to a prior snapshot, failure diagnostics,
 missing/settled asks, late card failure and competing settlement attempts.
 
-Repeated split settlement and stale explicit settlement must stay quiet. The build must
+Stale explicit settlement must stay quiet. The build must
 issue no Neo event or worker stop/dispatch, and admission/state SQL must not execute on
 main. Run focused settlement, ask, state-policy and session-repository tests, then the
 full check.

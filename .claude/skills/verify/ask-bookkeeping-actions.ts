@@ -23,6 +23,7 @@ assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert(!existsSync(join(run, 'data')));
 mkdirSync(join(run, 'data'), { recursive: true }); mkdirSync(join(run, 'evidence'), { recursive: true });
 const evidence: unknown[] = [];
+let mixedAskId = '';
 for (const phase of ['initial', 'reopen']) {
   const db = new Database(join(run, 'data/daemon.db'));
   try {
@@ -70,6 +71,7 @@ for (const phase of ['initial', 'reopen']) {
           title: `Work in ${repo}`, check: { pack: 'coding', kind: 'pr_merged', params: { urls: [`https://github.com/synthetic/${repo}/pull/1`] } },
         })),
       });
+      mixedAskId = mixed.ask.id;
       assert.equal(mixed.ask.status, 'open');
       assert.equal(mixed.todos.length, 2);
       assert(mixed.todos.every((todo: { askId: string }) => todo.askId === mixed.ask.id));
@@ -123,6 +125,10 @@ for (const phase of ['initial', 'reopen']) {
       assert(retry.records[0].includes('Open a new ask for it with a different title'));
 
     }
+    const mixed = await call('neo.ask.read', { askId: mixedAskId });
+    assert.equal(mixed.entry.ask.status, 'open');
+    assert.equal(mixed.entry.todos.length, 2);
+    assert(mixed.entry.todos.every((todo: { askId: string }) => todo.askId === mixedAskId));
     const read = await call('neo.ask.read', { askId: 'ask' });
     const child = await call('neo.ask.read', { askId: 'child' });
     assert.equal(child.entry.ask.parentId, 'ask');

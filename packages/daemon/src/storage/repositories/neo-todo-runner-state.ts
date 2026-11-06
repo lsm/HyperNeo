@@ -5,9 +5,6 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoDriverTarget } from '../../lib/neo/driver-work.ts';
 import type { NeoTodoJudgement } from '../../lib/neo/pack-contract.ts';
-import type { NeoTodoPolicy } from '../../lib/neo/todo-operations.ts';
-import { neoTodoPolicies } from '../../lib/neo/packs/todo-policies.ts';
-import { neoMoveTodo, neoTodoRepo } from '../../lib/neo/todo-repo.ts';
 import { requireNeoTodoStartable } from '../../lib/neo/todo-runner.ts';
 import { neoTodoStartRefusal } from '../../lib/neo/todo-start-gate.ts';
 import { sameNeoTodoCheck } from '../../lib/neo/todo-completion.ts';
@@ -65,7 +62,7 @@ const recompute = (superpipe({})('neo.todo.runner-state') as PipelineAPI)
 ) => State;
 
 const claim = (superpipe({})('neo.todo.claim-start-state') as PipelineAPI)
-  .input(['store', 'sessions', 'policies', 'id', 'now'])
+  .input(['store', 'sessions', 'id', 'now'])
   .pipe(
     (store: NeoAskTodoRepository, sessions: NeoTodoSessionRepository, id: string) => {
       const todo = store.getTodo(id);
@@ -97,24 +94,10 @@ const claim = (superpipe({})('neo.todo.claim-start-state') as PipelineAPI)
     ['store', 'outcome', 'now'],
     'result:outcome'
   )
-  .pipe(
-    (store: NeoAskTodoRepository, plan: Start, policies: readonly NeoTodoPolicy[]) => {
-      const repo = neoTodoRepo({ ...plan.todo, target: plan.target }, policies, plan.todo);
-      const todo = neoMoveTodo(store, plan.todo, repo) ?? plan.todo;
-      return {
-        ok: true as const,
-        todo,
-        ask: store.getAsk(todo.askId) ?? plan.ask,
-        target: plan.target,
-      };
-    },
-    ['store', 'outcome', 'policies'],
-    'outcome'
-  )
+  .pipe((plan: Start) => ({ ok: true as const, ...plan }), 'outcome', 'outcome')
   .end('outcome') as (
   store: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
-  policies: readonly NeoTodoPolicy[],
   id: string,
   now: number
 ) => Claim;
@@ -122,7 +105,6 @@ const claim = (superpipe({})('neo.todo.claim-start-state') as PipelineAPI)
 class NeoTodoRunnerState {
   private readonly store: NeoAskTodoRepository;
   private readonly sessions: NeoTodoSessionRepository;
-  private readonly policies: readonly NeoTodoPolicy[];
   private changed = false;
   constructor(
     db: Database,
@@ -143,7 +125,6 @@ class NeoTodoRunnerState {
       changes
     );
     this.sessions = new NeoTodoSessionRepository(db, changes);
-    this.policies = neoTodoPolicies(db);
   }
   recompute(
     id: string,
@@ -155,7 +136,7 @@ class NeoTodoRunnerState {
     return { ...recompute(this.store, id, check, change, now, judgement), changed: this.changed };
   }
   claim(id: string, now: number) {
-    return { ...claim(this.store, this.sessions, this.policies, id, now), changed: this.changed };
+    return { ...claim(this.store, this.sessions, id, now), changed: this.changed };
   }
   blocker(
     todo: NeoTodo,

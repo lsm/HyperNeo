@@ -27,7 +27,6 @@ import type {
   NeoTodo,
   NeoTodoCheck,
 } from '@hyperneo/shared/types/neo-ask';
-import { neoTodoDependencyNodes } from '../../lib/neo/todo-dependencies.ts';
 import {
   neoStartCardText,
   neoTodoAwaitsApproval,
@@ -440,14 +439,6 @@ export class NeoAskTodoRepository {
     );
   }
 
-  childAsk(parentId: string, repo: string): NeoAsk | null {
-    return foundAsk(
-      (this.db
-        .prepare(`${ASK_SELECT} WHERE parent_id = ? AND repo = ? AND status = 'open'`)
-        .get(parentId, repo) as AskRow | null) ?? null
-    );
-  }
-
   listChildAsks(parentId: string): NeoAsk[] {
     return (
       this.db
@@ -634,9 +625,6 @@ export class NeoAskTodoRepository {
     now: number,
     repo: string | null = null
   ): NeoTodo {
-    const home = this.getAsk(askId)?.repo;
-    if (repo && home && home !== repo)
-      throw new Error(`todo_repo_mismatch: a ${repo} todo cannot join a ${home} card.`);
     this.db
       .prepare(
         `INSERT INTO neo_todos (id, ask_id, position, title, done_when, check_json, instruction, named,
@@ -667,30 +655,6 @@ export class NeoAskTodoRepository {
         .run(repo, askId);
     this.touchAsk(askId, now);
     return this.getTodo(id)!;
-  }
-
-  moveTodo(todo: NeoTodo, askId: string, repo: string, now: number): NeoTodo {
-    this.db.transaction(() => {
-      const node = neoTodoDependencyNodes(this.listFamilyTodos(todo.askId)).find(
-        (item) => item.id === todo.id
-      );
-      this.db
-        .prepare(
-          `UPDATE neo_todos SET repo = ?2, position = CASE WHEN ask_id = ?1 THEN position
-             ELSE (SELECT COALESCE(MAX(position) + 1, 0) FROM neo_todos WHERE ask_id = ?1) END, ask_id = ?1,
-             depends_on = COALESCE(depends_on, ?4)
-           WHERE id = ?3`
-        )
-        .run(askId, repo, todo.id, JSON.stringify(node?.dependsOn ?? []));
-      this.pruneQuestions(todo.askId, now);
-      const moved = this.getTodo(todo.id)!;
-      if (askId !== todo.askId && moved.instruction && neoTodoAwaitsApproval(moved))
-        this.joinStartQuestion(moved, now);
-    })();
-    this.db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ? AND repo IS NULL').run(repo, askId);
-    this.touchAsk(todo.askId, now);
-    if (askId !== todo.askId) this.touchAsk(askId, now);
-    return this.getTodo(todo.id)!;
   }
 
   private stateFacts(
