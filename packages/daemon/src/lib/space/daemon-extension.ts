@@ -22,7 +22,10 @@ import { SpaceRepository } from '../../storage/repositories/space-repository.ts'
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
 import type { DaemonExtension } from '../extensions/contract.ts';
-import { createSpaceAdapter, spaceTaskControl } from './drivers/space-adapter.ts';
+import {
+  createSpaceAdapter,
+  spaceTaskControl,
+} from '../../../../space/src/drivers/space-adapter.ts';
 import type { SessionManager } from '../session/session-manager.ts';
 import type { TaskAgentManager } from './runtime/task-agent-manager.ts';
 import { hostname } from 'node:os';

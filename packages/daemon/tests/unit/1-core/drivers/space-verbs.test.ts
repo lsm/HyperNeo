@@ -1,14 +1,14 @@
 import { readHyperneoTurnEnds } from '../../../../src/storage/hyperneo-turn-ends-read.ts';
 import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
-import { spaceTaskControl } from '../../../../src/lib/space/drivers/space-adapter';
+import { spaceTaskControl } from '../../../../../space/src/drivers/space-adapter';
 import { readDriverFollowUp, readDriverSettlement } from '../../../../src/lib/neo/driver-work';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   createSpaceAdapter,
   spaceTaskCaller,
   taskOperationRejection,
-} from '../../../../src/lib/space/drivers/space-adapter';
+} from '../../../../../space/src/drivers/space-adapter';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { readSessionInputEvidence } from '../../../../src/lib/drivers/space-input-evidence';
 import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns';
