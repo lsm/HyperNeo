@@ -344,6 +344,37 @@ describe('QueryRunner', () => {
       }));
     });
 
+    it('delivers injected query messages without calling the SDK query', async () => {
+      const message = { type: 'system', subtype: 'init', session_id: 'synthetic' } as SDKMessage;
+      const fake = {
+        close: () => {},
+        interrupt: async () => undefined,
+        rewindFiles: async () => ({}),
+        [Symbol.asyncIterator]: async function* () {
+          yield message;
+        },
+      } as unknown as QueryLike;
+      const factory = mock(() => fake);
+      const sdkQuery = query as unknown as ReturnType<typeof mock>;
+      sdkQuery.mockClear();
+      const ctx = createContext({
+        session: {
+          ...mockSession,
+          workspacePath: null,
+          config: { model: 'unit', provider: providerId },
+        },
+        messageQueue: queue,
+      });
+      runner = new QueryRunner(ctx, factory);
+      const handle = jest.spyOn(runner, 'handleSDKMessage').mockImplementation(async () => {});
+      await runner.start();
+      await ctx.queryPromise;
+      expect(factory).toHaveBeenCalledTimes(1);
+      expect(handle).toHaveBeenCalledWith(message, expect.any(Number));
+      expect(sdkQuery).not.toHaveBeenCalled();
+      handle.mockRestore();
+    });
+
     it('keeps an arbitrary query-start failure distinct from a user interrupt for bounded job retries', async () => {
       const failure = new Error('Synthetic unclassified query start exploded');
       (query as unknown as ReturnType<typeof mock>).mockImplementation(() => {
