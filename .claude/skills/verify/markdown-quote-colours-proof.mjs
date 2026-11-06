@@ -8,13 +8,11 @@ export async function verifyQuoteColours(page, {run,base,phase,theme,baseline}) 
   page.on('pageerror',e=>errors.push(String(e)));
   await page.addInitScript(theme=>{
     localStorage.setItem('theme',theme);
-    window.__colourCopies=[];
-    Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>window.__colourCopies.push(text)}});
   },theme);
   await page.goto(`${base}/neo`);
   const article=page.locator(`[data-message-ref="${publicationId}"]`);
   await article.locator('blockquote p').first().waitFor();
-  await article.locator('.neo-markdown-assistant').screenshot({path:join(run,'evidence',`${phase}-${theme}.png`),scale:'css'});
+  await article.screenshot({path:join(run,'evidence',`${phase}-${theme}.png`),scale:'css'});
   const style=await article.evaluate(article=>{
     const q=article.querySelector('blockquote'), p=q.querySelector('p');
     const canvas=document.createElement('canvas');canvas.width=canvas.height=1;
@@ -30,14 +28,15 @@ export async function verifyQuoteColours(page, {run,base,phase,theme,baseline}) 
     const a=lum(fg),b=lum(bg);
     return {foreground:fg,border,background:bg,overlayAlpha,contrast:(Math.max(a,b)+.05)/(Math.min(a,b)+.05),fontStyle:getComputedStyle(p).fontStyle,heading:getComputedStyle(article.querySelector('h2')).color};
   });
-  const colours={before:{dark:[183,168,206],light:[114,97,130]},after:{dark:[205,189,234],light:[122,95,166]}};
-  assert.equal(style.foreground.join(','),colours[phase][theme].join(','));
-  assert.equal(style.border.join(','),style.foreground.join(','));
+  const colours={dark:[205,189,234],light:[122,95,166]};
+  const borders={dark:[128,100,158],light:[106,74,139]};
+  assert.equal(style.foreground.join(','),colours[theme].join(','));
+  assert.equal(style.border.join(','),(phase==='after'?borders[theme]:colours[theme]).join(','));
   assert.equal(style.fontStyle,'italic');
   assert(Math.abs(style.overlayAlpha-.06)<.005);
   assert(style.contrast>=4.5,`contrast ${style.contrast} must meet AA`);
   await article.getByRole('button',{name:'Copy quote',exact:true}).click();
-  assert.equal(await page.evaluate(()=>window.__colourCopies.at(-1)),'The release notes are ready for review. Please check the small changes before publishing.\n\nThank you for taking a look.');
+  assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),'The release notes are ready for review. Please check the small changes before publishing.\n\nThank you for taking a look.');
   await article.getByRole('button',{name:'Reply to Neo’s message',exact:true}).click();
   const bar=page.locator('[data-quote-bar]');await bar.waitFor();
   const reference=await bar.evaluate(el=>({colour:getComputedStyle(el).color,background:getComputedStyle(el).backgroundColor,accent:getComputedStyle(el.querySelector('[aria-hidden]')).backgroundColor}));
