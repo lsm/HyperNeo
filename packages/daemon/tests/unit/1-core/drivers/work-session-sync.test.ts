@@ -98,7 +98,7 @@ describe('workerName', () => {
     todo.run('t3', 'Remote todo', 3);
     session.run('t3', '{}', '{"adapter":"codex-desktop","daemon":"other","id":"b"}');
     expect(repository.workerName({ adapter: 'codex-desktop', id: 'b', daemon: 'other' })).toBe(
-      'Older todo'
+      'Remote todo'
     );
     new workSessionWrites.Repository(db).saveSessions(
       [{ ...ref, name: 'Synced', status: 'done' }],
