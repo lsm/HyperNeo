@@ -149,7 +149,7 @@ import { WorkflowHookRuntimeService } from './lib/workflows/hook-runtime-service
 import { WorkflowHookStateRepository } from './storage/repositories/workflow-hook-state-repository.ts';
 import type { SpaceManager } from '../../space/src/managers/space-manager.ts';
 import { loadSpaceDaemonModule } from './lib/space-module-loader.ts';
-import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service.ts';
+import type { SpaceRuntimeService } from '../../space/src/runtime/space-runtime-service.ts';
 import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager.ts';
 import type { SpaceWorktreeManager } from './lib/workspaces/worktree-manager.ts';
 import {

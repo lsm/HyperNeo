@@ -4,7 +4,7 @@ import { SpaceLongHorizonAgentRepository } from '../../storage/repositories/spac
 import { SpaceAgentReminderRepository } from '../../storage/repositories/space-agent-reminder-repository.ts';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
 import { SpaceManager } from '../../../../space/src/managers/space-manager.ts';
-import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
+import type { SpaceRuntimeService } from '../../../../space/src/runtime/space-runtime-service.ts';
 import type { SpaceWorktreeManager } from '../workspaces/worktree-manager.ts';
 import { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import { JobQueueProcessor } from '../../storage/job-queue-processor.ts';

@@ -24,7 +24,7 @@ import type {
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus';
 import type { SessionManager } from '../../../../src/lib/session-manager';
-import type { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service';
+import type { SpaceRuntimeService } from '../../../../../space/src/runtime/space-runtime-service';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
 type SummaryTask = SpaceTask & { descriptionTruncated?: boolean; resultTruncated?: boolean };

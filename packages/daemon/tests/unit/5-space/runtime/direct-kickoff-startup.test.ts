@@ -1,4 +1,4 @@
-import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service';
+import { SpaceRuntimeService } from '../../../../../space/src/runtime/space-runtime-service';
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';

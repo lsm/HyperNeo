@@ -28,7 +28,7 @@ import type { GoalAutomationService } from '../../goals/automation-service.ts';
 import type { SpaceGoalService } from '../../goals/service.ts';
 import type { ReplyRoutingRegistry } from '../../../../daemon/src/lib/messaging/reply-routing-registry.ts';
 import type { ScheduleService } from '../../../../daemon/src/lib/schedule/schedule-service.ts';
-import type { SpaceRuntimeService } from '../../../../daemon/src/lib/space/runtime/space-runtime-service.ts';
+import type { SpaceRuntimeService } from '../../runtime/space-runtime-service.ts';
 import type { TaskAgentManager } from '../../../../daemon/src/lib/space/runtime/task-agent-manager.ts';
 import type { SpaceTaskManager } from '../../../../daemon/src/lib/tasks/task-manager.ts';
 import type { CodingArtifactProfile } from '../../../../daemon/src/lib/workflows/coding-artifact-profile.ts';

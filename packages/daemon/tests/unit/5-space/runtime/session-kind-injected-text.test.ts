@@ -21,7 +21,7 @@ import type { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflo
 import {
   SpaceRuntimeService,
   type SpaceRuntimeServiceConfig,
-} from '../../../../src/lib/space/runtime/space-runtime-service.ts';
+} from '../../../../../space/src/runtime/space-runtime-service.ts';
 import { assembleSessionBriefing } from '../../../../src/lib/briefings/assemble-session-briefing.ts';
 import type {
   AuthoredCapabilityContribution,

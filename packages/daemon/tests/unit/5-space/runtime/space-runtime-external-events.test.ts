@@ -7,7 +7,7 @@ import type {
 } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { withSessionOperationLock } from '../../../../src/lib/agent/message-delivery';
-import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service';
+import { SpaceRuntimeService } from '../../../../../space/src/runtime/space-runtime-service';
 import { renderEventBlock } from '../../../../src/lib/external-events/deferred-event-digest';
 import { essenceEntryFromExternalEvent } from '../../../../src/lib/external-events/event-essence-entry';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';

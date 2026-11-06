@@ -99,7 +99,7 @@ import { SpaceSessionEventSubscriptionRepository } from '../../../daemon/src/sto
 import { SpaceAgentTemplateManager } from '../../../daemon/src/lib/agents/template-manager.ts';
 import { createAgentTemplateResolverFactory } from '../../../daemon/src/lib/workflows/run-template-snapshot.ts';
 import type { EvolutionRepository } from '../../../daemon/src/storage/repositories/evolution-repository.ts';
-import { SpaceRuntimeService } from '../../../daemon/src/lib/space/runtime/space-runtime-service.ts';
+import { SpaceRuntimeService } from '../runtime/space-runtime-service.ts';
 import { GOAL_OUTCOME_WAKE_ENABLED } from '../runtime/goal-outcome-wake-flag.ts';
 import { SpaceAgentInactivityWatchdogService } from '../../../daemon/src/lib/agents/inactivity-watchdog-service.ts';
 import type { InactivityWatchdogSessionSnapshot } from '../../../daemon/src/lib/agents/inactivity-watchdog-service.ts';

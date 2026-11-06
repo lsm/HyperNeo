@@ -14,7 +14,7 @@ import { resolveSpaceMcpSessionPolicy } from '../../../../src/lib/session-resolu
 import {
   SpaceRuntimeService,
   type SpaceRuntimeServiceConfig,
-} from '../../../../src/lib/space/runtime/space-runtime-service.ts';
+} from '../../../../../space/src/runtime/space-runtime-service.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import type { SettingsManager } from '../../../../src/lib/settings-manager.ts';
