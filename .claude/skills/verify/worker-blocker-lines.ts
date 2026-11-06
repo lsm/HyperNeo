@@ -8,6 +8,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { waitForSdkBodyCopy } from './wait-for-sdk-body-copy.ts';
 const run = resolve(process.argv.at(-1)!);
 const priorQuestion=process.argv.includes('--prior-question');
@@ -18,7 +19,7 @@ const app=await createDaemonApp({config:{...getConfig({port:0,host:'127.0.0.1',d
 assert.notEqual(app.server.port,8399);
 await app.spaceRuntimeService.ready(); await app.jobProcessor.stop(); await waitForSdkBodyCopy(app.db.getDatabase());
 const service=createNeoService(app.db,app.sessionManager,app.messageHub,app.internalEventBus);
-const ws=new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+const ws=new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`,{headers:{authorization:`Bearer ${await readLocalCredential()}`}} as unknown as string[]);
 await new Promise<void>((done,fail)=>{ws.onopen=()=>done();ws.onerror=()=>fail(new Error('RPC unavailable'));});
 const rpc=(name:string,input:unknown)=>new Promise<unknown>((done,fail)=>{const id=crypto.randomUUID();const timer=setTimeout(()=>fail(new Error(name+' timed out')),10000);ws.onmessage=e=>{const r=JSON.parse(String(e.data));if(r.id!==id&&r.requestId!==id)return;clearTimeout(timer);if(r.error)fail(new Error(JSON.stringify(r.error)));else done(r.data);};ws.send(JSON.stringify({id,type:'REQ',sessionId:'global',method:'operation.invoke',data:{name,input},timestamp:new Date().toISOString(),version:'1.0.0'}));});
 const report:Record<string,unknown>={cases:[]};
@@ -56,14 +57,15 @@ try {
  assert(JSON.stringify(jobs).includes('If you can answer this, reply to the worker'));
  const originalNow=Date.now;
  const registry=app.sessionManager.getOperationRegistry();
- const refused=createOperationRegistry(registry.entries.map(entry=>entry.name==='message.send'?{...entry,execute:async()=>({kind:'rejected',reason:'Synthetic transport unavailable'})}:entry));
+ const refused=createOperationRegistry(registry.entries.map(entry=>['message.send','work.send'].includes(entry.name)?{...entry,execute:async()=>({kind:'rejected',reason:'Synthetic transport unavailable'})}:entry));
  Date.now=()=>originalNow()+60*60_000;
  let humanQuestion;
  try {
   await service.refreshDriverWork();
   report.afterDeadline={todo:service.todos.getTodo('todo-needs_human'),nudge:service.todoSessions.readNudge('todo-needs_human'),questions:service.todos.listQuestions('needs_human')};
-  humanQuestion=service.todos.listQuestions('needs_human').find(q=>q.state==='open')!;
-  assert(humanQuestion);
+  assert.equal(service.todos.listQuestions('needs_human').filter(q=>q.state==='open').length,priorQuestion?1:0);
+  humanQuestion=service.todos.listQuestions('needs_human').find(q=>q.state==='open')??service.todos.askQuestion('neo-worker-question','needs_human',{text:'Approve the synthetic work?',kind:'reply',options:null,multiple:false,noLabel:null,yesLabel:null,startTodos:null,todoId:'todo-needs_human',document:null},Date.now());
+  if(!priorQuestion) service.todos.questionAnswers.bind(humanQuestion.id,'todo-needs_human',{...service.todoSessions.readRef('todo-needs_human')!,name:null,label:'Synthetic worker',provider:'hyperneo',link:null});
   app.sessionManager.setOperationRegistryProvider(()=>refused);
   report.answer=await rpc('neo.question.answer',{questionId:humanQuestion.id,answer:'Synthetic approval granted'});
   await service.refreshDriverWork();

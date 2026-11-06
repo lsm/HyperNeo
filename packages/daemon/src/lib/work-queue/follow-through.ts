@@ -8,7 +8,14 @@ export type FollowThroughIncident = {
     sessionId?: string;
   };
   checkOnlyReminder?: FollowThroughIncident['stallReminder'];
-  blockerReport?: { id: string; dispatchId: string; at: number; triagedAt?: number };
+  blockerReport?: {
+    id: string;
+    dispatchId: string;
+    at: number;
+    triagedAt?: number;
+    remindedAt?: number;
+  };
+  unreachableToldAt?: number;
   since: number;
   nudges: number;
   at?: number;
