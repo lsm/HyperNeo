@@ -22,6 +22,7 @@ describe('Writer-backed todo operation activation', () => {
   let order: string[];
   let duringStop: () => void;
   let stopFailure: string | null;
+  let checkDone: boolean;
   let call: (name: string, input: object, role?: 'neo' | 'direct_task_worker') => Promise<Receipt>;
   beforeEach(() => {
     db = new Database(':memory:');
@@ -32,11 +33,15 @@ describe('Writer-backed todo operation activation', () => {
     order = [];
     duringStop = () => {};
     stopFailure = null;
+    checkDone = true;
     gateway.onChanges = () => {
       order.push('commit');
     };
     const packs = createTodoCheckPacks(db);
-    packs.find((pack) => pack.id === 'coding')!.todos!.check = async () => ({ done: true });
+    packs.find((pack) => pack.id === 'coding')!.todos!.check = async () => ({
+      done: checkDone,
+      evidence: null,
+    });
     store.openAsk({
       id: 'ask',
       projectId: null,
@@ -145,6 +150,31 @@ describe('Writer-backed todo operation activation', () => {
     expect(result).toMatchObject({ ok: true, todo: { state: 'done' } });
     expect(order).toEqual(['stop', 'commit', 'announce', 'start:peer']);
     expect(result.ok && result.todos.find((todo) => todo.id === 'peer')?.state).toBe('doing');
+  });
+
+  test('close refuses a never-started todo whose check has not passed and points to remove', async () => {
+    checkDone = false;
+    const before = store.getTodo('first')!;
+    const result = await call('neo.todo.close', { todoId: 'first', reason: 'Never started' });
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('neo.todo.remove') });
+    expect(store.getTodo('first')).toEqual(before);
+    expect(order).toEqual([]);
+  });
+
+  test('close of a started todo whose check has not passed still waits on the check', async () => {
+    checkDone = false;
+    store.updateTodo(store.getTodo('first')!, { state: 'doing', startedAt: 2 }, 2);
+    expect(await call('neo.todo.close', { todoId: 'first', reason: 'Finished' })).toMatchObject({
+      ok: true,
+      todo: { state: 'blocked', blockedBy: 'check' },
+    });
+  });
+
+  test('remove cancels a never-started todo whose check has not passed', async () => {
+    checkDone = false;
+    expect(
+      await call('neo.todo.remove', { todoId: 'first', reason: 'Never started' })
+    ).toMatchObject({ ok: true, todo: { state: 'removed', reason: 'Never started' } });
   });
 
   test('a new human card during stop prevents the final completion write', async () => {

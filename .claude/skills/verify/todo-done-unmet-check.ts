@@ -38,6 +38,7 @@ try {
         if (name !== 'neo.snapshot') assert.equal(result.ok, true, JSON.stringify(result));
         return result;
       };
+      const start = (id: string) => store.updateTodo(store.getTodo(id)!, { startedAt: Date.now() }, Date.now());
       const blocked = (todo: { state: string; blockedBy: string | null; blockedReason: string | null; finishedAt: number | null }, reason: string) => {
         assert.equal(todo.state, 'blocked', JSON.stringify(todo));
         assert.equal(todo.blockedBy, 'check', JSON.stringify(todo));
@@ -54,14 +55,17 @@ try {
         ] });
         ids.pr = opened.todos[0].id;
         ids.evidence = opened.todos[1].id;
+        start(ids.pr);
+        start(ids.evidence);
         const closed = await invoke('neo.todo.close', { todoId: ids.pr, reason: 'Neo believes it merged' });
         blocked(closed.todo, 'check_unmet:');
         const ticked = await invoke('neo.todo.edit', { todoId: ids.pr, done: 'met', evidence: 'Neo believes it merged' });
         blocked(ticked.todo, 'check_unmet:');
         const wrong = await invoke('neo.todo.close', { todoId: ids.evidence, reason: 'Result written elsewhere' });
         blocked(wrong.todo, 'check_unmet:');
-        const terminal = await invoke('neo.ask.open', { title: 'Human drops unfinished work', request: 'Settle with an unmet check', todos: [{ title: 'Unverified terminal step', check: { pack: 'core', kind: 'evidence', params: { artifact: 'synthetic-missing' } } }] });
+        const terminal = await invoke('neo.ask.open', { title: 'Human drops unfinished work', request: 'Settle with an unmet check', todos: [{ title: 'Unverified terminal step', check: { pack: 'core', kind: 'evidence', params: { path: missing } } }] });
         ids.settled = terminal.todos[0].id;
+        start(ids.settled);
         blocked((await invoke('neo.todo.close', { todoId: ids.settled, reason: 'Verification outstanding' })).todo, 'check_unmet:');
         await invoke('neo.ask.settle', { askId: terminal.ask.id, status: 'done', outcome: 'Closed with verification outstanding' });
         assert.equal(store.getTodo(ids.settled)?.state, 'closed_unverified');
