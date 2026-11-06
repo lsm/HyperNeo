@@ -13,8 +13,8 @@ import {
   type LiveQueryLifecycleEvent,
   type LiveQueryLifecycleState,
   transitionLiveQueryLifecycle,
-} from '../lib/live-query-lifecycle';
-import { useMessageHub } from './useMessageHub';
+} from '../../lib/live-query-lifecycle';
+import { useMessageHub } from '../../hooks/useMessageHub';
 
 export interface SpaceTaskThreadMessageRow {
   id: string | number;

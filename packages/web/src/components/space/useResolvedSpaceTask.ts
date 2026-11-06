@@ -1,7 +1,7 @@
 import type { SpaceTask } from '@hyperneo/shared';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { type SummarySpaceTask, spaceStore } from '../lib/space-store';
-import { connectionState } from '../lib/state';
+import { type SummarySpaceTask, spaceStore } from '../../lib/space-store';
+import { connectionState } from '../../lib/state';
 
 const MAX_DETAIL_RETRIES = 2;
 

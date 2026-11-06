@@ -1,10 +1,10 @@
 import { lazy, Suspense } from 'preact/compat';
 import { useCallback, useEffect, useState } from 'preact/hooks';
-import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
-import { SpaceCreateTaskDialog } from '../components/space/SpaceCreateTaskDialog';
-import { GlassRouteShell } from '../components/space/glass-workspace';
-import { SpacePageHeader } from '../components/space/SpacePageHeader';
-import { navigateBack } from '../lib/router';
+import { AgentOverlayChat } from './AgentOverlayChat';
+import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
+import { GlassRouteShell } from './glass-workspace';
+import { SpacePageHeader } from './SpacePageHeader';
+import { navigateBack } from '../../lib/router';
 import {
   closeOverlayHistory,
   navigateToSpace,
@@ -12,9 +12,9 @@ import {
   navigateToSpaceSession,
   navigateToSpaceTask,
   pushOverlayHistory,
-} from '../lib/space-router';
-import { sessionStore } from '../lib/session-store';
-import type { SpaceViewMode } from '../lib/space-signals';
+} from '../../lib/space-router';
+import { sessionStore } from '../../lib/session-store';
+import type { SpaceViewMode } from '../../lib/space-signals';
 import {
   currentSpaceAgentHandleSignal,
   currentSpaceCanonicalIdSignal,
@@ -27,36 +27,30 @@ import {
   spaceOverlayPendingTaskIdSignal,
   spaceOverlaySessionIdSignal,
   spaceOverlayTaskContextSignal,
-} from '../lib/space-signals';
-import { spaceStore } from '../lib/space-store';
-import ChatContainer from './ChatContainer';
+} from '../../lib/space-signals';
+import { spaceStore } from '../../lib/space-store';
+import ChatContainer from '../../islands/ChatContainer';
 import { SpaceAgentChat } from './SpaceAgentChat';
 
 const SpaceConfigurePage = lazy(() =>
-  import('../components/space/SpaceConfigurePage').then((m) => ({ default: m.SpaceConfigurePage }))
+  import('./SpaceConfigurePage').then((m) => ({ default: m.SpaceConfigurePage }))
 );
-const SpaceTasks = lazy(() =>
-  import('../components/space/SpaceTasks').then((m) => ({ default: m.SpaceTasks }))
-);
-const SpaceGoals = lazy(() =>
-  import('../components/space/SpaceGoals').then((m) => ({ default: m.SpaceGoals }))
-);
-const SpaceForge = lazy(() =>
-  import('../components/space/SpaceForge').then((m) => ({ default: m.SpaceForge }))
-);
+const SpaceTasks = lazy(() => import('./SpaceTasks').then((m) => ({ default: m.SpaceTasks })));
+const SpaceGoals = lazy(() => import('./SpaceGoals').then((m) => ({ default: m.SpaceGoals })));
+const SpaceForge = lazy(() => import('./SpaceForge').then((m) => ({ default: m.SpaceForge })));
 const SpaceOverview = lazy(() =>
-  import('../components/space/SpaceOverview').then((m) => ({ default: m.SpaceOverview }))
+  import('./SpaceOverview').then((m) => ({ default: m.SpaceOverview }))
 );
 const SpaceTaskPane = lazy(() =>
-  import('../components/space/SpaceTaskPane').then((m) => ({ default: m.SpaceTaskPane }))
+  import('./SpaceTaskPane').then((m) => ({ default: m.SpaceTaskPane }))
 );
 const SpaceLongHorizonAgents = lazy(() =>
-  import('../components/space/SpaceLongHorizonAgents').then((m) => ({
+  import('./SpaceLongHorizonAgents').then((m) => ({
     default: m.SpaceLongHorizonAgents,
   }))
 );
 const SpaceMemories = lazy(() =>
-  import('../components/space/SpaceMemories').then((m) => ({ default: m.SpaceMemories }))
+  import('./SpaceMemories').then((m) => ({ default: m.SpaceMemories }))
 );
 
 const lazyFallback = (

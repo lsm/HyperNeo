@@ -1,13 +1,13 @@
 import type { SpaceTask } from '@hyperneo/shared';
-import { fuzzyScore } from './command-registry.ts';
-import { navigateToSpace, navigateToSpaceTask } from './space-router.ts';
-import { workspaceLabel } from './workspace-label.ts';
+import { fuzzyScore } from '../../lib/command-registry.ts';
+import { navigateToSpace, navigateToSpaceTask } from '../../lib/space-router.ts';
+import { workspaceLabel } from '../../lib/workspace-label.ts';
 import {
   type ExtensionPaletteItem,
   type ExtensionSearchResult,
   type SpaceWithTaskList,
   webExtension,
-} from './web-extensions.ts';
+} from '../../lib/web-extensions.ts';
 
 const SpaceIcon = () => (
   <svg class="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor">

@@ -84,7 +84,7 @@ vi.mock('../SessionList.tsx', () => ({
   SessionList: () => <div data-testid="session-list" />,
 }));
 
-vi.mock('../SpaceDetailPanel.tsx', () => ({
+vi.mock('../../components/space/SpaceDetailPanel.tsx', () => ({
   SpaceDetailPanel: () => <div data-testid="space-detail-panel" />,
 }));
 
@@ -209,7 +209,7 @@ vi.mock('../../lib/toast.ts', () => ({
 
 import { ContextPanel } from '../ContextPanel';
 import { declareExtensionNav, registerWebExtension } from '../../lib/web-extensions';
-import { spaceNav } from '../../lib/space-nav';
+import { spaceNav } from '../../components/space/space-nav';
 
 declareExtensionNav(spaceNav);
 

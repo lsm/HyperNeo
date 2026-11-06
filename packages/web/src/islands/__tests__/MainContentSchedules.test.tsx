@@ -7,7 +7,7 @@ import { currentSessionIdSignal, navSectionSignal } from '../../lib/signals.ts';
 import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from '../../lib/space-signals.ts';
 import { spaceWebExtension } from '../../lib/space-web-extension';
 import { declareExtensionNav, registerWebExtension } from '../../lib/web-extensions';
-import { spaceNav } from '../../lib/space-nav';
+import { spaceNav } from '../../components/space/space-nav';
 
 registerWebExtension('space', spaceWebExtension);
 
@@ -26,7 +26,9 @@ vi.mock('../ChatContainer.tsx', () => ({
     </main>
   ),
 }));
-vi.mock('../SpaceIsland.tsx', () => ({ default: () => <main>Space chat</main> }));
+vi.mock('../../components/space/SpaceIsland.tsx', () => ({
+  default: () => <main>Space chat</main>,
+}));
 vi.mock('../../components/space/SpaceCreateDialog', () => ({ SpaceCreateDialog: () => null }));
 vi.mock('../BottomTabBar', () => ({ BottomTabBar: () => null }));
 vi.mock('../../components/voice/VoiceRecordingIndicator', () => ({

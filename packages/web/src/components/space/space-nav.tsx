@@ -1,4 +1,4 @@
-import { navSectionSignal } from './signals.ts';
+import { navSectionSignal } from '../../lib/signals.ts';
 import {
   currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,
@@ -7,7 +7,7 @@ import {
   currentSpaceViewModeSignal,
   spaceOverlayPendingAgentNameSignal,
   spaceOverlaySessionIdSignal,
-} from './space-signals.ts';
+} from '../../lib/space-signals.ts';
 import {
   clearOverlaySignals,
   closeOverlayHistory,
@@ -20,17 +20,17 @@ import {
   navigateToSpaceSession,
   navigateToSpaceTask,
   navigateToSpaceTasks,
-} from './space-router.ts';
-import { spaceCurrentRoute } from './space-route-sync.ts';
-import { voiceReturnTaskTargetSessionSignal } from './voice/voice-composer-registry.ts';
+} from '../../lib/space-router.ts';
+import { spaceCurrentRoute } from '../../lib/space-route-sync.ts';
+import { voiceReturnTaskTargetSessionSignal } from '../../lib/voice/voice-composer-registry.ts';
 import {
   openSpaceSearchResult,
   spacePaletteItems,
   spacePaletteSource,
   warmSpacePalette,
 } from './space-palette.tsx';
-import { isActionRequired, isActiveTask } from './task-filters.ts';
-import { type ExtensionNav, webExtension } from './web-extensions.ts';
+import { isActionRequired, isActiveTask } from '../../lib/task-filters.ts';
+import { type ExtensionNav, webExtension } from '../../lib/web-extensions.ts';
 
 const SpacesIcon = () => (
   <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">

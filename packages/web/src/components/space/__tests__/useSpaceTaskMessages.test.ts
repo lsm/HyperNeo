@@ -10,7 +10,7 @@ const { mockRequest, mockOnEvent, mockGetHub, mockIsConnected } = vi.hoisted(() 
   mockIsConnected: { value: true },
 }));
 
-vi.mock('../useMessageHub', () => ({
+vi.mock('../../../hooks/useMessageHub', () => ({
   useMessageHub: () => ({
     request: mockRequest,
     onEvent: mockOnEvent,

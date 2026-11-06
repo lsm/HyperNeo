@@ -4,7 +4,7 @@ import { Portal } from '../ui/Portal';
 import { setupFocusTrap } from '../ui/Modal';
 import { PendingAgentChat } from './PendingAgentChat.tsx';
 import { clearOverlayHighlightMessageId } from '../../lib/space-router.ts';
-import { spaceVoiceScope } from '../../lib/space-nav.tsx';
+import { spaceVoiceScope } from './space-nav.tsx';
 import { VoiceRecordingIndicator } from '../voice/VoiceRecordingIndicator.tsx';
 import { VoiceSurfaceContext } from '../../hooks/useVoiceRecorder';
 import ChatContainer from '../../islands/ChatContainer';
