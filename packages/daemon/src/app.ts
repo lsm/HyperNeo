@@ -146,7 +146,7 @@ import {
 } from './lib/event-loop-stall-marker.ts';
 import { WorkflowHookRuntimeService } from './lib/workflows/hook-runtime-service.ts';
 import { WorkflowHookStateRepository } from './storage/repositories/workflow-hook-state-repository.ts';
-import type { SpaceManager } from './lib/space/managers/space-manager.ts';
+import type { SpaceManager } from '../../space/src/managers/space-manager.ts';
 import { loadSpaceDaemonModule } from './lib/space-module-loader.ts';
 import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service.ts';
 import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager.ts';

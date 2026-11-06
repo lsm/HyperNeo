@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Session, Space } from '@hyperneo/shared';
-import { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
+import { SpaceManager } from '../../../../../space/src/managers/space-manager';
 import { WorkspaceRemovalBlockedError } from '../../../../src/lib/workspaces/workspace-manager';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';

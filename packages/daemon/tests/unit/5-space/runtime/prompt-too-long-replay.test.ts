@@ -4,7 +4,7 @@ import type { SpaceWorkflow } from '@hyperneo/shared';
 import { ApiErrorCircuitBreaker } from '../../../../src/lib/agent/api-error-circuit-breaker';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
-import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import {
   buildPromptTooLongContinueNag,

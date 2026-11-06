@@ -19,7 +19,7 @@ import type {
 } from '../../../../src/lib/external-events/types';
 import { createInternalCommandBus } from '../../../../src/lib/internal-command-bus';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
-import { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
+import { SpaceManager } from '../../../../../space/src/managers/space-manager';
 import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager';
 import type { WorkflowArtifactProfile } from '../../../../src/lib/workflows/artifact-profile';
 import {

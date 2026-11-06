@@ -2,7 +2,7 @@ import { expect, mock, test } from 'bun:test';
 import type { MessageHub, Session } from '@hyperneo/shared';
 import { setupSessionHandlers } from '../../../../src/lib/rpc-handlers/session-handlers';
 import type { SessionManager } from '../../../../src/lib/session-manager';
-import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
+import type { SpaceManager } from '../../../../../space/src/managers/space-manager';
 import {
   createTestDb,
   createTestInternalEventBus,

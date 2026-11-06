@@ -10,7 +10,7 @@ import type {
 } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import type { Database } from '../../../storage/database.ts';
-import type { SpaceManager } from '../managers/space-manager.ts';
+import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 import { resolve } from 'node:path';
 import type { ImportResult, McpImportService } from '../../mcp/index.ts';
 import { Logger } from '../../logger.ts';

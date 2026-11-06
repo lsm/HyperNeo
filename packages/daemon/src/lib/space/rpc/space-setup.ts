@@ -132,7 +132,7 @@ import { collectSpaceFamilyOperations, createSessionSpacePort } from './family-o
 import { setupSpaceMcpHandlers } from './space-mcp-handlers.ts';
 import { archiveAgentSessions } from './space-agent-v2-handlers.ts';
 import type { SessionTarget } from '../../session-resolution/target.ts';
-import type { SpaceManager } from '../managers/space-manager.ts';
+import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { OperationRegistry } from '../../operations/registry.ts';
 

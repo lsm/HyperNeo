@@ -6,7 +6,7 @@ import type {
 import { isReservedAgentHandle } from '../../messaging/agent-handle.ts';
 import { getLongHorizonAgentTemplates } from '../../agents/long-horizon-templates.ts';
 import type { SpaceAgentTemplateManager } from '../../agents/template-manager.ts';
-import type { SpaceManager } from '../managers/space-manager.ts';
+import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 
 const METHOD_PREFIX = 'spaceAgentTemplate';
 

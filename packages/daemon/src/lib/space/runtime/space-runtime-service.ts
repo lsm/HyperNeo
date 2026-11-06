@@ -78,7 +78,7 @@ import {
   resolveAgentSessionId,
 } from '../../session-resolution/long-term-agent-session.ts';
 import { SpaceAgentTemplateManager } from '../../agents/template-manager.ts';
-import type { SpaceManager } from '../managers/space-manager.ts';
+import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
 import { SpaceMessageResolver } from '../../messaging/space-adapter.ts';
 import { agentMemoryCapabilityContribution } from '../../../../../space/src/tools/agent-memory-briefing.ts';
