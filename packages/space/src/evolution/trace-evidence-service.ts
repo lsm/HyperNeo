@@ -1,4 +1,4 @@
-import { sdkMessageBodyAt } from '../../../storage/repositories/sdk-message-body-read.ts';
+import { sdkMessageBodyAt } from '../../../daemon/src/storage/repositories/sdk-message-body-read.ts';
 import type { EvidenceKind, EvidenceRef } from '@hyperneo/shared';
 import type {
   CaptureTraceEvidenceForTaskParams,

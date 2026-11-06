@@ -114,7 +114,7 @@ import { setupEvolutionHandlers } from './evolution-handlers.ts';
 import { EvolutionConversationAnalysisService } from '../../../../../space/src/evolution/conversation-analysis-service.ts';
 import { EvolutionEpisodeService } from '../evolution/episode-service.ts';
 import { EvolutionScopeService } from '../evolution/scope-service.ts';
-import { EvolutionTraceEvidenceService } from '../evolution/trace-evidence-service.ts';
+import { EvolutionTraceEvidenceService } from '../../../../../space/src/evolution/trace-evidence-service.ts';
 import { ScheduleService } from '../../schedule/schedule-service.ts';
 import { SpaceGoalEventRepository } from '../../../storage/repositories/space-goal-event-repository.ts';
 import { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
