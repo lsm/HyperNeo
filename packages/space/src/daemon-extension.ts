@@ -1,38 +1,41 @@
-import { Database } from '../../storage/database.ts';
-import { type DaemonInternalEventMap, type InternalEventBus } from '../internal-event-bus.ts';
-import { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
-import { SpaceAgentReminderRepository } from '../../storage/repositories/space-agent-reminder-repository.ts';
-import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
-import { SpaceManager } from '../../../../space/src/managers/space-manager.ts';
-import type { SpaceRuntimeService } from '../../../../space/src/runtime/space-runtime-service.ts';
-import type { SpaceWorktreeManager } from '../workspaces/worktree-manager.ts';
-import { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
-import { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
-import { LONG_HORIZON_AGENT_REMINDER_FIRE, TASK_SCHEDULE_FIRE } from '../job-queue-constants.ts';
-import { handleTaskScheduleFire } from '../../../../space/src/job-handlers/task-schedule-fire.handler.ts';
+import { Database } from '../../daemon/src/storage/database.ts';
+import {
+  type DaemonInternalEventMap,
+  type InternalEventBus,
+} from '../../daemon/src/lib/internal-event-bus.ts';
+import { SpaceLongHorizonAgentRepository } from '../../daemon/src/storage/repositories/space-long-horizon-agent-repository.ts';
+import { SpaceAgentReminderRepository } from '../../daemon/src/storage/repositories/space-agent-reminder-repository.ts';
+import { SpaceAgentRepository } from '../../daemon/src/storage/repositories/space-agent-repository.ts';
+import { SpaceManager } from './managers/space-manager.ts';
+import type { SpaceRuntimeService } from './runtime/space-runtime-service.ts';
+import type { SpaceWorktreeManager } from '../../daemon/src/lib/workspaces/worktree-manager.ts';
+import { JobQueueRepository } from '../../daemon/src/storage/repositories/job-queue-repository.ts';
+import { JobQueueProcessor } from '../../daemon/src/storage/job-queue-processor.ts';
+import {
+  LONG_HORIZON_AGENT_REMINDER_FIRE,
+  TASK_SCHEDULE_FIRE,
+} from '../../daemon/src/lib/job-queue-constants.ts';
+import { handleTaskScheduleFire } from './job-handlers/task-schedule-fire.handler.ts';
 import {
   backfillLongHorizonAgentReminderNextRunAt,
   enqueueLongHorizonAgentReminderScanIfMissing,
   handleLongHorizonAgentReminderFire,
-} from '../job-handlers/long-horizon-agent-reminder-fire.handler.ts';
-import { readReminderOccurrenceState } from '../agents/reminder-delivery-registry.ts';
-import { resolveAgentSessionId } from '../session-resolution/long-term-agent-session.ts';
-import { TaskScheduleRepository } from '../../storage/repositories/task-schedule-repository.ts';
-import { SpaceRepository } from '../../storage/repositories/space-repository.ts';
-import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
-import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
-import type { DaemonExtension } from '../extensions/contract.ts';
-import {
-  createSpaceAdapter,
-  spaceTaskControl,
-} from '../../../../space/src/drivers/space-adapter.ts';
-import type { SessionManager } from '../session/session-manager.ts';
-import type { TaskAgentManager } from '../../../../space/src/runtime/task-agent-manager.ts';
+} from '../../daemon/src/lib/job-handlers/long-horizon-agent-reminder-fire.handler.ts';
+import { readReminderOccurrenceState } from '../../daemon/src/lib/agents/reminder-delivery-registry.ts';
+import { resolveAgentSessionId } from '../../daemon/src/lib/session-resolution/long-term-agent-session.ts';
+import { TaskScheduleRepository } from '../../daemon/src/storage/repositories/task-schedule-repository.ts';
+import { SpaceRepository } from '../../daemon/src/storage/repositories/space-repository.ts';
+import { SpaceTaskRepository } from '../../daemon/src/storage/repositories/space-task-repository.ts';
+import { SpaceGoalRepository } from '../../daemon/src/storage/repositories/space-goal-repository.ts';
+import type { DaemonExtension } from '../../daemon/src/lib/extensions/contract.ts';
+import { createSpaceAdapter, spaceTaskControl } from './drivers/space-adapter.ts';
+import type { SessionManager } from '../../daemon/src/lib/session/session-manager.ts';
+import type { TaskAgentManager } from './runtime/task-agent-manager.ts';
 import { hostname } from 'node:os';
-import type { ReactiveDatabase } from '../../storage/reactive-database.ts';
-import type { SpaceAgentInactivityWatchdogService } from '../agents/inactivity-watchdog-service.ts';
-import type { SpaceGoalService } from '../../../../space/src/goals/service.ts';
-import type { GoalAutomationService } from '../../../../space/src/goals/automation-service.ts';
+import type { ReactiveDatabase } from '../../daemon/src/storage/reactive-database.ts';
+import type { SpaceAgentInactivityWatchdogService } from '../../daemon/src/lib/agents/inactivity-watchdog-service.ts';
+import type { SpaceGoalService } from './goals/service.ts';
+import type { GoalAutomationService } from './goals/automation-service.ts';
 
 interface SpaceDaemonExtensionDeps {
   db: Database;

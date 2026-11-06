@@ -6,7 +6,7 @@ import {
   type OperationCaller,
   type OperationDefinition,
   type OperationPolicy,
-} from '../operations/registry.ts';
+} from '../../daemon/src/lib/operations/registry.ts';
 
 export interface SpaceReadDependencies {
   readonly listSpaces: (includeArchived: boolean) => Space[] | Promise<Space[]>;

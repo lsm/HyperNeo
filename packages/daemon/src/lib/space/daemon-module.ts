@@ -5,9 +5,9 @@ import { SPACE_SCHEMA } from '../../storage/schema/space-schema.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import { createSpaceDefaultOperations } from '../tasks/catalog-operations.ts';
 import { captureDirectMailboxAdmission } from '../tasks/direct-mailbox-admission.ts';
-import { createSpaceDaemonExtension } from './daemon-extension.ts';
+import { createSpaceDaemonExtension } from '../../../../space/src/daemon-extension.ts';
 import { EvolutionLogEvidenceService } from '../../../../space/src/evolution/log-evidence-service.ts';
-import { createSpaceExternalEvents } from './external-event-wiring.ts';
+import { createSpaceExternalEvents } from '../../../../space/src/external-event-wiring.ts';
 import { SpaceManager } from '../../../../space/src/managers/space-manager.ts';
 import { createSpaceRpc } from '../../../../space/src/rpc/space-setup.ts';
 
