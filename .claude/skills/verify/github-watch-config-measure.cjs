@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const cp = require('node:child_process');
 const ts = require(process.cwd() + '/node_modules/typescript');
 const { createHash } = require('node:crypto');
-const base = 'f2935c2c708b43b87e2d0f202311bedadc71d00e';
+const base = 'e2323316b794f9efc3cbf3530a9007fb5f5df1f5';
 const allowed = [
   'packages/daemon/src/lib/external-events/github/github-event-extension.ts',
   'packages/daemon/src/lib/external-events/github/github-repository.ts',
