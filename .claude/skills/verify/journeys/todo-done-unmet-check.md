@@ -9,8 +9,8 @@ bash .claude/skills/verify/proof-run.sh \
   /absolute/fresh/evidence-directory .claude/skills/verify/todo-done-unmet-check.ts verify
 ```
 
-Through the agent MCP door, Neo closes a coding PR todo whose PR check has not
-passed, then ticks it done with `neo.todo.edit`; both leave it `blocked` by
+Through the agent MCP door, Neo closes a started coding PR todo whose PR check has
+not passed, then ticks it done with `neo.todo.edit`; both leave it `blocked` by
 `check` with a `check_unmet:` reason and no finish time, never
 `closed_unverified`. A core evidence todo pointing at a wrong path is closed the
 same way. A real todo-runner sweep keeps both blocked, and the public ask read
