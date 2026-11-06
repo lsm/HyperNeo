@@ -163,6 +163,23 @@ describe('coding pack newly unowned PR notifications', () => {
     }
   });
 
+  test('naming a PR on a todo hands it to that session, ahead of the turn that produced it', async () => {
+    const { db, cycle } = setup();
+    try {
+      markWorkerRunning(db, 'doing');
+      new CodingTodoPrRepository(db).claim('todo', [{ url, claim: 'named' }], ship);
+      await new WorkTurnRepository(db).record({ adapter: 'codex-desktop', id: 'producer' }, [
+        turn(url, true),
+      ]);
+      await cycle([pr(1)]);
+      expect(
+        db.prepare("SELECT owner FROM pack_coding_pr_ledger WHERE repo = 'synthetic/a'").get()
+      ).toEqual({ owner: JSON.stringify(worker) });
+    } finally {
+      db.close();
+    }
+  });
+
   test('a turn that could not be read fully holds the unowned notice until it is known', async () => {
     const { db, wakes, cycle } = setup();
     try {
