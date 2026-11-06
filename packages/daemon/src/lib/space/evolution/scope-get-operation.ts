@@ -25,7 +25,7 @@ import {
   type EvolutionAuditWriter,
   type EvolutionGate,
   type EvolutionSpaceScope,
-} from './admission.ts';
+} from '../../../../../space/src/evolution/admission.ts';
 import {
   EvolutionEpisodeSchema,
   EvolutionLessonSchema,
@@ -37,7 +37,7 @@ import {
   EvolutionEvidenceRefSchema,
   EvolutionMetricSnapshotSchema,
   EvolutionScopeSchema,
-} from './result-schemas.ts';
+} from '../../../../../space/src/evolution/result-schemas.ts';
 import { findEvolutionScopeInSpace } from './scope-operations.ts';
 import type { EvolutionScopeService } from './scope-service.ts';
 

@@ -1,6 +1,6 @@
 import { getWorkflowRunExecutionStatusLabel } from '@hyperneo/shared';
 import type { EvidenceKind, SpaceTask, SpaceWorkflowRun } from '@hyperneo/shared';
-import type { WorkflowRunArtifactRecord } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
+import type { WorkflowRunArtifactRecord } from '../../../daemon/src/storage/repositories/workflow-run-artifact-repository.ts';
 
 export function buildTaskResultEvidenceSummary(task: SpaceTask): string {
   const outcome = task.result ?? task.reportedSummary ?? 'completed without task.result';
