@@ -10,6 +10,7 @@ export interface NeoPackBrief {
   id: string;
   describe: string;
   guidance?: string;
+  alwaysEnabled?: boolean;
 }
 
 export interface NeoTodoCheckResult {
@@ -82,6 +83,7 @@ export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
     openTodoIds: readonly string[]
   ): Record<string, string | number | null>[];
   workerRules?: string;
+  workerContext?(): string | null;
   workerStartExclusions?(todo: NeoTodo): WorkerStartExclusions | Promise<WorkerStartExclusions>;
   workerStartBrief?(instruction: string, parameters?: Record<string, unknown>): string;
   workerBrief?(

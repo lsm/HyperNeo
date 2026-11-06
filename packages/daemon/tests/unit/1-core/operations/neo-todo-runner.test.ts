@@ -1,4 +1,6 @@
 import { withCodingWorkerStartBrief } from '../../../../src/lib/neo/packs/coding/worker-worktree-brief';
+import { createDelegationPack } from '../../../../src/lib/neo/packs/delegation/pack.ts';
+import { createPackPreferenceOperations } from '../../../../src/lib/neo/preference-operations.ts';
 import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
 import { NEO_PACK_CODING_WORKER_RULES } from '@hyperneo/prompts';
 import { createNeoQuestionAnswerDelivery } from '../../../../src/lib/neo/question-answer-delivery.ts';
@@ -171,6 +173,54 @@ function setup(
 }
 
 describe('neo todo runner', () => {
+  test('long worker instructions retain shared delegation data after message truncation', async () => {
+    const h = setup();
+    try {
+      h.packs.push(createDelegationPack(() => h.db));
+      await h.runner.start(h.add(null, 'Long task. '.repeat(2000)).id);
+      const message = String(h.calls.find((call) => call.name === 'work.start')!.input.message);
+      expect(message).toContain('"payment":{"value":"self","configured":false}');
+      expect(message).toContain('CAPTCHAs always belong to the human');
+      expect(message).toContain('Long task.');
+      expect(message.length).toBeLessThanOrEqual(20_000);
+    } finally {
+      h.db.close();
+    }
+  });
+  test('coding workers receive shared delegation rules and the next worker sees changed values', async () => {
+    const h = setup();
+    try {
+      const shared = createDelegationPack(() => h.db);
+      h.packs.push(shared);
+      const check = { pack: 'coding', kind: 'pr_merged', params: {} };
+      await h.runner.start(h.add(check).id);
+      const set = createPackPreferenceOperations(h.db, () => h.packs).find(
+        (op) => op.name === 'pack.preferences.set'
+      )!;
+      await set.execute(
+        set.inputSchema.parse({
+          pack: 'delegation',
+          scope: { kind: 'global', key: '' },
+          key: 'payment',
+          value: 'fillStop',
+        }),
+        { source: 'rpc', principal: 'local' }
+      );
+      await h.runner.start(h.add(check).id);
+      const messages = h.calls
+        .filter((call) => call.name === 'work.start')
+        .map((call) => String(call.input.message));
+      expect(messages).toHaveLength(2);
+      expect(messages[0]).toContain('"payment":{"value":"self","configured":false}');
+      expect(messages[1]).toContain('"payment":{"value":"fillStop","configured":true}');
+      for (const message of messages) {
+        expect(message).toContain('the saved password manager or browser autofill');
+        expect(message).toContain('Rules for this work');
+      }
+    } finally {
+      h.db.close();
+    }
+  });
   test.each(['doing', 'done', 'failed', 'closed_unverified', 'blocked', 'todo'] as const)(
     'reports direct human work once on an open ask with todo state %s',
     async (state) => {
