@@ -8,13 +8,13 @@ import type {
 } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
-import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import {
   defineOperation,
   type OperationCaller,
   type OperationPolicy,
-} from '../operations/registry.ts';
+} from '../../operations/registry.ts';
 import type { EvolutionEpisodeService } from './episode-service.ts';
 import {
   admitEvolutionReader,

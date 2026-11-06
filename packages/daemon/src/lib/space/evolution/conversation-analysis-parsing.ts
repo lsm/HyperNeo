@@ -1,4 +1,4 @@
-import { asRecord } from '../record.ts';
+import { asRecord } from '../../record.ts';
 import type { EvolutionScope } from '@hyperneo/shared';
 import type {
   ConversationFrictionAnalysis,

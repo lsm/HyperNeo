@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
-import { createEvolutionEvidenceAttachOperation } from '../../../../src/lib/evolution/evidence-attach-operation.ts';
+import { createEvolutionEvidenceAttachOperation } from '../../../../src/lib/space/evolution/evidence-attach-operation.ts';
 import type {
   EvolutionAuditEntry,
   EvolutionAuditWriter,
-} from '../../../../src/lib/evolution/admission.ts';
-import { EvolutionScopeService } from '../../../../src/lib/evolution/scope-service.ts';
+} from '../../../../src/lib/space/evolution/admission.ts';
+import { EvolutionScopeService } from '../../../../src/lib/space/evolution/scope-service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,

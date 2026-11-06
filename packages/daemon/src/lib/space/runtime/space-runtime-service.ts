@@ -174,7 +174,7 @@ export interface SpaceRuntimeServiceConfig {
     nodeExecutionRepo: NodeExecutionRepository;
   };
   goalService?: import('../goals/service.ts').SpaceGoalService;
-  evolutionScopeService?: import('../../evolution/scope-service.ts').EvolutionScopeService;
+  evolutionScopeService?: import('../evolution/scope-service.ts').EvolutionScopeService;
   outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
   enableGoalOutcomeWake?: boolean;
   inactivityConfigRepo?: import('../../../storage/repositories/space-agent-inactivity-repository.ts').SpaceAgentInactivityConfigRepository;

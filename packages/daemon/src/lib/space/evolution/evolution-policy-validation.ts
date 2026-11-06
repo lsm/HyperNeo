@@ -1,6 +1,6 @@
 import type { EvolutionScope } from '@hyperneo/shared';
-import { getNextRunAt, isValidCronExpression } from '../scheduler/cron-utils.ts';
-import { readAutomationPolicyForScope } from '../space/goals/automation-policy.ts';
+import { getNextRunAt, isValidCronExpression } from '../../scheduler/cron-utils.ts';
+import { readAutomationPolicyForScope } from '../goals/automation-policy.ts';
 
 export function validateCompletedTaskThreshold(policy: EvolutionScope['policy'] | undefined): void {
   const automation = policy?.automation;

@@ -1,4 +1,4 @@
-import { errorMessage as failureDetail } from '../utils/error-message.ts';
+import { errorMessage as failureDetail } from '../../utils/error-message.ts';
 import type {
   EvolutionEpisode,
   EvolutionLesson,
@@ -12,8 +12,8 @@ import {
   defineOperation,
   type OperationCaller,
   type OperationPolicy,
-} from '../operations/registry.ts';
-import { TaskWithSpaceFieldsSchema } from '../tasks/get-operation.ts';
+} from '../../operations/registry.ts';
+import { TaskWithSpaceFieldsSchema } from '../../tasks/get-operation.ts';
 import {
   admitEvolutionMutator,
   denyEvolution,
