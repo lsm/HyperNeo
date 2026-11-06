@@ -335,9 +335,11 @@ export function planCodingPrOwner(
 
 export function planCodingRowOwner(
   row: { owner: string | null },
+  named: string | undefined,
   placed: CodingTurnOwner,
   guessed: () => string | null
 ): string | null {
+  if (named) return named;
   if (placed.state === 'placed') return JSON.stringify(placed.session);
   return placed.state === 'unknown' ? row.owner : guessed();
 }
@@ -823,18 +825,18 @@ export class CodingPrLedgerRepository {
   }
 
   assignOwners(): void {
-    const claims = new Map(
-      (
-        this.db
-          .prepare(
-            `SELECT c.url, s.ref FROM pack_coding_pr_claims c
-               JOIN neo_todo_sessions s ON s.todo_id = c.todo_id
-               JOIN neo_todos t ON t.id = c.todo_id
-              WHERE s.ref IS NOT NULL AND t.state <> 'removed'
-              ORDER BY c.claim = 'named', t.state IN ('todo', 'doing'), COALESCE(t.started_at, 0)`
-          )
-          .all() as { url: string; ref: string }[]
-      ).map((row) => [row.url, row.ref])
+    const claimRows = this.db
+      .prepare(
+        `SELECT c.url, s.ref, c.claim FROM pack_coding_pr_claims c
+           JOIN neo_todo_sessions s ON s.todo_id = c.todo_id
+           JOIN neo_todos t ON t.id = c.todo_id
+          WHERE s.ref IS NOT NULL AND t.state <> 'removed'
+          ORDER BY c.claim = 'named', t.state IN ('todo', 'doing'), COALESCE(t.started_at, 0)`
+      )
+      .all() as { url: string; ref: string; claim: string }[];
+    const claims = new Map(claimRows.map((row) => [row.url, row.ref]));
+    const named = new Map(
+      claimRows.filter((row) => row.claim === 'named').map((row) => [row.url, row.ref])
     );
     const sessions = (
       this.db
@@ -875,8 +877,11 @@ export class CodingPrLedgerRepository {
       'UPDATE pack_coding_pr_ledger SET owner = ? WHERE repo = ? AND number = ?'
     );
     for (const row of watched) {
-      const owner = planCodingRowOwner(row, planCodingLedgerTurnOwner(row, mentions), () =>
-        planCodingPrOwner(row, claims, sessions)
+      const owner = planCodingRowOwner(
+        row,
+        named.get(codingLedgerPrUrl(row)),
+        planCodingLedgerTurnOwner(row, mentions),
+        () => planCodingPrOwner(row, claims, sessions)
       );
       if (owner !== row.owner) update.run(owner, row.repo, row.number);
     }
