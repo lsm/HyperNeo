@@ -80,6 +80,12 @@ describe('neoPlanLines', () => {
 });
 
 describe('planNeoPlanContext', () => {
+  test('announces a completed last step even when unrelated owner headers exceed budget', () => {
+    const previous = fitNeoPlanLines(neoPlanLines(asks, [todo('first')], []), 10_000);
+    const current = fitNeoPlanLines(neoPlanLines(asks, [todo('first', { state: 'done' })], []), 1);
+    expect(planNeoPlanContext(previous, current, 'prompt')).toContain('todo first: no longer open or pending.');
+  });
+
   test('does not announce budget-omitted steps as finished', () => {
     const lines = neoPlanLines(asks, [todo('first')], []);
     const fitted = fitNeoPlanLines(lines, 1);
