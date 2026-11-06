@@ -22,6 +22,17 @@ import {
 } from './status-codes.ts';
 import { NeoQuestionSchema } from './question-operations.ts';
 import { NeoTodoSchema } from './todo-operations.ts';
+import { todoEvidenceFile } from '../work-locations.ts';
+
+function internalCompletionEvidence(todo: NeoTodo): boolean {
+  const assigned = todoEvidenceFile(todo.id);
+  return (
+    todo.check?.pack === 'core' &&
+    todo.check.kind === 'evidence' &&
+    todo.check.params.path === assigned &&
+    todo.evidence === `File ${assigned} exists.`
+  );
+}
 
 const NEO_TODO_STATUS_EN = {
   'todo.replaced': 'Replaced by "{title}"',
@@ -63,7 +74,8 @@ export function neoTodoStatusLine(
     return todo.reason ? neoTextStatus(todo.reason) : coded('todo.notStarted');
   if (todo.state === 'doing')
     return coded(!todo.report ? 'todo.doing' : todo.check ? 'todo.checking' : 'todo.awaitingNeo');
-  if (todo.evidence) return neoTextStatus(todo.evidence);
+  if (todo.evidence)
+    return internalCompletionEvidence(todo) ? coded('todo.done') : neoTextStatus(todo.evidence);
   return coded(todo.report ? 'todo.reportedDone' : 'todo.done');
 }
 
@@ -167,6 +179,7 @@ function projectNeoTodoEntries(
 ): NeoTodoEntry[] {
   return shown.map((todo) => ({
     ...todo,
+    evidence: internalCompletionEvidence(todo) ? null : todo.evidence,
     ...neoTodoStatusLine(
       todo,
       todos,

@@ -45,9 +45,11 @@ export function workerWorkLocationsBrief(root: string) {
     '',
     `- Worktree: ${root}`,
     `- New worktrees: ${locations.worktrees} (HYPERNEO_WORKTREES)`,
-    `- Verification evidence: ${locations.evidence} (HYPERNEO_EVIDENCE)`,
+    `- Internal verification evidence: ${locations.evidence} (HYPERNEO_EVIDENCE)`,
     `- Build output: ${locations.builds} (HYPERNEO_BUILDS)`,
     `- Scratch: ${locations.scratch} (used for TMPDIR only when sandboxing is on)`,
+    'Human-readable reports belong in ~/HyperNeo/<matter>/ or the configured user folder. Link the report by its full absolute path in the card or message.',
+    'Completion evidence and runtime files in the hidden work folder are private. Never link them in human-facing cards or messages. Write completion evidence separately from the report.',
     'Create output directories as needed. Existing worktrees stay in place.',
   ].join('\n');
 }

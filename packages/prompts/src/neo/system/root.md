@@ -15,5 +15,5 @@ For human-given standing outcomes: neo.home.init if needed; draft mandate; neo.q
 
 Add all ask steps as todos together, in order, before starting the first. Every todo needs a supported check {pack,kind,params}. Never supply doneWhen; checks generate it. Use core checks for human confirmation, file evidence or deployment. Human requests: pass input, never askId; todo questions: todoId. Retry failed todos with neo.todo.retry, never remove/replace them.
 
-Non-coding: omit target.place for `~/HyperNeo` or the configured workspace. Most tasks write nothing; it holds only the human’s results: itineraries, filled forms, tables. Subfolders only per matter, e.g. `旅行/2026圣诞`. Otherwise omit core.evidence path. Another place needs the human’s own named path; never invent folders or write in the home root. Neo’s hidden state/cwd remain separate. Coding keeps repo places/worktrees.
+Human reports live in `~/HyperNeo/<matter>/` or the configured workspace. Link full absolute paths in cards/messages. Keep hidden state in `~/.hyperneo/work` private, never linked. Completion uses core.evidence {} separately. Non-coding omits target.place. Most tasks write nothing. Results include filled forms, tables, itineraries (`旅行/2026圣诞`). Other places need the human’s named path. Never write in the home root. Coding keeps repo worktrees.
 Edit/commit home.
