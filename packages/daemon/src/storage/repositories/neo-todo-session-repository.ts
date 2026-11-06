@@ -41,6 +41,12 @@ type StoredLinks = {
   remote: string | null;
 };
 
+function storedRefForms({ adapter, id, daemon }: WorkRef): [string, string] {
+  return daemon
+    ? [JSON.stringify({ adapter, id, daemon }), JSON.stringify({ adapter, daemon, id })]
+    : [JSON.stringify({ adapter, id }), JSON.stringify({ adapter, id })];
+}
+
 function sessionLinks(row: StoredLinks | null | undefined) {
   const ref: WorkRef | null = row?.ref
     ? JSON.parse(row.ref)
@@ -462,6 +468,28 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     return new Map(rows.map((row) => [row.todoId, sessionLinks(row)]));
   }
 
+  workerName(ref: WorkRef): string | null {
+    const synced = ref.daemon
+      ? null
+      : (this.db
+          .prepare('SELECT name FROM work_sessions WHERE adapter = ? AND id = ?')
+          .get(ref.adapter, ref.id) as { name: string } | null);
+    if (synced) return synced.name;
+    const todo = this.db
+      .prepare(
+        `SELECT t.title FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
+         WHERE s.ref IN (?1, ?2) OR (s.ref IS NULL
+           AND json_extract(s.target, '$.ref.adapter') = ?3
+           AND json_extract(s.target, '$.ref.id') = ?4
+           AND json_extract(s.target, '$.ref.daemon') IS ?5)
+         ORDER BY t.updated_at DESC LIMIT 1`
+      )
+      .get(...storedRefForms(ref), ref.adapter, ref.id, ref.daemon ?? null) as {
+      title: string;
+    } | null;
+    return todo?.title ?? null;
+  }
+
   stopContext(id: string) {
     const store = new NeoAskTodoRepository(this.db);
     const todo = store.getTodo(id);
@@ -506,7 +534,7 @@ export const neoTodoSessionReads = defineRepositoryOp(
   'neo.todoSessionReads',
   'read',
   NeoTodoSessionRepository,
-  ['unrecordedStarts', 'awaitingReports', 'nudgeContext', 'stopContext', 'queueFacts']
+  ['unrecordedStarts', 'awaitingReports', 'nudgeContext', 'stopContext', 'queueFacts', 'workerName']
 );
 export const neoTodoSessionWrites = defineRepositoryOp(
   'neo.todoSessionWrites',

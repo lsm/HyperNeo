@@ -112,7 +112,7 @@ import { subscribeAgentActivationOutcomeRedelivery } from '../goals/agent-activa
 import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../goals/owner-change-outcome-redelivery.ts';
 import { setupEvolutionHandlers } from './evolution-handlers.ts';
 import { EvolutionConversationAnalysisService } from '../../../../../space/src/evolution/conversation-analysis-service.ts';
-import { EvolutionEpisodeService } from '../evolution/episode-service.ts';
+import { EvolutionEpisodeService } from '../../../../../space/src/evolution/episode-service.ts';
 import { EvolutionScopeService } from '../evolution/scope-service.ts';
 import { EvolutionTraceEvidenceService } from '../../../../../space/src/evolution/trace-evidence-service.ts';
 import { ScheduleService } from '../../schedule/schedule-service.ts';

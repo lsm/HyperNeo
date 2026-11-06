@@ -102,6 +102,8 @@
       "dependencies": {
         "@hyperneo/prompts": "workspace:*",
         "@hyperneo/shared": "workspace:*",
+        "superpipe": "0.18.0",
+        "zod": "4.6.2",
       },
       "devDependencies": {
         "@types/bun": "1.4.2",

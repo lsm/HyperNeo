@@ -1,12 +1,11 @@
 const fs = require('node:fs');
-const cp = require('node:child_process');
 const ts = require(process.cwd() + '/node_modules/typescript');
 const { createHash } = require('node:crypto');
 const hash = text => createHash('sha256').update(text).digest('hex');
 const file = 'packages/daemon/src/lib/external-events/github/github-event-extension.ts';
 const base = '24d78fdf4bf4d78c4fd7083c40756186abc2a839';
 const text = fs.readFileSync(file, 'utf8');
-const before = cp.execFileSync('git', ['show', base + ':' + file], { encoding: 'utf8' });
+const beforeHash = '7bc3d6d42159d35d1ed65b708bc0abdff35fe6c176915c7abf90bce8427eb2ee';
 const added = "import { gitHubWatchedRepoRead } from '../../../storage/repositories/github-watched-repo-read.ts';\n";
 const currentLookup = `const existingForValidation = await gatewayFor(this.db).run(gitHubWatchedRepoRead, {
         spaceId: params.spaceId,
@@ -18,7 +17,7 @@ const previousLookup = `const existingForValidation = this.repo.getWatchedRepo(
         params.owner,
         params.repo
       );`;
-if (!text.includes(currentLookup) || text.replace(added, '').replace(currentLookup, previousLookup) !== before)
+if (!text.includes(currentLookup) || hash(text.replace(added, '').replace(currentLookup, previousLookup)) !== beforeHash)
   throw Error('Extension changed beyond the validation reader bridge');
 const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
 const lines = node => source.getLineAndCharacterOfPosition(node.end).line - source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
