@@ -30,6 +30,15 @@ export interface ExtensionNavTab {
   open(): void;
 }
 
+export interface ExtensionPaletteItem {
+  id: string;
+  group: string;
+  title: string;
+  subtitle: string;
+  icon: ComponentType;
+  open(): void;
+}
+
 export interface ExtensionNav {
   extension: keyof WebExtensions;
   section: string;
@@ -38,6 +47,9 @@ export interface ExtensionNav {
   open(): void;
   contextTabs(): { label: string; tabs: ExtensionNavTab[] } | null;
   voiceScope(): string | null;
+  paletteItems(query: string): ExtensionPaletteItem[];
+  warmPalette(): void;
+  openSearchResult(result: { taskId?: string }): boolean;
   sessionFocus(): {
     overlayOpen: boolean;
     overlaySessionId: string | null;
