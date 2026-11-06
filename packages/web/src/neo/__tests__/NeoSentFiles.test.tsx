@@ -95,6 +95,14 @@ describe('neoSplitSentMessage', () => {
       files: [{ name: file.name, text: 'start\n```\nstill text' }],
     });
   });
+  it('keeps a long phone file whole across thousands of fence-like lines', () => {
+    const body = 'Notes\n' + '```\nmore notes\n'.repeat(8_000);
+    const text = '### Attached file: notes.txt\n\n```text\n' + body + '\n```';
+    expect(neoSplitSentMessage(text)).toEqual({
+      words: '',
+      files: [{ name: file.name, text: body }],
+    });
+  });
   it.each([
     'ordinary words',
     'Attached files',
