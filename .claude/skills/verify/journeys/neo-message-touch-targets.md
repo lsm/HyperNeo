@@ -12,8 +12,8 @@ Keep the owning shell alive. Import verifyIconHitAreas from
 neo-icon-hit-check.mjs in persistent headed Playwright. Pass the page, READY
 fixture and {phase:'before',evidence:'<run>/evidence',touch:false}. Repeat with
 a 390x844 dark mobile context (isMobile/hasTouch true, touch:true). Desktop is
-1280x900 light. Both need clipboard-read/write permissions. Pair each browser context by posting
-its synthetic READY pairCode to READY pairBase + /pair, with the matching Origin.
+1280x900 light. Both need clipboard-read/write permissions. Use SKILL.md’s attended fixture
+browser pairing setup and reuse the returned storageState for both contexts.
 The helper uses its isolated owner credential for fixture RPC, awaits the shared
 HTTP guard and refuses unauthenticated upgrades. Before the fix,
 message copy, reply, details copy, code copy and retry measure 28x28 pixels.

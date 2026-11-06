@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+export { pairMessageCopyBrowser } from './neo-whole-message-copy-web.mjs';
 
 export async function verifyIconHitAreas(page, fixture, { phase, evidence, touch = false }) {
   let refusedSends = 0;

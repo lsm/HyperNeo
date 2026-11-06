@@ -9,7 +9,9 @@ through the real reader before opening the real `/neo` UI.
 bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/neo-whole-message-copy.ts before "$READY"
 ```
 
-Keep that owning shell alive. `$READY` is a fresh absolute JSON file outside
+Keep that owning shell alive. Follow SKILL.md’s attended fixture browser pairing
+setup: import pairMessageCopyBrowser from the same browser helper, redeem READY
+once, and give every context the returned storageState. `$READY` is a fresh absolute JSON file outside
 the disposable run; it supplies the ephemeral URL, run, helper PID and expected
 source text. The helper waits for attended browser evidence. Before the fix,
 footer and touch long-press Copy in both viewports omit the short reply. Retain

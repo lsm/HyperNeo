@@ -110,6 +110,19 @@ VERIFY_PORT=9311 bun .claude/skills/verify/rpc.ts rpc:providers.create \
   '{"params":{"providerId":"anthropic","displayName":"Anthropic (dev proxy)","kind":"built_in","authType":"api_key","isEnabled":true,"isDefault":true,"sortOrder":0},"credentials":{"apiKey":"sk-devproxy-test-key"}}'
 ```
 
+## Attended fixture browser pairing
+
+For the message-copy fixture and its sibling journeys, READY includes a fresh
+`pairCode` and `pairBase`. Import `pairMessageCopyBrowser` alongside the journey's
+browser checker and call it once with the owned Playwright browser and READY.
+The function lives in `neo-whole-message-copy-web.mjs`; the sibling fold and
+hit-area helpers re-export it.
+It redeems the synthetic code through the real `/pair` endpoint and returns
+`storageState`. Pass that state to every desktop/touch browser context, alongside
+its viewport and clipboard permissions. Reuse the state across sibling checkers;
+the pairing code is single-use. Only use the fresh isolated fixture's fields.
+Never reuse a human profile or the live daemon's credential for browser proofs.
+
 ## In-process RPC proofs
 
 On macOS, run `bash .claude/skills/verify/resource-check.sh` before every heavy

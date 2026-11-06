@@ -8,7 +8,9 @@ bash .claude/skills/verify/proof-run.sh "$EVIDENCE" \
   .claude/skills/verify/neo-whole-message-copy.ts before "$READY"
 ```
 
-Keep the owning shell alive. Read READY for the ephemeral URL, run and helper
+Keep the owning shell alive. Follow SKILL.md’s attended fixture browser pairing
+setup: import pairMessageCopyBrowser from the same browser helper, redeem READY
+once, and give every context the returned storageState. Read READY for the ephemeral URL, run and helper
 PID. In persistent headed Playwright import verifyReplyFold from
 neo-reply-fold-layout-web.mjs and call it with the page, READY fixture and
 {phase:'before', evidence:'<run>/evidence', touch:false}. Repeat with a mobile
