@@ -60,10 +60,10 @@ try {
         ? page.getByRole('button', { name: 'Send message', exact: true }).tap()
         : input.press('Enter');
     const pictures = await page.evaluate(() =>
-      [0, 1].map((index) => {
+      [0, 1, 2].map((index) => {
         const canvas = document.createElement('canvas');
-        canvas.width = index ? 90 : 120;
-        canvas.height = index ? 60 : 80;
+        canvas.width = index === 2 ? 16 : index ? 90 : 120;
+        canvas.height = index === 2 ? 12 : index ? 60 : 80;
         const draw = canvas.getContext('2d');
         draw.fillStyle = index ? '#d4a420' : '#287db6';
         draw.fillRect(0, 0, canvas.width, canvas.height);
@@ -93,16 +93,21 @@ try {
       }
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 900 });
-      for (const mode of ['photo-only', 'file-only', 'mixed'])
+      for (const mode of [
+        ...(touch && width === 390 ? ['tiny-photo'] : []),
+        'photo-only',
+        'file-only',
+        'mixed',
+      ])
         for (const acceptDelay of [250, 1000]) {
           const files =
-            mode === 'photo-only'
-              ? [photo(0)]
+            mode === 'photo-only' || mode === 'tiny-photo'
+              ? [photo(mode === 'tiny-photo' ? 2 : 0)]
               : mode === 'file-only'
                 ? [file]
                 : [photo(0), file, photo(1)];
           const keys =
-            mode === 'photo-only'
+            mode === 'photo-only' || mode === 'tiny-photo'
               ? ['photo-0']
               : mode === 'file-only'
                 ? ['file-0']
@@ -139,6 +144,10 @@ try {
               const r = element.getBoundingClientRect();
               return { x: r.x, y: r.y, width: r.width, height: r.height };
             };
+            const targetBox = (row, key) => {
+              const node = row?.querySelector(`[data-flight="${key}"]`);
+              return box(key.startsWith('photo-') ? (node?.querySelector('img') ?? node) : node);
+            };
             const frame = () =>
               setTimeout(() => {
                 const overlay = document.querySelector('[data-send-flight]');
@@ -158,7 +167,7 @@ try {
                     box: box(node),
                     radius: parseFloat(getComputedStyle(node).borderRadius),
                     visibility: getComputedStyle(node).visibility,
-                    target: box(row?.querySelector(`[data-flight="${node.dataset.flightGhost}"]`)),
+                    target: targetBox(row, node.dataset.flightGhost),
                   })
                 );
                 window.mediaFrames.push({
@@ -166,7 +175,7 @@ try {
                   ghosts,
                   pending: row?.hasAttribute('data-pending-ask'),
                   rowVisibility: row ? getComputedStyle(row).visibility : null,
-                  targets: keys.map((key) => box(row?.querySelector(`[data-flight="${key}"]`))),
+                  targets: keys.map((key) => targetBox(row, key)),
                   bubble: !!row?.querySelector('.neo-message-bubble'),
                   words: !!document.querySelector('[data-flight-words]'),
                   distance: scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight,
@@ -243,7 +252,7 @@ try {
               );
           });
           const row = page.locator('[data-public-entry].neo-message-user').last();
-          if (mode !== 'photo-only') {
+          if (mode === 'file-only' || mode === 'mixed') {
             await row.getByRole('button', { name: 'Open file: notes.txt', exact: true }).click();
             const dialog = page.getByRole('dialog', { name: 'notes.txt', exact: true });
             await dialog.waitFor();
