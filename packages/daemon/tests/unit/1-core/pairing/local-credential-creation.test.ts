@@ -34,13 +34,17 @@ describe('local credential creation', () => {
     const run = vi.fn();
     const db = { run } as unknown as DbGateway;
     await ensureLocalCredential(db);
-    await ensureLocalCredential(db, 'agent');
+    await ensureLocalCredential(db, 'agent', 'http://127.0.0.1:9311');
     const file = join(dir, 'agent-read.credential');
-    const credential = readLocalCredential(file);
+    const credential = readLocalCredential(file, 'http://127.0.0.1:9311');
     expect(credential).not.toBe(readLocalCredential(join(dir, 'local-rpc.credential')));
     expect((await stat(file)).mode & 0o077).toBe(0);
-    await ensureLocalCredential(db, 'agent');
-    expect(readLocalCredential(file)).toBe(credential);
+    await ensureLocalCredential(db, 'agent', 'http://127.0.0.1:9311');
+    expect(readLocalCredential(file, 'http://127.0.0.1:9311')).toBe(credential);
+    expect(() => readLocalCredential(file, 'http://other.test')).toThrow('origin');
+    await ensureLocalCredential(db, 'agent', 'http://127.0.0.1:9312');
+    expect(readLocalCredential(file, 'http://127.0.0.1:9312')).toBe(credential);
+    expect(() => readLocalCredential(file, 'http://127.0.0.1:9311')).toThrow('origin');
     expect(run.mock.calls.at(-1)?.[1]).toMatchObject({ credential, kind: 'agent' });
   });
   afterEach(async () => {

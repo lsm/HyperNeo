@@ -16,7 +16,6 @@ describe('hyperneo read', () => {
     const dir = await mkdtemp(join(tmpdir(), 'agent-read-cli-'));
     cleanup.push(() => rm(dir, { recursive: true, force: true }));
     const credential = 'a'.repeat(43);
-    await writeFile(join(dir, 'agent-read.credential'), credential, { mode: 0o600 });
     await writeFile(join(dir, 'local-rpc.credential'), 'h'.repeat(43), { mode: 0o600 });
     const requests: { path: string; auth: string | undefined }[] = [];
     const server = createServer((req, res) => {
@@ -33,7 +32,13 @@ describe('hyperneo read', () => {
     cleanup.push(() => new Promise<void>((done) => server.close(() => done())));
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('No server address');
-    return { dir, requests, credential, base: `http://127.0.0.1:${address.port}` };
+    const base = `http://127.0.0.1:${address.port}`;
+    await writeFile(
+      join(dir, 'agent-read.credential'),
+      JSON.stringify({ credential, origin: base }),
+      { mode: 0o600 }
+    );
+    return { dir, requests, credential, base };
   }
 
   test('reads without a session identity using only the agent credential', async () => {
@@ -65,6 +70,18 @@ describe('hyperneo read', () => {
       HYPERNEO_DATA_DIR: owner.dir,
     });
     expect({ code, requests: other.requests }).toEqual({ code: 1, requests: [] });
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining('origin'));
+  });
+
+  test('refuses an unbound credential before making any request', async () => {
+    const { dir, requests, credential, base } = await fixture();
+    await writeFile(join(dir, 'agent-read.credential'), credential);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(
+      await runSessionCommand(['read', `${base}/ask/card.md`], { HYPERNEO_DATA_DIR: dir })
+    ).toBe(1);
+    expect(requests).toEqual([]);
+    expect(console.error).not.toHaveBeenCalledWith(expect.stringContaining(credential));
   });
 
   test('missing agent credentials never fall back to the human credential', async () => {
