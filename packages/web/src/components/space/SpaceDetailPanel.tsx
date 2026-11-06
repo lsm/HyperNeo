@@ -19,8 +19,8 @@ import {
   cloneConversationTitles,
   conversationTitle,
   getSessionSidebarStatus,
-  getTaskSidebarStatus,
 } from '../../lib/session-sidebar-status';
+import { getTaskSidebarStatus } from '../../lib/space-task-sidebar-status';
 import {
   currentSpaceAgentHandleSignal,
   currentSpaceSessionIdSignal,
@@ -38,7 +38,7 @@ import {
   seedSpaceTasksSeen,
   syncSpaceSessionSeen,
 } from '../../lib/space-unread';
-import { isActionRequired, isActiveTask, isDraftTask } from '../../lib/task-filters';
+import { isActionRequired, isActiveTask, isDraftTask } from '../../lib/space-task-filters';
 import { cn } from '../../lib/utils';
 
 type TaskTab = 'active' | 'action' | 'draft';

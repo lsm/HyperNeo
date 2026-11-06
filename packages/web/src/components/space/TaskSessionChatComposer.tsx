@@ -2,15 +2,12 @@ import type { MessageDeliveryMode, MessageImage, SpaceTaskActivityMember } from 
 import type { Ref } from 'preact';
 import { useMemo, useState } from 'preact/hooks';
 import { ChatComposer } from '../ChatComposer.tsx';
-import {
-  useTargetSessionContext,
-  type TaskComposerTarget,
-  type RegisterFileDropTarget,
-} from '../../hooks';
+import type { RegisterFileDropTarget } from '../../hooks';
 import { cn } from '../../lib/utils.ts';
 import { getAgentColor } from './thread/space-task-thread-agent-colors';
 import { agentInitial } from './thread/minimal/minimal-mock-data';
 import { TaskToolsModal } from './TaskToolsModal.tsx';
+import { useTargetSessionContext, type TaskComposerTarget } from './useTargetSessionContext.ts';
 
 interface TaskSessionChatComposerProps {
   mentionCandidates: Array<{ id: string; name: string }>;

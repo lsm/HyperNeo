@@ -14,7 +14,7 @@ not passed, then ticks it done with `neo.todo.edit`; both leave it `blocked` by
 `check` with a `check_unmet:` reason and no finish time, never
 `closed_unverified`. A core evidence todo pointing at a wrong path is closed the
 same way. A real todo-runner sweep keeps both blocked, and the public ask read
-shows `Blocked: check_unmet:` rather than Closed unverified, before and after
+shows `Waiting for its result` rather than Closed unverified or `check_unmet`, before and after
 restarting the isolated daemon. After restart Neo fixes the wrong check with
 `neo.todo.edit` to an existing file; the next sweep finishes it as done while
 the PR todo stays blocked.

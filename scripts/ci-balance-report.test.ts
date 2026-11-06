@@ -119,7 +119,7 @@ describe('resolveSuitePath', () => {
     expect(resolveSuitePath('tests/online/rpc/rpc-agent-handlers.test.ts').suite).toBe(
       'daemon-online'
     );
-    expect(resolveSuitePath('src/lib/priority-tokens.test.ts').suite).toBe('web');
+    expect(resolveSuitePath('src/lib/space-priority-tokens.test.ts').suite).toBe('web');
   });
 
   it('reports unknown paths as unresolved', () => {

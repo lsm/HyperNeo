@@ -2,11 +2,8 @@ import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { InProcessTransport, MessageHub } from '@hyperneo/shared';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
-import {
-  ExternalEventService,
-  ExternalEventStore,
-  type ExternalEvent,
-} from '../../../../src/lib/external-events';
+import { ExternalEventService, type ExternalEvent } from '../../../../src/lib/external-events';
+import { ExternalEventStore } from '../../../../src/lib/space/external-events/external-event-store';
 import { GitHubEventExtension } from '../../../../src/lib/external-events/github';
 import { ExternalEventExtensionConfigStore as SqliteExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
 import { syncGitHubPollingCapability } from '../../../../src/app';
