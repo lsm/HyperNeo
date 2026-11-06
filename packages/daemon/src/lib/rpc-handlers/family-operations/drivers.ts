@@ -358,13 +358,15 @@ function claudeDesktopAdapters(
   inbox: FamilyOperationContext['claudeInbox'],
   mods: FamilyOperationContext['claudeDesktopMods'],
   permissionMode: () => string,
-  readInput: NonNullable<ClaudeDesktopAdapterDeps['readInput']>
+  readInput: NonNullable<ClaudeDesktopAdapterDeps['readInput']>,
+  readRecords: NonNullable<ClaudeDesktopAdapterDeps['readRecords']>
 ): WorkAdapter[] {
   const sessionsDir = CLAUDE_DESKTOP_SESSIONS;
   const deps: ClaudeDesktopAdapterDeps = {
     readInput,
     mods: mods?.ready,
     sessionsDir,
+    readRecords,
     sendInbox: inbox?.send,
     admitInbox: inbox?.admit,
     prepareExecution,
@@ -538,7 +540,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       context.deps.db.gateway.call(readWorkInput, 'find', sessionId, {
         adapter: 'claude-code',
         marker,
-      })
+      }),
+    (sessionsDir) => context.deps.db.readClaudeRecordsAsync(sessionsDir)
   );
   context.driverCleanup?.push(
     startCuChecker(() => context.deps.db.getGlobalSettings().codexCuAutoReap !== false)

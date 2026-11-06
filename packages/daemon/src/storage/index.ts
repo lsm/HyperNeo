@@ -505,6 +505,10 @@ export class Database {
     return this.getSDKReader().readHyperneoTurnFacts(sessionId, cursor);
   }
 
+  readClaudeRecordsAsync(sessionsDir: string) {
+    return this.getSDKReader().readClaudeRecords(sessionsDir);
+  }
+
   readCodexSnapshotAsync(statePath: string, includeClosed: boolean, idPrefix?: string) {
     return this.getSDKReader().readCodexSnapshot(statePath, includeClosed, idPrefix);
   }

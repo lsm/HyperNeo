@@ -1,4 +1,8 @@
 import { cleanupOwnedWorktree } from './work-placement.ts';
+import {
+  ClaudeDesktopRecordSchema,
+  type ClaudeDesktopRecord,
+} from '../../storage/claude-desktop-read.ts';
 import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locations.ts';
 import { releaseWorkerSandbox, workerSandboxOn } from './worker-sandbox.ts';
 import { createHash } from 'node:crypto';
@@ -102,27 +106,6 @@ const DESKTOP_UI_UNCONFIRMED = {
     'No supported live Desktop render/read acknowledgment is available. The transcript can advance while the Desktop view remains stale; registration, links and Remote Control do not confirm rendering or reading.',
 };
 
-const RecordSchema = z.object({
-  sessionId: z.string().startsWith('local_'),
-  cliSessionId: z.string().optional(),
-  originCwd: z.string().optional(),
-  cwd: z.string().optional(),
-  title: z.string().default(''),
-  isArchived: z.boolean().default(false),
-  lastActivityAt: z.number().default(0),
-  permissionMode: z.string().optional(),
-  remoteControlUserEnabled: z.boolean().optional(),
-  bridgeSessionIds: z.array(z.string()).optional(),
-  prs: z
-    .array(
-      z.object({ url: z.string(), dismissed: z.boolean().optional(), own: z.boolean().optional() })
-    )
-    .optional()
-    .catch(undefined),
-  branch: z.string().optional().catch(undefined),
-  writtenBranches: z.array(z.string()).optional().catch(undefined),
-});
-
 const LiveSessionSchema = z.object({
   sessionId: z.string(),
   pid: z.number().int().positive().optional(),
@@ -137,7 +120,6 @@ const LiveSessionSchema = z.object({
     .transform((waitingFor) => waitingFor?.slice(0, 200) || undefined),
 });
 
-export type ClaudeDesktopRecord = z.infer<typeof RecordSchema> & { desktopRegistered?: true };
 type ClaudeTranscriptLocation = Pick<ClaudeDesktopRecord, 'cliSessionId' | 'cwd' | 'originCwd'>;
 export interface ClaudeLiveSession {
   sessionId: string;
@@ -160,6 +142,7 @@ export interface ClaudeDesktopAdapterDeps {
   ) => Promise<Result<WorkDelivery>>;
   prepareExecution?: WorkExecutionPreparer;
   sessionsDir: string;
+  readRecords?: (sessionsDir: string) => Promise<ClaudeDesktopRecord[]>;
   projectsDir: string;
   machine: string;
   liveSessions: () => Promise<readonly ClaudeLiveSession[]>;
@@ -182,6 +165,7 @@ async function listDir(dir: string): Promise<string[]> {
   return readdir(dir).catch(() => []);
 }
 
+export type { ClaudeDesktopRecord };
 export type ClaudeRecordCache = Map<string, { modifiedAt: number; records: ClaudeDesktopRecord[] }>;
 const STARTED_KEY = 'started:';
 
@@ -190,7 +174,7 @@ async function readRecord(path: string, cache: ClaudeRecordCache): Promise<Claud
     const modifiedAt = (await stat(path)).mtimeMs;
     const cached = cache.get(path);
     if (cached?.modifiedAt === modifiedAt) return cached.records;
-    const record = RecordSchema.safeParse(JSON.parse(await readFile(path, 'utf8')));
+    const record = ClaudeDesktopRecordSchema.safeParse(JSON.parse(await readFile(path, 'utf8')));
     const records: ClaudeDesktopRecord[] = record.success
       ? [{ ...record.data, desktopRegistered: true }]
       : [];
@@ -1780,7 +1764,8 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
         query.text && !query.spaceId && deps.searchChats ? await deps.searchChats(query.text) : []
       ),
     sessions: async () => {
-      const records = await loadClaudeDesktopRecords(reused, cache);
+      const records = await (deps.readRecords?.(deps.sessionsDir) ??
+        loadClaudeDesktopRecords(reused, cache));
       const live = new Map(
         (await loadLiveClaudeSessions(reused, records)).map((row) => [row.sessionId, row.status])
       );
@@ -1822,7 +1807,7 @@ async function archiveClaudeSession(
   const live = await deps.liveSessions();
   const path = paths[0][0];
   const original = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
-  const record = RecordSchema.parse(original);
+  const record = ClaudeDesktopRecordSchema.parse(original);
   if (record.sessionId !== ref.id) return reject('not_found', 'The Claude session changed.');
   if (
     record.cliSessionId &&
