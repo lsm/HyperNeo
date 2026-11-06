@@ -9,7 +9,7 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { ExternalEventStore } from '../../../../../space/src/external-events/external-event-store';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types';
-import { createExternalEventOperations } from '../../../../src/lib/space/external-events/operations';
+import { createExternalEventOperations } from '../../../../../space/src/external-events/operations';
 import type { OperationCaller, OperationDefinition } from '../../../../src/lib/operations/registry';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { createTestSession } from '../../../helpers/database';

@@ -1,14 +1,17 @@
 import type { NodeExecution, SpaceTask, SpaceWorkflowRun } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
-import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
-import type { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
-import { ensurePrompt, retryPrompt } from '../../agent/message-delivery-outbox.ts';
-import { buildSyntheticExternalEventMessage } from '../../external-events/deferred-event-digest.ts';
-import { buildImmediateEventMessageUuid } from '../../external-events/event-delivery-rules.ts';
-import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service.ts';
-import type { ExternalEventStore } from '../../../../../space/src/external-events/external-event-store.ts';
+import type { Database as BunDatabase } from '../../../daemon/src/storage/sqlite-compat.ts';
+import type { JobQueueRepository } from '../../../daemon/src/storage/repositories/job-queue-repository.ts';
+import type { SDKMessageRepository } from '../../../daemon/src/storage/repositories/sdk-message-repository.ts';
+import {
+  ensurePrompt,
+  retryPrompt,
+} from '../../../daemon/src/lib/agent/message-delivery-outbox.ts';
+import { buildSyntheticExternalEventMessage } from '../../../daemon/src/lib/external-events/deferred-event-digest.ts';
+import { buildImmediateEventMessageUuid } from '../../../daemon/src/lib/external-events/event-delivery-rules.ts';
+import type { ExternalEventPublishedPayload } from '../../../daemon/src/lib/external-events/external-event-service.ts';
+import type { ExternalEventStore } from './external-event-store.ts';
 import {
   prepareExternalEventTask,
   resolveCurrentQueueableOrActiveExecution,

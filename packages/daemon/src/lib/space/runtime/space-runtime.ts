@@ -150,11 +150,11 @@ import {
   isWorkflowTargetOwnedBySpace,
   resolveCurrentQueueableOrActiveExecution,
   resolveSubscriptionTarget,
-} from '../external-events/admission-gates.ts';
+} from '../../../../../space/src/external-events/admission-gates.ts';
 import {
   deliverImmediateEvent,
   type ImmediateEventDeliveryDeps,
-} from '../external-events/immediate-delivery-pipeline.ts';
+} from '../../../../../space/src/external-events/immediate-delivery-pipeline.ts';
 import {
   type RequeuePendingDeliveryDeps,
   runRequeuePendingDelivery,
