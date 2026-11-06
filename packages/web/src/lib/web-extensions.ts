@@ -37,6 +37,17 @@ export interface ExtensionNav {
   icon: ComponentType;
   open(): void;
   contextTabs(): { label: string; tabs: ExtensionNavTab[] } | null;
+  voiceScope(): string | null;
+  sessionFocus(): {
+    overlayOpen: boolean;
+    overlaySessionId: string | null;
+    sessionId: string | null;
+  } | null;
+  recordingReturn(
+    scopeId: string,
+    sessionId: string,
+    taskId: string | null
+  ): { path: string; open(replace: boolean): void } | null;
 }
 
 export interface SpaceWebExtension {

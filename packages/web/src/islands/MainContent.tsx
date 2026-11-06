@@ -12,7 +12,7 @@ import {
   settingsSectionSignal,
 } from '../lib/signals.ts';
 import { navigateToSessions } from '../lib/router.ts';
-import { webExtension, webExtensionDeclined } from '../lib/web-extensions.ts';
+import { webExtension, webExtensionDeclined, extensionNav } from '../lib/web-extensions.ts';
 import { BottomTabBar } from './BottomTabBar.tsx';
 import { VoiceRecordingIndicator } from '../components/voice/VoiceRecordingIndicator.tsx';
 import { VoiceSurfaceContext } from '../hooks/useVoiceRecorder';
@@ -214,7 +214,11 @@ export default function MainContent() {
 
   return (
     <VoiceSurfaceContext.Provider
-      value={{ surfaceId: 'primary', spaceId: spaceId ?? null, taskId: null }}
+      value={{
+        surfaceId: 'primary',
+        scopeId: extensionNav().flatMap((nav) => nav.voiceScope() ?? [])[0] ?? null,
+        taskId: null,
+      }}
     >
       <div key={contentKey} class="flex-1 flex flex-col overflow-hidden animate-fadeIn-200">
         {renderContent()}
