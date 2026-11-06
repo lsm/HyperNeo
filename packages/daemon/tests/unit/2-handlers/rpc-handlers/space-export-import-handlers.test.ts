@@ -8,7 +8,7 @@ import {
   type ImportExecuteResult,
   type ImportPreviewResult,
   setupSpaceExportImportHandlers,
-} from '../../../../src/lib/space/rpc/space-export-import-handlers';
+} from '../../../../../space/src/rpc/space-export-import-handlers';
 import { exportBundle, validateExportBundle } from '../../../../src/lib/space/export-format';
 import type { SpaceManager } from '../../../../../space/src/managers/space-manager';
 import {

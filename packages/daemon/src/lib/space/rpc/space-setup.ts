@@ -10,7 +10,7 @@ import { generateUUID } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import type { AgentSession } from '../../agent/agent-session.ts';
-import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers.ts';
+import { setupSpaceTaskMessageHandlers } from '../../../../../space/src/rpc/space-task-message-handlers.ts';
 import { createDefaultSessionResolutionDeps } from '../runtime/session-resolution-deps.ts';
 import { ensureSession } from '../../session-resolution/ensure-session.ts';
 import { TaskAgentManager } from '../runtime/task-agent-manager.ts';
@@ -23,7 +23,7 @@ import {
 import { resolveDeliverySession } from '../../session-resolution/resolve-delivery-session.ts';
 import { setupSpaceWorkflowRunHandlers } from '../../../../../space/src/rpc/space-workflow-run-handlers.ts';
 import { setupNodeExecutionHandlers } from '../../../../../space/src/rpc/space-node-execution-handlers.ts';
-import { setupSpaceExportImportHandlers } from './space-export-import-handlers.ts';
+import { setupSpaceExportImportHandlers } from '../../../../../space/src/rpc/space-export-import-handlers.ts';
 import type { TaskAgentManagerConfig } from '../runtime/task-agent-manager.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
 import type { SessionReportHandler } from '../../messaging/message-send.ts';
@@ -57,7 +57,7 @@ import {
   setupSpaceWorkflowHandlers,
   checkBuiltInWorkflowDriftOnStartup,
   restampBuiltInWorkflowsOnStartup,
-} from './space-workflow-handlers.ts';
+} from '../../../../../space/src/rpc/space-workflow-handlers.ts';
 import { SpaceTaskManager } from '../../tasks/task-manager.ts';
 import { SpaceWorkflowManager, createSpaceAgentLookup } from '../../workflows/workflow-manager.ts';
 import type { SpaceAgentLookup } from '../../workflows/workflow-manager.ts';
