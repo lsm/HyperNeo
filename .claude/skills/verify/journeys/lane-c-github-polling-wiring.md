@@ -51,3 +51,11 @@ before classifying a failure as existing. On the resumed base, that audit fails
 at `google-calendar-operations.ts:114` on both baseline and fixed source; no
 TypeScript 6 pass is claimed. The required repository quality check uses
 TypeScript 7 and passes independently.
+
+
+The later watch polling slice exports readPollingSnapshot from the shared writer
+module. The full-file pin is now
+35ea83f321ef4b0d1dc211a079fd10422dc6407b557e8f40f369b600cb99a75a.
+Restoring the single export keyword must reproduce the prior full-file hash.
+A query-only interface test reads its mapped snapshot. The watch command returns that shared snapshot to its injected config store
+after the polling-intent command commits.

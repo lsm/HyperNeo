@@ -37,11 +37,13 @@ describe('Public watch polling writer', () => {
         JSON.parse(readFileSync(join(root, 'evidence/github-watch-polling-writer.json'), 'utf8'))
       ).toMatchObject({
         pass: true,
-        snapshotFailureRollsBackWatchAndIntent: true,
+        intentFailureKeepsWatchedCommit: true,
+        configStoreFailureKeepsKnownCommit: true,
         configuredDisabledKeepsIntent: true,
         lastConfiguredRowClearsIntent: true,
         unknownCommitIncludesConfigWithoutReplay: true,
-        admissionFailurePreservesCluster: true,
+        admissionFailureKeepsWatchedCommit: true,
+        unknownPollingCommitLeavesStoreUnapplied: true,
         mainPollingSql: 0,
         nativeWriterLaneObserved: true,
         resourcesStopped: true,

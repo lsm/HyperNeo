@@ -192,8 +192,8 @@ describe('watchRepo validation reader', () => {
       });
       const report = JSON.parse(readFileSync(output, 'utf8'));
       expect(report.excludedLines).toBe(0);
-      expect(report.productionGraphLines).toBe(178);
-      expect(report.caller.lines).toBe(88);
+      expect(report.productionGraphLines).toBe(175);
+      expect(report.caller.lines).toBe(85);
       expect(report.modules).toHaveLength(3);
       for (const module of report.modules) {
         expect(module.counted).toBe(true);

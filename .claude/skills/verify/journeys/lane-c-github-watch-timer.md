@@ -9,8 +9,9 @@ the seeded row. Never touch port 8399.
 Start the actual extension and verify an active timer through public health.
 Call `space.github.watchRepo` to disable polling on its existing watch and trap
 the unscoped timer SELECT on main. Verify the watched-row receipt, retained row,
-false polling intent and saved snapshot. Existing watch validation/webhook and
-mutation/config effects stay main-side unchanged; only the timer decision moves.
+false polling intent and saved snapshot. The original slice moved only the timer decision. Later validation, watched-row
+mutation, polling intent and snapshot work now use the gateway. Remote webhook
+effects retain their existing ownership.
 Health readback runs outside the timer trap because its own readers are separate.
 
 Retain another active orphan row to prove the unscoped timer selection. Hold an actual
@@ -24,11 +25,11 @@ no-timer/session-provider admission skips and query/mapper interfaces, including
 cursor errors.
 
 The historical timer boundary retains its two already-audited data modules.
-The current measurement is fresh 162 / excluded 100 / known 262 lines, including
-the complete 88-line watch callback. Query module line counts changed in earlier
+The current measurement is fresh 159 / excluded 100 / known 259 lines, including
+the complete 85-line watch callback. Query module line counts changed in earlier
 reviewed extraction slices. Hash and interface pins remain in force.
-The config-writer slice separately measures its production diff and complete
-caller in github-watch-config-measure.cjs, with no new exclusion grant. Its reader
+The polling/config writer separately counts complete control roots in
+github-watch-config-measure.cjs, with no new exclusion grant. Its reader
 and atomic-writer bridges update only the watch callback pin here. The timer
 proof counts actual native config-write posts when asserting no upsert replay.
 This timer measurement makes no full public/runtime transitive-closure claim.

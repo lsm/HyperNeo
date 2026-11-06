@@ -23,7 +23,7 @@ const dataSpecs = [
   ['github-cursor-persist.ts', 8, '8ec4673c7f96429b885da9367af90c023bf161668f49607c799ea845658d3bae', 'Existing cursor JSON/time/ID bind order and caller rollback'],
   ['github-watched-update-persist.ts', 64, 'c4a07d91b0c58eb2983c0c367c4e31b8943a8569ba48f6c2a9ccace218215e54', 'Exact UPDATE flags/null/COALESCE/binds, supplied time, caller transaction'],
   ['github-watched-upsert-persist.ts', 40, 'c108d5f4cff7893041110ad4c28154c7922b8a6204388a68ab7ab9a0cf5addd9', 'Constructor-free UPSERT/UUID/clock/Space fallback and cursor policy'],
-  ['github-polling-enabled-write.ts', 66, '63c68646034af002fbd1e155e41e6092b61b840f5f59195c616829eb5a39869c', 'Serializable Space/enabled input; one existing gateway transaction; exact committed config receipt; no replay'],
+  ['github-polling-enabled-write.ts', 66, '35ea83f321ef4b0d1dc211a079fd10422dc6407b557e8f40f369b600cb99a75a', 'Serializable Space/enabled input; one existing gateway transaction; exact committed config receipt; no replay'],
 ];
 const data = dataSpecs.map(([name, expectedLines, expectedHash, contract]) => {
   const file = root + 'storage/repositories/' + name, text = fs.readFileSync(file, 'utf8');

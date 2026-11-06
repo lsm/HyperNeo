@@ -21,7 +21,7 @@ function walk(node) {
       const body = callback.getText(sf);
       if (!body.includes('await this.stopIdlePollingOnReader();')) throw Error('Watch caller does not await timer ownership');
       const before = body.replace('await this.stopIdlePollingOnReader();', 'this.maybeStopPolling();');
-      if (hash(before) !== 'ccc418a9da28cb70b65a22d1050c990a736d40bef5e2d15528287cb0b654ba08') throw Error('Watch caller changed beyond reviewed watch bridges');
+      if (hash(before) !== '5dd5a3ede0594bc8e0fec2e6350020bcfc846568dbbcadcd55045e12e2366dbe') throw Error('Watch caller changed beyond reviewed watch bridges');
       caller = { file, name, lines: lines(callback), sha256: hash(body), reviewedWatchBridgesOnly: true };
     } else otherRpcs.push([name, hash(callback.getText(sf))]);
   }

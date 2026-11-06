@@ -30,7 +30,7 @@ function persistPollingTargets(db: Database, targets: GitHubWatchedRepo[], enabl
     upsertGitHubWatchedRepo(db, { spaceId, owner, repo, pollingEnabled: enabled });
   }
 }
-function readPollingSnapshot(db: Database, spaceId: string): SpaceExternalEventSourceConfig {
+export function readPollingSnapshot(db: Database, spaceId: string): SpaceExternalEventSourceConfig {
   return {
     spaceId,
     source: 'github',

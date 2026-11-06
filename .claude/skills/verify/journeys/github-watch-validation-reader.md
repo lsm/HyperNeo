@@ -32,7 +32,9 @@ Require wrapper exit zero and inspect its log for closed-database errors.
 The config-writer rung also moves the serialized config-plan lookup and mutation
 off main. This helper now requires zero remaining main key lookups. It continues
 to prove validation admission, native reader ownership and receipt failure.
-Polling-intent and snapshot SQL remain for the next rung.
+The polling-intent decision and snapshot reads use the next writer command.
+Its data is returned to the existing config-store effect.
+This journey continues to exercise the validation reader.
 
 Run github-watch-validation-measure.cjs. It includes the entire current callback,
 admission gate and complete reader/lookup/mapper modules, with zero exclusions.

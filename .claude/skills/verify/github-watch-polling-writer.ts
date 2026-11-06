@@ -1,6 +1,6 @@
 import '../../../packages/daemon/tests/unit/helpers/register-space-schema.ts';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
@@ -28,20 +28,23 @@ process.env.PATH = join(run, 'bin') + ':' + process.env.PATH;
 const original = { prepare: Database.prototype.prepare, run: DbGateway.prototype.run,
   register: ExternalEventExtensionManager.prototype.register, start: JobQueueProcessor.prototype.start, fetch: globalThis.fetch, Worker: globalThis.Worker };
 const processors = new Set<JobQueueProcessor>();
-const writeName = 'github.watched.config.write';
+const writeName = 'github.watched.polling.write';
 let main: Database | undefined, measuring = false;
-let writes = 0, nativeWritePosts = 0, mainPollingSql = 0, loseWrite = false, refuseWrite = false;
-const metrics: { roundTripMs: number; requestBytes: number; replyBytes: number }[] = [];
+let watchedMutationPosts = 0;
+let writes = 0, nativeWritePosts = 0, mainPollingSql = 0, loseWrite = false, loseSnapshot = false, losePollingReceipt = false, holdPollingWrite = false, refuseWrite = false;
+const metrics: { operation: string; roundTripMs: number; requestBytes: number; replyBytes: number }[] = [];
 const evidence: Record<string, unknown> = { pass: false };
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let transport: WebSocketClientTransport | undefined;
 let lock: Database | undefined;
+let pendingWatch: Promise<unknown> | undefined;
 let timer: ReturnType<typeof setInterval> | undefined;
 let maxLag = 0;
 globalThis.Worker = function (url: string | URL, options?: WorkerOptions) {
   const worker = new original.Worker(url, options);
   const post = worker.postMessage.bind(worker);
   worker.postMessage = ((message: { op?: string; lane?: string }, transfer?: Transferable[]) => {
+    if (message?.op === 'github.watched.config.write') watchedMutationPosts++;
     if (message?.op === writeName) {
       assert.equal(message.lane, 'write');
       nativeWritePosts++;
@@ -63,14 +66,28 @@ Database.prototype.prepare = function (sql, ...rest) {
   } });
 };
 DbGateway.prototype.run = async function (op, input) {
+  if (op.name === 'extension.space.config.write') {
+    const at = performance.now();
+    const result = await original.run.call(this, op, input);
+    metrics.push({ operation: op.name, roundTripMs: performance.now() - at, requestBytes: Buffer.byteLength(JSON.stringify(input)), replyBytes: Buffer.byteLength(JSON.stringify({ result })) });
+    if (loseSnapshot) { loseSnapshot = false; throw new Error('synthetic snapshot outcome unknown'); }
+    return result;
+  }
   if (op.name !== writeName) return original.run.call(this, op, input);
   assert.equal(op.mode, 'write');
   writes++;
   if (refuseWrite) { refuseWrite = false; throw new Error('synthetic config admission refused'); }
+  if (holdPollingWrite) {
+    holdPollingWrite = false;
+    lock = new Database(app!.db.getDbPath());
+    lock.exec('BEGIN IMMEDIATE');
+    lock.prepare('UPDATE synthetic_lock SET value=1').run();
+  }
   const at = performance.now();
   const result = await original.run.call(this, op, input);
-  metrics.push({ roundTripMs: performance.now() - at, requestBytes: Buffer.byteLength(JSON.stringify(input)), replyBytes: Buffer.byteLength(JSON.stringify(result)) });
-  if (loseWrite) { loseWrite = false; throw new Error('synthetic config outcome unknown'); }
+  metrics.push({ operation: op.name, roundTripMs: performance.now() - at, requestBytes: Buffer.byteLength(JSON.stringify(input)), replyBytes: Buffer.byteLength(JSON.stringify(result)) });
+  if (losePollingReceipt) { losePollingReceipt = false; throw new Error('synthetic polling outcome unknown'); }
+  if (loseWrite) { loseWrite = false; loseSnapshot = true; }
   return result;
 } as typeof DbGateway.prototype.run;
 ExternalEventExtensionManager.prototype.register = function (extension) {
@@ -110,11 +127,22 @@ try {
   const before = rows();
   let previous = performance.now();
   timer = setInterval(() => { const now = performance.now(); maxLag = Math.max(maxLag, now - previous - 5); previous = now; }, 5);
-  main.exec("CREATE TRIGGER reject_watch_snapshot BEFORE INSERT ON space_external_event_source_configs BEGIN SELECT RAISE(ABORT,'synthetic snapshot refusal'); END");
+  const wal = app.db.getDbPath() + '-wal';
+  const initialWalBytes = existsSync(wal) ? statSync(wal).size : 0;
+  main.exec("CREATE TRIGGER reject_watch_intent BEFORE UPDATE OF polling_intent ON space_github_source_settings BEGIN SELECT RAISE(ABORT,'synthetic intent refusal'); END");
   measuring = true;
+  await assert.rejects(watch('mixed', true), /synthetic intent refusal/);
+  assert.equal(rows().watched.find(row => row.id === 'synthetic-watch')!.webhook_secret, 'synthetic-rotated');
+  assert.deepEqual(rows().settings, before.settings);
+  assert.equal(rows().snapshots.length, 0);
+  evidence.intentFailureKeepsWatchedCommit = true;
+  main.exec('DROP TRIGGER reject_watch_intent');
+  main.exec("CREATE TRIGGER reject_watch_snapshot BEFORE INSERT ON space_external_event_source_configs BEGIN SELECT RAISE(ABORT,'synthetic snapshot refusal'); END");
   await assert.rejects(watch(), /synthetic snapshot refusal/);
-  assert.deepEqual(rows(), before);
-  evidence.snapshotFailureRollsBackWatchAndIntent = true;
+  assert.equal(rows().watched.find(row => row.id === 'synthetic-watch')!.polling_enabled, 0);
+  assert.equal(rows().settings[0].polling_intent, 1);
+  assert.equal(rows().snapshots.length, 0);
+  evidence.configStoreFailureKeepsKnownCommit = true;
   main.exec('DROP TRIGGER reject_watch_snapshot');
   const first = await watch();
   assert.equal(first.watchedRepo.id, 'synthetic-watch');
@@ -125,12 +153,12 @@ try {
   assert(snapshot().watchedRepos.some((row: { owner: string; enabled: boolean; pollingEnabled: boolean }) => row.owner === 'Sibling' && !row.enabled && row.pollingEnabled));
   evidence.configuredDisabledKeepsIntent = true;
   main.exec('CREATE TABLE synthetic_lock(value INTEGER); INSERT INTO synthetic_lock VALUES(0)');
-  lock = new Database(app.db.getDbPath());
-  lock.exec('BEGIN IMMEDIATE');
-  lock.prepare('UPDATE synthetic_lock SET value=1').run();
+  holdPollingWrite = true;
   const posts = nativeWritePosts, at = performance.now();
   let settled = false;
   const held = watch('sibling').finally(() => { settled = true; });
+  pendingWatch = held;
+  void held.catch(() => {});
   const deadline = Date.now() + 4000;
   while (nativeWritePosts === posts) { assert(Date.now() < deadline); await new Promise(done => setTimeout(done, 5)); }
   const health = performance.now();
@@ -145,9 +173,17 @@ try {
   assert.equal(rows().settings[0].polling_intent, 0);
   assert.equal(snapshot().pollingIntent, false);
   evidence.lastConfiguredRowClearsIntent = true;
+  const beforePollingLoss = nativeWritePosts;
+  losePollingReceipt = true;
+  await assert.rejects(watch('mixed', true), /synthetic polling outcome unknown/);
+  assert.equal(rows().settings[0].polling_intent, 1);
+  assert.equal(snapshot().pollingIntent, false);
+  await new Promise(done => setTimeout(done, 60));
+  assert.equal(nativeWritePosts, beforePollingLoss + 1);
+  evidence.unknownPollingCommitLeavesStoreUnapplied = true;
   const beforeLoss = nativeWritePosts;
   loseWrite = true;
-  await assert.rejects(watch('mixed', true), /synthetic config outcome unknown/);
+  await assert.rejects(watch('mixed', true), /synthetic snapshot outcome unknown/);
   const committed = rows();
   assert.equal(committed.settings[0].polling_intent, 1);
   assert.equal(snapshot().pollingIntent, true);
@@ -158,13 +194,17 @@ try {
   evidence.unknownCommitIncludesConfigWithoutReplay = true;
   refuseWrite = true;
   await assert.rejects(watch(), /synthetic config admission refused/);
-  assert.deepEqual(rows(), committed);
+  assert.deepEqual(rows().settings, committed.settings);
+  assert.deepEqual(rows().snapshots, committed.snapshots);
+  assert.equal(rows().watched.find(row => row.id === 'synthetic-watch')!.polling_enabled, 0);
   assert.equal(nativeWritePosts, beforeLoss + 1);
-  evidence.admissionFailurePreservesCluster = true;
+  evidence.admissionFailureKeepsWatchedCommit = true;
   assert.equal(mainPollingSql, 0);
   assert.equal(nativeWritePosts, writes - 1);
   evidence.nativeWriterLaneObserved = nativeWritePosts > 0;
   evidence.maxLoopLagMs = maxLag;
+  evidence.walBytes = existsSync(wal) ? statSync(wal).size : 0;
+  evidence.walGrowthBytes = Number(evidence.walBytes) - initialWalBytes;
   evidence.metrics = metrics;
   evidence.rssBytes = process.memoryUsage().rss;
   evidence.pass = true;
@@ -172,6 +212,7 @@ try {
   measuring = false;
   if (timer) clearInterval(timer);
   if (lock) { lock.exec('ROLLBACK'); lock.close(); }
+  await Promise.allSettled([pendingWatch]);
   try { await transport?.close(); await Promise.all([...processors].map(p => p.stop())); await app?.cleanup(); }
   finally {
     Object.assign(Database.prototype, { prepare: original.prepare });
@@ -181,7 +222,8 @@ try {
     globalThis.fetch = original.fetch;
     globalThis.Worker = original.Worker;
     evidence.mainPollingSql = mainPollingSql;
-    evidence.writeRequests = writes;
+    evidence.pollingWriteRequests = writes;
+    evidence.watchedMutationPosts = watchedMutationPosts;
     evidence.nativeWritePosts = nativeWritePosts;
     evidence.resourcesStopped = true;
     writeFileSync(join(run, 'evidence/github-watch-polling-writer.json'), JSON.stringify(evidence, null, 2));
