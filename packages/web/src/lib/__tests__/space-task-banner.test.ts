@@ -4,7 +4,7 @@ import {
   resolveActiveTaskBanner,
   type HookBannerSummary,
   type TaskBannerInput,
-} from '../task-banner.ts';
+} from '../space-task-banner.ts';
 
 function makeTask(overrides: Partial<TaskBannerInput> = {}): TaskBannerInput {
   return {

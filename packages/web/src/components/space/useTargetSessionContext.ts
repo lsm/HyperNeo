@@ -7,10 +7,10 @@ import type {
   ThinkingLevel,
 } from '@hyperneo/shared';
 import { useState, useEffect, useMemo, useCallback, useRef } from 'preact/hooks';
-import { connectionManager } from '../lib/connection-manager.ts';
-import { connectionState } from '../lib/state.ts';
-import { toast } from '../lib/toast.ts';
-import { useModelSwitcher } from './useModelSwitcher.ts';
+import { connectionManager } from '../../lib/connection-manager.ts';
+import { connectionState } from '../../lib/state.ts';
+import { toast } from '../../lib/toast.ts';
+import { useModelSwitcher } from '../../hooks/useModelSwitcher.ts';
 
 export interface TaskComposerTarget {
   id: string;

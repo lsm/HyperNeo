@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { GOAL_STATUS_CONFIG, getGoalStatusClasses, getGoalStatusConfig } from './goal-status.js';
+import {
+  GOAL_STATUS_CONFIG,
+  getGoalStatusClasses,
+  getGoalStatusConfig,
+} from './space-goal-status.js';
 
 describe('goal-status', () => {
   it('covers every SpaceGoalStatus value', () => {
