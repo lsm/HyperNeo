@@ -37,6 +37,7 @@ export interface ExtensionNav {
   icon: ComponentType;
   open(): void;
   contextTabs(): { label: string; tabs: ExtensionNavTab[] } | null;
+  voiceScope(): string | null;
   sessionFocus(): {
     overlayOpen: boolean;
     overlaySessionId: string | null;

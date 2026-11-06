@@ -1,4 +1,5 @@
 import {
+  currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,
   currentSpaceSessionIdSignal,
   currentSpaceTaskIdSignal,
@@ -172,6 +173,8 @@ export const spaceNav: ExtensionNav = {
   icon: SpacesIcon,
   open: () => navigateToSpaces(),
   contextTabs: spaceContextTabs,
+  voiceScope: () =>
+    spaceVoiceScope(currentSpaceCanonicalIdSignal.value ?? currentSpaceIdSignal.value),
   sessionFocus: spaceSessionFocus,
   recordingReturn: spaceRecordingReturn,
 };
