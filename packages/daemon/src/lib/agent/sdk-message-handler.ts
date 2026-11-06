@@ -720,65 +720,6 @@ export class SDKMessageHandler {
     }
   }
 
-  async markMessageSubmitted(messageId: string): Promise<boolean> {
-    let persisted = await this.transitionPersistedMessage(messageId, 'enqueued', 'submitted');
-    if (!persisted) {
-      const already = this.ctx.db.getMessageByStatusAndUuid(
-        this.ctx.session.id,
-        'submitted',
-        messageId
-      );
-      if (already) persisted = true;
-    }
-    return persisted;
-  }
-
-  async markMessageAccepted(messageId: string): Promise<void> {
-    try {
-      await this.handleMessageYielded(messageId, Date.now());
-    } catch {}
-    const consumed = this.ctx.db.getMessageByStatusAndUuid(
-      this.ctx.session.id,
-      'consumed',
-      messageId
-    );
-    if (consumed) {
-      signalDeliveryConsumed(this.ctx.session.id, messageId);
-    }
-  }
-
-  async markACPDeliveryFailed(messageId: string): Promise<void> {
-    const { session, db, internalEventBus } = this.ctx;
-    const flipped = await db.writeSDKMessage('markDeliveryFailedByUuid', session.id, messageId);
-    if (!flipped) return;
-    internalEventBus
-      .publish('messages.statusChanged', {
-        sessionId: session.id,
-        messageIds: [flipped],
-        status: 'failed',
-      })
-      .catch(() => {});
-  }
-
-  private async transitionPersistedMessage(
-    messageId: string,
-    fromStatus: 'enqueued',
-    toStatus: 'submitted'
-  ): Promise<boolean> {
-    const { session, db, internalEventBus } = this.ctx;
-    const message = db.getMessageByStatusAndUuid(session.id, fromStatus, messageId);
-    if (!message) return false;
-    await db.updateMessageStatus([message.dbId], toStatus);
-    internalEventBus
-      .publish('messages.statusChanged', {
-        sessionId: session.id,
-        messageIds: [message.dbId],
-        status: toStatus,
-      })
-      .catch(() => {});
-    return true;
-  }
-
   private async handleMessageYielded(messageId: string, consumedAt: number): Promise<void> {
     const { session, db, internalEventBus, messageHub } = this.ctx;
 
@@ -847,10 +788,7 @@ export class SDKMessageHandler {
       .catch(() => {});
 
     const jobQueue = db.getJobQueueRepo?.();
-    if (
-      session.config.provider !== 'acp' &&
-      jobQueue?.hasActiveDeliveryJob(session.id, messageId)
-    ) {
+    if (jobQueue?.hasActiveDeliveryJob(session.id, messageId)) {
       return;
     }
 
@@ -2023,7 +1961,7 @@ export class SDKMessageHandler {
   private isDaemonCompactionPending(): boolean {
     const { session, messageQueue, stateManager } = this.ctx;
     const providerId = session.config.provider;
-    if (!providerId || providerId === 'acp') return false;
+    if (!providerId) return false;
     if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) return false;
     return messageQueue.hasOutstandingInternalCompaction() || stateManager.getIsCompacting();
   }
@@ -2184,7 +2122,6 @@ export class SDKMessageHandler {
     this.pendingContextRefresh = promise;
     const enforcesBudget =
       !!session.config.provider &&
-      session.config.provider !== 'acp' &&
       !NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(session.config.provider);
     if (reason !== 'event-tick' || enforcesBudget) {
       this.ctx.messageQueue.setDeliveryGate(

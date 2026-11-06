@@ -29,7 +29,3 @@ export function acpProcessGroupAlive(
     return (err as NodeJS.ErrnoException).code !== 'ESRCH';
   }
 }
-
-export function getAcpProcessTreeOwner(): Promise<AcpProcessTreeOwner> {
-  return Promise.resolve(basicAcpProcessTreeOwner);
-}

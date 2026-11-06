@@ -160,7 +160,6 @@ import {
   isSDKResultSuccess,
   isSDKSessionStateChangedMessage,
 } from '@hyperneo/shared/sdk/type-guards';
-import { AcpQueryRunner } from '../acp/acp-query-runner.ts';
 import {
   getSessionContextModelInfo,
   initializeModels,
@@ -208,7 +207,6 @@ import {
   type DriveTurnOutcome,
   DeliveryEnqueueRejectedError,
   deliverMessage,
-  deliveryConsumptionTimeoutMs,
   deliveryConsumptionTimeoutOrDefault,
   MANUAL_RECOVERY_PARK_MS,
   MESSAGE_DELIVERY_PARK_MS,
@@ -218,7 +216,6 @@ import {
   signalDeliveryConsumed,
   throwIfDeliveryAborted,
   waitForDeliveryAbort,
-  waitForDeliveryConsumption,
   withSessionLock,
 } from './message-delivery.ts';
 import { deliveryMetrics } from './message-delivery-metrics.ts';
@@ -244,7 +241,6 @@ import {
   QueryOptionsBuilder,
   type QueryOptionsBuilderContext,
 } from './query-options-builder.ts';
-import { AcpQueryAdapter } from '../acp/acp-query-adapter.ts';
 import { setKeyBridgeThinkingOff } from '../providers/provider-key-bridge.ts';
 import { QueryRunner, type QueryRunnerContext, type TrackedAgentProcess } from './query-runner.ts';
 import { RateLimitWatchdog } from './rate-limit-watchdog.ts';
@@ -390,7 +386,7 @@ export class AgentSession
   readonly optionsBuilder: QueryOptionsBuilder;
   readonly attemptTokens = new QueryAttemptRegistry();
 
-  private queryRunner: QueryRunner | AcpQueryRunner;
+  private queryRunner: QueryRunner;
   readonly interruptHandler: InterruptHandler;
   private interruptRequests = 0;
   private sdkRuntimeConfig: SDKRuntimeConfig;
@@ -583,8 +579,7 @@ export class AgentSession
 
     this.optionsBuilder = new QueryOptionsBuilder(this);
 
-    this.queryRunner =
-      session.config.provider === 'acp' ? new AcpQueryRunner(this) : new QueryRunner(this);
+    this.queryRunner = new QueryRunner(this);
 
     this.interruptHandler = new InterruptHandler(this);
 
@@ -951,14 +946,6 @@ export class AgentSession
       try {
         await this.db.updateSession(this.session.id, { config: { ...this.session.config } });
       } catch {}
-    }
-    const wantsAcp = this.session.config.provider === 'acp';
-    const hasAcpRunner = this.queryRunner instanceof AcpQueryRunner;
-    if (wantsAcp !== hasAcpRunner) {
-      (
-        this.queryRunner as unknown as { invalidateAttemptTokens?: () => void }
-      ).invalidateAttemptTokens?.();
-      this.queryRunner = wantsAcp ? new AcpQueryRunner(this) : new QueryRunner(this);
     }
     if (startGuard) await this.queryRunner.start(startGuard);
     else await this.queryRunner.start();
@@ -1710,7 +1697,6 @@ export class AgentSession
   }
 
   async applyThinkingLevel(): Promise<void> {
-    if (this.queryObject instanceof AcpQueryAdapter) return;
     const level = this.optionsBuilder.getEffectiveThinkingLevel();
     getProviderRegistry()
       .get(this.session.config.provider ?? '')
@@ -1729,15 +1715,10 @@ export class AgentSession
   }
 
   async getToolInventory(): Promise<SessionToolInventory> {
-    if (this.session.config.provider === 'acp' || this.queryRunner instanceof AcpQueryRunner) {
-      return { state: 'unverified', tools: [], skills: [], plugins: [], mcpServers: [] };
-    }
     return this.queryRunner.getToolInventory();
   }
 
   async applyToolChoice(key: SessionToolChoiceKey): Promise<SessionToolApplication> {
-    if (this.session.config.provider === 'acp' || this.queryRunner instanceof AcpQueryRunner)
-      return { application: 'restart_required', reason: 'provider_unverified' };
     if (key.startsWith('skill:') && this.isQueryActiveOrStarting())
       return { application: 'restart_required', reason: 'instructions_reload_unavailable' };
     return this.queryRunner.applyToolChoice();
@@ -1797,13 +1778,6 @@ export class AgentSession
   }
 
   reconcileEffectiveMcpServers(): void {
-    if (this.session.config.provider === 'acp') {
-      this.logger.info(
-        `mcp.reconcile skipped: provider 'acp' does not support live MCP updates; ` +
-          `changes apply on next query recreation (session ${this.session.id})`
-      );
-      return;
-    }
     this.syncRuntimeMcpServersToActiveQuery('reconcile', []);
   }
 
@@ -2131,7 +2105,6 @@ export class AgentSession
   ): Promise<void> {
     const queryGeneration = runnerGeneration ?? this.getQueryGeneration();
     if (
-      this.session.config.provider !== 'acp' &&
       queryGeneration === this.getQueryGeneration() &&
       isSDKSessionStateChangedMessage(message) &&
       message.state !== 'idle'
@@ -2164,7 +2137,6 @@ export class AgentSession
   }
 
   private observeTaskNotificationResult(message: import('@hyperneo/shared/sdk').SDKMessage): void {
-    if (this.session.config.provider === 'acp') return;
     if (isSDKSessionStateChangedMessage(message)) {
       if (message.state === 'idle') {
         this.taskNotificationRequeryAwaitingSdkIdle = false;
@@ -2835,6 +2807,12 @@ export class AgentSession
             throw new MessageDeliveryTerminalTurnError('Session is archived');
           }
           const pinned = (this.session.config.provider as string | undefined)?.trim() || undefined;
+          if (pinned === 'acp') {
+            const message =
+              'ACP session providers have been retired. Choose another provider for this session.';
+            await this.queryRunner.displayErrorAsAssistantMessage(message, { markAsError: true });
+            throw new MessageDeliveryTerminalTurnError(message, 'provider_retired');
+          }
           const registry = initializeProviders();
           if (pinned || !registry.has('anthropic')) {
             await waitForOptionalProviderRegistration(registry, pinned !== undefined);
@@ -2942,15 +2920,11 @@ export class AgentSession
       return admission;
     }
 
-    const timeoutMs = deliveryConsumptionTimeoutOrDefault(
-      deliveryConsumptionTimeoutMs(this.session.config.provider)
-    );
+    const timeoutMs = deliveryConsumptionTimeoutOrDefault();
     const ackWaitStartedAt = Date.now();
     let ackTimedOut = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const aborted = waitForDeliveryAbort(signal);
-    const consumption = waitForDeliveryConsumption(this.session.id, messageUuid);
-    let failedPoll: ReturnType<typeof setInterval> | undefined;
     const admissionTimeout = (): Promise<never> =>
       new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {
@@ -2963,36 +2937,8 @@ export class AgentSession
           );
         }, timeoutMs);
       });
-    const failedBeforeAcceptance = (): Promise<never> =>
-      new Promise<never>((_, reject) => {
-        failedPoll = setInterval(() => {
-          const current = this.db
-            .getSDKMessageRepo()
-            .getDeliveryContent(this.session.id, messageUuid);
-          if (current?.sendStatus === 'failed' || current?.sendStatus === 'deferred') {
-            clearInterval(failedPoll);
-            failedPoll = undefined;
-            reject(
-              new MessageDeliveryRecoverableTurnError(
-                'Delivery failed before acceptance',
-                'admission_failed'
-              )
-            );
-          }
-        }, 500);
-      });
     try {
       await Promise.race([admission.acknowledgment, admissionTimeout(), aborted.promise]);
-      if (this.session.config.provider === 'acp') {
-        clearTimeout(timeoutId);
-        timeoutId = undefined;
-        await Promise.race([
-          consumption.promise,
-          failedBeforeAcceptance(),
-          admissionTimeout(),
-          aborted.promise,
-        ]);
-      }
       deliveryMetrics.recordAckWait(Date.now() - ackWaitStartedAt, 'acknowledged');
     } catch (error) {
       if (ackTimedOut) {
@@ -3010,8 +2956,6 @@ export class AgentSession
       if (ackTimedOut || !this.isDeliveryConsumed(messageUuid)) throw error;
     } finally {
       clearTimeout(timeoutId);
-      if (failedPoll !== undefined) clearInterval(failedPoll);
-      consumption.cancel();
       aborted.cancel();
     }
 
@@ -3032,10 +2976,6 @@ export class AgentSession
   }
 
   private async publishToolResultConsumed(sessionId: string, uuids: string[]): Promise<void> {
-    if (this.session.config.provider === 'acp') {
-      if (uuids.length === 1) return;
-      uuids = uuids.slice(1);
-    }
     for (const uuid of uuids) {
       const row = this.db.getMessageByStatusAndUuid?.(sessionId, 'consumed', uuid);
       if (!row || row.type !== 'user') continue;

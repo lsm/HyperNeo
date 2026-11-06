@@ -34,7 +34,6 @@ import {
   type EditorState,
 } from './CustomEndpointEditor.tsx';
 import { useFetchModels } from './useFetchModels.ts';
-import { AcpEditorModal, type AcpConfiguredModel } from './AcpEditorModal.tsx';
 
 interface EnrichedProvider extends ProviderRecord {
   available: boolean;
@@ -67,16 +66,6 @@ function mergeProviderConfig(
     }
   }
   return JSON.stringify({ ...base, ...patch });
-}
-
-function readAcpCommand(provider: EnrichedProvider): string {
-  if (!provider.configJson) return '';
-  try {
-    const parsed = JSON.parse(provider.configJson) as { command?: unknown };
-    return typeof parsed.command === 'string' ? parsed.command : '';
-  } catch {
-    return '';
-  }
 }
 
 function readCuratedModels(provider: EnrichedProvider): CuratedModel[] | undefined {
@@ -122,7 +111,6 @@ const EMPTY_VISIBLE_MODELS_PANEL: VisibleModelsPanelState = {
 function getVisibleModelsFingerprint(provider: EnrichedProvider): string {
   const tokens: Array<string | undefined> = [
     provider.providerId,
-    readAcpCommand(provider),
     provider.baseUrl,
     provider.configJson,
     String(provider.available),
@@ -182,14 +170,6 @@ export function ProvidersSettings() {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [oauthFlow, setOauthFlow] = useState<OAuthFlowState | null>(null);
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
-  const [acpEditor, setAcpEditor] = useState<{
-    providerId: string;
-    providerName: string;
-    command: string;
-    models?: AcpConfiguredModel[];
-    envBacked?: boolean;
-    configJson?: string;
-  } | null>(null);
   const [kimiRegions, setKimiRegions] = useState<Record<string, 'china' | 'global'>>({});
   const lastSyncedKimiRegions = useRef<Record<string, 'china' | 'global'>>({});
   const [customEditor, setCustomEditor] = useState<EditorState | null>(null);
@@ -622,12 +602,7 @@ export function ProvidersSettings() {
       ...prev,
       [provider.id]: { ...EMPTY_VISIBLE_MODELS_PANEL, fetching: true },
     }));
-    const options =
-      provider.providerId === 'acp'
-        ? { command: readAcpCommand(provider) }
-        : provider.baseUrl
-          ? { baseUrl: provider.baseUrl }
-          : undefined;
+    const options = provider.baseUrl ? { baseUrl: provider.baseUrl } : undefined;
     const remote = await listProviderRemoteModels(provider.id, { ...options, force: true }).catch(
       (err) => ({ models: [], error: err })
     );
@@ -1152,53 +1127,6 @@ export function ProvidersSettings() {
                           </div>
                         )}
 
-                        {provider.providerId === 'acp' && !isCustom && (
-                          <div>
-                            <div class="flex items-center justify-between gap-2">
-                              <div class="min-w-0">
-                                <h5 class="text-xs font-semibold uppercase tracking-wider text-fg-muted mb-1">
-                                  Configuration
-                                </h5>
-                                <div class="text-xs text-fg-faint font-mono truncate">
-                                  {readAcpCommand(provider) ||
-                                    (provider.available
-                                      ? 'Using HYPERNEO_ACP_COMMAND'
-                                      : 'No command set')}
-                                </div>
-                                {(readCuratedModels(provider)?.length ?? 0) > 0 && (
-                                  <div class="mt-1 flex flex-wrap gap-1">
-                                    {readCuratedModels(provider)?.map((model) => (
-                                      <span
-                                        key={model.id}
-                                        class="text-[10px] px-1.5 py-0.5 rounded bg-surface-raised text-fg-soft"
-                                      >
-                                        {model.name ?? model.id}
-                                      </span>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                              <Button
-                                size="sm"
-                                variant="secondary"
-                                onClick={() =>
-                                  setAcpEditor({
-                                    providerId: provider.id,
-                                    providerName: provider.displayName,
-                                    command: readAcpCommand(provider),
-                                    models: readCuratedModels(provider),
-                                    envBacked: !readAcpCommand(provider),
-                                    configJson: provider.configJson,
-                                  })
-                                }
-                                disabled={isPending}
-                              >
-                                Edit
-                              </Button>
-                            </div>
-                          </div>
-                        )}
-
                         {!isCustom && (
                           <div data-testid="visible-models-panel">
                             <div class="flex items-center justify-between gap-2">
@@ -1397,22 +1325,6 @@ export function ProvidersSettings() {
           fetchedModels={fetchedModels}
           fetchModelsError={fetchModelsError}
           fetchedAt={fetchedAt}
-        />
-      )}
-
-      {acpEditor && (
-        <AcpEditorModal
-          providerId={acpEditor.providerId}
-          providerName={acpEditor.providerName}
-          command={acpEditor.command}
-          models={acpEditor.models}
-          envBacked={acpEditor.envBacked}
-          configJson={acpEditor.configJson}
-          onClose={() => setAcpEditor(null)}
-          onSaved={() => {
-            setAcpEditor(null);
-            loadProviders();
-          }}
         />
       )}
     </>

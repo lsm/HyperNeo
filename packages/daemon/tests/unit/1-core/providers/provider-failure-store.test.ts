@@ -62,41 +62,6 @@ describe('provider failure classification', () => {
     expect(classifyProviderFailureMessage('Codex probe failed: ECONNREFUSED')).toBe('transient');
   });
 
-  it('classifies ACP command parse errors as credential', () => {
-    expect(classifyProviderFailureMessage('Invalid ACP command: unmatched quote')).toBe(
-      'credential'
-    );
-    expect(classifyProviderFailureMessage('Invalid ACP command: command is empty')).toBe(
-      'credential'
-    );
-    expect(classifyProviderFailureMessage('HYPERNEO_ACP_COMMAND not set')).toBe('credential');
-  });
-
-  it('classifies ACP spawn and protocol errors as credential', () => {
-    expect(classifyProviderFailureMessage('ACP agent process error: spawn foo ENOENT')).toBe(
-      'credential'
-    );
-    expect(
-      classifyProviderFailureMessage(
-        'Unsupported ACP protocol version: agent returned 2, client requested 1'
-      )
-    ).toBe('credential');
-  });
-
-  it('classifies ACP timeouts, crashes, and agent-side initialize errors as transient', () => {
-    expect(classifyProviderFailureMessage('Request timed out after 10000ms: initialize')).toBe(
-      'transient'
-    );
-    expect(classifyProviderFailureMessage('ACP agent process exited')).toBe('transient');
-    expect(classifyProviderFailureMessage('Initialize failed: agent overloaded')).toBe('transient');
-    expect(classifyProviderFailureMessage('ACP agent process error: spawn foo EAGAIN')).toBe(
-      'transient'
-    );
-    expect(classifyProviderFailureMessage('ACP agent process error: spawn foo EMFILE')).toBe(
-      'transient'
-    );
-  });
-
   it('defaults unclassified errors to transient', () => {
     expect(classifyProviderFailureMessage('something unexpected happened')).toBe('transient');
   });

@@ -366,23 +366,3 @@ test('Costco human input survives a consumed teammate prompt when question.ask o
     }
   }
 }, 90000);
-
-test('ACP Neo persists a no-replyTo card notice through its real operation proxy', async () => {
-  const run = createTestDirectory(join(tmpdir(), 'neo-card-reply-acp-'));
-  await mkdir(join(run, 'home'));
-  const proof = fileURLToPath(
-    new URL('../../../../../.claude/skills/verify/card-reply-acp.ts', import.meta.url)
-  );
-  const output = execFileSync('bun', [proof, run], {
-    env: {
-      HOME: join(run, 'home'),
-      PATH: process.env.PATH,
-      NODE_ENV: 'test',
-      HYPERNEO_DATA_DIR: join(run, 'data'),
-      LOG_LEVEL: 'error',
-    },
-    timeout: 60000,
-    encoding: 'utf8',
-  });
-  expect(output).toContain('PASS ACP card reply');
-}, 70000);

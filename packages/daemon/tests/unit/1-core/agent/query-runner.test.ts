@@ -638,14 +638,6 @@ describe('QueryRunner', () => {
     });
   });
 
-  describe('inferAvailableSpawnRoute', () => {
-    it('returns acp for providerless ACP models ahead of registry filtering', async () => {
-      const route = await inferAvailableSpawnRoute('acp-coder');
-      expect(route.provider).toBe('acp');
-      expect(route.fallback).toBe(false);
-    });
-  });
-
   describe('resolveAvailableQueryProvider', () => {
     const makeRegistry = makeRegistryForResolver;
     const anthropicCatchAll = (_modelId: string) => true;
@@ -7780,24 +7772,6 @@ describe('QueryRunner environment variable handling', () => {
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe('glm-api-key');
   });
 
-  it('should preserve auth env when omitting provider-managed ACP env', () => {
-    const env = refreshQueryEnvFromProcess(
-      {},
-      {
-        ANTHROPIC_API_KEY: 'sk-ant-api-key',
-        ANTHROPIC_AUTH_TOKEN: 'sk-ant-oat-token',
-        CLAUDE_CODE_OAUTH_TOKEN: 'oauth-token',
-        ANTHROPIC_BASE_URL: 'https://stale-bridge.example.com',
-      },
-      { omitProviderManaged: true, omitProviderManagedPreserveAuth: true }
-    );
-
-    expect(env.ANTHROPIC_API_KEY).toBe('sk-ant-api-key');
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('sk-ant-oat-token');
-    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('oauth-token');
-    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
-  });
-
   it('should not copy ambient provider API keys into the query env', () => {
     const env = refreshQueryEnvFromProcess(
       { ANTHROPIC_AUTH_TOKEN: 'bridge-token' },
@@ -7824,26 +7798,6 @@ describe('QueryRunner environment variable handling', () => {
 
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe('glm-api-key');
-  });
-
-  it('should tombstone provider-managed env when omitted for ACP subprocesses', () => {
-    const env = refreshQueryEnvFromProcess(
-      {
-        ANTHROPIC_BASE_URL: 'https://stale.example.com',
-        ANTHROPIC_AUTH_TOKEN: 'stale-token',
-        KEEP_SESSION: 'session',
-      },
-      {
-        ANTHROPIC_BASE_URL: 'https://ambient.example.com',
-        KEEP_PROCESS: 'process',
-      },
-      { refreshAutoCompactWindow: true, omitProviderManaged: true }
-    );
-
-    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
-    expect(env.KEEP_SESSION).toBe('session');
-    expect(env.KEEP_PROCESS).toBe('process');
   });
 });
 

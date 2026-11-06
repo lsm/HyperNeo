@@ -757,65 +757,6 @@ describe('QueryLifecycleManager', () => {
       expect(mockContext.pendingRestartReason).toBeNull();
     });
 
-    test('clears ACP resume state on reset when no query is running', async () => {
-      mockContext.session.config.provider = 'acp';
-      mockContext.session.acpSessionId = 'stale-acp-session';
-      mockContext.session.metadata = {
-        acpInstructionsSent: true,
-        acpContextUsageEstimate: 12000,
-      } as Session['metadata'];
-      manager = new QueryLifecycleManager(mockContext);
-
-      const result = await manager.reset();
-
-      expect(result.success).toBe(true);
-      expect(mockContext.session.acpSessionId).toBeUndefined();
-      expect(mockContext.session.metadata.acpInstructionsSent).toBeUndefined();
-      expect(mockContext.session.metadata.acpContextUsageEstimate).toBeUndefined();
-      expect(updateSessionSpy).toHaveBeenCalledWith(
-        'test-session',
-        expect.objectContaining({
-          acpSessionId: undefined,
-          metadata: expect.objectContaining({
-            acpInstructionsSent: undefined,
-            acpContextUsageEstimate: undefined,
-          }),
-        })
-      );
-    });
-
-    test('clears ACP resume state on reset before restart', async () => {
-      mockContext.queryObject = {
-        interrupt: mock(async () => {}),
-      } as unknown as QueryLifecycleManagerContext['queryObject'];
-      mockContext.queryPromise = Promise.resolve();
-      mockContext.session.config.provider = 'acp';
-      mockContext.session.acpSessionId = 'stale-acp-session';
-      mockContext.session.metadata = {
-        acpInstructionsSent: true,
-        acpContextUsageEstimate: 12000,
-      } as Session['metadata'];
-      manager = new QueryLifecycleManager(mockContext);
-
-      const result = await manager.reset({ restartAfter: true });
-
-      expect(result.success).toBe(true);
-      expect(mockContext.session.acpSessionId).toBeUndefined();
-      expect(mockContext.session.metadata.acpInstructionsSent).toBeUndefined();
-      expect(mockContext.session.metadata.acpContextUsageEstimate).toBeUndefined();
-      expect(updateSessionSpy).toHaveBeenCalledWith(
-        'test-session',
-        expect.objectContaining({
-          acpSessionId: undefined,
-          metadata: expect.objectContaining({
-            acpInstructionsSent: undefined,
-            acpContextUsageEstimate: undefined,
-          }),
-        })
-      );
-      expect(startStreamingCalled).toBe(true);
-    });
-
     test('executes full reset sequence with running query', async () => {
       mockContext.queryObject = {
         interrupt: mock(async () => {}),
@@ -1141,26 +1082,6 @@ describe('QueryLifecycleManager', () => {
         await manager.ensureQueryStarted();
 
         expect(startStreamingCalled).toBe(true);
-      } finally {
-        delete process.env.TEST_SDK_SESSION_DIR;
-        rmSync(tmpTestDir, { recursive: true, force: true });
-      }
-    });
-
-    test('skips SDK transcript validation for ACP sessions with sdkSessionId', async () => {
-      const tmpTestDir = mkdtempSync(join(tmpdir(), 'kai-test-'));
-      try {
-        process.env.TEST_SDK_SESSION_DIR = tmpTestDir;
-        mockContext = createMockContext();
-        mockContext.session.config.provider = 'acp';
-        mockContext.session.sdkSessionId = 'missing-sdk-session';
-        manager = new QueryLifecycleManager(mockContext);
-
-        const result = await manager.ensureQueryStarted();
-
-        expect(result).toBe('started');
-        expect(startStreamingCalled).toBe(true);
-        expect(saveHyperNeoActionMessageSpy).not.toHaveBeenCalled();
       } finally {
         delete process.env.TEST_SDK_SESSION_DIR;
         rmSync(tmpTestDir, { recursive: true, force: true });

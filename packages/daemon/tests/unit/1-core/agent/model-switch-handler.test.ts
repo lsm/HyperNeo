@@ -27,8 +27,6 @@ import {
 } from '../../../../src/lib/providers/factory';
 import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { setModelsCache, clearModelsCache } from '../../../../src/lib/model-service';
-import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
-import { disposeAcpSessions } from '../../../../src/lib/acp/acp-model-fetcher';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -68,17 +66,6 @@ const TEST_MODELS: ModelInfo[] = [
     contextWindow: 200000,
     description: 'Haiku model',
     releaseDate: '2025-01-01',
-    available: true,
-  },
-  {
-    id: 'acp-default',
-    name: 'ACP Default',
-    alias: 'acp',
-    family: 'acp',
-    provider: 'acp',
-    contextWindow: 200000,
-    description: 'ACP model',
-    releaseDate: '2026-01-01',
     available: true,
   },
   {
@@ -268,7 +255,6 @@ describe('ModelSwitchHandler', () => {
       queryObject: {} as unknown as Query,
       queryPromise: null,
       messageQueue: { isRunning: mock(() => false) } as unknown as MessageQueue,
-      disposeAcpSessions: mock(async () => {}) as typeof disposeAcpSessions,
       firstMessageReceived: true,
       ...overrides,
     };
@@ -493,167 +479,6 @@ describe('ModelSwitchHandler', () => {
         expect(result.success).toBe(true);
         expect(mockSession.config.provider).toBe('anthropic');
       });
-
-      it('clears ACP resume and context usage state when switching providers', async () => {
-        mockSession.config.model = 'acp-default';
-        mockSession.config.provider = 'acp';
-        mockSession.acpSessionId = 'remote-acp-session';
-        mockSession.metadata = {
-          ...mockSession.metadata,
-          acpContextUsageEstimate: 12000,
-        };
-
-        handler = createHandler({ queryObject: null });
-        const result = await handler.switchModel(VALID_MODEL, 'anthropic');
-
-        expect(result.success).toBe(true);
-        expect(mockSession.acpSessionId).toBeUndefined();
-        expect(mockSession.metadata.acpContextUsageEstimate).toBeUndefined();
-        expect(updateSessionSpy).toHaveBeenCalledWith(
-          mockSession.id,
-          expect.objectContaining({
-            acpSessionId: undefined,
-            metadata: expect.objectContaining({ acpContextUsageEstimate: undefined }),
-          })
-        );
-      });
-
-      it('disposes the remote ACP session when switching away from ACP', async () => {
-        const acpProvider = getProviderRegistry().get('acp') as AcpProvider;
-        acpProvider.setAcpCommand('devin acp');
-        const disposeAcpSessionsSpy = mock(async () => {});
-
-        mockSession.config.model = 'acp-default';
-        mockSession.config.provider = 'acp';
-        mockSession.acpSessionId = 'remote-acp-session';
-        mockSession.metadata = {
-          ...mockSession.metadata,
-          acpContextUsageEstimate: 12000,
-        };
-
-        handler = createHandler({ queryObject: null, disposeAcpSessions: disposeAcpSessionsSpy });
-        const result = await handler.switchModel(VALID_MODEL, 'anthropic');
-
-        expect(result.success).toBe(true);
-        expect(disposeAcpSessionsSpy).toHaveBeenCalledWith(
-          'devin acp',
-          ['remote-acp-session'],
-          undefined,
-          expect.any(AbortSignal)
-        );
-        expect(mockSession.acpSessionId).toBeUndefined();
-      });
-
-      it('disposes the remote ACP session after restarting an active query', async () => {
-        const acpProvider = getProviderRegistry().get('acp') as AcpProvider;
-        acpProvider.setAcpCommand('devin acp');
-        const disposeAcpSessionsSpy = mock(async () => {});
-
-        mockSession.config.model = 'acp-default';
-        mockSession.config.provider = 'acp';
-        mockSession.acpSessionId = 'remote-acp-session';
-        mockSession.metadata = {
-          ...mockSession.metadata,
-          acpContextUsageEstimate: 12000,
-        };
-
-        handler = createHandler({ disposeAcpSessions: disposeAcpSessionsSpy });
-        const result = await handler.switchModel(VALID_MODEL, 'anthropic');
-
-        expect(result.success).toBe(true);
-        expect(restartSpy).toHaveBeenCalled();
-        expect(disposeAcpSessionsSpy).toHaveBeenCalledWith(
-          'devin acp',
-          ['remote-acp-session'],
-          undefined,
-          expect.any(AbortSignal)
-        );
-        expect(mockSession.acpSessionId).toBeUndefined();
-      });
-
-      it('disposes with the command that created the remote session', async () => {
-        const acpProvider = getProviderRegistry().get('acp') as AcpProvider;
-        acpProvider.setAcpCommand('new acp');
-        const disposeAcpSessionsSpy = mock(async () => {});
-
-        mockSession.config.model = 'acp-default';
-        mockSession.config.provider = 'acp';
-        mockSession.acpSessionId = 'remote-acp-session';
-        mockSession.metadata = {
-          ...mockSession.metadata,
-          acpSessionCommand: 'old acp',
-        };
-
-        handler = createHandler({ queryObject: null, disposeAcpSessions: disposeAcpSessionsSpy });
-        const result = await handler.switchModel(VALID_MODEL, 'anthropic');
-
-        expect(result.success).toBe(true);
-        expect(disposeAcpSessionsSpy).toHaveBeenCalledWith(
-          'old acp',
-          ['remote-acp-session'],
-          undefined,
-          expect.any(AbortSignal)
-        );
-        expect(mockSession.metadata?.acpSessionCommand).toBeUndefined();
-      });
-
-      it('disposes an active query with the command that created the remote session', async () => {
-        const acpProvider = getProviderRegistry().get('acp') as AcpProvider;
-        acpProvider.setAcpCommand('new acp');
-        const disposeAcpSessionsSpy = mock(async () => {});
-
-        mockSession.config.model = 'acp-default';
-        mockSession.config.provider = 'acp';
-        mockSession.acpSessionId = 'remote-acp-session';
-        mockSession.metadata = {
-          ...mockSession.metadata,
-          acpSessionCommand: 'old acp',
-        };
-
-        handler = createHandler({ disposeAcpSessions: disposeAcpSessionsSpy });
-        const result = await handler.switchModel(VALID_MODEL, 'anthropic');
-
-        expect(result.success).toBe(true);
-        expect(restartSpy).toHaveBeenCalled();
-        expect(disposeAcpSessionsSpy).toHaveBeenCalledWith(
-          'old acp',
-          ['remote-acp-session'],
-          undefined,
-          expect.any(AbortSignal)
-        );
-        expect(mockSession.metadata?.acpSessionCommand).toBeUndefined();
-      });
-
-      it('keeps the committed switch when disposing the remote ACP session fails', async () => {
-        const acpProvider = getProviderRegistry().get('acp') as AcpProvider;
-        acpProvider.setAcpCommand('devin acp');
-        const disposeAcpSessionsSpy = mock(async () => {
-          throw new Error('Dispose failed');
-        });
-
-        mockSession.config.model = 'acp-default';
-        mockSession.config.provider = 'acp';
-        mockSession.acpSessionId = 'remote-acp-session';
-        mockSession.metadata = {
-          ...mockSession.metadata,
-          acpContextUsageEstimate: 12000,
-        };
-
-        handler = createHandler({ disposeAcpSessions: disposeAcpSessionsSpy });
-        const result = await handler.switchModel(VALID_MODEL, 'anthropic');
-
-        expect(result.success).toBe(true);
-        expect(restartSpy).toHaveBeenCalled();
-        expect(disposeAcpSessionsSpy).toHaveBeenCalledTimes(1);
-        expect(mockSession.acpSessionId).toBeUndefined();
-        expect(mockSession.metadata.acpContextUsageEstimate).toBeUndefined();
-        expect(updateSessionSpy.mock.calls.at(-1)?.[1]).toEqual(
-          expect.objectContaining({
-            acpSessionId: undefined,
-            metadata: expect.objectContaining({ acpContextUsageEstimate: undefined }),
-          })
-        );
-      });
     });
 
     describe('when transport not ready', () => {
@@ -877,53 +702,6 @@ describe('ModelSwitchHandler', () => {
         expect(handleErrorSpy).toHaveBeenCalled();
       });
 
-      it('restores ACP context usage state when a provider switch rolls back', async () => {
-        mockSession.config.model = 'acp-default';
-        mockSession.config.provider = 'acp';
-        mockSession.acpSessionId = 'remote-acp-session';
-        mockSession.metadata = {
-          ...mockSession.metadata,
-          acpContextUsageEstimate: 12000,
-        };
-        restartSpy.mockRejectedValue(new Error('Restart failed'));
-        handler = createHandler();
-
-        const result = await handler.switchModel(VALID_MODEL, 'anthropic');
-
-        expect(result.success).toBe(false);
-        expect(mockSession.acpSessionId).toBe('remote-acp-session');
-        expect(mockSession.metadata.acpContextUsageEstimate).toBe(12000);
-        expect(updateSessionSpy.mock.calls.at(-1)?.[1]).toEqual(
-          expect.objectContaining({
-            acpSessionId: 'remote-acp-session',
-            metadata: expect.objectContaining({ acpContextUsageEstimate: 12000 }),
-          })
-        );
-      });
-
-      it('does not dispose the remote ACP session when a pre-query switch rolls back', async () => {
-        const acpProvider = getProviderRegistry().get('acp') as AcpProvider;
-        acpProvider.setAcpCommand('devin acp');
-        const disposeAcpSessionsSpy = mock(async () => {});
-        emitSpy.mockRejectedValueOnce(new Error('Publish failed'));
-
-        mockSession.config.model = 'acp-default';
-        mockSession.config.provider = 'acp';
-        mockSession.acpSessionId = 'remote-acp-session';
-        mockSession.metadata = {
-          ...mockSession.metadata,
-          acpSessionCommand: 'old acp',
-        };
-
-        handler = createHandler({ queryObject: null, disposeAcpSessions: disposeAcpSessionsSpy });
-        const result = await handler.switchModel(VALID_MODEL, 'anthropic');
-
-        expect(result.success).toBe(false);
-        expect(disposeAcpSessionsSpy).not.toHaveBeenCalled();
-        expect(mockSession.acpSessionId).toBe('remote-acp-session');
-        expect(mockSession.metadata.acpSessionCommand).toBe('old acp');
-      });
-
       it('rollback restores the literal stored provider, not the guard inference (P1)', async () => {
         mockSession.config.model = 'gemini-3.1-pro-preview';
         (mockSession.config as Record<string, unknown>).provider = undefined;
@@ -1135,7 +913,6 @@ describe('model switch timing', () => {
     expect(canSwitchModelLive(side('kimi'), side('kimi'))).toBe(true);
     expect(canSwitchModelLive(side('anthropic'), side('glm'))).toBe(false);
     expect(canSwitchModelLive(side('opencode'), side('opencode'))).toBe(false);
-    expect(canSwitchModelLive(side('acp'), side('acp'))).toBe(false);
   });
 
   it('gives the CLI the id the provider actually routes to', () => {

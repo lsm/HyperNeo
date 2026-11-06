@@ -80,32 +80,6 @@ export class QueryLifecycleManager {
     this.logger = new Logger(`QueryLifecycleManager ${ctx.session.id}`);
   }
 
-  private async clearAcpSessionStateForReset(): Promise<void> {
-    const { session, db } = this.ctx;
-    if (session.config.provider !== 'acp') return;
-
-    const updates: Partial<Session> = {};
-    if (session.acpSessionId) {
-      session.acpSessionId = undefined;
-      updates.acpSessionId = undefined;
-    }
-    if (
-      session.metadata?.acpInstructionsSent ||
-      session.metadata?.acpContextUsageEstimate !== undefined
-    ) {
-      session.metadata = {
-        ...session.metadata,
-        acpInstructionsSent: undefined,
-        acpContextUsageEstimate: undefined,
-      };
-      updates.metadata = session.metadata;
-    }
-
-    if (Object.keys(updates).length > 0) {
-      await db.updateSession(session.id, updates);
-    }
-  }
-
   private getSDKWorkspacePath(): string {
     const { session } = this.ctx;
     return sessionSdkPath(session) ?? process.cwd();
@@ -312,7 +286,7 @@ export class QueryLifecycleManager {
         await options.beforeStart();
       }
 
-      if (session.config.provider !== 'acp' && session.sdkSessionId) {
+      if (session.sdkSessionId) {
         const isValid = await this.validateAndRepairWithMigration();
         if (!isValid) {
           this.logger.warn(
@@ -348,7 +322,6 @@ export class QueryLifecycleManager {
       messageQueue.clear();
       this.ctx.pendingRestartReason = null;
       messageHandler.resetCircuitBreaker();
-      await this.clearAcpSessionStateForReset();
       await stateManager.setIdle();
       await this.ctx.clearModelsCache();
       return { success: true };
@@ -371,7 +344,6 @@ export class QueryLifecycleManager {
       messageQueue.clear();
       this.ctx.pendingRestartReason = null;
       messageHandler.resetCircuitBreaker();
-      await this.clearAcpSessionStateForReset();
       await internalEventBus.publish('session.errorClear', { sessionId: session.id });
 
       await this.stop({
@@ -386,7 +358,7 @@ export class QueryLifecycleManager {
       await this.ctx.clearModelsCache();
 
       if (restartAfter) {
-        if (session.config.provider !== 'acp' && session.sdkSessionId) {
+        if (session.sdkSessionId) {
           const isValid = await this.validateAndRepairWithMigration();
           if (!isValid) {
             this.logger.warn(
@@ -517,7 +489,7 @@ export class QueryLifecycleManager {
 
     throwIfDeliveryAborted(signal);
 
-    if (session.config.provider !== 'acp' && session.sdkSessionId) {
+    if (session.sdkSessionId) {
       const isValid = await this.validateAndRepairWithMigration();
       if (!isValid) {
         this.logger.warn(
