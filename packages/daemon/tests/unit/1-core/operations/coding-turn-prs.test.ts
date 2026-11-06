@@ -75,6 +75,13 @@ describe('coding turn PRs', () => {
     db.close();
   });
 
+  test('a URL matches whichever scheme the turn showed it with', () => {
+    const { db, record } = setup();
+    record(fact('t1', [], [url.replace('https:', 'http:')], 100));
+    expect(new WorkTurnRepository(db).mentioning([url]).map(({ id }) => id)).toEqual(['t1']);
+    db.close();
+  });
+
   test('a turn showing two looked-up URLs comes back once', () => {
     const { db, record } = setup();
     const other = 'https://github.com/acme/app/pull/8';
