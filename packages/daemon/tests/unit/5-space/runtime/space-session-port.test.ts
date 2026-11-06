@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
-import { createSpaceSessionPort } from '../../../../src/lib/space/runtime/space-session-port.ts';
+import { createSpaceSessionPort } from '../../../../../space/src/runtime/space-session-port.ts';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';

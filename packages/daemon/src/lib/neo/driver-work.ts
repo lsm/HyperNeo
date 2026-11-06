@@ -69,7 +69,7 @@ export const NeoDriverTargetSchema = z.discriminatedUnion('verb', [
   NeoReadWorkTarget,
   NeoStartWorkTarget,
   NeoSendWorkTarget,
-  z.object({ verb: z.literal('adopt'), ref: WorkRefSchema }),
+  z.object({ verb: z.literal('adopt'), ref: WorkRefSchema, boundAt: z.number().optional() }),
 ]);
 
 export type NeoDriverTarget = z.infer<typeof NeoDriverTargetSchema>;
@@ -345,10 +345,6 @@ export function readDriverSessionFacts(
         openedPrs: value.openedPrs ?? [],
       }
     : null;
-}
-
-export function readDriverOpenedPrs(outcome: OperationOutcome): string[] {
-  return parseDriverStatus(outcome)?.openedPrs ?? [];
 }
 
 export function readDriverLastInputAt(outcome: OperationOutcome): number | null {

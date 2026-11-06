@@ -29,8 +29,8 @@ import { reject } from '../../../daemon/src/lib/drivers/work-operations.ts';
 import { invokeOperation } from '../../../daemon/src/lib/operations/invoke.ts';
 import type { SessionManager } from '../../../daemon/src/lib/session/session-manager.ts';
 import type { Database } from '../../../daemon/src/storage/database.ts';
-import type { SpaceRuntimeService } from '../../../daemon/src/lib/space/runtime/space-runtime-service.ts';
-import type { TaskAgentManager } from '../../../daemon/src/lib/space/runtime/task-agent-manager.ts';
+import type { SpaceRuntimeService } from '../runtime/space-runtime-service.ts';
+import type { TaskAgentManager } from '../runtime/task-agent-manager.ts';
 import { matchChatsBy } from '../../../daemon/src/lib/drivers/match-chats.ts';
 
 const OPEN_TASK = `status IN ('draft', 'open', 'in_progress', 'review', 'approved', 'blocked', 'rate_limited', 'usage_limited')`;

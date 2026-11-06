@@ -13,7 +13,7 @@ import {
   type SessionEnsurer,
   setupSpaceTaskMessageHandlers,
   type TaskAgentManagerInterface,
-} from '../../../../src/lib/space/rpc/space-task-message-handlers';
+} from '../../../../../space/src/rpc/space-task-message-handlers';
 import type { Database } from '../../../../src/storage/database';
 import { ChannelCycleRepository } from '../../../../src/storage/repositories/channel-cycle-repository';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';

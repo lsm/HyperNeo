@@ -53,14 +53,15 @@ function planTurnFact(
 export function readHyperneoTurnFacts(
   db: BunDatabase,
   sessionId: string,
-  cursor?: string
+  cursor?: string,
+  limit = TURNS_PER_READ
 ): WorkTurnFact[] {
   let from: Position = cursor ? JSON.parse(cursor) : { seq: 0, consumed: 0, at: null };
   const terminals = db
     .prepare(`SELECT seq, id, timestamp, consumed_seq AS consumed, message_subtype AS ended
       FROM sdk_messages WHERE session_id = ? AND ${SESSION_BILLING_TERMINAL} AND seq > ?
       ORDER BY seq LIMIT ?`)
-    .all(sessionId, from.seq, TURNS_PER_READ) as Terminal[];
+    .all(sessionId, from.seq, limit) as Terminal[];
   const inputs = db.prepare(`SELECT sdk_uuid AS id, timestamp FROM sdk_messages
     WHERE session_id = ? AND ${CONSUMED_INPUT} AND COALESCE(input_kind, '') <> 'system'
       AND consumed_seq > ? AND consumed_seq <= ?

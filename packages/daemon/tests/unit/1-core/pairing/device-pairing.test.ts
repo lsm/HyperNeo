@@ -62,6 +62,77 @@ const door: OperationCaller = { source: 'mcp', principal: 'session-door', sessio
 const agent: OperationCaller = { source: 'mcp', sessionId: 'neo:root', role: 'neo' };
 
 describe('device pairing', () => {
+  test('an agent code cannot use the first-human pairing bootstrap', async () => {
+    const { db, call } = setup();
+    try {
+      expect(await call('device.pair.create', { kind: 'agent' }, door)).toMatchObject({
+        ok: false,
+        reason: NO_HUMAN_DEVICE,
+      });
+    } finally {
+      db.close();
+    }
+  });
+  test('remote agent pairing waits for a human and cannot issue or approve codes', async () => {
+    const { db, call, pair, repo } = setup();
+    try {
+      const first = await call('device.pair.create', { kind: 'human' }, door);
+      const phone = await pair(first.code);
+      const made = await call('device.pair.create', { kind: 'agent' }, door);
+      expect(made).toMatchObject({ ok: true, approval: 'pending' });
+      expect((await pair(made.code)).status).toBe(403);
+      const reader: OperationCaller = {
+        source: 'rpc',
+        principal: 'local',
+        device: { deviceId: 'agent', kind: 'agent' },
+      };
+      expect((await call('device.pair.create', { kind: 'human' }, reader)).ok).toBe(false);
+      expect((await call('device.pair.approve', { codeId: made.codeId }, reader)).ok).toBe(false);
+      expect(
+        (
+          await call(
+            'device.pair.approve',
+            { codeId: made.codeId },
+            pairedHuman(phone.body.deviceId)
+          )
+        ).ok
+      ).toBe(true);
+      const paired = await pair(made.code);
+      expect(paired.body.kind).toBe('agent');
+      expect(paired.body).not.toHaveProperty('origin');
+      expect(repo.listDevices().find((device) => device.kind === 'agent')).toBeDefined();
+    } finally {
+      db.close();
+    }
+  });
+  test('remote agent redemption leaves public-origin recording to the pairing client', async () => {
+    const { db, repo } = setup();
+    try {
+      const route = createPairRoute({
+        repo,
+        limiter: createPairingLimiter(),
+        now: () => 1_000_000,
+      });
+      const made = repo.createCode('agent', null, true, 1_000_000);
+      const response = await route(
+        new Request('http://127.0.0.1:9283/pair', {
+          method: 'POST',
+          headers: { 'x-forwarded-proto': 'https', 'x-forwarded-host': 'daemon.example' },
+          body: JSON.stringify({ code: made.code, name: 'Remote reader' }),
+        })
+      );
+      expect(response.status).toBe(200);
+      const paired = await response.json();
+      expect(paired).toMatchObject({
+        kind: 'agent',
+        credential: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+      });
+      expect(paired).not.toHaveProperty('origin');
+    } finally {
+      db.close();
+    }
+  });
+
   test('a code pairs one device once, with the kind fixed when the code was made', async () => {
     const { db, call, pair } = setup();
     const made = await call('device.pair.create', { kind: 'relay', name: 'Push relay' }, door);
@@ -268,6 +339,33 @@ describe('device pairing', () => {
       reason: NO_HUMAN_DEVICE,
     });
     db.close();
+  });
+
+  test('redeeming an agent code in a browser retains the existing device cookie', async () => {
+    const { db, repo } = setup();
+    try {
+      const route = createPairRoute({
+        repo,
+        limiter: createPairingLimiter(),
+        now: () => 1_000_000,
+      });
+      const made = repo.createCode('agent', null, true, 1_000_000);
+      const response = await route(
+        new Request('https://daemon.example/pair', {
+          method: 'POST',
+          headers: { origin: 'https://daemon.example', cookie: 'hyperneo_device=existing-human' },
+          body: JSON.stringify({ code: made.code, name: 'Reader' }),
+        })
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get('set-cookie')).toBeNull();
+      expect(await response.json()).toMatchObject({
+        kind: 'agent',
+        credential: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+      });
+    } finally {
+      db.close();
+    }
   });
 
   test('a browser gets its credential only as an HttpOnly cookie, Secure when its page is HTTPS', async () => {

@@ -8,10 +8,8 @@ import {
   codingTodoCheck,
   codingTodoCheckRefusal,
   codingTodoDoneWhen,
-  codingTodoOwnPrs,
   codingTodoStatusLine,
   createCodingTodoPack,
-  planCodingTodoClaims,
 } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import { codingPrUrl } from '../../../../src/lib/neo/packs/coding/pr-sweep.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
@@ -61,143 +59,14 @@ function setup(read: (urls: readonly string[]) => Promise<NeoWorkPr[] | null>) {
 }
 
 describe('coding todo pack', () => {
-  test('observed session PRs keep named and reported claims for the same todo', async () => {
-    const { db, pack, repo, todo } = setup(async () => []);
-    const row = todo(
-      { pack: 'coding', kind: 'pr_merged', params: { urls: [pr(1, 'OPEN').url] } },
-      `Opened ${pr(2, 'OPEN').url}`
-    );
-    await pack.openedPrs!(row, [pr(3, 'OPEN').url]);
-    expect(repo.urls(row.id).sort()).toEqual([1, 2, 3].map((n) => pr(n, 'OPEN').url));
-    await pack.openedPrs!(row, []);
-    expect(repo.urls(row.id).sort()).toEqual([1, 2, 3].map((n) => pr(n, 'OPEN').url));
-    db.close();
-  });
   test('a todo that replaces a removed one owns the PR they both name and closes on merge', async () => {
     const { db, pack, repo, todo } = setup(async () => [pr(9, 'MERGED')]);
     const check = { pack: 'coding', kind: 'pr_merged', params: { urls: [pr(9, 'OPEN').url] } };
     const removed = todo(check);
-    repo.claim(removed.id, [{ url: pr(9, 'OPEN').url, claim: 'named' }], 1);
     new NeoAskTodoRepository(db).updateTodo(removed, { state: 'removed', reason: 'Replaced.' }, 2);
     expect(await pack.check(todo(check))).toEqual({ done: true, evidence: '#9 merged' });
     db.close();
   });
-  test('claims PRs the check names and the report names, then checks their merge state', async () => {
-    const reads: string[][] = [];
-    const { pack, repo, todo } = setup(async (urls) => {
-      reads.push([...urls]);
-      return [pr(102, 'MERGED'), pr(103, 'OPEN', { checks: 'pending' })];
-    });
-    const row = todo(
-      {
-        pack: 'coding',
-        kind: 'pr_merged',
-        params: { urls: ['https://github.com/lsm/neo-ios/pull/102'] },
-      },
-      'Opened https://github.com/lsm/neo-ios/pull/103'
-    );
-    expect(await pack.check(row)).toEqual({ done: false, evidence: null });
-    expect(reads).toEqual([
-      ['https://github.com/lsm/neo-ios/pull/102', 'https://github.com/lsm/neo-ios/pull/103'],
-    ]);
-    expect(pack.statusLine(row)?.status).toBe('#102 merged; #103 open, waiting on CI');
-    expect(repo.urls(row.id)).toHaveLength(2);
-  });
-
-  test('a turn that names its PR only before its last message still claims it, done once merged', async () => {
-    const said = (text: string) =>
-      JSON.stringify({
-        type: 'response_item',
-        payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] },
-      });
-    const report = codexTurnState([
-      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started' } }),
-      said(`Opened ${pr(104, 'OPEN').url}; waiting on CI.`),
-      said('CI is green and the review approved it.'),
-      JSON.stringify({
-        type: 'event_msg',
-        payload: { type: 'task_complete', last_agent_message: 'Merged. All done.' },
-      }),
-    ]).reply;
-    let state: NeoWorkPr['state'] = 'OPEN';
-    const { pack, todo } = setup(async () => [pr(104, state)]);
-    const row = todo({ pack: 'coding', kind: 'pr_merged', params: {} }, report);
-    expect(await pack.check(row)).toEqual({ done: false, evidence: null });
-    state = 'MERGED';
-    expect(await pack.check(row)).toEqual({ done: true, evidence: '#104 merged' });
-  });
-
-  test('reads and records the PRs of a todo without a check, but gives no verdict', async () => {
-    const { pack, repo, todo } = setup(async () => [pr(5, 'OPEN', { review: 'approved' })]);
-    const row = todo(null, 'Opened https://github.com/lsm/neo-ios/pull/5');
-    expect(await pack.check(row)).toBeNull();
-    expect(repo.prs(row.id).map((item) => item.url)).toEqual([pr(5, 'OPEN').url]);
-    const continued = { ...row, report: null };
-    await pack.openedPrs!(continued, []);
-    expect(await pack.check(continued)).toBeNull();
-    expect(repo.urls(row.id)).toEqual(['https://github.com/lsm/neo-ios/pull/5']);
-  });
-
-  test('never counts a PR the session merged before the todo started', async () => {
-    const { pack, todo, db } = setup(async () => [pr(7381, 'MERGED', { mergedAt: 50 })]);
-    const row = {
-      ...todo({ pack: 'coding', kind: 'pr_merged', params: {} }),
-      state: 'doing' as const,
-      startedAt: 100,
-    };
-    await pack.openedPrs!(row, [pr(7381, 'MERGED').url]);
-    expect(await pack.check(row)).toEqual({ done: false, evidence: null });
-    expect(pack.statusLine(row)).toBeNull();
-    db.close();
-  });
-
-  test('a PR belongs only to the todo whose dispatch on that session it answers', async () => {
-    const opened = [
-      pr(7409, 'CLOSED', { createdAt: 50 }),
-      pr(7426, 'OPEN', { createdAt: 250 }),
-      pr(7427, 'MERGED', { createdAt: 120, mergedAt: 300 }),
-      pr(7430, 'OPEN', { createdAt: 130 }),
-    ];
-    const { db, pack, todo } = setup(async (urls) =>
-      opened.filter((item) => urls.includes(item.url))
-    );
-    const dispatch = (id: string, at: number, session: string) => {
-      db.prepare('UPDATE neo_todos SET state = ?, started_at = ? WHERE id = ?').run(
-        'doing',
-        at,
-        id
-      );
-      db.prepare('INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES (?, ?, ?)').run(
-        id,
-        '{}',
-        JSON.stringify({ adapter: 'claude-desktop', id: session })
-      );
-    };
-    const check = { pack: 'coding', kind: 'pr_merged', params: {} };
-    const gpt = { ...todo(check), state: 'doing' as const, startedAt: 100 };
-    const ids = { ...todo(check), state: 'doing' as const, startedAt: 200 };
-    const elsewhere = todo(check);
-    dispatch(gpt.id, 100, 'fullstack-1');
-    dispatch(ids.id, 200, 'fullstack-1');
-    dispatch(elsewhere.id, 150, 'fullstack-2');
-    for (const row of [gpt, ids])
-      await pack.openedPrs!(
-        row,
-        opened.map((item) => item.url)
-      );
-    await pack.check(gpt);
-    await pack.check(ids);
-    expect(pack.statusLine(gpt)?.status).toBe('#7427 merged');
-    expect(pack.statusLine(ids)?.status).toBe('#7426 open, waiting on review');
-
-    const reported = { ...ids, report: `Done: ${opened[3].url}` };
-    await pack.check(reported);
-    await pack.check(gpt);
-    expect(pack.statusLine(reported)?.status).toBe('#7430 open, waiting on review');
-    expect(pack.statusLine(gpt)?.status).toBe('#7427 merged');
-    db.close();
-  });
-
   test('leaves todos of other packs to the core and holds a coding todo whose PRs are unread', async () => {
     const { pack, todo } = setup(async () => null);
     expect(await pack.check(todo(null))).toBeNull();
@@ -215,32 +84,6 @@ describe('coding todo pack', () => {
         )
       )
     ).toEqual({ done: false, evidence: null });
-  });
-});
-
-describe('coding todo claims', () => {
-  test('canonical claims, re-derived reports, and not done from a partial read', async () => {
-    let read: NeoWorkPr[] = [pr(102, 'MERGED')];
-    const { pack, repo, todo } = setup(async () => read);
-    const row = todo(
-      {
-        pack: 'coding',
-        kind: 'pr_merged',
-        params: { urls: ['http://GitHub.com/lsm/neo-ios/pull/102/files?x=1'] },
-      },
-      'Opened https://github.com/lsm/neo-ios/pull/103'
-    );
-    expect(await pack.check(row)).toEqual({ done: false, evidence: null });
-    expect(repo.urls(row.id)).toEqual([
-      'https://github.com/lsm/neo-ios/pull/102',
-      'https://github.com/lsm/neo-ios/pull/103',
-    ]);
-    read = [pr(102, 'MERGED')];
-    expect(await pack.check({ ...row, report: 'Superseded; only #102 now' })).toEqual({
-      done: true,
-      evidence: '#102 merged',
-    });
-    expect(repo.urls(row.id)).toEqual(['https://github.com/lsm/neo-ios/pull/102']);
   });
 });
 
@@ -395,58 +238,6 @@ describe('codingTodoStatusLine', () => {
   });
 });
 
-describe('codingTodoOwnPrs', () => {
-  const row = (todoId: string, number: number, claim: CodingPrClaim, claimedAt = 1) => ({
-    todoId,
-    url: pr(number, 'OPEN').url,
-    claim,
-    claimedAt,
-  });
-  test('the report names the PRs, else the first PR opened in the dispatch window', () => {
-    const prs = [
-      pr(1, 'MERGED', { mergedAt: 50 }),
-      pr(2, 'MERGED', { mergedAt: 50 }),
-      pr(3, 'MERGED', { mergedAt: 150 }),
-      pr(4, 'OPEN', { createdAt: 120 }),
-      pr(5, 'OPEN', { createdAt: 110 }),
-      pr(6, 'OPEN', { createdAt: 90 }),
-    ];
-    const todo = { id: 'a', startedAt: 100 };
-    const window = { start: 100, end: 200 };
-    expect(
-      codingTodoOwnPrs(
-        todo,
-        [row('a', 1, 'named'), row('a', 2, 'reported'), row('a', 3, 'reported')],
-        prs,
-        window
-      ).map((item) => item.url)
-    ).toEqual([prs[0].url, prs[2].url]);
-    expect(
-      codingTodoOwnPrs(
-        todo,
-        [row('a', 4, 'branch'), row('a', 5, 'branch'), row('a', 6, 'branch')],
-        prs,
-        window
-      ).map((item) => item.url)
-    ).toEqual([prs[4].url]);
-    expect(codingTodoOwnPrs(todo, [row('a', 4, 'branch')], prs, { start: 100, end: 115 })).toEqual(
-      []
-    );
-  });
-
-  test('never counts one PR for two todos', () => {
-    const prs = [pr(4, 'OPEN', { createdAt: 120 })];
-    const window = { start: 100, end: null };
-    const own = (claims: ReturnType<typeof row>[], id: string) =>
-      codingTodoOwnPrs({ id, startedAt: 100 }, claims, prs, window).length;
-    expect(own([row('a', 4, 'branch'), row('b', 4, 'reported')], 'a')).toBe(0);
-    expect(own([row('a', 4, 'reported', 2), row('b', 4, 'reported', 1)], 'a')).toBe(0);
-    expect(own([row('a', 4, 'reported', 2), row('b', 4, 'reported', 1)], 'b')).toBe(1);
-    expect(own([row('a', 4, 'reported'), row('b', 4, 'named')], 'a')).toBe(0);
-    expect(own([row('a', 4, 'branch'), row('b', 4, 'branch')], 'a')).toBe(1);
-  });
-});
-
 describe('CodingTodoPrRepository.holder', () => {
   test('a PR url follows the configured GitHub host', () => {
     expect(codingPrUrl('github.example.test', { repo: 'lsm/hyperneo', number: 9 })).toBe(
@@ -478,22 +269,6 @@ describe('CodingTodoPrRepository.holder', () => {
   });
 });
 
-describe('planCodingTodoClaims', () => {
-  test('claims branch PRs only when they were opened after the todo started', () => {
-    expect(
-      planCodingTodoClaims({ check: null, startedAt: 100 }, null, [
-        pr(1, 'OPEN', { createdAt: 50 }),
-        pr(2, 'OPEN', { createdAt: 150 }),
-      ])
-    ).toEqual([{ url: 'https://github.com/lsm/neo-ios/pull/2', claim: 'branch' }]);
-    expect(
-      planCodingTodoClaims({ check: null, startedAt: null }, null, [
-        pr(2, 'OPEN', { createdAt: 1 }),
-      ])
-    ).toEqual([]);
-  });
-});
-
 describe('coding todo pack waiting', async () => {
   test('a todo with an open PR of its own is waiting on that PR, not idle', async () => {
     const { db, pack, repo, todo } = setup(async () => []);
@@ -502,29 +277,6 @@ describe('coding todo pack waiting', async () => {
     repo.record(row.id, [pr(1, 'OPEN')], 2);
     expect(await pack.waiting!(row)).toBe(true);
     repo.record(row.id, [pr(1, 'MERGED')], 3);
-    expect(await pack.waiting!(row)).toBe(false);
-    db.close();
-  });
-  test('a todo whose reported PRs merged still waits on a later PR its branch opened, even when a retry claims it too', async () => {
-    let later: NeoWorkPr['state'] = 'OPEN';
-    const { db, pack, todo, todos } = setup(async () => [
-      pr(1, 'MERGED', { createdAt: 10, mergedAt: 20 }),
-      pr(2, 'MERGED', { createdAt: 30, mergedAt: 40 }),
-      pr(3, later, { createdAt: 50 }),
-    ]);
-    const started = todos.updateTodo(todo(null), { startedAt: 5 }, 3);
-    const row = todos.updateTodo(
-      started,
-      { report: `Merged ${pr(1, 'MERGED').url} and ${pr(2, 'MERGED').url}.` },
-      4
-    );
-    await pack.openedPrs!(row, [pr(3, 'OPEN').url]);
-    await pack.openedPrs!(todo(null), [pr(3, 'OPEN').url]);
-    await pack.check(row);
-    expect(await pack.waiting!(row)).toBe(true);
-    expect(pack.statusLine(row)?.status).toContain('#3 open');
-    later = 'MERGED';
-    await pack.check(row);
     expect(await pack.waiting!(row)).toBe(false);
     db.close();
   });

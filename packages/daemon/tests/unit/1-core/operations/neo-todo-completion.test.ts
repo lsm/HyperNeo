@@ -262,43 +262,33 @@ describe('coding todo PR ownership through add and edit', () => {
     instruction: 'Land the fix',
     named: null,
   });
-  test.each(['named', 'ledger'])(
-    'records a duplicate of a live %s PR claim on the same ask',
-    async (claim) => {
-      const { db, store, call, coding } = setup();
-      try {
-        const original = store.addTodo(
-          'original',
-          'ask',
-          draft(claim === 'named' ? [url(2)] : []),
-          1
-        );
-        if (claim === 'ledger') await coding.todos.openedPrs!(original, [url(2)]);
-        const result = await call('neo.todo.add', {
-          askId: 'ask',
-          title: 'Pin PR link',
-          doneWhen: 'Merged',
-          check: {
-            pack: 'coding',
-            kind: 'pr_merged',
-            params: { urls: [url(2).replace('lsm/HyperNeo', 'LSM/HYPERNEO') + '/'] },
-          },
-        });
-        expect(result).toMatchObject({
-          ok: true,
-          records: [expect.stringMatching(/pr_already_tracked:.*todo original "Original fix"/)],
-        });
-        expect(store.listTodos('ask')).toHaveLength(2);
-      } finally {
-        db.close();
-      }
+  test.each(['named'])('records a duplicate of a live %s PR on the same ask', async () => {
+    const { db, store, call } = setup();
+    try {
+      store.addTodo('original', 'ask', draft([url(2)]), 1);
+      const result = await call('neo.todo.add', {
+        askId: 'ask',
+        title: 'Pin PR link',
+        doneWhen: 'Merged',
+        check: {
+          pack: 'coding',
+          kind: 'pr_merged',
+          params: { urls: [url(2).replace('lsm/HyperNeo', 'LSM/HYPERNEO') + '/'] },
+        },
+      });
+      expect(result).toMatchObject({
+        ok: true,
+        records: [expect.stringMatching(/pr_already_tracked:.*todo original "Original fix"/)],
+      });
+      expect(store.listTodos('ask')).toHaveLength(2);
+    } finally {
+      db.close();
     }
-  );
+  });
   test('editing pins URLs on the original check and the pack closes it only when all merge', async () => {
-    const { db, store, call, runner, states, coding } = setup();
+    const { db, store, call, runner, states } = setup();
     try {
       const original = store.addTodo('original', 'ask', draft(), 1);
-      await coding.todos.openedPrs!(original, [url(2)]);
       expect(
         await call('neo.todo.edit', { todoId: original.id, addUrls: [url(1), url(2), url(2)] })
       ).toMatchObject({
@@ -317,38 +307,29 @@ describe('coding todo PR ownership through add and edit', () => {
       db.close();
     }
   });
-  test.each(['named', 'ledger'])(
-    'edit records URLs claimed by another live todo through %s',
-    async (claim) => {
-      const { db, store, call, coding } = setup();
-      try {
-        const owner = store.addTodo(
-          'owner',
-          'ask',
-          { ...draft(claim === 'named' ? [url(2)] : []), title: 'Existing owner' },
-          1
-        );
-        if (claim === 'ledger') await coding.todos.openedPrs!(owner, [url(2)]);
-        const target = store.addTodo('target', 'ask', draft([url(1)]), 2);
-        expect(await call('neo.todo.edit', { todoId: target.id, addUrls: [url(2)] })).toMatchObject(
-          { ok: true, records: [expect.stringContaining('owner')] }
-        );
-        expect(store.getTodo(target.id)?.check?.params.urls).toEqual([
-          url(1).toLowerCase(),
-          url(2).toLowerCase(),
-        ]);
-      } finally {
-        db.close();
-      }
+  test.each(['named'])('edit records URLs another live todo holds through %s', async () => {
+    const { db, store, call } = setup();
+    try {
+      store.addTodo('owner', 'ask', { ...draft([url(2)]), title: 'Existing owner' }, 1);
+      const target = store.addTodo('target', 'ask', draft([url(1)]), 2);
+      expect(await call('neo.todo.edit', { todoId: target.id, addUrls: [url(2)] })).toMatchObject({
+        ok: true,
+        records: [expect.stringContaining('owner')],
+      });
+      expect(store.getTodo(target.id)?.check?.params.urls).toEqual([
+        url(1).toLowerCase(),
+        url(2).toLowerCase(),
+      ]);
+    } finally {
+      db.close();
     }
-  );
+  });
   test.each(['done', 'closed_unverified', 'failed', 'removed'] as const)(
     'a %s todo does not reserve the PR',
     async (state) => {
-      const { db, store, call, coding } = setup();
+      const { db, store, call } = setup();
       try {
         const old = store.addTodo('old', 'ask', draft([url(2)]), 1);
-        await coding.todos.openedPrs!(old, [url(2)]);
         store.updateTodo(old, { state }, 2);
         expect(
           await call('neo.todo.add', { askId: 'ask', ...draft([url(2)]), instruction: null })

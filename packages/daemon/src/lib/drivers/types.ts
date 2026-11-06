@@ -361,7 +361,11 @@ export interface WorkAdapter {
     request: StartRequest,
     context: WorkCallContext
   ) => Promise<Result<WorkStarted>>;
-  readonly turns?: (ref: WorkRef, cursor?: string) => Promise<Result<{ turns: WorkTurnFact[] }>>;
+  readonly turns?: (
+    ref: WorkRef,
+    cursor?: string,
+    limit?: number
+  ) => Promise<Result<{ turns: WorkTurnFact[] }>>;
   readonly send?: (
     ref: WorkRef,
     message: string,

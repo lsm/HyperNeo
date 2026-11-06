@@ -26,6 +26,7 @@ import { neoSessionKind } from './work-driver.ts';
 import { type NeoDoneTodosPage, neoDonePageMerge } from './neo-asks.ts';
 import { messageTime } from './NeoMessage.tsx';
 import { t } from '../lib/i18n/index.ts';
+import { copyToClipboard } from '../lib/utils.ts';
 import {
   neoQuestionText,
   neoTodoDetail,
@@ -740,30 +741,35 @@ export function NeoAskTodos({
       <div class="flex min-h-7 items-center gap-2">
         <span class={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${tone}`}>{t(label)}</span>
         <span class="flex-1" />
-        {(onReplyAsk || (onSettle && ask.status === 'open')) && (
-          <Dropdown
-            position="right"
-            items={[
-              ...(onReplyAsk ? [{ label: t('chat.reply'), onClick: onReplyAsk, disabled }] : []),
-              ...(onSettle && ask.status === 'open'
-                ? [
-                    { label: t('ask.markDone'), onClick: () => void settle('done'), disabled },
-                    {
-                      label: t('ask.drop'),
-                      onClick: () => void settle('dropped'),
-                      danger: true,
-                      disabled,
-                    },
-                  ]
-                : []),
-            ]}
-            trigger={
-              <IconButton title={t('ask.actions')} size="sm" class="text-fg-faint">
-                <NeoMoreIcon />
-              </IconButton>
-            }
-          />
-        )}
+        <Dropdown
+          position="right"
+          items={[
+            {
+              label: t('ask.copyLink'),
+              onClick: () => {
+                const title = ask.title.replace(/[\r\n]+/g, ' ').replace(/[\\`*_[\]<>]/g, '\\$&');
+                void copyToClipboard(`[${title}](${location.origin}/ask/${ask.id}.md)`);
+              },
+            },
+            ...(onReplyAsk ? [{ label: t('chat.reply'), onClick: onReplyAsk, disabled }] : []),
+            ...(onSettle && ask.status === 'open'
+              ? [
+                  { label: t('ask.markDone'), onClick: () => void settle('done'), disabled },
+                  {
+                    label: t('ask.drop'),
+                    onClick: () => void settle('dropped'),
+                    danger: true,
+                    disabled,
+                  },
+                ]
+              : []),
+          ]}
+          trigger={
+            <IconButton title={t('ask.actions')} size="sm" class="text-fg-faint">
+              <NeoMoreIcon />
+            </IconButton>
+          }
+        />
       </div>
       <h3 class="mt-2 line-clamp-3 break-words text-base font-semibold leading-snug">
         {ask.title}

@@ -29,15 +29,17 @@ caseAndSanitizedReceipt, lostReadReceiptHasNoFallbackOrMutation,
 nativeReadLaneObserved, mainValidationReads zero and resourcesStopped in github-watch-validation-reader.json.
 Require wrapper exit zero and inspect its log for closed-database errors.
 
-The successful watch still executes its later config-plan lookup and mutation
-on main. The helper counts that remaining lookup explicitly for the next rung.
-This slice proves only pre-mutation validation ownership. Timer and webhook
-policies retain their existing tests. The full daemon startup and transitive
-framework/OS closure are outside this local ownership claim.
+The config-writer rung also moves the serialized config-plan lookup and mutation
+off main. This helper now requires zero remaining main key lookups. It continues
+to prove validation admission, native reader ownership and receipt failure.
+The polling-intent decision and snapshot reads use the next writer command.
+Its data is returned to the existing config-store effect.
+This journey continues to exercise the validation reader.
 
-Run github-watch-validation-measure.cjs. Its 182-line owned graph includes the
-entire 92-line watch callback, admission gate, full command/lookup/mapper modules
-and three import/registration lines. Excluded lines are zero. It restores the
-single bridge edit and verifies all other extension bytes against the fresh base.
-Prior timer/capability pins deliberately refresh only this bridge's hash. Keep
-native JSON and wrapper status outside the worktree before removing owned data.
+Run github-watch-validation-measure.cjs. It includes the entire current callback,
+admission gate and complete reader/lookup/mapper modules, with zero exclusions.
+It compares extension bytes outside the separately reviewed config callback with
+a full-source hash from the config slice's fresh base, without invoking Git.
+The regression uses an explicitly refusing Git stub, so shallow CI checkouts
+need no historical objects. The command prints the current line count.
+Keep native JSON and wrapper status outside the worktree before cleanup.

@@ -113,28 +113,18 @@ for (const factory of factories)
       );
     });
 
-    test('a newly committed recorded claim is checked on every admission', () => {
-      const peer = todo('owner');
-      const target = todo('target', [url(2)]);
-      expect(policy.record(target, [peer, target])).toBeNull();
-      prs.claim(peer.id, [{ url: url(2), claim: 'branch' }], 2);
-      expect(policy.record(target, [peer, target])).toContain('already tracked by todo owner');
-    });
-
     test.each(['done', 'closed_unverified', 'failed', 'removed'] as const)(
       'a %s peer releases named and recorded ownership',
       (state) => {
         const peer = todo('owner', [url(2)]);
-        prs.claim(peer.id, [{ url: url(2), claim: 'branch' }], 2);
         const settled = todos.updateTodo(peer, { state }, 3);
         expect(settled.state).toBe(state);
         expect(policy.record(todo('target', [url(2)]), [settled])).toBeNull();
       }
     );
 
-    test('editing the current owner never conflicts with its own recorded claim', () => {
+    test('editing the current owner never conflicts with its own named PR', () => {
       const current = todo('owner', [url(2)]);
-      prs.claim(current.id, [{ url: url(2), claim: 'named' }], 2);
       expect(policy.record(current, [current])).toBeNull();
     });
 
@@ -142,9 +132,12 @@ for (const factory of factories)
       const current = todo('owner');
       const peer: NeoTodo = {
         ...current,
-        check: { pack: 'coding', kind: 'issue_closed', params: { issue: 'example/repo#9' } },
+        check: {
+          pack: 'coding',
+          kind: 'issue_closed',
+          params: { urls: [url(2)], issue: 'example/repo#9' },
+        },
       };
-      prs.claim(peer.id, [{ url: url(2), claim: 'branch' }], 2);
       expect(policy.record(todo('target', [url(2)]), [peer])).toBe(
         `pr_already_tracked: ${url(2)} is already tracked by todo owner "Title owner". Continue that todo instead.`
       );

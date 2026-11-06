@@ -3,6 +3,7 @@ import type { NeoTodoPatch } from '../../storage/repositories/neo-ask-todo-repos
 import { neoStartQuestionTitle } from './start-question.ts';
 import {
   NEO_TODO_NOT_READY,
+  NEO_TODO_PREREQUISITE_UNFINISHED,
   neoTodoCancelledDependencies,
   neoTodoDependenciesAfterApproval,
   neoTodoFinished,
@@ -15,13 +16,23 @@ export const NEO_TODO_NOT_APPROVED =
 const NEO_TODO_QUESTION_OPEN =
   'question_open: an open question holds this step; the queue starts it after the answer.';
 
+const neoTodoPrerequisitesOpen = (todo: NeoTodo, family: readonly NeoTodo[]) =>
+  todo.startedAt === null
+    ? !neoTodoReady(family, todo.id)
+    : neoTodoDependenciesAfterApproval(family, todo.id).some(
+        (id) => !neoTodoFinished(family.find((other) => other.id === id))
+      );
+
+export const neoTodoPrerequisiteRefusal = (todo: NeoTodo, family: readonly NeoTodo[]) =>
+  neoTodoPrerequisitesOpen(todo, family) ? NEO_TODO_PREREQUISITE_UNFINISHED : null;
+
 export function neoTodoWaitReason(
   todo: NeoTodo,
   family: readonly NeoTodo[],
   questions: readonly NeoQuestion[]
 ): string | null {
   if (todo.blockedBy === 'held') return 'todo_held: the human is holding this todo.';
-  if (!neoTodoReady(family, todo.id)) return NEO_TODO_NOT_READY;
+  if (neoTodoPrerequisitesOpen(todo, family)) return NEO_TODO_NOT_READY;
   return questions.some(
     (question) =>
       question.state === 'open' &&

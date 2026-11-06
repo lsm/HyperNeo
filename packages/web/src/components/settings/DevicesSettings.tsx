@@ -9,7 +9,7 @@ import { FORM_CONTROL_CLASS } from '../ui/FormField.tsx';
 import { PairPhoneFlow } from './PairPhoneFlow.tsx';
 import { SettingsGroup, SettingsSection } from './SettingsSection.tsx';
 
-type Kind = 'human' | 'relay' | 'daemon';
+type Kind = 'human' | 'relay' | 'daemon' | 'agent';
 type Refused = { ok: false; reason: string };
 interface Device {
   id: string;
@@ -69,6 +69,7 @@ const REFUSAL_LABEL = {
 } as const;
 
 const KIND_LABEL: Record<Kind, string> = {
+  agent: 'Agent reader',
   human: 'Phone or browser',
   relay: 'Push relay',
   daemon: 'Daemon',

@@ -15,6 +15,19 @@ import { createTables, runMigrations } from '../../../../src/storage/schema/inde
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 describe('local owner credential', () => {
+  test('local agent enrollment preserves first-human pairing bootstrap', async () => {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    const gateway = new DbGateway(':memory:', db);
+    try {
+      await gateway.run(enrollLocalDevice, { credential: 'h'.repeat(43), now: 1 });
+      await gateway.run(enrollLocalDevice, { credential: 'a'.repeat(43), now: 1, kind: 'agent' });
+      expect(new DevicePairingRepository(db).countDevices()).toEqual({ all: 0, humans: 0 });
+    } finally {
+      db.close();
+    }
+  });
   let dir: string;
   let file: string;
   const credential = randomBytes(32).toString('base64url');

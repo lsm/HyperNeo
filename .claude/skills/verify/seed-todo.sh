@@ -16,6 +16,6 @@ sqlite3 "$DB" "INSERT INTO neo_asks (id, session_id, title, request, status, rep
   VALUES ('ask-verify', '$ROOT', 'Fix the demo loader', 'Fix the demo loader', 'open', $REPO_SQL, $NOW_MS, $NOW_MS);
 INSERT INTO neo_todos (id, ask_id, position, title, done_when, check_json, state, report, repo, created_at, updated_at, started_at)
   VALUES ('todo-verify', 'ask-verify', 1, 'Fix the loader', 'PR merged',
-    '{\"pack\":\"coding\",\"kind\":\"pr_merged\",\"params\":{}}', 'doing', 'Opened $PR for the loader fix.', $REPO_SQL,
+    '{\"pack\":\"coding\",\"kind\":\"pr_merged\",\"params\":{\"urls\":[\"$PR\"]}}', 'doing', 'Opened $PR for the loader fix.', $REPO_SQL,
     $NOW_MS, $NOW_MS, $NOW_MS);"
 echo "seeded todo-verify for $ROOT; its PR reads as merged"

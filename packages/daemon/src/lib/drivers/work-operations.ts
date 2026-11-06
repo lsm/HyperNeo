@@ -180,6 +180,7 @@ const isTurnCursor = (cursor: string) => {
 const WorkTurnsInputSchema = z.object({
   ref: WorkRefSchema,
   cursor: z.string().min(1).max(200).refine(isTurnCursor).optional(),
+  limit: z.number().int().min(1).max(500).optional(),
 });
 const WorkTurnsResultSchema = workResultSchema(z.object({ turns: z.array(WorkTurnFactSchema) }));
 const WithdrawWorkInputSchema = z.object({
@@ -939,7 +940,7 @@ const runWorkTurns = (superpipe({})('work-turns') as PipelineAPI)
   .pipe(
     async (route: Route<'turns'>, input: TurnsInput, deps: WorkVerbDeps): Promise<TurnsResult> =>
       'local' in route
-        ? route.local(input.ref, input.cursor)
+        ? route.local(input.ref, input.cursor, input.limit)
         : forwardWork(
             route.daemon,
             'work.turns',

@@ -3,7 +3,11 @@ import { withWorkerProvenance } from '../drivers/worker-provenance.ts';
 import { createWorkQueue } from '../work-queue/sweep.ts';
 import { neoTodoAwaitsHuman } from './todo-state.ts';
 import { workerBlockerReminderDue } from './worker-blocker.ts';
-import { neoCancelledPrerequisiteKey, neoCancelledPrerequisiteNote } from './todo-start-gate.ts';
+import {
+  neoCancelledPrerequisiteKey,
+  neoCancelledPrerequisiteNote,
+  neoTodoPrerequisiteRefusal,
+} from './todo-start-gate.ts';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { neoTodoRunnerWrites } from '../../storage/repositories/neo-todo-runner-state.ts';
 import { neoSyncedWorkers, neoWorkerStatusDue } from './worker-status-gate.ts';
@@ -34,7 +38,6 @@ import {
   readDriverInputs,
   readDriverFollowUp,
   readDriverLive,
-  readDriverOpenedPrs,
   readDriverOutcome,
   readDriverSendBaseline,
   readDriverSent,
@@ -137,13 +140,16 @@ export function requireNeoTodoContinuable(read: {
   todo: NeoTodo | null;
   ask: NeoAsk | null;
   ref: WorkRef | null;
+  family: readonly NeoTodo[];
 }): Gate<{ todo: NeoTodo; ask: NeoAsk; ref: WorkRef }> {
-  const { todo, ask, ref } = read;
+  const { todo, ask, ref, family } = read;
   if (!todo || !ask) return fail('not_found: no such todo.');
   if (ask.status !== 'open')
     return record(todo, `ask_settled: this ask is ${ask.status}; no work was dispatched.`);
   if (todo.state === 'todo' || todo.state === 'removed' || !ref)
     return record(todo, `not_started: this todo is ${todo.state} and has no session to continue.`);
+  const waiting = neoTodoPrerequisiteRefusal(todo, family);
+  if (waiting) return fail(waiting);
   return { value: { todo, ask, ref } };
 }
 
@@ -779,9 +785,6 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
 
   const observe = async (id: string, outcome: OperationOutcome, ref: WorkRef) => {
     const todo = store.getTodo(id);
-    if (todo)
-      for (const pack of deps.packs())
-        await pack.todos?.openedPrs?.(todo, readDriverOpenedPrs(outcome));
     const turns = readDriverTurnEnds(outcome);
     if (!turns.length) return;
     const ask = todo && store.getAsk(todo.askId);
@@ -1372,6 +1375,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       ref: todo ? sessions.readRef(todo.id) : null,
       target: todo ? sessions.get(todo.id) : null,
       interrupted: todo ? sessions.readStartInterrupted(todo.id) : false,
+      family: todo ? store.listFamilyTodos(todo.askId) : [],
     };
   };
 

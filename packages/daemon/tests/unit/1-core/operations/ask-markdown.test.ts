@@ -119,7 +119,7 @@ describe('createAskMarkdownHandler', () => {
     const read = createAskMarkdownHandler(registry, authenticate);
     const response = await read(new Request(`http://localhost/ask/${id}.md`), null);
     expect(response?.status).toBe(401);
-    expect(await response?.text()).toBe('Device pairing required');
+    expect(await response?.text()).toContain('hyperneo read <link>');
     expect(response?.headers.get('cache-control')).toBe('no-store');
     expect(calls).toHaveLength(0);
   });

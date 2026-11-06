@@ -1,6 +1,6 @@
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { NeoTodoSessionRepository } from '../../../../storage/repositories/neo-todo-session-repository.ts';
-import { githubUrlKey, parsePrUrl } from '../../../github/parse-pr-url.ts';
+import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { CodingAssignmentsRepository } from './assignments.ts';
 import { CodingPrLedgerRepository } from './pr-ledger.ts';
 import { CodingTodoPrRepository } from './todo-prs.ts';
@@ -20,7 +20,7 @@ export function readCodingMergeLocal(db: Database, input: CodingMergeLocalReques
         "SELECT 1 FROM neo_todos t JOIN neo_asks a ON a.id=t.ask_id WHERE t.id=? AND t.state IN ('doing','blocked') AND a.status='open'"
       )
       .get(input.todoId),
-    linked: new CodingTodoPrRepository(db).urls(input.todoId).includes(githubUrlKey(input.url)),
+    linked: new CodingTodoPrRepository(db).linked(input.todoId, input.url),
   };
 }
 

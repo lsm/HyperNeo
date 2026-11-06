@@ -1,4 +1,3 @@
-import superpipe, { type PipelineAPI } from 'superpipe';
 import { codingApprovalUrl } from './pr-approved.ts';
 import { CodingStageFactsRepository } from './stage-facts.ts';
 import { CodingDeliveryFactsRepository } from './delivery-facts.ts';
@@ -17,24 +16,7 @@ import type { CodingPrState } from './pr-ledger.ts';
 import { neoStatusLine, type NeoStatusLine } from '../../status-codes.ts';
 import { createCodingPackTables } from './schema/coding-tables.ts';
 import { neoGitRepo } from '../../todo-repo.ts';
-import { extractNeoWorkPrUrls, type NeoWorkPrReader } from './work-prs.ts';
-import { planCodingIssuePrClaims } from './issue-pr-claims.ts';
-import { NeoAskTodoRepository } from '../../../../storage/repositories/neo-ask-todo-repository.ts';
-
-export type CodingPrClaim = 'named' | 'reported' | 'branch';
-export type CodingPrClaimRow = {
-  todoId: string;
-  url: string;
-  claim: CodingPrClaim;
-  claimedAt: number;
-};
-export type CodingTodoWindow = { start: number | null; end: number | null };
-
-export const CODING_TODO_WINDOW_QUERY = `SELECT t.started_at AS start, MIN(next.started_at) AS end
-  FROM neo_todos t LEFT JOIN neo_todo_sessions own ON own.todo_id = t.id
-  LEFT JOIN neo_todo_sessions other ON other.ref = own.ref AND other.todo_id != t.id
-  LEFT JOIN neo_todos next ON next.id = other.todo_id AND next.started_at > t.started_at
-  WHERE t.id = ?`;
+import type { NeoWorkPrReader } from './work-prs.ts';
 
 export class CodingTodoPrRepository {
   readonly stageFacts: CodingStageFactsRepository;
@@ -47,94 +29,16 @@ export class CodingTodoPrRepository {
     this.turnPrs = new CodingTurnPrRepository(db);
   }
 
-  claimClosingIssues(
-    rows: readonly { repo: string; number: number; body?: string }[],
-    now: number
-  ): void {
-    const store = new NeoAskTodoRepository(this.db);
-    const todos = store.listTodosForAsks(store.listOpenAsks().map((ask) => ask.id));
-    for (const row of rows)
-      for (const claim of planCodingIssuePrClaims(row.repo, row.number, row.body ?? '', todos))
-        this.claim(claim.todoId, [{ url: claim.url, claim: 'branch' }], now, 'additive');
-  }
-
-  stages(todoId: string) {
-    return this.urls(todoId).flatMap((url) => this.stageFacts.read(url));
-  }
-
-  claim(
-    todoId: string,
-    claims: readonly { url: string; claim: CodingPrClaim }[],
-    now: number,
-    mode: 'replace-reported' | 'additive' = 'replace-reported'
-  ) {
-    const keyed = claims.flatMap(({ url, claim }) => {
-      const key = codingPrKey(url);
-      return key ? [{ key, claim }] : [];
-    });
-    if (mode === 'replace-reported')
-      this.db
-        .prepare(
-          `DELETE FROM pack_coding_pr_claims WHERE todo_id = ? AND claim = 'reported'
-           AND url NOT IN (SELECT value FROM json_each(?))`
-        )
-        .run(
-          todoId,
-          JSON.stringify(keyed.filter((item) => item.claim === 'reported').map((item) => item.key))
-        );
-    const insert = this.db.prepare(
-      `INSERT INTO pack_coding_pr_claims (todo_id, url, claim, claimed_at) VALUES (?, ?, ?, ?)
-       ON CONFLICT(todo_id, url) DO UPDATE SET claim = excluded.claim, claimed_at = excluded.claimed_at
-        WHERE (claim = 'branch' AND excluded.claim != 'branch')
-           OR (claim = 'reported' AND excluded.claim = 'named')`
-    );
-    for (const { key, claim } of keyed) insert.run(todoId, key, claim, now);
-  }
-
-  write<K extends 'claim' | 'record'>(
-    method: K,
-    ...args: Parameters<CodingTodoPrRepository[K]>
-  ): Promise<void> {
+  write(method: 'record', ...args: Parameters<CodingTodoPrRepository['record']>): Promise<void> {
     return gatewayFor(this.db).run(codingTodoPrWrites, { method, args }) as Promise<void>;
   }
 
   urls(todoId: string): string[] {
-    return (
-      this.db
-        .prepare('SELECT url FROM pack_coding_pr_claims WHERE todo_id = ? ORDER BY claimed_at, url')
-        .all(todoId) as { url: string }[]
-    ).map((row) => row.url);
+    return this.turnPrs.ownedPrs(todoId);
   }
 
-  claimsOn(urls: readonly string[]): CodingPrClaimRow[] {
-    return this.db
-      .prepare(
-        `SELECT todo_id AS todoId, url, claim, claimed_at AS claimedAt FROM pack_coding_pr_claims
-          WHERE url IN (SELECT value FROM json_each(?))
-            AND todo_id NOT IN (SELECT id FROM neo_todos WHERE state = 'removed')`
-      )
-      .all(JSON.stringify(urls)) as CodingPrClaimRow[];
-  }
-
-  window(todoId: string): CodingTodoWindow {
-    const row = this.db.prepare(CODING_TODO_WINDOW_QUERY).get(todoId) as CodingTodoWindow | null;
-    return row ?? { start: null, end: null };
-  }
-
-  readWindow(todoId: string): Promise<CodingTodoWindow> {
-    return gatewayFor(this.db).call(codingTodoPrReads, 'window', todoId);
-  }
-
-  todosFor(urls: readonly string[]): string[] {
-    return (
-      this.db
-        .prepare(
-          'SELECT DISTINCT todo_id AS todoId FROM pack_coding_pr_claims WHERE url IN (SELECT value FROM json_each(?))'
-        )
-        .all(JSON.stringify(urls.flatMap((url) => codingPrKey(url) ?? []))) as {
-        todoId: string;
-      }[]
-    ).map((row) => row.todoId);
+  linked(todoId: string, url: string) {
+    return this.urls(todoId).includes(codingPrKey(url) ?? url);
   }
 
   prs(todoId: string): NeoWorkPr[] {
@@ -173,31 +77,6 @@ export class CodingTodoPrRepository {
     return gatewayFor(this.db).call(codingTodoPrReads, 'isWaiting', todoId);
   }
 
-  prsForTodos(ids: readonly string[]): Map<string, NeoWorkPr[]> {
-    const rows = this.db
-      .prepare(
-        `SELECT todo_id AS todoId, prs_json AS prs FROM pack_coding_todo_prs
-          WHERE todo_id IN (SELECT value FROM json_each(?))`
-      )
-      .all(JSON.stringify(ids)) as { todoId: string; prs: string }[];
-    return new Map(rows.map((row) => [row.todoId, JSON.parse(row.prs) as NeoWorkPr[]]));
-  }
-
-  latest(url: string): { pr: NeoWorkPr; readAt: number } | null {
-    const key = codingPrKey(url);
-    const rows = this.db
-      .prepare(
-        `SELECT prs_json AS prs, read_at AS readAt FROM pack_coding_todo_prs WHERE todo_id IN
-           (SELECT todo_id FROM pack_coding_pr_claims WHERE url = ?) ORDER BY read_at DESC`
-      )
-      .all(key) as { prs: string; readAt: number }[];
-    for (const row of rows) {
-      const pr = (JSON.parse(row.prs) as NeoWorkPr[]).find((item) => codingPrKey(item.url) === key);
-      if (pr) return { pr, readAt: row.readAt };
-    }
-    return null;
-  }
-
   record(todoId: string, prs: readonly NeoWorkPr[], now: number): void {
     for (const pr of prs) if (pr.head) this.stageFacts.observeHead(pr.url, pr.head, now);
     this.db
@@ -207,107 +86,6 @@ export class CodingTodoPrRepository {
       )
       .run(todoId, JSON.stringify(prs), now);
   }
-}
-
-export function planCodingTodoClaims(
-  todo: Pick<NeoTodo, 'check' | 'startedAt'>,
-  report: string | null,
-  branchPrs: readonly NeoWorkPr[]
-): { url: string; claim: CodingPrClaim }[] {
-  const named = todo.check?.params.urls;
-  return [
-    ...(Array.isArray(named) ? named.filter((url) => typeof url === 'string') : []).map(
-      (url: string) => ({ url, claim: 'named' as const })
-    ),
-    ...extractNeoWorkPrUrls(report).map((url) => ({ url, claim: 'reported' as const })),
-    ...branchPrs
-      .filter((pr) => todo.startedAt !== null && (pr.createdAt ?? 0) >= todo.startedAt)
-      .map((pr) => ({ url: pr.url, claim: 'branch' as const })),
-  ];
-}
-
-const CLAIM_RANK: Record<CodingPrClaim, number> = { named: 0, reported: 1, branch: 2 };
-
-const outranks = (rival: CodingPrClaimRow, own: CodingPrClaimRow) =>
-  CLAIM_RANK[rival.claim] < CLAIM_RANK[own.claim] ||
-  (own.claim !== 'branch' &&
-    rival.claim === own.claim &&
-    (rival.claimedAt < own.claimedAt ||
-      (rival.claimedAt === own.claimedAt && rival.todoId < own.todoId)));
-
-const inWindow = (window: CodingTodoWindow, pr: NeoWorkPr) =>
-  window.start !== null &&
-  pr.createdAt !== undefined &&
-  pr.createdAt >= window.start &&
-  (window.end === null || pr.createdAt < window.end);
-
-export function codingTodoOwnPrs(
-  todo: Pick<NeoTodo, 'id' | 'startedAt'>,
-  claims: readonly CodingPrClaimRow[],
-  prs: readonly NeoWorkPr[],
-  window: CodingTodoWindow
-): NeoWorkPr[] {
-  const mine = claims.filter(
-    (row) =>
-      row.todoId === todo.id &&
-      !claims.some(
-        (rival) => rival.todoId !== todo.id && rival.url === row.url && outranks(rival, row)
-      )
-  );
-  const read = (row: CodingPrClaimRow) =>
-    prs.filter((pr) => codingPrKey(pr.url) === row.url).slice(0, 1);
-  const answered = mine
-    .filter((row) => row.claim !== 'branch')
-    .flatMap((row) =>
-      read(row).filter(
-        (pr) =>
-          row.claim === 'named' ||
-          todo.startedAt === null ||
-          pr.mergedAt === undefined ||
-          pr.mergedAt >= todo.startedAt
-      )
-    );
-  if (answered.length) return answered;
-  return mine
-    .filter((row) => row.claim === 'branch')
-    .flatMap(read)
-    .filter((pr) => inWindow(window, pr))
-    .sort(
-      (a, b) =>
-        Number(a.state === 'CLOSED') - Number(b.state === 'CLOSED') || createdAt(a) - createdAt(b)
-    )
-    .slice(0, 1);
-}
-
-export function codingTodoOpenBranchPrs(
-  todo: Pick<NeoTodo, 'id'>,
-  claims: readonly CodingPrClaimRow[],
-  prs: readonly NeoWorkPr[],
-  window: CodingTodoWindow,
-  own: readonly NeoWorkPr[]
-): NeoWorkPr[] {
-  const owned = new Set(own.map((pr) => codingPrKey(pr.url)));
-  const branch = new Set(
-    claims
-      .filter((row) => row.todoId === todo.id && row.claim === 'branch')
-      .filter(
-        (row) =>
-          !claims.some(
-            (rival) => rival.todoId !== todo.id && rival.url === row.url && outranks(rival, row)
-          )
-      )
-      .map((row) => row.url)
-  );
-  return prs.filter((pr) => {
-    const key = codingPrKey(pr.url);
-    return (
-      pr.state === 'OPEN' &&
-      key !== null &&
-      branch.has(key) &&
-      !owned.has(key) &&
-      inWindow(window, pr)
-    );
-  });
 }
 
 const prNumber = (pr: NeoWorkPr) => `#${pr.url.replace(/\/+$/, '').split('/').pop()}`;
@@ -504,47 +282,6 @@ type CodingTodoFacts = {
   approval?: NeoTodoCheckResult;
 };
 
-const readIssueFacts = (superpipe({})('coding.issue-facts') as PipelineAPI)
-  .input(['todo', 'readRefs', 'readPrs', 'repo', 'persist'])
-  .pipe(() => Date.now(), 'todo', 'observedAt')
-  .pipe(
-    async (todo: NeoTodo, read: NeoRefStateReader) => {
-      const ref = codingIssueRef(todo.check);
-      return { issue: ref ? (await read([ref]))[0] : undefined };
-    },
-    ['todo', 'readRefs'],
-    'facts'
-  )
-  .pipe(
-    async (facts: Pick<CodingTodoFacts, 'issue'>, read: NeoWorkPrReader) => ({
-      ...facts,
-      prs: facts.issue?.closingPrs?.length ? ((await read(facts.issue.closingPrs)) ?? []) : [],
-    }),
-    ['facts', 'readPrs'],
-    'facts'
-  )
-  .pipe(
-    async (
-      facts: Omit<CodingTodoFacts, 'observedAt'>,
-      repo: CodingTodoPrRepository,
-      todo: NeoTodo,
-      observedAt: number,
-      persist: boolean
-    ) => {
-      if (persist) await repo.write('record', todo.id, facts.prs, observedAt);
-      return { ...facts, observedAt };
-    },
-    ['facts', 'repo', 'todo', 'observedAt', 'persist'],
-    'facts'
-  )
-  .endAsync('facts') as (
-  todo: NeoTodo,
-  readRefs: NeoRefStateReader,
-  readPrs: NeoWorkPrReader,
-  repo: CodingTodoPrRepository,
-  persist: boolean
-) => Promise<CodingTodoFacts>;
-
 export function createCodingTodoPolicy(
   repo: Pick<CodingTodoPrRepository, 'urls'>
 ): Required<Pick<NeoTodoPack, 'doneWhen' | 'addUrls' | 'refuse' | 'record' | 'repository'>> {
@@ -603,35 +340,6 @@ export function createCodingTodoPolicy(
   };
 }
 
-function projectQuestionClaims(
-  todo: NeoTodo,
-  named: readonly Pick<CodingPrClaimRow, 'url' | 'claim'>[],
-  stored: readonly CodingPrClaimRow[],
-  at: number,
-  detached: boolean
-): CodingPrClaimRow[] {
-  const projected = new Map<string, CodingPrClaimRow>(
-    stored
-      .filter((row) => row.todoId === todo.id && row.claim !== 'reported')
-      .map((row) => [row.url, row])
-  );
-  for (const { url, claim } of named) {
-    const key = codingPrKey(url)!;
-    const prior =
-      projected.get(key) ?? stored.find((row) => row.todoId === todo.id && row.url === key);
-    projected.set(
-      key,
-      prior && CLAIM_RANK[prior.claim] <= CLAIM_RANK[claim]
-        ? prior
-        : { todoId: todo.id, url: key, claim, claimedAt: at }
-    );
-  }
-  return [
-    ...(detached ? [] : stored.filter((row) => row.todoId !== todo.id)),
-    ...projected.values(),
-  ];
-}
-
 export function createCodingTodoPack(
   repo: CodingTodoPrRepository,
   readPrs: NeoWorkPrReader,
@@ -639,18 +347,7 @@ export function createCodingTodoPack(
   readRefs?: NeoRefStateReader,
   readApproval?: (url: string) => Promise<NeoTodoCheckResult>
 ): NeoTodoPack & NeoTodoFactJudge<CodingTodoFacts | null> {
-  const claimsOf = (todo: NeoTodo) => {
-    const recorded = new Set(repo.prs(todo.id).flatMap((pr) => codingPrKey(pr.url) ?? []));
-    return [
-      ...planCodingTodoClaims(todo, todo.report, []),
-      ...repo.claimsOn([...recorded]).filter((row) => row.todoId === todo.id),
-    ];
-  };
-  const readFacts = async (
-    todo: NeoTodo,
-    persist = true,
-    detached = false
-  ): Promise<CodingTodoFacts | null> => {
+  const readFacts = async (todo: NeoTodo, persist = true): Promise<CodingTodoFacts | null> => {
     if (todo.check && todo.check.pack !== 'coding') return null;
     if (todo.check?.kind === 'pr_approved')
       return {
@@ -658,42 +355,13 @@ export function createCodingTodoPack(
         observedAt: Date.now(),
         approval: await readApproval?.(String(todo.check.params.url)),
       };
-    if (todo.check?.kind === 'issue_closed')
-      return readIssueFacts(todo, readRefs ?? (async () => []), readPrs, repo, persist);
-    const placed =
-      todo.check?.kind === 'pr_merged'
-        ? await readCodingTurnFacts(todo, repo.turnPrs, readPrs)
-        : null;
-    if (placed) {
-      if (persist && !placed.incomplete) {
-        const claims = [
-          ...planCodingTodoClaims(todo, null, []),
-          ...placed.prs.map((pr) => ({ url: pr.url, claim: 'branch' as const })),
-        ];
-        await repo.write('claim', todo.id, claims, placed.observedAt, 'additive');
-        await repo.write('record', todo.id, [...placed.prs], placed.observedAt);
-      }
-      return placed;
-    }
-    const named = claimsOf(todo);
-    if (persist) await repo.write('claim', todo.id, named, Date.now());
-    const urls = [
-      ...new Set([...repo.urls(todo.id), ...named.map((claim) => codingPrKey(claim.url)!)]),
-    ];
-    if (!urls.length) return todo.check ? { prs: [], observedAt: Date.now() } : null;
-    const observedAt = Date.now();
-    const read = await readPrs(urls);
-    if (!read || urls.some((url) => !read.some((pr) => codingPrKey(pr.url) === url)))
-      return { prs: [], observedAt: Date.now(), incomplete: true };
-    const stored = repo.claimsOn(urls);
-    const claims = persist
-      ? stored
-      : projectQuestionClaims(todo, named, stored, observedAt, detached);
-    const window = await repo.readWindow(todo.id);
-    const prs = codingTodoOwnPrs(todo, claims, read, window);
-    const open = todo.check ? [] : codingTodoOpenBranchPrs(todo, claims, read, window, prs);
-    if (persist) await repo.write('record', todo.id, [...prs, ...open], observedAt);
-    return { prs, observedAt };
+    const facts = await readCodingTurnFacts(todo, repo.turnPrs, readPrs);
+    if (persist && !facts.incomplete)
+      await repo.write('record', todo.id, [...facts.prs], facts.observedAt);
+    if (todo.check?.kind !== 'issue_closed') return facts;
+    const ref = codingIssueRef(todo.check);
+    const [issue] = ref ? await (readRefs ?? (async () => []))([ref]) : [];
+    return { prs: facts.prs, observedAt: facts.observedAt, issue };
   };
   const checked = (todo: NeoTodo, facts: CodingTodoFacts) =>
     todo.check?.kind === 'pr_approved'
@@ -713,16 +381,8 @@ export function createCodingTodoPack(
       return result?.done ? { state: 'done', evidence: result.evidence } : { state: 'no_opinion' };
     },
     schema: createCodingPackTables,
-    openedPrs: async (todo, urls) => {
-      await repo.write(
-        'claim',
-        todo.id,
-        [...claimsOf(todo), ...urls.map((url) => ({ url, claim: 'branch' as const }))],
-        Date.now()
-      );
-    },
     check: async (todo, context) => {
-      const facts = await readFacts(todo, !context?.readOnly, context?.detached);
+      const facts = await readFacts(todo, !context?.readOnly);
       if (!facts) return null;
       if (facts.incomplete) return todo.check ? { done: false, evidence: null } : null;
       return checked(todo, facts);
@@ -737,12 +397,12 @@ export const codingTodoPrWrites = defineRepositoryOp(
   'coding.todoPrWrites',
   'write',
   CodingTodoPrRepository,
-  ['claim', 'record']
+  ['record']
 );
 
 export const codingTodoPrReads = defineRepositoryOp(
   'coding.todoPrReads',
   'read',
   CodingTodoPrRepository,
-  ['window', 'isWaiting', 'holder']
+  ['isWaiting', 'holder']
 );

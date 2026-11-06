@@ -3,11 +3,11 @@ import type { Space, SpaceTask, SpaceWorkflow, SpaceWorkflowRun } from '@hyperne
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import { EvolutionScopeService } from '../../../../../space/src/evolution/scope-service.ts';
-import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
-import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import type { SpaceRuntimeConfig } from '../../../../../space/src/runtime/space-runtime.ts';
+import { SpaceRuntime } from '../../../../../space/src/runtime/space-runtime.ts';
+import type { TaskAgentManager } from '../../../../../space/src/runtime/task-agent-manager.ts';
 import { CodingArtifactProfile } from '../../../../src/lib/workflows/coding-artifact-profile.ts';
 import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';

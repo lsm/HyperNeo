@@ -34,7 +34,6 @@ describe('Daemon App Cleanup', () => {
   let originalAnthropicAuthToken: string | undefined;
   let originalGlmApiKey: string | undefined;
   let originalTestUserSettingsDir: string | undefined;
-  let originalAcpCommand: string | undefined;
   let bunServeSpy: ReturnType<typeof spyOn> | null = null;
   const logs: string[] = [];
 
@@ -44,12 +43,10 @@ describe('Daemon App Cleanup', () => {
     originalAnthropicAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
     originalGlmApiKey = process.env.GLM_API_KEY;
     originalTestUserSettingsDir = process.env.TEST_USER_SETTINGS_DIR;
-    originalAcpCommand = process.env.HYPERNEO_ACP_COMMAND;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
     delete process.env.ANTHROPIC_AUTH_TOKEN;
     delete process.env.GLM_API_KEY;
-    delete process.env.HYPERNEO_ACP_COMMAND;
 
     clearStructuredLogSubscribers();
 
@@ -109,11 +106,6 @@ describe('Daemon App Cleanup', () => {
       process.env.TEST_USER_SETTINGS_DIR = originalTestUserSettingsDir;
     } else {
       delete process.env.TEST_USER_SETTINGS_DIR;
-    }
-    if (originalAcpCommand !== undefined) {
-      process.env.HYPERNEO_ACP_COMMAND = originalAcpCommand;
-    } else {
-      delete process.env.HYPERNEO_ACP_COMMAND;
     }
 
     console.log = originalConsoleLog;
@@ -274,7 +266,6 @@ describe('Daemon App Cleanup', () => {
       delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
       delete process.env.ANTHROPIC_AUTH_TOKEN;
       delete process.env.GLM_API_KEY;
-      delete process.env.HYPERNEO_ACP_COMMAND;
     });
 
     afterEach(() => {

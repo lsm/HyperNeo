@@ -30,7 +30,7 @@ export { readCodexSnapshot, withCodexState } from '../../storage/codex-desktop-r
 
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
-import { gitWorktreeProject } from './acp-agent-adapter.ts';
+import { gitWorktreeProject } from './worktree-project.ts';
 import { type CodexAppServer, CodexRequestError } from './codex-app-server.ts';
 import { type CodexSendGate, steerCodexDesktopTurn } from './codex-desktop-handoff.ts';
 import { selectCodexConfiguration } from './codex-start-configuration.ts';
@@ -1348,19 +1348,20 @@ const runCodexStop = (superpipe({})('codex-stop-work') as PipelineAPI)
 ) => Promise<Result<{ stopped: boolean }>>;
 
 const runCodexTurns = (superpipe({})('codex-turns') as PipelineAPI)
-  .input(['ref', 'cursor', 'deps'])
+  .input(['ref', 'cursor', 'limit', 'deps'])
   .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
   .pipe(
-    async (detail: CodexThreadDetail, cursor: string | undefined) => ({
+    async (detail: CodexThreadDetail, cursor: string | undefined, limit: number | undefined) => ({
       ok: true as const,
-      value: { turns: await readCodexTurnFacts(detail.thread.rolloutPath, cursor) },
+      value: { turns: await readCodexTurnFacts(detail.thread.rolloutPath, cursor, limit) },
     }),
-    ['outcome', 'cursor'],
+    ['outcome', 'cursor', 'limit'],
     'outcome'
   )
   .endAsync('outcome') as (
   ref: WorkRef,
   cursor: string | undefined,
+  limit: number | undefined,
   deps: CodexDesktopAdapterDeps
 ) => Promise<Result<{ turns: WorkTurnFact[] }>>;
 
@@ -1425,7 +1426,7 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
       ),
     withdraw: (ref, queuedSubmissionId) => runCodexWithdraw(ref, queuedSubmissionId, deps),
     status: (ref, since, receipt) => runCodexStatus(ref, deps, since, receipt, readOpenedPrs),
-    turns: (ref, cursor) => runCodexTurns(ref, cursor, deps),
+    turns: (ref, cursor, limit) => runCodexTurns(ref, cursor, limit, deps),
     stop: (ref) => runCodexStop(ref, deps),
     archive: async (ref, admit) => {
       const found = requireCodexThread(ref, deps);

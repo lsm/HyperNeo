@@ -6,14 +6,21 @@ import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { callCodingBranchDb } from './branch-facts-db.ts';
 import { codingUnownedWrites } from './unowned-db.ts';
-import { CodingPrLedgerRepository, type CodingPrTransition } from './pr-ledger.ts';
+import {
+  codingLedgerPrUrl,
+  CodingPrLedgerRepository,
+  type CodingPrTransition,
+  planCodingLedgerTurnOwner,
+} from './pr-ledger.ts';
 import { CODING_MANUAL_MERGE_NEXT_STEP, codingPrUrl, type CodingSweepDeps } from './pr-sweep.ts';
 import {
+  codingPrMayBeInRunningTurn,
   codingUnownedPrKey,
   planCodingUnownedNotice,
   type CodingUnownedNotice,
   type CodingUnownedPr,
 } from './pr-unowned.ts';
+import { CodingTurnPrRepository } from './turn-prs.ts';
 
 const log = new Logger('NeoPrSweep');
 
@@ -112,7 +119,7 @@ export class CodingPrEventRepository {
       }
       const rows = this.db
         .prepare(
-          `SELECT l.repo, l.number, l.title FROM pack_coding_pr_ledger l
+          `SELECT l.repo, l.number, l.title, l.created_at AS createdAt FROM pack_coding_pr_ledger l
            JOIN pack_coding_pr_unowned_state s ON s.id = 1
           WHERE l.owner IS NULL AND l.closed_at IS NULL AND l.state NOT IN ('draft', 'merged', 'closed')
             AND l.author_is_bot = 0 AND l.created_at > s.activated_at AND l.read_at = ?
@@ -120,8 +127,16 @@ export class CodingPrEventRepository {
               WHERE n.key = 'neo-pr-unowned:' || l.repo || '#' || l.number)
           ORDER BY l.repo, l.number`
         )
-        .all(now) as CodingUnownedPr[];
-      const watchedRows = rows.filter((row) => codingRepoWatched(this.db, row.repo));
+        .all(now) as (CodingUnownedPr & { createdAt: number | null })[];
+      const watched = rows.filter((row) => codingRepoWatched(this.db, row.repo));
+      const reads = new CodingTurnPrRepository(this.db);
+      const mentions = reads.mentions(watched.map(codingLedgerPrUrl));
+      const lastTurnEnds = reads.lastTurnEndsOfRunningWorkers();
+      const watchedRows = watched.filter(
+        (row) =>
+          !codingPrMayBeInRunningTurn(row.createdAt, lastTurnEnds) &&
+          planCodingLedgerTurnOwner(row, mentions).state === 'none'
+      );
       const notice = planCodingUnownedNotice(watchedRows);
       if (!notice) return null;
       const insert = this.db.prepare(

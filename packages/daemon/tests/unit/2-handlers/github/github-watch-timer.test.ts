@@ -25,11 +25,13 @@ const readName = 'github.polling.timer.read',
 class TimerGateway extends DbGateway {
   reads = 0;
   writes = 0;
+  configWrites = 0;
   holdNext = false;
   failNext = false;
   release?: () => void;
   override async run<A, R>(op: DbOp<A, R>, args: A): Promise<R> {
     if (op.name === writeName) this.writes++;
+    if (op.name === 'github.watched.config.write') this.configWrites++;
     if (op.name !== readName) return super.run(op, args);
     this.reads++;
     if (this.failNext) {
@@ -144,7 +146,7 @@ describe('Public watch timer callback reader wiring', () => {
         lightweight: true,
       })
     ).polling.active;
-  test('approved two-module boundary pins complete files with 167 fresh and 267 known lines', () => {
+  test('reviewed timer boundary pins the complete query interfaces', () => {
     const dir = mkdtempSync(join(tmpdir(), 'watch-reader-measure-'));
     try {
       const output = join(dir, 'boundary.json');
@@ -155,10 +157,10 @@ describe('Public watch timer callback reader wiring', () => {
       );
       const report = JSON.parse(readFileSync(output, 'utf8'));
       expect(report).toMatchObject({
-        fresh: 166,
+        fresh: 159,
         excludedLines: 100,
-        knownTotal: 266,
-        caller: { name: 'space.github.watchRepo', lines: 92, reviewedReaderCallsOnly: true },
+        knownTotal: 259,
+        caller: { name: 'space.github.watchRepo', lines: 85, reviewedWatchBridgesOnly: true },
       });
       expect(
         report.data.filter((row: { auditedStable: boolean }) => row.auditedStable)
@@ -256,19 +258,19 @@ describe('Public watch timer callback reader wiring', () => {
   test('reader failure preserves the known write and timer, then releases a later independent update', async () => {
     await request(true);
     const before = notices.length;
-    const upsert = vi.spyOn(extension.repo, 'upsertWatchedRepo');
+    const beforeConfig = gateway.configWrites;
     gateway.failNext = true;
     await expect(watch()).rejects.toThrow('synthetic timer reader unavailable');
     expect(gateway.reads).toBe(1);
-    expect(upsert).toHaveBeenCalledTimes(1);
+    expect(gateway.configWrites).toBe(beforeConfig + 1);
     await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(upsert).toHaveBeenCalledTimes(1);
+    expect(gateway.configWrites).toBe(beforeConfig + 1);
     expect(notices).toHaveLength(before);
     expect(extension.repo.getPollingIntent(space)).toBe(false);
     expect(extension.repo.listWatchedRepos(space)).toMatchObject([{ pollingEnabled: false }]);
     expect(await active()).toBe(true);
     await watch();
-    expect(upsert).toHaveBeenCalledTimes(2);
+    expect(gateway.configWrites).toBe(beforeConfig + 2);
     expect(await active()).toBe(false);
   });
   test('an older unused timer reply completes before a newer enable effect can acknowledge', async () => {

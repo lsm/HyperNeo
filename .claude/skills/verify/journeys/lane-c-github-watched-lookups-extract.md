@@ -10,9 +10,11 @@ Stop startup processors and finish SDK body copy before measuring. Create two
 synthetic Spaces. Through watchRepo, add a disabled-webhook/non-polling repository,
 update it by differently cased owner/repo and add the same key in the other Space.
 Check stable identity/case/creation time, changed enabled flag, Space isolation,
-public sanitized replies and saved listConfig rows. Observe both legacy key/id
-SELECTs on main. Before extraction these RPCs pass, then missing-helper assertions
-fail; commit those red proofs first. No public off-main claim is made.
+public sanitized replies and saved listConfig rows. Current activation must use
+six native reader posts and three native writer posts, with zero main key/id
+SELECTs. Scratch/unit contracts below still pin the exact lookup SQL and mapping.
+This updates the original extraction characterization without claiming whole
+public or startup closure.
 
 Use a scratch database containing only the watched table in query-only mode.
 Both helper lookups must retain the complete mapped row, case matching, missing

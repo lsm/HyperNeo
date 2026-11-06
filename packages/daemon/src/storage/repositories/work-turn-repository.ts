@@ -68,9 +68,17 @@ export class WorkTurnRepository {
 
   cursor(ref: WorkRef): string | null {
     const row = this.db
-      .prepare('SELECT cursor FROM work_turns WHERE ref = ? ORDER BY ended_at DESC LIMIT 1')
+      .prepare(`SELECT cursor FROM work_turns WHERE ref = ?
+        ORDER BY json_extract(cursor, '$.seq') DESC LIMIT 1`)
       .get(storedRef(ref)) as { cursor: string } | null;
     return row?.cursor ?? null;
+  }
+
+  lastEndedAt(ref: WorkRef): number | null {
+    const row = this.db
+      .prepare('SELECT MAX(ended_at) AS endedAt FROM work_turns WHERE ref = ?')
+      .get(storedRef(ref)) as { endedAt: number | null };
+    return row.endedAt;
   }
 
   list(ref: WorkRef): WorkTurnFact[] {

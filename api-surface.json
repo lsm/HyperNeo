@@ -6621,7 +6621,8 @@
                       "enum": [
                         "human",
                         "relay",
-                        "daemon"
+                        "daemon",
+                        "agent"
                       ],
                       "type": "string"
                     },
@@ -6753,7 +6754,8 @@
             "enum": [
               "human",
               "relay",
-              "daemon"
+              "daemon",
+              "agent"
             ],
             "type": "string"
           },
@@ -6857,7 +6859,8 @@
                       "enum": [
                         "human",
                         "relay",
-                        "daemon"
+                        "daemon",
+                        "agent"
                       ],
                       "type": "string"
                     },
@@ -57916,6 +57919,11 @@
             "maxLength": 200,
             "minLength": 1,
             "type": "string"
+          },
+          "limit": {
+            "maximum": 500,
+            "minimum": 1,
+            "type": "integer"
           },
           "ref": {
             "properties": {

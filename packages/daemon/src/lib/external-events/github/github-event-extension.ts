@@ -1,3 +1,5 @@
+import { gitHubWatchPollingWrite } from '../../../storage/repositories/github-watch-polling-write.ts';
+import { gitHubWatchedConfigWrite } from '../../../storage/repositories/github-watched-config-write.ts';
 import { gitHubWatchedRepoRead } from '../../../storage/repositories/github-watched-repo-read.ts';
 import { gitHubPollingTimerReads } from '../../../storage/repositories/github-polling-usage-read.ts';
 import { gitHubPollingCapabilityReads } from '../../../storage/repositories/github-polling-usage-read.ts';
@@ -417,11 +419,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (!params.spaceId || !params.owner || !params.repo) {
         throw new Error('spaceId, owner and repo are required');
       }
-      const existingForValidation = await gatewayFor(this.db).run(gitHubWatchedRepoRead, {
-        spaceId: params.spaceId,
-        owner: params.owner,
-        repo: params.repo,
-      });
+      const watchedKey = { spaceId: params.spaceId, owner: params.owner, repo: params.repo };
+      const existingForValidation = await gatewayFor(this.db).run(
+        gitHubWatchedRepoRead,
+        watchedKey
+      );
       if (params.pollingEnabled && !existingForValidation?.pollingEnabled) {
         this.assertPollingIntervalEnabled();
       }
@@ -438,7 +440,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         params.owner,
         params.repo,
         async (): Promise<GitHubWatchedRepo> => {
-          const existing = this.repo.getWatchedRepo(params.spaceId, params.owner, params.repo);
+          const existing = await gatewayFor(this.db).run(gitHubWatchedRepoRead, watchedKey);
           const replacingAutoSecret = Boolean(
             params.webhookSecret && existing?.webhookAutoRegistered
           );
@@ -455,33 +457,26 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           if ((replacingAutoSecret || disablingAutoWebhook) && existing?.webhookRemoteId) {
             await this.deleteRemoteWebhookIfUnshared(existing);
           }
-          let w = this.repo.upsertWatchedRepo(upsertParams);
-          if (replacingAutoSecret || disablingAutoWebhook) {
-            this.repo.clearWebhookRegistration(w.id, { clearSecret: disablingAutoWebhook });
-            w = this.repo.getWatchedRepoById(w.id) ?? w;
-          }
-          if (manualSecretRotated) {
-            this.repo.clearWebhookDeliveryHistory(w.id);
-            w = this.repo.getWatchedRepoById(w.id) ?? w;
-          }
-          return w;
+          return gatewayFor(this.db).run(gitHubWatchedConfigWrite, {
+            params: upsertParams,
+            clearRegistration: replacingAutoSecret || disablingAutoWebhook,
+            clearSecret: disablingAutoWebhook,
+            clearDelivery: manualSecretRotated,
+          });
         }
       );
+      const config = await gatewayFor(this.db).run(gitHubWatchPollingWrite, {
+        spaceId: watchedRepo.spaceId,
+        pollingEnabled: watchedRepo.pollingEnabled,
+        wasPolling: existingForValidation?.pollingEnabled ?? false,
+      });
+      await context.config.setSpaceConfig(watchedRepo.spaceId, this.sourceId, config);
       if (watchedRepo.pollingEnabled) {
-        this.repo.setPollingIntent(params.spaceId, true);
-        await this.persistSpaceConfig(context, watchedRepo.spaceId);
         if (this.getPollIntervalMs() > 0) {
           await this.enablePollingCapability(context);
           this.ensurePollingActive();
         }
       } else {
-        if (
-          existingForValidation?.pollingEnabled &&
-          this.repo.listAllPollingConfiguredRepos(params.spaceId).length === 0
-        ) {
-          this.repo.setPollingIntent(params.spaceId, false);
-        }
-        await this.persistSpaceConfig(context, watchedRepo.spaceId);
         await this.disablePollingCapabilityIfUnused(context);
         await this.stopIdlePollingOnReader();
       }

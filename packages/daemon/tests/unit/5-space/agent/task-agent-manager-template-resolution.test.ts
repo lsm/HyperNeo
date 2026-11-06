@@ -20,13 +20,13 @@ import type {
   NodeAgentSpawnConfig,
   NodeAgentTemplateSource,
 } from '../../../../src/lib/tasks/spawn-slot-resolution.ts';
-import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import type { TaskAgentManagerConfig } from '../../../../../space/src/runtime/task-agent-manager.ts';
 import {
   createAgentTemplateResolver,
   toRunTemplateSnapshot,
   withRunTemplateSnapshots,
 } from '../../../../src/lib/workflows/run-template-snapshot.ts';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { TaskAgentManager } from '../../../../../space/src/runtime/task-agent-manager.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 const TASK_ID = 'task-3832';

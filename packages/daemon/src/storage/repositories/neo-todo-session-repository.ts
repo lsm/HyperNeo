@@ -448,7 +448,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
         sent_receipt = NULL, live_status = NULL, start_interrupted = 0, needs_you_since = NULL`)
       .run(
         todoId,
-        JSON.stringify({ verb: 'adopt', ref }),
+        JSON.stringify({ verb: 'adopt', ref, boundAt: now }),
         JSON.stringify(ref),
         now,
         now,
@@ -495,7 +495,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       : (this.db
           .prepare('SELECT name FROM work_sessions WHERE adapter = ? AND id = ?')
           .get(ref.adapter, ref.id) as { name: string } | null);
-    if (synced) return synced.name;
+    if (synced?.name) return synced.name;
     const todo = this.db
       .prepare(
         `SELECT t.title FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id

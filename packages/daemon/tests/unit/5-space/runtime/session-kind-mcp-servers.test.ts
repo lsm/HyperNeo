@@ -14,11 +14,11 @@ import { resolveSpaceMcpSessionPolicy } from '../../../../src/lib/session-resolu
 import {
   SpaceRuntimeService,
   type SpaceRuntimeServiceConfig,
-} from '../../../../src/lib/space/runtime/space-runtime-service.ts';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+} from '../../../../../space/src/runtime/space-runtime-service.ts';
+import { TaskAgentManager } from '../../../../../space/src/runtime/task-agent-manager.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import type { SettingsManager } from '../../../../src/lib/settings-manager.ts';
-import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import { AgentMemoryRepository } from '../../../../src/storage/repositories/agent-memory-repository.ts';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository.ts';

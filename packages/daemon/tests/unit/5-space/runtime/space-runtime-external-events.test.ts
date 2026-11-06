@@ -7,26 +7,26 @@ import type {
 } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { withSessionOperationLock } from '../../../../src/lib/agent/message-delivery';
-import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service';
+import { SpaceRuntimeService } from '../../../../../space/src/runtime/space-runtime-service';
 import { renderEventBlock } from '../../../../src/lib/external-events/deferred-event-digest';
 import { essenceEntryFromExternalEvent } from '../../../../src/lib/external-events/event-essence-entry';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
-import { ExternalEventStore } from '../../../../src/lib/space/external-events/external-event-store';
-import { ExternalEventQueueMetrics } from '../../../../src/lib/space/external-events/queue-health-metrics';
+import { ExternalEventStore } from '../../../../../space/src/external-events/external-event-store';
+import { ExternalEventQueueMetrics } from '../../../../../space/src/external-events/queue-health-metrics';
 import type {
   ExternalEvent,
   ExternalEventDeliveryRecord,
 } from '../../../../src/lib/external-events/types';
 import { createInternalCommandBus } from '../../../../src/lib/internal-command-bus';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
-import { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
+import { SpaceManager } from '../../../../../space/src/managers/space-manager';
 import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager';
 import type { WorkflowArtifactProfile } from '../../../../src/lib/workflows/artifact-profile';
 import {
   parsePositiveIntegerEnv,
   SpaceRuntime,
   type SpaceRuntimeConfig,
-} from '../../../../src/lib/space/runtime/space-runtime';
+} from '../../../../../space/src/runtime/space-runtime';
 import { CodingArtifactProfile } from '../../../../src/lib/workflows/coding-artifact-profile';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';

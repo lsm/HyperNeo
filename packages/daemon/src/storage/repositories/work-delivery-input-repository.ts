@@ -1,3 +1,4 @@
+import type { WorkRef } from '../../lib/drivers/types.ts';
 import type { NeoDriverTarget, readDriverOutcome } from '../../lib/neo/driver-work.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { defineDbOp } from '../db-gateway/db-op.ts';
@@ -109,6 +110,30 @@ export class WorkDeliveryInputRepository {
         .prepare(`${SELECT} WHERE ${where} ORDER BY accepted_at, rowid`)
         .all(...params) as InputRow[]
     ).map(readInput);
+  }
+
+  openWorkerRefs(): { ref: WorkRef; lastActivityAt: number | null }[] {
+    const rows = this.db
+      .prepare(`WITH workers(ref) AS (
+          SELECT json_extract(d.outcome, '$.ref')
+            FROM neo_asks a JOIN neo_todos t ON t.ask_id = a.id
+            JOIN work_delivery_inputs d ON d.todo_id = t.id
+            WHERE a.status = 'open'
+              AND t.state NOT IN ('done', 'closed_unverified', 'failed', 'removed')
+          UNION
+          SELECT s.ref
+            FROM neo_asks a JOIN neo_todos t ON t.ask_id = a.id
+            JOIN neo_todo_sessions s ON s.todo_id = t.id
+            WHERE a.status = 'open'
+              AND t.state NOT IN ('done', 'closed_unverified', 'failed', 'removed')
+              AND json_extract(s.target, '$.verb') = 'adopt'
+        )
+        SELECT workers.ref AS ref, w.last_activity_at AS lastActivityAt FROM workers
+        LEFT JOIN work_sessions w ON w.adapter = json_extract(workers.ref, '$.adapter')
+          AND w.id = json_extract(workers.ref, '$.id')
+        WHERE workers.ref IS NOT NULL ORDER BY workers.ref`)
+      .all() as { ref: string; lastActivityAt: number | null }[];
+    return rows.map((row) => ({ ...row, ref: JSON.parse(row.ref) as WorkRef }));
   }
 
   due(now: number, limit = 100) {

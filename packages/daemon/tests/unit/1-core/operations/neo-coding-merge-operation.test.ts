@@ -86,7 +86,10 @@ function fixture(bot = true) {
     todos = new CodingTodoPrRepository(db),
     assignments = new CodingAssignmentsRepository(db);
   new NeoTodoSessionRepository(db).bind('todo', author, 1);
-  todos.claim('todo', [{ url, claim: 'named' }], 1);
+  db.prepare('UPDATE neo_todos SET check_json = ? WHERE id = ?').run(
+    JSON.stringify({ pack: 'coding', kind: 'pr_merged', params: { urls: [url] } }),
+    'todo'
+  );
   ledger.stageFacts.observeHead(url, head, 1);
   const setting = (key: string, value: unknown) =>
     db

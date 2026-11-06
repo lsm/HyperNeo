@@ -8,5 +8,5 @@ bash .claude/skills/verify/with-run.sh bash -c '
   cd packages/daemon
   env -i HOME="$RUN/home" TMPDIR="$RUN/tmp" PATH="$RUN/bin:$PATH" NODE_ENV=test \
     node_modules/.bin/vitest run tests/unit/1-core/drivers/codex*.test.ts \
-    tests/unit/1-core/drivers/copilot*.test.ts tests/unit/1-core/drivers/acp-agent-adapter.test.ts
+    tests/unit/1-core/drivers/copilot*.test.ts
 '

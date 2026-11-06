@@ -635,3 +635,80 @@ describe('cancelled prerequisites', () => {
     }
   });
 });
+
+describe('unfinished prerequisites of a started step', () => {
+  const started = async ({ invoke, runner, store, step, work }: ReturnType<typeof setup>) => {
+    const opened = await invoke('neo.ask.open', {
+      title: 'Reopened prerequisite',
+      request: 'Finish A before J.',
+      todos: [
+        { ...step('A', []), ...work, start: true },
+        { ...step('J', [0]), ...work, start: true },
+      ],
+    });
+    const [a, j] = opened.todos;
+    await runner.advance();
+    await complete(runner, store.getTodo(a.id)!);
+    await runner.refresh(() => {});
+    expect(store.getTodo(j.id)?.state).toBe('doing');
+    return { a, j };
+  };
+
+  test('continue and retry refuse while a prerequisite is reopened, then run', async () => {
+    const context = setup();
+    const { db, store, invoke, sent } = context;
+    try {
+      const { a, j } = await started(context);
+      store.updateTodo(store.getTodo(a.id)!, { state: 'doing', finishedAt: null }, Date.now());
+      const before = sent.length;
+      const continued = await invoke('neo.todo.continue', { todoId: j.id, message: 'Next.' });
+      expect(continued).toMatchObject({ ok: false, reason: expect.stringMatching(/^not_ready:/) });
+      store.updateTodo(store.getTodo(j.id)!, { state: 'failed', reason: 'Lost.' }, Date.now());
+      const retried = await invoke('neo.todo.retry', { todoId: j.id });
+      expect(retried).toMatchObject({ ok: false, reason: expect.stringMatching(/^not_ready:/) });
+      expect(store.getTodo(j.id)?.state).toBe('failed');
+      expect(sent).toHaveLength(before);
+      store.updateTodo(store.getTodo(a.id)!, { state: 'done' }, Date.now());
+      expect((await invoke('neo.todo.retry', { todoId: j.id })).ok).toBe(true);
+      expect(store.getTodo(j.id)?.state).toBe('doing');
+      expect(sent).toHaveLength(before + 1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a cancelled prerequisite never strands a started step', async () => {
+    const context = setup();
+    const { db, store, invoke, sent } = context;
+    try {
+      const { a, j } = await started(context);
+      store.updateTodo(store.getTodo(a.id)!, { state: 'removed' }, Date.now());
+      const before = sent.length;
+      expect((await invoke('neo.todo.continue', { todoId: j.id, message: 'Next.' })).ok).toBe(true);
+      expect(sent).toHaveLength(before + 1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('bind refuses while a prerequisite runs, then binds', async () => {
+    const { db, store, invoke, runner, step, work } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Bind waits',
+        request: 'Finish X before Y.',
+        todos: [{ ...step('X', []), ...work, start: true }, step('Y', [0])],
+      });
+      const [x, y] = opened.todos;
+      await runner.advance();
+      const refused = await invoke('neo.todo.bind', { todoId: y.id, ref: work.target.ref });
+      expect(refused).toMatchObject({ ok: false, reason: expect.stringMatching(/^not_ready:/) });
+      expect(store.getTodo(y.id)).toMatchObject({ state: 'todo', startedAt: null });
+      await complete(runner, store.getTodo(x.id)!);
+      expect((await invoke('neo.todo.bind', { todoId: y.id, ref: work.target.ref })).ok).toBe(true);
+      expect(store.getTodo(y.id)?.state).toBe('doing');
+    } finally {
+      db.close();
+    }
+  });
+});

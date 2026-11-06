@@ -39,6 +39,9 @@ describe('GitHub watched lookup SQL extraction', () => {
         pass: true,
         mainThreadMovementClaim: false,
         publicRpc: {
+          mainLookupReads: 0,
+          nativeLookupReads: 6,
+          nativeConfigWrites: 3,
           lookupReadsObserved: true,
           sameIdentityAndCreationTimePreserved: true,
           spaceIsolationAndSavedConfigPreserved: true,

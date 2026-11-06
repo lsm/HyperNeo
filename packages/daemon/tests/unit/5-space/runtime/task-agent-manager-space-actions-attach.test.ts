@@ -16,8 +16,8 @@ import {
 } from '../../../../src/lib/operations/registry.ts';
 import { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { hasRuntimeWorkerOperations } from '../../../../src/lib/session/sub-session-identity.ts';
-import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import type { TaskAgentManagerConfig } from '../../../../../space/src/runtime/task-agent-manager.ts';
+import { TaskAgentManager } from '../../../../../space/src/runtime/task-agent-manager.ts';
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import {
@@ -74,7 +74,7 @@ function makeManager(
     spaceManager: { getSpace: async () => ({ id: SPACE_ID, autonomyLevel: 3 }) },
     spaceRuntimeService: {
       getSpaceRuntime: () =>
-        ({}) as unknown as import('../../../../src/lib/space/runtime/space-runtime.ts').SpaceRuntime,
+        ({}) as unknown as import('../../../../../space/src/runtime/space-runtime.ts').SpaceRuntime,
       isWorkflowRunActive: () => true,
       activateWorkflowNode: async () => [],
       ensureToolTargetSession: async () =>

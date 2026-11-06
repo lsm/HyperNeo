@@ -10,8 +10,15 @@ its web UI. Lint, types and unit tests are not proof. Every helper named here
 lives next to this file in `.claude/skills/verify/`. Run commands from the repo
 root of your worktree.
 
+Check `bun --version` before proof jobs. Select the pinned Bun 1.4.2 binary's
+directory on PATH when the host default differs. The wrapper carries that PATH
+into its isolated child environment and CLI subprocesses.
+
 ## Rules
 
+- Owned HTTP preview servers must await `app.guardRequest(request)` before
+  routing and return any non-null refusal. After guard API changes, run the
+  focused transport regression in `journeys/verify-http-guards.md`.
 - Never start, stop or mutate the human's daemon. Isolated runs never use port
   8399, `~/.hyperneo` or a copy of a real database. Journey 15 only reads logs.
 - No provider key in the environment, real or fake. `launch.sh` starts from

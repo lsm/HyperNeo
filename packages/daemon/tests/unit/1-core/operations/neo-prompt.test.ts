@@ -16,6 +16,9 @@ describe('root Neo system prompt', () => {
       'Add all ask steps as todos together, in order, before starting the first.'
     );
   });
+  test('tells Neo to add parallel running work with after: [] before binding', () => {
+    expect(NEO_ROOT_TURN_END).toContain('so pass after: [] for parallel running work.');
+  });
   test.each([
     { packs: [] },
     { packs: ['coding'] },

@@ -13,7 +13,7 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import {
   type AgentSubscriptionDependencies,
   createAgentSubscriptionOperations,
-} from '../../../../src/lib/space/external-events/agent-subscription-operations';
+} from '../../../../../space/src/external-events/agent-subscription-operations';
 import type { OperationCaller, OperationDefinition } from '../../../../src/lib/operations/registry';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { createTestSession } from '../../../helpers/database';

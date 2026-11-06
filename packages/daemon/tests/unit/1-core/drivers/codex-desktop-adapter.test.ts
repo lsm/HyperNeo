@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, spyOn } from 'bun:test';
-import * as acp from '../../../../src/lib/drivers/acp-agent-adapter';
+import * as worktrees from '../../../../src/lib/drivers/worktree-project';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -213,7 +213,7 @@ describe('codex-desktop adapter against a Codex state database', () => {
   });
 
   test('resolves each worktree folder once per snapshot and refreshes on the next find', async () => {
-    const probe = spyOn(acp, 'gitWorktreeProject');
+    const probe = spyOn(worktrees, 'gitWorktreeProject');
     try {
       const adapter = createCodexDesktopAdapter({
         bootstrapServer: () => Promise.reject(new Error('not used')),

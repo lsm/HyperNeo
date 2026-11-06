@@ -6,8 +6,8 @@ import {
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
 import { createSpaceReadOperations } from '../../../../src/lib/space/space-read-operations.ts';
-import type { SpaceFamilyContext } from '../../../../src/lib/space/rpc/family-operations/space-context.ts';
-import { registerSpaceOperations } from '../../../../src/lib/space/rpc/family-operations/spaces.ts';
+import type { SpaceFamilyContext } from '../../../../../space/src/rpc/family-operations/space-context.ts';
+import { registerSpaceOperations } from '../../../../../space/src/rpc/family-operations/spaces.ts';
 
 function makeSpace(overrides: Partial<Space> & Pick<Space, 'id'>): Space {
   return {

@@ -55,12 +55,15 @@ describe('coding stage facts', () => {
       db.prepare(
         "INSERT INTO neo_todos (id, ask_id, position, title, done_when, state, created_at, updated_at) VALUES ('todo-7', 'ask-7', 1, 'Stages', 'Merged', 'doing', 1, 1)"
       ).run();
-      todos.claim('todo-7', [{ url, claim: 'named' }], 1);
+      db.prepare('UPDATE neo_todos SET check_json = ? WHERE id = ?').run(
+        JSON.stringify({ pack: 'coding', kind: 'pr_merged', params: { urls: [url] } }),
+        'todo-7'
+      );
       expect(ledger.recordStage(fact)).toBe(false);
       ledger.replace('synthetic/stages', [row('head-a')], 1);
       expect(ledger.recordStage(fact)).toBe(true);
       expect(ledger.recordStage({ ...fact, stage: 'qa', verdict: 'inconclusive' })).toBe(true);
-      expect(todos.stages('todo-7')).toHaveLength(2);
+      expect(ledger.stageFacts.read(url)).toHaveLength(2);
       ledger.replace('synthetic/stages', [row('head-a')], 2);
       expect(ledger.stageFacts.read(url)).toHaveLength(2);
       ledger.replace('synthetic/stages', [row('head-b')], 3);
@@ -69,7 +72,7 @@ describe('coding stage facts', () => {
         [{ url, head: 'head-a', state: 'OPEN', checks: 'passing', review: 'none' }],
         2
       );
-      expect(todos.stages('todo-7')).toEqual([]);
+      expect(ledger.stageFacts.read(url)).toEqual([]);
       expect(ledger.recordStage(fact)).toBe(false);
       ledger.replace('synthetic/stages', [row('head-a')], 4);
       expect(ledger.stageFacts.read(url)).toEqual([]);

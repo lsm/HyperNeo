@@ -16,7 +16,7 @@ import * as failure from '../../../../src/lib/mailbox/failure';
 import { MAILBOX_LANE } from '../../../../src/lib/mailbox/enqueue';
 import { SessionManager } from '../../../../src/lib/session-manager';
 import { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
-import { createDefaultSessionResolutionDeps } from '../../../../src/lib/space/runtime/session-resolution-deps';
+import { createDefaultSessionResolutionDeps } from '../../../../../space/src/runtime/session-resolution-deps';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';

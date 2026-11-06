@@ -1,3 +1,5 @@
+import { gitHubWatchPollingWrite } from '../repositories/github-watch-polling-write.ts';
+import { gitHubWatchedConfigWrite } from '../repositories/github-watched-config-write.ts';
 import { gitHubWatchedRepoRead } from '../repositories/github-watched-repo-read.ts';
 import { peerReads, peerWrites } from '../repositories/neo-peer-repository.ts';
 import { neoStallReminderWrite } from '../repositories/neo-stall-reminder-write.ts';
@@ -71,6 +73,7 @@ import { codingTodoPrWrites } from '../../lib/neo/packs/coding/todo-prs.ts';
 import { codingDeliveryWrites } from '../../lib/neo/packs/coding/delivery-facts.ts';
 import {
   enrollLocalDevice,
+  deviceKindByCredential,
   recordUnpaired,
   recordWouldRefuse,
   touchDevice,
@@ -233,6 +236,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     ...SDK_MESSAGE_TRANSACTIONS,
     recordWouldRefuse,
     enrollLocalDevice,
+    deviceKindByCredential,
     touchDevice,
     recordUnpaired,
     jobQueueWrites,
@@ -343,5 +347,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     gitHubPollingCapabilityReads,
     gitHubPollingTimerReads,
     gitHubWatchedRepoRead,
+    gitHubWatchedConfigWrite,
+    gitHubWatchPollingWrite,
   ].map((op) => [op.name, op])
 );

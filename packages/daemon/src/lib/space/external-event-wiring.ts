@@ -5,7 +5,7 @@ import { SpaceSessionEventSubscriptionRepository } from '../../storage/repositor
 import { SpaceWorkflowEventSubscriptionRepository } from '../../storage/repositories/space-workflow-event-subscription-repository.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import { ExternalEventService } from '../external-events/external-event-service.ts';
-import { ExternalEventStore } from './external-events/external-event-store.ts';
+import { ExternalEventStore } from '../../../../space/src/external-events/external-event-store.ts';
 import { composeLongHorizonSubscriptionPattern } from '../external-events/long-horizon-subscription-pattern.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 

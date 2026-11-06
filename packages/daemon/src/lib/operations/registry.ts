@@ -14,7 +14,10 @@ export interface OperationCaller {
   readonly clientId?: string;
   readonly source: 'rpc' | 'mcp' | 'internal';
   readonly principal?: string;
-  readonly device?: { readonly deviceId: string; readonly kind: 'human' | 'relay' | 'daemon' };
+  readonly device?: {
+    readonly deviceId: string;
+    readonly kind: 'human' | 'relay' | 'daemon' | 'agent';
+  };
   readonly sessionId?: string;
   readonly spaceId?: string;
   readonly role?: OperationCallerRole;

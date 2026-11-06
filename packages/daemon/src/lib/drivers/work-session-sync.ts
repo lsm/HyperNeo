@@ -17,16 +17,25 @@ export function workSessionRows(
   adapter: string,
   sessions: readonly WorkSessionFact[]
 ): WorkSessionRow[] {
-  return sessions.flatMap((session) => (session.name ? [{ adapter, ...session }] : []));
+  return sessions.map((session) => ({ adapter, ...session }));
 }
 
 async function scanAdapters(adapters: readonly WorkAdapter[]): Promise<WorkSessionRow[]> {
-  const scans = await Promise.allSettled(
+  const scans = await Promise.all(
     adapters.flatMap(({ id, sessions }) =>
-      sessions ? [sessions().then((found) => workSessionRows(id, found))] : []
+      sessions
+        ? [
+            sessions()
+              .then((found) => workSessionRows(id, found))
+              .catch((error) => {
+                logger.warn(`Session scan failed for ${id}`, error);
+                return [];
+              }),
+          ]
+        : []
     )
   );
-  return scans.flatMap((scan) => (scan.status === 'fulfilled' ? scan.value : []));
+  return scans.flat();
 }
 
 export const syncWorkSessions = (superpipe({})('work-session-sync') as PipelineAPI)

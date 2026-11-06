@@ -20,6 +20,7 @@ import { createAskMarkdownHandler } from './lib/neo/ask-markdown.ts';
 import { createRequestGuard } from './lib/pairing/origin-host.ts';
 import { createUpgradeAuthenticator, type UpgradeIdentity } from './lib/pairing/upgrade-auth.ts';
 import { ensureLocalCredential } from './lib/pairing/local-credential.ts';
+import { createAgentReadGuard } from './lib/pairing/agent-read.ts';
 import { daemonPairingLimiter } from './lib/pairing/pairing-limiter.ts';
 import { DevicePairingRepository } from './storage/repositories/device-pairing-repository.ts';
 import { Database } from './storage/database.ts';
@@ -34,7 +35,7 @@ import { DaemonConfigService } from './lib/daemon-config-service.ts';
 import { SettingsManager } from './lib/settings-manager.ts';
 import { StateProjectionService } from './lib/state-projection-service.ts';
 import { BUILD_METADATA } from './lib/build-metadata.ts';
-import { writeRuntimeDescriptor } from './lib/runtime-descriptor.ts';
+import { dialableHost, writeRuntimeDescriptor } from './lib/runtime-descriptor.ts';
 import { createClientEventBridge } from './lib/client-event-bridge.ts';
 import {
   MAX_GITHUB_POLLING_INTERVAL_SECONDS,
@@ -70,7 +71,7 @@ import {
   SessionExternalEventStore,
   ingestSessionEvent,
 } from './lib/external-events/index.ts';
-import type { ExternalEventStore } from './lib/space/external-events/external-event-store.ts';
+import type { ExternalEventStore } from '../../space/src/external-events/external-event-store.ts';
 import { mailSessionEvent } from './lib/external-events/session-event-delivery.ts';
 import { readLatestSessionPrState } from './lib/external-events/session-external-event-store.ts';
 import { replaySessionTerminals } from './lib/external-events/session-terminal-replay.ts';
@@ -146,10 +147,10 @@ import {
 } from './lib/event-loop-stall-marker.ts';
 import { WorkflowHookRuntimeService } from './lib/workflows/hook-runtime-service.ts';
 import { WorkflowHookStateRepository } from './storage/repositories/workflow-hook-state-repository.ts';
-import type { SpaceManager } from './lib/space/managers/space-manager.ts';
+import type { SpaceManager } from '../../space/src/managers/space-manager.ts';
 import { loadSpaceDaemonModule } from './lib/space-module-loader.ts';
-import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service.ts';
-import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager.ts';
+import type { SpaceRuntimeService } from '../../space/src/runtime/space-runtime-service.ts';
+import type { TaskAgentManager } from '../../space/src/runtime/task-agent-manager.ts';
 import type { SpaceWorktreeManager } from './lib/workspaces/worktree-manager.ts';
 import {
   cleanupJobsInBatches,
@@ -359,7 +360,7 @@ export interface DaemonAppContext {
     req: Request,
     remoteAddress: string | null
   ) => Promise<UpgradeIdentity | null>;
-  guardRequest: (req: Request) => Response | null;
+  guardRequest: (req: Request) => Promise<Response | null>;
   db: Database;
   messageHub: MessageHub;
   sessionManager: SessionManager;
@@ -1200,11 +1201,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     });
     const handleAskMarkdown = createAskMarkdownHandler(
       () => sessionManager.getOperationRegistry(),
-      authenticateUpgrade
+      createUpgradeAuthenticator({ db: () => db.gateway, now: Date.now, agentRead: true })
     );
     if (process.env.NODE_ENV !== 'test' || process.env.HYPERNEO_DATA_DIR)
       await ensureLocalCredential(db.gateway);
-    const guardRequest = createRequestGuard({
+    const guardOrigin = createRequestGuard({
       db: () => db.gateway,
       allowedHosts: () => settingsManager.getGlobalSettings().allowedHosts ?? [],
       exempt: (req) =>
@@ -1213,6 +1214,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           .some((route) => route.path === new URL(req.url).pathname),
       now: Date.now,
     });
+    const guardAgent = createAgentReadGuard(() => db.gateway);
+    const guardRequest = async (req: Request) => guardOrigin(req) ?? (await guardAgent(req));
 
     let server: ServerHandle | undefined;
     let removeRuntimeDescriptorFile = () => {};
@@ -1267,7 +1270,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
       async fetch(req, upgrade, client) {
         const url = new URL(req.url);
-        const refused = guardRequest(req);
+        const refused = await guardRequest(req);
         if (refused) return refused;
 
         if (req.method === 'OPTIONS') {
@@ -1368,12 +1371,19 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       },
     });
 
+    removeRuntimeDescriptorFile =
+      process.env.NODE_ENV === 'test' ? () => {} : writeRuntimeDescriptor(config.host, server.port);
+    if (process.env.NODE_ENV !== 'test' || process.env.HYPERNEO_DATA_DIR)
+      await ensureLocalCredential(
+        db.gateway,
+        'agent',
+        new URL(`http://${dialableHost(config.host)}:${server.port}`).origin
+      );
+
     startupTimer.start('post-bind jobs + background services');
     void db.startSdkMessageColumnsBackfill(() => {
       void stateManager.broadcastSystemChange();
     });
-    removeRuntimeDescriptorFile =
-      process.env.NODE_ENV === 'test' ? () => {} : writeRuntimeDescriptor(config.host, server.port);
     const openMessageSearchMergeGate = (): void => {
       if (startupAborted) return;
       db.startMessageSearchMerges();

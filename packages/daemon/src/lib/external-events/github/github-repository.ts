@@ -140,19 +140,6 @@ export class GitHubEventExtensionRepository {
     return upsertGitHubWatchedRepo(this.db, params);
   }
 
-  clearWebhookRegistration(id: string, options: { clearSecret?: boolean } = {}): void {
-    this.db
-      .prepare(
-        `UPDATE space_github_watched_repos
-         SET webhook_secret = CASE WHEN ? THEN NULL ELSE webhook_secret END,
-             webhook_remote_id = NULL, webhook_url = NULL, webhook_auto_registered = 0, webhook_active = NULL,
-             webhook_last_checked_at = NULL, webhook_last_error = NULL, webhook_configured_at = NULL,
-             last_webhook_at = NULL, updated_at = ?
-         WHERE id = ?`
-      )
-      .run(options.clearSecret ? 1 : 0, Date.now(), id);
-  }
-
   setRepoEnabled(spaceId: string, enabled: boolean): number {
     const now = Date.now();
     return persistGitHubSpaceEnabled(this.db, spaceId, enabled, now);
@@ -324,14 +311,6 @@ export class GitHubEventExtensionRepository {
          WHERE id = ?`
       )
       .run(Date.now(), Date.now(), id);
-  }
-
-  clearWebhookDeliveryHistory(id: string): void {
-    this.db
-      .prepare(
-        `UPDATE space_github_watched_repos SET last_webhook_at = NULL, updated_at = ? WHERE id = ?`
-      )
-      .run(Date.now(), id);
   }
 
   updatePollCursor(id: string, cursor: PollCursor): void {

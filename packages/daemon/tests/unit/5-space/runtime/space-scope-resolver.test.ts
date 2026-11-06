@@ -3,7 +3,7 @@ import type { Session, Space } from '@hyperneo/shared';
 import {
   createSpaceScopeResolver,
   type SpaceScopeDependencies,
-} from '../../../../src/lib/space/runtime/space-scope-resolver.ts';
+} from '../../../../../space/src/runtime/space-scope-resolver.ts';
 import {
   makeSessionKindLongHorizonAgent,
   makeSessionKindPolicyContext,

@@ -41,7 +41,6 @@ describe('Bun todo receipt parity probe', () => {
         runtime: 'bun',
         startupBodyCopyComplete: true,
         bootstrapReceipt: true,
-        recoveryWindow: true,
         liveStatus: true,
         dispatchReceipt: true,
         dispatchRollback: true,

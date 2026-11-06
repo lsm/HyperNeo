@@ -16,19 +16,19 @@ import { createOperationRegistry } from '../../../../src/lib/operations/registry
 import { buildAgentSessionConfig } from '../../../../src/lib/session-resolution/agent-session-config.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import type { SettingsManager } from '../../../../src/lib/settings-manager.ts';
-import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import {
   SpaceRuntimeService,
   type SpaceRuntimeServiceConfig,
-} from '../../../../src/lib/space/runtime/space-runtime-service.ts';
+} from '../../../../../space/src/runtime/space-runtime-service.ts';
 import { assembleSessionBriefing } from '../../../../src/lib/briefings/assemble-session-briefing.ts';
 import type {
   AuthoredCapabilityContribution,
   ScopeContribution,
 } from '../../../../src/lib/briefings/contribution.ts';
-import { spaceScopeContribution } from '../../../../src/lib/space/runtime/space-scope-contribution.ts';
-import { createSpaceScopeResolver } from '../../../../src/lib/space/runtime/space-scope-resolver.ts';
+import { spaceScopeContribution } from '../../../../../space/src/runtime/space-scope-contribution.ts';
+import { createSpaceScopeResolver } from '../../../../../space/src/runtime/space-scope-resolver.ts';
 import {
   isBuiltInMcpServer,
   isBuiltInMcpServerName,

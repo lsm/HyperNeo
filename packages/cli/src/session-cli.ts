@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { sessionDoorPath } from '@hyperneo/daemon/lib/messaging/session-door';
 import { readLocalCredential } from '@hyperneo/daemon/lib/pairing/local-credential';
 import { WORKER_REPORT_KINDS } from '@hyperneo/shared/types/worker-report';
+import { readCard } from './read-card.ts';
 
 type Env = Record<string, string | undefined>;
 
@@ -95,6 +96,7 @@ async function post(socketPath: string, body: unknown): Promise<{ status: number
 }
 
 export async function runSessionCommand(args: string[], env: Env = process.env): Promise<number> {
+  if (args[0] === 'read') return readCard(args.slice(1), env.HYPERNEO_DATA_DIR);
   const sender = resolveSender(env) ?? (args[0] === 'pair' || args[0] === 'devices' ? 'cli' : null);
   if (!sender) {
     console.error(

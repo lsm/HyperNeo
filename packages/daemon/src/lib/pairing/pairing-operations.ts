@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import type { DevicePairingRepository } from '../../storage/repositories/device-pairing-repository.ts';
+import type {
+  DeviceKind,
+  DevicePairingRepository,
+} from '../../storage/repositories/device-pairing-repository.ts';
 import { isLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { PairingLimiter } from './pairing-limiter.ts';
@@ -7,7 +10,7 @@ import { createDeviceRevoker } from './revoke-device.ts';
 
 export const SESSION_DOOR_PRINCIPAL = 'session-door';
 
-const Kind = z.enum(['human', 'relay', 'daemon']);
+const Kind = z.enum(['human', 'relay', 'daemon', 'agent']);
 const Refused = z.object({ ok: z.literal(false), reason: z.string() });
 export const refused = { ok: false as const, reason: 'This action needs the user.' };
 
@@ -34,10 +37,13 @@ export function planPairingCode(
   caller: OperationCaller,
   paired: { all: number; humans: number },
   callerIsPairedHuman: boolean,
-  recovery = false
+  recovery = false,
+  kind: DeviceKind = 'human'
 ): { approved: boolean } | { reason: string } | null {
+  if (caller.device?.kind === 'agent') return null;
   if (callerIsPairedHuman) return { approved: true };
   if (!isLocalUser(caller) && !fromDoor(caller)) return null;
+  if (kind === 'agent' && paired.humans === 0) return { reason: NO_HUMAN_DEVICE };
   if (fromDoor(caller) && recovery) return { approved: true };
   if (paired.all === 0) return { approved: true };
   return paired.humans === 0 ? { reason: NO_HUMAN_DEVICE } : { approved: false };

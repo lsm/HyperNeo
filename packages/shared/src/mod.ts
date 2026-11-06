@@ -38,7 +38,6 @@ export * from './live-query-types.ts';
 export * from './validation/workspace-path.ts';
 export * from './lib/workflow-graph.ts';
 export * from './lib/workflow-handoff.ts';
-export * from './acp/index.ts';
 
 export {
   Logger,
@@ -64,3 +63,6 @@ export type {
   StructuredLogSubscriber,
 } from './logger.ts';
 export * from './tool-summary-fields.ts';
+
+export * from './command.ts';
+export * from './json-rpc.ts';

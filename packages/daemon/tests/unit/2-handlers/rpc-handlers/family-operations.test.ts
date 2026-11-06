@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { OPERATION_NAMES } from '@hyperneo/shared/types/operation-names';
 import { collectFamilyOperations } from '../../../../src/lib/rpc-handlers/family-operations/index.ts';
-import { collectSpaceFamilyOperations } from '../../../../src/lib/space/rpc/family-operations/space.ts';
-import type { SpaceFamilyContext } from '../../../../src/lib/space/rpc/family-operations/space-context.ts';
+import { collectSpaceFamilyOperations } from '../../../../../space/src/rpc/family-operations/space.ts';
+import type { SpaceFamilyContext } from '../../../../../space/src/rpc/family-operations/space-context.ts';
 
 function fakeContext(): SpaceFamilyContext {
   return {

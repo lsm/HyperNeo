@@ -228,6 +228,57 @@ describe('NeoAskTodos', () => {
     expect(app.container.querySelector('[data-ask-details]')).toBeNull();
   });
 
+  it.each([
+    ['en', 'Ask actions', 'Copy link', 'open', 'https://cards.example.test'],
+    ['zh-Hans', '更多操作', '复制链接', 'done', 'http://127.0.0.1:43210'],
+    ['en', 'Ask actions', 'Copy link', 'dropped', 'https://other.example.test:9443'],
+  ] as const)(
+    'copies the card link (%s, %s, %s, %s, %s)',
+    async (language, menu, label, status, origin) => {
+      vi.stubGlobal('location', new URL(`${origin}/neo?key=synthetic#card`));
+      locale.value = language;
+      const copy = vi.spyOn(clipboard, 'copyToClipboard').mockResolvedValue(true);
+      const data = entry({});
+      data.ask.status = status;
+      data.ask.title = 'Review [iOS] \\ API\nnext step';
+      const url = location.href;
+      const answer = vi.fn();
+      const app = render(<NeoAskTodos entry={data} onAnswer={answer} disabled />);
+      try {
+        fireEvent.click(app.getByRole('button', { name: menu }));
+        fireEvent.click(app.getByRole('menuitem', { name: label }));
+        await waitFor(() =>
+          expect(copy).toHaveBeenCalledWith(
+            `[Review \\[iOS\\] \\\\ API next step](${origin}/ask/ask.md)`
+          )
+        );
+        await waitFor(() => expect(app.queryByRole('menuitem', { name: label })).toBeNull());
+        expect(location.href).toBe(url);
+        expect(answer).not.toHaveBeenCalled();
+      } finally {
+        copy.mockRestore();
+        vi.unstubAllGlobals();
+      }
+    }
+  );
+
+  it('copies a plain Unicode card title verbatim', async () => {
+    const copy = vi.spyOn(clipboard, 'copyToClipboard').mockResolvedValue(true);
+    const data = entry({});
+    const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} />);
+    try {
+      fireEvent.click(app.getByRole('button', { name: '更多操作' }));
+      fireEvent.click(app.getByRole('menuitem', { name: '复制链接' }));
+      await waitFor(() =>
+        expect(copy).toHaveBeenCalledWith(
+          `[${data.ask.title}](${location.origin}/ask/${data.ask.id}.md)`
+        )
+      );
+    } finally {
+      copy.mockRestore();
+    }
+  });
+
   it('copies a quote after expanding and reopening a collapsed card', async () => {
     locale.value = 'en';
     const copy = vi.spyOn(clipboard, 'copyToClipboard').mockResolvedValue(true);
@@ -1049,9 +1100,11 @@ describe('NeoAskTodos', () => {
   );
 
   it('marks an open ask done or drops it from its menu', () => {
+    const dropLabel = '放弃这件事';
     const onSettle = vi.fn();
     const app = render(<NeoAskTodos entry={entry({})} onAnswer={() => {}} onSettle={onSettle} />);
     fireEvent.click(app.getByRole('button', { name: '更多操作' }));
+    expect(app.getByRole('menuitem', { name: dropLabel })).toBeTruthy();
     fireEvent.click(app.getByRole('menuitem', { name: '标记做完' }));
     expect(onSettle).toHaveBeenCalledWith('done');
     cleanup();
@@ -1062,7 +1115,10 @@ describe('NeoAskTodos', () => {
         onSettle={onSettle}
       />
     );
-    expect(settled.queryByRole('button', { name: '更多操作' })).toBeNull();
+    fireEvent.click(settled.getByRole('button', { name: '更多操作' }));
+    expect(settled.getByRole('menuitem', { name: '复制链接' })).toBeTruthy();
+    expect(settled.queryByRole('menuitem', { name: '标记做完' })).toBeNull();
+    expect(settled.queryByRole('menuitem', { name: dropLabel })).toBeNull();
   });
 
   it('moves removed todos into Details, one line each with what replaced them', () => {

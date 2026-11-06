@@ -2,6 +2,7 @@ import type { NeoCardSearchPage } from './neo-card-search.ts';
 import type { WorkDetail, WorkTurnFact } from '../lib/drivers/types.ts';
 import { runtimeWorkerUrl } from '../lib/runtime-worker-url.ts';
 import type { CodexSnapshot } from '../lib/drivers/codex-desktop-adapter.ts';
+import type { ClaudeDesktopRecord } from './claude-desktop-read.ts';
 import type { PendingTurn } from './turn-vectors.ts';
 import type { Fact, NeoMessageStatusRef } from '../lib/neo/message-status.ts';
 import type { MessageFeedArgs } from './sdk-message-feed-read.ts';
@@ -43,12 +44,13 @@ export type CardSearchArgs = {
 };
 type SDKReadArgs =
   | SDKStatusArgs
-  | { hyperneoTurnFacts: { sessionId: string; cursor?: string } }
+  | { hyperneoTurnFacts: { sessionId: string; cursor?: string; limit?: number } }
   | { hyperneoTurnEnds: { sessionId: string; since: number } }
   | SDKPageArgs
   | WorkSearchArgs
   | MessageFeedArgs
   | { neoMessageStatus: NeoMessageStatusRef[] }
+  | { claudeRecords: { sessionsDir: string } }
   | { codexSnapshot: { statePath: string; includeClosed: boolean; idPrefix?: string } }
   | { turnVectors: { model: string; dimensions: number; limit: number | null } }
   | CardSearchArgs;
@@ -63,6 +65,7 @@ export type SDKReadResult =
   | PendingTurn[]
   | number
   | CodexSnapshot
+  | ClaudeDesktopRecord[]
   | WorkTurnFact[];
 export type SDKStatusRequest = {
   id: number;
@@ -219,8 +222,14 @@ export class SDKStatusReader {
     >;
   }
 
-  readHyperneoTurnFacts(sessionId: string, cursor?: string) {
-    return this.enqueue({ hyperneoTurnFacts: { sessionId, cursor } }) as Promise<WorkTurnFact[]>;
+  readHyperneoTurnFacts(sessionId: string, cursor?: string, limit?: number) {
+    return this.enqueue({ hyperneoTurnFacts: { sessionId, cursor, limit } }) as Promise<
+      WorkTurnFact[]
+    >;
+  }
+
+  readClaudeRecords(sessionsDir: string): Promise<ClaudeDesktopRecord[]> {
+    return this.enqueue({ claudeRecords: { sessionsDir } }) as Promise<ClaudeDesktopRecord[]>;
   }
 
   readCodexSnapshot(
@@ -285,7 +294,7 @@ export class SDKStatusReader {
   }
 
   private exchange(args: SDKReadArgs | null, queuedAt: number): Promise<SDKReadResult | null> {
-    if (this.dbPath === ':memory:' && args && !('codexSnapshot' in args))
+    if (this.dbPath === ':memory:' && args && !('codexSnapshot' in args || 'claudeRecords' in args))
       return Promise.reject(new Error('SDK reader needs a file-backed DB'));
     const worker = (this.worker ??= this.createWorker());
     const id = ++this.id,
@@ -319,17 +328,19 @@ export class SDKStatusReader {
                     ? 'hyperneo-turn-facts'
                     : 'hyperneoTurnEnds' in args
                       ? 'hyperneo-turn-ends'
-                      : 'codexSnapshot' in args
-                        ? 'codex-snapshot'
-                        : 'turnVectors' in args
-                          ? 'turn-vectors'
-                          : 'neoMessageStatus' in args
-                            ? 'neo-message-status'
-                            : 'feed' in args
-                              ? 'message-feed'
-                              : 'page' in args
-                                ? 'sdk-page'
-                                : 'sdk-status'
+                      : 'claudeRecords' in args
+                        ? 'claude-records'
+                        : 'codexSnapshot' in args
+                          ? 'codex-snapshot'
+                          : 'turnVectors' in args
+                            ? 'turn-vectors'
+                            : 'neoMessageStatus' in args
+                              ? 'neo-message-status'
+                              : 'feed' in args
+                                ? 'message-feed'
+                                : 'page' in args
+                                  ? 'sdk-page'
+                                  : 'sdk-status'
               : 'close',
             id,
             epoch,

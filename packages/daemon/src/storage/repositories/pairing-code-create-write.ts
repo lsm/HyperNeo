@@ -25,7 +25,8 @@ const commitCodeCreation = (superpipe({})('pairing.code.create') as PipelineAPI)
         draft.caller,
         repo.countDevices(),
         pairedHuman,
-        draft.kind === 'human' && repo.humanRecoveryOpen()
+        draft.kind === 'human' && repo.humanRecoveryOpen(),
+        draft.kind
       );
       if (!plan) return { reason: refused };
       return 'reason' in plan

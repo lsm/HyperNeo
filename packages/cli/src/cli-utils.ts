@@ -1,4 +1,5 @@
 import { SESSION_CLI_HELP } from './session-cli-commands.ts';
+import { dialableHost } from '@hyperneo/daemon/lib/runtime-descriptor';
 export interface CliOptions {
   port?: number;
   host?: string;
@@ -135,7 +136,8 @@ function getNetworkAddresses(): Array<{ label: string; address: string }> {
 }
 
 export function printServerUrls(port: number, host: string): void {
-  console.log(`   🌐 Local:   http://localhost:${port}`);
+  const localHost = dialableHost(host);
+  console.log(`   🌐 Local:   http://${localHost}:${port}`);
 
   if (host === '0.0.0.0' || host === '::') {
     const addresses = getNetworkAddresses();
@@ -146,7 +148,7 @@ export function printServerUrls(port: number, host: string): void {
     console.log(`   🌐 Network: http://${host}:${port}`);
   }
 
-  console.log(`   🔌 WebSocket: ws://localhost:${port}/ws`);
+  console.log(`   🔌 WebSocket: ws://${localHost}:${port}/ws`);
 }
 
 export async function findAvailablePort(): Promise<number> {

@@ -57,6 +57,19 @@ async function refused(pending: unknown) {
 }
 
 describe('operation callers from paired devices', () => {
+  test('an agent device cannot invoke even a read or pairing operation', async () => {
+    const call = connectedAs({ deviceId: 'reader', kind: 'agent' } as UpgradeIdentity);
+    for (const name of [
+      'neo.ask.read',
+      'neo.snapshot',
+      'client.list',
+      'message.send',
+      'work.status',
+      'session.archive',
+    ]) {
+      await refused(call(name));
+    }
+  });
   test('an unpaired RPC connection cannot call owner operations', async () => {
     const call = connectedAs(null);
     await refused(call('session.archive'));

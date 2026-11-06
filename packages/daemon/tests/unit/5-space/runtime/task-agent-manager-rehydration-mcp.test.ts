@@ -8,8 +8,8 @@ import { createOutboxTestDb } from '../../../helpers/outbox-test-db';
 import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
-import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import type { TaskAgentManagerConfig } from '../../../../../space/src/runtime/task-agent-manager.ts';
+import { TaskAgentManager } from '../../../../../space/src/runtime/task-agent-manager.ts';
 import type { OperationRegistry } from '../../../../src/lib/operations/registry.ts';
 
 const SPACE_ID = 'space-rehydrate-mcp';
@@ -179,7 +179,7 @@ function makeManager(): {
     spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
     spaceRuntimeService: {
       getSpaceRuntime: () =>
-        ({}) as unknown as import('../../../../src/lib/space/runtime/space-runtime.ts').SpaceRuntime,
+        ({}) as unknown as import('../../../../../space/src/runtime/space-runtime.ts').SpaceRuntime,
       isWorkflowRunActive: () => true,
       activateWorkflowNode: async () => [],
       ensureToolTargetSession: async () =>

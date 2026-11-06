@@ -12,6 +12,7 @@ import {
   WorkTurnRepository,
 } from '../../../../src/storage/repositories/work-turn-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
+import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 
@@ -47,6 +48,15 @@ function setup() {
     recordWorkTurns.run(db, { ref, turns }, undefined as never);
   return { db, send, record };
 }
+
+const ledger = (db: Database, createdAt: number) =>
+  db
+    .prepare(
+      `INSERT INTO pack_coding_pr_ledger
+        (repo, number, title, branch, head, state, state_since, read_at, created_at)
+       VALUES ('acme/app', 7, 't', 'b', 'h', 'open', 1, 1, ?)`
+    )
+    .run(createdAt);
 
 const todo = (id: string) =>
   ({
@@ -166,10 +176,53 @@ describe('coding turn PRs', () => {
       ...todo('a'),
       check: { pack: 'coding', kind: 'pr_merged', params: { urls: [url] } },
     };
-    await pack.readFacts(named as NeoTodo);
-    expect(db.prepare('SELECT claim FROM pack_coding_pr_claims').all()).toEqual([
-      { claim: 'named' },
+    expect((await pack.readFacts(named as NeoTodo))?.prs.map((pr) => pr.url)).toEqual([url]);
+    db.close();
+  });
+
+  test('a todo is linked only to the PR its own turn produced', () => {
+    const { db, send, record } = setup();
+    db.exec('PRAGMA foreign_keys = OFF');
+    send('d1', 'a', 'receipt-a');
+    send('d2', 'b', 'receipt-b');
+    record(fact('t1', ['receipt-a'], [url], 100), fact('t2', ['receipt-b'], [url], 200));
+    ledger(db, 105);
+    const prs = new CodingTodoPrRepository(db);
+    expect(prs.linked('a', url)).toBe(true);
+    expect(prs.linked('b', url)).toBe(false);
+    db.close();
+  });
+
+  test('a PR the ledger has not seen is not linked by a turn', () => {
+    const { db, send, record } = setup();
+    send('d1', 'a', 'receipt-a');
+    record(fact('t1', ['receipt-a'], [url], 100));
+    expect(new CodingTodoPrRepository(db).linked('a', url)).toBe(false);
+    db.close();
+  });
+
+  test('a bound todo owns the turn running at its bind, with no delivery row', async () => {
+    const { db, record } = setup();
+    db.exec('PRAGMA foreign_keys = OFF');
+    record(fact('t1', ['typed'], [url], 100), fact('t0', ['typed'], [url], 50));
+    new NeoTodoSessionRepository(db).bind('c', ref, 105);
+    const turns = new CodingTurnPrRepository(db);
+    expect(turns.own('c').map(({ id }) => id)).toEqual(['t1']);
+    expect(turns.mentions([url]).turns.find(({ id }) => id === 't1')?.bound).toMatchObject([
+      { todo: 'c', boundAt: 105 },
     ]);
+    const pack = createCodingTodoPack(new CodingTodoPrRepository(db), async () => [merged(105)]);
+    expect((await pack.readFacts(todo('c'), false))?.prs).toHaveLength(1);
+    db.close();
+  });
+
+  test('a human turn after the bind keeps a bound todo open', async () => {
+    const { db, record } = setup();
+    db.exec('PRAGMA foreign_keys = OFF');
+    record(fact('t1', ['typed'], [url], 100));
+    new NeoTodoSessionRepository(db).bind('c', ref, 50);
+    const pack = createCodingTodoPack(new CodingTodoPrRepository(db), async () => [merged(105)]);
+    expect((await pack.readFacts(todo('c'), false))?.incomplete).toBe(true);
     db.close();
   });
 

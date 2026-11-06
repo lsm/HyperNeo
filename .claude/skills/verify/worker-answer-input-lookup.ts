@@ -28,8 +28,8 @@ const claudeOwner = '11111111-1111-4111-8111-111111111111';
 mkdirSync(desktopRecords, { recursive: true });
 writeFileSync(join(desktopRecords, 'local_card.json'), JSON.stringify({ sessionId: 'local_card', cliSessionId: claudeOwner, cwd: '/synthetic-proof-project' }));
 const copilotFixture = resolve(import.meta.dir, '../../../packages/daemon/tests/fixtures/copilot-sdk.ts');
-const acpFixture = resolve(import.meta.dir, '../../../packages/daemon/tests/fixtures/copilot-acp.ts');
-writeFileSync(join(run, 'bin/copilot'), `#!/usr/bin/env bun\nif (process.argv.includes('--acp')) await import(${JSON.stringify(acpFixture)}); else { process.argv.push('--production-version', '--durable-inputs'); await import(${JSON.stringify(copilotFixture)}); }\n`, { mode: 0o700 });
+writeFileSync(join(run, 'bin/copilot'), `#!/usr/bin/env bun\nprocess.argv.push('--production-version', '--durable-inputs'); await import(${JSON.stringify(copilotFixture)});\n`, { mode: 0o700 });
+process.env.COPILOT_CLI_PATH = join(run, 'bin/copilot');
 mkdirSync(join(run, 'home/evidence'), { recursive: true });
 writeFileSync(join(run, 'home/copilot-list.json'), '[]');
 mkdirSync(join(run, 'workspace'), { recursive: true });
@@ -99,7 +99,9 @@ try {
   await app.spaceRuntimeService.ready(); await app.jobProcessor.stop();
   await seed();
   if (peerMode) {
-    console.log(JSON.stringify({ port: app.server.port }));
+    const pairing = await rpc('device.pair.create', { kind: 'human', name: 'Synthetic querying daemon' });
+    assert(pairing.ok && pairing.approval === 'approved');
+    console.log(JSON.stringify({ port: app.server.port, code: pairing.code }));
     await new Response(Bun.stdin).text();
   } else {
     const lookup = (name: string, extra: Record<string, unknown> = {}, adapter = 'codex-desktop') => rpc('work.read', { sessionId: 'worker', input: { adapter, marker: marker(name) }, ...extra });
@@ -146,8 +148,8 @@ try {
     let ready = '';
     while (!ready.includes('\n')) { const part = await reader.read(); assert(!part.done); ready += new TextDecoder().decode(part.value); }
     reader.releaseLock();
-    const port = JSON.parse(ready.split('\n')[0]).port;
-    await rpc('daemon.attach', { daemonId: 'synthetic-owner', url: `ws://127.0.0.1:${port}/ws` });
+    const { port, code } = JSON.parse(ready.split('\n')[0]);
+    await rpc('daemon.attach', { daemonId: 'synthetic-owner', url: `ws://127.0.0.1:${port}/ws`, code });
     const remote = await lookup('remote-only', { daemon: 'synthetic-owner' });
     assert.equal(remote.value.turns[0].messageId, 'peer-input');
     assert.deepEqual(remote.value.matchedInput, { adapter: 'codex-desktop', marker: marker('remote-only') });

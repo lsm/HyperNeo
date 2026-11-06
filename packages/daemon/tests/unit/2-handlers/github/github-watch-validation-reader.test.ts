@@ -180,7 +180,7 @@ describe('watchRepo validation reader', () => {
     expect(row()).toEqual(before);
   });
 
-  test('complete reader measurement works without Git history below 200 lines', () => {
+  test('complete watch measurements work without Git history below 200 lines', () => {
     const dir = mkdtempSync(join(tmpdir(), 'watch-validation-scope-'));
     try {
       const output = join(dir, 'scope.json');
@@ -192,13 +192,18 @@ describe('watchRepo validation reader', () => {
       });
       const report = JSON.parse(readFileSync(output, 'utf8'));
       expect(report.excludedLines).toBe(0);
-      expect(report.productionGraphLines).toBe(182);
-      expect(report.caller.lines).toBe(92);
+      expect(report.productionGraphLines).toBe(175);
+      expect(report.caller.lines).toBe(85);
       expect(report.modules).toHaveLength(3);
       for (const module of report.modules) {
         expect(module.counted).toBe(true);
         expect(module.sha256).toMatch(/^[a-f0-9]{64}$/);
       }
+      execFileSync(bun, ['.claude/skills/verify/github-watch-config-measure.cjs', output], {
+        cwd: fileURLToPath(new URL('../../../../../../', import.meta.url)),
+        env: { ...process.env, PATH: dir },
+      });
+      expect(JSON.parse(readFileSync(output, 'utf8')).ownedRootLines).toBe(140);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -21,8 +21,8 @@ function walk(node) {
       const body = callback.getText(sf);
       if (!body.includes('await this.stopIdlePollingOnReader();')) throw Error('Watch caller does not await timer ownership');
       const before = body.replace('await this.stopIdlePollingOnReader();', 'this.maybeStopPolling();');
-      if (hash(before) !== 'e864551004da9d8c466e34128893fd2074fce59550280a594a28f9c3ad978851') throw Error('Watch caller changed beyond reviewed reader calls');
-      caller = { file, name, lines: lines(callback), sha256: hash(body), reviewedReaderCallsOnly: true };
+      if (hash(before) !== '5dd5a3ede0594bc8e0fec2e6350020bcfc846568dbbcadcd55045e12e2366dbe') throw Error('Watch caller changed beyond reviewed watch bridges');
+      caller = { file, name, lines: lines(callback), sha256: hash(body), reviewedWatchBridgesOnly: true };
     } else otherRpcs.push([name, hash(callback.getText(sf))]);
   }
   ts.forEachChild(node, walk);
@@ -47,6 +47,6 @@ const knownTotal = selected.concat(data, [caller]).reduce((n, row) => n + row.li
 const excludedLines = data.filter(row => row.auditedStable).reduce((n, row) => n + row.lines, 0);
 const fresh = knownTotal - excludedLines;
 if (fresh > 200) throw Error('Public watch timer slice exceeds 200 lines');
-const report = { head: cp.execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), selected, caller, data, importLines, smokeLines, fresh, excludedLines, knownTotal, contract: 'One public timer call site awaits the registered reader in the existing effect queue; captured handle prevents clearing another lifetime. No timer/provider skips admission, errors propagate after known writes, no fallback/replay.', auditLimit: 'Sibling #9657 refreshes only the retired six-line helper deletion pin, with selected roots and data exclusions unchanged. Complete selected watch caller/auth, timer owner and reader/query/mapper counted. Neo approved only the two unchanged constructor-free query/mapper modules (97 lines) outside the fresh 167-line envelope, 264 known total. Watch validation/webhook/mutation/config effects remain unchanged main-side and are not re-audited. The retired legacy helper is deleted under #9657. Existing writer/capability subtrees retain separate audits; no full public/framework/runtime closure, background polling reader or #9438/#8714 completion claim.' };
+const report = { head: cp.execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), selected, caller, data, importLines, smokeLines, fresh, excludedLines, knownTotal, contract: 'One public timer call site awaits the registered reader in the existing effect queue; captured handle prevents clearing another lifetime. No timer/provider skips admission, errors propagate after known writes, no fallback/replay.', auditLimit: 'Sibling #9657 refreshes only the retired six-line helper deletion pin, with selected roots and data exclusions unchanged. Complete selected watch caller/auth, timer owner and reader/query/mapper counted. Neo approved only the two unchanged constructor-free query/mapper modules (97 lines) outside the fresh 167-line envelope, 264 known total. The reviewed watch config slice moves key reads and atomic mutations to the gateway. Remaining polling-intent/snapshot effects are not re-audited by this timer measurement. The retired legacy helper is deleted under #9657. Existing writer/capability subtrees retain separate audits; no full public/framework/runtime closure, background polling reader or #9438/#8714 completion claim.' };
 fs.writeFileSync(process.argv[2], JSON.stringify(report, null, 2) + '\n');
 console.log(JSON.stringify({ fresh, excludedLines, knownTotal }));
