@@ -13,6 +13,7 @@ const service = join(homedir(), '.codex/computer-use/Codex Computer Use.app/Cont
 const pid = 987654;
 const name = 'Codex Computer Use interaction';
 let young = false, recent = false, failSignal = false, denyRead = false, auto = false;
+let failNotice = false;
 let hold: Promise<void> | undefined;
 const commands: { file: string; args: string[] }[] = [];
 const notices: string[] = [];
@@ -39,6 +40,7 @@ const fakeExecFile = Object.assign(() => { throw new Error('Use promisified fixt
       assert.equal(args[0], '-e');
       assert(args[1].includes('display notification (item 1 of argv)'));
       notices.push(args[2]);
+      if (failNotice) throw new Error('synthetic notification refusal');
       return { stdout: '', stderr: '' };
     }
     throw new Error(`Refused unexpected command ${file}`);
@@ -102,6 +104,14 @@ try {
     await end();
   }
   young = recent = denyRead = failSignal = false;
+  failNotice = true;
+  const closeFailedNotice = startCuChecker(() => false); closeAll.push(closeFailedNotice);
+  const failedNoticeTimer = timers.at(-1)!;
+  const beforeFailedNotices = notices.length;
+  failedNoticeTimer.callback(); await settle(); failedNoticeTimer.callback(); await settle();
+  assert.equal(notices.length - beforeFailedNotices, 1, 'A failed notification must not retry');
+  await closeFailedNotice();
+  failNotice = false;
   let release!: () => void;
   hold = new Promise<void>((resolve) => { release = resolve; });
   const end = startCuChecker(() => false); closeAll.push(end);

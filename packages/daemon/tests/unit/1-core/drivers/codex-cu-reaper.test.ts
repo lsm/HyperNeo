@@ -72,6 +72,33 @@ describe('decideCuReap', () => {
 });
 
 describe('createCuChecker', () => {
+  test('a failed alert is attempted once for each service process birth', async () => {
+    let attempts = 0;
+    let facts = observation();
+    const checker = createCuChecker({
+      read: async () => facts,
+      auto: () => false,
+      notify: async () => {
+        attempts++;
+        throw new Error('notification denied');
+      },
+      signal: () => {
+        throw new Error('alert mode must not signal');
+      },
+    });
+    try {
+      await checker.check();
+      await checker.check();
+      expect(attempts).toBe(1);
+      facts = { ...facts, processes: `123 501 Tue Nov  3 08:00:00 2026 ${path}` };
+      await checker.check();
+      await checker.check();
+      expect(attempts).toBe(2);
+    } finally {
+      await checker.close();
+    }
+  });
+
   test('explicit alert mode offers the exact single-PID action without sending a signal', async () => {
     const notices: string[] = [],
       signals: number[] = [];
