@@ -1,3 +1,5 @@
+import { messageImageFullUrl } from '../../neo/neo-message-images.ts';
+import { PhotoThumbnail } from '../PhotoLightbox.tsx';
 import { CheckGlyph } from '../icons/common-glyphs.tsx';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import type { MessageDeliveryRetryInfo, MessageDeliveryStatus } from '@hyperneo/shared';
@@ -380,14 +382,16 @@ export function SDKUserMessage({
             const source = img.source as Record<string, unknown>;
             const mediaType = source.media_type as string;
             const data = source.data as string;
+            const src = `data:${mediaType};base64,${data}`;
+            const fullSrc = messageImageFullUrl(img);
 
             return (
               <div key={idx} class="rounded overflow-hidden border border-line-strong/50">
-                <img
-                  src={`data:${mediaType};base64,${data}`}
-                  alt="Attached image"
-                  class="max-w-full h-auto"
-                />
+                {fullSrc ? (
+                  <PhotoThumbnail src={src} fullSrc={fullSrc} label="Attached image" />
+                ) : (
+                  <img src={src} alt="Attached image" class="max-w-full h-auto" />
+                )}
               </div>
             );
           })}

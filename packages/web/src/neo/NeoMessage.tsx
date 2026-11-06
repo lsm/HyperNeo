@@ -7,7 +7,7 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { CopyButton } from '../components/ui/CopyButton.tsx';
 import { neoMessageAnchor, type NeoReplyContext } from './reply-context.ts';
-import { neoMessageImageSources } from './neo-message-images.ts';
+import { neoMessagePhotos } from './neo-message-images.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoClampedText } from './NeoClampedText.tsx';
 
@@ -50,14 +50,19 @@ export function NeoMessage({
   children?: ComponentChildren;
 }) {
   const user = message.type === 'user';
-  const images = neoMessageImageSources(message);
+  const images = neoMessagePhotos(message);
   const sent = user ? neoSplitSentMessage(text) : { words: text, files: [] };
   const words = user ? neoSentWords(sent.words, images.length > 0) : text;
   const copyDisabled = !words.trim() && !sent.files.length;
   const photos = (images.length > 0 || sent.files.length > 0) && (
     <div class={`mb-3 flex flex-wrap gap-2 ${user ? 'justify-end' : ''}`}>
-      {images.map((src, index) => (
-        <PhotoThumbnail key={index} src={src} label={`Attached photo ${index + 1}`} />
+      {images.map(({ src, fullSrc }, index) => (
+        <PhotoThumbnail
+          key={index}
+          src={src}
+          fullSrc={fullSrc}
+          label={`Attached photo ${index + 1}`}
+        />
       ))}
       <NeoSentFiles files={sent.files} />
     </div>

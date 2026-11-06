@@ -243,6 +243,11 @@ export async function startDevServer(config: Config) {
         server.requestIP(req)?.address ?? null
       );
       if (markdown) return markdown;
+      const image = await daemonContext.handleMessageImage(
+        req,
+        server.requestIP(req)?.address ?? null
+      );
+      if (image) return image;
 
       try {
         const entry = resolveNeoEntry(url);

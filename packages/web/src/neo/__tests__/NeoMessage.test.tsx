@@ -21,6 +21,34 @@ describe('Neo message presentation', () => {
     expect(container.querySelector('.neo-shell')?.getAttribute('data-theme')).toBe('dark');
     expect(document.documentElement.getAttribute('data-theme')).toBe(appTheme);
   });
+  it('opens a linked photo from its full image URL', () => {
+    const url = '/api/sessions/s/messages/m/images/0';
+    render(
+      <NeoMessage
+        message={
+          {
+            type: 'user',
+            message: {
+              role: 'user',
+              content: [
+                {
+                  type: 'image',
+                  source: { type: 'base64', media_type: 'image/png', data: 'YWJj' },
+                  full: { url },
+                },
+              ],
+            },
+          } as unknown as ChatMessage
+        }
+        text=""
+      />
+    );
+    const placeholder = screen.getByRole('img', { name: 'Attached photo 1' });
+    expect(placeholder.getAttribute('src')).toBe('data:image/png;base64,YWJj');
+    fireEvent.click(placeholder);
+    const dialog = screen.getByRole('dialog', { name: 'Attached photo 1' });
+    expect(dialog.querySelector('img')?.getAttribute('src')).toBe(url);
+  });
   it.each(markdownExamples)(
     'renders rich Markdown for $type using its own theme',
     async (example) => {

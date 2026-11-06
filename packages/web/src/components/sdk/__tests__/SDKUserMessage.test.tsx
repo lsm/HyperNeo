@@ -1,7 +1,8 @@
 // @ts-nocheck
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
+import { render, fireEvent, cleanup, waitFor, screen } from '@testing-library/preact';
+import { ATTACHMENT_LIGHTBOX_TEST_ID } from '../../PhotoLightbox.tsx';
 import { SDKUserMessage } from '../SDKUserMessage';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
@@ -229,6 +230,27 @@ describe('SDKUserMessage', () => {
       const img = container.querySelector('img');
       expect(img).toBeTruthy();
       expect(img?.getAttribute('src')).toContain('data:image/png;base64');
+    });
+
+    it('opens the full image from its link and shows the placeholder until then', () => {
+      const message = createImageMessage();
+      const block = (message.message.content as unknown as Record<string, unknown>[])[1];
+      block.full = {
+        url: '/api/sessions/s/messages/m/images/1',
+        mediaType: 'image/png',
+        bytes: 9_000_000,
+        width: 4000,
+        height: 3000,
+      };
+      const { container } = render(<SDKUserMessage message={message} />);
+
+      const placeholder = container.querySelector('img');
+      expect(placeholder?.getAttribute('src')).toContain('data:image/png;base64');
+      fireEvent.click(screen.getByRole('button', { name: /attached image/i }));
+      const lightbox = screen.getByTestId(ATTACHMENT_LIGHTBOX_TEST_ID);
+      expect(lightbox.querySelector('img')?.getAttribute('src')).toBe(
+        '/api/sessions/s/messages/m/images/1'
+      );
     });
 
     it('should render text alongside images', () => {

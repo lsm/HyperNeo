@@ -20,6 +20,7 @@ import { createAskMarkdownHandler } from './lib/neo/ask-markdown.ts';
 import { createRequestGuard } from './lib/pairing/origin-host.ts';
 import { createUpgradeAuthenticator, type UpgradeIdentity } from './lib/pairing/upgrade-auth.ts';
 import { ensureLocalCredential } from './lib/pairing/local-credential.ts';
+import { createMessageImageHandler } from './lib/rpc-handlers/message-image-route.ts';
 import { createAgentReadGuard } from './lib/pairing/agent-read.ts';
 import { daemonPairingLimiter } from './lib/pairing/pairing-limiter.ts';
 import { DevicePairingRepository } from './storage/repositories/device-pairing-repository.ts';
@@ -356,6 +357,7 @@ export interface DaemonAppContext {
   server: ServerHandle;
   handlePair: (req: Request) => Promise<Response>;
   handleAskMarkdown: (req: Request, remoteAddress: string | null) => Promise<Response | null>;
+  handleMessageImage: (req: Request, remoteAddress: string | null) => Promise<Response | null>;
   authenticateUpgrade: (
     req: Request,
     remoteAddress: string | null
@@ -1203,6 +1205,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       () => sessionManager.getOperationRegistry(),
       createUpgradeAuthenticator({ db: () => db.gateway, now: Date.now, agentRead: true })
     );
+    const handleMessageImage = createMessageImageHandler(authenticateUpgrade, () => db.gateway);
     if (process.env.NODE_ENV !== 'test' || process.env.HYPERNEO_DATA_DIR)
       await ensureLocalCredential(db.gateway);
     const guardOrigin = createRequestGuard({
@@ -1285,6 +1288,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
         const markdown = await handleAskMarkdown(req, client?.remoteAddress ?? null);
         if (markdown) return markdown;
+        const image = await handleMessageImage(req, client?.remoteAddress ?? null);
+        if (image) return image;
 
         if (url.pathname === '/ws') {
           const device = await authenticateUpgrade(req, client?.remoteAddress ?? null);
@@ -1755,6 +1760,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       server,
       handlePair,
       handleAskMarkdown,
+      handleMessageImage,
       authenticateUpgrade,
       guardRequest,
       db,

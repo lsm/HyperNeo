@@ -1,5 +1,5 @@
 import { sdkMessageBodyAt } from '../../../storage/repositories/sdk-message-body-read.ts';
-import { capMessageOutput } from '../../rpc-handlers/message-output-cap.ts';
+import { capSdkMessage } from '../../rpc-handlers/message-output-cap.ts';
 import {
   activeDeliveryJobsCtes,
   ACTIVE_DELIVERY_RETRYING_CTE_SQL,
@@ -50,7 +50,7 @@ export function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<str
     const parsed = JSON.parse(content) as Record<string, unknown>;
     const turnId = turnUserMessageId ?? String(id);
     content = JSON.stringify({
-      ...capMessageOutput(parsed),
+      ...capSdkMessage(sessionId)(parsed),
       _taskMeta: {
         authorRole: role,
         authorLabel: label,

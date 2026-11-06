@@ -191,6 +191,11 @@ export async function startProdServer(config: Config) {
         server.requestIP(req)?.address ?? null
       );
       if (markdown) return markdown;
+      const image = await daemonContext.handleMessageImage(
+        req,
+        server.requestIP(req)?.address ?? null
+      );
+      if (image) return image;
 
       return app.fetch(req);
     },

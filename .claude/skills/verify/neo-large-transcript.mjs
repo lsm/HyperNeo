@@ -27,10 +27,10 @@ for (let i = 0; i < 5; i++) {
 }
 sql(seed);
 const stored = Number(sql(`SELECT sum(length(sdk_message)) FROM sdk_messages WHERE session_id=${quote(sessionId)}`));
-assert(stored > 40 * 1024 * 1024, 'fixture must exceed the outbound limit');
+assert(stored > 40 * 1024 * 1024, 'stored rows must exceed the outbound limit');
 const raw = rpcRaw('rpc:liveQuery.subscribe', { queryName: 'messages.bySession', params: [sessionId, 200], subscriptionId: 'verify-too-large' }, '4');
 const rawTooLarge = raw.includes('MESSAGE_TOO_LARGE');
-assert(rawTooLarge, 'the raw transcript must fail as too large');
+assert(!rawTooLarge, 'large images must stay out of the raw transcript window');
 
 const pairing = rpc('device.pair.create', { kind: 'human', name: 'Large transcript browser' });
 assert.equal(pairing.approval, 'approved');
