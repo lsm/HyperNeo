@@ -71,6 +71,7 @@ export function NeoSendFlight({
           height: `${box.height}px`,
           padding: `${12 * box.chrome}px ${16 * box.chrome}px`,
           borderWidth: `${box.chrome}px`,
+          lineHeight: String(1.625 + 0.075 * box.chrome),
           borderTopRightRadius: `${16 - 14 * box.chrome}px`,
         });
         ghost.current.style.setProperty('--neo-flight-chrome', String(box.chrome));
@@ -102,7 +103,7 @@ export function NeoSendFlight({
       {flight.quote && (
         <NeoQuoteBar author={flight.quote.author} excerpt={neoQuoteExcerpt(flight.quote.text)} />
       )}
-      <p class="whitespace-pre-wrap text-base leading-relaxed">{flight.words}</p>
+      <p class="whitespace-pre-wrap text-base leading-[inherit]">{flight.words}</p>
     </div>
   );
 }
