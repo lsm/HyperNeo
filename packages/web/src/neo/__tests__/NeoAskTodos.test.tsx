@@ -989,6 +989,30 @@ describe('NeoAskTodos', () => {
     expect(app.getByText('卡住了：等人').className).toContain('text-warning');
   });
 
+  it('shows no next action for a todo waiting on its check', () => {
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          state: 'doing',
+          todos: [
+            todo('a', {
+              state: 'blocked',
+              blockedBy: 'check',
+              status: 'Waiting for its result',
+              statusCodes: [{ code: 'todo.waitingResult', params: {} }],
+              nextAction: 'fix a wrong check with neo.todo.edit',
+            }),
+          ],
+        })}
+        onAnswer={() => {}}
+      />
+    );
+    const row = app.container.querySelector('[data-ask-todo="a"]')!;
+    expect(row.querySelector('[data-todo-next-action]')).toBeNull();
+    expect(row.textContent).toContain('等结果');
+    expect(row.textContent).not.toContain('neo.todo.edit');
+  });
+
   it('keeps a non-blocked status muted and shows no next action', () => {
     const app = render(
       <NeoAskTodos
