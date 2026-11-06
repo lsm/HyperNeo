@@ -2883,6 +2883,7 @@ describe('worker final-line blockers', () => {
         expect(reminders()).toHaveLength(action === 'unchanged' ? 1 : 0);
         if (action === 'unchanged') {
           expect(reminders()[0]).toContain('Awaiting Neo confirmation');
+          expect(reminders()[0]).toContain('neo.question.relay');
           await h.runner.refresh(() => {});
           expect(reminders()).toHaveLength(1);
           expect(h.store.listQuestions('ask').filter((q) => q.todoId === todo.id)).toHaveLength(0);
