@@ -89,16 +89,24 @@ describe('neoTodoRepo', () => {
     expect(neoTodoRepo(draft, [coding], { repo: null })).toBeNull();
   });
 
-  test('a place with no git remote does not inherit the ask’s repo', () => {
-    const folder = { ...place, remotes: undefined };
-    const started = {
-      ...draft,
-      check: pendingTodoCheck,
-      instruction: 'Go',
-      target: { verb: 'start' as const, adapter: 'hyperneo', place: folder },
-    };
-    expect(neoTodoRepo(started, [coding], { repo: 'github.com/lsm/ops' })).toBeNull();
-  });
+  test.each([{ remotes: undefined }, { remotes: [] }, { remotes: ['not a git remote'] }])(
+    'a place without a repository does not inherit the ask’s repo %j',
+    ({ remotes }) => {
+      const folder = { ...place, remotes };
+      const started = {
+        ...draft,
+        check: pendingTodoCheck,
+        instruction: 'Go',
+        target: { verb: 'start' as const, adapter: 'hyperneo', place: folder },
+      };
+      expect(neoTodoRepo(started, [coding], { repo: 'github.com/lsm/ops' })).toBeNull();
+      expect(
+        neoTodoRepo({ ...started, named: { repository: 'synthetic/explicit' } }, [coding], {
+          repo: 'github.com/lsm/ops',
+        })
+      ).toBe('github.com/synthetic/explicit');
+    }
+  );
 });
 
 describe('neo.todo.add repo', () => {

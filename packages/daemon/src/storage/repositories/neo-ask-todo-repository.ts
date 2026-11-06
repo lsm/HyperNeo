@@ -32,7 +32,7 @@ import {
   neoStartCardText,
   neoTodoAwaitsApproval,
   neoTodoOnStartCard,
-  neoTodosAwaitingCancellationCard,
+  neoTodosAwaitingNeoDecision,
   planNeoQuestionPrune,
   planNeoStartRelease,
   type NeoQuestionPrune,
@@ -302,7 +302,7 @@ export class NeoAskTodoRepository {
         startTodos: string | null;
       })[]
     ).map((row) => ({ ...row, startTodos: parsed<string[]>(row.startTodos) }));
-    return { todos, questions };
+    return { todos, questions, awaitingNeo: this.listAwaitingNeoDecision() };
   }
 
   askFacts(input: { askId?: string; todoId?: string; questionId?: string }) {
@@ -1187,34 +1187,7 @@ export class NeoAskTodoRepository {
       ['store', 'askId', 'now'],
       'pruned'
     )
-    .pipe(
-      (store: NeoAskTodoRepository, askId: string) => store.getAsk(askId),
-      ['store', 'askId'],
-      'ask'
-    )
-    .pipe(
-      (store: NeoAskTodoRepository, askId: string) => store.listFamilyTodos(askId),
-      ['store', 'askId'],
-      'family'
-    )
-    .pipe(
-      (store: NeoAskTodoRepository, askId: string) => store.listQuestions(askId),
-      ['store', 'askId'],
-      'questions'
-    )
-    .pipe(neoTodosAwaitingCancellationCard, ['family', 'ask', 'questions'], 'awaiting')
-    .pipe(
-      (store: NeoAskTodoRepository, awaiting: readonly NeoTodo[], now: number) => {
-        for (const todo of awaiting) {
-          store.joinStartQuestion(todo, now);
-          if (todo.state === 'todo')
-            store.writeTodo(todo, { state: 'blocked', blockedBy: 'question' }, now);
-        }
-      },
-      ['store', 'awaiting', 'now'],
-      'carded'
-    )
-    .end('carded') as (store: NeoAskTodoRepository, askId: string, now: number) => void;
+    .end('pruned') as (store: NeoAskTodoRepository, askId: string, now: number) => void;
 
   private startCardFamily(question: NeoQuestion): NeoTodo[] {
     const members = (question.startTodos ?? []).flatMap((id) => this.getTodo(id) ?? []);
@@ -1235,6 +1208,20 @@ export class NeoAskTodoRepository {
       .run(JSON.stringify(plan.kept), plan.text, plan.state, plan.retiredReason, question.id);
     for (const todo of plan.released) this.writeTodo(todo, { state: 'todo' }, now);
     return true;
+  }
+
+  listAwaitingNeoDecision(): NeoTodo[] {
+    const candidates = this.db
+      .prepare(`SELECT a.id FROM neo_asks a WHERE a.status = 'open'
+        AND EXISTS (SELECT 1 FROM neo_todos waiting WHERE waiting.ask_id = a.id
+          AND waiting.started_at IS NULL AND waiting.state IN ('todo', 'blocked'))
+        AND EXISTS (SELECT 1 FROM neo_todos gone JOIN neo_asks home ON home.id = gone.ask_id
+          WHERE COALESCE(home.parent_id, home.id) = COALESCE(a.parent_id, a.id)
+          AND (gone.state = 'removed' OR (gone.state = 'closed_unverified' AND gone.started_at IS NULL)))`)
+      .all() as { id: string }[];
+    return candidates.flatMap(({ id }) =>
+      neoTodosAwaitingNeoDecision(this.listFamilyTodos(id), this.getAsk(id), this.listQuestions(id))
+    );
   }
 
   cardUnapprovedTodos(now: number): void {
@@ -1357,6 +1344,7 @@ export const neoTodoReads = defineRepositoryOp(
     'doneTodoFacts',
     'askFacts',
     'listCheckable',
+    'listAwaitingNeoDecision',
     'listOpenAsks',
     'listTodosForAsks',
     'followedRefs',
