@@ -878,3 +878,66 @@
     transparent
   );
 }
+
+/* Proposed product CSS: copy these rules unchanged after approval. */
+.neo-shell {
+  --neo-markdown-quote-border: light-dark(#6a4a8b, #80649e);
+  --neo-action-hover: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.neo-markdown blockquote {
+  border-color: var(--neo-markdown-quote-border);
+  padding-right: 84px;
+}
+.neo-quote-copy-button {
+  width: 64px;
+  min-height: 48px;
+  gap: 2px;
+}
+.neo-quote-copy-button [aria-live] {
+  min-height: 0;
+}
+.neo-quote-copy-button [aria-live]:empty {
+  display: none;
+}
+.neo-message > .flex > :is(.copy-button, .neo-message-action) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+}
+.neo-quote-copy-button,
+.neo-message > .flex > :is(.copy-button, .neo-message-action) {
+  border-radius: 8px;
+  background: transparent;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease;
+}
+.neo-quote-copy-button:not(.text-success),
+.neo-message > .flex > :is(.copy-button, .neo-message-action):not(.text-success) {
+  color: var(--fg-muted);
+}
+.neo-quote-copy-button > svg,
+.neo-message > .flex > :is(.copy-button, .neo-message-action) > svg {
+  width: 20px !important;
+  height: 20px !important;
+}
+@media (hover: hover) {
+  .neo-quote-copy-button:hover:not(:disabled),
+  .neo-message > .flex > :is(.copy-button, .neo-message-action):hover:not(:disabled) {
+    background: var(--neo-action-hover);
+  }
+  .neo-quote-copy-button:hover:not(:disabled):not(.text-success),
+  .neo-message
+    > .flex
+    > :is(.copy-button, .neo-message-action):hover:not(:disabled):not(.text-success) {
+    color: var(--fg);
+  }
+}
+.neo-quote-copy-button:focus-visible,
+.neo-message > .flex > :is(.copy-button, .neo-message-action):focus-visible {
+  outline: 2px solid var(--neo-markdown-quote-border);
+  outline-offset: 2px;
+}

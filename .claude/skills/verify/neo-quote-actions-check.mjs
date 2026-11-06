@@ -18,7 +18,7 @@ export async function verifyQuoteActions(page, options) {
     const box = await control.boundingBox();
     const icon = await control.locator('svg').boundingBox();
     const expected = phase === 'after'
-      ? (index === 0 ? [64, 48, 20] : [44, 44, 20])
+      ? (index === 0 ? [64, touch ? 44 : 48, 20] : [44, 44, 20])
       : (index === 0 ? [60, 44, 16] : [touch ? 44 : 28, touch ? 44 : 28, 16]);
     assert.deepEqual([box.width, box.height, icon.width, icon.height], [...expected.slice(0, 2), expected[2], expected[2]]);
     geometry.push({ button: box, icon });
@@ -66,7 +66,8 @@ export async function verifyQuoteActions(page, options) {
   assert.equal((await copy.boundingBox()).width, geometry[0].button.width);
   await article.screenshot({ path: join(run, 'evidence', `${phase}-${theme}-copied.png`), scale: 'css' });
   await page.waitForFunction(() => !document.querySelector('.neo-quote-copy-button.text-success'));
-  await footer.getByRole('button').first().click();
+  if (touch) await footer.getByRole('button').first().tap();
+  else await footer.getByRole('button').first().click();
   assert((await page.evaluate(() => navigator.clipboard.readText())).includes('## A short update'));
   const gutter = await quote.evaluate(node => {
     const range = document.createRange();

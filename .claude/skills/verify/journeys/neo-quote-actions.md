@@ -10,8 +10,8 @@ Grant clipboard-read/write permissions. Baseline is the matching before result.
 Run before and after in dark and light at 1280x900 with a fine pointer, then at
 390x844 with hasTouch true. Inspect viewport and article screenshots. The helper
 requires the approved text colours, italics, 6% quote overlay and AA contrast.
-It observes the deeper border, 64x48 quote copy, 44x44 footer controls and 20px
-icons, plus a 5% foreground hover overlay with a stable quote background.
+It observes the deeper border, 64x48 fine-pointer quote copy, 64x44 coarse-pointer
+quote copy (matching the mockup), 44x44 footer controls and 20px icons, plus a 5% foreground hover overlay with a stable quote background.
 It exercises keyboard focus, Enter-to-copy, visible copied feedback, exact real
 clipboard text, whole-message copy and Reply. Gold headings and message-reference
 colours must match the baseline. Also check 320px touch width for control/text

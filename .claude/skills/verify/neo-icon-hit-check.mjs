@@ -22,7 +22,7 @@ export async function verifyIconHitAreas(page, fixture, { phase, evidence, touch
     await control.scrollIntoViewIfNeeded();
     const box = await control.boundingBox();
     assert(box);
-    if (phase === 'after' && touch) assert(box.width >= 44 && box.height >= 44, JSON.stringify({ name, box }));
+    if (phase === 'after' && (touch || ['message copy', 'reply'].includes(name))) assert(box.width >= 44 && box.height >= 44, JSON.stringify({ name, box }));
     else assert(box.width < 44 && box.height < 44, JSON.stringify({ name, box }));
     observations.push({ name, width: box.width, height: box.height });
   };

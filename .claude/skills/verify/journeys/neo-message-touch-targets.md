@@ -17,7 +17,9 @@ message copy, reply, details copy, code copy and retry measure 28x28 pixels.
 Retain that baseline and commit the failing browser reproduction before fixing.
 
 Rebuild and repeat with after, fresh evidence and READY. Touch targets must be
-at least 44x44, while desktop stays 28x28 with unchanged icon size. The helper
+at least 44x44. The approved quote-control update also makes desktop message
+copy and reply 44x44 with 20px icons; other desktop controls stay 28x28. See
+neo-quote-actions.md for its before/after hover, focus and colour proof. The helper
 copies actual code into the clipboard and checks exact whitespace. It injects
 a controlled WebSocket refusal only for neo.message.send, leaving all other
 RPC connected to the real isolated daemon. The visible failed-send Retry is

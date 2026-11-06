@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-export async function verifyQuoteColours(page, {run,base,phase,theme,baseline}) {
+export async function verifyQuoteColours(page, {run,base,phase,theme,baseline,touch=false}) {
   const {publicationId} = JSON.parse(await readFile(join(run,'evidence/quote-colour-fixture.json'),'utf8'));
   const errors=[];
   page.on('pageerror',e=>errors.push(String(e)));
@@ -35,9 +35,11 @@ export async function verifyQuoteColours(page, {run,base,phase,theme,baseline}) 
   assert.equal(style.fontStyle,'italic');
   assert(Math.abs(style.overlayAlpha-.06)<.005);
   assert(style.contrast>=4.5,`contrast ${style.contrast} must meet AA`);
-  await article.getByRole('button',{name:'Copy quote',exact:true}).click();
+  const copy=article.getByRole('button',{name:'Copy quote',exact:true});
+  if(touch)await copy.tap();else await copy.click();
   assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),'The release notes are ready for review. Please check the small changes before publishing.\n\nThank you for taking a look.');
-  await article.getByRole('button',{name:'Reply to Neo’s message',exact:true}).click();
+  const reply=article.getByRole('button',{name:'Reply to Neo’s message',exact:true});
+  if(touch)await reply.tap();else await reply.click();
   const bar=page.locator('[data-quote-bar]');await bar.waitFor();
   const reference=await bar.evaluate(el=>({colour:getComputedStyle(el).color,background:getComputedStyle(el).backgroundColor,accent:getComputedStyle(el.querySelector('[aria-hidden]')).backgroundColor}));
   const controls={heading:style.heading,reference};
