@@ -103,6 +103,21 @@ const toggleAll = (app: ReturnType<typeof render>) => {
 };
 
 describe('NeoAskTodos', () => {
+  it('omits the completion line when a start todo has an empty completion string', () => {
+    locale.value = 'en';
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          todos: [todo('internal', { doneWhen: '' })],
+          questions: [question('start', { kind: 'start', startTodos: ['internal'] })],
+        })}
+        onAnswer={vi.fn()}
+      />
+    );
+    expect(app.getAllByText('Todo internal').length).toBeGreaterThan(0);
+    expect(app.queryByText(/^Done =/)).toBeNull();
+    expect(app.queryByRole('button', { name: /Open current file/ })).toBeNull();
+  });
   it('loads todo bodies only after opening a summary without open questions', async () => {
     locale.value = 'en';
     const summary = entry({
