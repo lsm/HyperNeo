@@ -1,4 +1,10 @@
-import type { MessageHub, Space, SpaceLongHorizonAgent, SpaceTask } from '@hyperneo/shared';
+import type {
+  MessageHub,
+  Session,
+  Space,
+  SpaceLongHorizonAgent,
+  SpaceTask,
+} from '@hyperneo/shared';
 import type { ComponentChild, ComponentType } from 'preact';
 import { type ReadonlySignal, signal } from '@preact/signals';
 import { invokeOperation } from './operations';
@@ -90,6 +96,10 @@ export interface SpaceWebExtension {
     agents: ReadonlySignal<SpaceLongHorizonAgent[]>;
     initGlobalList(): Promise<void>;
   };
+}
+
+export function extensionOwnsSession(session: Session): boolean {
+  return !!session.context?.spaceId;
 }
 
 interface WebExtensions {

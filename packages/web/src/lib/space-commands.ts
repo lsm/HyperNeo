@@ -37,7 +37,7 @@ export const SPACE_COMMANDS: readonly CommandDescriptor[] = [
   {
     id: 'space.tasks',
     label: 'Space: View tasks',
-    category: 'space',
+    category: 'Spaces',
     keywords: ['mission'],
     extension: 'space',
     run: inCurrentSpace((spaceId) => navigateToSpaceTasks(spaceId)),
@@ -45,7 +45,7 @@ export const SPACE_COMMANDS: readonly CommandDescriptor[] = [
   {
     id: 'space.configure',
     label: 'Space: Configure',
-    category: 'space',
+    category: 'Spaces',
     keywords: ['agents', 'workflows'],
     extension: 'space',
     run: inCurrentSpace((spaceId) => navigateToSpaceConfigure(spaceId)),
@@ -53,7 +53,7 @@ export const SPACE_COMMANDS: readonly CommandDescriptor[] = [
   {
     id: 'space.overview',
     label: 'Space: Overview',
-    category: 'space',
+    category: 'Spaces',
     extension: 'space',
     run: inCurrentSpace((spaceId) => navigateToSpace(spaceId)),
   },
