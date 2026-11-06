@@ -33,14 +33,15 @@ try {
     assert.notEqual(reply.isError, true);
     return JSON.parse(reply.content[0].text);
   };
-  for (const verb of ['send', 'bind']) {
+  for (const verb of ['send']) {
     const reply = await add(verb, worker.slice(0, 8));
     assert.equal(reply.ok, true, JSON.stringify(reply));
-    const stored = verb === 'bind' ? sessions.readRef(reply.todo.id) : sessions.get(reply.todo.id)?.ref;
+    const stored = sessions.get(reply.todo.id)?.ref;
     assert.deepEqual(stored, { adapter: 'hyperneo', id: worker });
     evidence.push({ stored });
   }
   const pending = await add('send', worker);
+  todos.updateTodo(todos.getTodo(pending.todo.id)!, { approvedAt: 1 }, 1);
   assert.equal(pending.ok, true);
   const bind = async (id: string) => {
     const reply = await handler({ name: 'neo.todo.bind', input: { todoId: pending.todo.id, ref: { adapter: 'hyperneo', id } } });

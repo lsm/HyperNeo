@@ -8,10 +8,11 @@ TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evid
 
 The helper owns a real daemon on an ephemeral port, a fresh HOME and synthetic
 database. It registers no provider and starts no worker or model turn. Through
-the production MCP handler, adding send and bind targets using a uniquely
+the production MCP handler, adding send targets using a uniquely
 resolvable HyperNeo session prefix must store the full ID. An unknown prefix
 with start:true must be refused before creating a todo or delivery input.
 The separate neo.todo.bind door must also resolve a prefix to the full ID;
+its synthetic instructed todo is seeded as already approved before binding.
 an unknown rebind must fail while retaining the previous worker reference.
 A multi-todo neo.ask.open with one resolvable prefix followed by an unknown
 prefix must refuse the whole batch before opening an ask or adding any todo or

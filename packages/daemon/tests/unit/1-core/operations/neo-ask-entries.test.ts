@@ -459,6 +459,48 @@ describe('projectNeoAskEntries todo order and done todos', () => {
     expect(await read('ask')).toEqual({ ok: false, reason: 'denied' });
   });
 
+  test('neo.ask.read retains an open historical child of a completed parent', async () => {
+    const { store, opened } = seed([]);
+    store.settleAsk(opened, 'done', 'Previously split', 2);
+    const child = store.openAsk({
+      ...opened,
+      id: 'historical-child',
+      title: 'Existing child',
+      parentId: opened.id,
+      repo: 'github.com/synthetic/child',
+    });
+    const work = store.addTodo(
+      'historical-work',
+      child.id,
+      {
+        title: 'Existing work',
+        doneWhen: 'Observed',
+        check: null,
+        instruction: null,
+        named: null,
+      },
+      3,
+      child.repo
+    );
+    const op = createNeoAskReadOperation(
+      store,
+      () => [],
+      (caller) => ({ value: caller }),
+      async (todos) => [...todos]
+    );
+    for (const input of [{ askId: child.id }, { todoId: work.id }]) {
+      const read = await op.execute(op.inputSchema.parse(input), { source: 'rpc' });
+      expect(read).toMatchObject({
+        ok: true,
+        entry: {
+          ask: { id: child.id, parentId: opened.id, status: 'open' },
+          todos: [{ id: work.id, askId: child.id, title: 'Existing work', state: 'todo' }],
+        },
+      });
+    }
+    expect(store.getAsk(opened.id)?.status).toBe('done');
+  });
+
   test('neo.ask.doneTodos pages the done todos in list order', async () => {
     const { store, sessions } = seed(['done', 'done', 'doing', 'done', 'done']);
     const op = createNeoDoneTodosOperation(

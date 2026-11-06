@@ -321,6 +321,36 @@ describe('repo child cards', () => {
     db.close();
   });
 
+  test.each([undefined, [], ['not a remote']])(
+    'adding work with its own place preserves an unknown repo %j',
+    async (remotes) => {
+      const { db, store, open, add } = setup();
+      try {
+        const { ask } = await open({
+          title: 'Local work',
+          request: 'Local work',
+          todos: [pr('HyperNeo', 1)],
+        });
+        const local = await add({
+          askId: ask.id,
+          ...draft,
+          title: 'Independent folder',
+          instruction: 'Work here',
+          target: { verb: 'start', adapter: 'hyperneo', place: { ...place, remotes } },
+        });
+        expect(local).toMatchObject({ ok: true, todo: { askId: ask.id, repo: null } });
+        const inherited = await add({ askId: ask.id, ...draft, title: 'Same repository' });
+        expect(inherited).toMatchObject({
+          ok: true,
+          todo: { askId: ask.id, repo: 'github.com/lsm/hyperneo' },
+        });
+        expect(store.listChildAsks(ask.id)).toEqual([]);
+      } finally {
+        db.close();
+      }
+    }
+  );
+
   test('a stray todo goes to a child card, and a card refuses another repo’s todo', async () => {
     const { db, store, open, add } = setup();
     const receipt = (await open({
