@@ -42,6 +42,7 @@ const NEO_TODO_STATUS_EN = {
   'todo.notStarted': 'Not started',
   'todo.doing': 'In progress',
   'todo.blocked': 'Blocked: {reason}',
+  'todo.waitingResult': 'Waiting for its result',
   'todo.checking': 'Session reported; checking',
   'todo.awaitingNeo': 'Turn finished; waiting for Neo to check',
   'todo.reportedDone': 'Session says it is done',
@@ -68,6 +69,7 @@ export function neoTodoStatusLine(
   }
   if (todo.state === 'failed')
     return todo.reason ? neoTextStatus(todo.reason) : coded('todo.failed');
+  if (todo.state === 'blocked' && todo.blockedBy === 'check') return coded('todo.waitingResult');
   if (todo.state === 'blocked') return coded('todo.blocked', { reason: todo.blockedReason ?? '' });
   if (packLine) return packLine;
   if (todo.state === 'todo')

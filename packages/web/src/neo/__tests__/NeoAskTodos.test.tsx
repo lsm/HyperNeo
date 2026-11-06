@@ -969,7 +969,7 @@ describe('NeoAskTodos', () => {
               state: 'blocked',
               blockedReason: 'CI 一直红',
               nextAction: '修好测试再推',
-              blockedBy: 'check',
+              blockedBy: 'failure',
               status: '卡住了：CI 一直红',
             }),
             todo('b', { state: 'blocked', blockedReason: '等人', status: '卡住了：等人' }),
