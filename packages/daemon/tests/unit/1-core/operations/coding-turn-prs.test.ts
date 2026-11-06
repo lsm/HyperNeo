@@ -158,6 +158,7 @@ describe('coding turn PRs', () => {
 
   test('a PR the check names keeps its named claim', async () => {
     const { db, send, record } = setup();
+    db.exec('PRAGMA foreign_keys = OFF');
     send('d1', 'a', 'receipt-a');
     record(fact('t1', ['receipt-a'], [url], 100));
     const pack = createCodingTodoPack(new CodingTodoPrRepository(db), async () => [merged(105)]);
