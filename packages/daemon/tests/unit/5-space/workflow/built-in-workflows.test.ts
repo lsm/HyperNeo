@@ -30,7 +30,7 @@ import { getPresetAgentTemplates } from '../../../../src/lib/agents/seed-agents.
 import {
   exportWorkflow,
   validateExportedWorkflow,
-} from '../../../../src/lib/space/export-format.ts';
+} from '../../../../../space/src/export-format.ts';
 import { isWorkflowTerminalNode } from '../../../../../space/src/runtime/task-agent-manager.ts';
 import { LEGACY_CODING_SLOT_PROMPTS } from '../../../../src/lib/workflows/built-in-legacy-slot-prompts.ts';
 import {

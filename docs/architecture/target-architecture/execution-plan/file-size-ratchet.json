@@ -7,8 +7,8 @@
       "maxLines": 10860,
       "followUp": "M3 schema migration split"
     },
-    "packages/daemon/src/lib/space/runtime/space-runtime.ts": {
-      "maxLines": 6599,
+    "packages/space/src/runtime/space-runtime.ts": {
+      "maxLines": 6605,
       "followUp": "M9 runtime component extraction"
     },
     "packages/daemon/src/lib/space/tools/space-agent-tools.ts": {
@@ -188,7 +188,7 @@
       "followUp": "M10 cleanup split when touched"
     },
     "packages/space/src/rpc/space-export-import-handlers.ts": {
-      "maxLines": 1453,
+      "maxLines": 1449,
       "followUp": "M2/M4 fabric bridge split"
     },
     "packages/ui/src/components/listbox/listbox.tsx": {
@@ -379,7 +379,7 @@
       "maxLines": 653,
       "followUp": "M8 focused read-model stores"
     },
-    "packages/daemon/src/lib/space/export-format.ts": {
+    "packages/space/src/export-format.ts": {
       "maxLines": 647,
       "followUp": "M10 cleanup split when touched"
     },

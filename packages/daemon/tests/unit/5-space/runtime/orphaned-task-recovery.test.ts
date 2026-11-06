@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { SpaceTask } from '@hyperneo/shared';
 import { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
-import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import { SpaceRuntime } from '../../../../../space/src/runtime/space-runtime.ts';
 import {
   ORPHANED_IN_PROGRESS_GRACE_MS,
   selectOrphanedInProgressTasks,

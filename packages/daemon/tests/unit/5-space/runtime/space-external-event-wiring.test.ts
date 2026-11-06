@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
-import { createSpaceExternalEvents } from '../../../../src/lib/space/external-event-wiring.ts';
+import { createSpaceExternalEvents } from '../../../../../space/src/external-event-wiring.ts';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 

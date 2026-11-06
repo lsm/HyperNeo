@@ -8,7 +8,6 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
-import type { NeoSessionFacts } from '../../../packages/daemon/src/lib/neo/pack-contract.ts';
 
 const run = resolve(process.argv[2]), execFile = promisify(execFileCallback);
 assert(run.startsWith('/private/tmp/'));
@@ -48,26 +47,20 @@ const call = async (name: string, input: unknown) => {
 };
 const watched = async () => (await call('pack.preferences.get', { pack: 'coding', scope: { kind: 'global', key: '' }, key: 'watchedRepos' })).preference.value;
 const save = async (value: string[]) => assert.deepEqual(await call('pack.preferences.set', { pack: 'coding', scope: { kind: 'global', key: '' }, key: 'watchedRepos', value }), { ok: true });
-const facts = (repo: string): NeoSessionFacts => ({ ref: { adapter: 'codex-desktop', id: repo.replace('/', '-') }, status: 'done', lastActivityAt: Date.now(), remotes: [`https://github.com/${repo}.git`], branches: ['synthetic'], openedPrs: [`https://github.com/${repo}/pull/1`] });
 const gh = () => existsSync(join(run, 'evidence/gh.log')) ? readFileSync(join(run, 'evidence/gh.log'), 'utf8') : '';
 try {
   await open();
   assert.deepEqual(await watched(), []);
-  await service!.pack('coding')!.observeSessions!([facts('foreign/repo')], Date.now());
   await service!.pack('coding')!.sweep!(Date.now());
   assert.equal(gh(), '');
-  assert.deepEqual(app!.db.getDatabase().prepare('SELECT ref FROM pack_coding_session_facts').all(), []);
-  evidence.fresh = { watchList: [], githubCalls: 0, foreignFacts: 0 };
+  evidence.fresh = { watchList: [], githubCalls: 0 };
   await save(['chosen/repo']);
-  await service!.pack('coding')!.observeSessions!([facts('foreign/repo'), facts('chosen/repo')], Date.now());
   await service!.pack('coding')!.sweep!(Date.now());
   assert.equal((gh().match(/^CALL /gm) ?? []).length, 3);
   assert(gh().includes('CALL api user --include'));
   assert(gh().includes('repos/chosen/repo/pulls?'));
   assert(!gh().includes('foreign/repo'));
-  const rows = app!.db.getDatabase().prepare('SELECT repos FROM pack_coding_session_facts').all();
-  assert.deepEqual(rows, [{ repos: '["chosen/repo"]' }]);
-  evidence.chosen = { watchList: await watched(), githubCalls: 3, facts: rows };
+  evidence.chosen = { watchList: await watched(), githubCalls: 3 };
   await close(); await open();
   assert.deepEqual(await watched(), ['chosen/repo']);
   await save([]); const before = gh();

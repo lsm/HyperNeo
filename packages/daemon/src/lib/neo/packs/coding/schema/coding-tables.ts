@@ -157,18 +157,7 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
   );
   DROP TABLE IF EXISTS pack_coding_session_prs;
   DROP TABLE IF EXISTS pack_coding_pr_claims;
-  CREATE TABLE IF NOT EXISTS pack_coding_session_facts (
-    ref TEXT PRIMARY KEY CHECK (json_valid(ref)),
-    repos TEXT NOT NULL CHECK (json_valid(repos)),
-    branches TEXT NOT NULL CHECK (json_valid(branches)),
-    linked TEXT CHECK (linked IS NULL OR json_valid(linked)),
-    linked_window INTEGER NOT NULL DEFAULT 0,
-    owned TEXT NOT NULL CHECK (json_valid(owned)),
-    opened TEXT NOT NULL CHECK (json_valid(opened)),
-    dismissed TEXT NOT NULL CHECK (json_valid(dismissed)),
-    active_at INTEGER NOT NULL,
-    seen_at INTEGER NOT NULL
-  )`);
+  DROP TABLE IF EXISTS pack_coding_session_facts;`);
   const heads = db.prepare('PRAGMA table_info(pack_coding_stage_heads)').all() as {
     name: string;
   }[];

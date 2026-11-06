@@ -3,7 +3,6 @@ import { neoPublicationWrites } from '../../../storage/repositories/neo-publicat
 import { NEO_DEFAULT_PACKS } from './index.ts';
 import { createNeoProjectTreeOperations } from './coding/project-tree-operations.ts';
 import { NeoService } from '../service.ts';
-import { localCodingSessionId, neoWorkBranch } from './coding/branch-prs.ts';
 import { CodingTodoPrRepository } from './coding/todo-prs.ts';
 import { hostname } from 'node:os';
 import type { Database } from '../../../storage/sqlite-compat.ts';
@@ -141,11 +140,6 @@ export function createNeoService(...args: NeoServiceArgs) {
           new CodingPrLedgerRepository(db.getDatabase())
         ),
       ];
-      coding.sessionLinks = async (ref) => {
-        const localId = localCodingSessionId(ref);
-        const branch = neoWorkBranch(localId ? db.getSession(localId) : null);
-        return branch ? configured.readBranchPrs(branch) : [];
-      };
       return {
         packs: [
           coding,

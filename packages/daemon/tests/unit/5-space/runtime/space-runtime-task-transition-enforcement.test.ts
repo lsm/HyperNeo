@@ -18,8 +18,8 @@ import {
   SpaceTaskManager,
   VALID_SPACE_TASK_TRANSITIONS,
 } from '../../../../src/lib/tasks/task-manager.ts';
-import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import { SpaceRuntime } from '../../../../../space/src/runtime/space-runtime.ts';
+import type { SpaceRuntimeConfig } from '../../../../../space/src/runtime/space-runtime.ts';
 import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
 
 const SPACE_ID = 'space-transition-enforcement';

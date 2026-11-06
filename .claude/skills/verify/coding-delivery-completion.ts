@@ -64,7 +64,7 @@ try {
         assert.deepEqual(await rpc('neo.coding.result', { todoId: 'todo', ref, fact }), { ok: true });
         const pack = createCodingPack({ database: () => db, todoPrs: todos, prLedger: ledger, readPrs: async () => [],
           prSweep: new CodingPrSweepRepository(db), prEvents: new CodingPrEventRepository(db),
-          prSweepDeps: { tell: async () => true, wake: async () => true }, readClaudeOwners: async () => [], projectRepos: () => [] });
+          prSweepDeps: { tell: async () => true, wake: async () => true }, projectRepos: () => [] });
         const prepared = await pack.prepareMerge(todos.deliveryFacts, 'todo', { url, head, open: true, requiredCiGreen: true, findingsResolved: true, humanSignoffSatisfied: true, ciEvidence: ['ci:run'], reviewEvidence: ['github:review'] },
           { reference: fact.acceptanceContract, write, qa: ref, bot: 'review-bot' }, { kind: 'bot', head, login: 'review-bot', approved: true }, ledger.stageFacts.read(url), async () => head);
         assert(prepared.accepted); evidence.push({ phase, prepared });

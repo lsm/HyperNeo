@@ -57448,12 +57448,6 @@
                   "model": {
                     "type": "string"
                   },
-                  "openedPrs": {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
                   "permissionMode": {
                     "type": "string"
                   },

@@ -1,3 +1,4 @@
+import { seedPrOwner } from './seed-pr-owner.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -27,8 +28,7 @@ try {
   const repo = 'synthetic/guidance', url = `https://github.com/${repo}/pull/7`, now = Date.now();
   const row = { repo, number: 7, title: 'Guidance', branch: 'guidance', head: 'a'.repeat(40), closedAt: null };
   await ledger.write('replace', repo, [{ ...row, state: 'waiting_review' }], now);
-  await ledger.write('observeSessions', [{ ref: { adapter: 'codex', id: 'synthetic-owner' }, status: { state: 'running' }, lastActivityAt: now,
-    remotes: ['git@github.com:synthetic/guidance.git'], branches: ['guidance'], openedPrs: [url] }], now);
+  seedPrOwner(db, repo, { adapter: 'codex', id: 'synthetic-owner' });
   const transitions = await ledger.write('replace', repo, [{ ...row, state: 'approved_green' }], now);
   const messages: { kind: string; text: string }[] = [];
   const delivery = { tell: async (_ref: unknown, _key: string, text: string) => { messages.push({ kind: 'owner', text }); return true; },

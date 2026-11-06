@@ -237,7 +237,6 @@ export const WorkDetailSchema = WorkSummarySchema.extend({
   recentInputs: z.array(WorkInputSchema).optional(),
   exchange: z.array(WorkExchangeEntrySchema).optional(),
   exchangeCut: z.boolean().optional(),
-  openedPrs: z.array(z.string()).optional(),
   linkedPrs: z
     .array(
       z.object({

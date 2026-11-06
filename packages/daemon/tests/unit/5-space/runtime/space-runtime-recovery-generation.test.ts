@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import { SpaceRuntime } from '../../../../../space/src/runtime/space-runtime.ts';
 
 function recoveryRuntime(input: { restarted: boolean; adopted: boolean }) {
   const cancelled: string[] = [];

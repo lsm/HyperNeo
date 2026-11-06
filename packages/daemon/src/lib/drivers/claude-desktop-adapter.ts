@@ -73,7 +73,6 @@ import {
   workInput,
 } from './work-messages.ts';
 import { matchChatsBy } from './match-chats.ts';
-import { claudeOpenedPrs } from './opened-prs.ts';
 import {
   observeClaudeIdentity,
   withClaudeIdentity,
@@ -459,7 +458,6 @@ export interface ClaudeTranscriptState extends ClaudeRuntimeIdentity {
   inputs: WorkInput[];
   lastAt: number;
   exchange?: WorkExchange;
-  openedPrs?: string[];
 }
 
 export interface ClaudeTranscriptEntry {
@@ -584,7 +582,6 @@ export function claudeTranscriptState(
             : null;
     if (next) exchange.push(next);
   }
-  const openedPrs = claudeOpenedPrs(lines);
   const reply = turnReply(turn);
   return {
     ...identity,
@@ -601,7 +598,6 @@ export function claudeTranscriptState(
           ),
         }
       : {}),
-    ...(openedPrs.length ? { openedPrs } : {}),
   };
 }
 
@@ -659,7 +655,6 @@ export function describeClaudeSession(
         : {}),
       recentInputs: transcript.inputs,
       ...withExchange(transcript.exchange),
-      ...(transcript.openedPrs ? { openedPrs: transcript.openedPrs } : {}),
       ...claudeSessionLinks(record),
     },
   };

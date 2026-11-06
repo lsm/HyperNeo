@@ -20,7 +20,6 @@ async function using(run: (db: Database, pack: Pack) => Promise<void>) {
     createCodingPack({
       database: () => db,
       readPrs: async () => [],
-      readClaudeOwners: async () => [],
       todoPrs: new CodingTodoPrRepository(db),
       prLedger: new CodingPrLedgerRepository(db),
       prEvents: new CodingPrEventRepository(db),

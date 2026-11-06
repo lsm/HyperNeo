@@ -37,7 +37,6 @@ function fixture(saved = true) {
   const pack = createCodingPack({
     database: () => db,
     readPrs: async () => [],
-    readClaudeOwners: async () => [],
     projectRepos: () => [repo],
     prLedger: new CodingPrLedgerRepository(db),
     prEvents: new CodingPrEventRepository(db),
