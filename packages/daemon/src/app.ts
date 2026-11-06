@@ -70,7 +70,7 @@ import {
   SessionExternalEventStore,
   ingestSessionEvent,
 } from './lib/external-events/index.ts';
-import type { ExternalEventStore } from './lib/space/external-events/external-event-store.ts';
+import type { ExternalEventStore } from '../../space/src/external-events/external-event-store.ts';
 import { mailSessionEvent } from './lib/external-events/session-event-delivery.ts';
 import { readLatestSessionPrState } from './lib/external-events/session-external-event-store.ts';
 import { replaySessionTerminals } from './lib/external-events/session-terminal-replay.ts';

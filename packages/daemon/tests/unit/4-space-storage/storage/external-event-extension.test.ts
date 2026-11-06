@@ -2,7 +2,7 @@ import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { MessageHub, type RequestHandler, generateUUID } from '@hyperneo/shared';
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
-import { ExternalEventStore } from '../../../../src/lib/space/external-events/external-event-store';
+import { ExternalEventStore } from '../../../../../space/src/external-events/external-event-store';
 import type { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
 import { ExternalEventExtensionManager } from '../../../../src/lib/external-events/extension-manager';
 import type {
