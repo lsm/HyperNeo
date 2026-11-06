@@ -1,5 +1,5 @@
-import { sdkMessageBodyAt } from '../../../storage/repositories/sdk-message-body-read.ts';
-import { isRecord } from '../../record.ts';
+import { sdkMessageBodyAt } from '../../../daemon/src/storage/repositories/sdk-message-body-read.ts';
+import { isRecord } from '../../../daemon/src/lib/record.ts';
 import {
   fillPrompt,
   SPACE_RUNTIME_HANDOFF_NO_TRANSCRIPT,
@@ -16,16 +16,16 @@ import {
   assertTaskTransitionSnapshot,
   StaleTaskGuardError,
   type TaskTransitionExpectation,
-} from '../../tasks/task-manager.ts';
-import { settleTaskDependents } from '../../tasks/settle-dependents.ts';
-import { createDirectOutcomeRequester } from '../../tasks/direct-outcome-jobs.ts';
-import { prepareSpaceTaskStatusUpdate } from '../../tasks/status-preparation.ts';
-import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
-import { TASK_SLOT_STATUSES, availableTaskSlots } from '../../tasks/capacity.ts';
-import { orderWork } from '../../work-queue/order.ts';
-import { selectOrphanedInProgressTasks } from '../../tasks/orphaned-task-recovery.ts';
-import { DirectTaskExecutionRepository } from '../../../storage/repositories/direct-task-execution-repository.ts';
-import { PendingCompletionSupersededError } from '../../tasks/pending-completion-guard.ts';
+} from '../../../daemon/src/lib/tasks/task-manager.ts';
+import { settleTaskDependents } from '../../../daemon/src/lib/tasks/settle-dependents.ts';
+import { createDirectOutcomeRequester } from '../../../daemon/src/lib/tasks/direct-outcome-jobs.ts';
+import { prepareSpaceTaskStatusUpdate } from '../../../daemon/src/lib/tasks/status-preparation.ts';
+import { SpaceRepository } from '../../../daemon/src/storage/repositories/space-repository.ts';
+import { TASK_SLOT_STATUSES, availableTaskSlots } from '../../../daemon/src/lib/tasks/capacity.ts';
+import { orderWork } from '../../../daemon/src/lib/work-queue/order.ts';
+import { selectOrphanedInProgressTasks } from '../../../daemon/src/lib/tasks/orphaned-task-recovery.ts';
+import { DirectTaskExecutionRepository } from '../../../daemon/src/storage/repositories/direct-task-execution-repository.ts';
+import { PendingCompletionSupersededError } from '../../../daemon/src/lib/tasks/pending-completion-guard.ts';
 import type {
   CreateNodeExecutionParams,
   NodeExecution,
@@ -47,83 +47,89 @@ import {
 } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { isSDKResultError, isSDKResultSuccess } from '@hyperneo/shared/sdk';
-import { activatePrompts } from '../../agent/message-delivery-outbox.ts';
-import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
-import { createSQLiteAsciiPrefixRange } from '../../../storage/sqlite-prefix-range.ts';
+import { activatePrompts } from '../../../daemon/src/lib/agent/message-delivery-outbox.ts';
+import type { ReactiveDatabase } from '../../../daemon/src/storage/reactive-database.ts';
+import { createSQLiteAsciiPrefixRange } from '../../../daemon/src/storage/sqlite-prefix-range.ts';
 import {
   ChannelCycleRepository,
   DEAD_LOOP_THRESHOLD,
   DEAD_LOOP_WINDOW_MS,
-} from '../../../storage/repositories/channel-cycle-repository.ts';
-import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
-import { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
-import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
-import type { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
-import type { SpaceAgentSubscriptionRepository } from '../../../storage/repositories/space-agent-subscription-repository.ts';
-import type { SpaceSessionEventSubscriptionRepository } from '../../../storage/repositories/space-session-event-subscription-repository.ts';
-import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
+} from '../../../daemon/src/storage/repositories/channel-cycle-repository.ts';
+import type { NodeExecutionRepository } from '../../../daemon/src/storage/repositories/node-execution-repository.ts';
+import { JobQueueRepository } from '../../../daemon/src/storage/repositories/job-queue-repository.ts';
+import { SDKMessageRepository } from '../../../daemon/src/storage/repositories/sdk-message-repository.ts';
+import type { SpaceAgentTemplateRepository } from '../../../daemon/src/storage/repositories/space-agent-template-repository.ts';
+import type { SpaceAgentSubscriptionRepository } from '../../../daemon/src/storage/repositories/space-agent-subscription-repository.ts';
+import type { SpaceSessionEventSubscriptionRepository } from '../../../daemon/src/storage/repositories/space-session-event-subscription-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../../daemon/src/storage/repositories/space-long-horizon-agent-repository.ts';
 import {
   type SpaceTaskRepository,
   spaceTaskWrites,
   type WriteSpaceTask,
-} from '../../../storage/repositories/space-task-repository.ts';
-import { spaceTaskLaneFor } from '../../../storage/db-gateway/db-gateway.ts';
-import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository.ts';
-import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
-import { TERMINAL_RUN_RECONCILE_SETTLED_TASK_STATUSES } from '../../../storage/repositories/space-workflow-run-repository.ts';
-import { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository.ts';
-import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
-import { renderEventBlock } from '../../external-events/deferred-event-digest.ts';
-import { essenceEntryFromExternalEvent } from '../../external-events/event-essence-entry.ts';
-import { eventMatchesFilter, subscriptionEventFilter } from '../../external-events/event-filter.ts';
-import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service.ts';
-import type { ExternalEventStore } from '../../../../../space/src/external-events/external-event-store.ts';
-import { SESSION_EVENT_SCOPE } from '../../external-events/session-external-event-store.ts';
-import { legacyGitHubTopic } from '../../external-events/github-subscription-pattern.ts';
-import { composeLongHorizonSubscriptionPattern } from '../../external-events/long-horizon-subscription-pattern.ts';
+} from '../../../daemon/src/storage/repositories/space-task-repository.ts';
+import { spaceTaskLaneFor } from '../../../daemon/src/storage/db-gateway/db-gateway.ts';
+import { SpaceWorkflowEventSubscriptionRepository } from '../../../daemon/src/storage/repositories/space-workflow-event-subscription-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../../daemon/src/storage/repositories/space-workflow-run-repository.ts';
+import { TERMINAL_RUN_RECONCILE_SETTLED_TASK_STATUSES } from '../../../daemon/src/storage/repositories/space-workflow-run-repository.ts';
+import { ToolContinuationRecoveryRepository } from '../../../daemon/src/storage/repositories/tool-continuation-recovery-repository.ts';
+import type { WorkflowRunArtifactRepository } from '../../../daemon/src/storage/repositories/workflow-run-artifact-repository.ts';
+import type { Database as BunDatabase } from '../../../daemon/src/storage/sqlite-compat.ts';
+import { renderEventBlock } from '../../../daemon/src/lib/external-events/deferred-event-digest.ts';
+import { essenceEntryFromExternalEvent } from '../../../daemon/src/lib/external-events/event-essence-entry.ts';
+import {
+  eventMatchesFilter,
+  subscriptionEventFilter,
+} from '../../../daemon/src/lib/external-events/event-filter.ts';
+import type { ExternalEventPublishedPayload } from '../../../daemon/src/lib/external-events/external-event-service.ts';
+import type { ExternalEventStore } from '../external-events/external-event-store.ts';
+import { SESSION_EVENT_SCOPE } from '../../../daemon/src/lib/external-events/session-external-event-store.ts';
+import { legacyGitHubTopic } from '../../../daemon/src/lib/external-events/github-subscription-pattern.ts';
+import { composeLongHorizonSubscriptionPattern } from '../../../daemon/src/lib/external-events/long-horizon-subscription-pattern.ts';
 import {
   ExternalEventQueueMetrics,
   type QueueHealthGauges,
   type QueueHealthSnapshot,
-} from '../../../../../space/src/external-events/queue-health-metrics.ts';
-import { TopicTrie } from '../../external-events/topic-trie.ts';
-import { validateGlobPattern } from '../../external-events/topic-validator.ts';
+} from '../external-events/queue-health-metrics.ts';
+import { TopicTrie } from '../../../daemon/src/lib/external-events/topic-trie.ts';
+import { validateGlobPattern } from '../../../daemon/src/lib/external-events/topic-validator.ts';
 import type {
   ExternalEvent,
   ExternalEventDeliveryRecord,
   ExternalEventRecord,
-} from '../../external-events/types.ts';
-import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus.ts';
+} from '../../../daemon/src/lib/external-events/types.ts';
+import type {
+  DaemonCommandMap,
+  InternalCommandBus,
+} from '../../../daemon/src/lib/internal-command-bus.ts';
 import type {
   DaemonInternalEventMap,
   InternalEventBus,
   InternalEventPayload,
-} from '../../internal-event-bus.ts';
-import { Logger } from '../../logger.ts';
-import type { SpaceActorRegistryAdapter } from '../../messaging/actor-registry.ts';
-import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../../workflows/agent-slot-limits.ts';
-import { unifiedAgentRecordExists } from '../../agents/worker-long-horizon-mapper.ts';
-import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
+} from '../../../daemon/src/lib/internal-event-bus.ts';
+import { Logger } from '../../../daemon/src/lib/logger.ts';
+import type { SpaceActorRegistryAdapter } from '../../../daemon/src/lib/messaging/actor-registry.ts';
+import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../../../daemon/src/lib/workflows/agent-slot-limits.ts';
+import { unifiedAgentRecordExists } from '../../../daemon/src/lib/agents/worker-long-horizon-mapper.ts';
+import type { SpaceManager } from '../managers/space-manager.ts';
 import {
   assertValidSpaceTaskTransition,
   isValidSpaceTaskTransition,
   SpaceTaskManager,
   VALID_SPACE_TASK_TRANSITIONS,
-} from '../../tasks/task-manager.ts';
-import { TaskRejection } from '../../tasks/transitions.ts';
+} from '../../../daemon/src/lib/tasks/task-manager.ts';
+import { TaskRejection } from '../../../daemon/src/lib/tasks/transitions.ts';
 import {
   isReservedWorkflowAgentName,
   type SpaceWorkflowManager,
-} from '../../workflows/workflow-manager.ts';
+} from '../../../daemon/src/lib/workflows/workflow-manager.ts';
 import {
   createAgentTemplateResolver,
   runTemplateResolves,
   runTemplateSnapshotRecord,
-} from '../../workflows/run-template-snapshot.ts';
-import { normalizeMeaningfulTaskResult } from '../../tasks/result-utils.ts';
-import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.ts';
-import { CompletionDetector } from '../../workflows/completion-detector.ts';
+} from '../../../daemon/src/lib/workflows/run-template-snapshot.ts';
+import { normalizeMeaningfulTaskResult } from '../../../daemon/src/lib/tasks/result-utils.ts';
+import type { WorkflowArtifactProfile } from '../../../daemon/src/lib/workflows/artifact-profile.ts';
+import { CompletionDetector } from '../../../daemon/src/lib/workflows/completion-detector.ts';
 import {
   DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS,
   DEFAULT_AGENT_STUCK_NAG_GRACE_MS,
@@ -133,55 +139,55 @@ import {
   MAX_BLOCKED_RUN_RETRIES,
   MAX_TASK_AGENT_CRASH_RETRIES,
   MAX_TERMINAL_ERROR_CONTINUE_RETRIES,
-} from '../../../../../space/src/runtime/constants.ts';
+} from './constants.ts';
 import {
   createAgentStuckRecoveryState,
   decideStuckLadderAction,
   observeExecutionProgress,
   type AgentStuckRecoveryState,
-} from '../../tasks/stuck-ladder-gates.ts';
+} from '../../../daemon/src/lib/tasks/stuck-ladder-gates.ts';
 import {
   DEFAULT_EXTERNAL_EVENT_QUEUE_TTL_MS,
   isQueuedExternalEventExpired,
-} from '../../external-events/event-delivery-rules.ts';
+} from '../../../daemon/src/lib/external-events/event-delivery-rules.ts';
 import {
   evaluateRequeueTaskLifecycle,
   isPublishedExternalEventExpired,
   isWorkflowTargetOwnedBySpace,
   resolveCurrentQueueableOrActiveExecution,
   resolveSubscriptionTarget,
-} from '../../../../../space/src/external-events/admission-gates.ts';
+} from '../external-events/admission-gates.ts';
 import {
   deliverImmediateEvent,
   type ImmediateEventDeliveryDeps,
-} from '../../../../../space/src/external-events/immediate-delivery-pipeline.ts';
+} from '../external-events/immediate-delivery-pipeline.ts';
 import {
   type RequeuePendingDeliveryDeps,
   runRequeuePendingDelivery,
-} from '../../messaging/requeue-pending-delivery-pipeline.ts';
+} from '../../../daemon/src/lib/messaging/requeue-pending-delivery-pipeline.ts';
 import {
   type RestoreIdleSessionsDeps,
   type RestoreIdleSessionsOutcome,
   runRestoreIdleSessions,
-} from '../../tasks/restore-idle-sessions-pipeline.ts';
+} from '../../../daemon/src/lib/tasks/restore-idle-sessions-pipeline.ts';
 import {
   DETERMINISTIC_DIGEST_UUID_PREFIX,
   type RenderPendingDigestDeps,
   type RenderPendingDigestOutcome,
   runRenderPendingDigest,
-} from '../../messaging/render-pending-digest-pipeline.ts';
-import { classifyLastMessageForIdleAgent } from '../../session/last-message-classifier.ts';
-import type { SelectWorkflowWithLlm } from '../../workflows/llm-workflow-selector.ts';
+} from '../../../daemon/src/lib/messaging/render-pending-digest-pipeline.ts';
+import { classifyLastMessageForIdleAgent } from '../../../daemon/src/lib/session/last-message-classifier.ts';
+import type { SelectWorkflowWithLlm } from '../../../daemon/src/lib/workflows/llm-workflow-selector.ts';
 import {
   clearedPendingCompletion,
   type PostApprovalRouteContext,
   type PostApprovalRouteResult,
   PostApprovalRouter,
-} from '../../workflows/post-approval-router.ts';
+} from '../../../daemon/src/lib/workflows/post-approval-router.ts';
 import {
   runPostApprovalRetry,
   TaskScopedRetrySerializer,
-} from '../../workflows/post-approval-retry.ts';
+} from '../../../daemon/src/lib/workflows/post-approval-retry.ts';
 import {
   buildPromptTooLongContinueNag,
   COMPACT_RESULT_TIMEOUT_MS,
@@ -189,9 +195,9 @@ import {
   isPromptTooLongErrorMessage,
   MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS,
   type PromptTooLongRecoveryState,
-} from '../../session/prompt-too-long-recovery.ts';
-import type { TaskAgentManager } from '../../../../../space/src/runtime/task-agent-manager.ts';
-import { WorkflowExecutor } from '../../workflows/workflow-executor.ts';
+} from '../../../daemon/src/lib/session/prompt-too-long-recovery.ts';
+import type { TaskAgentManager } from './task-agent-manager.ts';
+import { WorkflowExecutor } from '../../../daemon/src/lib/workflows/workflow-executor.ts';
 import {
   findMissingNodeAgentReferences,
   formatMissingAgentReference,
@@ -201,9 +207,9 @@ import {
   isSpawnSupersededError,
   isTransientSpawnError,
   MissingWorkflowAgentError,
-} from '../../workflows/node-execution-validation.ts';
-import { canTransition as canTransitionRunStatus } from '../../workflows/run-status-machine.ts';
-import { selectTimedOutExecutions } from '../../workflows/run-tick-admission-gates.ts';
+} from '../../../daemon/src/lib/workflows/node-execution-validation.ts';
+import { canTransition as canTransitionRunStatus } from '../../../daemon/src/lib/workflows/run-status-machine.ts';
+import { selectTimedOutExecutions } from '../../../daemon/src/lib/workflows/run-tick-admission-gates.ts';
 import type {
   AdmitSpawnExecutionOutcome,
   ExecutorMeta,
@@ -211,8 +217,8 @@ import type {
   SpaceWorkflowRunTickDeps,
   SpawnPendingExecutionsOutcome,
   StrandedExecutionRecoveryResult,
-} from '../../workflows/run-tick-contract.ts';
-import { runSpaceWorkflowRunTick } from '../../workflows/run-tick-pipeline.ts';
+} from '../../../daemon/src/lib/workflows/run-tick-contract.ts';
+import { runSpaceWorkflowRunTick } from '../../../daemon/src/lib/workflows/run-tick-pipeline.ts';
 import {
   resolveCompletionSummaries,
   isTaskAlreadyResolved,
@@ -221,13 +227,13 @@ import {
   isSettlementTerminal,
   resolveQuiesceSourceNodeId,
   selectSiblingsToQuiesce,
-} from '../../workflows/run-completion-settlement.ts';
+} from '../../../daemon/src/lib/workflows/run-completion-settlement.ts';
 import {
   classifySpawnFailure,
   decideSpawnAdmission,
   hasDriveableExecution,
   selectPromotablePendingExecutions,
-} from '../../workflows/run-spawn-decisions.ts';
+} from '../../../daemon/src/lib/workflows/run-spawn-decisions.ts';
 
 const log = new Logger('space-runtime');
 const TASK_BLOCKABLE_FROM_STATUSES: readonly SpaceTaskStatus[] = (
@@ -278,10 +284,10 @@ export interface SpaceRuntimeConfig {
   }) => Promise<void> | void;
   selectWorkflowWithLlm?: SelectWorkflowWithLlm;
   goalService?: Pick<
-    import('../../../../../space/src/goals/service.ts').SpaceGoalService,
+    import('../goals/service.ts').SpaceGoalService,
     'handleTaskTerminal' | 'supersedeOutcomeNotificationsForTask' | 'retryQueuedRunsForSpace'
   >;
-  evolutionScopeService?: import('../../../../../space/src/evolution/scope-service.ts').EvolutionScopeService;
+  evolutionScopeService?: import('../evolution/scope-service.ts').EvolutionScopeService;
   actorRegistry?: SpaceActorRegistryAdapter;
   deliverLongHorizonExternalEvent?: (args: {
     spaceId: string;

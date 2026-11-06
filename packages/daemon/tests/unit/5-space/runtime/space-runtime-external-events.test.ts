@@ -26,7 +26,7 @@ import {
   parsePositiveIntegerEnv,
   SpaceRuntime,
   type SpaceRuntimeConfig,
-} from '../../../../src/lib/space/runtime/space-runtime';
+} from '../../../../../space/src/runtime/space-runtime';
 import { CodingArtifactProfile } from '../../../../src/lib/workflows/coding-artifact-profile';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
