@@ -96,6 +96,11 @@ export function neoCancelledPrerequisiteNote(todo: NeoTodo, family: readonly Neo
   ].join(' ');
 }
 
+export const neoCancelledPrerequisiteKey = (todo: NeoTodo, family: readonly NeoTodo[]) =>
+  `neo-todo-prereq:${todo.id}:${neoTodoCancelledDependencies(family, todo.id)
+    .map(({ id }) => id)
+    .join(',')}`;
+
 export const neoTodoProceedPatch = (
   todo: NeoTodo,
   family: readonly NeoTodo[],

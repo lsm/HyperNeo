@@ -526,11 +526,15 @@ export function planNeoTodoRemove(
 const Continue = z.object({ todoId: Text, message: Text });
 const Proceed = z.object({ todoId: Text });
 
-export function planNeoTodoProceed(todo: NeoTodo, family: readonly NeoTodo[]): Gate<TodoPlan> {
+export function planNeoTodoProceed(
+  todo: NeoTodo,
+  family: readonly NeoTodo[],
+  now: number
+): Gate<TodoPlan> {
   if (!neoTodoCancellationPending(todo, family))
     return fail('no_cancelled_prerequisite: this todo is not waiting on a cancelled prerequisite.');
   if (todo.instruction && todo.approvedAt === null) return fail(NEO_TODO_NOT_APPROVED);
-  return { value: { todo, patch: neoTodoProceedPatch(todo, family, Date.now()) } };
+  return { value: { todo, patch: neoTodoProceedPatch(todo, family, now) } };
 }
 const Retry = z.object({ todoId: Text });
 const Close = z.object({ todoId: Text, reason: Text });
@@ -785,7 +789,7 @@ export function createNeoTodoOperations(
 
   const proceedPastCancelled = owned(superpipe({})('neo.todo.proceed') as PipelineAPI)
     .pipe(
-      (todo: NeoTodo) => planNeoTodoProceed(todo, todos.listFamilyTodos(todo.askId)),
+      (todo: NeoTodo) => planNeoTodoProceed(todo, todos.listFamilyTodos(todo.askId), Date.now()),
       'outcome',
       'result:outcome'
     )
