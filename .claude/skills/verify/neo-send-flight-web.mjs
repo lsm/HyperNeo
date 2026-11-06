@@ -57,7 +57,7 @@ try {
       if (touch) await reply.tap();
       else await reply.click();
       await page.locator('form [data-quote-bar]').waitFor();
-      const words = `Flying words at ${width}, delay ${acceptDelay}`;
+      const words = `Flying words at ${width}, delay ${acceptDelay}` + (acceptDelay === 1000 ? "\nSecond line\nThird line\nFourth line" : "");
       await input.fill(words);
       await page.evaluate(() => {
         const rail = document.querySelector('.neo-chat-rail');
@@ -79,7 +79,7 @@ try {
           const rail = document.querySelector('.neo-chat-rail');
           const main = document.querySelector('main.neo-scroll');
           const scroll = rail.scrollHeight > rail.clientHeight + 100 ? rail : main;
-          window.flightFrames.push({ ms: performance.now() - start, ghost: box(ghost), ghostVisible: ghost ? getComputedStyle(ghost).visibility : null, ghostText: ghost?.textContent, bubble: box(row?.querySelector('.neo-message-bubble')), row: row ? { pending: row.hasAttribute('data-pending-ask'), visibility: getComputedStyle(row).visibility, height: row.getBoundingClientRect().height, arrive: row.classList.contains('neo-arrive') } : null, composerQuote: !!document.querySelector('form [data-quote-bar]'), ghostQuote: !!ghost?.querySelector('[data-quote-bar]'), distance: scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight, chrome: ghost ? Number(ghost.style.getPropertyValue('--neo-flight-chrome')) : null });
+          window.flightFrames.push({ ms: performance.now() - start, ghost: box(ghost), ghostWords: box(ghost?.lastElementChild), targetWords: box(row?.querySelector('.neo-clamped-text p')), ghostVisible: ghost ? getComputedStyle(ghost).visibility : null, ghostText: ghost?.textContent, bubble: box(row?.querySelector('.neo-message-bubble')), row: row ? { pending: row.hasAttribute('data-pending-ask'), visibility: getComputedStyle(row).visibility, height: row.getBoundingClientRect().height, arrive: row.classList.contains('neo-arrive') } : null, composerQuote: !!document.querySelector('form [data-quote-bar]'), ghostQuote: !!ghost?.querySelector('[data-quote-bar]'), distance: scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight, chrome: ghost ? Number(ghost.style.getPropertyValue('--neo-flight-chrome')) : null });
           if (performance.now() - start < 1800) requestAnimationFrame(frame);
         }, 0);
         requestAnimationFrame(frame);
@@ -107,6 +107,7 @@ try {
       }
       const last = moving.at(-1);
       for (const key of ['x', 'y', 'width', 'height']) assert(Math.abs(last.ghost[key] - last.bubble[key]) < 5, `Ghost missed the landing ${key}`);
+      assert(Math.abs(last.ghostWords.height - last.targetWords.height) < 2, 'Words changed line height at landing');
       const settled = frames.filter(f => f.ms > 650 && f.bubble);
       assert(settled.every(f => f.distance < 3), 'Send did not stay at the bottom');
       const first = settled[0].bubble, final = settled.at(-1).bubble;
