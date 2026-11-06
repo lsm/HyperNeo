@@ -106,7 +106,8 @@ export async function parseOperationInput(
   }
 }
 
-const DEVICE_OPERATIONS: Record<'relay' | 'daemon', ReadonlySet<string>> = {
+const DEVICE_OPERATIONS: Record<'relay' | 'daemon' | 'agent', ReadonlySet<string>> = {
+  agent: new Set(),
   relay: new Set([
     'neo.snapshot',
     'neo.ask.read',
@@ -134,7 +135,7 @@ const DEVICE_OPERATIONS: Record<'relay' | 'daemon', ReadonlySet<string>> = {
 function isDeviceAdmitted(operation: OperationDefinition, caller: OperationCaller): boolean {
   const kind = caller.device?.kind;
   if (caller.source === 'rpc' && caller.clientId !== undefined && !kind) return false;
-  return !kind || kind === 'human' || DEVICE_OPERATIONS[kind].has(operation.name);
+  return !kind || kind === 'human' || DEVICE_OPERATIONS[kind]?.has(operation.name) === true;
 }
 
 export function isOperationAdmitted(

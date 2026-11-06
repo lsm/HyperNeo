@@ -67,8 +67,12 @@ function answerPaired(
   paired: { device: { id: string; kind: string }; credential: string }
 ): Response {
   const origin = req.headers.get('origin');
-  const device = { deviceId: paired.device.id, kind: paired.device.kind };
-  if (!origin) return answer(200, { ...device, credential: paired.credential });
+  const device = {
+    deviceId: paired.device.id,
+    kind: paired.device.kind,
+  };
+  if (!origin || paired.device.kind === 'agent')
+    return answer(200, { ...device, credential: paired.credential });
   const response = answer(200, device);
   response.headers.set('set-cookie', deviceCookie(paired.credential, origin));
   return response;
