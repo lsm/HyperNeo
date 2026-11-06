@@ -528,7 +528,7 @@ export class Database {
       undefined,
       this.options?.queryObservability,
       (args) =>
-        'codexSnapshot' in args
+        'codexSnapshot' in args || 'claudeRecords' in args
           ? Promise.resolve()
           : this.core.waitForSdkMessageColumns(
               'sessionId' in args

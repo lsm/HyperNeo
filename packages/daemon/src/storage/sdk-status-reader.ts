@@ -292,7 +292,7 @@ export class SDKStatusReader {
   }
 
   private exchange(args: SDKReadArgs | null, queuedAt: number): Promise<SDKReadResult | null> {
-    if (this.dbPath === ':memory:' && args && !('codexSnapshot' in args))
+    if (this.dbPath === ':memory:' && args && !('codexSnapshot' in args || 'claudeRecords' in args))
       return Promise.reject(new Error('SDK reader needs a file-backed DB'));
     const worker = (this.worker ??= this.createWorker());
     const id = ++this.id,

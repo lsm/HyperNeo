@@ -598,6 +598,17 @@ test('a memory daemon can read an external file off main and close that reader',
   expect(worker.stopped).toBe(true);
 });
 
+test('a memory daemon can read Claude session files off main', async () => {
+  const worker = new TestWorker();
+  const reader = new SDKStatusReader(':memory:', () => worker as unknown as Worker);
+  const records = reader.readClaudeRecords('/synthetic-sessions');
+  worker.onmessage?.({ data: { ready: true } } as MessageEvent<SDKStatusReply>);
+  worker.reply(worker.requests[0], []);
+  expect(await records).toEqual([]);
+  await reader.close();
+  expect(worker.stopped).toBe(true);
+});
+
 for (const failure of [
   'unable to open database file',
   'database is locked',
