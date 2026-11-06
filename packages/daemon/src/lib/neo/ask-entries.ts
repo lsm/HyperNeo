@@ -98,12 +98,12 @@ const NEO_OWNED_BLOCKERS: readonly NeoTodo['blockedBy'][] = [
   'stalled',
   'environment',
 ];
-const neoHandlesBlocker = (todo: NeoTodo) =>
+const neoHandlesBlocker = (todo: Pick<NeoTodo, 'state' | 'blockedBy'>) =>
   todo.state === 'blocked' && NEO_OWNED_BLOCKERS.includes(todo.blockedBy);
 
 export function neoWorkCounts(
-  openTodos: readonly NeoTodo[],
-  openQuestions: readonly NeoQuestion[]
+  openTodos: readonly Pick<NeoTodo, 'id' | 'askId' | 'state' | 'blockedBy'>[],
+  openQuestions: readonly Pick<NeoQuestion, 'askId' | 'state' | 'kind' | 'todoId' | 'startTodos'>[]
 ): { needsYou: number; neoUnhandled: number } {
   const cards = openQuestions.filter((question) => question.state === 'open');
   return {

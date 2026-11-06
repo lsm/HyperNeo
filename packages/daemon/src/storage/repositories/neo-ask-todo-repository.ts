@@ -263,14 +263,10 @@ export class NeoAskTodoRepository {
     ]);
     const last = asks.filter((ask) => ask.status !== 'open' && !attention.has(ask.id)).at(-1);
     const unlisted = this.countAsks(projectId) - asks.length;
-    const openIds = this.listOpenAsks().map((ask) => ask.id);
     return {
       asks,
       unlisted,
-      openWork: {
-        todos: this.listTodosForAsks(openIds),
-        questions: this.listQuestionsForAsks(openIds),
-      },
+      openWork: this.openWorkFacts(),
       historyCursor:
         work && unlisted > 0 && last ? { updatedAt: last.updatedAt, id: last.id } : null,
       facts: {
@@ -281,6 +277,28 @@ export class NeoAskTodoRepository {
         ),
       },
     };
+  }
+
+  openWorkFacts() {
+    const todos = this.db
+      .prepare(
+        `SELECT t.id, t.ask_id AS askId, t.state, t.blocked_by AS blockedBy
+         FROM neo_todos t JOIN neo_asks a ON a.id = t.ask_id
+         WHERE t.state = 'blocked' AND a.status = 'open'`
+      )
+      .all() as Pick<NeoTodo, 'id' | 'askId' | 'state' | 'blockedBy'>[];
+    const questions = (
+      this.db
+        .prepare(
+          `SELECT q.ask_id AS askId, q.state, q.kind, q.todo_id AS todoId, q.start_todos AS startTodos
+           FROM neo_questions q JOIN neo_asks a ON a.id = q.ask_id
+           WHERE q.state = 'open' AND a.status = 'open'`
+        )
+        .all() as (Pick<NeoQuestion, 'askId' | 'state' | 'kind' | 'todoId'> & {
+        startTodos: string | null;
+      })[]
+    ).map((row) => ({ ...row, startTodos: parsed<string[]>(row.startTodos) }));
+    return { todos, questions };
   }
 
   askFacts(input: { askId?: string; todoId?: string; questionId?: string }) {
