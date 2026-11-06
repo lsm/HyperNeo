@@ -26,11 +26,11 @@ for (const name of ['workspace', 'bin', 'evidence']) mkdirSync(join(run, name), 
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 process.env.PATH = join(run, 'bin') + ':' + process.env.PATH;
 const original = { prepare: Database.prototype.prepare, run: DbGateway.prototype.run,
-  register: ExternalEventExtensionManager.prototype.register, start: JobQueueProcessor.prototype.start, fetch: globalThis.fetch };
+  register: ExternalEventExtensionManager.prototype.register, start: JobQueueProcessor.prototype.start, fetch: globalThis.fetch, Worker: globalThis.Worker };
 const processors = new Set<JobQueueProcessor>();
 const readName = 'github.watched.lookup.read';
 let main: Database | undefined, measuring = false, validationPending = false;
-let reads = 0, mainValidationReads = 0, remainingMainLookups = 0, loseRead = false;
+let reads = 0, nativeReadPosts = 0, mainValidationReads = 0, remainingMainLookups = 0, loseRead = false;
 const metrics: { roundTripMs: number; requestBytes: number; replyBytes: number }[] = [];
 const evidence: Record<string, unknown> = { pass: false };
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
@@ -38,6 +38,18 @@ let transport: WebSocketClientTransport | undefined;
 let lock: Database | undefined;
 let timer: ReturnType<typeof setInterval> | undefined;
 let maxLag = 0;
+globalThis.Worker = function (url: string | URL, options?: WorkerOptions) {
+  const worker = new original.Worker(url, options);
+  const post = worker.postMessage.bind(worker);
+  worker.postMessage = ((message: { op?: string; lane?: string }, transfer?: Transferable[]) => {
+    if (message?.op === readName) {
+      assert.equal(message.lane, 'read');
+      nativeReadPosts++;
+    }
+    return post(message, transfer ?? []);
+  }) as typeof worker.postMessage;
+  return worker;
+} as unknown as typeof Worker;
 Database.prototype.prepare = function (sql, ...rest) {
   const connection = this, statement = Reflect.apply(original.prepare, this, [sql, ...rest]);
   if (!/SELECT \* FROM space_github_watched_repos WHERE space_id = \? AND lower\(owner\)/.test(sql)) return statement;
@@ -117,7 +129,7 @@ try {
   assert.equal(reply.watchedRepo.id, 'synthetic-watch');
   assert.equal(reply.watchedRepo.owner, 'Mixed');
   assert.equal(reply.watchedRepo.pollingEnabled, false);
-  assert.equal(reply.watchedRepo.webhookSecret, undefined);
+  assert.equal(reply.watchedRepo.webhookSecret, 'configured');
   evidence.caseAndSanitizedReceipt = true;
   const saved = rows(), beforeFailure = reads;
   loseRead = true;
@@ -127,8 +139,12 @@ try {
   assert.deepEqual(rows(), saved);
   evidence.lostReadReceiptHasNoFallbackOrMutation = true;
   assert.equal(mainValidationReads, 0);
+  assert.equal(nativeReadPosts, reads);
+  evidence.nativeReadLaneObserved = nativeReadPosts > 0;
   assert(remainingMainLookups > 0);
   evidence.remainingMainLookupIsNextRung = remainingMainLookups;
+  evidence.latencyTargetsMet = Number(evidence.validationRpcWhileWriterHeldMs) < 250 &&
+    Number(evidence.healthWhileWriterHeldMs) < 250 && maxLag < 1000;
   evidence.maxLoopLagMs = maxLag;
   evidence.metrics = metrics;
   evidence.rssBytes = process.memoryUsage().rss;
@@ -144,8 +160,10 @@ try {
     ExternalEventExtensionManager.prototype.register = original.register;
     JobQueueProcessor.prototype.start = original.start;
     globalThis.fetch = original.fetch;
+    globalThis.Worker = original.Worker;
     evidence.mainValidationReads = mainValidationReads;
     evidence.readRequests = reads;
+    evidence.nativeReadPosts = nativeReadPosts;
     evidence.resourcesStopped = true;
     writeFileSync(join(run, 'evidence/github-watch-validation-reader.json'), JSON.stringify(evidence, null, 2));
   }

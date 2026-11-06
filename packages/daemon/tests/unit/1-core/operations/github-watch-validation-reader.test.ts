@@ -40,6 +40,7 @@ describe('Public watched repository validation reader', () => {
         caseAndSanitizedReceipt: true,
         lostReadReceiptHasNoFallbackOrMutation: true,
         mainValidationReads: 0,
+        nativeReadLaneObserved: true,
         resourcesStopped: true,
       });
     } finally {

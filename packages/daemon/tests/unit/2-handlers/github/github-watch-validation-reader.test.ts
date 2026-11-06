@@ -1,3 +1,10 @@
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { gitHubWatchedRepoRead } from '../../../../src/storage/repositories/github-watched-repo-read';
+import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import { InProcessTransport, MessageHub } from '@hyperneo/shared';
@@ -154,5 +161,43 @@ describe('watchRepo validation reader', () => {
     await store.setGlobalConfig('github', { ...global, globallyEnabled: false });
     await expect(request()).rejects.toThrow('GitHub RPC configuration capability is disabled');
     expect(gateway.reads).toBe(0);
+  });
+  test('registered reader preserves complete mapping, case matching and missing scope', async () => {
+    expect(DB_OPS.get(readName)).toBe(gitHubWatchedRepoRead);
+    expect(gitHubWatchedRepoRead.mode).toBe('read');
+    const input = { spaceId: space, owner: 'mixed', repo: 'REPO' };
+    expect(await gateway.run(gitHubWatchedRepoRead, input)).toEqual(
+      extension.repo.getWatchedRepo(space, 'Mixed', 'repo')
+    );
+    expect(await gateway.run(gitHubWatchedRepoRead, { ...input, spaceId: 'missing' })).toBeNull();
+    expect(await gateway.run(gitHubWatchedRepoRead, { ...input, repo: 'missing' })).toBeNull();
+    db.prepare('UPDATE space_github_watched_repos SET poll_cursor=? WHERE space_id=?').run(
+      '{broken',
+      space
+    );
+    const before = row();
+    await expect(gateway.run(gitHubWatchedRepoRead, input)).rejects.toThrow();
+    expect(row()).toEqual(before);
+  });
+
+  test('complete caller and all data modules fit below 200 lines without exclusions', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'watch-validation-scope-'));
+    try {
+      const output = join(dir, 'scope.json');
+      execFileSync('bun', ['.claude/skills/verify/github-watch-validation-measure.cjs', output], {
+        cwd: fileURLToPath(new URL('../../../../../../', import.meta.url)),
+      });
+      const report = JSON.parse(readFileSync(output, 'utf8'));
+      expect(report.excludedLines).toBe(0);
+      expect(report.productionGraphLines).toBe(182);
+      expect(report.caller.lines).toBe(92);
+      expect(report.modules).toHaveLength(3);
+      for (const module of report.modules) {
+        expect(module.counted).toBe(true);
+        expect(module.sha256).toMatch(/^[a-f0-9]{64}$/);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
