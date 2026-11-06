@@ -17,6 +17,7 @@ import type {
   MessageOrigin,
   ModelInfo,
   PendingModelSwitch,
+  ProcessingWaiting,
   Provider,
   QuestionDraftResponse,
   RewindMode,
@@ -1243,6 +1244,10 @@ export class AgentSession
 
   async showNotice(text: string): Promise<void> {
     await this.queryRunner.displayErrorAsAssistantMessage(text, { markAsError: true });
+  }
+
+  async setWaiting(waiting: ProcessingWaiting): Promise<void> {
+    await this.stateManager.setWaiting(waiting);
   }
 
   async resetQuery(options?: {

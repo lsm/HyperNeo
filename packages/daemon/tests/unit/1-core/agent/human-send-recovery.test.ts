@@ -163,6 +163,9 @@ describe('human send recovery wiring', () => {
           showNotice: async (text: string) => {
             calls.push(text);
           },
+          setWaiting: async (waiting: string) => {
+            calls.push(`waiting ${waiting}`);
+          },
           ...session,
         }) as HumanSendSession,
       refreshCredentials: async (providerId) => {
@@ -182,7 +185,52 @@ describe('human send recovery wiring', () => {
   test('recovery refreshes the session provider and wakes that session', async () => {
     const { calls, recovery } = setup({});
     expect(await recovery.prepare('s')).toBe('recovered');
-    expect(calls).toEqual(['refresh anthropic', 'rebuild', 'wake s']);
+    expect(calls).toEqual([
+      'refresh anthropic',
+      'waiting reconnecting',
+      'rebuild',
+      'waiting reconnecting',
+      'wake s',
+    ]);
+  });
+
+  test.each([
+    ['processing', ['waiting model']],
+    ['idle', []],
+  ] as const)('a quiet %s turn inside the stall bound shows %j', async (status, expected) => {
+    process.env.HYPERNEO_HUMAN_SEND_SILENCE_MS = '5';
+    const { calls, recovery } = setup({
+      humanSendFacts: async () => ({ status, held: false, openTools: 0, lastActivityAt: 0 }),
+    });
+    try {
+      recovery.watch('s', 'm');
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(calls).toEqual([...expected]);
+    } finally {
+      recovery.stop();
+      delete process.env.HYPERNEO_HUMAN_SEND_SILENCE_MS;
+    }
+  });
+
+  test('a turn that already answered never shows the waiting line', async () => {
+    process.env.HYPERNEO_HUMAN_SEND_SILENCE_MS = '5';
+    const { calls, recovery } = setup({
+      humanSendFacts: async () => ({
+        status: 'processing',
+        held: false,
+        openTools: 0,
+        lastActivityAt: 0,
+      }),
+      lastSdkOutputAt: () => Date.now() + 60_000,
+    });
+    try {
+      recovery.watch('s', 'm');
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(calls).toEqual([]);
+    } finally {
+      recovery.stop();
+      delete process.env.HYPERNEO_HUMAN_SEND_SILENCE_MS;
+    }
   });
 
   test('a failed rebuild does not pretend to have recovered', async () => {

@@ -52,7 +52,7 @@ const blocks = (message: WatchedMessage, type: string, key: 'id' | 'tool_use_id'
 };
 
 const MODEL_OUTPUT_TYPES: ReadonlySet<string> = new Set(['assistant', 'stream_event', 'result']);
-const isModelOutput = (message: WatchedMessage): boolean =>
+export const isModelOutput = (message: WatchedMessage): boolean =>
   MODEL_OUTPUT_TYPES.has(message.type) ||
   (message.type === 'system' && message.status === 'compacting');
 

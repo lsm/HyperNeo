@@ -13,6 +13,7 @@ import {
 } from '../lib/voice/voice-audio-outbox.ts';
 import { getVoiceRecord, type VoiceRecordEntry } from '../lib/voice/voice-audio-store.ts';
 import { NeoAttachments } from './NeoAttachments.tsx';
+import { neoWaitingLine } from './NeoBusyRow.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { type NeoPreference, NeoPreferences } from './NeoPreferences.tsx';
 import { NeoQuoteBar } from './NeoQuoteBar.tsx';
@@ -92,7 +93,9 @@ export function NeoComposer({
   const needsDraft = hasAttachments || !!quote || !!boundPreview;
   const agentState = store.agentState.value;
   const noNetwork = agentState.status === 'rate_limit_cooldown' && agentState.reason === 'network';
-  const attention = !!store.error.value || agentState.status === 'waiting_for_input' || noNetwork;
+  const waitingLine = forSession ? null : neoWaitingLine(agentState);
+  const attention =
+    !!store.error.value || agentState.status === 'waiting_for_input' || noNetwork || !!waitingLine;
   const collapsed = !focused && !draft && !needsDraft && !attention;
   const draftContext = t(
     boundPreview
@@ -462,7 +465,7 @@ export function NeoComposer({
               ? voiceStatus
                 ? 'order-last flex w-full'
                 : 'hidden'
-              : store.error.value || agentState.status === 'waiting_for_input' || noNetwork
+              : attention
                 ? 'order-last flex w-full sm:order-none sm:w-auto sm:flex-1'
                 : 'hidden'
           }`}
@@ -475,7 +478,7 @@ export function NeoComposer({
                 ? t('chat.notice.needs_you')
                 : agentState.status === 'waiting_for_input'
                   ? t('composer.question')
-                  : null}
+                  : waitingLine}
         </span>
         <div class="neo-composer-actions flex min-w-0 items-center gap-4 ml-auto">
           <NeoVoice

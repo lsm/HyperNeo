@@ -1,4 +1,9 @@
-import type { AgentProcessingState, MessageContent, PendingUserQuestion } from '@hyperneo/shared';
+import type {
+  AgentProcessingState,
+  MessageContent,
+  PendingUserQuestion,
+  ProcessingWaiting,
+} from '@hyperneo/shared';
 import type { SDKAssistantMessage, SDKMessage } from '@hyperneo/shared/sdk';
 import { isToolUseBlock } from '@hyperneo/shared/sdk/type-guards';
 import type { Database } from '../../storage/database.ts';
@@ -6,6 +11,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { Logger } from '../logger.ts';
 import { type IdleOwnerScope, isIdleWaiterAdmitted } from './idle-waiter-admission-pipeline.ts';
 import { deliveryMetrics } from './message-delivery-metrics.ts';
+import { isModelOutput } from './stream-silence-watch.ts';
 
 type StreamingPhase = 'initializing' | 'thinking' | 'streaming' | 'finalizing';
 
@@ -15,6 +21,7 @@ export class ProcessingStateManager {
   private streamingStartedAt: number | null = null;
   private processingStartedAt: number | null = null;
   private isCompacting = false;
+  private waiting: ProcessingWaiting | undefined;
   private heldPrompt: { uuid: string; content: string | MessageContent[] } | null = null;
   private logger: Logger;
   private onIdleCallback?: (owner?: IdleOwnerScope) => Promise<void>;
@@ -312,6 +319,7 @@ export class ProcessingStateManager {
         (this.processingState.status === 'processing'
           ? this.processingState.messageIds
           : undefined),
+      waiting: this.waiting,
     });
   }
 
@@ -429,6 +437,18 @@ export class ProcessingStateManager {
     }
   }
 
+  async setWaiting(waiting: ProcessingWaiting | undefined): Promise<void> {
+    this.waiting = waiting;
+    if (this.processingState.status !== 'processing') return;
+    this.processingState = { ...this.processingState, waiting };
+    this.persistToDatabase();
+    await this.internalEventBus.publish('session.updated', {
+      sessionId: this.sessionId,
+      source: 'processing-state',
+      processingState: this.processingState,
+    });
+  }
+
   getIsCompacting(): boolean {
     return this.isCompacting;
   }
@@ -453,6 +473,7 @@ export class ProcessingStateManager {
       streamingStartedAt: this.streamingStartedAt ?? undefined,
       isCompacting: this.isCompacting,
       messageIds: this.processingState.messageIds,
+      waiting: this.waiting,
     };
 
     this.persistToDatabase();
@@ -468,6 +489,8 @@ export class ProcessingStateManager {
     if (this.processingState.status !== 'processing') {
       return;
     }
+
+    if (this.waiting && isModelOutput(message)) await this.setWaiting(undefined);
 
     if (message.type === 'stream_event') {
       const event = (message as Extract<SDKMessage, { type: 'stream_event' }>).event as {
@@ -511,6 +534,7 @@ export class ProcessingStateManager {
   }
 
   private async setState(newState: AgentProcessingState, suppressPublish = false): Promise<void> {
+    if (newState.status !== 'processing' && newState.status !== 'queued') this.waiting = undefined;
     if (newState.status === 'idle' || newState.status === 'interrupted') {
       if (
         this.processingState.status === 'processing' &&

@@ -11,7 +11,7 @@ import { SessionStore } from '../lib/session-store.ts';
 import type { MessageImage } from '@hyperneo/shared';
 import { NeoComposer } from './NeoComposer.tsx';
 import { restoreNeoImages } from './neo-attachments.ts';
-import { NeoBusyRow } from './NeoBusyRow.tsx';
+import { NeoBusyRow, neoWaitingLine } from './NeoBusyRow.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoMessage } from './NeoMessage.tsx';
 import { NeoSessionStepsLine, NeoThinkingRow, NeoToolRow } from './NeoSessionSteps.tsx';
@@ -145,6 +145,7 @@ export function NeoSessionPane({
   const question = state.status === 'waiting_for_input' ? state.pendingQuestion : null;
   const last = blocks.at(-1)?.at(-1);
   const showsRunningSteps = last?.type === 'steps' && last.steps.running;
+  const waitingLine = neoWaitingLine(state);
   const error = notice || store.error.value?.message;
   useLayoutEffect(() => {
     const el = scroller.current;
@@ -240,7 +241,9 @@ export function NeoSessionPane({
               />
             </div>
           )}
-          {running && !showsRunningSteps && <NeoBusyRow words={[t('session.working')]} />}
+          {running && (waitingLine || !showsRunningSteps) && (
+            <NeoBusyRow words={[waitingLine ?? t('session.working')]} />
+          )}
           {error && (
             <p role="alert" class="text-sm text-danger">
               {error}
