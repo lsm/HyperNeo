@@ -1,5 +1,6 @@
 import type { NodeExecution, SpaceTask, SpaceWorkflowRun } from '@hyperneo/shared';
-import type { ExternalEventPublishedPayload } from './external-event-service.ts';
+import { DEFAULT_EXTERNAL_EVENT_QUEUE_TTL_MS } from '../../external-events/event-delivery-rules.ts';
+import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service.ts';
 
 export interface WorkflowTargetKey {
   workflowRunId: string;
@@ -12,8 +13,6 @@ export type ExternalEventTaskDecision =
   | { action: 'deliver' }
   | { action: 'hold' }
   | { action: 'fail'; reason: string };
-
-export const DEFAULT_EXTERNAL_EVENT_QUEUE_TTL_MS = 300_000;
 
 function isExecutionForTarget(
   execution: NodeExecution,
@@ -93,13 +92,5 @@ export function isPublishedExternalEventExpired(
   ttlMs = DEFAULT_EXTERNAL_EVENT_QUEUE_TTL_MS
 ): boolean {
   if (createdAt === undefined) return false;
-  return now - createdAt > ttlMs;
-}
-
-export function isQueuedExternalEventExpired(
-  createdAt: number,
-  now = Date.now(),
-  ttlMs = DEFAULT_EXTERNAL_EVENT_QUEUE_TTL_MS
-): boolean {
   return now - createdAt > ttlMs;
 }

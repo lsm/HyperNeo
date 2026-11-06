@@ -11,9 +11,10 @@ data dir and DB, ephemeral port, no provider, `gh` refuses everything). It seeds
 one open ask, sends two consumed human messages through `neo.message.send` (one
 new, one replying to that ask) and calls the operations as the Neo session:
 
-- `neo.question.ask {input: <new message>, askId: <unrelated ask>}` opens a new
-  ask whose origin is that message and whose request is the human's words; the
-  receipt carries an `ask_rebound` record and the unrelated ask gets no question.
+- `neo.question.ask {input: <new message>, askId: <unrelated ask>}` is refused with
+  `ask_mismatch`, opens nothing, and the unrelated ask gets no question.
+- `neo.question.ask {input: <new message>}` opens a new ask whose origin is that
+  message and whose request is the human's words.
 - `neo.todo.add {input: <new message>}` lands on that same ask.
 - `neo.todo.add {input: <reply to the ask>}` lands on the replied-to ask.
 - `askId` alone still works; neither field is an input error; an unknown input

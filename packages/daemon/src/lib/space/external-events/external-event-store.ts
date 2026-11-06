@@ -1,9 +1,12 @@
-import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
-import { defineRepositoryOp } from '../../storage/db-gateway/db-op.ts';
-import type { ReactiveDatabase } from '../../storage/reactive-database.ts';
-import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import { gatewayFor } from '../../../storage/db-gateway/db-gateway.ts';
+import { externalEventSweeps } from '../../../storage/repositories/space-external-event-sweep-repository.ts';
+import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import type { DeliveryTerminalEvent, PendingDeliverySummary } from './queue-health-metrics.ts';
-import { validateLiteralTopic, validateSource } from './topic-validator.ts';
+import {
+  ExternalEventValidationError,
+  validateExternalEvent,
+} from '../../external-events/event-validation.ts';
 import {
   type DeliveryFailure,
   type DeliveryTarget,
@@ -18,7 +21,7 @@ import {
   type StoreResult,
   TERMINAL_DELIVERY_STATES,
   TERMINAL_EVENT_STATES,
-} from './types.ts';
+} from '../../external-events/types.ts';
 
 interface ExternalEventRow {
   id: string;
@@ -69,13 +72,6 @@ interface ExternalEventDeliveryLogRow extends ExternalEventDeliveryRow {
   event_state: ExternalEventState;
   event_created_at: number;
   event_updated_at: number;
-}
-
-export class ExternalEventValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ExternalEventValidationError';
-  }
 }
 
 const EXTERNAL_EVENT_TABLES = ['space_external_events', 'space_external_event_deliveries'] as const;
@@ -271,78 +267,6 @@ export class ExternalEventStore {
         outcome: 'failed',
         reason: 'ttl_expired',
       });
-  }
-
-  markPublishedEventsFailedBefore(createdAtBefore: number, now: number = Date.now()): number {
-    const result = this.db
-      .prepare(
-        `UPDATE space_external_events
-         SET state = 'failed', updated_at = ?
-         WHERE state = 'published'
-           AND created_at < ?
-           AND NOT EXISTS (
-             SELECT 1 FROM space_external_event_deliveries d WHERE d.event_id = space_external_events.id
-           )`
-      )
-      .run(now, createdAtBefore);
-    if (result.changes > 0) this.notify(['space_external_events']);
-    return result.changes ?? 0;
-  }
-
-  markPendingDeliveriesFailedBefore(
-    createdAtBefore: number,
-    skipDeliveryKeys: ReadonlySet<string>,
-    now: number = Date.now()
-  ): Array<{ eventId: string; deliveryKey: string }> {
-    const skip = [...skipDeliveryKeys];
-    const skipClause =
-      skip.length > 0 ? `AND delivery_key NOT IN (${skip.map(() => '?').join(',')})` : '';
-    const expired = this.db
-      .prepare(
-        `UPDATE space_external_event_deliveries
-         SET state = 'failed', failure_reason = 'ttl_expired', updated_at = ?
-         WHERE state = 'pending'
-           AND EXISTS (
-             SELECT 1 FROM space_external_events e
-             WHERE e.id = space_external_event_deliveries.event_id
-               AND e.created_at < ?
-           )
-           ${skipClause}
-         RETURNING event_id, delivery_key`
-      )
-      .all(now, createdAtBefore, ...skip) as Array<{ event_id: string; delivery_key: string }>;
-    if (expired.length > 0) {
-      this.notify();
-      if (this.deliveryTerminalHook) {
-        for (const row of expired) {
-          this.deliveryTerminalHook({
-            eventId: row.event_id,
-            deliveryKey: row.delivery_key,
-            outcome: 'failed',
-            reason: 'ttl_expired',
-          });
-        }
-      }
-    }
-
-    const rollup = this.db
-      .prepare(
-        `UPDATE space_external_events
-         SET state = 'failed', updated_at = ?
-         WHERE state = 'published'
-           AND EXISTS (
-             SELECT 1 FROM space_external_event_deliveries d
-             WHERE d.event_id = space_external_events.id
-               AND d.state = 'failed' AND d.failure_reason = 'ttl_expired'
-           )
-           AND NOT EXISTS (
-             SELECT 1 FROM space_external_event_deliveries d
-             WHERE d.event_id = space_external_events.id AND d.state = 'pending'
-           )`
-      )
-      .run(now);
-    if (expired.length === 0 && rollup.changes > 0) this.notify(['space_external_events']);
-    return expired.map((row) => ({ eventId: row.event_id, deliveryKey: row.delivery_key }));
   }
 
   markEventIgnored(eventId: string, _reason: 'no_matching_subscriptions'): void {
@@ -773,46 +697,6 @@ export class ExternalEventStore {
   }
 }
 
-export function validateExternalEvent(event: ExternalEvent): string | null {
-  if (!event.id || typeof event.id !== 'string') return 'ExternalEvent.id is required';
-  if (!event.spaceId || typeof event.spaceId !== 'string') {
-    return 'ExternalEvent.spaceId is required';
-  }
-  if (
-    !event.dedupeKey ||
-    typeof event.dedupeKey !== 'string' ||
-    event.dedupeKey.trim().length === 0
-  ) {
-    return 'ExternalEvent.dedupeKey is required and must not be whitespace-only';
-  }
-  if (event.dedupeKey !== event.dedupeKey.trim()) {
-    return 'ExternalEvent.dedupeKey must not have leading or trailing whitespace';
-  }
-
-  const sourceCheck = validateSource(event.source);
-  if (!sourceCheck.valid) return `ExternalEvent.source invalid: ${sourceCheck.reason}`;
-
-  const topicCheck = validateLiteralTopic(event.topic);
-  if (!topicCheck.valid) return `ExternalEvent.topic invalid: ${topicCheck.reason}`;
-
-  const firstSegment = event.topic.split('/')[0];
-  if (firstSegment !== event.source) {
-    return `ExternalEvent.topic first segment "${firstSegment}" must equal source "${event.source}"`;
-  }
-
-  if (typeof event.occurredAt !== 'number' || !Number.isFinite(event.occurredAt)) {
-    return 'ExternalEvent.occurredAt must be a finite number';
-  }
-  if (typeof event.ingestedAt !== 'number' || !Number.isFinite(event.ingestedAt)) {
-    return 'ExternalEvent.ingestedAt must be a finite number';
-  }
-  if (typeof event.summary !== 'string') return 'ExternalEvent.summary must be a string';
-  if (typeof event.payload !== 'object' || event.payload === null) {
-    return 'ExternalEvent.payload must be an object';
-  }
-  return null;
-}
-
 function rowToRecord(row: ExternalEventRow): ExternalEventRecord {
   let payload: Record<string, unknown> = {};
   try {
@@ -887,10 +771,3 @@ function deliveryLogRowToRecord(row: ExternalEventDeliveryLogRow): ExternalEvent
     eventUpdatedAt: eventRecord.updatedAt,
   };
 }
-
-export const externalEventSweeps = defineRepositoryOp(
-  'externalEvents.sweep',
-  'write',
-  ExternalEventStore,
-  ['markPublishedEventsFailedBefore', 'markPendingDeliveriesFailedBefore']
-);

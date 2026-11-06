@@ -44,11 +44,11 @@ import {
 import { dbQueryCapabilityContribution } from '../../db-query/briefing.ts';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools.ts';
 import type { ExternalEventService } from '../../external-events/external-event-service.ts';
-import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
+import type { ExternalEventStore } from '../external-events/external-event-store.ts';
 import {
   ExternalEventQueueMetrics,
   type QueueHealthSnapshot,
-} from '../../external-events/queue-health-metrics.ts';
+} from '../external-events/queue-health-metrics.ts';
 import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import { Logger } from '../../logger.ts';

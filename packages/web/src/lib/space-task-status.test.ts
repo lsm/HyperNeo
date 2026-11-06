@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { getTaskStatusClasses, getTaskStatusConfig, TASK_STATUS_CONFIG } from './task-status.js';
+import {
+  getTaskStatusClasses,
+  getTaskStatusConfig,
+  TASK_STATUS_CONFIG,
+} from './space-task-status.js';
 
 describe('task-status', () => {
   it('covers every SpaceTaskStatus value', () => {

@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   type ClaudeDesktopAdapterDeps,
   type ClaudeRecordCache,
@@ -27,6 +27,7 @@ import {
   claudeInputEvidence,
   claudeTranscriptState,
   createClaudeDesktopAdapter,
+  claudeTranscriptPath,
   readClaudeDesktopRecords,
   readLiveClaudeSessions,
   reuseLiveSessions,
@@ -513,6 +514,43 @@ describe('claude-desktop adapter against the app session records', () => {
         'bypassPermissions',
       ]);
     });
+  });
+
+  test('turns reads the transcript of the session record, and an unknown session is not found', async () => {
+    const record = (await readClaudeDesktopRecords(dir, new Map())).find(
+      (row) => row.sessionId === 'local_a1'
+    )!;
+    const path = claudeTranscriptPath(join(dir, 'projects'), record)!;
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(
+      path,
+      [
+        {
+          type: 'user',
+          uuid: 'in-1',
+          timestamp: '2026-11-06T04:00:00Z',
+          message: { content: 'Go' },
+        },
+        {
+          type: 'assistant',
+          uuid: 'end-1',
+          timestamp: '2026-11-06T04:00:01Z',
+          message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Done' }] },
+        },
+      ]
+        .map((row) => JSON.stringify(row))
+        .join('\n') + '\n'
+    );
+    const driver = adapter([]);
+    expect(await driver.turns!({ adapter: 'claude-desktop', id: 'local_a1' })).toMatchObject({
+      ok: true,
+      value: { turns: [{ id: 'end-1', inputs: ['in-1'] }] },
+    });
+    expect(await driver.turns!({ adapter: 'claude-desktop', id: 'missing' })).toMatchObject({
+      ok: false,
+      reason: 'not_found',
+    });
+    rmSync(path);
   });
 
   test('status exposes execution cwd without requiring a transcript', async () => {

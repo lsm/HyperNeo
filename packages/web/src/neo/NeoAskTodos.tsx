@@ -26,7 +26,13 @@ import { neoSessionKind } from './work-driver.ts';
 import { type NeoDoneTodosPage, neoDonePageMerge } from './neo-asks.ts';
 import { messageTime } from './NeoMessage.tsx';
 import { t } from '../lib/i18n/index.ts';
-import { neoQuestionText, neoTodoDetail, neoTodoHasMore, neoTodoStatus } from './todo-status.ts';
+import {
+  neoQuestionText,
+  neoTodoDetail,
+  neoTodoHasMore,
+  neoTodoNextAction,
+  neoTodoStatus,
+} from './todo-status.ts';
 
 const states = {
   waiting: ['ask.state.waiting', 'text-warning bg-warning/10'],
@@ -124,6 +130,7 @@ function TodoRow({
   const [mark, color] = marks[todo.state];
   const detailId = `${anchorPrefix}neo-todo-detail-${todo.id}`;
   const detail = neoTodoDetail(todo);
+  const nextAction = neoTodoNextAction(todo);
   const head = (
     <>
       <span
@@ -206,9 +213,9 @@ function TodoRow({
                   </p>
                 ))}
               <ArtifactCards artifacts={todo.artifacts} />
-              {number === undefined && todo.state === 'blocked' && todo.nextAction && (
+              {number === undefined && nextAction && (
                 <span data-todo-next-action class="block break-words text-xs text-fg-muted">
-                  {t('todo.nextAction', { action: todo.nextAction })}
+                  {t('todo.nextAction', { action: nextAction })}
                 </span>
               )}
             </div>
@@ -221,9 +228,7 @@ function TodoRow({
             todo.title,
             number === undefined ? neoTodoStatus(todo) : todo.doneWhen,
             ...(onToggle && expanded ? detail : []),
-            ...((!onToggle || expanded) && number === undefined && todo.state === 'blocked'
-              ? [todo.nextAction ?? '']
-              : []),
+            ...((!onToggle || expanded) && number === undefined ? [nextAction ?? ''] : []),
           ].join('\n')}
         />
       </div>

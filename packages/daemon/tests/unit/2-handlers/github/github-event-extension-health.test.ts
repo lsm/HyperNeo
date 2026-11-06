@@ -7,7 +7,8 @@ import {
   GitHubEventExtension,
   type GitHubHealthSnapshot,
 } from '../../../../src/lib/external-events/github/github-event-extension';
-import { ExternalEventStore, type ExternalEvent } from '../../../../src/lib/external-events';
+import type { ExternalEvent } from '../../../../src/lib/external-events';
+import { ExternalEventStore } from '../../../../src/lib/space/external-events/external-event-store';
 import type {
   ExternalEventExtensionConfigStore,
   SpaceExternalEventSourceConfig,

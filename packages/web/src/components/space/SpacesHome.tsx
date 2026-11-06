@@ -7,8 +7,8 @@ import {
   navigateToSpaceSession,
 } from '../../lib/space-router.ts';
 import { spaceStore } from '../../lib/space-store.ts';
-import { isActionRequired, isActiveTask } from '../../lib/task-filters.ts';
-import { getTaskStatusClasses, getTaskStatusConfig } from '../../lib/task-status.ts';
+import { isActionRequired, isActiveTask } from '../../lib/space-task-filters.ts';
+import { getTaskStatusClasses, getTaskStatusConfig } from '../../lib/space-task-status.ts';
 import { StatusBadge } from '../ui/StatusBadge.tsx';
 import { SpaceCreateDialog } from './SpaceCreateDialog.tsx';
 import { MobileMenuButton } from '../ui/MobileMenuButton.tsx';

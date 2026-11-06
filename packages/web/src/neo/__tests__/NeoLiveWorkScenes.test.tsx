@@ -210,6 +210,8 @@ function mount(publicMode = true, empty = false) {
       updatedAt: 1,
     })),
     work: [],
+    needsYou: empty ? 0 : 1,
+    neoUnhandled: 0,
     todoAsks: empty
       ? []
       : [testAskEntry('waiting', 'Fictional execution proposal', { state: 'waiting' })],
@@ -392,6 +394,45 @@ describe('Neo public work scenes', () => {
     });
     expect(screen.queryByText('No work yet.')).toBeNull();
     expect(screen.getByRole('region', { name: 'Needs your attention' })).toBeTruthy();
+  });
+
+  it('reads the daemon counts instead of judging the loaded asks', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    const { model } = mount();
+    const set = (counts: { needsYou?: number; neoUnhandled?: number }) =>
+      act(() => {
+        model.value = { ...model.value, snapshot: { ...model.value.snapshot, ...counts } };
+      });
+    set({ needsYou: 4, neoUnhandled: 2 });
+    expect(screen.getByRole('button', { name: /^Your work, 4 need/, hidden: true })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Needs your attention · 4' })).toBeTruthy();
+    expect(screen.getByText('Neo has 2 still to handle')).toBeTruthy();
+    set({ needsYou: 4, neoUnhandled: 0 });
+    expect(screen.queryByText(/still to handle/)).toBeNull();
+  });
+
+  it('keeps a blocked ask with no card out of the human list', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    const { model } = mount();
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          needsYou: 0,
+          neoUnhandled: 1,
+          todoAsks: [
+            testAskEntry('blocked', 'Blocked work', {
+              state: 'doing',
+              todos: [testTodo('b', { state: 'blocked' })],
+            }),
+          ],
+        },
+      };
+    });
+    expect(screen.queryByRole('region', { name: 'Needs your attention' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Your work', hidden: true })).toBeTruthy();
+    expect(screen.getByText('Neo has 1 still to handle')).toBeTruthy();
   });
 
   it('shows no pending check banner and only work scene groups in legacy mode', () => {

@@ -16,6 +16,20 @@ export async function readNeoTodoCompletion(
   return rule ? rule.check(todo) : null;
 }
 
+export function requireNeoTodoCloseStarted<T extends { todo: NeoTodo }>(
+  plan: T,
+  result: NeoTodoCheckResult | null
+): Gate<T> {
+  if (result?.done || plan.todo.startedAt !== null) return { value: plan };
+  return {
+    reason: {
+      ok: false,
+      reason:
+        'todo_not_started: it never started and its check has not passed, so it cannot be done; nothing changed. To cancel or replace it use neo.todo.remove.',
+    },
+  };
+}
+
 export function requireNeoTodoMayFinish<T extends { todo: NeoTodo; patch?: NeoTodoPatch }>(
   plan: T,
   result: NeoTodoCheckResult | null

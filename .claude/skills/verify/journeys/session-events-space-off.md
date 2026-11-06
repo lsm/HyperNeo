@@ -14,5 +14,5 @@ operations listed for that session, `spaceSubscriptionTable: false`, an empty
 `spaceEventTables`, `proof-event` in `deliveries` as `pending`, and the saved
 session message in `message`. With no model turn the session never consumes it, so
 `delivered` is not reached here; that state is pinned by unit test. The isolated daemon has no
-GitHub token, so `subscribe` answers `ok: false` with a `GITHUB_TOKEN` error: the
-subscription is kept and routing works, only the live repo watch could not start.
+GitHub token or `gh` login, so `subscribe` answers `ok: false` with a `GitHub CLI polling
+unavailable` error: the subscription is kept and routing works, only the live repo watch could not start.

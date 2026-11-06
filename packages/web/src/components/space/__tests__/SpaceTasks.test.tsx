@@ -115,7 +115,7 @@ vi.mock('../../../lib/utils', () => ({
 
 mockTasks = signal<SpaceTask[]>([]);
 
-import { isActiveTask } from '../../../lib/task-filters';
+import { isActiveTask } from '../../../lib/space-task-filters';
 import { SpaceTasks, TAB_PREDICATES } from '../SpaceTasks';
 
 function makeTask(

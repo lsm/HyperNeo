@@ -214,6 +214,10 @@ export interface NeoCardReplyContext {
   language?: LanguageSetting;
 }
 
+const ASK_ALL_DONE = `(EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state = 'done')
+  AND NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state NOT IN ('done', 'removed'))
+  AND NOT EXISTS (SELECT 1 FROM neo_asks child WHERE child.parent_id = neo_asks.id AND child.status = 'open'))`;
+
 export class NeoAskTodoRepository {
   get questionAnswers() {
     return new NeoQuestionAnswerRepository(
@@ -266,6 +270,7 @@ export class NeoAskTodoRepository {
     return {
       asks,
       unlisted,
+      openWork: this.openWorkFacts(),
       historyCursor:
         work && unlisted > 0 && last ? { updatedAt: last.updatedAt, id: last.id } : null,
       facts: {
@@ -276,6 +281,28 @@ export class NeoAskTodoRepository {
         ),
       },
     };
+  }
+
+  openWorkFacts() {
+    const todos = this.db
+      .prepare(
+        `SELECT t.id, t.ask_id AS askId, t.state, t.blocked_by AS blockedBy
+         FROM neo_todos t JOIN neo_asks a ON a.id = t.ask_id
+         WHERE t.state = 'blocked' AND a.status = 'open'`
+      )
+      .all() as Pick<NeoTodo, 'id' | 'askId' | 'state' | 'blockedBy'>[];
+    const questions = (
+      this.db
+        .prepare(
+          `SELECT q.ask_id AS askId, q.state, q.kind, q.todo_id AS todoId, q.start_todos AS startTodos
+           FROM neo_questions q JOIN neo_asks a ON a.id = q.ask_id
+           WHERE q.state = 'open' AND a.status = 'open'`
+        )
+        .all() as (Pick<NeoQuestion, 'askId' | 'state' | 'kind' | 'todoId'> & {
+        startTodos: string | null;
+      })[]
+    ).map((row) => ({ ...row, startTodos: parsed<string[]>(row.startTodos) }));
+    return { todos, questions };
   }
 
   askFacts(input: { askId?: string; todoId?: string; questionId?: string }) {
@@ -521,27 +548,31 @@ export class NeoAskTodoRepository {
   listStalledAsks(
     before: number,
     repeatBefore: number | null = null,
-    includeStalledTodos = true
+    includeStalledTodos = true,
+    wakeFinishedNow = false
   ): {
     id: string;
     sessionId: string;
     title: string;
     wakeKey: string;
+    finished: number;
   }[] {
     return this.db
-      .prepare(`SELECT id, session_id AS sessionId, title,
+      .prepare(`SELECT id, session_id AS sessionId, title, ${ASK_ALL_DONE} AS finished,
       'neo-stalled-ask:' || id || ':' || updated_at || ':' || COALESCE(stalled_wake_at, 0) AS wakeKey
-      FROM neo_asks WHERE status = 'open' AND updated_at <= ?1
+      FROM neo_asks WHERE status = 'open'
       AND EXISTS (SELECT 1 FROM sessions WHERE sessions.id = neo_asks.session_id AND sessions.status = 'active')
       AND NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state IN ('todo', 'doing'))
       AND NOT EXISTS (SELECT 1 FROM neo_questions WHERE ask_id = neo_asks.id AND state = 'open')
       AND (?3 OR NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state = 'blocked' AND blocked_by IN ('stalled', 'environment')))
-      AND (?2 IS NULL OR stalled_wake_at IS NULL OR stalled_wake_at <= ?2)`)
-      .all(before, repeatBefore, includeStalledTodos ? 1 : 0) as {
+      AND ((updated_at <= ?1 AND (?2 IS NULL OR stalled_wake_at IS NULL OR stalled_wake_at <= ?2))
+        OR (?4 AND ${ASK_ALL_DONE} AND (stalled_wake_at IS NULL OR stalled_wake_at < updated_at)))`)
+      .all(before, repeatBefore, includeStalledTodos ? 1 : 0, wakeFinishedNow ? 1 : 0) as {
       id: string;
       sessionId: string;
       title: string;
       wakeKey: string;
+      finished: number;
     }[];
   }
 

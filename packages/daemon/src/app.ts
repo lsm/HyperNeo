@@ -56,14 +56,9 @@ import {
 } from './lib/internal-command-bus.ts';
 import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus.ts';
 import { setupRPCHandlers } from './lib/rpc-handlers/index.ts';
-import { createSpaceRpc } from './lib/space/rpc/space-setup.ts';
 import { DaemonExtensions } from './lib/extensions/contract.ts';
 import { isSpaceEnabled, registerSchemaExtension } from './storage/schema/extensions.ts';
-import { SPACE_SCHEMA } from './storage/schema/space-schema.ts';
-import { createSpaceDaemonExtension } from './lib/space/daemon-extension.ts';
-import { createSpaceExternalEvents } from './lib/space/external-event-wiring.ts';
 import { contributeDefaultOperations } from './lib/operations/database-catalog.ts';
-import { createSpaceDefaultOperations } from './lib/tasks/catalog-operations.ts';
 import { connectedDeviceReads } from './storage/repositories/connected-device-read.ts';
 import { applyProviderModelAllowlistsToEnv } from './lib/rpc-handlers/settings-handlers.ts';
 import { WebSocketServerTransport } from './lib/websocket-server-transport.ts';
@@ -71,11 +66,11 @@ import { createWebSocketHandlers } from './routes/setup-websocket.ts';
 import { createGitHubService, type GitHubService } from './lib/github/github-service.ts';
 import {
   ExternalEventService,
-  type ExternalEventStore,
   routeExternalEventPublisher,
   SessionExternalEventStore,
   ingestSessionEvent,
 } from './lib/external-events/index.ts';
+import type { ExternalEventStore } from './lib/space/external-events/external-event-store.ts';
 import { mailSessionEvent } from './lib/external-events/session-event-delivery.ts';
 import { readLatestSessionPrState } from './lib/external-events/session-external-event-store.ts';
 import { replaySessionTerminals } from './lib/external-events/session-terminal-replay.ts';
@@ -151,7 +146,8 @@ import {
 } from './lib/event-loop-stall-marker.ts';
 import { WorkflowHookRuntimeService } from './lib/workflows/hook-runtime-service.ts';
 import { WorkflowHookStateRepository } from './storage/repositories/workflow-hook-state-repository.ts';
-import { SpaceManager } from './lib/space/managers/space-manager.ts';
+import type { SpaceManager } from './lib/space/managers/space-manager.ts';
+import { loadSpaceDaemonModule } from './lib/space-module-loader.ts';
 import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service.ts';
 import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager.ts';
 import type { SpaceWorktreeManager } from './lib/workspaces/worktree-manager.ts';
@@ -180,14 +176,12 @@ import { createHumanSendRecovery } from './lib/agent/human-send-recovery.ts';
 import { gatewayFor } from './storage/db-gateway/db-gateway.ts';
 import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler.ts';
 import { registerMailboxJobs } from './lib/mailbox/registration.ts';
-import { captureDirectMailboxAdmission } from './lib/tasks/direct-mailbox-admission.ts';
 import { boundDeliveryContent } from './lib/handoffs/bound-delivery.ts';
 import { resolveMailboxSession } from './lib/mailbox/session-lookup.ts';
 import { MAILBOX_LANE } from './lib/mailbox/enqueue.ts';
 import { settleMessageDeliveryDeadLetter } from './lib/job-handlers/message-delivery-dead-letter.ts';
 import { asMessageDeliveryPayload } from './lib/agent/message-delivery.ts';
 import { deliveryMetrics } from './lib/agent/message-delivery-metrics.ts';
-import { SpaceRepository } from './storage/repositories/space-repository.ts';
 import {
   AppMcpLifecycleManager,
   McpImportService,
@@ -197,7 +191,6 @@ import { FileIndex } from './lib/file-index.ts';
 import { Logger, installConsoleLogCapture, subscribeToStructuredLogs } from './lib/logger.ts';
 import { createStartupPhaseTimer } from './lib/startup-phase-timer.ts';
 import { StructuredLogFileSink } from './lib/structured-log-file-sink.ts';
-import { EvolutionLogEvidenceService } from './lib/space/evolution/log-evidence-service.ts';
 import { SkillsManager } from './lib/skills-manager.ts';
 import {
   cleanupSuspiciousProcesses,
@@ -480,7 +473,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     }
 
     const spaceEnabled = isSpaceEnabled();
-    if (spaceEnabled) registerSchemaExtension(SPACE_SCHEMA);
+    const spaceModule = spaceEnabled ? await loadSpaceDaemonModule() : null;
+    if (spaceModule) registerSchemaExtension(spaceModule.schema);
     const db = new Database(
       config.dbPath,
       config.sqlQueryObservability
@@ -494,12 +488,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const cutOffSessionIds = db.listProcessingSessionIds();
     const interruptedTurns = await db.markRestartInterruptedTurns();
     const liveQueries = new LiveQueryEngine(db.getDatabase(), reactiveDb);
-    const logEvidenceService = spaceEnabled
-      ? new EvolutionLogEvidenceService({
-          evolutionRepo: db.evolution,
-          spaceRepo: new SpaceRepository(db.getDatabase()),
-        })
-      : undefined;
+    const logEvidenceService = spaceModule?.createLogEvidenceService(db);
     const unsubscribeEarlyStructuredLogs = subscribeToStructuredLogs((event) => {
       logEvidenceService?.capture(event);
       if (event.level === 'fatal') {
@@ -591,7 +580,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       })
     );
 
-    const spaceManager = spaceEnabled ? new SpaceManager(db.getDatabase(), reactiveDb) : undefined;
+    const spaceManager = spaceModule?.createSpaceManager(db.getDatabase(), reactiveDb);
 
     const authManager = new AuthManager(db, config);
     await authManager.initialize();
@@ -693,7 +682,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     messageHub.registerRouter(router);
     const extensions = new DaemonExtensions(db.getDatabase(), messageHub);
-    if (spaceEnabled) contributeDefaultOperations('space', createSpaceDefaultOperations);
+    if (spaceModule) contributeDefaultOperations('space', spaceModule.defaultOperations);
     const logExtensionStopFailures = (failures: { id: string; error: unknown }[]) => {
       for (const { id, error } of failures)
         logError(`[Daemon] Extension ${id} failed to stop:`, error);
@@ -904,9 +893,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const fileIndex = new FileIndex(config.workspaceRoot);
     void fileIndex.init();
 
-    const spaceExternalEvents = spaceEnabled
-      ? createSpaceExternalEvents(db.getDatabase(), reactiveDb, internalEventBus)
-      : undefined;
+    const spaceExternalEvents = spaceModule?.createExternalEvents(
+      db.getDatabase(),
+      reactiveDb,
+      internalEventBus
+    );
     const sessionExternalEventStore = new SessionExternalEventStore(db.getDatabase());
     const sessionExternalEventService = new ExternalEventService(
       sessionExternalEventStore,
@@ -1131,9 +1122,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         skillsManager,
         mcpImportService,
       },
-      spaceManager && spaceExternalEvents
+      spaceModule && spaceManager && spaceExternalEvents
         ? (rpcDeps, host) =>
-            createSpaceRpc(
+            spaceModule.createRpc(
               {
                 ...rpcDeps,
                 spaceManager,
@@ -1172,9 +1163,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     startupTimer.start('space runtime ready kickoff + HTTP/WS server bind');
     const spaceRuntimeReadyPromise = space?.spaceRuntimeService.ready() ?? Promise.resolve();
-    if (space && spaceManager)
+    if (spaceModule && space && spaceManager)
       extensions.register(
-        createSpaceDaemonExtension({
+        spaceModule.createDaemonExtension({
           db,
           reactiveDb,
           jobQueue,
@@ -1423,8 +1414,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       isSessionHeldByTaskLimit: (sessionId) =>
         taskAgentManager?.isSessionHeldByTaskRateLimit(sessionId) ?? false,
       getSession: (sessionId) => resolveMailboxSession(sessionId, sessionManager, taskAgentManager),
-      captureAdmission: spaceEnabled
-        ? (entry) => captureDirectMailboxAdmission(db.getDatabase(), entry)
+      captureAdmission: spaceModule
+        ? (entry) => spaceModule.captureMailboxAdmission(db.getDatabase(), entry)
         : undefined,
       isSessionArchived: (sessionId: string) =>
         reactiveDb?.db.getSession(sessionId)?.status === 'archived',

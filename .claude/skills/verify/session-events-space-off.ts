@@ -82,7 +82,7 @@ try {
     'event.external.unsubscribe',
   ]);
   evidence.subscribe = await invoke('event.external.subscribe', { prUrl: PR });
-  assert.match(evidence.subscribe.error, /GITHUB_TOKEN/);
+  assert.match(evidence.subscribe.error, /GitHub CLI polling unavailable/);
   evidence.subscriptions = await invoke('event.external.subscription.list');
   assert.equal(evidence.subscriptions.stored.length, 1);
 

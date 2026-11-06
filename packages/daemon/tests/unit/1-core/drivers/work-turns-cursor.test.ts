@@ -35,10 +35,15 @@ describe('work.turns cursor', () => {
     });
   });
 
-  test.each(['not json', 'null', '7', '{}', '[1,2]'])(
-    '%s is refused as invalid input',
-    async (cursor) => {
-      expect(await read(cursor)).toMatchObject({ kind: 'failed', code: 'invalid_input' });
-    }
-  );
+  test.each([
+    'not json',
+    'null',
+    '7',
+    '{}',
+    '[1,2]',
+    '{"seq":-1,"consumed":0}',
+    '{"seq":1.5,"consumed":0}',
+  ])('%s is refused as invalid input', async (cursor) => {
+    expect(await read(cursor)).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+  });
 });

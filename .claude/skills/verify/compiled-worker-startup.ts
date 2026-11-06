@@ -18,7 +18,7 @@ if (process.platform === 'win32') {
   writeFileSync(probe, '');
   const phases: string[] = [];
   try {
-    execFileSync(join(process.env.SystemRoot!, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', 'exit 0'], { env: { SystemRoot: process.env.SystemRoot, USERPROFILE: join(run, 'home'), TEMP: join(run, 'tmp') }, stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000, windowsHide: true });
+    execFileSync(join(process.env.SystemRoot!, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', 'exit 0'], { env: { SystemRoot: process.env.SystemRoot, USERPROFILE: join(run, 'home'), TEMP: join(run, 'tmp') }, stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000, windowsHide: true });
     phases.push('powershell-started');
     checkWindowsCredential(probe, true);
     phases.push('acl-without-open-handle');

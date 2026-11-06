@@ -78,7 +78,7 @@ import { renderEventBlock } from '../../external-events/deferred-event-digest.ts
 import { essenceEntryFromExternalEvent } from '../../external-events/event-essence-entry.ts';
 import { eventMatchesFilter, subscriptionEventFilter } from '../../external-events/event-filter.ts';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service.ts';
-import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
+import type { ExternalEventStore } from '../external-events/external-event-store.ts';
 import { SESSION_EVENT_SCOPE } from '../../external-events/session-external-event-store.ts';
 import { legacyGitHubTopic } from '../../external-events/github-subscription-pattern.ts';
 import { composeLongHorizonSubscriptionPattern } from '../../external-events/long-horizon-subscription-pattern.ts';
@@ -86,7 +86,7 @@ import {
   ExternalEventQueueMetrics,
   type QueueHealthGauges,
   type QueueHealthSnapshot,
-} from '../../external-events/queue-health-metrics.ts';
+} from '../external-events/queue-health-metrics.ts';
 import { TopicTrie } from '../../external-events/topic-trie.ts';
 import { validateGlobPattern } from '../../external-events/topic-validator.ts';
 import type {
@@ -142,17 +142,19 @@ import {
 } from '../../tasks/stuck-ladder-gates.ts';
 import {
   DEFAULT_EXTERNAL_EVENT_QUEUE_TTL_MS,
+  isQueuedExternalEventExpired,
+} from '../../external-events/event-delivery-rules.ts';
+import {
   evaluateRequeueTaskLifecycle,
   isPublishedExternalEventExpired,
-  isQueuedExternalEventExpired,
   isWorkflowTargetOwnedBySpace,
   resolveCurrentQueueableOrActiveExecution,
   resolveSubscriptionTarget,
-} from '../../external-events/admission-gates.ts';
+} from '../external-events/admission-gates.ts';
 import {
   deliverImmediateEvent,
   type ImmediateEventDeliveryDeps,
-} from '../../external-events/immediate-delivery-pipeline.ts';
+} from '../external-events/immediate-delivery-pipeline.ts';
 import {
   type RequeuePendingDeliveryDeps,
   runRequeuePendingDelivery,

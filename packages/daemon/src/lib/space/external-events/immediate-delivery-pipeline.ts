@@ -1,13 +1,13 @@
-import { createHash } from 'node:crypto';
 import type { NodeExecution, SpaceTask, SpaceWorkflowRun } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
-import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
-import type { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
-import { ensurePrompt, retryPrompt } from '../agent/message-delivery-outbox.ts';
-import { buildSyntheticExternalEventMessage } from './deferred-event-digest.ts';
-import type { ExternalEventPublishedPayload } from './external-event-service.ts';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
+import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
+import type { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
+import { ensurePrompt, retryPrompt } from '../../agent/message-delivery-outbox.ts';
+import { buildSyntheticExternalEventMessage } from '../../external-events/deferred-event-digest.ts';
+import { buildImmediateEventMessageUuid } from '../../external-events/event-delivery-rules.ts';
+import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service.ts';
 import type { ExternalEventStore } from './external-event-store.ts';
 import {
   prepareExternalEventTask,
@@ -82,16 +82,6 @@ function settled(
   outcome: ImmediateEventDeliveryOutcome
 ): ImmediateEventDeliveryCtx {
   return { ...ctx, outcome };
-}
-
-export const IMMEDIATE_EVENT_MESSAGE_UUID_PREFIX = 'ev-';
-
-export function buildImmediateEventMessageUuid(eventId: string, deliveryKey: string): string {
-  const digest = createHash('sha256').update(`${eventId}\u0000${deliveryKey}`).digest('hex');
-  return (
-    `${IMMEDIATE_EVENT_MESSAGE_UUID_PREFIX}${digest.slice(0, 8)}-${digest.slice(8, 12)}` +
-    `-${digest.slice(12, 16)}-${digest.slice(16, 20)}-${digest.slice(20, 32)}`
-  );
 }
 
 export function resolveTarget(ctx: ImmediateEventDeliveryCtx): ImmediateEventDeliveryCtx {

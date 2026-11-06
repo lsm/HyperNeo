@@ -107,11 +107,33 @@ function setup() {
 }
 
 describe('neo ask binding from human input', () => {
-  test('a new human request opens its own ask even when Neo names an unrelated one', async () => {
+  test('input and askId that disagree are refused, and no ask is opened', async () => {
     const f = setup();
     try {
       const input = f.human('There are two Open buttons on the card');
-      const result = await f.ask({ input, askId: f.slow.id });
+      const asksBefore = f.store.listOpenAsks().length;
+      const refused = await f.ask({ input, askId: f.slow.id });
+      expect(refused).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('ask_mismatch'),
+      });
+      expect(await f.add({ input, askId: f.slow.id })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('ask_mismatch'),
+      });
+      expect(f.store.listOpenAsks()).toHaveLength(asksBefore);
+      expect(f.store.listQuestions(f.slow.id)).toEqual([]);
+      expect(f.store.listTodos(f.slow.id)).toEqual([]);
+    } finally {
+      f.db.close();
+    }
+  });
+
+  test('a new human request opens its own ask', async () => {
+    const f = setup();
+    try {
+      const input = f.human('There are two Open buttons on the card');
+      const result = await f.ask({ input });
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.question.askId).not.toBe(f.slow.id);
@@ -119,7 +141,6 @@ describe('neo ask binding from human input', () => {
       expect(opened.originMessageId).toBe(input);
       expect(opened.request).toBe('There are two Open buttons on the card');
       expect(opened.title).toBe('Which button?');
-      expect(result.records?.join(' ')).toContain('ask_rebound');
       expect(f.store.listQuestions(f.slow.id)).toEqual([]);
       const todo = await f.add({ input });
       expect(todo.ok && todo.todo?.askId).toBe(opened.id);
@@ -135,9 +156,12 @@ describe('neo ask binding from human input', () => {
       const asked = await f.ask({ askId: f.slow.id });
       if (!asked.ok) throw new Error(asked.reason);
       const input = f.human('Use the index', { kind: 'question', id: asked.question.id });
-      const added = await f.add({ input, askId: other.id });
+      expect(await f.add({ input, askId: other.id })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('ask_mismatch'),
+      });
+      const added = await f.add({ input, askId: f.slow.id });
       expect(added.ok && added.todo?.askId).toBe(f.slow.id);
-      expect(added.ok && added.records?.join(' ')).toContain('ask_rebound');
     } finally {
       f.db.close();
     }
@@ -165,7 +189,7 @@ describe('neo ask binding from human input', () => {
         author: 'neo',
       });
       const again = resolveNeoInputAsk(f.store, f.reads, owner, { input }, 'Count');
-      expect(again).toEqual({ value: { askId: bound.value.askId, records: [] } });
+      expect(again).toEqual({ value: { askId: bound.value.askId } });
     } finally {
       f.db.close();
     }
@@ -175,7 +199,7 @@ describe('neo ask binding from human input', () => {
     const f = setup();
     try {
       expect(resolveNeoInputAsk(f.store, f.reads, owner, { askId: f.slow.id }, 't')).toEqual({
-        value: { askId: f.slow.id, records: [] },
+        value: { askId: f.slow.id },
       });
       const unknown = await f.add({ input: crypto.randomUUID() });
       expect(unknown.ok ? '' : unknown.reason).toContain('unknown_input');

@@ -19,21 +19,22 @@ export interface TodoStateFacts {
 export const NEO_TODO_STALLED_CARD_TAIL =
   ' has nobody working on it, and HyperNeo cannot restart it on its own. Where should it continue, or should it close?';
 
-export const neoTodoStalledCard = (todo: Pick<NeoTodo, 'title'>) =>
-  `"${todo.title}"${NEO_TODO_STALLED_CARD_TAIL}`;
-
 export const isNeoTodoStalledCard = (text: string) => text.endsWith(NEO_TODO_STALLED_CARD_TAIL);
+
+export const neoQuestionCoversTodo = (
+  question: Pick<NeoQuestion, 'state' | 'todoId' | 'kind' | 'startTodos'>,
+  todo: Pick<NeoTodo, 'id'>
+) =>
+  question.state === 'open' &&
+  (!question.todoId || question.todoId === todo.id) &&
+  (question.kind !== 'start' || !!question.startTodos?.includes(todo.id));
 
 export function neoTodoAwaitsHuman(
   todo: Pick<NeoTodo, 'id'>,
   questions: readonly Pick<NeoQuestion, 'state' | 'todoId' | 'kind' | 'startTodos' | 'text'>[]
 ): boolean {
   return questions.some(
-    (question) =>
-      question.state === 'open' &&
-      !isNeoTodoStalledCard(question.text) &&
-      (!question.todoId || question.todoId === todo.id) &&
-      (question.kind !== 'start' || !!question.startTodos?.includes(todo.id))
+    (question) => !isNeoTodoStalledCard(question.text) && neoQuestionCoversTodo(question, todo)
   );
 }
 

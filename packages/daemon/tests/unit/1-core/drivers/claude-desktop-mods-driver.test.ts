@@ -257,7 +257,15 @@ describe('Claude Desktop mods driver wiring', () => {
     async (flag) => {
       const adapter = start({ HYPERNEO_CLAUDE_DESKTOP_MODS: flag });
       expect(driver).toBeUndefined();
-      expect(adapter.capabilities).toEqual(['find', 'start', 'send', 'steer', 'status', 'archive']);
+      expect(adapter.capabilities).toEqual([
+        'find',
+        'start',
+        'send',
+        'steer',
+        'status',
+        'turns',
+        'archive',
+      ]);
       expect(adapter.queue).toBeUndefined();
       expect(adapter.stop).toBeUndefined();
       expect(adapter.withdraw).toBeUndefined();

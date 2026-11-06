@@ -1,7 +1,8 @@
 import { workerSandboxOn } from '../drivers/worker-sandbox.ts';
 import { withWorkerProvenance } from '../drivers/worker-provenance.ts';
 import { createWorkQueue } from '../work-queue/sweep.ts';
-import { neoTodoAwaitsHuman, neoTodoStalledCard } from './todo-state.ts';
+import { neoTodoAwaitsHuman } from './todo-state.ts';
+import { workerBlockerReminderDue } from './worker-blocker.ts';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { neoTodoRunnerWrites } from '../../storage/repositories/neo-todo-runner-state.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -213,6 +214,12 @@ const neoTodoUnworkedNote = (todo: Pick<NeoTodo, 'id' | 'title' | 'doneWhen'>) =
 
 const neoTodoStallNote = (todo: Pick<NeoTodo, 'title'>, reason: string) =>
   `Todo "${todo.title}" is stalled: ${reason}\nNext: ${NEO_TODO_STALL_NEXT}`;
+
+const neoTodoUnreachableNote = (todo: Pick<NeoTodo, 'id' | 'title'>) =>
+  `Todo "${todo.title}" (${todo.id}) has nobody working on it and the daemon cannot restart it. Continue it, remove it, or ask the human with neo.question.ask only if they must decide.`;
+
+const neoTodoBlockerReminder = (todo: Pick<NeoTodo, 'id' | 'title' | 'blockedReason'>) =>
+  `Todo "${todo.title}" (${todo.id}) still waits on its worker's blocker: ${todo.blockedReason}\nAnswer the worker, or ask the human with neo.question.ask (yesno or choice) linked to this todo.`;
 
 const neoTodoMovedNote = (todo: Pick<NeoTodo, 'title'>, minutes: number) =>
   `Todo "${todo.title}" sat idle ${minutes} min with no progress, so the daemon moved it to a fresh worker.`;
@@ -878,6 +885,18 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
     .endAsync('todo') as (todo: NeoTodo, now: number) => Promise<NeoTodo | null>;
 
+  const remindBlocker = async (id: string, now: number) => {
+    const due = workerBlockerReminderDue(store, sessions, id, now);
+    const ask = due && store.getAsk(due.askId);
+    const incident = sessions.readNudge(id);
+    if (!due || !ask || !incident?.blockerReport) return;
+    await deps.tell(ask, due, neoTodoBlockerReminder(due), `neo-todo-blocker:${id}`);
+    sessions.recordNudge(id, {
+      ...incident,
+      blockerReport: { ...incident.blockerReport, remindedAt: now },
+    });
+  };
+
   const follow = (superpipe({})('neo-todo-follow') as PipelineAPI)
     .input(['todo', 'now'])
     .pipe(
@@ -1182,30 +1201,25 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   ) => Promise<NudgeClaim | null>;
 
   type Stalled = { todo: NeoTodo; ask: NeoAsk; ref: WorkRef };
-  const carded = ({ todo, ask }: Stalled) =>
+  const handled = ({ todo, ask }: Stalled) =>
+    sessions.readNudge(todo.id)?.unreachableToldAt === todo.updatedAt ||
     store
       .listQuestions(ask.id)
       .some((q) => q.todoId === todo.id && (q.state === 'open' || q.createdAt >= todo.updatedAt));
 
-  const cardTodo = (stalled: Stalled, now: number) => {
-    if (carded(stalled)) return;
+  const tellUnreachable = async (stalled: Stalled, now: number) => {
+    if (handled(stalled)) return;
     const { todo, ask } = stalled;
-    store.askQuestion(
-      crypto.randomUUID(),
-      ask.id,
-      {
-        text: neoTodoStalledCard(todo),
-        kind: 'reply',
-        options: null,
-        multiple: false,
-        noLabel: null,
-        yesLabel: null,
-        startTodos: null,
-        todoId: todo.id,
-      },
-      now
+    await deps.tell(
+      ask,
+      todo,
+      neoTodoUnreachableNote(todo),
+      `neo-todo-unreachable:${todo.id}:${todo.updatedAt}`
     );
-    deps.changed();
+    sessions.recordNudge(todo.id, {
+      ...(sessions.readNudge(todo.id) ?? { since: now, nudges: 0 }),
+      unreachableToldAt: todo.updatedAt,
+    });
   };
 
   const findPlace = async ({ ask, ref }: Stalled) => {
@@ -1242,14 +1256,14 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'result:rescue'
     )
     .pipe(
-      (stalled: Stalled, now: number): { value: Stalled } | { reason: null } => {
-        if (carded(stalled)) return { reason: null };
+      async (stalled: Stalled, now: number): Promise<{ value: Stalled } | { reason: null }> => {
+        if (handled(stalled)) return { reason: null };
         if (
           !stalled.ask.originMessageId?.startsWith('neo-track:') &&
           !sessions.readNudge(stalled.todo.id)?.redispatched
         )
           return { value: stalled };
-        cardTodo(stalled, now);
+        await tellUnreachable(stalled, now);
         return { reason: null };
       },
       ['rescue', 'now'],
@@ -1265,7 +1279,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       async (stalled: Stalled, now: number): Promise<{ value: Rescue } | { reason: null }> => {
         const place = await findPlace(stalled);
         if (place) return { value: { ...stalled, place } };
-        cardTodo(stalled, now);
+        await tellUnreachable(stalled, now);
         return { reason: null };
       },
       ['rescue', 'now'],
@@ -1316,7 +1330,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
             },
             now
           );
-          cardTodo({ ...rescue, todo: restored }, now);
+          await tellUnreachable({ ...rescue, todo: restored }, now);
         }
       },
       ['rescue', 'now', 'dispatched'],
@@ -1366,6 +1380,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       sent && { ...sent, receipt: delivered.receipt, delivery: delivered.delivery }
     );
     restartLadder(todo.id, Date.now());
+    if (todo.blockedBy === 'needs-human')
+      for (const card of store.listQuestions(ask.id))
+        if (card.state === 'open' && card.todoId === todo.id)
+          store.retireQuestion(card, 'Neo sent the worker on.', null, Date.now());
     const next = store.updateTodo(
       todo,
       { state: 'doing', report: null, evidence: null, finishedAt: null },
@@ -1479,9 +1497,9 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       }
       for (const todo of await store.read('listCheckable')) {
         if (todo.blockedBy === 'needs-human')
-          await deps
-            .write(neoTodoRunnerWrites, { method: 'escalate', args: [todo.id, Date.now()] })
-            .catch((error) => warn('Worker blocker fallback pending', error));
+          await remindBlocker(todo.id, Date.now()).catch((error) =>
+            warn('Worker blocker reminder pending', error)
+          );
         await waitOnHuman(todo, Date.now()).catch((error) =>
           warn('Todo human wait pending', error)
         );
