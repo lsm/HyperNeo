@@ -10,7 +10,8 @@ The helper starts an ephemeral real daemon and uses public message.send,
 session.get and message.sdkMessages RPCs. Its scripted SDK consumes the original
 human prompt, emits an ordinary top-level rate-limit result, then leaves its
 stream open. The configured fallback must switch from Haiku to Sonnet and produce
-FALLBACK_RECOVERED for that same prompt without another human message. The fixture
+FALLBACK_RECOVERED for that same prompt without another human message. The fallback
+entry's saved thinking level must be on the recovered session. The fixture
 writes its own synthetic SDK transcript so normal resume validation still runs.
 It refuses external HTTP and supplies its provider credential only in the fresh
 DB; there is no model listener, credential file, browser, live daemon or port 8399.

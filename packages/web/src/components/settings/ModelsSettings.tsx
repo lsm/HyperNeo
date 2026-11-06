@@ -667,15 +667,65 @@ function NeoModelSettings({
   );
 }
 
+function thinkingChoices(model: Pick<ModelInfo, 'provider' | 'thinkingModes'> | null | undefined) {
+  const mode =
+    model?.thinkingModes ??
+    PROVIDER_THINKING_MODES[model?.provider as keyof typeof PROVIDER_THINKING_MODES];
+  return {
+    options: mode === 'off' ? THINKING_OPTIONS.slice(0, 1) : THINKING_OPTIONS,
+    unknown: Boolean(model && !mode),
+  };
+}
+
+function FallbackThinkingSelect({
+  entry,
+  label,
+  model,
+  disabled,
+  onChange,
+}: {
+  entry: FallbackModelEntry;
+  label: string;
+  model: ModelInfo | undefined;
+  disabled: boolean;
+  onChange: (level: ThinkingLevel | undefined) => void;
+}) {
+  const saved = entry.thinkingLevel;
+  const { options, unknown } = thinkingChoices(model ?? entry);
+  const unsupported = saved !== undefined && !options.some((option) => option.value === saved);
+  return (
+    <>
+      <select
+        aria-label={label}
+        class="rounded border border-line bg-surface px-2 py-1 text-xs text-fg"
+        value={saved ?? ''}
+        disabled={disabled}
+        onChange={(event) =>
+          onChange((event.currentTarget.value || undefined) as ThinkingLevel | undefined)
+        }
+      >
+        <option value="">Use default</option>
+        {options.map((option) => (
+          <option value={option.value}>{option.label}</option>
+        ))}
+        {unsupported && <option value={saved}>{THINKING_LEVEL_LABELS[saved]}</option>}
+      </select>
+      {unsupported && (
+        <span class="text-xs text-warning">Saved level is not supported by this model.</span>
+      )}
+      {unknown && (
+        <span class="text-xs text-fg-faint">Thinking support for this model is unknown.</span>
+      )}
+    </>
+  );
+}
+
 function DefaultThinkingSelect({ model }: { model: ModelInfo | null }) {
   const saved = normalizeThinkingLevel(globalSettings.value?.thinkingLevel);
   const [level, setLevel] = useState<ThinkingLevel>(saved);
   const [saving, setSaving] = useState(false);
   useEffect(() => setLevel(saved), [saved]);
-  const mode =
-    model?.thinkingModes ??
-    PROVIDER_THINKING_MODES[model?.provider as keyof typeof PROVIDER_THINKING_MODES];
-  const options = mode === 'off' ? THINKING_OPTIONS.slice(0, 1) : THINKING_OPTIONS;
+  const { options, unknown } = thinkingChoices(model);
   const unsupported = !options.some((option) => option.value === level);
   const change = async (next: ThinkingLevel) => {
     setLevel(next);
@@ -710,7 +760,7 @@ function DefaultThinkingSelect({ model }: { model: ModelInfo | null }) {
       {unsupported && (
         <span class="text-xs text-warning">Saved level is not supported by this model.</span>
       )}
-      {model && !mode && (
+      {unknown && (
         <span class="text-xs text-fg-faint">Thinking support for this model is unknown.</span>
       )}
     </div>
@@ -901,6 +951,16 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
     const newModels = [...fallbackModels];
     [newModels[index], newModels[newIndex]] = [newModels[newIndex], newModels[index]];
     await saveFallbackModels(newModels);
+  };
+
+  const handleThinking = async (index: number, level: ThinkingLevel | undefined) => {
+    await saveFallbackModels(
+      fallbackModels.map((entry, i) => {
+        if (i !== index) return entry;
+        const { thinkingLevel: _previous, ...rest } = entry;
+        return level ? { ...rest, thinkingLevel: level } : rest;
+      })
+    );
   };
 
   const handleDefaultModel = async (model: ModelInfo) => {
@@ -1112,6 +1172,15 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
               isUpdating={isUpdating}
               onMove={handleMove}
               onRemove={handleRemove}
+              controls={(entry, index) => (
+                <FallbackThinkingSelect
+                  entry={entry}
+                  label={`Fallback ${index + 1} thinking`}
+                  model={findSameModel(availableModels, entry)}
+                  disabled={isUpdating}
+                  onChange={(level) => handleThinking(index, level)}
+                />
+              )}
             />
           )}
 

@@ -185,7 +185,7 @@ try {
     await hub.request('mcp.registry.setEnabled', { id: server.id, enabled: false });
   await app.settingsManager.updateGlobalSettingsAsync({
     modelFallbackMap: {},
-    fallbackModels: [{ provider: 'anthropic', model: 'sonnet' }],
+    fallbackModels: [{ provider: 'anthropic', model: 'sonnet', thinkingLevel: 'think24k' }],
   });
   const { sessionId } = await hub.request<{ sessionId: string }>('session.create', {
     workspacePath: join(run, 'workspace'),
@@ -242,6 +242,7 @@ try {
     assert(oldClosed && oldInterrupted);
     assert.equal(starts.length, 2);
     assert(starts[1].model.includes('sonnet'));
+    assert.equal((evidence.session as Session).config.thinkingLevel, 'think24k');
     assert.equal(consumed.length, 2);
     const content = (value: unknown) =>
       (value as { message: { content: unknown } }).message.content;
