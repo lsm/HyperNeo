@@ -1,6 +1,6 @@
 import type { CreateEvidenceRefParams, EvidenceRef, SpaceTask } from '@hyperneo/shared';
-import type { EvolutionRepository } from '../../../storage/repositories/evolution-repository.ts';
-import type { TraceEvidenceDiagnostic } from '../../../../../space/src/evolution/trace-evidence-types.ts';
+import type { EvolutionRepository } from '../../../daemon/src/storage/repositories/evolution-repository.ts';
+import type { TraceEvidenceDiagnostic } from './trace-evidence-types.ts';
 
 export function createAutoEvidenceOnce(
   evolutionRepo: EvolutionRepository,

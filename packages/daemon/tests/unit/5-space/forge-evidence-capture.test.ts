@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from '../../../src/storage/sqlite-compat';
-import { EvolutionScopeService } from '../../../src/lib/space/evolution/scope-service';
+import { EvolutionScopeService } from '../../../../space/src/evolution/scope-service';
 import { EvolutionTraceEvidenceService } from '../../../../space/src/evolution/trace-evidence-service';
 import { SpaceTaskManager } from '../../../src/lib/tasks/task-manager';
 import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';

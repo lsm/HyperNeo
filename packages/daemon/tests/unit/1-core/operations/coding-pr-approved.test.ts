@@ -52,7 +52,7 @@ test('a question can wait for a PR approval without a linked todo', async () => 
       f.operation.inputSchema.parse({
         askId: 'ask',
         kind: 'reply',
-        text: 'There is no review app',
+        text: 'There is no review app?',
         retireWhen: check,
       }),
       { source: 'mcp', role: 'neo', sessionId: 'neo' }

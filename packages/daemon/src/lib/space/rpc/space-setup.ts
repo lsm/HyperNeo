@@ -113,14 +113,14 @@ import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../../../../../space/
 import { setupEvolutionHandlers } from './evolution-handlers.ts';
 import { EvolutionConversationAnalysisService } from '../../../../../space/src/evolution/conversation-analysis-service.ts';
 import { EvolutionEpisodeService } from '../../../../../space/src/evolution/episode-service.ts';
-import { EvolutionScopeService } from '../evolution/scope-service.ts';
+import { EvolutionScopeService } from '../../../../../space/src/evolution/scope-service.ts';
 import { EvolutionTraceEvidenceService } from '../../../../../space/src/evolution/trace-evidence-service.ts';
 import { ScheduleService } from '../../schedule/schedule-service.ts';
 import { SpaceGoalEventRepository } from '../../../storage/repositories/space-goal-event-repository.ts';
 import { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
 import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
 import { SpaceGoalService } from '../../../../../space/src/goals/service.ts';
-import { mergeEvolutionPolicy } from '../evolution/scope-service.ts';
+import { mergeEvolutionPolicy } from '../../../../../space/src/evolution/scope-service.ts';
 import type { RPCHandlerDependencies } from '../../rpc-handlers/index.ts';
 import type { ExternalEventService } from '../../external-events/external-event-service.ts';
 import type { ExternalEventStore } from '../external-events/external-event-store.ts';
