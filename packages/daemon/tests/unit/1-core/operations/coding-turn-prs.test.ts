@@ -83,11 +83,25 @@ describe('coding turn PRs', () => {
     db.close();
   });
 
-  test('re-recording a turn replaces its URLs', () => {
+  test('recording a turn never scans the URL index', () => {
+    const { db, record } = setup();
+    const plans: string[] = [];
+    const prepare = db.prepare.bind(db);
+    db.prepare = ((sql: string) => {
+      if (sql.includes('DELETE FROM work_turn_urls')) plans.push(sql);
+      return prepare(sql);
+    }) as typeof db.prepare;
+    record(fact('t1', [], [url], 100));
+    expect(plans).toEqual([]);
+    db.close();
+  });
+
+  test('a re-recorded turn reads back with its current URLs', () => {
     const { db, record } = setup();
     record(fact('t1', [], [url], 100));
     record(fact('t1', [], ['https://x.test/other'], 100));
-    expect(new WorkTurnRepository(db).mentioning([url])).toEqual([]);
+    const [turn] = new WorkTurnRepository(db).mentioning([url]);
+    expect(turn.urls).toEqual(['https://x.test/other']);
     db.close();
   });
 

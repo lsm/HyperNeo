@@ -3,6 +3,7 @@ import {
   type CodingTurn,
   planCodingTurnFacts,
   planCodingTurnOwner,
+  planCodingTurnUrls,
 } from '../../../../src/lib/neo/packs/coding/turn-owner.ts';
 
 const url = 'https://github.com/acme/app/pull/7';
@@ -140,6 +141,23 @@ describe('coding turn ownership', () => {
   test('the same session keeps the turn holding the creation', () => {
     const early = turn({ id: 't0', startedAt: 1, endedAt: 50, inputs: ['receipt-b'] });
     expect(owner([early, turn()])).toEqual({ state: 'placed', session, todo: 'todo-a' });
+  });
+});
+
+describe('planCodingTurnUrls', () => {
+  const pull = (number: number) => `https://github.com/acme/app/pull/${number}`;
+  const shown = Array.from({ length: 50 }, (_, index) => pull(index + 100));
+
+  test('a listing in tool output cannot grow the read past the cap', () => {
+    const own = [turn({ urls: shown, finalUrls: [] })];
+    expect(planCodingTurnUrls({ check: null }, own)).toHaveLength(8);
+  });
+
+  test('named and reported PRs are always read', () => {
+    const named = Array.from({ length: 9 }, (_, index) => pull(index + 1));
+    const todo = { check: { pack: 'coding', kind: 'pr_merged', params: { urls: named } } };
+    const own = [turn({ urls: [...shown, pull(50)], finalUrls: [pull(50)] })];
+    expect(planCodingTurnUrls(todo, own)).toEqual([...named, pull(50)]);
   });
 });
 
