@@ -59,6 +59,11 @@ describe('neoPlanLines', () => {
       )?.text
     ).toContain('ready=false');
   });
+  test('describes an absent reason as display text', () => {
+    const line = neoPlanLines(asks, [todo('first')], []).find((item) => item.id === 'first');
+    expect(line?.text).toContain('reason=not recorded');
+  });
+
   test('keeps every open ask when over budget', () => {
     const lines = neoPlanLines(
       asks,
