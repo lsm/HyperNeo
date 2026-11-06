@@ -218,7 +218,7 @@ export const THINKING_EFFORTS: readonly ThinkingEffort[] = [
   'max',
 ];
 
-const THINKING_LEVEL_EFFORT: Record<ThinkingLevel, ThinkingEffort | undefined> = {
+export const THINKING_LEVEL_EFFORT: Record<ThinkingLevel, ThinkingEffort | undefined> = {
   off: undefined,
   think8k: 'low',
   think16k: 'medium',

@@ -887,6 +887,7 @@ export function setupSessionHandlers(
           context_window: m.contextWindow,
           autoCompactPercent: m.autoCompactPercent,
           thinkingModes: m.thinkingModes,
+          effortLevels: m.effortLevels,
           available: m.available !== false && !unavailable.has(m.provider ?? ''),
           type: 'model' as const,
         })),
