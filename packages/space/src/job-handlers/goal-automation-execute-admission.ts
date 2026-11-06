@@ -4,9 +4,9 @@ import type {
   GoalEvolutionAutomationPolicy,
   SpaceTask,
 } from '@hyperneo/shared';
-import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
-import type { EvolutionRepository } from '../../../storage/repositories/evolution-repository.ts';
-import { readCompletedTaskThreshold } from '../goals/automation-policy.ts';
+import type { SpaceGoalRepository } from '../../../daemon/src/storage/repositories/space-goal-repository.ts';
+import type { EvolutionRepository } from '../../../daemon/src/storage/repositories/evolution-repository.ts';
+import { readCompletedTaskThreshold } from '../../../daemon/src/lib/space/goals/automation-policy.ts';
 
 export interface GoalAutomationExternalEventSnapshot {
   source: string;

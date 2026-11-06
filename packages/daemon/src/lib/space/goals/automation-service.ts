@@ -14,7 +14,7 @@ import type { GoalAutomationCursorRepository } from '../../../storage/repositori
 import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { EvolutionScopeService } from '../evolution/scope-service.ts';
-import type { GoalAutomationExecutePayload } from '../job-handlers/goal-automation-execute.handler.ts';
+import type { GoalAutomationExecutePayload } from '../../../../../space/src/job-handlers/goal-automation-execute.handler.ts';
 import { Logger } from '../../logger.ts';
 import {
   findMatchingSubscription,
