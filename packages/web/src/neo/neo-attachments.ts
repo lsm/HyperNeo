@@ -66,6 +66,38 @@ export function attachmentDocuments(files: NeoAttachment[]): string[] {
   });
 }
 
+export type NeoSentFile = { name: string; text: string };
+
+export function neoSplitSentMessage(text: string): { words: string; files: NeoSentFile[] } {
+  const whole = { words: text, files: [] };
+  const marker = '### Attached file: ';
+  const boundary = text.indexOf(`\n\n${marker}`);
+  const start = text.startsWith(marker) ? 0 : boundary < 0 ? -1 : boundary + 2;
+  if (start < 0) return whole;
+  const files: NeoSentFile[] = [];
+  let rest = text.slice(start);
+  while (rest) {
+    const head = /^### Attached file: (.*)\n\n(`{3,})text\n/.exec(rest);
+    if (!head) return whole;
+    const body = rest.slice(head[0].length);
+    const close = `\n${head[2]}`;
+    let end = body.indexOf(close);
+    while (end >= 0) {
+      const after = body.slice(end + close.length);
+      if (!after || after.startsWith(`\n\n${marker}`)) break;
+      end = body.indexOf(close, end + close.length);
+    }
+    if (end < 0) return whole;
+    files.push({ name: head[1].replace(/\\([\\`*_{}[\]<>])/g, '$1'), text: body.slice(0, end) });
+    rest = body.slice(end + close.length).replace(/^\n+/, '');
+  }
+  const words = text.slice(0, start).trim();
+  return {
+    words: words === 'Attached files' ? '' : words.replace(/\n\nAttached files$/, ''),
+    files,
+  };
+}
+
 export function neoSentWords(text: string, hasPhotos: boolean): string {
   return hasPhotos && text === 'Attached files' ? '' : text;
 }

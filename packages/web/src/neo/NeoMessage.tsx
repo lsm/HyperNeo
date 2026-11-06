@@ -1,5 +1,6 @@
 import { PhotoThumbnail } from '../components/PhotoLightbox.tsx';
-import { neoSentWords } from './neo-attachments.ts';
+import { neoSentWords, neoSplitSentMessage } from './neo-attachments.ts';
+import { NeoSentFiles } from './NeoAttachments.tsx';
 import type { ChatMessage } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
@@ -50,13 +51,15 @@ export function NeoMessage({
 }) {
   const user = message.type === 'user';
   const images = neoMessageImageSources(message);
-  const words = user ? neoSentWords(text, images.length > 0) : text;
-  const copyDisabled = !words.trim();
-  const photos = images.length > 0 && (
+  const sent = user ? neoSplitSentMessage(text) : { words: text, files: [] };
+  const words = user ? neoSentWords(sent.words, images.length > 0) : text;
+  const copyDisabled = !words.trim() && !sent.files.length;
+  const photos = (images.length > 0 || sent.files.length > 0) && (
     <div class={`mb-3 flex flex-wrap gap-2 ${user ? 'justify-end' : ''}`}>
       {images.map((src, index) => (
         <PhotoThumbnail key={index} src={src} label={`Attached photo ${index + 1}`} />
       ))}
+      <NeoSentFiles files={sent.files} />
     </div>
   );
   const time = messageTime((message as ChatMessage & { timestamp?: number }).timestamp);

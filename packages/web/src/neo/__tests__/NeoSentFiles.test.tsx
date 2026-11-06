@@ -57,7 +57,7 @@ describe('neoSplitSentMessage', () => {
   it.each(['', 'Please read this', 'Attached files', 'Spoken words\n\nAttached files'])(
     'splits the web writer with draft %j',
     (draft) => {
-      const files: NeoAttachment[] = [
+      const files: Array<Extract<NeoAttachment, { kind: 'text' }>> = [
         file,
         {
           ...file,
@@ -126,8 +126,10 @@ describe('sent file cards', () => {
     expect(screen.queryByText(file.text)).toBeNull();
     fireEvent.click(card);
     const dialog = await screen.findByRole('dialog', { name: file.name });
-    expect(within(dialog).getByText(file.text).className).toContain('select-text');
-    expect(within(dialog).getByText(file.text).className).toContain('whitespace-pre-wrap');
+    const reader = dialog.querySelector('pre')!;
+    expect(reader.textContent).toBe(file.text);
+    expect(reader.className).toContain('select-text');
+    expect(reader.className).toContain('whitespace-pre-wrap');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close modal' }));
     expect(screen.queryByRole('dialog')).toBeNull();
   });

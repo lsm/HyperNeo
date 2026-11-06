@@ -189,6 +189,7 @@ export const en = {
   'live.attachWait': 'Wait for the conversation to load before attaching files.',
   'live.photosFailed': 'Could not load this message’s photos. Please try again.',
   'chat.you': 'You',
+  'chat.openFile': 'Open file: {name}',
   'chat.openNamed': 'Open {name}',
   'chat.photo': 'Photo',
   'chat.loadingPhoto': 'Loading photo',
