@@ -6,15 +6,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import {
-  ACP_AGENTS,
-  type AcpAgentAdapterDeps,
-  type AcpAgentSession,
-  acpSessionTitle,
+  COPILOT_CLIENT,
+  type CopilotDiscoveryDeps,
+  type CopilotSession,
+  copilotSessionTitle,
   copilotSessionFolder,
-  createAcpAgentAdapter,
-  readAcpSessionPages,
-  reuseAcpSessionList,
-} from '../../../../src/lib/drivers/acp-agent-adapter';
+  createCopilotDiscovery,
+  planCopilotSessionWindow,
+  reuseCopilotSessionList,
+} from '../../../../src/lib/drivers/copilot-discovery';
 
 const createTestDirectory = testDirectories();
 
@@ -24,11 +24,10 @@ const session = (
   cwd: string,
   title: string,
   updatedAt = NOW - 3_600_000
-): AcpAgentSession => ({ sessionId, cwd, title, updatedAt });
+): CopilotSession => ({ sessionId, cwd, title, updatedAt });
 
-function adapter(sessions: AcpAgentSession[], own: string[] = [], deps = {}) {
-  const base: AcpAgentAdapterDeps = {
-    agent: ACP_AGENTS[0],
+function adapter(sessions: CopilotSession[], own: string[] = [], deps = {}) {
+  const base: CopilotDiscoveryDeps = {
     machine: 'laptop',
     now: () => NOW,
     listSessions: async () => sessions,
@@ -36,12 +35,12 @@ function adapter(sessions: AcpAgentSession[], own: string[] = [], deps = {}) {
     projectFolder: (folder) => folder.replace(/\/\.wt\/[^/]+$/, ''),
     ...deps,
   };
-  return createAcpAgentAdapter(base);
+  return createCopilotDiscovery(base);
 }
 
-describe('createAcpAgentAdapter.find', () => {
-  test('keeps only the temporary Copilot discovery registration', () => {
-    expect(ACP_AGENTS.map((agent) => agent.id)).toEqual(['copilot-cli']);
+describe('createCopilotDiscovery.find', () => {
+  test('keeps only the Copilot discovery registration', () => {
+    expect(adapter([]).id).toBe('copilot-cli');
   });
 
   test('groups agent sessions by project folder with live status and newest first', async () => {
@@ -73,7 +72,7 @@ describe('createAcpAgentAdapter.find', () => {
   });
 
   test('links each session into the GitHub Copilot app when it is installed', async () => {
-    const [copilot] = ACP_AGENTS;
+    const copilot = COPILOT_CLIENT;
     const listed = [session('s/1', '/repo', 'Work')];
     const [linked] = await adapter(listed, [], { link: copilot.app?.link }).find({
       includeClosed: false,
@@ -101,22 +100,22 @@ describe('createAcpAgentAdapter.find', () => {
   });
 });
 
-describe('ACP agent helpers', () => {
-  test('acpSessionTitle drops the role prefix, flattens whitespace and bounds length', () => {
-    expect(acpSessionTitle('[User]:  fix\n the   build')).toBe('fix the build');
-    expect(acpSessionTitle(null)).toBe('Untitled session');
-    expect(acpSessionTitle('x'.repeat(200))).toHaveLength(80);
+describe('Copilot discovery helpers', () => {
+  test('copilotSessionTitle drops the role prefix, flattens whitespace and bounds length', () => {
+    expect(copilotSessionTitle('[User]:  fix\n the   build')).toBe('fix the build');
+    expect(copilotSessionTitle(null)).toBe('Untitled session');
+    expect(copilotSessionTitle('x'.repeat(200))).toHaveLength(80);
   });
 
   test('findExecutable resolves the first PATH entry holding the binary', () => {
-    const dir = createTestDirectory(join(tmpdir(), 'acp-bin-'));
+    const dir = createTestDirectory(join(tmpdir(), 'copilot-bin-'));
     writeFileSync(join(dir, 'copilot'), '');
     expect(findExecutable('copilot', `/nowhere:${dir}`)).toBe(join(dir, 'copilot'));
     expect(findExecutable('copilot', '/nowhere')).toBeNull();
   });
 
   test('gitWorktreeProject maps a linked worktree to its main repository', async () => {
-    const root = createTestDirectory(join(tmpdir(), 'acp-wt-'));
+    const root = createTestDirectory(join(tmpdir(), 'copilot-wt-'));
     const worktree = join(root, 'wt');
     mkdirSync(worktree);
     writeFileSync(join(worktree, '.git'), `gitdir: ${root}/repo/.git/worktrees/wt\n`);
@@ -136,11 +135,11 @@ describe('ACP agent helpers', () => {
     expect(await copilotSessionFolder('../s1', state)).toBeNull();
   });
 
-  test('reuseAcpSessionList reuses one listing, failed or not, for a minute', async () => {
+  test('reuseCopilotSessionList reuses one listing, failed or not, for a minute', async () => {
     let now = 0;
     let calls = 0;
     let fail = true;
-    const list = reuseAcpSessionList(
+    const list = reuseCopilotSessionList(
       async () => {
         calls++;
         if (fail) throw new Error('agent down');
@@ -158,38 +157,36 @@ describe('ACP agent helpers', () => {
     expect(calls).toBe(2);
   });
 
-  test('readAcpSessionPages stops paging once a page reaches sessions older than the horizon', async () => {
-    const at = (day: number) => new Date(day * 86_400_000).toISOString();
-    const pages = [
-      {
-        sessions: [{ sessionId: 'a', cwd: '/r', title: 'A', updatedAt: at(100) }],
-        nextCursor: '1',
-      },
-      { sessions: [{ sessionId: 'b', cwd: '/r', title: 'B', updatedAt: at(40) }], nextCursor: '2' },
-      {
-        sessions: [{ sessionId: 'c', cwd: '/r', title: 'C', updatedAt: at(10) }],
-        nextCursor: null,
-      },
-    ];
-    const cursors: (string | undefined)[] = [];
-    const client = {
-      initialize: async () => ({}) as never,
-      canListSessions: () => true,
-      listSessions: async (params: { cursor?: string } = {}) => {
-        cursors.push(params.cursor);
-        return pages[Number(params.cursor ?? 0)];
-      },
-    };
-    const sessions = await readAcpSessionPages(client, {}, '/home', 50 * 86_400_000);
-    expect(sessions.map((s) => s.sessionId)).toEqual(['a', 'b']);
-    expect(cursors).toEqual([undefined, '1']);
+  test('keeps the complete 50-row boundary before stopping at the 90-day horizon', () => {
+    const day = 86_400_000;
+    const metadata = Array.from({ length: 150 }, (_, index) => ({
+      sessionId: String(index),
+      startTime: new Date(0),
+      modifiedTime: new Date((index < 49 ? 200 - index : 100 - (index - 49)) * day),
+      isRemote: false,
+    }));
+    expect(planCopilotSessionWindow(metadata, 110 * day).map((item) => item.sessionId)).toEqual(
+      metadata.slice(0, 50).map((item) => item.sessionId)
+    );
   });
 
-  test('reuseAcpSessionList answers from the last listing while a fresh one loads', async () => {
+  test('retains the existing 500-session maximum and newest-first ordering', () => {
+    const metadata = Array.from({ length: 600 }, (_, index) => ({
+      sessionId: String(index),
+      startTime: new Date(0),
+      modifiedTime: new Date(1_800_000_000_000 - index),
+      isRemote: false,
+    }));
+    expect(
+      planCopilotSessionWindow([...metadata].reverse(), 0).map((item) => item.sessionId)
+    ).toEqual(metadata.slice(0, 500).map((item) => item.sessionId));
+  });
+
+  test('reuseCopilotSessionList answers from the last listing while a fresh one loads', async () => {
     let now = 0;
     let round = 0;
     let release: () => void = () => {};
-    const list = reuseAcpSessionList(
+    const list = reuseCopilotSessionList(
       async () => {
         round++;
         if (round === 3) throw new Error('agent down');

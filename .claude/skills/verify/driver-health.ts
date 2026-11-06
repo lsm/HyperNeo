@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { createServer, type AddressInfo } from 'node:net';
+import { createMockApiServer } from '../../../packages/daemon/tests/helpers/mock-api-server.ts';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
@@ -25,16 +27,26 @@ const version = (app: string, value: string) => {
 version('Codex', '1.0.0');
 version('Claude', '1.0.0');
 const quote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
-const fixture = resolve('packages/daemon/tests/fixtures/copilot-acp.ts');
+const fixture = resolve('packages/daemon/tests/fixtures/copilot-sdk.ts');
 writeFileSync(join(home, 'copilot-list.json'), '[]');
+const runtime = join(run, 'copilot-runtime');
+writeFileSync(runtime, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(fixture)} --production-version \"$@\"\n`, { mode: 0o700 });
+process.env.COPILOT_CLI_PATH = runtime;
 for (const name of ['gh', 'ps', 'open', 'claude', 'copilot']) {
   const body = name === 'copilot'
-    ? `if [ "$1" = --version ]; then echo 1.0.105; exit 0; fi\nif [ "$1" = --acp ]; then exec ${quote(process.execPath)} ${quote(fixture)} "$@"; fi\nexit 1\n`
+    ? `if [ "$1" = --version ]; then echo 1.0.105; exit 0; fi\nexit 1\n`
     : name === 'claude' ? 'if [ "$1" = --version ]; then echo 2.1.0; exit 0; fi\nexit 1\n' : 'exit 1\n';
   writeFileSync(join(run, 'bin', name), `#!/bin/sh\n${body}`, { mode: 0o700 });
 }
 process.env.PATH = `${join(run, 'bin')}:${process.env.PATH}`;
-process.env.ANTHROPIC_BASE_URL = 'http://127.0.0.1:9';
+const reservation = createServer();
+await new Promise<void>(done => reservation.listen(0, '127.0.0.1', done));
+const modelPort = (reservation.address() as AddressInfo).port;
+await new Promise<void>((done, fail) => reservation.close(error => error ? fail(error) : done()));
+const model = await createMockApiServer({ port: modelPort, logLevel: 'error' });
+await model.start();
+process.env.HYPERNEO_USE_DEV_PROXY = '1';
+process.env.VERIFY_MOCK_PORT = String(modelPort);
 const state = join(home, '.codex/state_6.sqlite');
 const external = new Database(state);
 external.exec(`CREATE TABLE projects(id TEXT, name TEXT, updated_at_ms INTEGER);
@@ -79,6 +91,8 @@ async function startup() {
 try {
   await app.spaceRuntimeService.ready();
   await app.jobProcessor.stop();
+  const mcpRegistry = await rpc('rpc:mcp.registry.list');
+  for (const server of mcpRegistry.servers) await rpc('rpc:mcp.registry.setEnabled', { id: server.id, enabled: false });
   await rpc('rpc:providers.create', { params: { providerId: 'anthropic', displayName: 'Synthetic admission only', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
   const beforeBinding = await rpc('work.health', { action: 'check' });
   assert.equal(beforeBinding.health['codex-desktop'].unverifiedVersion, true);
@@ -165,9 +179,9 @@ try {
   await rpc('work.health', { action: 'check' });
   assert.equal((await notices()).length, afterUpgrade);
   assert.equal(hash(), before, 'Health checks must leave external state untouched');
-  const calls = readFileSync(join(home, 'evidence/calls.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line).method);
-  assert(calls.every((name) => ['initialize', 'session/list'].includes(name)), JSON.stringify(calls));
-  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ initial, missing, recovered, upgraded, neoNotices: await notices(), repeatedUnavailableCount: unavailableCount, unchangedExternalDatabase: true, readOnlyAcpCalls: calls, protectedSettings: true, verifiedBeforeNeoBinding: true, forcedCheckAfterScheduledRead: true, workerMcpRefusedWithoutMutation: true, boundNeoMcpAllowed: true, humanRpcAllowed: true }, null, 2));
+  const calls = readFileSync(join(home, 'calls.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line).method);
+  assert(calls.every((name) => ['connect', 'status.get', 'session.list'].includes(name)), JSON.stringify(calls));
+  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ initial, missing, recovered, upgraded, neoNotices: await notices(), repeatedUnavailableCount: unavailableCount, unchangedExternalDatabase: true, readOnlySdkDiscoveryCalls: calls, protectedSettings: true, verifiedBeforeNeoBinding: true, forcedCheckAfterScheduledRead: true, workerMcpRefusedWithoutMutation: true, boundNeoMcpAllowed: true, humanRpcAllowed: true }, null, 2));
   console.log('PASS: public RPC health, missing-state reason, one Neo event across repeats/restart, recovery and usable unverified upgrade');
   if (process.argv.includes('--browser')) {
     if (process.argv.includes('--slow-check')) {
@@ -208,6 +222,7 @@ try {
   writeFileSync(join(run, 'evidence/receipts.json'), JSON.stringify(receipts, null, 2));
   web?.stop(true);
   await app.cleanup();
+  await model.stop();
   writeFileSync(join(run, 'evidence/cleanup.json'), JSON.stringify({ daemonStopped: true, syntheticDataOwnedByWrapper: true }));
 }
 process.exit(0);
