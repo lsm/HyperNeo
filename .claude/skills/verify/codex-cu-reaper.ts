@@ -192,6 +192,12 @@ try {
   registerDriverOperations(context);
   assert.equal(timers.length, beforeTestRegistration, 'Test-mode driver registration must not arm CU timers');
   process.env.NODE_ENV = 'production';
+  const unownedContext = { ...context };
+  delete unownedContext.driverCleanup;
+  const unownedBefore = { timers: timers.length, commands: commands.length };
+  registerDriverOperations(unownedContext);
+  const unownedAfter = { timers: timers.length, commands: commands.length };
+  assert.deepEqual(unownedAfter, unownedBefore, 'Absent cleanup must skip checker creation');
   for (const value of [undefined, false, true]) {
     settings = value === undefined ? {} : { codexCuAutoReap: value };
     const cleanupIndex = closeAll.length, timerIndex = timers.length;
@@ -219,7 +225,7 @@ try {
   await startCuChecker(() => true)();
   assert.equal(timers.length, beforeNonMac);
   assert(events.length > 0, 'Automatic actions, opt-out alerts and refusals must be logged');
-  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ pass: true, notices, signals, commands, timers: timers.map(({ callback: _callback, ...timer }) => timer), events, realMachineProof: 'not covered by this synthetic helper' }, null, 2));
+  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ pass: true, unownedCleanup: { before: unownedBefore, after: unownedAfter }, notices, signals, commands, timers: timers.map(({ callback: _callback, ...timer }) => timer), events, realMachineProof: 'not covered by this synthetic helper' }, null, 2));
   process.stdout.write('PASS: synthetic macOS command adapter, automatic default, opt-out alert, reread, failures, cadence, overlap and cleanup\n');
 } finally {
   process.env.NODE_ENV = 'test';

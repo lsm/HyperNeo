@@ -8,6 +8,9 @@ with the single-PID action `kill -TERM <pid>`. Omitted or true means automatic.
 It checks every 60 seconds, unrefs timer handles that support it, and closes with
 the driver's cleanup. No live-daemon restart is part of this journey.
 Driver startup with NODE_ENV=test must create no checker or OS-command timer.
+Production driver registration without driverCleanup must also create no checker
+timer or OS commands. The optional call short-circuits argument evaluation when
+the cleanup owner is absent; retain the before/after counters in observed.json.
 
 Deduplication is local to each checker. Same-user daemons observing the same
 helper can each notify once or race SIGTERM attempts after their final rechecks.
