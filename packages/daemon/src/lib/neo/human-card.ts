@@ -48,7 +48,7 @@ const onlyCard = (open: readonly NeoQuestion[], replaced: NeoQuestion | null) =>
       !isNeoTodoStalledCard(question.text)
   );
   return other
-    ? `card_open: card ${other.id} is already open on this ask; pass replaces to change it, or wait for its answer.`
+    ? `card_open: card ${other.id} is already open on this ask; wait for its answer, or change it with neo.question.ask replaces.`
     : null;
 };
 

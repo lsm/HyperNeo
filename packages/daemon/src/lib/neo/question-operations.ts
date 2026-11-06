@@ -258,6 +258,7 @@ const Asked = {
   focused: z.boolean().optional(),
   sourceSession: WorkRefSchema.optional(),
   artifacts: Artifacts,
+  document: Text.optional().describe('Full detail shown apart from the short card text.'),
   todoId: Text.optional().describe(
     'The todo this card belongs to. One card may be open per ask; a second returns card_open, and replaces changes the open one.'
   ),
@@ -507,6 +508,7 @@ export function planNeoQuestion(
     text: input.text,
     ...(sourceSession ? { sourceSession } : {}),
     ...(input.artifacts ? { artifacts: input.artifacts } : {}),
+    ...('document' in input && input.document ? { document: input.document } : {}),
     ...(todoId ? { todoId } : {}),
     ...(input.replyTo ? { replyTo: input.replyTo } : {}),
     kind: input.kind,

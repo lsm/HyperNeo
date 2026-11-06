@@ -33001,6 +33001,11 @@
                 ],
                 "type": "object"
               },
+              "document": {
+                "description": "Full detail shown apart from the short card text.",
+                "minLength": 1,
+                "type": "string"
+              },
               "focused": {
                 "type": "boolean"
               },
@@ -33172,6 +33177,11 @@
                   "sha256"
                 ],
                 "type": "object"
+              },
+              "document": {
+                "description": "Full detail shown apart from the short card text.",
+                "minLength": 1,
+                "type": "string"
               },
               "focused": {
                 "type": "boolean"
@@ -33348,6 +33358,11 @@
                   "sha256"
                 ],
                 "type": "object"
+              },
+              "document": {
+                "description": "Full detail shown apart from the short card text.",
+                "minLength": 1,
+                "type": "string"
               },
               "focused": {
                 "type": "boolean"

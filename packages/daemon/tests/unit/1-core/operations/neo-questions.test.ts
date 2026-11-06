@@ -395,6 +395,12 @@ describe('neo.question operations', () => {
     expect(ordinary).not.toHaveProperty('sourceSession');
   });
 
+  test('keeps the full detail in document while the card text stays short', async () => {
+    const { asked } = setup();
+    const card = await asked({ kind: 'reply', text: 'Which one?', document: 'Long detail' });
+    expect(card).toMatchObject({ text: 'Which one?', document: 'Long detail' });
+  });
+
   test('keeps registered artifact references on the question card', async () => {
     const artifact = {
       daemonId: '10000000-0000-4000-8000-000000000001',
