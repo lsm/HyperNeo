@@ -1,7 +1,10 @@
 import type { SpaceGoal } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { defineOperation, type OperationCaller } from '../../operations/registry.ts';
+import {
+  defineOperation,
+  type OperationCaller,
+} from '../../../daemon/src/lib/operations/registry.ts';
 import {
   admitGoalAccess,
   type GoalCallerContext,
@@ -10,15 +13,15 @@ import {
   GoalSpaceScopeShape,
   goalMutationContext,
   recordGoalAudit,
-} from '../../../../../space/src/goals/goal-operation-scope.ts';
+} from './goal-operation-scope.ts';
 import {
   GOAL_WRITE_POLICY,
   GoalMetricsSchema,
   GoalPrioritySchema,
   GoalStatusSchema,
   GoalTypeSchema,
-} from '../../goals/goal-contract.ts';
-import { SpaceGoalSchema } from '../../../../../space/src/goals/goal-result-schemas.ts';
+} from '../../../daemon/src/lib/goals/goal-contract.ts';
+import { SpaceGoalSchema } from './goal-result-schemas.ts';
 import type { SpaceGoalService } from './service.ts';
 
 export const GoalWritableFieldsShape = {

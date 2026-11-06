@@ -40,7 +40,7 @@ import {
   maxCompletedTaskTimestamp,
   maxEvidenceCursor,
   selectEvidenceAfterCursor,
-} from '../../../daemon/src/lib/space/goals/automation-service.ts';
+} from '../goals/automation-service.ts';
 import { GOAL_AUTOMATION_EXECUTE } from '../../../daemon/src/lib/job-queue-constants.ts';
 import { Logger } from '../../../daemon/src/lib/logger.ts';
 

@@ -19,7 +19,7 @@ import {
 import {
   GoalAutomationService,
   externalEventTriggerKey,
-} from '../../../../src/lib/space/goals/automation-service';
+} from '../../../../../space/src/goals/automation-service';
 import { EvolutionScopeService } from '../../../../src/lib/space/evolution/scope-service';
 import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository';
 import { GoalAutomationCursorRepository } from '../../../../src/storage/repositories/goal-automation-cursor-repository';

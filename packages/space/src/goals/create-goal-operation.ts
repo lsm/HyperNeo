@@ -1,8 +1,11 @@
 import type { SpaceGoal } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { defineOperation, type OperationCaller } from '../../operations/registry.ts';
-import { hasSpaceAuthority } from '../../session-resolution/space-mcp-session-policy.ts';
+import {
+  defineOperation,
+  type OperationCaller,
+} from '../../../daemon/src/lib/operations/registry.ts';
+import { hasSpaceAuthority } from '../../../daemon/src/lib/session-resolution/space-mcp-session-policy.ts';
 import {
   admitGoalSpace,
   goalDenial,
@@ -12,10 +15,10 @@ import {
   recordGoalAudit,
   type GoalCallerContext,
   type GoalRejection,
-} from '../../../../../space/src/goals/goal-operation-scope.ts';
-import { GOAL_WRITE_POLICY } from '../../goals/goal-contract.ts';
-import { SpaceGoalSchema } from '../../../../../space/src/goals/goal-result-schemas.ts';
-import { decideGoalOwnershipMutationAdmission } from '../../../../../space/src/goals/ownership-gates.ts';
+} from './goal-operation-scope.ts';
+import { GOAL_WRITE_POLICY } from '../../../daemon/src/lib/goals/goal-contract.ts';
+import { SpaceGoalSchema } from './goal-result-schemas.ts';
+import { decideGoalOwnershipMutationAdmission } from './ownership-gates.ts';
 import type { SpaceGoalService } from './service.ts';
 import { GoalWritableFieldsShape } from './update-goal-operation.ts';
 

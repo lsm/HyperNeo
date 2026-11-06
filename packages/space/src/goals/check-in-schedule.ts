@@ -6,7 +6,7 @@ import type {
   PublicSpaceGoalUpdateParams,
   SpaceGoalMutationContext,
   SpaceGoalServiceDeps,
-} from '../../../daemon/src/lib/space/goals/service.ts';
+} from './service.ts';
 import { buildTaskDescription, goalTaskLabels } from './task-template.ts';
 
 export function pauseLinkedScheduleOrClear(deps: SpaceGoalServiceDeps, goal: SpaceGoal): void {

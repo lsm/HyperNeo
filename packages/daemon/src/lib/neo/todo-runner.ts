@@ -6,6 +6,7 @@ import { workerBlockerReminderDue } from './worker-blocker.ts';
 import { neoCancelledPrerequisiteKey, neoCancelledPrerequisiteNote } from './todo-start-gate.ts';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { neoTodoRunnerWrites } from '../../storage/repositories/neo-todo-runner-state.ts';
+import { neoSyncedWorkers, neoWorkerStatusDue } from './worker-status-gate.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
@@ -290,6 +291,10 @@ export function neoTodoNote(todo: NeoTodo): string {
 }
 
 export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
+  const statusSeen = new Map<string, string>();
+  const workerLive = async (ask: NeoAsk, ref: WorkRef) =>
+    (await sessions.read('syncedLive', ref)) ??
+    readDriverLive(await deps.invoke(caller(ask), 'work.status', { ref }));
   const formatGoal = (instruction: string, goal: NeoWorkGoal | null) =>
     (deps.packs().find((pack) => pack.workGoal)?.workGoal ?? withWorkGoal)(instruction, goal);
   const { store, sessions } = deps;
@@ -489,7 +494,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     for (const [worker, { id, ref }] of targets) {
       const ask = store.getAsk(store.getTodo(id)?.askId ?? '');
       if (!ask || !ref || ref.adapter === 'space') continue;
-      const live = readDriverLive(await deps.invoke(caller(ask), 'work.status', { ref }));
+      const live = await workerLive(ask, ref);
       if (isBusyWork(live?.status)) busy.push(worker);
     }
     return busy;
@@ -1181,9 +1186,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
     .pipe(
       async (context: NudgeContext) => {
-        const live = readDriverLive(
-          await deps.invoke(caller(context.ask), 'work.status', { ref: context.ref })
-        );
+        const live = await workerLive(context.ask, context.ref);
         await sessions.write('noteWorkerStatus', context.todo.id, live?.status ?? 'unknown');
         return live;
       },
@@ -1517,20 +1520,43 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         .then(tellCancelledPrerequisites)
         .catch((error) => warn('Cancelled prerequisite note pending', error));
       const candidates = [];
+      const synced = neoSyncedWorkers(
+        await sessions.read('syncedActivity').catch((error) => {
+          warn('Synced workers unavailable', error);
+          return [];
+        })
+      );
+      const whenChanged = async (
+        kind: string,
+        todoId: string,
+        ref: WorkRef,
+        read: () => Promise<unknown>
+      ) => {
+        const key = `${kind}:${todoId}`;
+        const fact = synced.get(neoWorkerKey(ref) ?? '');
+        if (!neoWorkerStatusDue(fact, statusSeen.get(key))) return;
+        await read();
+        if (fact) statusSeen.set(key, fact);
+      };
       for (const { todoId, ref } of await sessions.read('awaitingReports')) {
         const todo = store.getTodo(todoId);
-        if (todo?.state === 'doing')
-          await settle(todoId, ref).catch((error) => warn('Todo session refresh pending', error));
-        else if (todo) candidates.push({ todo, ref, ask: store.getAsk(todo.askId)! });
+        if (todo?.state === 'doing') {
+          const landing = sessions.readStartedAt(todoId) === null;
+          await (landing
+            ? settle(todoId, ref)
+            : whenChanged('settle', todoId, ref, () => settle(todoId, ref))
+          ).catch((error) => warn('Todo session refresh pending', error));
+        } else if (todo) candidates.push({ todo, ref, ask: store.getAsk(todo.askId)! });
       }
       const plan = planNeoTurnReportSweep(candidates, reportCursor);
       reportCursor = plan.next;
       for (const { todo, ref, ask } of plan.selected) {
         const since = sessions.readFollowAnchor(todo.id) ?? todo.startedAt ?? todo.createdAt;
-        await deps
-          .invoke(caller(ask), 'work.status', { ref, since })
-          .then((outcome) => observe(todo.id, outcome, ref))
-          .catch((error) => warn('Worker human turn report pending', error));
+        await whenChanged('report', todo.id, ref, () =>
+          deps
+            .invoke(caller(ask), 'work.status', { ref, since })
+            .then((outcome) => observe(todo.id, outcome, ref))
+        ).catch((error) => warn('Worker human turn report pending', error));
       }
       for (const todo of await store.read('listCheckable')) {
         if (todo.blockedBy === 'needs-human')
@@ -1540,7 +1566,11 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         await waitOnHuman(todo, Date.now()).catch((error) =>
           warn('Todo human wait pending', error)
         );
-        await follow(todo, Date.now()).catch((error) => warn('Todo follow pending', error));
+        const followed = sessions.readRef(todo.id);
+        await (followed
+          ? whenChanged('follow', todo.id, followed, () => follow(todo, Date.now()))
+          : follow(todo, Date.now())
+        ).catch((error) => warn('Todo follow pending', error));
         await check(store.getTodo(todo.id) ?? todo, Date.now()).catch((error) =>
           warn('Todo check pending', error)
         );

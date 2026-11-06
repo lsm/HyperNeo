@@ -15,7 +15,7 @@ import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { markWorkUnusable } from '../work-started-sessions.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
-import type { WorkRef } from '../../lib/drivers/types.ts';
+import type { WorkRef, WorkStatus } from '../../lib/drivers/types.ts';
 import type { DriverSent, NeoDriverTarget } from '../../lib/neo/driver-work.ts';
 import type { NeoDriverProgress } from '../../lib/neo/settle-driver-work.ts';
 import type { NeoWorkDriverReceipt } from '@hyperneo/shared/types/neo-snapshot';
@@ -81,11 +81,16 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     todoId: string
   ): Promise<ReturnType<NeoTodoSessionRepository['stopContext']>>;
   read(method: 'queueFacts'): Promise<ReturnType<NeoTodoSessionRepository['queueFacts']>>;
-  read(method: (typeof neoTodoSessionReads.methods)[number], todoId?: string) {
+  read(method: 'syncedActivity'): Promise<ReturnType<NeoTodoSessionRepository['syncedActivity']>>;
+  read(
+    method: 'syncedLive',
+    ref: WorkRef
+  ): Promise<ReturnType<NeoTodoSessionRepository['syncedLive']>>;
+  read(method: (typeof neoTodoSessionReads.methods)[number], key?: string | WorkRef) {
     return gatewayFor(this.db).call(
       neoTodoSessionReads,
       method,
-      ...((todoId === undefined ? [] : [todoId]) as never)
+      ...((key === undefined ? [] : [key]) as never)
     );
   }
 
@@ -468,6 +473,22 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     return new Map(rows.map((row) => [row.todoId, sessionLinks(row)]));
   }
 
+  syncedLive(ref: WorkRef): { status: WorkStatus; lastActivityAt: number } | null {
+    if (ref.daemon) return null;
+    return this.db
+      .prepare(
+        `SELECT status, last_activity_at AS lastActivityAt FROM work_sessions
+         WHERE adapter = ? AND id = ?`
+      )
+      .get(ref.adapter, ref.id) as { status: WorkStatus; lastActivityAt: number } | null;
+  }
+
+  syncedActivity(): { adapter: string; id: string; status: string; at: number }[] {
+    return this.db
+      .prepare('SELECT adapter, id, status, last_activity_at AS at FROM work_sessions')
+      .all() as { adapter: string; id: string; status: string; at: number }[];
+  }
+
   workerName(ref: WorkRef): string | null {
     const synced = ref.daemon
       ? null
@@ -534,7 +555,16 @@ export const neoTodoSessionReads = defineRepositoryOp(
   'neo.todoSessionReads',
   'read',
   NeoTodoSessionRepository,
-  ['unrecordedStarts', 'awaitingReports', 'nudgeContext', 'stopContext', 'queueFacts', 'workerName']
+  [
+    'unrecordedStarts',
+    'awaitingReports',
+    'nudgeContext',
+    'stopContext',
+    'queueFacts',
+    'workerName',
+    'syncedActivity',
+    'syncedLive',
+  ]
 );
 export const neoTodoSessionWrites = defineRepositoryOp(
   'neo.todoSessionWrites',
