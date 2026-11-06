@@ -51,7 +51,8 @@ import {
   currentSpaceIdSignal,
   navSectionSignal,
 } from '../../lib/signals';
-import { registerWebExtension } from '../../lib/web-extensions';
+import { declareExtensionNav, registerWebExtension } from '../../lib/web-extensions';
+import { spaceNav } from '../../lib/space-nav';
 import { navigateToSessions } from '../../lib/router';
 
 function makeTask(id: string, status: SpaceTask['status'], title = `Task ${id}`): SpaceTask {
@@ -84,6 +85,8 @@ function makeSpace(tasks: SpaceTask[]) {
     sessions: [],
   };
 }
+
+declareExtensionNav(spaceNav);
 
 describe('SpacesHome running list', () => {
   beforeEach(async () => {

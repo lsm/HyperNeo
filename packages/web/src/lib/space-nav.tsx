@@ -172,6 +172,12 @@ function spaceRecordingReturn(
   };
 }
 
+function spaceContentKey(): string | null {
+  const spaceId = currentSpaceIdSignal.value;
+  if (spaceId) return `space-${spaceId}-${currentSpaceViewModeSignal.value}`;
+  return navSectionSignal.value === 'spaces' ? 'spaces' : null;
+}
+
 export const spaceNav: ExtensionNav = {
   extension: 'space',
   section: 'spaces',
@@ -179,6 +185,7 @@ export const spaceNav: ExtensionNav = {
   icon: SpacesIcon,
   open: () => navigateToSpaces(),
   contextTabs: spaceContextTabs,
+  contentKey: spaceContentKey,
   voiceScope: () =>
     spaceVoiceScope(currentSpaceCanonicalIdSignal.value ?? currentSpaceIdSignal.value),
   paletteItems: spacePaletteItems,

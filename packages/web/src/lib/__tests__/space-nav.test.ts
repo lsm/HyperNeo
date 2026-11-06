@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from '../signals';
+import {
+  currentSpaceCanonicalIdSignal,
+  currentSpaceIdSignal,
+  currentSpaceViewModeSignal,
+  navSectionSignal,
+} from '../signals';
 import { spaceNav } from '../space-nav';
 
 describe('spaceNav.voiceScope', () => {
@@ -21,5 +26,28 @@ describe('spaceNav.voiceScope', () => {
     expect(spaceNav.recordingReturn('space:space-1', 'session-1', null)?.path).toBe(
       '/space/space-1/session/session-1'
     );
+  });
+});
+
+describe('spaceNav.contentKey', () => {
+  afterEach(() => {
+    currentSpaceIdSignal.value = null;
+    currentSpaceViewModeSignal.value = 'overview';
+    navSectionSignal.value = 'spaces';
+  });
+
+  it('claims the Spaces home and each Space view', () => {
+    navSectionSignal.value = 'spaces';
+    expect(spaceNav.contentKey()).toBe('spaces');
+
+    currentSpaceIdSignal.value = 'space-1';
+    currentSpaceViewModeSignal.value = 'goals';
+    expect(spaceNav.contentKey()).toBe('space-space-1-goals');
+  });
+
+  it('leaves other sections to the shell', () => {
+    navSectionSignal.value = 'chats';
+
+    expect(spaceNav.contentKey()).toBeNull();
   });
 });

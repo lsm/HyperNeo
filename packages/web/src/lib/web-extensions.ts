@@ -2,7 +2,7 @@ import type { MessageHub, Space, SpaceLongHorizonAgent, SpaceTask } from '@hyper
 import type { ComponentChild, ComponentType } from 'preact';
 import { type ReadonlySignal, signal } from '@preact/signals';
 import { invokeOperation } from './operations';
-import type { ExtensionPanelTarget, SpaceViewMode } from './signals';
+import type { ExtensionPanelTarget } from './signals';
 
 export type SpaceWithTaskList = Space & { tasks: SpaceTask[] };
 
@@ -13,6 +13,7 @@ export interface ShellExtension {
   sessionRenamed(sessionId: string, title: string): void;
   panelTarget(): ExtensionPanelTarget | null;
   sidebar(section: string): ComponentType<{ onClose: () => void }> | null;
+  Content: ComponentType<{ fallback: ComponentChild }>;
   renderPanel(target: ExtensionPanelTarget): ComponentChild;
   sessionAgent(sessionId: string): ExtensionSessionAgent | null;
 }
@@ -52,6 +53,7 @@ export interface ExtensionNav {
   icon: ComponentType;
   open(): void;
   contextTabs(): { label: string; tabs: ExtensionNavTab[] } | null;
+  contentKey(): string | null;
   voiceScope(): string | null;
   paletteItems(query: string): ExtensionPaletteItem[];
   warmPalette(): void;
@@ -79,14 +81,6 @@ export interface SpaceWebExtension {
     agents: ReadonlySignal<SpaceLongHorizonAgent[]>;
     initGlobalList(): Promise<void>;
   };
-  SpaceIsland: ComponentType<{
-    spaceId: string;
-    routeSpaceId?: string | null;
-    viewMode: SpaceViewMode;
-    sessionViewId?: string | null;
-    taskViewId?: string | null;
-  }>;
-  SpacesHome: ComponentType;
 }
 
 interface WebExtensions {
