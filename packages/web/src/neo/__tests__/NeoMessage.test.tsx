@@ -80,6 +80,39 @@ describe('Neo message presentation', () => {
     expect(screen.getByRole('dialog', { name: 'Attached photo 1' })).toBeTruthy();
   });
   it.each(['user', 'assistant'] as const)(
+    'keeps %s photos in their intended place beside words',
+    async (type) => {
+      const { container } = render(
+        <NeoMessage
+          message={
+            {
+              type,
+              message: {
+                content: [
+                  {
+                    type: 'image',
+                    source: { type: 'base64', media_type: 'image/png', data: 'YWJj' },
+                  },
+                ],
+              },
+            } as unknown as ChatMessage
+          }
+          text="The lamp flickers"
+        />
+      );
+      const photo = screen.getByRole('img', { name: 'Attached photo 1' });
+      const bubble = container.querySelector('.neo-message-bubble')!;
+      expect(bubble.contains(photo)).toBe(type === 'assistant');
+      expect(await screen.findByText('The lamp flickers')).toBeTruthy();
+      if (type === 'user') {
+        expect(
+          photo.compareDocumentPosition(bubble) & Node.DOCUMENT_POSITION_FOLLOWING
+        ).toBeTruthy();
+        expect(photo.closest('.justify-end')).toBeTruthy();
+      }
+    }
+  );
+  it.each(['user', 'assistant'] as const)(
     'puts %s name and time outside the bubble and copies only content',
     async (type) => {
       const timestamp = new Date(2026, 8, 26, 11, 16).getTime();

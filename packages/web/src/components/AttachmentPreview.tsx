@@ -2,18 +2,16 @@ import { CloseGlyph } from './icons/common-glyphs.tsx';
 import type { MessageImage } from '@hyperneo/shared/types';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { formatFileSize } from '../lib/file-utils.ts';
-import { Portal } from './ui/Portal.tsx';
+import { PhotoLightbox } from './PhotoLightbox.tsx';
+export { ATTACHMENT_LIGHTBOX_TEST_ID } from './PhotoLightbox.tsx';
 
 interface AttachmentPreviewProps {
   attachments: Array<MessageImage & { name: string; size: number }>;
   onRemove: (index: number) => void;
 }
 
-export const ATTACHMENT_LIGHTBOX_TEST_ID = 'attachment-lightbox';
-
 export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewProps) {
   const [enlargedIndex, setEnlargedIndex] = useState<number | null>(null);
-  const dialogRef = useRef<HTMLDivElement>(null);
   const stripRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
   const enlarged =
@@ -38,19 +36,6 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
       closeLightbox();
       return;
     }
-    dialogRef.current?.focus();
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        closeLightbox();
-      } else if (e.key === 'Tab') {
-        e.preventDefault();
-        e.stopPropagation();
-        dialogRef.current?.focus();
-      }
-    };
-    document.addEventListener('keydown', handleKeyDown, { capture: true });
-    return () => document.removeEventListener('keydown', handleKeyDown, { capture: true });
   }, [enlargedIndex, attachments.length]);
 
   if (attachments.length === 0) return null;
@@ -112,24 +97,11 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
       ))}
 
       {enlarged && (
-        <Portal into="body">
-          <div
-            ref={dialogRef}
-            data-testid={ATTACHMENT_LIGHTBOX_TEST_ID}
-            role="dialog"
-            aria-modal="true"
-            aria-label={enlarged.name}
-            tabindex={-1}
-            class="fixed inset-0 z-50 flex items-center justify-center p-6 bg-scrim backdrop-blur-sm cursor-zoom-out animate-fadeIn outline-none"
-            onClick={closeLightbox}
-          >
-            <img
-              src={`data:${enlarged.media_type};base64,${enlarged.data}`}
-              alt={enlarged.name}
-              class="max-h-[90vh] max-w-[90vw] object-contain rounded-lg shadow-2xl"
-            />
-          </div>
-        </Portal>
+        <PhotoLightbox
+          src={`data:${enlarged.media_type};base64,${enlarged.data}`}
+          label={enlarged.name}
+          onClose={closeLightbox}
+        />
       )}
     </div>
   );

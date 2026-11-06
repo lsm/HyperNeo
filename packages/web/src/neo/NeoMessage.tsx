@@ -1,3 +1,5 @@
+import { PhotoThumbnail } from '../components/PhotoLightbox.tsx';
+import { neoSentWords } from './neo-attachments.ts';
 import type { ChatMessage } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
@@ -48,7 +50,15 @@ export function NeoMessage({
 }) {
   const user = message.type === 'user';
   const images = neoMessageImageSources(message);
-  const copyDisabled = !text.trim();
+  const words = user ? neoSentWords(text, images.length > 0) : text;
+  const copyDisabled = !words.trim();
+  const photos = images.length > 0 && (
+    <div class={`mb-3 flex flex-wrap gap-2 ${user ? 'justify-end' : ''}`}>
+      {images.map((src, index) => (
+        <PhotoThumbnail key={index} src={src} label={`Attached photo ${index + 1}`} />
+      ))}
+    </div>
+  );
   const time = messageTime((message as ChatMessage & { timestamp?: number }).timestamp);
   const accepted =
     user &&
@@ -82,65 +92,57 @@ export function NeoMessage({
           </span>
         )}
       </div>
-      <div
-        class={`neo-message-bubble rounded-2xl border px-4 py-3 ${user ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
-      >
-        {!user && replyTo && sessionId && (
-          <button
-            type="button"
-            title={replyTo.excerpt}
-            aria-label={`Return to your request: ${replyTo.excerpt}`}
-            class="mb-2 block max-w-full truncate text-left text-xs text-fg-muted hover:text-accent"
-            onClick={() =>
-              document
-                .getElementById(neoMessageAnchor(sessionId, replyTo.messageId))
-                ?.scrollIntoView?.({ block: 'nearest' })
-            }
-          >
-            ↩ {replyTo.excerpt}
-          </button>
-        )}
-        {images.length > 0 && (
-          <div class="mb-3 flex flex-wrap gap-2">
-            {images.map((src, index) => (
-              <img
-                key={index}
-                src={src}
-                alt={`Attached photo ${index + 1}`}
-                class="max-h-64 max-w-full rounded-xl object-contain"
-              />
-            ))}
-          </div>
-        )}
-        {(() => {
-          const body = /^\s*\d+[.)]?\s*$/.test(text) ? (
-            <p class="whitespace-pre-wrap text-base leading-relaxed">{text}</p>
-          ) : (
-            <MarkdownRenderer
-              content={text}
-              class={`neo-markdown ${user ? 'neo-markdown-user' : 'neo-markdown-assistant'} text-base leading-relaxed`}
-            />
-          );
-          return user ? <NeoClampedText text={text}>{body}</NeoClampedText> : body;
-        })()}
-        {work?.report && !user && (
-          <details class="mt-4 border-t border-line pt-3">
-            <summary class="cursor-pointer text-sm font-medium text-accent hover:underline">
-              Read result · {work.title}
-            </summary>
-            <div class="mt-3 rounded-xl border border-line bg-surface p-4">
-              <p class="mb-3 text-xs text-fg-muted">
-                HyperNeo’s response, not independently verified.
-              </p>
+      {user && photos}
+      {(!user || words) && (
+        <div
+          class={`neo-message-bubble rounded-2xl border px-4 py-3 ${user ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
+        >
+          {!user && replyTo && sessionId && (
+            <button
+              type="button"
+              title={replyTo.excerpt}
+              aria-label={`Return to your request: ${replyTo.excerpt}`}
+              class="mb-2 block max-w-full truncate text-left text-xs text-fg-muted hover:text-accent"
+              onClick={() =>
+                document
+                  .getElementById(neoMessageAnchor(sessionId, replyTo.messageId))
+                  ?.scrollIntoView?.({ block: 'nearest' })
+              }
+            >
+              ↩ {replyTo.excerpt}
+            </button>
+          )}
+          {!user && photos}
+          {(() => {
+            const body = /^\s*\d+[.)]?\s*$/.test(words) ? (
+              <p class="whitespace-pre-wrap text-base leading-relaxed">{words}</p>
+            ) : (
               <MarkdownRenderer
-                content={work.report}
-                class="neo-markdown neo-markdown-assistant text-base leading-relaxed"
+                content={words}
+                class={`neo-markdown ${user ? 'neo-markdown-user' : 'neo-markdown-assistant'} text-base leading-relaxed`}
               />
-              <CopyButton text={work.report} label="Copy work result" />
-            </div>
-          </details>
-        )}
-      </div>
+            );
+            return user ? <NeoClampedText text={words}>{body}</NeoClampedText> : body;
+          })()}
+          {work?.report && !user && (
+            <details class="mt-4 border-t border-line pt-3">
+              <summary class="cursor-pointer text-sm font-medium text-accent hover:underline">
+                Read result · {work.title}
+              </summary>
+              <div class="mt-3 rounded-xl border border-line bg-surface p-4">
+                <p class="mb-3 text-xs text-fg-muted">
+                  HyperNeo’s response, not independently verified.
+                </p>
+                <MarkdownRenderer
+                  content={work.report}
+                  class="neo-markdown neo-markdown-assistant text-base leading-relaxed"
+                />
+                <CopyButton text={work.report} label="Copy work result" />
+              </div>
+            </details>
+          )}
+        </div>
+      )}
       <div class={`mt-1 flex items-center gap-3 ${user ? 'justify-end' : ''}`}>
         <CopyButton
           text={text}

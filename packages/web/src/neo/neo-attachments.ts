@@ -66,6 +66,10 @@ export function attachmentDocuments(files: NeoAttachment[]): string[] {
   });
 }
 
+export function neoSentWords(text: string, hasPhotos: boolean): string {
+  return hasPhotos && text === 'Attached files' ? '' : text;
+}
+
 export function attachmentMessage(draft: string, files: NeoAttachment[]) {
   return [
     draft.trim() || (files.length ? 'Attached files' : ''),

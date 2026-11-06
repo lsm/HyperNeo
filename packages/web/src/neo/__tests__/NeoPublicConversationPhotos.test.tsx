@@ -2,7 +2,7 @@ import type {
   NeoConversationAskPageItem,
   NeoConversationImageRef,
 } from '@hyperneo/shared/types/neo-conversation-ask';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NeoPublicConversation, PendingAsk } from '../NeoPublicConversation.tsx';
 import { projectNeoPublicConversation } from '../public-conversation.ts';
@@ -147,7 +147,7 @@ describe('public ask photo references', () => {
     );
     fireEvent.click(open);
     await waitFor(() =>
-      expect(screen.getByRole('img', { name: 'Attached photo 1' }).getAttribute('src')).toBe(
+      expect(screen.getAllByRole('img', { name: 'Attached photo 1' })[0].getAttribute('src')).toBe(
         'data:image/png;base64,ZnVsbA=='
       )
     );
@@ -155,7 +155,14 @@ describe('public ask photo references', () => {
       name: 'neo.conversation.image.read',
       input: { conversationId, imageId: photo.imageId },
     });
-    expect(screen.queryByRole('button', { name: 'Open attached photo 1' })).toBeNull();
+    const dialog = await screen.findByRole('dialog', { name: 'Attached photo 1' });
+    expect(within(dialog).getByRole('img').getAttribute('src')).toBe(
+      'data:image/png;base64,ZnVsbA=='
+    );
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    expect(screen.getByRole('button', { name: 'Open attached photo 1' })).toBe(
+      document.activeElement
+    );
   });
 
   it('shows a placeholder for a photo without a thumbnail', () => {
@@ -186,7 +193,7 @@ describe('public ask photo references', () => {
     request.mockResolvedValueOnce({ ...full, imageId: '3:0' });
     fireEvent.click(retry);
     await waitFor(() =>
-      expect(screen.getByRole('img', { name: 'Attached photo 1' }).getAttribute('src')).toBe(
+      expect(screen.getAllByRole('img', { name: 'Attached photo 1' })[0].getAttribute('src')).toBe(
         'data:image/png;base64,ZnVsbA=='
       )
     );
@@ -216,7 +223,7 @@ describe('public ask photo references', () => {
     expect(request).not.toHaveBeenCalled();
     seen[0]();
     await waitFor(() =>
-      expect(screen.getByRole('img', { name: 'Attached photo 1' }).getAttribute('src')).toBe(
+      expect(screen.getAllByRole('img', { name: 'Attached photo 1' })[0].getAttribute('src')).toBe(
         'data:image/png;base64,ZnVsbA=='
       )
     );

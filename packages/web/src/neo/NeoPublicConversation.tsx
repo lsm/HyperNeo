@@ -1,3 +1,5 @@
+import { PhotoThumbnail } from '../components/PhotoLightbox.tsx';
+import { neoSentWords } from './neo-attachments.ts';
 import { previewLinkedReferenceCandidates } from '@hyperneo/shared/types/artifact-reference';
 import type { NeoReplyTo } from '@hyperneo/shared/types/neo-ask';
 import type {
@@ -61,6 +63,30 @@ function publicAskPhotos(content: NeoAskItem['content']): AskPhoto[] {
   );
 }
 
+function SentMedia({ photos, conversationId }: { photos: AskPhoto[]; conversationId: string }) {
+  if (!photos.length) return null;
+  return (
+    <div class="mb-3 flex flex-wrap justify-end gap-2">
+      {photos.map((photo, index) =>
+        photo.kind === 'ref' ? (
+          <RefPhoto
+            key={photo.ref.imageId}
+            conversationId={conversationId}
+            photo={photo.ref}
+            label={t('chat.attachedPhoto', { n: String(index + 1) })}
+          />
+        ) : (
+          <PhotoThumbnail
+            key={index}
+            src={photo.src}
+            label={t('chat.attachedPhoto', { n: String(index + 1) })}
+          />
+        )
+      )}
+    </div>
+  );
+}
+
 function photoBox(ref: NeoConversationImageRef) {
   if (!ref.width || !ref.height) return { width: '8rem', height: '8rem' };
   return {
@@ -108,6 +134,7 @@ function RefPhoto({
     { state: 'idle' | 'loading' | 'failed' } | { state: 'ready'; src: string }
   >(cached ? { state: 'ready', src: cached } : { state: 'idle' });
   const frame = useRef<HTMLButtonElement>(null);
+  const [openWhenReady, setOpenWhenReady] = useState(false);
   const load = async () => {
     setView({ state: 'loading' });
     const read = await readNeoConversationImage({ conversationId, imageId: photo.imageId }, () =>
@@ -132,7 +159,7 @@ function RefPhoto({
   const box = photoBox(photo);
   if (view.state === 'ready')
     return (
-      <img src={view.src} alt={label} style={box} class="max-w-full rounded-xl object-contain" />
+      <PhotoThumbnail src={view.src} label={label} style={box} initiallyOpen={openWhenReady} />
     );
   const loading = view.state === 'loading';
   return (
@@ -143,7 +170,10 @@ function RefPhoto({
         aria-busy={loading}
         disabled={loading}
         ref={frame}
-        onClick={() => void load()}
+        onClick={() => {
+          setOpenWhenReady(true);
+          void load();
+        }}
         style={box}
         class="relative max-w-full cursor-zoom-in overflow-hidden rounded-xl border bg-fill-soft"
       >
@@ -174,7 +204,10 @@ function RefPhoto({
         <button
           type="button"
           class="text-xs text-danger hover:underline"
-          onClick={() => void load()}
+          onClick={() => {
+            setOpenWhenReady(true);
+            void load();
+          }}
         >
           {t('chat.photoRetry')}
         </button>
@@ -451,12 +484,13 @@ function PublicEntry({
   const short = publication?.shortText?.trim() ?? '';
   const full = publication?.fullText.trim() ?? '';
   const hasDetails = !!short && !!full && full !== short && publication?.verbatim !== true;
+  const photos = ask ? publicAskPhotos(ask.content) : [];
   const copyText = ask
-    ? publicAskText(ask.content)
+    ? neoSentWords(publicAskText(ask.content), photos.length > 0)
     : hasDetails
       ? `${short}\n\n${full}`
       : full || short;
-  const text = ask ? publicAskText(ask.content) : hasDetails ? short : full || short;
+  const text = ask ? copyText : hasDetails ? short : full || short;
   const quoteText = publication ? neoPublicationQuoteExcerpt(publication) : text;
   const references = useMemo(
     () => ({
@@ -476,7 +510,6 @@ function PublicEntry({
     ? (reference: string) =>
         openArtifactPreview({ kind: 'reference', source: referenceSource, reference })
     : undefined;
-  const photos = ask ? publicAskPhotos(ask.content) : [];
   const time = messageTime((ask ?? publication)!.createdAt);
   const author = publication ? 'Neo' : t('chat.you');
   const notDelivered = t('chat.notDelivered');
@@ -559,128 +592,111 @@ function PublicEntry({
           </span>
         )}
       </div>
-      <div
-        class={`neo-message-bubble rounded-2xl border px-4 py-3 ${ask ? 'rounded-tr-sm' : 'rounded-tl-sm'} ${undelivered ? '!border-danger' : ''}`}
-      >
-        <NeoPreviewReference reference={ask?.previewContext} />
-        {ask?.replyTo && (
-          <div data-reply-to={`${ask.replyTo.kind}:${ask.replyTo.id}`}>
-            <ReplyQuote
-              replyTo={ask.replyTo}
-              labels={replyLabels}
-              onSeek={onSeek}
-              onOpenWork={onOpenWork}
-            />
-          </div>
-        )}
-        {photos.length > 0 && (
-          <div class="mb-3 flex flex-wrap gap-2">
-            {photos.map((photo, index) =>
-              photo.kind === 'ref' ? (
-                <RefPhoto
-                  key={photo.ref.imageId}
-                  conversationId={ask!.conversationId}
-                  photo={photo.ref}
-                  label={t('chat.attachedPhoto', { n: String(index + 1) })}
-                />
-              ) : (
-                <img
-                  key={index}
-                  src={photo.src}
-                  alt={t('chat.attachedPhoto', { n: String(index + 1) })}
-                  class="max-h-64 max-w-full rounded-xl object-contain"
-                />
-              )
-            )}
-          </div>
-        )}
-        {(() => {
-          if (publication?.cardReply)
-            return (
-              <button
-                type="button"
-                class="text-left text-accent hover:underline focus-visible:outline-accent"
-                disabled={!onOpenWork}
-                onClick={() =>
-                  onOpenWork?.(
-                    `neo-ref-question-${publication.cardReply!.questionId}`,
-                    publication.cardReply
-                  )
-                }
-              >
-                {t('chat.cardReply')}
-                <span class="block text-sm text-fg">
-                  {neoCardReplyTitle(
-                    publication,
-                    replyLabels?.get(`question:${publication.cardReply.questionId}`)?.label
-                  )}
-                </span>
-              </button>
-            );
-          const fold = (
-            <div class="mt-1 flow-root">
-              <ContentDisclosureControl
-                expanded={expanded}
-                onToggle={() => setExpanded(!expanded)}
+      <SentMedia photos={photos} conversationId={ask?.conversationId ?? ''} />
+      {(!ask || text || ask.replyTo || ask.previewContext) && (
+        <div
+          class={`neo-message-bubble rounded-2xl border px-4 py-3 ${ask ? 'rounded-tr-sm' : 'rounded-tl-sm'} ${undelivered ? '!border-danger' : ''}`}
+        >
+          <NeoPreviewReference reference={ask?.previewContext} />
+          {ask?.replyTo && (
+            <div data-reply-to={`${ask.replyTo.kind}:${ask.replyTo.id}`}>
+              <ReplyQuote
+                replyTo={ask.replyTo}
+                labels={replyLabels}
+                onSeek={onSeek}
+                onOpenWork={onOpenWork}
               />
             </div>
-          );
-          const more = hasDetails && !expanded ? fold : undefined;
-          const body = /^[\s]*\d+[.)]?[\s]*$/.test(text) ? (
-            <p class="whitespace-pre-wrap text-base leading-relaxed">{text}</p>
-          ) : (
-            <MarkdownRenderer
-              content={text}
-              references={references.text}
-              onReference={openReference}
-              class={`neo-markdown neo-markdown-${ask ? 'user' : 'assistant'} text-base leading-relaxed`}
-            />
-          );
-          return (
-            <>
-              <div ref={bubbleText}>
-                {ask ? <NeoClampedText text={text}>{body}</NeoClampedText> : body}
+          )}
+
+          {(() => {
+            if (publication?.cardReply)
+              return (
+                <button
+                  type="button"
+                  class="text-left text-accent hover:underline focus-visible:outline-accent"
+                  disabled={!onOpenWork}
+                  onClick={() =>
+                    onOpenWork?.(
+                      `neo-ref-question-${publication.cardReply!.questionId}`,
+                      publication.cardReply
+                    )
+                  }
+                >
+                  {t('chat.cardReply')}
+                  <span class="block text-sm text-fg">
+                    {neoCardReplyTitle(
+                      publication,
+                      replyLabels?.get(`question:${publication.cardReply.questionId}`)?.label
+                    )}
+                  </span>
+                </button>
+              );
+            const fold = (
+              <div class="mt-1 flow-root">
+                <ContentDisclosureControl
+                  expanded={expanded}
+                  onToggle={() => setExpanded(!expanded)}
+                />
               </div>
-              {more}
-              {hasDetails && expanded && (
-                <div
-                  data-publication-details
-                  class="mt-3 rounded-[10px] bg-fill-soft px-3 pt-1 pb-2 text-sm text-fg-muted"
-                  style={{ '--prose-fg': 'var(--fg-muted)' }}
-                >
-                  <div class="-mr-2 mb-1 flex items-center justify-between">
-                    <span class="text-xs text-fg-faint">{t('ask.details')}</span>
-                    <CopyButton text={full} label={t('chat.copyDetails')} />
-                  </div>
-                  <MarkdownRenderer
-                    content={full}
-                    references={references.full}
-                    onReference={openReference}
-                    class="neo-markdown neo-markdown-assistant text-sm leading-relaxed"
-                  />
-                  {fold}
+            );
+            const more = hasDetails && !expanded ? fold : undefined;
+            const body = /^[\s]*\d+[.)]?[\s]*$/.test(text) ? (
+              <p class="whitespace-pre-wrap text-base leading-relaxed">{text}</p>
+            ) : (
+              <MarkdownRenderer
+                content={text}
+                references={references.text}
+                onReference={openReference}
+                class={`neo-markdown neo-markdown-${ask ? 'user' : 'assistant'} text-base leading-relaxed`}
+              />
+            );
+            return (
+              <>
+                <div ref={bubbleText}>
+                  {ask ? <NeoClampedText text={text}>{body}</NeoClampedText> : body}
                 </div>
-              )}
-              {referenceSource && (
-                <FileReferenceCards source={referenceSource} text={text} details={full} />
-              )}
-              {publication && <ArtifactCards artifacts={publication.artifacts} />}
-              {publication && links.length > 0 && (
-                <ul
-                  aria-label={t('chat.scenes')}
-                  class="mt-3 flex flex-wrap gap-3 text-sm text-accent"
-                >
-                  {links.map((link) => (
-                    <li key={JSON.stringify([link.kind, link.id])}>
-                      <span>{link.label}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </>
-          );
-        })()}
-      </div>
+                {more}
+                {hasDetails && expanded && (
+                  <div
+                    data-publication-details
+                    class="mt-3 rounded-[10px] bg-fill-soft px-3 pt-1 pb-2 text-sm text-fg-muted"
+                    style={{ '--prose-fg': 'var(--fg-muted)' }}
+                  >
+                    <div class="-mr-2 mb-1 flex items-center justify-between">
+                      <span class="text-xs text-fg-faint">{t('ask.details')}</span>
+                      <CopyButton text={full} label={t('chat.copyDetails')} />
+                    </div>
+                    <MarkdownRenderer
+                      content={full}
+                      references={references.full}
+                      onReference={openReference}
+                      class="neo-markdown neo-markdown-assistant text-sm leading-relaxed"
+                    />
+                    {fold}
+                  </div>
+                )}
+                {referenceSource && (
+                  <FileReferenceCards source={referenceSource} text={text} details={full} />
+                )}
+                {publication && <ArtifactCards artifacts={publication.artifacts} />}
+                {publication && links.length > 0 && (
+                  <ul
+                    aria-label={t('chat.scenes')}
+                    class="mt-3 flex flex-wrap gap-3 text-sm text-accent"
+                  >
+                    {links.map((link) => (
+                      <li key={JSON.stringify([link.kind, link.id])}>
+                        <span>{link.label}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            );
+          })()}
+        </div>
+      )}
       {publication &&
       !publication.cardReply &&
       (publication.editedAt || publication.revisions?.length) ? (
@@ -793,6 +809,11 @@ export function PendingAsk({
   onRetry?: (requestId: string) => void;
   onEdit?: (requestId: string) => void;
 }) {
+  const photos: AskPhoto[] = ask.images.map((image) => ({
+    kind: 'inline',
+    src: `data:${image.media_type};base64,${image.data}`,
+  }));
+  const words = neoSentWords(ask.text, photos.length > 0);
   const failed = ask.state === 'failed';
   const [showReason, setShowReason] = useState(false);
   const time = messageTime(ask.createdAt);
@@ -838,36 +859,28 @@ export function PendingAsk({
           </span>
         )}
       </div>
-      <div
-        class={`neo-message-bubble rounded-2xl rounded-tr-sm border px-4 py-3 ${failed ? '!border-danger' : ''}`}
-      >
-        <NeoPreviewReference reference={ask.previewContext} />
-        {ask.quote && (
-          <NeoQuoteBar
-            author={ask.quote.author}
-            excerpt={neoQuoteExcerpt(ask.quote.text)}
-            onOpen={() => {
-              const target = document.getElementById(ask.quote!.anchor);
-              if (target) flashMessage(target);
-            }}
-          />
-        )}
-        {ask.images.length > 0 && (
-          <div class="mb-3 flex flex-wrap gap-2">
-            {ask.images.map((image, index) => (
-              <img
-                key={index}
-                src={`data:${image.media_type};base64,${image.data}`}
-                alt={t('chat.attachedPhoto', { n: String(index + 1) })}
-                class="max-h-64 max-w-full rounded-xl object-contain"
-              />
-            ))}
-          </div>
-        )}
-        <NeoClampedText text={ask.text}>
-          <p class="whitespace-pre-wrap text-base leading-relaxed">{ask.text}</p>
-        </NeoClampedText>
-      </div>
+      <SentMedia photos={photos} conversationId={ask.sessionId} />
+      {(words || ask.quote || ask.previewContext) && (
+        <div
+          class={`neo-message-bubble rounded-2xl rounded-tr-sm border px-4 py-3 ${failed ? '!border-danger' : ''}`}
+        >
+          <NeoPreviewReference reference={ask.previewContext} />
+          {ask.quote && (
+            <NeoQuoteBar
+              author={ask.quote.author}
+              excerpt={neoQuoteExcerpt(ask.quote.text)}
+              onOpen={() => {
+                const target = document.getElementById(ask.quote!.anchor);
+                if (target) flashMessage(target);
+              }}
+            />
+          )}
+
+          <NeoClampedText text={words}>
+            <p class="whitespace-pre-wrap text-base leading-relaxed">{words}</p>
+          </NeoClampedText>
+        </div>
+      )}
       {failed && (
         <div class="flow-root mt-1 px-1 text-xs text-danger">
           {showReason && <span>{notSent}</span>}
