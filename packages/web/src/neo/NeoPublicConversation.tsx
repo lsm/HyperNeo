@@ -907,7 +907,7 @@ export function PendingAsk({
           />
         </div>
       )}
-      {!failed && <div aria-hidden="true" class="mt-1 h-7" />}
+      {!failed && <div aria-hidden="true" class="neo-pending-actions mt-1 h-7" />}
       {failed && (
         <div class="mt-1 flex items-center justify-end gap-1">
           <button
