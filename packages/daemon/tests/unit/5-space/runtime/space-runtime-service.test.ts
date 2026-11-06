@@ -44,7 +44,7 @@ import { SpaceManager as SpaceMgr } from '../../../../src/lib/space/managers/spa
 import type { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import { SpaceWorkflowManager as WorkflowMgr } from '../../../../src/lib/workflows/workflow-manager.ts';
 import type { SpaceRuntimeServiceConfig } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
-import { createAgentSubscriptionOperations } from '../../../../src/lib/external-events/agent-subscription-operations.ts';
+import { createAgentSubscriptionOperations } from '../../../../src/lib/space/external-events/agent-subscription-operations.ts';
 import { isOperationAdmitted } from '../../../../src/lib/operations/invoke.ts';
 import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
