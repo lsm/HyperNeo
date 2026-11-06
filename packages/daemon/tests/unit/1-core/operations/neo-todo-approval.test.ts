@@ -320,7 +320,8 @@ describe('todo approval', () => {
         repo: 'synthetic/second',
       });
       db.prepare('UPDATE neo_todos SET ask_id = ? WHERE id = ?').run(child.id, b.id);
-      store.pruneQuestions(a.askId, Date.now());
+      store.retireQuestions(a.askId, Date.now());
+      store.joinStartQuestion(store.getTodo(a.id)!, Date.now());
       store.joinStartQuestion(store.getTodo(b.id)!, Date.now());
       const parent = crypto.randomUUID();
       store.askQuestion(
