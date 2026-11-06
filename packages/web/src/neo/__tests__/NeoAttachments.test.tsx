@@ -5,7 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
 import { NeoComposer } from '../NeoComposer.tsx';
 import { NeoLive } from '../NeoLive.tsx';
-import { readNeoAttachment, attachmentMessage, restoreNeoImages } from '../neo-attachments.ts';
+import {
+  readNeoAttachment,
+  attachmentMessage,
+  restoreNeoImages,
+  neoSentWords,
+} from '../neo-attachments.ts';
 
 const sendMessage = vi.hoisted(() => vi.fn());
 const useNeoMock = vi.hoisted(() => vi.fn());
@@ -246,5 +251,17 @@ describe('restoreNeoImages', () => {
       )
     ).toBe(false);
     expect(restoreNeoImages(id, [photo])).toBe(true);
+  });
+});
+
+describe('sent photo words', () => {
+  it.each([
+    ['Attached files', true, ''],
+    ['Attached files', false, 'Attached files'],
+    [' Attached files ', true, ' Attached files '],
+    ['The lamp flickers', true, 'The lamp flickers'],
+    ['', true, ''],
+  ])('shows %j with photos=%s as %j', (text, photos, words) => {
+    expect(neoSentWords(text, photos)).toBe(words);
   });
 });

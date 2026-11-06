@@ -49,7 +49,7 @@ describe('Neo message presentation', () => {
       expect(container.querySelector('script')).toBeNull();
     }
   );
-  it('shows photos inside the sent message', () => {
+  it('shows a photo-only user message without a bubble and enlarges its photo', () => {
     render(
       <NeoMessage
         message={
@@ -71,7 +71,47 @@ describe('Neo message presentation', () => {
     expect(screen.getByRole('img', { name: 'Attached photo 1' }).getAttribute('src')).toBe(
       'data:image/png;base64,YWJj'
     );
+    expect(document.querySelector('.neo-message-bubble')).toBeNull();
+    expect(screen.queryByText('Attached files')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Copy your message' }).hasAttribute('disabled')).toBe(
+      true
+    );
+    fireEvent.click(screen.getByRole('img', { name: 'Attached photo 1' }));
+    expect(screen.getByRole('dialog', { name: 'Attached photo 1' })).toBeTruthy();
   });
+  it.each(['user', 'assistant'] as const)(
+    'keeps %s photos in their intended place beside words',
+    async (type) => {
+      const { container } = render(
+        <NeoMessage
+          message={
+            {
+              type,
+              message: {
+                content: [
+                  {
+                    type: 'image',
+                    source: { type: 'base64', media_type: 'image/png', data: 'YWJj' },
+                  },
+                ],
+              },
+            } as unknown as ChatMessage
+          }
+          text="The lamp flickers"
+        />
+      );
+      const photo = screen.getByRole('img', { name: 'Attached photo 1' });
+      const bubble = container.querySelector('.neo-message-bubble')!;
+      expect(bubble.contains(photo)).toBe(type === 'assistant');
+      expect(await screen.findByText('The lamp flickers')).toBeTruthy();
+      if (type === 'user') {
+        expect(
+          photo.compareDocumentPosition(bubble) & Node.DOCUMENT_POSITION_FOLLOWING
+        ).toBeTruthy();
+        expect(photo.closest('.justify-end')).toBeTruthy();
+      }
+    }
+  );
   it.each(['user', 'assistant'] as const)(
     'puts %s name and time outside the bubble and copies only content',
     async (type) => {
