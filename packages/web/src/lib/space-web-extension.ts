@@ -2,8 +2,7 @@ import { type ComponentChild, h } from 'preact';
 import { lazy } from 'preact/compat';
 import { GoalDetailPanel } from '../components/space/GoalDetailPanel.tsx';
 import { ScopeDetailPanel } from '../components/space/ScopeDetailPanel.tsx';
-import { SpaceCreateDialog } from '../components/space/SpaceCreateDialog.tsx';
-import { SpaceDetailPanel } from '../islands/SpaceDetailPanel.tsx';
+import { SpaceSidebar } from '../components/space/SpaceSidebar.tsx';
 import { SpacesHome } from '../islands/SpacesHome.tsx';
 import { navigateToSpaceAgent } from './router.ts';
 import {
@@ -78,12 +77,11 @@ export const spaceWebExtension: SpaceWebExtension = {
     refresh: () => spaceStore.refresh(),
     sessionRenamed: (sessionId, title) => spaceStore.updateSession(sessionId, { title }),
     panelTarget,
+    sidebar: (section) => (section === 'spaces' ? SpaceSidebar : null),
     renderPanel,
     sessionAgent,
   },
   store: spaceStore,
   SpaceIsland: lazy(() => import('../islands/SpaceIsland.tsx')),
-  SpaceDetailPanel,
   SpacesHome,
-  SpaceCreateDialog,
 };

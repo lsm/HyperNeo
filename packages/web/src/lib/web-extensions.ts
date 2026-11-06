@@ -12,6 +12,7 @@ export interface ShellExtension {
   refresh(): Promise<void>;
   sessionRenamed(sessionId: string, title: string): void;
   panelTarget(): ExtensionPanelTarget | null;
+  sidebar(section: string): ComponentType<{ onClose: () => void }> | null;
   renderPanel(target: ExtensionPanelTarget): ComponentChild;
   sessionAgent(sessionId: string): ExtensionSessionAgent | null;
 }
@@ -85,13 +86,7 @@ export interface SpaceWebExtension {
     sessionViewId?: string | null;
     taskViewId?: string | null;
   }>;
-  SpaceDetailPanel: ComponentType<{
-    spaceId: string;
-    navigationSpaceId?: string;
-    onNavigate?: () => void;
-  }>;
   SpacesHome: ComponentType;
-  SpaceCreateDialog: ComponentType<{ isOpen: boolean; onClose: () => void }>;
 }
 
 interface WebExtensions {
