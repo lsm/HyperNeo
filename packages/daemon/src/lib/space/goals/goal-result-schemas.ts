@@ -6,13 +6,13 @@ import type {
   SpaceTaskCompact,
 } from '@hyperneo/shared';
 import { z } from 'zod';
-import { TaskCoreSchema } from '../tasks/get-operation.ts';
+import { TaskCoreSchema } from '../../tasks/get-operation.ts';
 import {
   GoalMetricsSchema,
   GoalPrioritySchema,
   GoalStatusSchema,
   GoalTypeSchema,
-} from './goal-contract.ts';
+} from '../../goals/goal-contract.ts';
 
 export const SpaceGoalSchema = z.object({
   id: z.string(),

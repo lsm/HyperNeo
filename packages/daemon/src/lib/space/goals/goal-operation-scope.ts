@@ -1,10 +1,10 @@
 import type { Session, SpaceGoal } from '@hyperneo/shared';
 import { z } from 'zod';
-import type { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
-import type { OperationCaller } from '../operations/registry.ts';
-import type { GoalAccess } from './goal-contract.ts';
-import { resolveSessionSpaceId } from '../session-resolution/space-caller-scope.ts';
-import type { SpaceMcpSessionPolicyContext } from '../session-resolution/space-mcp-session-policy.ts';
+import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
+import type { OperationCaller } from '../../operations/registry.ts';
+import type { GoalAccess } from '../../goals/goal-contract.ts';
+import { resolveSessionSpaceId } from '../../session-resolution/space-caller-scope.ts';
+import type { SpaceMcpSessionPolicyContext } from '../../session-resolution/space-mcp-session-policy.ts';
 import type { SpaceGoalMutationContext } from './service.ts';
 
 export const GOAL_REJECTION_REASONS = [

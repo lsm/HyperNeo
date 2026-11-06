@@ -1,7 +1,7 @@
 import type { SpaceGoal, SpaceGoalListParams } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import { defineOperation, type OperationCaller } from '../../operations/registry.ts';
 import {
   admitGoalSpace,
   GoalRejectionSchema,
@@ -9,7 +9,7 @@ import {
   type GoalCallerContext,
   type GoalRejection,
 } from './goal-operation-scope.ts';
-import { GOAL_READ_POLICY, GoalStatusSchema } from './goal-contract.ts';
+import { GOAL_READ_POLICY, GoalStatusSchema } from '../../goals/goal-contract.ts';
 import { SpaceGoalSchema } from './goal-result-schemas.ts';
 import type { SpaceGoalService } from './service.ts';
 

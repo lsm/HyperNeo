@@ -7,7 +7,7 @@ import type {
 import { EvolutionEpisodeService } from '../../../../src/lib/evolution/episode-service.ts';
 import { createEvolutionOperations } from '../../../../src/lib/evolution/operations.ts';
 import { EvolutionScopeService } from '../../../../src/lib/evolution/scope-service.ts';
-import { SpaceGoalService } from '../../../../src/lib/goals/service.ts';
+import { SpaceGoalService } from '../../../../src/lib/space/goals/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,

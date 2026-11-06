@@ -28,8 +28,8 @@ import type { TaskAgentManager } from './runtime/task-agent-manager.ts';
 import { hostname } from 'node:os';
 import type { ReactiveDatabase } from '../../storage/reactive-database.ts';
 import type { SpaceAgentInactivityWatchdogService } from '../agents/inactivity-watchdog-service.ts';
-import type { SpaceGoalService } from '../goals/service.ts';
-import type { GoalAutomationService } from '../goals/automation-service.ts';
+import type { SpaceGoalService } from './goals/service.ts';
+import type { GoalAutomationService } from './goals/automation-service.ts';
 
 interface SpaceDaemonExtensionDeps {
   db: Database;

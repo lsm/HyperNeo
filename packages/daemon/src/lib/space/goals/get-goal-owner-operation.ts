@@ -1,8 +1,8 @@
 import type { SpaceGoal, SpaceGoalOwnerResolution } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import type { SpaceAgentGoalScopeRepository } from '../../storage/repositories/space-agent-goal-scope-repository.ts';
-import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import type { SpaceAgentGoalScopeRepository } from '../../../storage/repositories/space-agent-goal-scope-repository.ts';
+import { defineOperation, type OperationCaller } from '../../operations/registry.ts';
 import {
   admitGoalAccess,
   GoalRejectionSchema,
@@ -10,7 +10,7 @@ import {
   type GoalCallerContext,
   type GoalRejection,
 } from './goal-operation-scope.ts';
-import { GOAL_READ_POLICY } from './goal-contract.ts';
+import { GOAL_READ_POLICY } from '../../goals/goal-contract.ts';
 import { GoalOwnerResolutionSchema } from './goal-result-schemas.ts';
 import type { SpaceGoalService } from './service.ts';
 

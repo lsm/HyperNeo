@@ -6,7 +6,7 @@ import type {
 } from '@hyperneo/shared';
 import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
-import { readCompletedTaskThreshold } from '../goals/automation-policy.ts';
+import { readCompletedTaskThreshold } from '../space/goals/automation-policy.ts';
 
 export interface GoalAutomationExternalEventSnapshot {
   source: string;
