@@ -253,14 +253,18 @@ try {
           });
           const row = page.locator('[data-public-entry].neo-message-user').last();
           if (mode === 'file-only' || mode === 'mixed') {
-            await row.getByRole('button', { name: 'Open file: notes.txt', exact: true }).click();
+            const trigger = row.getByRole('button', { name: 'Open file: notes.txt', exact: true });
+            if (touch) await trigger.tap();
+            else await trigger.click({ delay: 100 });
             const dialog = page.getByRole('dialog', { name: 'notes.txt', exact: true });
             await dialog.waitFor();
             assert.equal(await dialog.locator('pre').textContent(), file.buffer.toString());
             await page.keyboard.press('Escape');
             await dialog.waitFor({ state: 'detached' });
           } else {
-            await row.getByRole('button', { name: 'Open attached photo 1', exact: true }).click();
+            const trigger = row.getByRole('button', { name: 'Open attached photo 1', exact: true });
+            if (touch) await trigger.tap();
+            else await trigger.click({ delay: 100 });
             const dialog = page.getByRole('dialog', { name: 'Attached photo 1' });
             await dialog.waitFor();
             await page.keyboard.press('Escape');

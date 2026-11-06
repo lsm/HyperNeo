@@ -31,7 +31,9 @@ row during flight, roughly 550ms travel, and final bounds within 5px of each
 live target. After landing, require less than 3px movement in each target bound,
 continued bottom pinning, and no dummy bubble for media alone. Include a 16×12 photo at 390px with a coarse pointer, measuring its actual image
 bounds alongside its wrapper. Open the landed
-photo or file reader to check restored interaction and exact file contents.
+photo or file reader with a 100ms held mouse click or a touch tap, checking
+restored interaction and exact file contents. Also run neo-media-reader-pointer.md
+to prove pointer target stability and keyboard activation through composer blur.
 At 390px, also enable reduced motion and send mixed media alone. Require all
 three visible targets, an absent words bubble, and zero flight overlays. Inspect
 mid-flight/landed and reduced-motion screenshots and evidence.json, including
