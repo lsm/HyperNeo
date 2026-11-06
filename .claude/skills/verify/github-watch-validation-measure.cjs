@@ -3,7 +3,7 @@ const ts = require(process.cwd() + '/node_modules/typescript');
 const { createHash } = require('node:crypto');
 const hash = text => createHash('sha256').update(text).digest('hex');
 const file = 'packages/daemon/src/lib/external-events/github/github-event-extension.ts';
-const base = 'bed7f0070973d960248547ad872984854a156d54';
+const base = '995db89299b4f586ecf74714c7eeee5a5baf4c2b';
 const text = fs.readFileSync(file, 'utf8');
 const added = "import { gitHubWatchedConfigWrite } from '../../../storage/repositories/github-watched-config-write.ts';\n";
 const callback = body => body.slice(body.indexOf("    hub.onRequest('space.github.watchRepo'"), body.indexOf("    hub.onRequest('space.github.autoConfigureWebhook'"));
