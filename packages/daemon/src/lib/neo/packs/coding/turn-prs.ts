@@ -84,6 +84,16 @@ export class CodingTurnPrRepository {
     };
   }
 
+  lastTurnEndsOfRunningWorkers(): (number | null)[] {
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT s.ref FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
+          WHERE s.ref IS NOT NULL AND s.live_status = 'running' AND t.state = 'doing'`
+      )
+      .all() as { ref: string }[];
+    return rows.map((row) => this.turns.lastEndedAt(JSON.parse(row.ref) as WorkRef));
+  }
+
   private createdAt(url: string) {
     const pr = parsePrUrl(url);
     const row = this.db

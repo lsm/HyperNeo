@@ -2,6 +2,8 @@ import { expect, spyOn, test } from 'bun:test';
 import { CodingPrEventRepository } from '../../../../src/lib/neo/packs/coding/pr-events.ts';
 import { wakeCodingUnownedPrs } from '../../../../src/lib/neo/packs/coding/pr-unowned.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { runMigration477 } from '../../../../src/storage/schema/m477-work-turns.ts';
+import { runMigration480 } from '../../../../src/storage/schema/m480-work-turn-urls.ts';
 import { createNeoPackPreferencesTable } from '../../../../src/storage/schema/m426-neo-pack-preferences.ts';
 import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -13,6 +15,12 @@ for (const readOnly of [false, true]) {
     for (const db of [main, writer]) {
       createNeoPackPreferencesTable(db);
       createCodingPackTables(db, 0);
+      runMigration477(db);
+      runMigration480(db);
+      db.exec(
+        `CREATE TABLE IF NOT EXISTS neo_todos (id TEXT, state TEXT);
+           CREATE TABLE IF NOT EXISTS neo_todo_sessions (todo_id TEXT, ref TEXT, live_status TEXT);`
+      );
     }
     writer
       .prepare(`INSERT INTO pack_coding_pr_ledger

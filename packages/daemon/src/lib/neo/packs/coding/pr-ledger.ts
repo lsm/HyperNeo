@@ -27,6 +27,12 @@ import { CodingQueryFactsRepository } from './query-facts.ts';
 import { CodingWorkFactsRepository } from './work-facts.ts';
 import { CodingBranchFactsRepository } from './branch-facts.ts';
 import { CodingMergeFactsRepository } from './merge-facts.ts';
+import { CodingTurnPrRepository } from './turn-prs.ts';
+import {
+  type CodingTurnMentions,
+  type CodingTurnOwner,
+  planCodingTurnOwner,
+} from './turn-owner.ts';
 import { getNeoPackPreference } from '../../preferences.ts';
 import { codingMergeContextRepos } from './merge-context.ts';
 import { z } from 'zod';
@@ -280,12 +286,25 @@ export function codingRemoteRepo(remote: string): string | null {
   return match ? match[1].toLowerCase() : null;
 }
 
+export const codingLedgerPrUrl = (row: { repo: string; number: number }) =>
+  `https://github.com/${row.repo.toLowerCase()}/pull/${row.number}`;
+
+export const planCodingLedgerTurnOwner = (
+  row: { repo: string; number: number; createdAt: number | null },
+  { turns, todos }: CodingTurnMentions
+) =>
+  planCodingTurnOwner(
+    { url: codingLedgerPrUrl(row), createdAt: row.createdAt ?? undefined },
+    turns,
+    todos
+  );
+
 export function planCodingPrOwner(
   row: { repo: string; number: number; branch: string; owner: string | null },
   claims: ReadonlyMap<string, string>,
   sessions: readonly CodingSessionLinks[]
 ): string | null {
-  const url = `https://github.com/${row.repo.toLowerCase()}/pull/${row.number}`;
+  const url = codingLedgerPrUrl(row);
   const claim = claims.get(url);
   if (claim) return claim;
   const owned = sessions.filter((session) => session.owned.includes(url));
@@ -312,6 +331,17 @@ export function planCodingPrOwner(
   if (candidates.some((session) => session.ref === row.owner)) return row.owner;
   if (candidates.length) return candidates[0].ref;
   return sessions.some((session) => session.ref === row.owner) ? null : row.owner;
+}
+
+export function planCodingRowOwner(
+  row: { owner: string | null },
+  named: string | undefined,
+  placed: CodingTurnOwner,
+  guessed: () => string | null
+): string | null {
+  if (named) return named;
+  if (placed.state === 'placed') return JSON.stringify(placed.session);
+  return placed.state === 'unknown' ? row.owner : guessed();
 }
 
 type CodingLedgerSnapshotRow = {
@@ -795,18 +825,18 @@ export class CodingPrLedgerRepository {
   }
 
   assignOwners(): void {
-    const claims = new Map(
-      (
-        this.db
-          .prepare(
-            `SELECT c.url, s.ref FROM pack_coding_pr_claims c
-               JOIN neo_todo_sessions s ON s.todo_id = c.todo_id
-               JOIN neo_todos t ON t.id = c.todo_id
-              WHERE s.ref IS NOT NULL AND t.state <> 'removed'
-              ORDER BY c.claim = 'named', t.state IN ('todo', 'doing'), COALESCE(t.started_at, 0)`
-          )
-          .all() as { url: string; ref: string }[]
-      ).map((row) => [row.url, row.ref])
+    const claimRows = this.db
+      .prepare(
+        `SELECT c.url, s.ref, c.claim FROM pack_coding_pr_claims c
+           JOIN neo_todo_sessions s ON s.todo_id = c.todo_id
+           JOIN neo_todos t ON t.id = c.todo_id
+          WHERE s.ref IS NOT NULL AND t.state <> 'removed'
+          ORDER BY c.claim = 'named', t.state IN ('todo', 'doing'), COALESCE(t.started_at, 0)`
+      )
+      .all() as { url: string; ref: string; claim: string }[];
+    const claims = new Map(claimRows.map((row) => [row.url, row.ref]));
+    const named = new Map(
+      claimRows.filter((row) => row.claim === 'named').map((row) => [row.url, row.ref])
     );
     const sessions = (
       this.db
@@ -831,14 +861,28 @@ export class CodingPrLedgerRepository {
       dismissed: JSON.parse(row.dismissed) as string[],
     }));
     const rows = this.db
-      .prepare('SELECT repo, number, branch, owner FROM pack_coding_pr_ledger')
-      .all() as { repo: string; number: number; branch: string; owner: string | null }[];
+      .prepare(
+        'SELECT repo, number, branch, owner, created_at AS createdAt FROM pack_coding_pr_ledger'
+      )
+      .all() as {
+      repo: string;
+      number: number;
+      branch: string;
+      owner: string | null;
+      createdAt: number | null;
+    }[];
+    const watched = rows.filter((row) => this.watches(row.repo));
+    const mentions = new CodingTurnPrRepository(this.db).mentions(watched.map(codingLedgerPrUrl));
     const update = this.db.prepare(
       'UPDATE pack_coding_pr_ledger SET owner = ? WHERE repo = ? AND number = ?'
     );
-    for (const row of rows) {
-      if (!this.watches(row.repo)) continue;
-      const owner = planCodingPrOwner(row, claims, sessions);
+    for (const row of watched) {
+      const owner = planCodingRowOwner(
+        row,
+        named.get(codingLedgerPrUrl(row)),
+        planCodingLedgerTurnOwner(row, mentions),
+        () => planCodingPrOwner(row, claims, sessions)
+      );
       if (owner !== row.owner) update.run(owner, row.repo, row.number);
     }
   }
