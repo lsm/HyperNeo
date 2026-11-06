@@ -27,6 +27,7 @@ import { noNeoInputReads, resolveNeoInputAsk, type NeoInputReads } from './input
 import type { NeoPack } from './pack-contract.ts';
 import {
   readNeoTodoCompletion,
+  requireNeoTodoCloseStarted,
   requireNeoTodoMayFinish,
   sameNeoTodoCheck,
 } from './todo-completion.ts';
@@ -780,6 +781,7 @@ export function createNeoTodoOperations(
   const close = owned(superpipe({})('neo.todo.close') as PipelineAPI)
     .pipe(planNeoTodoClose, ['outcome', 'input'], 'result:outcome')
     .pipe(completion, 'outcome', 'completion')
+    .pipe(requireNeoTodoCloseStarted, ['outcome', 'completion'], 'result:outcome')
     .pipe(requireNeoTodoMayFinish, ['outcome', 'completion'], 'result:outcome')
     .pipe(cards, 'outcome', 'questions')
     .pipe(requireNeoTodoCardsAnswered, ['outcome', 'questions'], 'result:outcome')
@@ -830,7 +832,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.remove',
       description:
-        'Remove a todo from an open ask you own, with the reason; its session stops if it is running, unless the todo only follows a session the human tracked. An invalid replacedBy is recorded while removal proceeds without a replacement link. Unstarted dependents stop and ask the human once: approval removes only this prerequisite, decline removes the dependent. replacedBy names the todo that replaces it; approved dependents wait for it instead. A removed todo stays listed, struck through.',
+        'Remove a todo from an open ask you own, with the reason: this is how to cancel or replace one, started or not; neo.todo.close is only for work really done. Its session stops if it is running, unless the todo only follows a session the human tracked. An invalid replacedBy is recorded while removal proceeds without a replacement link. Unstarted dependents stop and ask the human once: approval removes only this prerequisite, decline removes the dependent. replacedBy names the todo that replaces it; approved dependents wait for it instead. A removed todo stays listed, struck through.',
       inputSchema: Remove,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -857,7 +859,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.close',
       description:
-        'Close a todo with your reason. It is done only when its outcome check passes; otherwise it stays open, blocked by its check with the unmet reason, and finishes by itself once the check passes; if the check is wrong, fix it with neo.todo.edit check. Its session stops if it is running, unless the todo only follows a session the human tracked. A todo with an unanswered card is refused until the human answers it.',
+        'Close a todo whose work is really done, with your reason; to cancel or replace it use neo.todo.remove. A todo that never started is refused, unchanged, unless its outcome check passes. A started todo is done only when its outcome check passes; otherwise it stays open, blocked by its check with the unmet reason, and finishes by itself once the check passes; if the check is wrong, fix it with neo.todo.edit check. Its session stops if it is running, unless the todo only follows a session the human tracked. A todo with an unanswered card is refused until the human answers it.',
       inputSchema: Close,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

@@ -1,9 +1,7 @@
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { beforeEach, describe, expect, test } from 'bun:test';
-import {
-  ExternalEventStore,
-  ExternalEventValidationError,
-} from '../../../../src/lib/external-events/external-event-store';
+import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store';
+import { ExternalEventValidationError } from '../../../../src/lib/external-events/event-validation';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types';
 import { createSpaceTables } from '../../helpers/space-test-db';
 

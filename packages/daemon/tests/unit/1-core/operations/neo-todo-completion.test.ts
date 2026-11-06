@@ -124,8 +124,8 @@ describe('one completion rule for Neo todos', () => {
     async (judged) => {
       const { db, store, states, runner, call } = setup(undefined, judged);
       db.prepare(
-        `INSERT INTO neo_todos (id, ask_id, position, title, done_when, check_json, state, created_at, updated_at)
-       VALUES ('t', 'ask', 0, 'Land both', 'Both merged', ?, 'doing', 1, 1)`
+        `INSERT INTO neo_todos (id, ask_id, position, title, done_when, check_json, state, started_at, created_at, updated_at)
+       VALUES ('t', 'ask', 0, 'Land both', 'Both merged', ?, 'doing', 1, 1, 1)`
       ).run(
         JSON.stringify({ pack: 'coding', kind: 'pr_opened', params: { urls: [url(1), url(2)] } })
       );
@@ -177,6 +177,7 @@ describe('one completion rule for Neo todos', () => {
       },
       1
     );
+    store.updateTodo(todo, { startedAt: 1 }, 1);
     states.set(2, 'CLOSED');
     const reason = '#2 closed without merging and no pull request replaced it';
     expect(await call('neo.todo.close', { todoId: todo.id, reason: 'done' })).toEqual({
@@ -201,6 +202,7 @@ describe('one completion rule for Neo todos', () => {
       { title: 'Deploy', doneWhen: 'Running', check: null, instruction: null, named: null },
       1
     );
+    store.updateTodo(todo, { startedAt: 1 }, 1);
     expect(await readNeoTodoCompletion([coding], todo)).toBeNull();
     expect(requireNeoTodoMayFinish({ todo }, null)).toEqual({ value: { todo } });
     expect(await call('neo.todo.close', { todoId: todo.id, reason: 'Running' })).toMatchObject({
@@ -244,6 +246,7 @@ describe('coding todo PR ownership through add and edit', () => {
       if (!added.ok) throw new Error(added.reason);
       await runner.checkNow([added.todo.id], () => {});
       expect(store.getTodo(added.todo.id)?.state).not.toBe('done');
+      store.updateTodo(store.getTodo(added.todo.id)!, { startedAt: 1 }, 1);
       expect(
         await call('neo.todo.close', { todoId: added.todo.id, reason: 'PR remains unidentified' })
       ).toMatchObject({ ok: true, todo: { state: 'blocked', blockedBy: 'check' } });

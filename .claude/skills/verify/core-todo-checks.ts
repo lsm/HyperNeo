@@ -122,6 +122,7 @@ try {
     return result.todo;
   };
   const close = async (todo: NeoTodo, state: string) => {
+    store.updateTodo(store.getTodo(todo.id)!, { startedAt: Date.now() }, Date.now());
     const result = await rpc('neo.todo.close', {
       todoId: todo.id,
       reason: 'Observed synthetic outcome',
