@@ -16,12 +16,14 @@ run's local credential. External browser requests and gh calls are refused.
 
 At 1280 and 390 pixels, in English and Simplified Chinese, open the actual card
 menu and click Copy link / 复制链接. The real clipboard must equal one Markdown
-line containing the full escaped card title and `hyperneo://ask/<askId>`. The
+line containing the full escaped card title and `<location.origin>/ask/<askId>.md`. The
 fixture covers brackets, backslashes and a multiline title. The page URL stays
-unchanged and clicking Copy link sends no operation request. Inspect each saved
+unchanged and clicking Copy link sends no operation request. A synthetic query
+and fragment on the page must be absent from the copied link. Inspect each saved
 menu PNG and browser.json. Component tests additionally cover settled cards and
 copying while mutation actions are disabled.
 
 The helper closes its browser, listeners and daemon even on failure. The shared
 wrapper preserves evidence and removes its temporary HOME/DB. No provider keys,
-live daemon, scheme handler or native navigation are involved.
+live daemon or native navigation are involved. The separate Markdown GET endpoint
+is outside this copy-only journey.

@@ -748,7 +748,7 @@ export function NeoAskTodos({
               label: t('ask.copyLink'),
               onClick: () => {
                 const title = ask.title.replace(/[\r\n]+/g, ' ').replace(/[\\`*_[\]<>]/g, '\\$&');
-                void copyToClipboard(`[${title}](hyperneo://ask/${ask.id})`);
+                void copyToClipboard(`[${title}](${location.origin}/ask/${ask.id}.md)`);
               },
             },
             ...(onReplyAsk ? [{ label: t('chat.reply'), onClick: onReplyAsk, disabled }] : []),

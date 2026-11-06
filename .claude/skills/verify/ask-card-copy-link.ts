@@ -70,7 +70,7 @@ try {
   });
   writeFileSync(join(run, 'fixture.json'), JSON.stringify({
     askId,
-    expected: '[Review \\[iOS\\] \\\\ API next step](hyperneo://ask/10000000-0000-4000-8000-000000000002)',
+    label: 'Review \\[iOS\\] \\\\ API next step',
   }));
   const child = Bun.spawn(['node', '.claude/skills/verify/ask-card-copy-link.mjs', String(front.port), run], {
     stdout: 'inherit', stderr: 'inherit',

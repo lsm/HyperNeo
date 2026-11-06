@@ -26,7 +26,7 @@ try {
       }));
       await page.route('**/*', route => new URL(route.request().url()).hostname === '127.0.0.1'
         ? route.continue() : route.abort());
-      await page.goto(`http://127.0.0.1:${port}/neo`);
+      await page.goto(`http://127.0.0.1:${port}/neo?key=synthetic#card`);
       const card = page.locator(`[data-ask="${fixture.askId}"]`);
       if (width < 800) {
         await page.getByRole('button', { name: language === 'en' ? 'Your work' : '你的事', exact: false }).click();
@@ -40,7 +40,7 @@ try {
       const count = operations.length;
       await page.getByRole('menuitem', { name: label, exact: true }).click();
       const copied = await page.evaluate(() => navigator.clipboard.readText());
-      assert.equal(copied, fixture.expected);
+      assert.equal(copied, `[${fixture.label}](${new URL(url).origin}/ask/${fixture.askId}.md)`);
       assert.equal(copied.split('\n').length, 1);
       assert.equal(page.url(), url);
       assert.deepEqual(operations.slice(count), []);
