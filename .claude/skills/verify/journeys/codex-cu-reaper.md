@@ -5,7 +5,7 @@ PID/birth after the conservative leak predicate and final recheck pass. No
 setting is needed to enable it. Explicit `codexCuAutoReap: false` through the
 existing settings.global.update RPC opts out into an OS notification and log
 with the single-PID action `kill -TERM <pid>`. Omitted or true means automatic.
-It checks every 60 seconds, without keeping the process alive, and closes with
+It checks every 60 seconds, unrefs timer handles that support it, and closes with
 the driver's cleanup. No live-daemon restart is part of this journey.
 
 Deduplication is local to each checker. Same-user daemons observing the same
@@ -37,6 +37,22 @@ escalation. Concurrent ticks share one check, close clears the timer, and
 non-macOS setup creates no timer. Keep observed.json and proof.log.
 Two independent checker fixtures must each notify once. A young assertion on
 the final read must produce neither a signal nor an automatic kill-action log.
+Register the actual driver with a numeric timer handle too: startup, the check
+and cleanup must succeed without requiring an unref method.
+
+Run the native timer lifecycle helper in both supported runtimes, with the
+pinned Deno available on PATH for the second invocation:
+
+```sh
+bash .claude/skills/verify/proof-run.sh /absolute/fresh/bun-timer-evidence \
+  .claude/skills/verify/codex-cu-reaper-runtime.ts
+VERIFY_PROOF_RUNTIME=deno bash .claude/skills/verify/proof-run.sh \
+  /absolute/fresh/deno-timer-evidence .claude/skills/verify/codex-cu-reaper-runtime.ts
+```
+
+This uses each runtime's real timer, observes a synthetic empty assertion set
+and closes the checker. No OS commands or signals run. Record the actual
+runtime version and outcome instead of assuming its native timer handle shape.
 
 Run the focused codex-cu-reaper unit suite too: five-minute boundary, ordinary
 0–60-second interactions, 11–20-hour leaks, multiple assertions, recent

@@ -125,7 +125,7 @@ export function createCuChecker(effects: Effects) {
         checking = undefined;
       }));
   const timer = setInterval(() => void check(), 60_000);
-  timer.unref();
+  timer.unref?.();
   return {
     check,
     close: async () => {

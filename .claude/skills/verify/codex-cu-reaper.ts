@@ -156,22 +156,25 @@ try {
   } as unknown as Context;
   for (const value of [undefined, false, true]) {
     settings = value === undefined ? {} : { codexCuAutoReap: value };
+    const cleanupIndex = closeAll.length, timerIndex = timers.length;
     registerDriverOperations(context);
-    const registered = timers.at(-1)!;
+    const registered = timers[timerIndex];
     const beforeSignals = signals.length, beforeNotices = notices.length;
     registered.callback(); await settle();
     assert.equal(signals.length - beforeSignals, value === false ? 0 : 1,
       'Omitted setting must auto-reap; only explicit false opts out');
     assert.equal(notices.length - beforeNotices, value === false ? 1 : 0);
-    await closeAll.at(-1)!();
+    await closeAll[cleanupIndex]();
+    assert(registered.cleared);
   }
   numericTimers = true; settings = {};
+  const numericCleanupIndex = closeAll.length, numericTimerIndex = timers.length;
   registerDriverOperations(context);
-  const numericTimer = timers.at(-1)!;
+  const numericTimer = timers[numericTimerIndex];
   const beforeNumericSignals = signals.length;
   numericTimer.callback(); await settle();
   assert.equal(signals.length - beforeNumericSignals, 1);
-  await closeAll.at(-1)!();
+  await closeAll[numericCleanupIndex]();
   assert(numericTimer.cleared, 'Numeric timer handles must close with the driver');
   Object.defineProperty(process, 'platform', { value: 'linux' });
   const beforeNonMac = timers.length;
