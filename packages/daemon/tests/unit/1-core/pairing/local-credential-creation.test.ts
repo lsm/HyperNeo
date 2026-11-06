@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { access, mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -28,6 +28,21 @@ vi.mock('node:fs/promises', async (original) => {
 describe('local credential creation', () => {
   const dataDir = process.env.HYPERNEO_DATA_DIR;
   let dir: string;
+  test('agent startup creates a separate owner-only credential and reuses it', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'agent-credential-'));
+    process.env.HYPERNEO_DATA_DIR = dir;
+    const run = vi.fn();
+    const db = { run } as unknown as DbGateway;
+    await ensureLocalCredential(db);
+    await ensureLocalCredential(db, 'agent');
+    const file = join(dir, 'agent-read.credential');
+    const credential = readLocalCredential(file);
+    expect(credential).not.toBe(readLocalCredential(join(dir, 'local-rpc.credential')));
+    expect((await stat(file)).mode & 0o077).toBe(0);
+    await ensureLocalCredential(db, 'agent');
+    expect(readLocalCredential(file)).toBe(credential);
+    expect(run.mock.calls.at(-1)?.[1]).toMatchObject({ credential, kind: 'agent' });
+  });
   afterEach(async () => {
     if (dataDir === undefined) delete process.env.HYPERNEO_DATA_DIR;
     else process.env.HYPERNEO_DATA_DIR = dataDir;

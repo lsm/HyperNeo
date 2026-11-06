@@ -62,6 +62,36 @@ const door: OperationCaller = { source: 'mcp', principal: 'session-door', sessio
 const agent: OperationCaller = { source: 'mcp', sessionId: 'neo:root', role: 'neo' };
 
 describe('device pairing', () => {
+  test('remote agent pairing waits for a human and cannot issue or approve codes', async () => {
+    const { db, call, pair, repo } = setup();
+    try {
+      const first = await call('device.pair.create', { kind: 'human' }, door);
+      const phone = await pair(first.code);
+      const made = await call('device.pair.create', { kind: 'agent' }, door);
+      expect(made).toMatchObject({ ok: true, approval: 'pending' });
+      expect((await pair(made.code)).status).toBe(403);
+      const reader: OperationCaller = {
+        source: 'rpc',
+        principal: 'local',
+        device: { deviceId: 'agent', kind: 'agent' },
+      };
+      expect((await call('device.pair.create', { kind: 'human' }, reader)).ok).toBe(false);
+      expect((await call('device.pair.approve', { codeId: made.codeId }, reader)).ok).toBe(false);
+      expect(
+        (
+          await call(
+            'device.pair.approve',
+            { codeId: made.codeId },
+            pairedHuman(phone.body.deviceId)
+          )
+        ).ok
+      ).toBe(true);
+      expect((await pair(made.code)).body.kind).toBe('agent');
+      expect(repo.listDevices().find((device) => device.kind === 'agent')).toBeDefined();
+    } finally {
+      db.close();
+    }
+  });
   test('a code pairs one device once, with the kind fixed when the code was made', async () => {
     const { db, call, pair } = setup();
     const made = await call('device.pair.create', { kind: 'relay', name: 'Push relay' }, door);
