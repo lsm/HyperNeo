@@ -1,13 +1,13 @@
 import type { EvidenceRef, EvolutionScope } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
-import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import {
   defineOperation,
   type OperationCaller,
   type OperationPolicy,
-} from '../operations/registry.ts';
+} from '../../operations/registry.ts';
 import {
   admitEvolutionMutator,
   denyEvolution,

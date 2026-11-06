@@ -1,6 +1,6 @@
-import { sdkMessageBodyAt } from '../../storage/repositories/sdk-message-body-read.ts';
+import { sdkMessageBodyAt } from '../../../storage/repositories/sdk-message-body-read.ts';
 import type { EvidenceRef } from '@hyperneo/shared';
-import { Logger } from '../logger.ts';
+import { Logger } from '../../logger.ts';
 import type {
   CaptureConversationFrictionForTaskParams,
   ConversationFrictionAnalysis,

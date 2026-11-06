@@ -8,16 +8,16 @@ import type {
 } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
-import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
-import { syncGoalAutomationSelfNagScheduleForScope } from '../space/goals/automation-schedule-sync.ts';
+import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
+import { syncGoalAutomationSelfNagScheduleForScope } from '../goals/automation-schedule-sync.ts';
 import { validateGoalAutomationSelfNagPolicy } from './evolution-policy-validation.ts';
 import {
   defineOperation,
   type OperationCaller,
   type OperationPolicy,
-} from '../operations/registry.ts';
-import type { ScheduleService } from '../schedule/schedule-service.ts';
+} from '../../operations/registry.ts';
+import type { ScheduleService } from '../../schedule/schedule-service.ts';
 import {
   admitEvolutionMutator,
   admitEvolutionReader,

@@ -1,5 +1,5 @@
 import type { EvidenceRef, StructuredLogEvent } from '@hyperneo/shared';
-import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
+import type { EvolutionRepository } from '../../../storage/repositories/evolution-repository.ts';
 import type { LogEvidenceRepository } from './log-evidence-types.ts';
 import { selectEvidenceKind, summarizeLogEvent } from './log-event-classification.ts';
 import { buildMetadata, numberOr } from './log-event-metadata.ts';

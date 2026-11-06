@@ -1,11 +1,11 @@
 import type { CreateMetricSnapshotParams, EvidenceRef, EvolutionScope } from '@hyperneo/shared';
-import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
-import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
-import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
-import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
-import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
-import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
-import type { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository.ts';
+import type { EvolutionRepository } from '../../../storage/repositories/evolution-repository.ts';
+import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
+import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
+import type { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { EvolutionTraceEvidenceService } from './trace-evidence-service.ts';
 import type { TraceEvidenceDiagnostic } from './trace-evidence-types.ts';
 

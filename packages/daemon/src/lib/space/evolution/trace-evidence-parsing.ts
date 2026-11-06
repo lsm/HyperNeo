@@ -1,5 +1,5 @@
-import { uniqueStrings as unique } from '../utils/unique-strings.ts';
-import { asRecord } from '../record.ts';
+import { uniqueStrings as unique } from '../../utils/unique-strings.ts';
+import { asRecord } from '../../record.ts';
 const SOURCE_FILE_EXTENSIONS = new Set([
   'ts',
   'tsx',

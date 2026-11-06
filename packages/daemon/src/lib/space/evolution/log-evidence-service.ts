@@ -1,5 +1,5 @@
 import type { StructuredLogEvent, StructuredLogLevel } from '@hyperneo/shared';
-import { isSqliteBusyError } from '../../storage/busy-retry.ts';
+import { isSqliteBusyError } from '../../../storage/busy-retry.ts';
 import type {
   DrainItem,
   EvolutionLogEvidenceServiceDeps,

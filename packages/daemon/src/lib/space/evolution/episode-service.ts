@@ -14,7 +14,7 @@ import type {
   UpdateTaskProposalParams,
 } from '@hyperneo/shared';
 import { generateUUID, scoreEvolutionEvidenceQuality } from '@hyperneo/shared';
-import { Logger } from '../logger.ts';
+import { Logger } from '../../logger.ts';
 import type {
   ApplyRollupGoalUpdateParams,
   ApplyRollupGoalUpdateResult,

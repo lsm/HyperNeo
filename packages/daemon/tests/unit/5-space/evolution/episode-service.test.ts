@@ -5,8 +5,8 @@ import {
   EvolutionEpisodeService,
   parseEpisodeJudgeJson,
   resolveEpisodeJudgeModel,
-} from '../../../../src/lib/evolution/episode-service';
-import { EvolutionScopeService } from '../../../../src/lib/evolution/scope-service';
+} from '../../../../src/lib/space/evolution/episode-service';
+import { EvolutionScopeService } from '../../../../src/lib/space/evolution/scope-service';
 import { clearModelsCache, setModelsCache } from '../../../../src/lib/model-service';
 import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository';
 import { SpaceGoalEventRepository } from '../../../../src/storage/repositories/space-goal-event-repository';

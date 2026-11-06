@@ -1,8 +1,8 @@
-import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import type { EvolutionScope, SpaceTask } from '@hyperneo/shared';
-import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
-import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
-import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
+import type { EvolutionRepository } from '../../../storage/repositories/evolution-repository.ts';
+import type { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 
 export const CONVERSATION_ANALYSIS_VERSION = 1;
 export const DEFAULT_CONFIDENCE_THRESHOLD = 0.5;

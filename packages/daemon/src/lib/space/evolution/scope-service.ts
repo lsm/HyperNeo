@@ -10,7 +10,7 @@ import type {
   UpdateEvolutionScopeParams,
   EvolutionEvidenceListResponse,
 } from '@hyperneo/shared';
-import { Logger } from '../logger.ts';
+import { Logger } from '../../logger.ts';
 import type {
   AddManualNoteEvidenceParams,
   AddMetricSnapshotEvidenceParams,
