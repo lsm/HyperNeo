@@ -1,18 +1,9 @@
 import { SessionSchedules } from '../components/SessionSchedules.tsx';
 import { lazy, Suspense } from 'preact/compat';
 import { useEffect } from 'preact/hooks';
-import {
-  currentSessionIdSignal,
-  currentSpaceCanonicalIdSignal,
-  currentSpaceIdSignal,
-  currentSpaceSessionIdSignal,
-  currentSpaceTaskIdSignal,
-  currentSpaceViewModeSignal,
-  navSectionSignal,
-  settingsSectionSignal,
-} from '../lib/signals.ts';
+import { currentSessionIdSignal, navSectionSignal, settingsSectionSignal } from '../lib/signals.ts';
 import { navigateToSessions } from '../lib/router.ts';
-import { webExtension, webExtensionDeclined, extensionNav } from '../lib/web-extensions.ts';
+import { webExtension, extensionNav } from '../lib/web-extensions.ts';
 import { BottomTabBar } from './BottomTabBar.tsx';
 import { VoiceRecordingIndicator } from '../components/voice/VoiceRecordingIndicator.tsx';
 import { VoiceSurfaceContext } from '../hooks/useVoiceRecorder';
@@ -100,25 +91,28 @@ const lazyFallback = (
 
 export default function MainContent() {
   const sessionId = currentSessionIdSignal.value;
-  const spaceRouteId = currentSpaceIdSignal.value;
-  const spaceId = currentSpaceCanonicalIdSignal.value ?? spaceRouteId;
-  const space = webExtension('space');
-  const spaceDeclined = webExtensionDeclined('space');
-  const spaceSessionViewId = currentSpaceSessionIdSignal.value;
-  const spaceTaskViewId = currentSpaceTaskIdSignal.value;
-  const spaceViewMode = currentSpaceViewModeSignal.value;
   const navSection = navSectionSignal.value;
   const settingsSection = settingsSectionSignal.value;
 
+  const extensions = extensionNav();
+  const sectionHasOwner =
+    navSection === 'chats' ||
+    navSection === 'settings' ||
+    extensions.some((nav) => nav.section === navSection);
+
   useEffect(() => {
-    if (spaceDeclined && navSection === 'spaces') navigateToSessions(true);
-  }, [spaceDeclined, navSection]);
+    if (!sectionHasOwner) navigateToSessions(true);
+  }, [sectionHasOwner]);
+
+  const extensionView = extensions.flatMap((nav) => {
+    const key = nav.contentKey();
+    return key ? [{ key, extension: nav.extension }] : [];
+  })[0];
+  const ExtensionContent = extensionView && webExtension(extensionView.extension)?.shell.Content;
 
   let contentKey: string;
-  if (spaceRouteId) {
-    contentKey = `space-${spaceRouteId}-${spaceViewMode}`;
-  } else if (navSection === 'spaces') {
-    contentKey = 'spaces';
+  if (extensionView) {
+    contentKey = extensionView.key;
   } else if (sessionId) {
     contentKey = `chat-${sessionId}`;
   } else if (navSection === 'chats') {
@@ -130,23 +124,8 @@ export default function MainContent() {
   }
 
   function renderContent() {
-    if (spaceId) {
-      if (!space) return lazyFallback;
-      return (
-        <Suspense fallback={lazyFallback}>
-          <space.SpaceIsland
-            spaceId={spaceId}
-            routeSpaceId={spaceRouteId}
-            viewMode={spaceViewMode}
-            sessionViewId={spaceSessionViewId}
-            taskViewId={spaceTaskViewId}
-          />
-        </Suspense>
-      );
-    }
-
-    if (navSection === 'spaces') {
-      return space ? <space.SpacesHome /> : lazyFallback;
+    if (extensionView) {
+      return ExtensionContent ? <ExtensionContent fallback={lazyFallback} /> : lazyFallback;
     }
 
     if (sessionId) {
@@ -209,7 +188,7 @@ export default function MainContent() {
       );
     }
 
-    return space ? <space.SpacesHome /> : lazyFallback;
+    return lazyFallback;
   }
 
   return (

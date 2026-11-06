@@ -10,7 +10,8 @@ import {
   navSectionSignal,
 } from '../../lib/signals.ts';
 import { spaceWebExtension } from '../../lib/space-web-extension';
-import { registerWebExtension } from '../../lib/web-extensions';
+import { declareExtensionNav, registerWebExtension } from '../../lib/web-extensions';
+import { spaceNav } from '../../lib/space-nav';
 
 registerWebExtension('space', spaceWebExtension);
 
@@ -47,6 +48,8 @@ beforeEach(() => {
   request.mockReset().mockResolvedValue({ ok: true, schedules: [] });
 });
 afterEach(cleanup);
+declareExtensionNav(spaceNav);
+
 describe('session page schedule placement', () => {
   it('owns the session strip and its scoped list read', async () => {
     render(<MainContent />);
