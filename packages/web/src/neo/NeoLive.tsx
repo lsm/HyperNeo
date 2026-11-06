@@ -1,3 +1,4 @@
+import { NeoSendFlight, type NeoSendFlightRequest } from './NeoSendFlight.tsx';
 import { resolveNeoCardReply } from './public-conversation.ts';
 import {
   neoWorkReferenceEntry,
@@ -37,7 +38,12 @@ import {
   neoAskEntryGroup,
 } from './neo-asks.ts';
 import { invokeOperation } from '../lib/operations.ts';
-import { restoreNeoImages, useNeoAttachments } from './neo-attachments.ts';
+import {
+  neoSentWords,
+  neoSplitSentMessage,
+  restoreNeoImages,
+  useNeoAttachments,
+} from './neo-attachments.ts';
 import { createNeoDraftReloadBuffer } from './neo-draft-reload-buffer.ts';
 import { useNeoPreviewCandidate } from './useNeoPreviewCandidate.ts';
 import { neoFileQuestionText } from './neo-file-question.ts';
@@ -107,6 +113,8 @@ const sessionTitle = (sessionId: string) =>
 
 export function NeoLive() {
   const neo = useNeo();
+  const [sendFlight, setSendFlight] = useState<NeoSendFlightRequest | null>(null);
+  useEffect(() => setSendFlight(null), [neo.sessionId]);
   const attachments = useNeoAttachments(neo.sessionId);
   const [dragging, setDragging] = useState(false);
   const [narrow, setNarrow] = useState(() => !window.matchMedia('(min-width: 1120px)').matches);
@@ -1133,7 +1141,10 @@ export function NeoLive() {
                 captureDraft(content, livePreview.current);
               }}
               onError={neo.setError}
-              onSend={(input) => {
+              onSend={(input, from) => {
+                nearBottom.current = true;
+                if (scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
+                setAwayFromBottom(false);
                 editRevision.value += 1;
                 priorFrame.current.frame = JSON.stringify([quote, [], 0]);
                 const handoff = recovery.handoff().catch((error: unknown) => {
@@ -1155,6 +1166,12 @@ export function NeoLive() {
                 return inputDraft.holdDraftAdoption(async () => {
                   const flight = neo.send(input);
                   const requestId = neo.sendRequestId(input);
+                  const words = neoSentWords(
+                    neoSplitSentMessage(input.text).words,
+                    !!input.images?.length
+                  );
+                  if (requestId && from && (words || input.quote))
+                    setSendFlight({ id: requestId, from, words, quote: input.quote });
                   if (requestId) acceptedCleanups.set(requestId, cleanup);
                   const receipt = await (recoveryReady ? flight : flight.finally(() => handoff));
                   if (receipt.ok) {
@@ -1168,6 +1185,13 @@ export function NeoLive() {
           )}
         </div>
       </footer>
+      {sendFlight && (
+        <NeoSendFlight
+          key={sendFlight.id}
+          flight={sendFlight}
+          onDone={() => setSendFlight((current) => (current === sendFlight ? null : current))}
+        />
+      )}
       <ToastContainer />
       {expandable && !expanded && (
         <NeoPreviewResize

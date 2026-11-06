@@ -47,6 +47,8 @@ export function NeoConversation({
   onRetryPublic?: () => void;
   onLoadEarlierPublic?: () => void;
 }) {
+  const sentHere = useMemo(() => new Set<string>(), [sessionId]);
+  pendingAsks?.forEach((ask) => sentHere.add(ask.requestId));
   const state = store.agentState.value;
   const pending = state.status === 'waiting_for_input' ? state.pendingQuestion : null;
   const epoch = useMemo(
@@ -85,6 +87,7 @@ export function NeoConversation({
         {publicConversation && (
           <NeoPublicConversation
             conversation={publicConversation}
+            skipArrival={sentHere}
             statuses={statuses}
             replyLabels={replyLabels}
             onRetry={onRetryPublic}

@@ -858,3 +858,23 @@
     min-height: 60px;
   }
 }
+
+.neo-send-flight {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  overflow: hidden;
+  border-style: solid;
+  border-radius: 16px;
+  color: var(--neo-user-text);
+  background: color-mix(
+    in srgb,
+    var(--neo-user-background) calc(var(--neo-flight-chrome) * 100%),
+    transparent
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--neo-user-border) calc(var(--neo-flight-chrome) * 100%),
+    transparent
+  );
+}
