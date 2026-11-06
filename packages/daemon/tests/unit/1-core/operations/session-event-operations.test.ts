@@ -116,13 +116,24 @@ describe('session event operations without Space', () => {
     );
   });
 
-  test('get reads a stored session event and names an unknown id', async () => {
+  test('get reads only events delivered to this session, and Neo reads any', async () => {
     storeEvent('e1');
+    storeEvent('theirs');
+    const jobs = db.getJobQueueRepo();
+    jobs.enqueue({
+      queue: 'mailbox',
+      payload: { messageUuid: sessionEventMessageUuid('e1', 's-plain') },
+    });
     expect(await run('event.external.get', { eventId: 'e1' })).toMatchObject({
       event: { id: 'e1', summary: 'Summary e1' },
       state: 'published',
     });
+    expect(await run('event.external.get', { eventId: 'theirs' })).toBe('event_not_found');
     expect(await run('event.external.get', { eventId: 'nope' })).toBe('event_not_found');
+    const neo: OperationCaller = { ...caller, role: 'neo' };
+    expect(await run('event.external.get', { eventId: 'theirs' }, neo)).toMatchObject({
+      event: { id: 'theirs' },
+    });
   });
 
   test('delivery list reports this session mailbox jobs only, filtered by state', async () => {

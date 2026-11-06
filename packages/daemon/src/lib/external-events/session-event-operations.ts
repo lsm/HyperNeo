@@ -199,24 +199,32 @@ export function readSessionDeliveries(
   };
 }
 
-function readSessionEvent(
-  _sessionId: string,
+export function readSessionEvent(
+  sessionId: string,
   input: { eventId: string },
-  deps: Pick<SessionEventDependencies, 'events'>
+  deps: Pick<SessionEventDependencies, 'events' | 'deliveryJob'>,
+  caller: OperationCaller
 ) {
   const record = deps.events.getById(input.eventId);
-  return record ? { event: record.event, state: record.state } : 'event_not_found';
+  const visible =
+    caller.role === 'neo' || deps.deliveryJob(sessionEventMessageUuid(input.eventId, sessionId));
+  return record && visible ? { event: record.event, state: record.state } : 'event_not_found';
 }
 
 function ownSessionPipeline<Input, Result>(
   name: string,
   deps: SessionEventDependencies,
-  apply: (sessionId: string, input: Input, deps: SessionEventDependencies) => Result
+  apply: (
+    sessionId: string,
+    input: Input,
+    deps: SessionEventDependencies,
+    caller: OperationCaller
+  ) => Result
 ) {
   return (superpipe({ deps })(name) as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitSessionCaller, ['caller', 'deps'], 'result:outcome')
-    .pipe(apply, ['outcome', 'input', 'deps'], 'outcome')
+    .pipe(apply, ['outcome', 'input', 'deps', 'caller'], 'outcome')
     .endAsync('outcome') as (
     input: Input,
     caller: OperationCaller
@@ -274,7 +282,7 @@ export function createSessionEventOperations(
     defineOperation({
       name: 'event.external.get',
       policy: { safetyClass: 'read', roles: SESSION_EVENT_ROLES },
-      description: `Fetch the full raw record for one external event by id, the on-demand counterpart to the lean summary injected as a message. Rejects event_not_found when the id is unknown. ${SESSION_DOC}`,
+      description: `Fetch the full raw record for one external event by id, the on-demand counterpart to the lean summary injected as a message. Rejects event_not_found when the id is unknown or the event was not delivered to this session; Neo can read any event. ${SESSION_DOC}`,
       inputSchema: z.object({ eventId: z.string().min(1) }).strict(),
       resultSchema: z.union([
         z.object({ event: ExternalEventSchema, state: ExternalEventStateSchema }),

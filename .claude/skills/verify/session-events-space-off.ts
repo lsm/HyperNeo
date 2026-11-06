@@ -102,8 +102,6 @@ try {
     summary: 'PR #7 review submitted',
     payload: { prUrl: PR, prNumber: 7, actor: 'proof' },
   });
-  evidence.get = await invoke('event.external.get', { eventId: 'proof-event' });
-  assert.equal(evidence.get.event.id, 'proof-event');
   for (let attempt = 0; attempt < 50; attempt++) {
     evidence.deliveries = await invoke('event.external.delivery.list');
     if (evidence.deliveries.deliveries[0]?.state === 'delivered') break;
@@ -111,6 +109,8 @@ try {
   }
   assert.equal(evidence.deliveries.deliveries[0]?.eventId, 'proof-event');
   assert.equal(evidence.deliveries.deliveries[0]?.state, 'delivered');
+  evidence.get = await invoke('event.external.get', { eventId: 'proof-event' });
+  assert.equal(evidence.get.event.id, 'proof-event');
 
   evidence.unsubscribe = await invoke('event.external.unsubscribe', { prUrl: PR });
   assert.equal(evidence.unsubscribe.ok, true);
