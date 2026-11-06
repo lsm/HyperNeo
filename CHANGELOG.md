@@ -4,6 +4,20 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.55.0] - 2026-11-06
+
+### Before upgrading
+
+- Space is off by default, and compiled builds do not include it (#9915 and related moves). A compiled daemon started with `HYPERNEO_SPACE=on` exits with a clear error.
+- ACP support and the OpenCode worker are removed (#9981, #10002). Copilot sessions are now discovered through its SDK.
+
+### Neo and workers
+
+- Neo is the default web entry and the only writer of human cards; cards that break the card rules are refused (#9888, #9890, #9902, #9930, #9946).
+- A todo's pull requests are placed by the worker turn that produced them (#9892, #9995, #10005).
+- Worker names and status sync into the DB, so readers no longer ask each worker live, which removes most event-loop stalls (#9926, #9937, #9960, #9980, #9999).
+- Copy card links as Markdown, and read them with an origin-bound read-only agent credential (#9867, #9906).
+
 ## [0.54.0] - 2026-11-04
 
 ### Before upgrading
