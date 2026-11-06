@@ -66,6 +66,7 @@ export interface RawModelEntry {
   contextWindow?: number;
   context_window?: number;
   thinkingModes?: 'off' | 'on' | 'granular';
+  effortLevels?: ModelInfo['effortLevels'];
   available?: boolean;
 }
 
@@ -106,6 +107,7 @@ export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
       releaseDate: '',
       available: m.available !== false,
       thinkingModes: m.thinkingModes,
+      effortLevels: m.effortLevels,
     };
   });
 

@@ -210,6 +210,7 @@ describe('Session RPC Handlers — models.list', () => {
       name: 'Healthy',
       provider: 'healthy',
       contextWindow: 128000,
+      effortLevels: ['low', 'high'],
     } as ModelInfo;
     for (const [id, discover] of [
       ['healthy', async () => [model]],
@@ -237,7 +238,11 @@ describe('Session RPC Handlers — models.list', () => {
       unavailableProviders: Array<{ providerId: string; available: boolean }>;
     };
     expect(result.models).toEqual([
-      expect.objectContaining({ id: 'healthy-model', available: true }),
+      expect.objectContaining({
+        id: 'healthy-model',
+        available: true,
+        effortLevels: ['low', 'high'],
+      }),
     ]);
     expect(result.unavailableProviders).toContainEqual(
       expect.objectContaining({ providerId: 'broken', available: false })
