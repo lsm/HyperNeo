@@ -15,7 +15,6 @@
     "./provider/*": "./src/provider/*.ts",
     "./logger": "./src/logger.ts",
     "./command": "./src/command.ts",
-    "./acp": "./src/acp/index.ts",
     "./message-hub/unix-socket-transport": "./src/message-hub/unix-socket-transport.ts",
     "./message-hub/stdio-transport": "./src/message-hub/stdio-transport.ts",
     "./message-hub/protocol": "./src/message-hub/protocol.ts",

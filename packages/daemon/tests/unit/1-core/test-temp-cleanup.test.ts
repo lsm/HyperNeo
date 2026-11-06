@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const daemon = fileURLToPath(new URL('../../../', import.meta.url));
 const suites = [
-  'tests/unit/1-core/drivers/acp-agent-adapter.test.ts',
+  'tests/unit/1-core/drivers/copilot-discovery-groups.test.ts',
   'tests/unit/1-core/drivers/copilot-history-find.test.ts',
   'tests/unit/1-core/providers/codex-model-discovery.test.ts',
   'tests/unit/lib/oap/oap-stdio-client.test.ts',
@@ -25,7 +25,7 @@ test('fixture suites remove their owned temporary directories', () => {
       timeout: 90000,
     });
     expect(
-      readdirSync(root).filter((name) => /^(acp-|copilot-|hyperneo-|neo-|oap-)/.test(name))
+      readdirSync(root).filter((name) => /^(copilot-|hyperneo-|neo-|oap-)/.test(name))
     ).toEqual([]);
   } finally {
     rmSync(root, { recursive: true, force: true });

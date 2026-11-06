@@ -7,7 +7,8 @@ TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evid
 ```
 
 The helper owns two isolated source daemons with separate HOME/data/DB directories
-and ephemeral loopback listeners. It refuses gh, open and ps; no credentials,
+and ephemeral loopback listeners. The querying daemon redeems a pairing code
+from the synthetic peer before attaching. It refuses gh, open and ps; no credentials,
 native applications, provider turns or live daemon are involved. It ingests
 synthetic Codex and Claude Code transcripts through the production native-feed
 parsers into each daemon's retained index.

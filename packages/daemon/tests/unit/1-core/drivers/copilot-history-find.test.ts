@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createCopilotAdapter } from '../../../../src/lib/drivers/copilot-adapter';
-import { createAcpAgentAdapter } from '../../../../src/lib/drivers/acp-agent-adapter';
+import { createCopilotDiscovery } from '../../../../src/lib/drivers/copilot-discovery';
 import type { WorkTurnPage } from '../../../../src/storage/work-turn-page';
 import type { WorkAdapter, WorkCallContext, WorkStarted } from '../../../../src/lib/drivers/types';
 
@@ -47,13 +47,12 @@ function setup(projectFolder?: string) {
   const external = [
     { sessionId: 'external', cwd: '/synthetic/copilot-project', title: 'External', updatedAt: 1 },
   ];
-  const discovery = createAcpAgentAdapter({
-    agent: { id: 'copilot-cli', name: 'Copilot', bin: 'copilot', args: [] },
+  const discovery = createCopilotDiscovery({
     machine: 'test',
     now: Date.now,
     listSessions: async () => {
-      if (existsSync(join(run, 'acp-list-failure')))
-        throw new Error('Synthetic ACP listing failure');
+      if (existsSync(join(run, 'discovery-list-failure')))
+        throw new Error('Synthetic discovery listing failure');
       return external;
     },
     ownSessions: () => new Set(),
@@ -320,7 +319,7 @@ describe('Copilot owned history and discovery', () => {
     expect(f.read(work, '../../not-a-message')?.availability).toBe('reply_unavailable');
   });
 
-  test('owned status overrides both young and old ACP heuristics, dedupes before title filtering', async () => {
+  test('owned status overrides both young and old external discovery heuristics, dedupes before title filtering', async () => {
     const f = setup();
     const completed = await f.start();
     const blocked = await f.start('permission');
@@ -328,13 +327,13 @@ describe('Copilot owned history and discovery', () => {
       {
         sessionId: completed.ref.id,
         cwd: '/synthetic/copilot-project',
-        title: 'Wrong ACP title',
+        title: 'Wrong external title',
         updatedAt: Date.now(),
       },
       {
         sessionId: blocked.ref.id,
         cwd: '/synthetic/copilot-project',
-        title: 'Wrong ACP title',
+        title: 'Wrong external title',
         updatedAt: 1,
       }
     );
@@ -347,9 +346,9 @@ describe('Copilot owned history and discovery', () => {
       { status: 'needs_you' },
     ]);
     expect(work.find((w) => w.ref.id === 'external')?.status).toBe('done');
-    expect((await f.adapter.find({ ...query, text: 'Wrong ACP' })).flatMap((g) => g.work)).toEqual(
-      []
-    );
+    expect(
+      (await f.adapter.find({ ...query, text: 'Wrong external' })).flatMap((g) => g.work)
+    ).toEqual([]);
     expect(
       (await f.adapter.find({ ...query, text: 'Owned title' })).flatMap((g) => g.work)
     ).toHaveLength(2);
@@ -507,8 +506,8 @@ describe('Copilot owned history and discovery', () => {
 
   test('owned discovery remains available when a cold external list fails; failure without owned work stays explicit', async () => {
     const f = setup();
-    writeFileSync(join(f.run, 'acp-list-failure'), 'fail');
-    await expect(f.adapter.find(query)).rejects.toThrow('Synthetic ACP listing failure');
+    writeFileSync(join(f.run, 'discovery-list-failure'), 'fail');
+    await expect(f.adapter.find(query)).rejects.toThrow('Synthetic discovery listing failure');
     const work = await f.start();
     await f.restart();
     const items = (await f.adapter.find(query)).flatMap((g) => g.work);

@@ -14,13 +14,12 @@ version-reader fixture on their isolated PATH so Linux CI needs no macOS tools;
 the daemon journey on macOS still exercises the real installed `plutil`.
 
 The helper owns its daemon, synthetic home, Codex database, application-version
-plists and version-only CLI shims. Copilot discovery uses the repository's ACP
-fixture; its recorded methods must contain only initialize and session/list.
-No real account, credential or worker is used. A synthetic provider with a fake
-key supplies admission metadata only; its endpoint is an unused loopback port.
-A synthetic Neo uses
-manual mode: real mailbox admission persists notices into its context without
-starting a model. Observe those notices through public work.read RPC.
+plists and version-only CLI shims. Copilot discovery uses the repository's SDK
+fixture; its recorded methods must contain only connect, status.get and session.list.
+No real account, credential or human worker is used. A synthetic provider stores the dev-proxy key in the fresh database. An ephemeral
+local API mock handles any synthetic Neo turns, and external registry MCP servers
+are disabled before its binding is created. Real mailbox admission persists
+notices into its context. Observe those notices through public work.read RPC.
 
 The explicitly enqueued startup health job checks all five local drivers. Then
 work.health and work.adapters must expose a missing synthetic Codex database as

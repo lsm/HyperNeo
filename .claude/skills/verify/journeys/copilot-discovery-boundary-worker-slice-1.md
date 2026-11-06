@@ -1,20 +1,22 @@
-## Copilot discovery boundary (worker slice 1)
+## Copilot discovery boundary
 
-Use the shared setup and cleanup from SKILL.md and the real daemon/RPC helper
-in copilot-owned-history-find.md. It covers external discovery merged with owned
-workers through the actual operation.invoke door. Copilot retains its --acp
-listing path during the first removal slice. OpenCode must be absent from
-ACP_AGENTS, while Copilot still advertises find/start/send/queue/status/stop.
-The fixture records only initialize and session/list on the discovery process.
+Use the guarded setup and cleanup in SKILL.md and the real daemon/RPC helper
+in copilot-owned-history-find.md. External SDK metadata is merged with owned
+workers through operation.invoke. OpenCode is absent. Copilot retains
+find/start/send/queue/status/stop. Discovery calls session.list and closes its
+own SDK process without creating, resuming or sending to a session.
 
-Focused synthetic process tests additionally verify that the existing ACP client
-loads a session, filters an unrelated session's message, accepts one streamed
-response, and observes a cancelled prompt without removing history. They also
-reject an incompatible ACP protocol. This characterizes the current ACP client,
-not SDK worker delivery/receipt normalization, model discovery, IDE attachment or
-termination of arbitrary child tools:
+Run focused process tests under an isolated HOME and TMPDIR using with-run.sh:
 
 ```bash
 cd packages/daemon
-bunx vitest run tests/unit/1-core/drivers/copilot-discovery.test.ts
+node_modules/.bin/vitest run tests/unit/1-core/drivers/copilot-discovery.test.ts \
+  tests/unit/1-core/drivers/copilot-discovery-groups.test.ts
 ```
+
+Observe matching titles and recovered project folders, explicit listing errors,
+incompatible protocol rejection, and a stalled listing ending at its deadline
+with no surviving fixture process. Pure window tests retain the first complete
+50-row page crossing the 90-day horizon and at most 500 recent rows. These are
+synthetic SDK protocol and public daemon proofs. Real account authentication,
+installed CLI persistence and GUI handover require separate verification.

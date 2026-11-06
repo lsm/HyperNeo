@@ -104,6 +104,31 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
             ],
       });
       break;
+    case 'session.list': {
+      if (process.argv.includes('--held-list')) break;
+      if (existsSync(join(process.cwd(), 'copilot-list-failure'))) {
+        send({
+          jsonrpc: '2.0',
+          id: msg.id,
+          error: { code: -32000, message: 'Synthetic listing failure' },
+        });
+        break;
+      }
+      const sessions = JSON.parse(readFileSync(join(process.cwd(), 'copilot-list.json'), 'utf8'));
+      reply({
+        sessions: sessions.map(
+          (session: { sessionId: string; cwd?: string; title?: string; updatedAt?: string }) => ({
+            sessionId: session.sessionId,
+            startTime: session.updatedAt ?? new Date(0).toISOString(),
+            modifiedTime: session.updatedAt ?? new Date(0).toISOString(),
+            summary: session.title,
+            isRemote: false,
+            ...(session.cwd ? { context: { cwd: session.cwd } } : {}),
+          })
+        ),
+      });
+      break;
+    }
     case 'session.create':
       sessionId = String(msg.params?.sessionId);
       if (process.argv.includes('--durable-inputs')) writeFileSync(fixtureState(), '0');
