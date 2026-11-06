@@ -1207,8 +1207,16 @@ export class NeoAskTodoRepository {
   }
 
   listAwaitingNeoDecision(): NeoTodo[] {
-    return this.listOpenAsks().flatMap((ask) =>
-      neoTodosAwaitingNeoDecision(this.listFamilyTodos(ask.id), ask, this.listQuestions(ask.id))
+    const candidates = this.db
+      .prepare(`SELECT a.id FROM neo_asks a WHERE a.status = 'open'
+        AND EXISTS (SELECT 1 FROM neo_todos waiting WHERE waiting.ask_id = a.id
+          AND waiting.started_at IS NULL AND waiting.state IN ('todo', 'blocked'))
+        AND EXISTS (SELECT 1 FROM neo_todos gone JOIN neo_asks home ON home.id = gone.ask_id
+          WHERE COALESCE(home.parent_id, home.id) = COALESCE(a.parent_id, a.id)
+          AND (gone.state = 'removed' OR (gone.state = 'closed_unverified' AND gone.started_at IS NULL)))`)
+      .all() as { id: string }[];
+    return candidates.flatMap(({ id }) =>
+      neoTodosAwaitingNeoDecision(this.listFamilyTodos(id), this.getAsk(id), this.listQuestions(id))
     );
   }
 
