@@ -9,6 +9,11 @@ import { VoiceRecordingIndicator } from '../components/voice/VoiceRecordingIndic
 import { VoiceSurfaceContext } from '../hooks/useVoiceRecorder';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 
+import {
+  ConnectionsServicesPage,
+  isConnectionsSection,
+} from '../components/settings/ConnectionsServicesPage.tsx';
+
 const ChatContainer = lazy(() => import('./ChatContainer.tsx'));
 const SessionsPage = lazy(() =>
   import('./SessionsPage.tsx').then((m) => ({ default: m.SessionsPage }))
@@ -167,13 +172,17 @@ export default function MainContent() {
               <Suspense fallback={lazyFallback}>
                 {settingsSection === 'preferences' && <PreferencesSettings />}
                 {settingsSection === 'general' && <GeneralSettings />}
-                {settingsSection === 'providers' && <ProvidersSettings />}
-                {settingsSection === 'connections' && <ConnectionsSettings />}
+                {isConnectionsSection(settingsSection) && (
+                  <ConnectionsServicesPage section={settingsSection} fallback={lazyFallback}>
+                    {settingsSection === 'providers' && <ProvidersSettings />}
+                    {settingsSection === 'connections' && <ConnectionsSettings />}
+                    {settingsSection === 'devices' && <DevicesSettings />}
+                    {settingsSection === 'remote-daemons' && <RemoteDaemonsSettings />}
+                  </ConnectionsServicesPage>
+                )}
                 {settingsSection === 'voice' && <VoiceSettings />}
                 {settingsSection === 'exa' && <ExaSettings />}
                 {settingsSection === 'app-mcp-servers' && <AppMcpServersSettings />}
-                {settingsSection === 'devices' && <DevicesSettings />}
-                {settingsSection === 'remote-daemons' && <RemoteDaemonsSettings />}
                 {settingsSection === 'skills' && <SkillsRegistry />}
                 {settingsSection === 'coding-pack' && <PackSettings />}
                 {settingsSection === 'neo-model' && <NeoModelSettings />}

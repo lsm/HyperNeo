@@ -164,7 +164,9 @@ describe('NeoDrawer', () => {
   it('explains pairing refusal and keeps platform-only controls out of web', async () => {
     invoke.mockResolvedValue({ ok: false, reason: 'not_paired: denied' });
     drawer();
-    expect((await screen.findByRole('alert')).textContent).toContain('Settings → Devices');
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'Settings → Connections & Services → Devices'
+    );
     expect(screen.queryByRole('textbox')).toBeNull();
     expect(screen.queryByText('Demo data (offline)')).toBeNull();
   });
