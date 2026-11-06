@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+export { pairMessageCopyBrowser } from './neo-whole-message-copy-web.mjs';
 
 export async function verifyMermaidHitAreas(page, fixture, { phase, evidence, touch = false }) {
   await page.goto(fixture.url);

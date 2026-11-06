@@ -112,11 +112,12 @@ VERIFY_PORT=9311 bun .claude/skills/verify/rpc.ts rpc:providers.create \
 
 ## Attended fixture browser pairing
 
-For the message-copy fixture and its sibling journeys, READY includes a fresh
+For the message-copy and Mermaid hit-area fixtures and their sibling journeys,
+READY includes a fresh
 `pairCode` and `pairBase`. Import `pairMessageCopyBrowser` alongside the journey's
 browser checker and call it once with the owned Playwright browser and READY.
-The function lives in `neo-whole-message-copy-web.mjs`; the sibling fold and
-hit-area helpers re-export it.
+The function lives in `neo-whole-message-copy-web.mjs`; the sibling fold,
+hit-area and Mermaid helpers re-export it.
 It redeems the synthetic code through the real `/pair` endpoint and returns
 `storageState`. Pass that state to every desktop/touch browser context, alongside
 its viewport and clipboard permissions. Reuse the state across sibling checkers;
