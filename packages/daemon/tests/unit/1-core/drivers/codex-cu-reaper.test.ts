@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { decideCuReap, createCuChecker } from '../../../../src/lib/drivers/codex-cu-reaper';
+import {
+  configureLogger,
+  getLoggerConfig,
+  LogLevel,
+  subscribeToStructuredLogs,
+} from '../../../../src/lib/logger';
 
 const now = Date.parse('2026-11-03T18:00:00Z');
 const path =
@@ -72,6 +78,41 @@ describe('decideCuReap', () => {
 });
 
 describe('createCuChecker', () => {
+  test('a cancelled automatic action does not log a kill attempt', async () => {
+    const previousConfig = getLoggerConfig();
+    configureLogger({ level: LogLevel.WARN });
+    const events: string[] = [];
+    const unsubscribe = subscribeToStructuredLogs((event) => {
+      if (event.module.includes('codex-cu')) events.push(JSON.stringify(event));
+    });
+    let reads = 0;
+    let confirmed = false;
+    const signals: number[] = [];
+    const checker = createCuChecker({
+      read: async () =>
+        ++reads === 1 || confirmed
+          ? observation()
+          : { ...observation(), assertions: `Listed by owning process:\n${assertion('00:00:01')}` },
+      auto: () => true,
+      notify: async () => {},
+      signal: (pid) => void signals.push(pid),
+    });
+    try {
+      await checker.check();
+      expect(reads).toBe(2);
+      expect(signals).toEqual([]);
+      expect(events.filter((event) => event.includes('action: kill -TERM'))).toEqual([]);
+      confirmed = true;
+      await checker.check();
+      expect(signals).toEqual([123]);
+      expect(events.filter((event) => event.includes('action: kill -TERM'))).toHaveLength(1);
+    } finally {
+      await checker.close();
+      unsubscribe();
+      configureLogger(previousConfig);
+    }
+  });
+
   test('a failed alert is attempted once for each service process birth', async () => {
     let attempts = 0;
     let facts = observation();

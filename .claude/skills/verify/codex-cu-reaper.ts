@@ -14,6 +14,7 @@ const pid = 987654;
 const name = 'Codex Computer Use interaction';
 let young = false, recent = false, failSignal = false, denyRead = false, auto = false;
 let failNotice = false;
+let becomeYoungAfterRead = false;
 let hold: Promise<void> | undefined;
 const commands: { file: string; args: string[] }[] = [];
 const notices: string[] = [];
@@ -29,7 +30,9 @@ const fakeExecFile = Object.assign(() => { throw new Error('Use promisified fixt
     if (file === '/usr/bin/pmset' && args[1] === 'assertions') {
       if (denyRead) throw new Error('synthetic pmset refusal');
       await hold;
-      return { stdout: `Listed by owning process:\n pid ${pid}(SkyComputerUseService): [0x0000000500000001] ${young ? '00:00:01' : '20:00:00'} PreventUserIdleDisplaySleep named: "${name}"\n`, stderr: '' };
+      const age = young ? '00:00:01' : '20:00:00';
+      if (becomeYoungAfterRead) young = true;
+      return { stdout: `Listed by owning process:\n pid ${pid}(SkyComputerUseService): [0x0000000500000001] ${age} PreventUserIdleDisplaySleep named: "${name}"\n`, stderr: '' };
     }
     if (file === '/usr/bin/pmset' && args[1] === 'log') {
       const at = new Date(Date.now() - (recent ? 1_000 : 600_000)).toISOString().slice(0, 19).replace('T', ' ');
@@ -112,6 +115,15 @@ try {
   assert.equal(notices.length - beforeFailedNotices, 1, 'A failed notification must not retry');
   await closeFailedNotice();
   failNotice = false;
+  becomeYoungAfterRead = true;
+  const closeCancelled = startCuChecker(() => true); closeAll.push(closeCancelled);
+  const beforeCancelledSignals = signals.length, beforeCancelledEvents = events.length;
+  timers.at(-1)!.callback(); await settle();
+  assert.equal(signals.length, beforeCancelledSignals);
+  assert.equal(events.slice(beforeCancelledEvents).filter((event) => JSON.stringify(event).includes('action: kill -TERM')).length, 0,
+    'A cancelled final recheck must not log a kill attempt');
+  await closeCancelled();
+  becomeYoungAfterRead = young = false;
   let release!: () => void;
   hold = new Promise<void>((resolve) => { release = resolve; });
   const end = startCuChecker(() => false); closeAll.push(end);
