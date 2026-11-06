@@ -585,12 +585,15 @@ export function NeoLive() {
   useLayoutEffect(() => {
     const element = footer.current;
     if (!element) return;
-    const resize = new ResizeObserver(() => {
+    const keepBottom = () => {
       shell.current?.style.setProperty('--neo-composer-height', `${element.offsetHeight}px`);
-      if (nearBottom.current && scroll.current)
+      if (nearBottom.current && scroll.current) {
         scroll.current.scrollTop = scroll.current.scrollHeight;
+        lastScrollTop.current = scroll.current.scrollTop;
+      }
       if (scroll.current) setAwayFromBottom(!isAtBottom(scroll.current));
-    });
+    };
+    const resize = new ResizeObserver(keepBottom);
     resize.observe(element);
     const railElement = rail.current;
     const observeRail = () => {
@@ -599,8 +602,11 @@ export function NeoLive() {
       for (const child of railElement.children) resize.observe(child);
     };
     observeRail();
-    const added = new MutationObserver(observeRail);
-    if (railElement) added.observe(railElement, { childList: true });
+    const added = new MutationObserver(() => {
+      observeRail();
+      keepBottom();
+    });
+    if (railElement) added.observe(railElement, { childList: true, subtree: true });
     return () => {
       resize.disconnect();
       added.disconnect();
