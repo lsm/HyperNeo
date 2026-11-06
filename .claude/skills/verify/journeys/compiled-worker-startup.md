@@ -81,8 +81,12 @@ artifact. A macOS/Linux pass alone does not verify Windows stability.
 The cold PowerShell preflight gets 30 seconds. The actual ACL probe and daemon
 startup must still pass afterward. The fixture waits synchronously for its source,
 compiler and compiled child before cleanup. Its one directory removal allows five
-filesystem retries with 100 ms linear backoff, totaling at most 1.5 seconds of
-backoff for a transient lock. A persistent lock still fails the test.
+Windows lock retries with 100 ms linear backoff, totaling at most 1.5 seconds of
+backoff for a transient lock. The script-owned removeTempDirectory helper retries
+only EBUSY, EPERM and ENOTEMPTY on Windows. Persistent locks fail after six removal
+attempts; other errors and platforms fail immediately. Bun 1.4.2 parses the native
+rmSync retry options but its removal implementation ignores them, so these waits
+are explicit and asynchronous. The Windows fixture job also tests these bounds.
 
 Run the resource regression helper with fresh directories:
 

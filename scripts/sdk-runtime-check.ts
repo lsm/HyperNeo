@@ -6,13 +6,13 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
-  rmSync,
   statSync,
 } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
+import { removeTempDirectory } from './remove-temp-directory.ts';
 
 const RUN_TIMEOUT_MS = 600_000;
 const OLD_DOWNLOAD_CAP_MS = 120_000;
@@ -187,7 +187,7 @@ async function checkSlowInterruptedDownload(compiledBinary: string, copilotVersi
     );
   } finally {
     mirror.close();
-    rmSync(run, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await removeTempDirectory(run);
   }
 }
 
@@ -200,7 +200,7 @@ export async function checkSdkRuntimes(compiledBinary: string, network = false):
     expectRuntimes(observed(await runBinary(binary, run)), 'cache', run, copilotCliVersion);
     console.log(`PASS: ${basename(compiledBinary)} started Claude and Copilot`);
   } finally {
-    rmSync(run, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await removeTempDirectory(run);
   }
   if (network) await checkSlowInterruptedDownload(compiledBinary, copilotCliVersion);
 }

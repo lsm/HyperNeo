@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { removeTempDirectory } from '../../../scripts/remove-temp-directory.ts';
 
 const root = resolve(import.meta.dir, '../../..');
 const run = resolve(process.argv[2]);
@@ -74,15 +75,15 @@ try {
     );
     const sdk = readFileSync(join(root, 'scripts/sdk-runtime-check.ts'), 'utf8');
     const cleanups = [
-      ...fixture.matchAll(/^    rmSync\(run,.*$/gm),
-      ...sdk.matchAll(/^    rmSync\(run,.*$/gm),
+      ...fixture.matchAll(/^    await removeTempDirectory\(run\);$/gm),
+      ...sdk.matchAll(/^    await removeTempDirectory\(run\);$/gm),
     ];
     assert.equal(cleanups.length, 3, 'Must exercise the fixture and both SDK cleanup statements');
     const results: Record<string, unknown>[] = [];
     evidence.cleanup = results;
     for (const [index, [cleanup]] of cleanups.entries()) {
       const cleanupStatement = reproduce
-        ? cleanup.replace(', maxRetries: 5, retryDelay: 100', '')
+        ? 'rmSync(run, { recursive: true, force: true });'
         : cleanup;
       const directory = join(run, `locked-fixture-${index}`);
       const ready = join(run, `lock-ready-${index}`);
@@ -102,9 +103,16 @@ try {
         }
         assert(existsSync(ready), 'Locker must execute its image before cleanup');
         assert.equal(locker.exitCode, null, 'Locker must still own its executable');
+        const cleanupStarted = Date.now();
         let cleanupFailure: unknown;
         try {
-          new Function('rmSync', 'run', cleanupStatement)(rmSync, directory);
+          const remove = new Function(
+            'rmSync',
+            'removeTempDirectory',
+            'run',
+            `return (async () => { ${cleanupStatement} })();`
+          );
+          await remove(rmSync, removeTempDirectory, directory);
         } catch (error) {
           cleanupFailure = error;
         }
@@ -112,6 +120,7 @@ try {
           index,
           passed: cleanupFailure === undefined,
           remaining: existsSync(directory),
+          elapsedMs: Date.now() - cleanupStarted,
           code: (cleanupFailure as NodeJS.ErrnoException | undefined)?.code,
         });
         if (reproduce) {
@@ -127,7 +136,7 @@ try {
         locker.kill();
         await locker.exited;
         evidence.lockerStderr = await stderr;
-        rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+        await removeTempDirectory(directory);
       }
     }
   } else {
@@ -136,7 +145,7 @@ try {
   evidence.passed = true;
 } finally {
   writeFileSync(join(run, 'evidence/windows-resources.json'), JSON.stringify(evidence, null, 2));
-  rmSync(join(run, 'System32'), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await removeTempDirectory(join(run, 'System32'));
   rmSync(source, { force: true });
 }
 console.log('PASS: compiled-smoke resource regression proof', JSON.stringify(evidence));

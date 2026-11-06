@@ -642,7 +642,7 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Run worker resolution and compiled fixture contracts
         working-directory: packages/daemon
-        run: bun test --preload=./tests/unit/setup.ts ./tests/unit/lib/runtime-worker-url.test.ts
+        run: bun test --preload=./tests/unit/setup.ts ./tests/unit/lib/runtime-worker-url.test.ts ./tests/unit/lib/temp-directory-cleanup.test.ts
       - name: Prove the compile timeout budget on Windows three times
         shell: pwsh
         run: |

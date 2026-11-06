@@ -1,9 +1,10 @@
 import { expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { runtimeWorkerUrl } from '../../../src/lib/runtime-worker-url.ts';
+import { removeTempDirectory } from '../../../../../scripts/remove-temp-directory.ts';
 
 test.each([
   [
@@ -29,7 +30,7 @@ test.each([
   );
 });
 
-test('source and compiled node workers execute TypeScript entrypoints as JavaScript', () => {
+test('source and compiled node workers execute TypeScript entrypoints as JavaScript', async () => {
   const root = resolve(import.meta.dirname, '../../../../..');
   const run = mkdtempSync(join(tmpdir(), 'hyperneo-compiled-worker-'));
   const bun = process.versions.bun
@@ -56,6 +57,6 @@ test('source and compiled node workers execute TypeScript entrypoints as JavaScr
       'compiled-worker-ready'
     );
   } finally {
-    rmSync(run, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await removeTempDirectory(run);
   }
 }, 52_000);
