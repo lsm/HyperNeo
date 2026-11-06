@@ -93,6 +93,7 @@ describe('Bun daemon boot probe construction', () => {
         pass: true,
         health: 'ok',
         liveEmpty: true,
+        goalListed: true,
         spaceTables: 0,
         noMissingTables: true,
         gracefulShutdown: true,

@@ -3,6 +3,7 @@ import { registerClientOperations } from './clients.ts';
 import { registerDriverOperations } from './drivers.ts';
 import { registerSessionEventOperations } from './external-events.ts';
 import type { FamilyOperationContext } from './context.ts';
+import { registerSessionGoalOperations } from './goals.ts';
 import { registerSessionOperations } from './session.ts';
 import { registerSettingsOperations } from './settings.ts';
 import { createProjectFolderOperation } from '../../session/project-folder-operation.ts';
@@ -15,6 +16,7 @@ export function collectFamilyOperations(context: FamilyOperationContext): Operat
     ...registerClientOperations(context),
     ...registerDriverOperations(context),
     ...registerSessionEventOperations(context),
+    ...registerSessionGoalOperations(context),
     ...registerSessionOperations(context),
     ...registerSettingsOperations(context),
   ];
