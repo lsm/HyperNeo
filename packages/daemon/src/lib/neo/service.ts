@@ -94,6 +94,7 @@ import { createNeoPublisher } from './publication-operation.ts';
 import type { NeoSessionNotice, NeoSessionNoticeGroup } from './session-watch.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
 import { createNeoTodoRunner, type NeoTodoRunner } from './todo-runner.ts';
+import { isNeoTodoStalledCard } from './todo-state.ts';
 import { neoWorkingKey, readNeoWorking } from './working.ts';
 
 const MODEL_CHANGE_SOURCES = new Set([
@@ -569,18 +570,26 @@ export class NeoService {
     sessionId: string | undefined
   ) {
     const todo = this.todos.getTodo(input.todoId);
-    const nudge = this.todoSessions.readNudge(input.todoId);
-    const staged = nudge?.workerQuestion;
+    const staged = this.todoSessions.readNudge(input.todoId)?.workerQuestion;
     const ref = this.todoSessions.readRef(input.todoId);
     if (!todo || !staged || !ref || this.todos.getAsk(todo.askId)?.sessionId !== sessionId)
       return {
         ok: false,
         reason: 'no_worker_question: this todo has no worker question to relay.',
       };
+    const card = this.todos
+      .listQuestions(todo.askId)
+      .find((q) => q.state === 'open' && q.todoId === todo.id && !isNeoTodoStalledCard(q.text));
+    if (card)
+      return {
+        ok: false,
+        reason: `card_open: card ${card.id} is already waiting for the human on this todo; relay after it is answered.`,
+      };
     const language = expectedReportLanguage(this.db.getGlobalSettings().language);
     const result = await this.storeWorkerQuestion(ref, { ...staged, ...input, language });
-    if (result.ok)
-      this.todoSessions.recordNudge(input.todoId, { ...nudge, workerQuestion: undefined });
+    const current = this.todoSessions.readNudge(input.todoId);
+    if (result.ok && current && JSON.stringify(current.workerQuestion) === JSON.stringify(staged))
+      this.todoSessions.recordNudge(input.todoId, { ...current, workerQuestion: undefined });
     return result;
   }
 

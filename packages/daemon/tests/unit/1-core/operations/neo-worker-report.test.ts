@@ -369,6 +369,42 @@ test('a relay uses the staged question once, whatever the language is by then', 
   }
 });
 
+test('a question staged during a relay stays staged', async () => {
+  const { db, service, send } = await setup();
+  try {
+    await send(input);
+    const store = service.storeWorkerQuestion.bind(service);
+    service.storeWorkerQuestion = (async (...args: Parameters<typeof store>) => {
+      await send({ ...input, question: { ...input.question, title: 'Which region?' } });
+      return store(...args);
+    }) as typeof service.storeWorkerQuestion;
+    const words = { todoId: 'todo', title: 'Deploy where?', options: ['Staging', 'Production'] };
+    expect(await service.relayWorkerQuestion(words, 'neo')).toMatchObject({ ok: true });
+    expect(service.todoSessions.readNudge('todo')?.workerQuestion?.title).toBe('Which region?');
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
+test('a relay waits while the human already has a card for that todo', async () => {
+  const { db, service, send } = await setup();
+  try {
+    await send(input);
+    const words = { todoId: 'todo', title: 'Deploy where?', options: ['Staging', 'Production'] };
+    await service.relayWorkerQuestion(words, 'neo');
+    await send({ ...input, question: { ...input.question, title: 'Which region?' } });
+    expect(
+      await service.relayWorkerQuestion({ ...words, title: 'Which region?' }, 'neo')
+    ).toMatchObject({ ok: false, reason: expect.stringContaining('card_open') });
+    expect(service.todos.listQuestions('ask')).toHaveLength(1);
+    expect(service.todoSessions.readNudge('todo')?.workerQuestion?.title).toBe('Which region?');
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
 test('a new worker question on the same todo wakes Neo again, and a repeat does not', async () => {
   const { db, service, send } = await setup();
   try {

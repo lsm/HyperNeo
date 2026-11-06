@@ -1030,7 +1030,7 @@ export function createNeoQuestionOperations(
     defineOperation({
       name: 'neo.question.relay',
       description:
-        "Put a worker's question in front of the human, written in your own plain words as title and 2-6 options. Use it only when you cannot answer the worker yourself. The human's answer goes back to that worker.",
+        "Put a worker's question in front of the human, written in your own plain words as title and 2-6 options. Use it only when you cannot answer the worker yourself. The human's answer goes back to that worker. Refused while the human already has a card for that todo; relay once it is answered.",
       inputSchema: Relay,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
