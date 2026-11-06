@@ -6,10 +6,13 @@ import { PairPage } from './components/pairing/PairPage.tsx';
 import { connectionManager } from './lib/connection-manager.ts';
 import { commandRegistry } from './lib/command-registry.ts';
 import { SPACE_COMMANDS } from './lib/space-commands.ts';
+import { registerRouteExtension } from './lib/router.ts';
 import { spaceNav } from './lib/space-nav.tsx';
+import { spaceRoutes } from './lib/space-router.ts';
 import { declareExtensionNav, loadWebExtensions } from './lib/web-extensions.ts';
 
 declareExtensionNav(spaceNav);
+registerRouteExtension(spaceRoutes);
 commandRegistry.registerAll(SPACE_COMMANDS);
 
 void loadWebExtensions(() => connectionManager.getHub(), {

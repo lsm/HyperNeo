@@ -2,6 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   cleanupRouter,
   createSessionPath,
+  getSessionIdFromPath,
+  initializeRouter,
+  navigateBack,
+  navigateToSession,
+  navigateToSettings,
+} from '../router';
+import { registerRouteExtension } from '../router';
+import { spaceRoutes } from '../space-router';
+import {
   createSpaceAgentPath,
   createSpaceConfigurePath,
   createSpaceGoalsPath,
@@ -11,7 +20,6 @@ import {
   createSpaceSessionPath,
   createSpaceTaskPath,
   createSpaceTasksPath,
-  getSessionIdFromPath,
   getSpaceAgentFromPath,
   getSpaceConfigureTabFromPath,
   getSpaceGoalsFromPath,
@@ -20,10 +28,6 @@ import {
   getSpaceIdFromPath,
   getSpaceTaskIdFromPath,
   getSpaceTaskViewFromPath,
-  initializeRouter,
-  navigateBack,
-  navigateToSession,
-  navigateToSettings,
   navigateToSpace,
   navigateToSpaceAgent,
   navigateToSpaceConfigure,
@@ -34,7 +38,7 @@ import {
   navigateToSpacesPage,
   navigateToSpaceTask,
   navigateToSpaceTasks,
-} from '../router';
+} from '../space-router';
 import { currentSessionIdSignal, navSectionSignal, settingsSectionSignal } from '../signals';
 import {
   currentSpaceAgentHandleSignal,
@@ -77,6 +81,8 @@ function setPath(path: string) {
     configurable: true,
   });
 }
+
+registerRouteExtension(spaceRoutes);
 
 describe('router', () => {
   beforeEach(() => {

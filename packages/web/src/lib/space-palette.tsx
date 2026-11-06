@@ -1,6 +1,6 @@
 import type { SpaceTask } from '@hyperneo/shared';
 import { fuzzyScore } from './command-registry.ts';
-import { navigateToSpace, navigateToSpaceTask } from './router.ts';
+import { navigateToSpace, navigateToSpaceTask } from './space-router.ts';
 import { workspaceLabel } from './workspace-label.ts';
 import {
   type ExtensionPaletteItem,

@@ -14,7 +14,7 @@ import {
   navigateToSpaceSession,
   navigateToSpaceTask,
   navigateToSpaceTasks,
-} from '../lib/router';
+} from '../lib/space-router';
 import {
   cloneConversationTitles,
   conversationTitle,

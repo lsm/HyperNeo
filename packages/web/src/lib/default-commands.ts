@@ -59,7 +59,7 @@ export const DEFAULT_COMMANDS: readonly CommandDescriptor[] = [
     id: 'quickOpen.open',
     label: 'Open quick open',
     category: 'navigation',
-    description: 'Jump to chats, messages, tasks, and spaces',
+    description: 'Jump to chats, messages, and tasks',
     keywords: ['spotlight', 'search', 'jump', 'go'],
     shortcut: { code: 'KeyP', mod: true },
     run: () => {

@@ -56,6 +56,10 @@ vi.mock('../../../lib/signals', async (importOriginal) => {
   };
 });
 
+vi.mock('../../../lib/space-router', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../../../lib/router')),
+}));
 vi.mock('../../../lib/router', () => ({
   navigateToSpaceTasks: mockNavigateToSpaceTasks,
 }));

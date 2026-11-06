@@ -1,7 +1,7 @@
 import type { SpaceBlockReason, SpaceTask, SpaceTaskStatus, TaskSchedule } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { navigateToSpaceTasks } from '../../lib/router';
+import { navigateToSpaceTasks } from '../../lib/space-router';
 import { currentSpaceTasksFilterTabSignal } from '../../lib/space-signals';
 import { type SummarySpaceTask, spaceStore } from '../../lib/space-store';
 import { getTaskWorkspaceLabel } from '../../lib/space-task-helpers';

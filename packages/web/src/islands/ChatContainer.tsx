@@ -68,7 +68,7 @@ import {
 } from '../lib/chat-turns.ts';
 import { connectionManager } from '../lib/connection-manager';
 import { MIN_MESSAGES_BOTTOM_PADDING_PX } from '../lib/layout-metrics.ts';
-import { clearOverlayHighlightMessageId, navigateToSettings } from '../lib/router.ts';
+import { navigateToSettings } from '../lib/router.ts';
 import type { SessionLoadErrorKind, SessionUnavailableKind } from '../lib/session-load-error.ts';
 import { type SessionStore, sessionStore } from '../lib/session-store.ts';
 import { type SearchMessageLoadTarget, searchHighlightMessageIdSignal } from '../lib/signals.ts';
@@ -176,6 +176,7 @@ interface ChatContainerProps {
   readonly?: boolean;
   onBack?: () => void;
   highlightMessageId?: string;
+  onHighlightConsumed?: () => void;
   titleOverride?: string;
   onSendOverride?: (
     content: string,
@@ -195,6 +196,7 @@ export default function ChatContainer({
   readonly = false,
   onBack,
   highlightMessageId,
+  onHighlightConsumed,
   titleOverride,
   onSendOverride,
   store = sessionStore,
@@ -738,7 +740,7 @@ export default function ChatContainer({
         searchLoadTargetRef.current = null;
         setSearchLoadTarget(null);
       }
-      if (messageId === highlightMessageId) clearOverlayHighlightMessageId();
+      if (messageId === highlightMessageId) onHighlightConsumed?.();
     },
   });
 
