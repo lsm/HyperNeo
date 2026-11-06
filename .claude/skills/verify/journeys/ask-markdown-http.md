@@ -19,8 +19,13 @@ Private completion wording and answered questions are absent from the Markdown.
 
 The helper then stops the standalone daemon and runs the production, embedded
 production and development CLI entrypoints sequentially against that synthetic
-database. Each public listener must produce the same results. Embedded assets
-are build-generated, so the proof temporarily supplies an empty generated asset
+database. Each public listener must produce the same results.
+The helper reads the advertised local origin from each CLI's own output and
+passes its card link to the real `hyperneo read` command. All three commands must
+print the card successfully, with the advertised host matching the issuer's
+canonical host rule.
+
+Embedded assets are build-generated, so the proof temporarily supplies an empty generated asset
 module in the owning checkout and removes it afterward. It refuses to overwrite
 an existing generated module. The real embedded HTTP handler runs unchanged.
 The development entrypoint runs its actual Vite server. All child daemons and

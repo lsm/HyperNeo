@@ -13,6 +13,7 @@ import {
   createJsonErrorResponse,
   shouldHaveImmutableCache,
   isHtmlFile,
+  printServerUrls,
 } from './cli-utils.ts';
 import { embeddedAssets, embeddedBuiltinSkills } from './embedded-assets';
 
@@ -212,7 +213,6 @@ export async function startProdServer(config: Config) {
   sdkWarmupTimer = setTimeout(warmupSDKCliBinary, 0);
 
   log.info(`\nProduction server running!`);
-  log.info(`   UI: http://localhost:${config.port}`);
-  log.info(`   WebSocket: ws://localhost:${config.port}/ws`);
+  printServerUrls(config.port, config.host);
   log.info(`\nPress Ctrl+C to stop\n`);
 }
