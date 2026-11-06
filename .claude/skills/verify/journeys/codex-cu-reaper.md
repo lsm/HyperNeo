@@ -7,6 +7,7 @@ existing settings.global.update RPC opts out into an OS notification and log
 with the single-PID action `kill -TERM <pid>`. Omitted or true means automatic.
 It checks every 60 seconds, unrefs timer handles that support it, and closes with
 the driver's cleanup. No live-daemon restart is part of this journey.
+Driver startup with NODE_ENV=test must create no checker or OS-command timer.
 
 Deduplication is local to each checker. Same-user daemons observing the same
 helper can each notify once or race SIGTERM attempts after their final rechecks.
@@ -24,6 +25,9 @@ TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh \
 The helper replaces child_process.execFile, process.kill and timer effects
 before importing the real module. Every unexpected command is refused; it
 cannot call the host pmset, ps, osascript or send a real signal. It drives the
+test-mode setup first and requires zero timers. Only after installing every
+OS-effect replacement does it select production mode inside the isolated
+helper to exercise the enabled path, restoring test mode in finally. It drives the
 real 60-second callback, parses pmset and ps fixtures, and captures the actual
 notification arguments a human would receive. Register the actual driver
 operations with omitted, false and true settings: the default must send one

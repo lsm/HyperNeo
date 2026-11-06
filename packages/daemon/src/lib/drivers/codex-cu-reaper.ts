@@ -137,7 +137,7 @@ export function createCuChecker(effects: Effects) {
 }
 
 export function startCuChecker(auto: () => boolean) {
-  if (process.platform !== 'darwin') return async () => {};
+  if (process.platform !== 'darwin' || process.env.NODE_ENV === 'test') return async () => {};
   return createCuChecker({
     read: readObservation,
     auto,

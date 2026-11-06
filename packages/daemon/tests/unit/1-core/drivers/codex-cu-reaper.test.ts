@@ -81,7 +81,7 @@ describe('decideCuReap', () => {
   });
 });
 
-describe('createCuChecker', () => {
+describe('startCuChecker', () => {
   test('test-mode driver setup never arms the host checker on macOS', async () => {
     expect(process.env.NODE_ENV).toBe('test');
     const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
@@ -96,7 +96,9 @@ describe('createCuChecker', () => {
       Object.defineProperty(process, 'platform', platform);
     }
   });
+});
 
+describe('createCuChecker', () => {
   test('starts, checks and closes with a numeric timer handle', async () => {
     const timer = 42 as unknown as ReturnType<typeof setInterval>;
     const interval = spyOn(globalThis, 'setInterval').mockReturnValue(timer);

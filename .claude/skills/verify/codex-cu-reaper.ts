@@ -153,10 +153,16 @@ try {
   const context = {
     deps: { db: { getSession: () => null, getDatabase: () => ({}), getGlobalSettings: () => settings },
       externalEventStore: {}, config: { dbPath: join(run, 'synthetic.db') },
+      jobQueue: { enqueue: ({ queue }: { queue: string }) => assert.equal(queue, 'work.driver.health') },
       jobProcessor: { register: () => {} } },
     spaceGoalService: {}, longHorizonAgentRepo: {}, nodeExecutionRepo: {}, spaceTaskRepo: {},
     sessionScheduler: { registerSource: () => {} }, neoPacks: () => [], driverCleanup: closeAll,
   } as unknown as Context;
+  process.env.NODE_ENV = 'test';
+  const beforeTestRegistration = timers.length;
+  registerDriverOperations(context);
+  assert.equal(timers.length, beforeTestRegistration, 'Test-mode driver registration must not arm CU timers');
+  process.env.NODE_ENV = 'production';
   for (const value of [undefined, false, true]) {
     settings = value === undefined ? {} : { codexCuAutoReap: value };
     const cleanupIndex = closeAll.length, timerIndex = timers.length;
