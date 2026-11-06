@@ -82,7 +82,7 @@ try {
   assert.equal(made.exit, 0, made.stderr);
   const code = JSON.parse(made.stdout);
   assert.equal(code.approval, 'pending');
-  const redeem = () => fetch(pairingUrl, { method: 'POST', tls, body: JSON.stringify({ code: code.code, name: 'TLS remote reader' }) });
+  const redeem = () => fetch(pairingUrl, { method: 'POST', redirect: 'error', tls, body: JSON.stringify({ code: code.code, name: 'TLS remote reader' }) });
   assert.equal((await redeem()).status, 403);
   socket = createLocalSocket(`${backend.replace('http:', 'ws:')}/ws`);
   await new Promise<void>((done, fail) => {
@@ -95,7 +95,7 @@ try {
   const remote = await paired.json();
   const remoteData = join(run, 'remote-client');
   mkdirSync(remoteData, { mode: 0o700 });
-  writeFileSync(join(remoteData, 'agent-read.credential'), JSON.stringify({ credential: remote.credential, origin: remote.origin }), { mode: 0o600 });
+  writeFileSync(join(remoteData, 'agent-read.credential'), JSON.stringify({ credential: remote.credential, origin: new URL(pairingUrl).origin }), { mode: 0o600 });
   const read = await cli(remoteData, 'read', link);
   const receipt = { pairedOverTls: true, backendHttp: true, cliExit: read.exit, cardRead: read.stdout.startsWith('# Plan the visit\n'), error: read.stderr };
   writeFileSync(join(run, 'evidence/tls-agent-read.json'), JSON.stringify(receipt, null, 2));

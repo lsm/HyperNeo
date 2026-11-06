@@ -70,7 +70,6 @@ function answerPaired(
   const device = {
     deviceId: paired.device.id,
     kind: paired.device.kind,
-    ...(paired.device.kind === 'agent' ? { origin: new URL(req.url).origin } : {}),
   };
   if (!origin || paired.device.kind === 'agent')
     return answer(200, { ...device, credential: paired.credential });

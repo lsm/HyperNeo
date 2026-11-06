@@ -99,7 +99,7 @@ describe('device pairing', () => {
       ).toBe(true);
       const paired = await pair(made.code);
       expect(paired.body.kind).toBe('agent');
-      expect(paired.body.origin).toBe('http://127.0.0.1');
+      expect(paired.body).not.toHaveProperty('origin');
       expect(repo.listDevices().find((device) => device.kind === 'agent')).toBeDefined();
     } finally {
       db.close();

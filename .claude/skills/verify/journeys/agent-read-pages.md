@@ -23,8 +23,9 @@ its card-shaped URL with an origin error and zero requests to that server.
 
 Generate a remote agent code through the existing CLI. Redeeming it must return
 403 until the human approves through RPC. The resulting agent credential reads
-the card and is refused on /ws. Save the pairing response's origin and credential
-as an owner-only JSON file in a separate synthetic remote client data directory.
+the card and is refused on /ws. Derive origin from the actual approved pairing
+URL used by the client. Save that origin and the returned credential as an
+owner-only JSON file in a separate synthetic remote client data directory.
 Its real CLI read must succeed for the issuer, reject the second origin and leave
 the collector request count at zero. Revoke both remote and local agent devices through
 human RPC. Both reads must become 401, and the CLI must fail. Restart the daemon
@@ -45,10 +46,11 @@ with their package Vitest configurations, then the full repository check.
 
 For a remote agent, the human uses the existing pairing flow with kind agent,
 approves the pending code on an already paired human device, and redeems it with
-POST /pair from the remote client. Keep the returned credential in that client's
-owner-only agent-read.credential JSON file with both `credential` and `origin`
-in its configured data directory. The CLI validates the link origin against that
-same file before any request, then reads the card and refuses redirects. It never falls back
+POST /pair from the remote client at its approved HTTP(S) URL. The client records
+`origin` as `new URL(pairingUrl).origin` from that direct pairing request and stores
+it with the returned `credential` in its owner-only agent-read.credential JSON
+file. That approved URL supplies the public origin through TLS termination.
+The CLI validates the link origin against that same file before any request, then reads the card and refuses redirects. It never falls back
 to local-rpc.credential. No credential belongs in a link.
 
 For concurrent-startup credential ownership, run the same wrapper with
@@ -93,3 +95,13 @@ ipv6-origin.json and ipv6-cleanup.json. Host-vector tests also cover a global IP
 literal's URL formatting. The browser-agent pairing regression checks that its
 response returns the agent credential in JSON and preserves the browser's device
 cookie. Existing human pairing retains its HttpOnly cookie behavior.
+
+
+Run `agent-tls-proxy.ts` through the shared wrapper for remote HTTPS pairing.
+It generates a temporary certificate fixture and runs a real TLS proxy in front
+of the isolated HTTP daemon. The proof clients trust only that fixture's added
+CA for this run. Pairing waits for human RPC approval. The remote client records
+the actual HTTPS pairing URL's origin and its real CLI must print the card,
+refuse another origin with zero collector requests, and observe revocation.
+Human reads must still succeed. Inspect tls-agent-read.json and tls-cleanup.json.
+The wrapper removes the temporary certificate, key, daemon data and client file.
