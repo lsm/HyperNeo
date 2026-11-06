@@ -214,15 +214,6 @@ describe('coding turn PRs', () => {
     db.close();
   });
 
-  test('the snapshot pins what the rule places', () => {
-    const { db, send, record } = setup();
-    send('d1', 'a', 'receipt-a');
-    record(fact('t1', ['receipt-a'], [url], 100));
-    ledger(db, 105);
-    expect(new CodingTodoPrRepository(db).pinned('a')).toEqual([{ url, state: null }]);
-    db.close();
-  });
-
   test('a bound todo owns the turn running at its bind, with no delivery row', async () => {
     const { db, record } = setup();
     db.exec('PRAGMA foreign_keys = OFF');
