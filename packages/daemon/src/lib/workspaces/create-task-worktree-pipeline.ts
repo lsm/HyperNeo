@@ -10,7 +10,7 @@ import {
   NETWORK_RETRY_DELAYS_MS,
   retryWithBackoff,
 } from '../utils/retry-utils.ts';
-import { worktreeSlug } from '../space/worktree-slug.ts';
+import { worktreeSlug } from './worktree-slug.ts';
 import { getWorktreeBaseDir } from '../worktree-path-utils.ts';
 import { nodeWorkspaceValidationIo } from './validation-pipeline.ts';
 import {
