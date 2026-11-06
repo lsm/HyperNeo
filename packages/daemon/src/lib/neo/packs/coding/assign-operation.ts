@@ -78,7 +78,7 @@ function admit(input: Input, deps: Deps): Gate<Assignment> {
     !todo ||
     !['doing', 'blocked'].includes(todo.state) ||
     !write ||
-    !deps.todos.urls(input.todoId).includes(githubUrlKey(input.url))
+    !deps.todos.linked(input.todoId, input.url)
   )
     return refuse('A live coding todo with a linked author and PR is required.');
   if (contract && contract.reference !== input.acceptanceContract)

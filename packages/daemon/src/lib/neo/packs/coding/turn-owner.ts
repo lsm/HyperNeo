@@ -77,6 +77,18 @@ export function planCodingTurnUrls(
   return [...reported, ...shown.slice(0, Math.max(0, MAX_TURN_PRS - reported.size))];
 }
 
+export function planCodingTurnOwned(
+  todo: Pick<NeoTodo, 'id' | 'check'>,
+  prs: readonly { url: string; createdAt?: number }[],
+  mentions: CodingTurnMentions
+) {
+  const named = new Set(namedPrKeys(todo));
+  return prs.flatMap(({ url, createdAt }) => {
+    const owner = planCodingTurnOwner({ url, createdAt }, mentions.turns, mentions.todos);
+    return named.has(url) || (owner.state === 'placed' && owner.todo === todo.id) ? url : [];
+  });
+}
+
 export function planCodingTurnFacts(
   todo: Pick<NeoTodo, 'id' | 'check'>,
   own: readonly Pick<CodingTurn, 'complete' | 'finalUrls'>[],
