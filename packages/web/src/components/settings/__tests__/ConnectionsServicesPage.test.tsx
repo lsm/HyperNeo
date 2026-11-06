@@ -82,7 +82,7 @@ describe('isConnectionsSection', () => {
     ['devices', true],
     ['remote-daemons', true],
     ['exa', false],
-    ['models', false],
+    ['neo-model', false],
   ])('%s is %s', (section, expected) => {
     expect(isConnectionsSection(section)).toBe(expected);
   });
