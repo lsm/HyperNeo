@@ -123,7 +123,7 @@ import { SpaceGoalService } from '../../../../../space/src/goals/service.ts';
 import { mergeEvolutionPolicy } from '../../../../../space/src/evolution/scope-service.ts';
 import type { RPCHandlerDependencies } from '../../rpc-handlers/index.ts';
 import type { ExternalEventService } from '../../external-events/external-event-service.ts';
-import type { ExternalEventStore } from '../external-events/external-event-store.ts';
+import type { ExternalEventStore } from '../../../../../space/src/external-events/external-event-store.ts';
 import type { ExternalEventDeliveryState } from '../../external-events/types.ts';
 import type { SpaceRpcHost } from '../../rpc-handlers/space-rpc.ts';
 import { createSpaceSessionPort } from '../runtime/space-session-port.ts';
