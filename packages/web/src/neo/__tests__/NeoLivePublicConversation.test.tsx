@@ -714,6 +714,24 @@ describe('NeoLive durable conversation activation', () => {
     expect(main.scrollTop).toBe(10);
   });
 
+  it('returns to the bottom when sending after reading older messages', async () => {
+    const { container } = render(<NeoLive />);
+    const main = container.querySelector('main')!;
+    Object.defineProperties(main, {
+      scrollHeight: { configurable: true, value: 1000 },
+      clientHeight: { configurable: true, value: 200 },
+    });
+    main.scrollTop = 800;
+    fireEvent.scroll(main);
+    main.scrollTop = 0;
+    fireEvent.scroll(main);
+    const input = screen.getByRole('textbox', { name: 'Draft' });
+    fireEvent.input(input, { target: { value: 'A new thought' } });
+    fireEvent.submit(input.closest('form')!);
+    await waitFor(() => expect(sendMock).toHaveBeenCalledTimes(1));
+    expect(main.scrollTop).toBe(1000);
+  });
+
   it('keeps following new messages after a tap on an unavailable quote', async () => {
     const { container } = render(<NeoLive />);
     const main = container.querySelector('main')!;
