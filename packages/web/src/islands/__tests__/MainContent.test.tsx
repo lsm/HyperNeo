@@ -45,12 +45,8 @@ vi.mock('../../hooks/useVoiceRecorder', () => ({
 }));
 
 import MainContent from '../MainContent';
-import {
-  currentSessionIdSignal,
-  currentSpaceCanonicalIdSignal,
-  currentSpaceIdSignal,
-  navSectionSignal,
-} from '../../lib/signals';
+import { currentSessionIdSignal, navSectionSignal } from '../../lib/signals';
+import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from '../../lib/space-signals';
 import { declareExtensionNav, registerWebExtension } from '../../lib/web-extensions';
 import { spaceNav } from '../../lib/space-nav';
 import { navigateToSessions } from '../../lib/router';

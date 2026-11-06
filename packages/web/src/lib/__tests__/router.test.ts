@@ -35,8 +35,8 @@ import {
   navigateToSpaceTask,
   navigateToSpaceTasks,
 } from '../router';
+import { currentSessionIdSignal, navSectionSignal, settingsSectionSignal } from '../signals';
 import {
-  currentSessionIdSignal,
   currentSpaceAgentHandleSignal,
   currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,
@@ -45,9 +45,7 @@ import {
   currentSpaceTaskIdSignal,
   currentSpaceTasksFilterTabSignal,
   currentSpaceViewModeSignal,
-  navSectionSignal,
-  settingsSectionSignal,
-} from '../signals';
+} from '../space-signals';
 
 const SESSION_ID = '550e8400-e29b-41d4-a716-446655440000';
 const SPACE_ID = 'demo-space';

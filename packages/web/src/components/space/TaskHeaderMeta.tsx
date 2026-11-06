@@ -2,7 +2,7 @@ import type { SpaceTask, SpaceTaskPriority } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { navigateToSpaceEvolve, navigateToSpaceGoals } from '../../lib/router';
-import { currentSpaceGoalIdSignal, currentSpaceScopeIdSignal } from '../../lib/signals';
+import { currentSpaceGoalIdSignal, currentSpaceScopeIdSignal } from '../../lib/space-signals';
 import { spaceStore } from '../../lib/space-store';
 import { getTaskStatusConfig } from '../../lib/task-status';
 import { StatusBadge } from '../ui/StatusBadge';

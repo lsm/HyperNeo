@@ -8,8 +8,8 @@ import { VoiceRecordingIndicator } from '../voice/VoiceRecordingIndicator.tsx';
 import { VoiceSurfaceContext } from '../../hooks/useVoiceRecorder';
 import ChatContainer from '../../islands/ChatContainer';
 import { SessionStore } from '../../lib/session-store';
-import type { SpaceOverlayTaskContext } from '../../lib/signals';
-import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from '../../lib/signals';
+import type { SpaceOverlayTaskContext } from '../../lib/space-signals';
+import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from '../../lib/space-signals';
 import { spaceStore } from '../../lib/space-store';
 import { cn } from '../../lib/utils';
 

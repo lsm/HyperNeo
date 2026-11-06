@@ -58,7 +58,7 @@ import {
   type TaskTransitionResult,
   requireAccepted,
 } from './operations';
-import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from './signals';
+import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from './space-signals';
 
 const logger = new Logger('hyperneo:web:spacestore');
 

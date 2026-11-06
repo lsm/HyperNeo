@@ -52,7 +52,8 @@ vi.mock('../visual-editor/WorkflowModelSelect', () => ({
   },
 }));
 
-import { currentSpaceScopeIdSignal, rightPanelTargetSignal } from '../../../lib/signals';
+import { rightPanelTargetSignal } from '../../../lib/signals';
+import { currentSpaceScopeIdSignal } from '../../../lib/space-signals';
 import { spaceStore } from '../../../lib/space-store';
 import { ScopeDetail, SpaceForge } from '../SpaceForge';
 

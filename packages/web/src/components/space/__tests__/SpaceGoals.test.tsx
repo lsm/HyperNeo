@@ -41,7 +41,8 @@ vi.mock('../../../lib/utils', () => ({
   getRelativeTime: () => '1m ago',
 }));
 
-import { currentSpaceGoalIdSignal, rightPanelTargetSignal } from '../../../lib/signals';
+import { rightPanelTargetSignal } from '../../../lib/signals';
+import { currentSpaceGoalIdSignal } from '../../../lib/space-signals';
 import { spaceStore } from '../../../lib/space-store';
 import { SpaceGoalDialog } from '../SpaceGoalDialog';
 import { SpaceGoals } from '../SpaceGoals';

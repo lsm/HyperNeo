@@ -137,16 +137,10 @@ vi.mock('../../lib/router.ts', () => ({
   navigateToSpaceTasks: mockNavigateToSpaceTasks,
 }));
 
-vi.mock('../../lib/signals.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../lib/signals.ts')>();
+vi.mock('../../lib/space-signals.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/space-signals.ts')>();
   return {
     ...actual,
-    get navSectionSignal() {
-      return mockNavSectionSignal;
-    },
-    get contextPanelOpenSignal() {
-      return mockContextPanelOpenSignal;
-    },
     get currentSpaceIdSignal() {
       return mockCurrentSpaceIdSignal;
     },
@@ -161,6 +155,18 @@ vi.mock('../../lib/signals.ts', async (importOriginal) => {
     },
     get currentSpaceViewModeSignal() {
       return mockCurrentSpaceViewModeSignal;
+    },
+  };
+});
+vi.mock('../../lib/signals.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/signals.ts')>();
+  return {
+    ...actual,
+    get navSectionSignal() {
+      return mockNavSectionSignal;
+    },
+    get contextPanelOpenSignal() {
+      return mockContextPanelOpenSignal;
     },
     get settingsSectionSignal() {
       return mockSettingsSectionSignal;
@@ -239,7 +245,7 @@ describe('ContextPanel', () => {
   );
 
   it('preserves the current configure tab when switching spaces from configure', async () => {
-    const { currentSpaceSettingsTabSignal } = await import('../../lib/signals.ts');
+    const { currentSpaceSettingsTabSignal } = await import('../../lib/space-signals.ts');
     currentSpaceSettingsTabSignal.value = 'workflow-templates';
     try {
       mockCurrentSpaceViewModeSignal.value = 'configure';

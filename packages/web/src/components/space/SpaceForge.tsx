@@ -34,7 +34,8 @@ import { EvidenceTab } from './SpaceForgeEvidence.tsx';
 import { MetricsTab } from './SpaceForgeMetrics.tsx';
 import { ActiveLessonsTab } from './SpaceForgeLessons.tsx';
 import { EpisodesTab } from './SpaceForgeEpisodes.tsx';
-import { currentSpaceScopeIdSignal, rightPanelTargetSignal } from '../../lib/signals';
+import { rightPanelTargetSignal } from '../../lib/signals';
+import { currentSpaceScopeIdSignal } from '../../lib/space-signals';
 import { spaceStore } from '../../lib/space-store';
 
 function isScopePanelOpen(): boolean {

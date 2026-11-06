@@ -19,6 +19,7 @@ import {
   navigateToSpaceTask,
   navigateToSpaceTasks,
 } from './router.ts';
+import { navSectionSignal } from './signals.ts';
 import {
   currentSpaceAgentHandleSignal,
   currentSpaceIdSignal,
@@ -27,11 +28,10 @@ import {
   currentSpaceTaskIdSignal,
   currentSpaceTasksFilterTabSignal,
   currentSpaceViewModeSignal,
-  navSectionSignal,
   type SpaceSettingsTab,
   type SpaceTasksFilterTab,
   type SpaceViewMode,
-} from './signals.ts';
+} from './space-signals.ts';
 import type { ExtensionRoute } from './web-extensions.ts';
 
 export interface SpaceRouteState {

@@ -22,7 +22,7 @@ vi.mock('../../../lib/router', () => ({
   navigateToSpaceEvolve: vi.fn(),
 }));
 
-import { currentSpaceGoalIdSignal } from '../../../lib/signals';
+import { currentSpaceGoalIdSignal } from '../../../lib/space-signals';
 import { TaskHeaderMeta } from '../TaskHeaderMeta';
 
 function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {

@@ -1,6 +1,11 @@
 import { batch } from '@preact/signals';
 import {
   currentSessionIdSignal,
+  navSectionSignal,
+  type SettingsSection,
+  settingsSectionSignal,
+} from './signals.ts';
+import {
   currentSpaceAgentHandleSignal,
   currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,
@@ -9,18 +14,15 @@ import {
   currentSpaceTaskIdSignal,
   currentSpaceTasksFilterTabSignal,
   currentSpaceViewModeSignal,
-  navSectionSignal,
-  type SettingsSection,
   type SpaceSettingsTab,
   type SpaceOverlayTaskContext,
-  settingsSectionSignal,
   spaceOverlayAgentNameSignal,
   spaceOverlayHighlightMessageIdSignal,
   spaceOverlayPendingAgentNameSignal,
   spaceOverlayPendingTaskIdSignal,
   spaceOverlaySessionIdSignal,
   spaceOverlayTaskContextSignal,
-} from './signals.ts';
+} from './space-signals.ts';
 
 const SESSION_ROUTE_PATTERN = /^\/session\/((?:neo:)?[a-f0-9-]+)$/i;
 const SESSIONS_ROUTE_PATTERN = /^\/sessions$/;

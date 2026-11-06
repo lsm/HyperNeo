@@ -92,8 +92,8 @@ vi.mock('../../lib/router.ts', () => ({
   navigateToSpaceConfigure: mockNavigateToSpaceConfigure,
 }));
 
-vi.mock('../../lib/signals.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../lib/signals.ts')>();
+vi.mock('../../lib/space-signals.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/space-signals.ts')>();
   return {
     ...actual,
     get currentSpaceSessionIdSignal() {
@@ -117,6 +117,12 @@ vi.mock('../../lib/signals.ts', async (importOriginal) => {
     get spaceOverlayAgentNameSignal() {
       return mockSpaceOverlayAgentNameSignal;
     },
+  };
+});
+vi.mock('../../lib/signals.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/signals.ts')>();
+  return {
+    ...actual,
   };
 });
 

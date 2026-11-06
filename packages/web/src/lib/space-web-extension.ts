@@ -4,16 +4,14 @@ import { ScopeDetailPanel } from '../components/space/ScopeDetailPanel.tsx';
 import { SpaceMain } from '../components/space/SpaceMain.tsx';
 import { SpaceSidebar } from '../components/space/SpaceSidebar.tsx';
 import { navigateToSpaceAgent } from './router.ts';
+import { type ExtensionPanelTarget, navSectionSignal, rightPanelTargetSignal } from './signals.ts';
 import {
   currentSpaceCanonicalIdSignal,
   currentSpaceGoalIdSignal,
   currentSpaceIdSignal,
   currentSpaceScopeIdSignal,
   currentSpaceViewModeSignal,
-  type ExtensionPanelTarget,
-  navSectionSignal,
-  rightPanelTargetSignal,
-} from './signals.ts';
+} from './space-signals.ts';
 import { spaceStore } from './space-store.ts';
 import type { ExtensionSessionAgent, SpaceWebExtension } from './web-extensions.ts';
 

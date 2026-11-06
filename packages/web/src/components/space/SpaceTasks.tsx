@@ -2,7 +2,7 @@ import type { SpaceBlockReason, SpaceTask, SpaceTaskStatus, TaskSchedule } from 
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { navigateToSpaceTasks } from '../../lib/router';
-import { currentSpaceTasksFilterTabSignal } from '../../lib/signals';
+import { currentSpaceTasksFilterTabSignal } from '../../lib/space-signals';
 import { type SummarySpaceTask, spaceStore } from '../../lib/space-store';
 import { getTaskWorkspaceLabel } from '../../lib/space-task-helpers';
 import { isActionRequired, isActiveTask, isDraftTask } from '../../lib/task-filters';

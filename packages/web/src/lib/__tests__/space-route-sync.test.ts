@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SpaceViewMode } from '../signals';
+import type { SpaceViewMode } from '../space-signals';
 import { deriveAppExpectedPath } from '../app-routing';
 import { deriveSpaceRoute, type SpaceRouteState } from '../space-route-sync';
 

@@ -9,7 +9,7 @@ import {
   getSpaceAgentDetailFromPath,
   initializeRouter,
 } from '../router';
-import { currentSpaceAgentHandleSignal } from '../signals';
+import { currentSpaceAgentHandleSignal } from '../space-signals';
 
 function setPath(path: string) {
   const url = new URL(path, 'https://hyperneo.test');
