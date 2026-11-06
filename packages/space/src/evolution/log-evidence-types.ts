@@ -1,6 +1,6 @@
 import type { EvidenceRef, StructuredLogEvent, StructuredLogLevel } from '@hyperneo/shared';
-import type { EvolutionRepository } from '../../../storage/repositories/evolution-repository.ts';
-import type { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
+import type { EvolutionRepository } from '../../../daemon/src/storage/repositories/evolution-repository.ts';
+import type { SpaceRepository } from '../../../daemon/src/storage/repositories/space-repository.ts';
 
 export interface LogEvidenceSubscription {
   scopeId: string;
