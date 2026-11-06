@@ -42,6 +42,9 @@
     "packages/prompts": {
       "project": ["**/*.ts"]
     },
+    "packages/space": {
+      "project": ["**/*.ts"]
+    },
     "packages/shared": {
       "entry": ["tests/**/*.ts"],
       "project": ["**/*.ts"]
