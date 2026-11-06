@@ -6,7 +6,8 @@ import { CommandPalette } from '../CommandPalette.tsx';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { commandRegistry } from '../../lib/command-registry.ts';
 import { commandPaletteModeSignal, commandPaletteOpenSignal } from '../../lib/signals.ts';
-import { registerWebExtension } from '../../lib/web-extensions.ts';
+import { declareExtensionNav, registerWebExtension } from '../../lib/web-extensions.ts';
+import { spaceNav } from '../../lib/space-nav';
 
 describe('CommandPalette', () => {
   beforeEach(() => {
@@ -24,6 +25,7 @@ describe('CommandPalette', () => {
   });
 
   it('omits Space commands when the daemon does not provide Space', async () => {
+    declareExtensionNav(spaceNav);
     registerWebExtension('space', null);
     commandRegistry.register({
       id: 'nav.chats',
@@ -33,12 +35,14 @@ describe('CommandPalette', () => {
     });
     commandRegistry.register({
       id: 'nav.spaces',
+      extension: 'space',
       label: 'Go to spaces',
       category: 'navigation',
       run: () => {},
     });
     commandRegistry.register({
       id: 'space.overview',
+      extension: 'space',
       label: 'Space: Overview',
       category: 'space',
       run: () => {},
