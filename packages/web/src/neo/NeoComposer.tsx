@@ -296,6 +296,7 @@ export function NeoComposer({
       if (alive.current) setSending(false);
     }
   }
+  const showQuote = quote && (!sending || quote !== sendingQuote.current);
   return (
     <form
       onSubmit={(event) => {
@@ -343,7 +344,7 @@ export function NeoComposer({
             {t('composer.usePreview')}
           </button>
         )}
-      {quote && (!sending || quote !== sendingQuote.current) && (
+      {showQuote && (
         <div
           role="region"
           aria-label={t('composer.replyingToExcerpt', {
@@ -409,7 +410,7 @@ export function NeoComposer({
           ref={thought}
           id={`neo-thought${idSuffix}`}
           aria-label={forSession ? t('session.message') : t('composer.message')}
-          aria-describedby={quote ? `neo-quote-label${idSuffix}` : undefined}
+          aria-describedby={showQuote ? `neo-quote-label${idSuffix}` : undefined}
           value={draft}
           onInput={(event) => onDraft(event.currentTarget.value)}
           onPaste={(event) => {
