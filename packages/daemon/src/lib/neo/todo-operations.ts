@@ -37,6 +37,7 @@ import {
   NEO_TODO_NOT_APPROVED,
   neoTodoCancellationPending,
   neoTodoProceedPatch,
+  neoTodoPrerequisiteRefusal,
   neoTodoStartRefusal,
 } from './todo-start-gate.ts';
 
@@ -272,6 +273,14 @@ const bindNeoTodo = (superpipe({})('neo.todo.bind-worker') as PipelineAPI)
               ? fail(NEO_TODO_CANCELLED_DEPENDENCY)
               : { value: todo },
     ['todos', 'todo'],
+    'result:bound'
+  )
+  .pipe(
+    (todos: NeoAskTodoRepository, bound: NeoTodo): Gate<NeoTodo> => {
+      const waiting = neoTodoPrerequisiteRefusal(bound, todos.listFamilyTodos(bound.askId));
+      return waiting ? fail(waiting) : { value: bound };
+    },
+    ['todos', 'bound'],
     'result:bound'
   )
   .pipe(
@@ -826,7 +835,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.bind',
       description:
-        'Bind an unfinished todo on an open ask to an existing running worker, without sending or starting anything. Use this to repair a failed backfill instead of retrying its instruction. Records worker and doing, clears failure and old delivery evidence; does not stop the existing worker.',
+        'Bind an unfinished todo on an open ask to an existing running worker, without sending or starting anything. Use this to repair a failed backfill instead of retrying its instruction. Records worker and doing, clears failure and old delivery evidence; does not stop the existing worker. A step with unfinished prerequisites is refused, so add independent running work with after: [].',
       inputSchema: Bind,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

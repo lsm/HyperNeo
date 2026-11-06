@@ -51,9 +51,9 @@ try {
         evidence.push({ phase, name: 'neo.todo.add', refused: refused.content[0].text });
         assert.equal(refused.isError, true); assert.match(refused.content[0].text, /bind is its own operation: use neo\.todo\.bind/);
         assert.equal(store.listTodos(todo.askId).length, 1);
-        const withOptions = await invoke('neo.todo.add', { askId: todo.askId, title: 'Second running task', check: { pack: 'core', kind: 'evidence', params: { path: '/synthetic/pending' } } });
+        const withOptions = await invoke('neo.todo.add', { askId: todo.askId, title: 'Second running task', after: [], check: { pack: 'core', kind: 'evidence', params: { path: '/synthetic/pending' } } });
         assert.equal((await invoke('neo.todo.bind', { todoId: withOptions.todo.id, ref })).todo.state, 'doing');
-        const failed = await invoke('neo.todo.add', { askId: todo.askId, title: 'Synthetic backfill', check: { pack: 'core', kind: 'evidence', params: { path: '/synthetic/pending' } } });
+        const failed = await invoke('neo.todo.add', { askId: todo.askId, title: 'Synthetic backfill', after: [], check: { pack: 'core', kind: 'evidence', params: { path: '/synthetic/pending' } } });
         store.updateTodo(store.getTodo(failed.todo.id)!, { state: 'failed', reason: 'Synthetic delivery was not confirmed', finishedAt: 2 }, 2);
         sessions.create(failed.todo.id, { verb: 'send', ref }); sessions.recordRef(failed.todo.id, ref, 1);
         sessions.recordSent(failed.todo.id, { inputBefore: 1, opening: 'Synthetic old instruction' });
