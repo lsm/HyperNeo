@@ -5,6 +5,7 @@ import {
   createCodingTodoPack,
   CodingTodoPrRepository,
 } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
+import { codingTurnSessionKey } from '../../../../src/lib/neo/packs/coding/turn-owner.ts';
 import { CodingTurnPrRepository } from '../../../../src/lib/neo/packs/coding/turn-prs.ts';
 import {
   recordWorkTurns,
@@ -136,7 +137,10 @@ describe('coding turn PRs', () => {
     const turns = new CodingTurnPrRepository(db);
     expect(turns.own('a').map(({ id }) => id)).toEqual(['t1']);
     expect(turns.own('b').map(({ id }) => id)).toEqual(['t2']);
-    expect(turns.mentions([url]).todos).toMatchObject({ 'desktop-pending:abc123': 'a', t2: 'b' });
+    expect(turns.mentions([url]).todos[codingTurnSessionKey(ref)]).toMatchObject({
+      'desktop-pending:abc123': 'a',
+      t2: 'b',
+    });
     db.close();
   });
 
