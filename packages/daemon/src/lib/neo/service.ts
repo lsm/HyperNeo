@@ -687,7 +687,7 @@ export class NeoService {
           this.db.getGlobalSettings().language,
           (staged, question) =>
             wake(
-              staged.id,
+              neoDerivedId(JSON.stringify([staged.id, question.title, question.options])),
               `Worker question on todo ${staged.id}: ${question.title}\nOptions: ${question.options.join(' | ')}\nAnswer the worker and continue if you can. If only the human can decide, call neo.question.relay with your own plain words.`
             )
         );

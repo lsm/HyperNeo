@@ -351,6 +351,23 @@ test('only Neo turns a worker question into a card, in its own words, keeping th
   }
 });
 
+test('a new worker question on the same todo wakes Neo again, and a repeat does not', async () => {
+  const { db, service, send } = await setup();
+  try {
+    const wakes = () =>
+      db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'neo' });
+    await send(input);
+    await send(input);
+    expect(wakes()).toHaveLength(1);
+    await send({ ...input, question: { ...input.question, title: 'Which region?' } });
+    expect(wakes()).toHaveLength(2);
+    expect(JSON.stringify(wakes()[1].payload)).toContain('Which region?');
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
 test('a worker cannot place a hold or create a card for another assigned worker', async () => {
   const { db, service, send } = await setup();
   try {
