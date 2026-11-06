@@ -5,7 +5,8 @@ import {
   navigateToSpacesPage,
   navigateToSpaceTasks,
 } from './router.ts';
-import { commandPaletteOpenSignal, currentSpaceIdSignal, navSectionSignal } from './signals.ts';
+import { commandPaletteOpenSignal, navSectionSignal } from './signals.ts';
+import { currentSpaceIdSignal } from './space-signals.ts';
 import { toast } from './toast.ts';
 
 function inCurrentSpace(action: (spaceId: string) => void) {

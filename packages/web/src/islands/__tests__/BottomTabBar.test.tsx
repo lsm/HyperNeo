@@ -3,14 +3,14 @@ import { cleanup, render, screen } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { spaceStore } from '../../lib/space-store';
+import { navSectionSignal } from '../../lib/signals';
 import {
   currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,
   currentSpaceSessionIdSignal,
   currentSpaceTaskIdSignal,
   currentSpaceViewModeSignal,
-  navSectionSignal,
-} from '../../lib/signals';
+} from '../../lib/space-signals';
 import { BottomTabBar } from '../BottomTabBar';
 import {
   declareExtensionNav,

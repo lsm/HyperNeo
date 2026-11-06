@@ -7,7 +7,7 @@ import {
   currentSpaceSessionIdSignal,
   currentSpaceTaskIdSignal,
   currentSpaceViewModeSignal,
-} from '../../lib/signals.ts';
+} from '../../lib/space-signals.ts';
 
 const SpaceIsland = lazy(() => import('../../islands/SpaceIsland.tsx'));
 

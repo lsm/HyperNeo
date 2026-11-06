@@ -21,12 +21,11 @@ import MainContent from '../../../islands/MainContent.tsx';
 import { locale } from '../../../lib/i18n/index.ts';
 import {
   currentSessionIdSignal,
-  currentSpaceIdSignal,
-  currentSpaceCanonicalIdSignal,
   navSectionSignal,
   settingsSectionSignal,
   type SettingsSection,
 } from '../../../lib/signals.ts';
+import { currentSpaceIdSignal, currentSpaceCanonicalIdSignal } from '../../../lib/space-signals.ts';
 
 const account = {
   id: 'synthetic-connection',

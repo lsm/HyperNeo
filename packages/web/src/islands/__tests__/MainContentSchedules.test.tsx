@@ -3,12 +3,8 @@ import { signal } from '@preact/signals';
 import { cleanup, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import MainContent from '../MainContent.tsx';
-import {
-  currentSessionIdSignal,
-  currentSpaceCanonicalIdSignal,
-  currentSpaceIdSignal,
-  navSectionSignal,
-} from '../../lib/signals.ts';
+import { currentSessionIdSignal, navSectionSignal } from '../../lib/signals.ts';
+import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from '../../lib/space-signals.ts';
 import { spaceWebExtension } from '../../lib/space-web-extension';
 import { declareExtensionNav, registerWebExtension } from '../../lib/web-extensions';
 import { spaceNav } from '../../lib/space-nav';

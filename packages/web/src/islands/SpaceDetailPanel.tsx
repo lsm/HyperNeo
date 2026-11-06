@@ -28,7 +28,7 @@ import {
   currentSpaceViewModeSignal,
   spaceOverlayPendingTaskIdSignal,
   spaceOverlaySessionIdSignal,
-} from '../lib/signals';
+} from '../lib/space-signals';
 import { type SpaceSessionRow, spaceStore } from '../lib/space-store';
 import {
   getSpaceSessionUnreadCount,

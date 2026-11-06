@@ -6,13 +6,13 @@ import {
   initializeRouter,
   cleanupRouter,
 } from '../router';
+import { navSectionSignal } from '../signals';
 import {
-  navSectionSignal,
   spaceOverlaySessionIdSignal,
   spaceOverlayAgentNameSignal,
   spaceOverlayTaskContextSignal,
   currentSpaceIdSignal,
-} from '../signals';
+} from '../space-signals';
 
 let originalHistory: unknown;
 let originalLocation: unknown;

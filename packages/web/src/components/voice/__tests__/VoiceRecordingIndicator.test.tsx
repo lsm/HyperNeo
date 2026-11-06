@@ -25,6 +25,10 @@ const routerState = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../lib/voice/voice-recorder-store.ts', () => ({ voiceRecorderStore }));
+vi.mock('../../../lib/space-signals.ts', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../../../lib/signals.ts')),
+}));
 vi.mock('../../../lib/signals.ts', () => ({
   currentSessionIdSignal: {
     get value() {

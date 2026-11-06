@@ -1,13 +1,13 @@
+import { navSectionSignal } from './signals.ts';
 import {
   currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,
   currentSpaceSessionIdSignal,
   currentSpaceTaskIdSignal,
   currentSpaceViewModeSignal,
-  navSectionSignal,
   spaceOverlayPendingAgentNameSignal,
   spaceOverlaySessionIdSignal,
-} from './signals.ts';
+} from './space-signals.ts';
 import {
   createSpaceSessionPath,
   createSpaceTaskPath,

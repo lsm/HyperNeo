@@ -18,7 +18,7 @@ import {
   currentSpaceSettingsTabSignal,
   currentSpaceTasksFilterTabSignal,
   currentSpaceViewModeSignal,
-} from '../../lib/signals.ts';
+} from '../../lib/space-signals.ts';
 import { spaceStore } from '../../lib/space-store.ts';
 import { cn } from '../../lib/utils.ts';
 
