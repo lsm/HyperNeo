@@ -2,7 +2,7 @@ import { describe, expect, test, beforeEach } from 'bun:test';
 import { vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import type { Writable } from 'node:stream';
-import { AcpTransport } from '../../../src/lib/acp/acp-transport';
+import { ProcessJsonRpcTransport } from '../../../src/lib/process-json-rpc';
 
 class MockStream extends EventEmitter {
   written: string[] = [];
@@ -72,14 +72,14 @@ function createMockSpawn(delayMs = 0): SpawnHandler {
   };
 }
 
-describe('AcpTransport', () => {
+describe('ProcessJsonRpcTransport', () => {
   beforeEach(() => {
     lastMockProcess = null;
     spawnState.handler = createMockSpawn();
   });
 
   test('sends request with auto-incrementing IDs', () => {
-    const transport = new AcpTransport({ command: 'acp-agent' });
+    const transport = new ProcessJsonRpcTransport({ command: 'acp-agent' });
     const proc = lastMockProcess!;
 
     transport.sendRequest('initialize', { protocolVersion: '1.0' });
@@ -100,7 +100,7 @@ describe('AcpTransport', () => {
   });
 
   test('sends notification without id', () => {
-    const transport = new AcpTransport({ command: 'acp-agent' });
+    const transport = new ProcessJsonRpcTransport({ command: 'acp-agent' });
     const proc = lastMockProcess!;
 
     transport.sendNotification('session/cancel', { sessionId: 'abc' });
@@ -115,7 +115,7 @@ describe('AcpTransport', () => {
   });
 
   test('parses line-delimited JSON-RPC responses from stdout', async () => {
-    const transport = new AcpTransport({ command: 'acp-agent' });
+    const transport = new ProcessJsonRpcTransport({ command: 'acp-agent' });
     const proc = lastMockProcess!;
 
     const promise = transport.sendRequest('initialize', {});
@@ -130,7 +130,7 @@ describe('AcpTransport', () => {
   });
 
   test('handles multiple lines in single stdout chunk', async () => {
-    const transport = new AcpTransport({ command: 'acp-agent' });
+    const transport = new ProcessJsonRpcTransport({ command: 'acp-agent' });
     const proc = lastMockProcess!;
 
     const p1 = transport.sendRequest('req1', {});
@@ -146,7 +146,7 @@ describe('AcpTransport', () => {
   });
 
   test('handles partial lines across stdout chunks', async () => {
-    const transport = new AcpTransport({ command: 'acp-agent' });
+    const transport = new ProcessJsonRpcTransport({ command: 'acp-agent' });
     const proc = lastMockProcess!;
 
     const promise = transport.sendRequest('initialize', {});
@@ -162,7 +162,7 @@ describe('AcpTransport', () => {
   });
 
   test('rejects request when response contains error', async () => {
-    const transport = new AcpTransport({ command: 'acp-agent' });
+    const transport = new ProcessJsonRpcTransport({ command: 'acp-agent' });
     const proc = lastMockProcess!;
 
     const promise = transport.sendRequest('bad', {});
@@ -182,14 +182,14 @@ describe('AcpTransport', () => {
   });
 
   test('rejects pending requests on process exit', async () => {
-    const transport = new AcpTransport({ command: 'acp-agent' });
+    const transport = new ProcessJsonRpcTransport({ command: 'acp-agent' });
     const proc = lastMockProcess!;
 
     const promise = transport.sendRequest('hang', {});
     proc.emit('exit', 1, 'SIGTERM');
     proc.emit('close', 1, 'SIGTERM');
 
-    await expect(promise).rejects.toThrow('ACP agent process exited');
+    await expect(promise).rejects.toThrow('JSON-RPC process exited');
   });
 
   test('observes spawn errors when process-tree ownership fails', () => {
@@ -198,7 +198,7 @@ describe('AcpTransport', () => {
       throw new Error('missing process id');
     });
 
-    expect(() => new AcpTransport({ command: 'missing', processTreeOwner })).toThrow(
+    expect(() => new ProcessJsonRpcTransport({ command: 'missing', processTreeOwner })).toThrow(
       'missing process id'
     );
     expect(lastMockProcess?.killed).toBe(true);
@@ -206,17 +206,17 @@ describe('AcpTransport', () => {
   });
 
   test('rejects pending requests on process error', async () => {
-    const transport = new AcpTransport({ command: 'acp-agent' });
+    const transport = new ProcessJsonRpcTransport({ command: 'acp-agent' });
     const proc = lastMockProcess!;
 
     const promise = transport.sendRequest('hang', {});
     proc.emit('error', new Error('spawn ENOENT'));
 
-    await expect(promise).rejects.toThrow('ACP agent process error: spawn ENOENT');
+    await expect(promise).rejects.toThrow('JSON-RPC process error: spawn ENOENT');
   });
 
   test('rejects sendRequest when transport is closed', async () => {
-    const transport = new AcpTransport({ command: 'acp-agent' });
+    const transport = new ProcessJsonRpcTransport({ command: 'acp-agent' });
     await transport.close();
 
     await expect(transport.sendRequest('anything', {})).rejects.toThrow('Transport is closed');
@@ -224,7 +224,7 @@ describe('AcpTransport', () => {
 
   test('emits notifications via onNotification callback', () => {
     const notifications: unknown[] = [];
-    const transport = new AcpTransport({
+    const transport = new ProcessJsonRpcTransport({
       command: 'acp-agent',
       onNotification: (n) => notifications.push(n),
     });
@@ -243,7 +243,7 @@ describe('AcpTransport', () => {
   });
 
   test('isolates notification handler failures', async () => {
-    const transport = new AcpTransport({
+    const transport = new ProcessJsonRpcTransport({
       command: 'acp-agent',
       onNotification: () => {
         throw new Error('notification boom');
@@ -278,7 +278,7 @@ describe('AcpTransport', () => {
       return proc as unknown as ReturnType<typeof import('node:child_process').spawn>;
     };
 
-    new AcpTransport({
+    new ProcessJsonRpcTransport({
       command: 'acp-agent',
       args: ['--acp'],
       cwd: '/tmp/project',
@@ -295,7 +295,10 @@ describe('AcpTransport', () => {
   });
 
   test('close sends SIGTERM then SIGKILL after timeout', async () => {
-    const transport = new AcpTransport({ command: 'acp-agent', processGroupProbe: () => true });
+    const transport = new ProcessJsonRpcTransport({
+      command: 'acp-agent',
+      processGroupProbe: () => true,
+    });
     const proc = lastMockProcess!;
 
     const closePromise = transport.close();
@@ -310,7 +313,7 @@ describe('AcpTransport', () => {
   test('retains tree ownership after the leader exits', async () => {
     const terminate = vi.fn();
     const processTreeOwner = vi.fn(() => ({ terminate }));
-    const transport = new AcpTransport({
+    const transport = new ProcessJsonRpcTransport({
       command: 'acp-agent',
       processTreeOwner,
       processGroupProbe: () => true,
@@ -327,7 +330,7 @@ describe('AcpTransport', () => {
   test('does not escalate SIGKILL after the process group is gone', async () => {
     const terminate = vi.fn();
     const processTreeOwner = vi.fn(() => ({ terminate }));
-    const transport = new AcpTransport({
+    const transport = new ProcessJsonRpcTransport({
       command: 'acp-agent',
       processTreeOwner,
       processGroupProbe: () => false,
@@ -345,7 +348,7 @@ describe('AcpTransport', () => {
   test('signals and escalates against the leader when the group is gone but it lives', async () => {
     const terminate = vi.fn();
     const processTreeOwner = vi.fn(() => ({ terminate }));
-    const transport = new AcpTransport({
+    const transport = new ProcessJsonRpcTransport({
       command: 'acp-agent',
       processTreeOwner,
       processGroupProbe: () => false,
@@ -376,7 +379,7 @@ describe('AcpTransport', () => {
   test('cancels leader escalation when the leader exits after the group is gone', async () => {
     const terminate = vi.fn();
     const processTreeOwner = vi.fn(() => ({ terminate }));
-    const transport = new AcpTransport({
+    const transport = new ProcessJsonRpcTransport({
       command: 'acp-agent',
       processTreeOwner,
       processGroupProbe: () => false,
@@ -395,7 +398,7 @@ describe('AcpTransport', () => {
   test('escalates SIGKILL while the process group remains', async () => {
     const terminate = vi.fn();
     const processTreeOwner = vi.fn(() => ({ terminate }));
-    const transport = new AcpTransport({
+    const transport = new ProcessJsonRpcTransport({
       command: 'acp-agent',
       processTreeOwner,
       processGroupProbe: () => true,
@@ -426,7 +429,7 @@ describe('AcpTransport', () => {
     const terminate = vi.fn();
     const processTreeOwner = vi.fn(() => ({ terminate }));
     let groupExists = true;
-    const transport = new AcpTransport({
+    const transport = new ProcessJsonRpcTransport({
       command: 'acp-agent',
       processTreeOwner,
       processGroupProbe: () => groupExists,
@@ -443,7 +446,7 @@ describe('AcpTransport', () => {
 
   test('onExit callback fires when process exits', () => {
     const exits: Array<{ code: number | null; signal: string | null }> = [];
-    const transport = new AcpTransport({
+    const transport = new ProcessJsonRpcTransport({
       command: 'acp-agent',
       onExit: (code, signal) => exits.push({ code, signal }),
     });
@@ -458,7 +461,7 @@ describe('AcpTransport', () => {
 
   test('onStderr callback receives stderr data', () => {
     const stderrLines: string[] = [];
-    const transport = new AcpTransport({
+    const transport = new ProcessJsonRpcTransport({
       command: 'acp-agent',
       onStderr: (data) => stderrLines.push(data),
     });
@@ -471,7 +474,7 @@ describe('AcpTransport', () => {
   });
 
   test('ignores empty lines and malformed JSON', async () => {
-    const transport = new AcpTransport({ command: 'acp-agent' });
+    const transport = new ProcessJsonRpcTransport({ command: 'acp-agent' });
     const proc = lastMockProcess!;
 
     proc.stdout.emit('data', Buffer.from('\n\nnot-json\n\n'));
@@ -486,7 +489,7 @@ describe('AcpTransport', () => {
   });
 
   test('request timeout rejects after configured duration', async () => {
-    const transport = new AcpTransport({
+    const transport = new ProcessJsonRpcTransport({
       command: 'acp-agent',
       requestTimeoutMs: 50,
     });
@@ -499,7 +502,7 @@ describe('AcpTransport', () => {
 
   test('dispatches inbound requests via onRequest callback', () => {
     const requests: unknown[] = [];
-    const transport = new AcpTransport({
+    const transport = new ProcessJsonRpcTransport({
       command: 'acp-agent',
       onRequest: (r) => requests.push(r),
     });
@@ -525,7 +528,7 @@ describe('AcpTransport', () => {
 
   test('treats id: null JSON-RPC messages as inbound requests', () => {
     const requests: unknown[] = [];
-    const transport = new AcpTransport({
+    const transport = new ProcessJsonRpcTransport({
       command: 'acp-agent',
       onRequest: (r) => requests.push(r),
     });
@@ -550,7 +553,7 @@ describe('AcpTransport', () => {
   });
 
   test('auto-replies error when inbound request has no onRequest handler', () => {
-    const transport = new AcpTransport({ command: 'acp-agent' });
+    const transport = new ProcessJsonRpcTransport({ command: 'acp-agent' });
     const proc = lastMockProcess!;
 
     proc.stdout.emit(
@@ -566,7 +569,7 @@ describe('AcpTransport', () => {
   });
 
   test('catches inbound handler failures and sends JSON-RPC error response', () => {
-    const transport = new AcpTransport({
+    const transport = new ProcessJsonRpcTransport({
       command: 'acp-agent',
       onRequest: () => {
         throw new Error('handler boom');
@@ -590,7 +593,7 @@ describe('AcpTransport', () => {
   });
 
   test('catches rejected async inbound handler and sends JSON-RPC error response', async () => {
-    const transport = new AcpTransport({
+    const transport = new ProcessJsonRpcTransport({
       command: 'acp-agent',
       onRequest: async () => {
         throw new Error('async handler boom');
@@ -616,7 +619,7 @@ describe('AcpTransport', () => {
   });
 
   test('sendResponse writes JSON-RPC response to stdin', () => {
-    const transport = new AcpTransport({ command: 'acp-agent' });
+    const transport = new ProcessJsonRpcTransport({ command: 'acp-agent' });
     const proc = lastMockProcess!;
 
     transport.sendResponse(7, { ok: true });
@@ -629,7 +632,7 @@ describe('AcpTransport', () => {
   });
 
   test('sendErrorResponse writes JSON-RPC error to stdin', () => {
-    const transport = new AcpTransport({ command: 'acp-agent' });
+    const transport = new ProcessJsonRpcTransport({ command: 'acp-agent' });
     const proc = lastMockProcess!;
 
     transport.sendErrorResponse(8, { code: -32600, message: 'Bad' });
@@ -642,7 +645,10 @@ describe('AcpTransport', () => {
   });
 
   test('close falls back to direct kill when group kill fails', async () => {
-    const transport = new AcpTransport({ command: 'acp-agent', processGroupProbe: () => true });
+    const transport = new ProcessJsonRpcTransport({
+      command: 'acp-agent',
+      processGroupProbe: () => true,
+    });
     const proc = lastMockProcess!;
     proc.pid = 12345;
 

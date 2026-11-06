@@ -3,7 +3,7 @@ import { workerWorkEnvironment, workerWorkLocationsBrief } from '../work-locatio
 import { CopilotClient, RuntimeConnection, type SessionEvent } from '@github/copilot-sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { isAbsolute } from 'node:path';
-import { buildAcpSafeEnv } from '../acp/acp-command.ts';
+import { buildSafeProcessEnv } from '../safe-process-env.ts';
 import type { WorkDelivery } from './types.ts';
 export class CopilotModelUnavailableError extends Error {}
 export const COPILOT_CLI_VERSION = '1.0.105';
@@ -135,7 +135,7 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
     connection: RuntimeConnection.forStdio({
       path: config.cliPath,
       args: ['--no-remote', '--no-remote-export', '--no-custom-instructions'],
-      env: { ...buildAcpSafeEnv(config.env), ...workerWorkEnvironment(config.cwd) },
+      env: { ...buildSafeProcessEnv(config.env), ...workerWorkEnvironment(config.cwd) },
     }),
     mode: 'empty',
     baseDirectory: config.stateDirectory,

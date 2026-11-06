@@ -17,7 +17,7 @@ import {
 } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
-import { isSafeFsSupported, replaceFileWithinWorkspace } from '../../acp/acp-safe-fs.ts';
+import { isSafeFsSupported, replaceFileWithinWorkspace } from '../../safe-fs.ts';
 import { neoDerivedId } from '../derived-id.ts';
 import { applyHomeChoice } from './apply-choice.ts';
 import type { HomeConflict, HomeFailure } from './conflicts.ts';

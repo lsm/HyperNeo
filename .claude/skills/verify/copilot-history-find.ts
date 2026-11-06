@@ -1,3 +1,4 @@
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { strict as assert } from 'node:assert';
 import { appendFileSync, existsSync, renameSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
@@ -22,6 +23,10 @@ writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 const fixture = fileURLToPath(new URL('../../../packages/daemon/tests/fixtures/copilot-sdk.ts', import.meta.url));
 const acp = fileURLToPath(new URL('../../../packages/daemon/tests/fixtures/copilot-acp.ts', import.meta.url));
 writeFileSync(join(run, 'bin/copilot'), `#!/usr/bin/env bun\nif (process.argv.includes('--acp')) await import(${JSON.stringify(acp)}); else { process.argv.push('--production-version', '--durable-inputs'); await import(${JSON.stringify(fixture)}); }\n`, { mode: 0o700 });
+writeFileSync(join(run, 'bin/opencode'), '#!/bin/sh\nexit 19\n', { mode: 0o700 });
+process.env.COPILOT_CLI_PATH = join(run, 'bin/copilot');
+const network = globalThis.fetch;
+globalThis.fetch = (() => { throw new Error('External HTTP disabled'); }) as typeof fetch;
 mkdirSync(join(run, 'home/evidence'), { recursive: true });
 writeFileSync(join(run, 'home/copilot-list.json'), '[]');
 const observations: unknown[] = [];
@@ -31,7 +36,7 @@ let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let ws: WebSocket | undefined;
 async function connect() {
   app = await createDaemonApp({ config, verbose: false });
-  ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  ws = createLocalSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connection failed')); });
 }
 function rpc(name: string, input: unknown): Promise<unknown> {
@@ -57,6 +62,11 @@ const calls = () => readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').tri
 async function restart() { ws?.close(); await app!.cleanup(); app = undefined; await connect(); }
 try {
   await connect();
+  const adapters = await rpc('work.adapters', {}) as Result<{ id: string; capabilities: string[] }[]>;
+  assert(adapters.ok, JSON.stringify(adapters));
+  assert(!adapters.value.some(adapter => adapter.id === 'opencode'));
+  const copilot = adapters.value.find(adapter => adapter.id === 'copilot-cli');
+  for (const capability of ['find', 'start', 'send', 'queue', 'status', 'stop']) assert(copilot?.capabilities.includes(capability));
   if (mode === 'boundary') {
     const work = await start('history');
     const file = join(run, 'data/copilot-workers', work.ref.id, 'session-state', work.ref.id, 'events.jsonl');
@@ -170,7 +180,7 @@ try {
   }
   console.log(`PASS (${mode}): owned Copilot work.read/find through isolated daemon; evidence ${run}/evidence/observed.json`);
 } finally {
-  ws?.close(); await app?.cleanup();
+  ws?.close(); await app?.cleanup(); globalThis.fetch = network;
   const pids = existsSync(join(run, 'workspace/calls.jsonl')) ? [...new Set(calls().map(c => c.pid))] : [];
   await new Promise(done => setTimeout(done, 100));
   const remaining = pids.filter(pid => { try { process.kill(pid, 0); return true; } catch { return false; } });

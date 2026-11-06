@@ -1,3 +1,5 @@
+import { findExecutable } from '../../drivers/find-executable.ts';
+import { gitWorktreeProject } from '../../drivers/worktree-project.ts';
 import { resolveNewSessionModel } from '../../session/new-session-model.ts';
 import { workerWorktreeHasSubmodules } from '../../drivers/work-placement.ts';
 import { releaseWorkerSandbox } from '../../drivers/worker-sandbox.ts';
@@ -39,8 +41,6 @@ import { resolveCopilotRuntime } from '../../providers/anthropic-copilot/copilot
 import {
   ACP_AGENTS,
   createAcpAgentAdapter,
-  findAcpAgentBinary,
-  gitWorktreeProject,
   listAcpAgentSessions,
   reuseAcpSessionList,
 } from '../../drivers/acp-agent-adapter.ts';
@@ -390,7 +390,7 @@ function acpAgentAdapters(
   context: FamilyOperationContext
 ): WorkAdapter[] {
   return ACP_AGENTS.flatMap((agent) => {
-    const command = findAcpAgentBinary(agent.bin);
+    const command = findExecutable(agent.bin);
     if (!command) return [];
     const directory = join(dirname(resolve(context.deps.config.dbPath)), 'copilot-workers');
     const adapters = [

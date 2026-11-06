@@ -64,3 +64,6 @@ export type {
   StructuredLogSubscriber,
 } from './logger.ts';
 export * from './tool-summary-fields.ts';
+
+export * from './command.ts';
+export * from './json-rpc.ts';

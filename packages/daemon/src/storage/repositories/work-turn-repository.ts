@@ -73,6 +73,13 @@ export class WorkTurnRepository {
     return row?.cursor ?? null;
   }
 
+  lastEndedAt(ref: WorkRef): number | null {
+    const row = this.db
+      .prepare('SELECT MAX(ended_at) AS endedAt FROM work_turns WHERE ref = ?')
+      .get(storedRef(ref)) as { endedAt: number | null };
+    return row.endedAt;
+  }
+
   list(ref: WorkRef): WorkTurnFact[] {
     const rows = this.db
       .prepare(`SELECT ${TURN_COLUMNS} FROM work_turns WHERE ref = ? ORDER BY ended_at`)

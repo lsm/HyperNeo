@@ -30,7 +30,7 @@ export { readCodexSnapshot, withCodexState } from '../../storage/codex-desktop-r
 
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
-import { gitWorktreeProject } from './acp-agent-adapter.ts';
+import { gitWorktreeProject } from './worktree-project.ts';
 import { type CodexAppServer, CodexRequestError } from './codex-app-server.ts';
 import { type CodexSendGate, steerCodexDesktopTurn } from './codex-desktop-handoff.ts';
 import { selectCodexConfiguration } from './codex-start-configuration.ts';

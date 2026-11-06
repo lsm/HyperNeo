@@ -7,13 +7,16 @@ import type {
   SpaceGoalStatus,
   SpaceTask,
 } from '@hyperneo/shared';
-import type { SpaceAgentGoalScopeRepository } from '../../../storage/repositories/space-agent-goal-scope-repository.ts';
-import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
-import { decideGoalOwnershipMutationAdmission } from '../../../../../space/src/goals/ownership-gates.ts';
-import type { SpaceGoalService } from '../../../../../space/src/goals/service.ts';
-import { invokeOperationFromHandler } from '../../operations/handler-invoker.ts';
-import type { OperationRegistrySource } from '../../operations/registry.ts';
-import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
+import type { SpaceAgentGoalScopeRepository } from '../../../daemon/src/storage/repositories/space-agent-goal-scope-repository.ts';
+import type {
+  DaemonInternalEventMap,
+  InternalEventBus,
+} from '../../../daemon/src/lib/internal-event-bus.ts';
+import { decideGoalOwnershipMutationAdmission } from '../goals/ownership-gates.ts';
+import type { SpaceGoalService } from '../goals/service.ts';
+import { invokeOperationFromHandler } from '../../../daemon/src/lib/operations/handler-invoker.ts';
+import type { OperationRegistrySource } from '../../../daemon/src/lib/operations/registry.ts';
+import type { SpaceManager } from '../managers/space-manager.ts';
 
 export interface SpaceGoalHandlerDeps {
   goalService: SpaceGoalService;

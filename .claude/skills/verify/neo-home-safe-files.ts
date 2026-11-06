@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { replaceFileWithinWorkspace } from '../../../packages/daemon/src/lib/acp/acp-safe-fs-backend.ts';
+import { replaceFileWithinWorkspace } from '../../../packages/daemon/src/lib/safe-fs-backend.ts';
 
 const run = process.argv.at(-1)!;
 mkdirSync(join(run, 'evidence'), { recursive: true });

@@ -33,15 +33,15 @@ import type {
   AcpTerminalReleaseResult,
   AcpPermissionRequest,
   AcpPermissionResponseResult,
-  AcpJsonRpcNotification,
-  AcpJsonRpcRequest,
+  JsonRpcNotification,
+  JsonRpcRequest,
   AcpMcpServerConfig,
   AcpContentBlock,
   AcpStopReason,
 } from '@hyperneo/shared';
-import type { AcpProcessTreeOwner } from './acp-process-tree.ts';
-import { AcpTransport } from './acp-transport.ts';
-import type { AcpTransportCallbacks } from './acp-transport.ts';
+import type { ProcessTreeOwner } from '../process-tree.ts';
+import { ProcessJsonRpcTransport } from '../process-json-rpc.ts';
+import type { ProcessJsonRpcTransportCallbacks } from '../process-json-rpc.ts';
 
 export interface AcpClientCallbacks {
   onFsRead?(params: AcpFsReadParams): Promise<AcpFsReadResult>;
@@ -58,25 +58,25 @@ export interface AcpClientCallbacks {
 
 export interface AcpClientOptions
   extends AcpClientCallbacks,
-    Pick<AcpTransportCallbacks, 'onProcessSpawn' | 'onStderr' | 'onExit'> {
+    Pick<ProcessJsonRpcTransportCallbacks, 'onProcessSpawn' | 'onStderr' | 'onExit'> {
   command: string;
   args?: string[];
   env?: Record<string, string>;
   replaceEnv?: boolean;
   cwd?: string;
   requestTimeoutMs?: number;
-  processTreeOwner?: AcpProcessTreeOwner;
+  processTreeOwner?: ProcessTreeOwner;
 }
 
 export class AcpClient {
-  private transport: AcpTransport;
+  private transport: ProcessJsonRpcTransport;
   private callbacks: AcpClientCallbacks;
   private agentCapabilities: AcpInitializeResult['agentCapabilities'] | undefined;
   private authMethods: AcpInitializeResult['authMethods'] | undefined;
   private cachedConfigOptions: AcpConfigOption[] = [];
   private cachedModes: AcpSessionModeState | undefined;
   private sessionId: string | undefined;
-  private notificationSubscribers = new Set<(notification: AcpJsonRpcNotification) => void>();
+  private notificationSubscribers = new Set<(notification: JsonRpcNotification) => void>();
   private closed = false;
   private lastPromptStopReason: AcpStopReason | undefined;
 
@@ -104,7 +104,7 @@ export class AcpClient {
       onPermissionRequest,
     };
 
-    this.transport = new AcpTransport({
+    this.transport = new ProcessJsonRpcTransport({
       ...transportOptions,
       onRequest: (request) => this.handleRequest(request),
       onNotification: (notification) => this.handleNotification(notification),
@@ -305,7 +305,7 @@ export class AcpClient {
       accepted = true;
     };
 
-    const subscriber = (notification: AcpJsonRpcNotification) => {
+    const subscriber = (notification: JsonRpcNotification) => {
       if (notification.method !== 'session/update') return;
       const params = notification.params as AcpSessionUpdateNotification;
       if (params.sessionId !== this.sessionId) return;
@@ -430,7 +430,7 @@ export class AcpClient {
     return this.cachedConfigOptions;
   }
 
-  private async handleRequest(request: AcpJsonRpcRequest): Promise<void> {
+  private async handleRequest(request: JsonRpcRequest): Promise<void> {
     const handler = this.getRequestHandler(request.method);
     if (!handler) {
       this.transport.sendErrorResponse(request.id, {
@@ -494,7 +494,7 @@ export class AcpClient {
     }
   }
 
-  private handleNotification(notification: AcpJsonRpcNotification): void {
+  private handleNotification(notification: JsonRpcNotification): void {
     for (const subscriber of this.notificationSubscribers) {
       try {
         subscriber(notification);

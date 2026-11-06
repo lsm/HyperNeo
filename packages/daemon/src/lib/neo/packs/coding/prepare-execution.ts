@@ -1,7 +1,7 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { gitWorktreeProject } from '../../../drivers/acp-agent-adapter.ts';
+import { gitWorktreeProject } from '../../../drivers/worktree-project.ts';
 import type { NeoExecutionPreparation } from '../../pack-contract.ts';
 import { QA_SYSTEM_CONTRACT, REVIEWER_SYSTEM_CONTRACT } from '@hyperneo/prompts';
 

@@ -1,9 +1,4 @@
-export function getAcpCommandIdentity(commandLine: string): string {
-  const { command, args } = parseAcpCommand(commandLine);
-  return JSON.stringify([command, ...args]);
-}
-
-export function parseAcpCommand(commandLine: string): { command: string; args: string[] } {
+export function parseCommand(commandLine: string): { command: string; args: string[] } {
   const tokens: string[] = [];
   let current = '';
   let quote: 'single' | 'double' | null = null;
@@ -64,11 +59,11 @@ export function parseAcpCommand(commandLine: string): { command: string; args: s
     tokenStarted = true;
   }
   if (quote) {
-    throw new Error('Invalid ACP command: unmatched quote');
+    throw new Error('Invalid command: unmatched quote');
   }
   if (tokenStarted) tokens.push(current);
   if (!tokens[0]) {
-    throw new Error('Invalid ACP command: command is empty');
+    throw new Error('Invalid command: command is empty');
   }
 
   return { command: tokens[0], args: tokens.slice(1) };

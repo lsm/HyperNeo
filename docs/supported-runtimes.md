@@ -35,7 +35,7 @@ Windows compiled-worker smoke remains a required CI dependency.
 
 ## Filesystem security
 
-The native ACP filesystem backend uses Bun FFI on supported macOS and Linux
+The native safe filesystem backend uses Bun FFI on supported macOS and Linux
 hosts. Descriptor-relative operations, no-follow flags, permissions, cancellation
 and race checks remain required. Native backend availability and Windows behavior
 must be verified separately for any platform change.
