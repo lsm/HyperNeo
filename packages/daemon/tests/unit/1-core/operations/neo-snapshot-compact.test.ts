@@ -63,7 +63,14 @@ describe('fitNeoSnapshotBudget', () => {
   test('drops remaining step payloads before dropping any open ask', () => {
     const full = snapshot(12, 0);
     for (const item of full.todoAsks ?? []) {
-      Object.assign(item.todos[0], { askId: item.ask.id, state: 'todo', position: 0, approvedAt: 1, startedAt: null, dependsOn: [] });
+      Object.assign(item.todos[0], {
+        askId: item.ask.id,
+        state: 'todo',
+        position: 0,
+        approvedAt: 1,
+        startedAt: null,
+        dependsOn: [],
+      });
       item.todos[0].worker = { adapter: 'hyperneo', id: 'w'.repeat(10_000) };
     }
     const fitted = fitNeoSnapshotBudget(full, 4_000);

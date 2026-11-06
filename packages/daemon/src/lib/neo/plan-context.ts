@@ -7,7 +7,7 @@ export type NeoPlanLine = {
   id: string;
   askId: string;
   text: string;
-  omitted?: true;
+  omitted?: boolean;
 };
 
 export function neoPlanLines(
@@ -64,13 +64,14 @@ export function fitNeoPlanLines(lines: readonly NeoPlanLine[], budget: number): 
     return [...lines];
   return lines
     .filter((line) => line.kind === 'ask')
-    .map((line) => ({
-      ...line,
-      omitted: true,
-      text: lines.some((detail) => detail.kind === 'todo' && detail.askId === line.askId)
-        ? `${line.text} (Steps omitted; use neo.ask.read ${line.askId}.)`
-        : line.text,
-    }));
+    .map((line) => {
+      const omitted = lines.some((detail) => detail.kind === 'todo' && detail.askId === line.askId);
+      return {
+        ...line,
+        omitted,
+        text: omitted ? `${line.text} (Steps omitted; use neo.ask.read ${line.askId}.)` : line.text,
+      };
+    });
 }
 
 export function planNeoPlanContext(
