@@ -113,17 +113,17 @@ import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../../../../../space/
 import { setupEvolutionHandlers } from './evolution-handlers.ts';
 import { EvolutionConversationAnalysisService } from '../../../../../space/src/evolution/conversation-analysis-service.ts';
 import { EvolutionEpisodeService } from '../../../../../space/src/evolution/episode-service.ts';
-import { EvolutionScopeService } from '../evolution/scope-service.ts';
+import { EvolutionScopeService } from '../../../../../space/src/evolution/scope-service.ts';
 import { EvolutionTraceEvidenceService } from '../../../../../space/src/evolution/trace-evidence-service.ts';
 import { ScheduleService } from '../../schedule/schedule-service.ts';
 import { SpaceGoalEventRepository } from '../../../storage/repositories/space-goal-event-repository.ts';
 import { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
 import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
 import { SpaceGoalService } from '../../../../../space/src/goals/service.ts';
-import { mergeEvolutionPolicy } from '../evolution/scope-service.ts';
+import { mergeEvolutionPolicy } from '../../../../../space/src/evolution/scope-service.ts';
 import type { RPCHandlerDependencies } from '../../rpc-handlers/index.ts';
 import type { ExternalEventService } from '../../external-events/external-event-service.ts';
-import type { ExternalEventStore } from '../external-events/external-event-store.ts';
+import type { ExternalEventStore } from '../../../../../space/src/external-events/external-event-store.ts';
 import type { ExternalEventDeliveryState } from '../../external-events/types.ts';
 import type { SpaceRpcHost } from '../../rpc-handlers/space-rpc.ts';
 import { createSpaceSessionPort } from '../runtime/space-session-port.ts';
@@ -132,7 +132,7 @@ import { collectSpaceFamilyOperations, createSessionSpacePort } from './family-o
 import { setupSpaceMcpHandlers } from './space-mcp-handlers.ts';
 import { archiveAgentSessions } from './space-agent-v2-handlers.ts';
 import type { SessionTarget } from '../../session-resolution/target.ts';
-import type { SpaceManager } from '../managers/space-manager.ts';
+import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { OperationRegistry } from '../../operations/registry.ts';
 

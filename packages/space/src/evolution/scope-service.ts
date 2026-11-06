@@ -10,7 +10,7 @@ import type {
   UpdateEvolutionScopeParams,
   EvolutionEvidenceListResponse,
 } from '@hyperneo/shared';
-import { Logger } from '../../logger.ts';
+import { Logger } from '../../../daemon/src/lib/logger.ts';
 import type {
   AddManualNoteEvidenceParams,
   AddMetricSnapshotEvidenceParams,
@@ -22,10 +22,10 @@ import type {
   ResolveScopeForGoalParams,
   ResolveScopeForTaskParams,
   SelectTaskLessonsParams,
-} from '../../../../../space/src/evolution/scope-service-types.ts';
-import { mergeEvolutionPolicy } from '../../../../../space/src/evolution/scope-policy.ts';
-import { rankLessonsByTaskRelevance } from '../../../../../space/src/evolution/lesson-ranking.ts';
-import { buildPreflightContext } from '../../../../../space/src/evolution/scope-preflight-context.ts';
+} from './scope-service-types.ts';
+import { mergeEvolutionPolicy } from './scope-policy.ts';
+import { rankLessonsByTaskRelevance } from './lesson-ranking.ts';
+import { buildPreflightContext } from './scope-preflight-context.ts';
 import {
   buildTaskResultEvidenceMetadata,
   buildTaskResultEvidenceSummary,
@@ -33,7 +33,7 @@ import {
   selectWorkflowEvidenceKind,
   summarizeArtifact,
   summarizeArtifactTypes,
-} from '../../../../../space/src/evolution/scope-evidence-summaries.ts';
+} from './scope-evidence-summaries.ts';
 import {
   createAutoEvidenceOnce,
   createProposalOriginEvidence,
@@ -55,13 +55,13 @@ import {
   requireScopeForWorkflowRun,
   requireScopeInSpace,
   requireSpace,
-} from '../../../../../space/src/evolution/scope-resolution.ts';
+} from './scope-resolution.ts';
 
-export { mergeEvolutionPolicy } from '../../../../../space/src/evolution/scope-policy.ts';
+export { mergeEvolutionPolicy } from './scope-policy.ts';
 export type {
   AddManualNoteEvidenceParams,
   EvolutionScopeServiceDeps,
-} from '../../../../../space/src/evolution/scope-service-types.ts';
+} from './scope-service-types.ts';
 
 const log = new Logger('evolution-scope-service');
 

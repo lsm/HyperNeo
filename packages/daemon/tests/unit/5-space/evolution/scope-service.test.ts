@@ -4,7 +4,7 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import {
   EvolutionScopeService,
   mergeEvolutionPolicy,
-} from '../../../../src/lib/space/evolution/scope-service';
+} from '../../../../../space/src/evolution/scope-service';
 import { extractArtifactDetail } from '../../../../../space/src/evolution/scope-evidence-summaries';
 import { rankLessonsByTaskRelevance } from '../../../../../space/src/evolution/lesson-ranking';
 import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository';

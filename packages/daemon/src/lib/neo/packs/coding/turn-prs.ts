@@ -6,12 +6,15 @@ import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import { WorkDeliveryInputRepository } from '../../../../storage/repositories/work-delivery-input-repository.ts';
 import { WorkTurnRepository } from '../../../../storage/repositories/work-turn-repository.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
+import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import type { NeoWorkPrReader } from './work-prs.ts';
 import {
   type CodingTurn,
   type CodingTurnMentions,
+  codingTurnSessionKey,
   codingTurnTodos,
   planCodingTurnFacts,
+  planCodingTurnOwned,
   planCodingTurnUrls,
 } from './turn-owner.ts';
 
@@ -75,7 +78,9 @@ export class CodingTurnPrRepository {
     const refs = new Map(turns.map((turn) => [JSON.stringify(turn.ref), turn.ref]));
     return {
       turns,
-      todos: Object.assign({}, ...[...refs.values()].map((ref) => this.todosOf(ref))),
+      todos: Object.fromEntries(
+        [...refs.values()].map((ref) => [codingTurnSessionKey(ref), this.todosOf(ref)])
+      ),
     };
   }
 
@@ -87,6 +92,33 @@ export class CodingTurnPrRepository {
       )
       .all() as { ref: string }[];
     return rows.map((row) => this.turns.lastEndedAt(JSON.parse(row.ref) as WorkRef));
+  }
+
+  private createdAt(url: string) {
+    const pr = parsePrUrl(url);
+    const row = this.db
+      .prepare(
+        `SELECT created_at AS createdAt FROM pack_coding_pr_ledger WHERE number = ?2 AND (repo = ?1
+          OR repo IN (SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?1))`
+      )
+      .get(`${pr?.owner}/${pr?.repo}`.toLowerCase(), Number(pr?.number)) as {
+      createdAt: number | null;
+    } | null;
+    return row?.createdAt ?? undefined;
+  }
+
+  ownedPrs(todoId: string): string[] | null {
+    const own = this.own(todoId);
+    if (!own.length) return null;
+    const row = this.db
+      .prepare('SELECT check_json AS json FROM neo_todos WHERE id = ?')
+      .get(todoId) as {
+      json: string | null;
+    } | null;
+    const todo = { id: todoId, check: row?.json ? JSON.parse(row.json) : null };
+    const urls = planCodingTurnUrls(todo, own);
+    const prs = urls.map((url) => ({ url, createdAt: this.createdAt(url) }));
+    return planCodingTurnOwned(todo, prs, this.mentions(urls));
   }
 
   readOwn(todoId: string): Promise<CodingTurn[]> {

@@ -502,9 +502,11 @@ test('a button answer never waits for an unrelated unavailable HyperNeo session'
   const f = await fixture();
   const peer = { ...f.source, id: 'unavailable-peer', daemon: 'synthetic-remote' };
   const sessions = new NeoTodoSessionRepository(f.db);
+  const owner = f.store.getAsk('ask')!;
+  f.store.openAsk({ ...owner, id: 'other-ask', createdAt: 2 });
   const other = f.store.addTodo(
     'other',
-    'ask',
+    'other-ask',
     { title: 'Other', doneWhen: 'Done', instruction: null, check: null, named: null },
     2
   );

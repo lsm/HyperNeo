@@ -5,6 +5,7 @@ import {
   createCodingTodoPack,
   CodingTodoPrRepository,
 } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
+import { codingTurnSessionKey } from '../../../../src/lib/neo/packs/coding/turn-owner.ts';
 import { CodingTurnPrRepository } from '../../../../src/lib/neo/packs/coding/turn-prs.ts';
 import {
   recordWorkTurns,
@@ -46,6 +47,15 @@ function setup() {
     recordWorkTurns.run(db, { ref, turns }, undefined as never);
   return { db, send, record };
 }
+
+const ledger = (db: Database, createdAt: number) =>
+  db
+    .prepare(
+      `INSERT INTO pack_coding_pr_ledger
+        (repo, number, title, branch, head, state, state_since, read_at, created_at)
+       VALUES ('acme/app', 7, 't', 'b', 'h', 'open', 1, 1, ?)`
+    )
+    .run(createdAt);
 
 const todo = (id: string) =>
   ({
@@ -136,7 +146,10 @@ describe('coding turn PRs', () => {
     const turns = new CodingTurnPrRepository(db);
     expect(turns.own('a').map(({ id }) => id)).toEqual(['t1']);
     expect(turns.own('b').map(({ id }) => id)).toEqual(['t2']);
-    expect(turns.mentions([url]).todos).toMatchObject({ 'desktop-pending:abc123': 'a', t2: 'b' });
+    expect(turns.mentions([url]).todos[codingTurnSessionKey(ref)]).toMatchObject({
+      'desktop-pending:abc123': 'a',
+      t2: 'b',
+    });
     db.close();
   });
 
@@ -154,6 +167,7 @@ describe('coding turn PRs', () => {
 
   test('a PR the check names keeps its named claim', async () => {
     const { db, send, record } = setup();
+    db.exec('PRAGMA foreign_keys = OFF');
     send('d1', 'a', 'receipt-a');
     record(fact('t1', ['receipt-a'], [url], 100));
     const pack = createCodingTodoPack(new CodingTodoPrRepository(db), async () => [merged(105)]);
@@ -165,6 +179,46 @@ describe('coding turn PRs', () => {
     expect(db.prepare('SELECT claim FROM pack_coding_pr_claims').all()).toEqual([
       { claim: 'named' },
     ]);
+    db.close();
+  });
+
+  test('a todo is linked only to the PR its own turn produced, whatever its claims say', () => {
+    const { db, send, record } = setup();
+    db.exec('PRAGMA foreign_keys = OFF');
+    send('d1', 'a', 'receipt-a');
+    send('d2', 'b', 'receipt-b');
+    record(fact('t1', ['receipt-a'], [url], 100), fact('t2', ['receipt-b'], [url], 200));
+    ledger(db, 105);
+    const prs = new CodingTodoPrRepository(db);
+    prs.claim('b', [{ url, claim: 'branch' }], 1, 'additive');
+    expect(prs.linked('a', url)).toBe(true);
+    expect(prs.linked('b', url)).toBe(false);
+    db.close();
+  });
+
+  test('a PR the ledger has not seen is not linked by a turn', () => {
+    const { db, send, record } = setup();
+    send('d1', 'a', 'receipt-a');
+    record(fact('t1', ['receipt-a'], [url], 100));
+    expect(new CodingTodoPrRepository(db).linked('a', url)).toBe(false);
+    db.close();
+  });
+
+  test('a todo with no turns keeps its claims', () => {
+    const { db } = setup();
+    db.exec('PRAGMA foreign_keys = OFF');
+    const prs = new CodingTodoPrRepository(db);
+    prs.claim('a', [{ url, claim: 'branch' }], 1, 'additive');
+    expect(prs.linked('a', url)).toBe(true);
+    db.close();
+  });
+
+  test('the snapshot pins what the rule places', () => {
+    const { db, send, record } = setup();
+    send('d1', 'a', 'receipt-a');
+    record(fact('t1', ['receipt-a'], [url], 100));
+    ledger(db, 105);
+    expect(new CodingTodoPrRepository(db).pinned('a')).toEqual([{ url, state: null }]);
     db.close();
   });
 

@@ -2,30 +2,30 @@ import { promises as fs } from 'node:fs';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
-import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
-import { SessionRepository } from '../../../storage/repositories/session-repository.ts';
-import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
-import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
-import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
+import type { Database as BunDatabase } from '../../../daemon/src/storage/sqlite-compat.ts';
+import type { ReactiveDatabase } from '../../../daemon/src/storage/reactive-database.ts';
+import { SessionRepository } from '../../../daemon/src/storage/repositories/session-repository.ts';
+import { SpaceRepository } from '../../../daemon/src/storage/repositories/space-repository.ts';
+import { SpaceTaskRepository } from '../../../daemon/src/storage/repositories/space-task-repository.ts';
+import { SpaceGoalRepository } from '../../../daemon/src/storage/repositories/space-goal-repository.ts';
 import {
   SpaceWorkspaceRepository,
   type SpaceWorkspaceRecord,
-} from '../../../storage/repositories/space-workspace-repository.ts';
+} from '../../../daemon/src/storage/repositories/space-workspace-repository.ts';
 import {
   buildRegistrySnapshot,
   SpaceWorkspaceManager,
   WorkspaceRegistrationError,
-} from '../../workspaces/workspace-manager.ts';
+} from '../../../daemon/src/lib/workspaces/workspace-manager.ts';
 import {
   checkWorkspaceRegistryGates,
   nodeWorkspaceValidationIo,
   validateWorkspaceRegistration,
   type WorkspaceRegistrySnapshot,
   type WorkspaceValidationIo,
-} from '../../workspaces/validation-pipeline.ts';
-import { Logger } from '../../logger.ts';
-import { slugify, validateSlug } from '../../agents/slug.ts';
+} from '../../../daemon/src/lib/workspaces/validation-pipeline.ts';
+import { Logger } from '../../../daemon/src/lib/logger.ts';
+import { slugify, validateSlug } from '../../../daemon/src/lib/agents/slug.ts';
 import type { Space, CreateSpaceParams, UpdateSpaceParams } from '@hyperneo/shared';
 
 const execAsync = promisify(exec);

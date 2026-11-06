@@ -6,7 +6,8 @@ import { codingPrKey } from './pr-key.ts';
 
 export type CodingTurn = WorkTurnMention;
 export type CodingTurnTodos = Readonly<Record<string, string>>;
-export type CodingTurnMentions = { turns: readonly CodingTurn[]; todos: CodingTurnTodos };
+export type CodingSessionTodos = Readonly<Record<string, CodingTurnTodos>>;
+export type CodingTurnMentions = { turns: readonly CodingTurn[]; todos: CodingSessionTodos };
 export type CodingTurnOwner =
   | { state: 'placed'; session: WorkRef; todo: string | null }
   | { state: 'unknown' }
@@ -32,12 +33,13 @@ export function codingTurnTodos(turn: CodingTurn, todos: CodingTurnTodos): strin
     : todosIn(turn.previous, todos);
 }
 
-const sessionKey = ({ adapter, id, daemon }: WorkRef) => JSON.stringify([adapter, id, daemon]);
+export const codingTurnSessionKey = ({ adapter, id, daemon }: WorkRef) =>
+  JSON.stringify([adapter, id, daemon]);
 
 export function planCodingTurnOwner(
   pr: { url: string; createdAt?: number },
   turns: readonly CodingTurn[],
-  todos: CodingTurnTodos
+  todos: CodingSessionTodos
 ): CodingTurnOwner {
   const key = codingPrKey(pr.url);
   const isPr = (url: string) => codingPrKey(url) === key;
@@ -49,10 +51,15 @@ export function planCodingTurnOwner(
   if (inside.some((turn) => !turn.complete)) return { state: 'unknown' };
   const reported = inside.filter((turn) => turn.finalUrls.some(isPr));
   const placing = reported.length ? reported : inside;
-  if (new Set(placing.map((turn) => sessionKey(turn.ref))).size > 1) return { state: 'unknown' };
+  if (new Set(placing.map((turn) => codingTurnSessionKey(turn.ref))).size > 1)
+    return { state: 'unknown' };
   if (!reported.length && (inside.length > 1 || inside[0].finalUrls.some(codingPrKey)))
     return { state: 'unknown' };
-  const owners = [...new Set(placing.flatMap((turn) => codingTurnTodos(turn, todos)))];
+  const owners = [
+    ...new Set(
+      placing.flatMap((turn) => codingTurnTodos(turn, todos[codingTurnSessionKey(turn.ref)] ?? {}))
+    ),
+  ];
   return { state: 'placed', session: placing[0].ref, todo: owners.length === 1 ? owners[0] : null };
 }
 
@@ -68,6 +75,18 @@ export function planCodingTurnUrls(
     (url) => !reported.has(url)
   );
   return [...reported, ...shown.slice(0, Math.max(0, MAX_TURN_PRS - reported.size))];
+}
+
+export function planCodingTurnOwned(
+  todo: Pick<NeoTodo, 'id' | 'check'>,
+  prs: readonly { url: string; createdAt?: number }[],
+  mentions: CodingTurnMentions
+) {
+  const named = new Set(namedPrKeys(todo));
+  return prs.flatMap(({ url, createdAt }) => {
+    const owner = planCodingTurnOwner({ url, createdAt }, mentions.turns, mentions.todos);
+    return named.has(url) || (owner.state === 'placed' && owner.todo === todo.id) ? url : [];
+  });
 }
 
 export function planCodingTurnFacts(

@@ -8,7 +8,7 @@ import { captureDirectMailboxAdmission } from '../tasks/direct-mailbox-admission
 import { createSpaceDaemonExtension } from './daemon-extension.ts';
 import { EvolutionLogEvidenceService } from '../../../../space/src/evolution/log-evidence-service.ts';
 import { createSpaceExternalEvents } from './external-event-wiring.ts';
-import { SpaceManager } from './managers/space-manager.ts';
+import { SpaceManager } from '../../../../space/src/managers/space-manager.ts';
 import { createSpaceRpc } from './rpc/space-setup.ts';
 
 export const spaceDaemonModule = {

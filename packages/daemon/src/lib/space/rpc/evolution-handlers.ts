@@ -38,7 +38,7 @@ import type { EvolutionEpisodeService } from '../../../../../space/src/evolution
 import type {
   AddManualNoteEvidenceParams,
   EvolutionScopeService,
-} from '../evolution/scope-service.ts';
+} from '../../../../../space/src/evolution/scope-service.ts';
 
 interface RecordPayload {
   [key: string]: unknown;

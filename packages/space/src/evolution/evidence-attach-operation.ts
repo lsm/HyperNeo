@@ -1,13 +1,13 @@
 import type { EvidenceRef, EvolutionScope } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
-import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
+import type { SpaceTaskRepository } from '../../../daemon/src/storage/repositories/space-task-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../../daemon/src/storage/repositories/space-workflow-run-repository.ts';
 import {
   defineOperation,
   type OperationCaller,
   type OperationPolicy,
-} from '../../operations/registry.ts';
+} from '../../../daemon/src/lib/operations/registry.ts';
 import {
   admitEvolutionMutator,
   denyEvolution,
@@ -18,11 +18,8 @@ import {
   type EvolutionAuditWriter,
   type EvolutionGate,
   type EvolutionSpaceScope,
-} from '../../../../../space/src/evolution/admission.ts';
-import {
-  EvolutionEvidenceRefSchema,
-  EvolutionMetadataSchema,
-} from '../../../../../space/src/evolution/result-schemas.ts';
+} from './admission.ts';
+import { EvolutionEvidenceRefSchema, EvolutionMetadataSchema } from './result-schemas.ts';
 import type { EvolutionScopeService } from './scope-service.ts';
 
 export interface EvolutionEvidenceAttachDependencies extends EvolutionAdmissionDependencies {

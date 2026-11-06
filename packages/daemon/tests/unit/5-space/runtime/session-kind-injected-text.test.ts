@@ -16,7 +16,7 @@ import { createOperationRegistry } from '../../../../src/lib/operations/registry
 import { buildAgentSessionConfig } from '../../../../src/lib/session-resolution/agent-session-config.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import type { SettingsManager } from '../../../../src/lib/settings-manager.ts';
-import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import {
   SpaceRuntimeService,

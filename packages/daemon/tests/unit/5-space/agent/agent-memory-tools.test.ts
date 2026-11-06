@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { AgentMemoryRepository } from '../../../../src/storage/repositories/agent-memory-repository.ts';
-import { createAgentMemoryToolHandlers } from '../../../../src/lib/space/tools/agent-memory-tools.ts';
+import { createAgentMemoryToolHandlers } from '../../../../../space/src/tools/agent-memory-tools.ts';
 
 let db: BunDatabase;
 let repo: AgentMemoryRepository;

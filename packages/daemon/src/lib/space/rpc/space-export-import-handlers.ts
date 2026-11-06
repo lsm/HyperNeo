@@ -32,7 +32,7 @@ import {
 } from '../../agents/unified-agent-events.ts';
 import { isRunnableUnifiedAgent } from '../../agents/worker-long-horizon-mapper.ts';
 import { exportBundle, normalizeOverride, validateExportBundle } from '../export-format.ts';
-import type { SpaceManager } from '../managers/space-manager.ts';
+import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../../agents/slug.ts';
 

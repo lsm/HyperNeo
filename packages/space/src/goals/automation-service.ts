@@ -13,7 +13,7 @@ import type { EvolutionRepository } from '../../../daemon/src/storage/repositori
 import type { GoalAutomationCursorRepository } from '../../../daemon/src/storage/repositories/goal-automation-cursor-repository.ts';
 import type { SpaceGoalRepository } from '../../../daemon/src/storage/repositories/space-goal-repository.ts';
 import type { SpaceTaskRepository } from '../../../daemon/src/storage/repositories/space-task-repository.ts';
-import type { EvolutionScopeService } from '../../../daemon/src/lib/space/evolution/scope-service.ts';
+import type { EvolutionScopeService } from '../evolution/scope-service.ts';
 import type { GoalAutomationExecutePayload } from '../job-handlers/goal-automation-execute.handler.ts';
 import { Logger } from '../../../daemon/src/lib/logger.ts';
 import {

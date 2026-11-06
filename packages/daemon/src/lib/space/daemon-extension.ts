@@ -3,7 +3,7 @@ import { type DaemonInternalEventMap, type InternalEventBus } from '../internal-
 import { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceAgentReminderRepository } from '../../storage/repositories/space-agent-reminder-repository.ts';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
-import { SpaceManager } from '../space/managers/space-manager.ts';
+import { SpaceManager } from '../../../../space/src/managers/space-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
 import type { SpaceWorktreeManager } from '../workspaces/worktree-manager.ts';
 import { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
@@ -22,7 +22,10 @@ import { SpaceRepository } from '../../storage/repositories/space-repository.ts'
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
 import type { DaemonExtension } from '../extensions/contract.ts';
-import { createSpaceAdapter, spaceTaskControl } from './drivers/space-adapter.ts';
+import {
+  createSpaceAdapter,
+  spaceTaskControl,
+} from '../../../../space/src/drivers/space-adapter.ts';
 import type { SessionManager } from '../session/session-manager.ts';
 import type { TaskAgentManager } from './runtime/task-agent-manager.ts';
 import { hostname } from 'node:os';
