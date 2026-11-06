@@ -1,4 +1,5 @@
 import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
+import { DELEGATION_PACK_BRIEF } from '../../../../src/lib/neo/packs/delegation/pack.ts';
 import { describe, expect, test } from 'bun:test';
 import {
   loadNeoFilePacks,
@@ -169,6 +170,7 @@ describe('neoSettingsPackBriefs', () => {
           'Software work in git repositories: pull requests, CI, review and merging. Check pr_approved {url} waits for saved-policy approval; pr_merged waits for merge.',
         guidance: NEO_PACK_CODING_INSTRUCTIONS,
       },
+      DELEGATION_PACK_BRIEF,
     ]);
     adoptNeoFilePacks(
       loadNeoFilePacks({
@@ -178,9 +180,11 @@ describe('neoSettingsPackBriefs', () => {
       })
     );
     expect(neoSettingsPackBriefs({ packs: ['inbox-triage'] }).map((brief) => brief.id)).toEqual([
+      'delegation',
       'inbox-triage',
     ]);
-    expect(neoSettingsPackBriefs().map((brief) => brief.id)).toEqual(['coding']);
+    expect(neoSettingsPackBriefs().map((brief) => brief.id)).toEqual(['coding', 'delegation']);
+    expect(neoSettingsPackBriefs({ packs: [] }).map((brief) => brief.id)).toEqual(['delegation']);
     adoptNeoFilePacks([]);
   });
 });

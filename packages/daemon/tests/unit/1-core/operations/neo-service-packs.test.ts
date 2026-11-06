@@ -105,10 +105,10 @@ test('core checks stay installed with only life-admin enabled and read actual ou
 
 test('installed builtins keep identity and settings select without rebuilding them', () => {
   const installed = service.installedPacks();
-  expect(installed.map((pack) => pack.id)).toEqual(['coding', 'life-admin', 'core']);
-  expect(service.packs()).toEqual([installed[0]]);
+  expect(installed.map((pack) => pack.id)).toEqual(['coding', 'life-admin', 'delegation', 'core']);
+  expect(service.packs()).toEqual([installed[0], installed[2]]);
   db.updateGlobalSettings({ neo: { packs: ['life-admin'] } });
-  expect(service.packs()).toEqual([installed[1]]);
+  expect(service.packs()).toEqual([installed[1], installed[2]]);
   expect(service.installedPacks()[0]).toBe(installed[0]);
   expect(service.installedPacks()[1]).toBe(installed[1]);
   expect(

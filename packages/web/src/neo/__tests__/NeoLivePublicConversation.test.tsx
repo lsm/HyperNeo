@@ -15,6 +15,7 @@ import type { NeoAskState } from '../useNeoConversationAsks.ts';
 import type { NeoPublicationState } from '../useNeoPublications.ts';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
+let sendMock: ReturnType<typeof vi.fn>;
 const transport = vi.hoisted(() => ({ hub: null as unknown }));
 vi.mock('../useNeo.ts', () => ({ useNeo: useNeoMock }));
 vi.mock('../../lib/connection-manager.ts', () => ({
@@ -30,12 +31,23 @@ vi.mock('../neo-attachments.ts', async (original) => ({
   restoreNeoImages: restoreImages,
 }));
 vi.mock('../NeoComposer.tsx', () => ({
-  NeoComposer: (props: { draft: string; onDraft: (value: string) => void }) => (
-    <textarea
-      aria-label="Draft"
-      value={props.draft}
-      onInput={(event) => props.onDraft(event.currentTarget.value)}
-    />
+  NeoComposer: (props: {
+    draft: string;
+    onDraft: (value: string) => void;
+    onSend: (input: { text: string }) => void;
+  }) => (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        props.onSend({ text: props.draft });
+      }}
+    >
+      <textarea
+        aria-label="Draft"
+        value={props.draft}
+        onInput={(event) => props.onDraft(event.currentTarget.value)}
+      />
+    </form>
   ),
 }));
 
@@ -168,6 +180,7 @@ beforeEach(async () => {
     store.messagesLoaded.value = true;
     sessionId.value = root;
   });
+  sendMock = vi.fn(async () => ({ ok: true }));
   useNeoMock.mockImplementation(() => {
     const rootSnapshot = source.value;
     const conversation = projectNeoPublicConversation(
@@ -193,7 +206,8 @@ beforeEach(async () => {
       setError: (value: string) => (error.value = value),
       open,
       retry: vi.fn(),
-      send: vi.fn(),
+      send: sendMock,
+      sendRequestId: () => undefined,
       act: vi.fn(),
       busyWork: null,
     };
@@ -467,17 +481,23 @@ describe('NeoLive durable conversation activation', () => {
     expect(await within(publicView()).findByText('a-reply', { selector: 'strong' })).toBeTruthy();
     expect(screen.getByText('Native session controls could not be loaded.')).toBeTruthy();
     expect(screen.queryByText('Opening your conversation…')).toBeNull();
-    expect(screen.queryByLabelText('Draft')).toBeNull();
-    await act(async () => {
-      store.loadErrorKind.value = null;
-      store.messagesLoaded.value = true;
-    });
     expect(screen.getByLabelText('Draft')).toBeTruthy();
     await act(async () => {
       store.activeSessionId.value = 'stale-native-owner';
     });
     expect(screen.queryByLabelText('Public conversation')).toBeNull();
     expect(screen.queryByLabelText('Draft')).toBeNull();
+  });
+
+  it('shows the composer and sends when the raw transcript never loads', async () => {
+    store.messagesLoaded.value = false;
+    render(<NeoLive />);
+    const draft = (await screen.findByLabelText('Draft')) as HTMLTextAreaElement;
+    fireEvent.input(draft, { target: { value: 'still here' } });
+    await waitFor(() => expect(draft.value).toBe('still here'));
+    fireEvent.submit(draft.closest('form')!);
+    await waitFor(() => expect(sendMock).toHaveBeenCalledOnce());
+    expect(JSON.stringify(sendMock.mock.calls[0])).toContain('still here');
   });
 
   it('labels holder replies as Neo without author navigation', async () => {

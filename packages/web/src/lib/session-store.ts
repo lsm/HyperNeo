@@ -161,9 +161,11 @@ function isThinned(message: ChatMessage): boolean {
 
 export class SessionStore {
   private readonly followDisplayMode: boolean;
+  private readonly loadsTranscript: boolean;
 
-  constructor(options: { followDisplayMode?: boolean } = {}) {
+  constructor(options: { followDisplayMode?: boolean; transcript?: boolean } = {}) {
     this.followDisplayMode = options.followDisplayMode ?? false;
+    this.loadsTranscript = options.transcript ?? true;
     activeStores.add(this);
   }
 
@@ -426,7 +428,8 @@ export class SessionStore {
           )
         : 'messages.bySession';
 
-      await this.subscribeToMessagesLiveQuery(hub, sessionId);
+      if (this.loadsTranscript) await this.subscribeToMessagesLiveQuery(hub, sessionId);
+      else this.recoverOnReconnect(hub, sessionId, null);
     } catch (err) {
       logger.error('Failed to start subscriptions:', err);
       toast.error('Failed to connect to daemon');
@@ -538,26 +541,7 @@ export class SessionStore {
     });
     this.cleanupFunctions.push(unsubError);
 
-    const unsubReconnect = hub.onConnection((state) => {
-      if (state === 'disconnected' || state === 'reconnecting') {
-        if (this.activeMessagesSubscriptionId === subscriptionId && !this.destroyed) {
-          this.beginRecovery();
-        }
-        return;
-      }
-      if (state === 'failed') {
-        if (this.activeMessagesSubscriptionId === subscriptionId) {
-          this.isRecovering.value = false;
-        }
-        return;
-      }
-      if (state !== 'connected') return;
-      if (this.activeMessagesSubscriptionId !== subscriptionId) return;
-      this.performRecovery(hub, sessionId, subscriptionId).catch((err) => {
-        logger.warn('Session recovery on reconnect failed:', err);
-      });
-    });
-    this.cleanupFunctions.push(unsubReconnect);
+    this.recoverOnReconnect(hub, sessionId, subscriptionId);
 
     this.cleanupFunctions.push(() => {
       const activeHub = connectionManager.getHubIfConnected();
@@ -581,6 +565,33 @@ export class SessionStore {
         this.messagesLoaded.value = true;
       }
     }
+  }
+
+  private recoverOnReconnect(
+    hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+    sessionId: string,
+    subscriptionId: string | null
+  ): void {
+    const unsubReconnect = hub.onConnection((state) => {
+      if (state === 'disconnected' || state === 'reconnecting') {
+        if (this.activeMessagesSubscriptionId === subscriptionId && !this.destroyed) {
+          this.beginRecovery();
+        }
+        return;
+      }
+      if (state === 'failed') {
+        if (this.activeMessagesSubscriptionId === subscriptionId) {
+          this.isRecovering.value = false;
+        }
+        return;
+      }
+      if (state !== 'connected') return;
+      if (this.activeMessagesSubscriptionId !== subscriptionId) return;
+      this.performRecovery(hub, sessionId, subscriptionId).catch((err) => {
+        logger.warn('Session recovery on reconnect failed:', err);
+      });
+    });
+    this.cleanupFunctions.push(unsubReconnect);
   }
 
   private _applyMessagesSnapshot(rows: ChatMessage[], metadata?: Record<string, unknown>): void {

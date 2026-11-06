@@ -6,11 +6,9 @@ Take life admin end to end in the human's own Chrome through the
 confirmation is in the human's inbox or calendar. Use core.human_confirmed
 {questionId} for a recorded human decision on the ask (yes/no, choice, or text reply), or core.evidence
 {path:absoluteFilePath} for a confirmation file in the requested persistent directory. The daemon derives the
-completion sentence from the check. Logins, passwords, 2FA codes,
-CAPTCHAs and payment details belong to the human: stop and wait for them.
-Anything that sends, pays, books, cancels or accepts terms needs the human's yes
-first: prepare it, stop at the final click, and ask a yesno question that states
-it exactly.
+completion sentence from the check. Follow the shared delegation settings for
+sign-in, verification codes, forms, payments, commitments and human steps.
+CAPTCHAs always belong to the human.
 
 When a report finds a confirmation, quote it on one line:
 

@@ -78,6 +78,7 @@ export interface NeoTodoRunnerDeps {
     input: Record<string, unknown>
   ): Promise<OperationOutcome>;
   packs(): readonly NeoPack[];
+  enabledPacks?(): readonly NeoPack[];
   tell(
     ask: NeoAsk,
     todo: NeoTodo,
@@ -306,6 +307,12 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   const { store, sessions } = deps;
   const workerBrief = (todo: NeoTodo, instruction: string, harness: string, existing = true) => {
     instruction += `\n\nEven when told to stay quiet, report questions or blockers requiring a human decision with message.send {to: the sending Neo, kind: question or blocked, text: original report, question: {todoId: "${todo.id}", title: short question, options: 2–6 short options, language: en or zh-Hans}} in the human's configured language. Do not keep working while waiting for that answer.`;
+    instruction = [
+      ...(deps.enabledPacks?.() ?? deps.packs()).map((pack) => pack.workerContext?.()),
+      instruction,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
     const pack = deps.packs().find((candidate) => candidate.id === todo.check?.pack);
     const recorded = existing ? sessions.readCard(todo.id) : null;
     if (!existing) return instruction;
