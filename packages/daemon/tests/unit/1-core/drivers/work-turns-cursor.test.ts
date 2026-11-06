@@ -25,7 +25,7 @@ describe('work.turns cursor', () => {
   test('work.adapters lists the turns capability', async () => {
     expect(
       await invokeOperation(registry, 'work.adapters', {}, { source: 'internal', role: 'neo' })
-    ).toMatchObject({ value: { value: { adapters: [{ capabilities: ['find', 'turns'] }] } } });
+    ).toMatchObject({ value: { value: [{ capabilities: ['find', 'turns'] }] } });
   });
 
   test('a cursor a reader wrote is accepted', async () => {

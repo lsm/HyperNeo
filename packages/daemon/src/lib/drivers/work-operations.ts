@@ -224,6 +224,7 @@ const RoutedCapabilitySchema = z.enum([
   'queue',
   'withdraw',
   'status',
+  'turns',
   'stop',
   'archive',
 ]);
@@ -1115,7 +1116,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.adapters',
       description:
-        'List work adapters on this daemon, or the attached daemon named by daemon, with their available capabilities: find, start, rename, send, steer, queue, withdraw, status, stop, archive. Local client health includes status, reason, installed and verified versions, and check time; unavailable unregistered clients appear with no capabilities. Avoid assigning degraded or unavailable clients. An unverified version remains usable when health is ok. steer means work.send accepts mode steer on that adapter; it is listed only when declared and implemented. Optional unsupportedCapabilities maps unavailable capabilities to their limitation; explicit unsupported requests return that explanation. Archive uses neo.session.archive and requires a human request in a live turn. Use only capabilities listed for the chosen adapter.',
+        'List work adapters on this daemon, or the attached daemon named by daemon, with their available capabilities: find, start, rename, send, steer, queue, withdraw, status, turns, stop, archive. Local client health includes status, reason, installed and verified versions, and check time; unavailable unregistered clients appear with no capabilities. Avoid assigning degraded or unavailable clients. An unverified version remains usable when health is ok. steer means work.send accepts mode steer on that adapter; it is listed only when declared and implemented. Optional unsupportedCapabilities maps unavailable capabilities to their limitation; explicit unsupported requests return that explanation. Archive uses neo.session.archive and requires a human request in a live turn. Use only capabilities listed for the chosen adapter.',
       inputSchema: z.object({ daemon: z.string().min(1).optional() }),
       resultSchema: WorkAdaptersResultSchema,
       policy: { safetyClass: 'read' },

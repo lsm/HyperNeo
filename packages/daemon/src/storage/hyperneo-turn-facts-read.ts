@@ -61,7 +61,8 @@ export function readHyperneoTurnFacts(
       ORDER BY seq LIMIT ?`)
     .all(sessionId, from.seq, TURNS_PER_READ) as Terminal[];
   const inputs = db.prepare(`SELECT sdk_uuid AS id, timestamp FROM sdk_messages
-    WHERE session_id = ? AND ${CONSUMED_INPUT} AND consumed_seq > ? AND consumed_seq <= ?
+    WHERE session_id = ? AND ${CONSUMED_INPUT} AND COALESCE(input_kind, '') <> 'system'
+      AND consumed_seq > ? AND consumed_seq <= ?
     ORDER BY consumed_seq`);
   const outputs = db.prepare(`SELECT ${sdkMessageBodyAt('sdk_messages.rowid')} AS body
     FROM sdk_messages WHERE session_id = ? AND seq > ? AND seq <= ? AND (seq = ?
