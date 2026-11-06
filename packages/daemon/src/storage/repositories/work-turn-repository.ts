@@ -78,27 +78,24 @@ export class WorkTurnRepository {
   }
 
   mentioning(prefixes: readonly string[]): WorkTurnMention[] {
-    const find = this.db.prepare(`SELECT DISTINCT ref, turn_id AS id FROM work_turn_urls
+    const find = this.db.prepare(`SELECT DISTINCT work_turns.ref AS ref, ${TURN_COLUMNS}
+      FROM work_turn_urls JOIN work_turns
+        ON work_turns.ref = work_turn_urls.ref AND work_turns.id = turn_id
       WHERE url >= ? AND url <= ?`);
-    const turn = this.db.prepare(`SELECT ${TURN_COLUMNS} FROM work_turns WHERE ref = ? AND id = ?`);
     const before = this.db.prepare(`SELECT ${TURN_COLUMNS} FROM work_turns
       WHERE ref = ? AND ended_at < ? ORDER BY ended_at DESC LIMIT 1`);
-    const found = prefixes.flatMap(
-      (prefix) => find.all(prefix, `${prefix}\uffff`) as { ref: string; id: string }[]
+    return prefixes.flatMap((prefix) =>
+      (find.all(prefix, `${prefix}\uffff`) as (TurnRow & { ref: string })[]).map(
+        ({ ref, ...row }) => {
+          const fact = readTurnRow(row);
+          const previous = before.get(ref, fact.endedAt) as TurnRow | null;
+          return {
+            ...fact,
+            ref: JSON.parse(ref) as WorkRef,
+            previous: previous ? readTurnRow(previous) : null,
+          };
+        }
+      )
     );
-    const unique = new Map(found.map((row) => [`${row.ref}\n${row.id}`, row]));
-    return [...unique.values()].flatMap(({ ref, id }) => {
-      const row = turn.get(ref, id) as TurnRow | null;
-      if (!row) return [];
-      const fact = readTurnRow(row);
-      const previous = before.get(ref, fact.endedAt) as TurnRow | null;
-      return [
-        {
-          ...fact,
-          ref: JSON.parse(ref) as WorkRef,
-          previous: previous ? readTurnRow(previous) : null,
-        },
-      ];
-    });
   }
 }
