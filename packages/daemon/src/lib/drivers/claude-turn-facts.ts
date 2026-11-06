@@ -92,8 +92,10 @@ function finishTurn(turn: Turn, end: End): WorkTurnFact {
   };
 }
 
-const sameMessage = (end: End | null, row: Row) =>
-  !!end && row.type === 'assistant' && row.message?.id === end.row.message?.id;
+const sameMessage = (end: End, row: Row | null) =>
+  row?.type === 'assistant' &&
+  typeof row.message?.id === 'string' &&
+  row.message.id === end.row.message?.id;
 
 export async function readClaudeTurnFacts(path: string, cursor?: string): Promise<WorkTurnFact[]> {
   const start: number = cursor ? JSON.parse(cursor).seq : 0;
@@ -107,16 +109,16 @@ export async function readClaudeTurnFacts(path: string, cursor?: string): Promis
       offset += Buffer.byteLength(line) + 1;
       if (!line.trim()) continue;
       const row = parseRow(line);
-      if (!row) {
-        turn.complete = false;
-        continue;
-      }
-      if (row.isSidechain === true || row.isCompactSummary === true) continue;
+      if (row?.isSidechain === true || row?.isCompactSummary === true) continue;
       if (end && !sameMessage(end, row)) {
         facts.push(finishTurn(turn, end));
         turn = openTurn();
         end = null;
         if (facts.length === TURNS_PER_READ) break;
+      }
+      if (!row) {
+        turn.complete = false;
+        continue;
       }
       if (claudeInputText(row)?.startsWith(INTERRUPTED)) {
         end = { row, offset, interrupted: true };

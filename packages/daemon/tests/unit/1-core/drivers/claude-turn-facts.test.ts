@@ -190,6 +190,20 @@ describe('readClaudeTurnFacts', () => {
     expect(turn.complete).toBe(false);
   });
 
+  test('a row that cannot be read after a turn ended leaves that turn complete', async () => {
+    const turns = await readClaudeTurnFacts(
+      file([human('in-1', 1, 'Work'), reply('end-1', 2, 'Done'), '{torn'])
+    );
+    expect(turns.map((turn) => [turn.id, turn.complete])).toEqual([['end-1', true]]);
+  });
+
+  test('finished replies without a message id stay separate turns', async () => {
+    const turns = await readClaudeTurnFacts(
+      file([reply('end-1', 1, 'One'), reply('end-2', 2, 'Two')])
+    );
+    expect(turns.map((turn) => turn.id)).toEqual(['end-1', 'end-2']);
+  });
+
   test('a turn with no input starts at its first timed row', async () => {
     const [turn] = await readClaudeTurnFacts(file([tool(1, PR), reply('end-1', 2, 'Done')]));
     expect(turn).toMatchObject({ inputs: [], startedAt: Date.parse(at(1)) });
