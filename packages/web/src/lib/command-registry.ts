@@ -7,6 +7,7 @@ export interface CommandShortcut {
 }
 
 export interface CommandDescriptor {
+  extension?: string;
   id: string;
   label: string;
   category: CommandCategory;

@@ -2,18 +2,10 @@ import { commandRegistry, type CommandDescriptor } from './command-registry.ts';
 import {
   commandPaletteModeSignal,
   commandPaletteOpenSignal,
-  currentSpaceIdSignal,
   navSectionSignal,
   settingsSectionSignal,
 } from './signals.ts';
-import {
-  navigateToSessions,
-  navigateToSettings,
-  navigateToSpace,
-  navigateToSpaceConfigure,
-  navigateToSpaceTasks,
-  navigateToSpacesPage,
-} from './router.ts';
+import { navigateToSessions, navigateToSettings } from './router.ts';
 import { createSession } from './api-helpers.ts';
 import { toast } from './toast.ts';
 import { connectionState } from './state.ts';
@@ -49,17 +41,6 @@ async function runCreateSession() {
       toast.error(err instanceof Error ? err.message : 'Failed to create session');
     }
   }
-}
-
-function requireSpace(action: (spaceId: string) => void) {
-  return () => {
-    const spaceId = currentSpaceIdSignal.value;
-    if (!spaceId) {
-      toast.error('Open a space first');
-      return;
-    }
-    action(spaceId);
-  };
 }
 
 export const DEFAULT_COMMANDS: readonly CommandDescriptor[] = [
@@ -106,17 +87,6 @@ export const DEFAULT_COMMANDS: readonly CommandDescriptor[] = [
       closePalette();
       navSectionSignal.value = 'chats';
       navigateToSessions();
-    },
-  },
-  {
-    id: 'nav.spaces',
-    label: 'Go to spaces',
-    category: 'navigation',
-    keywords: ['workspace'],
-    run: () => {
-      closePalette();
-      navSectionSignal.value = 'spaces';
-      navigateToSpacesPage();
     },
   },
   {
@@ -178,35 +148,6 @@ export const DEFAULT_COMMANDS: readonly CommandDescriptor[] = [
       settingsSectionSignal.value = 'shortcuts';
       navigateToSettings('shortcuts');
     },
-  },
-  {
-    id: 'space.tasks',
-    label: 'Space: View tasks',
-    category: 'space',
-    keywords: ['mission'],
-    run: requireSpace((spaceId) => {
-      closePalette();
-      navigateToSpaceTasks(spaceId);
-    }),
-  },
-  {
-    id: 'space.configure',
-    label: 'Space: Configure',
-    category: 'space',
-    keywords: ['agents', 'workflows'],
-    run: requireSpace((spaceId) => {
-      closePalette();
-      navigateToSpaceConfigure(spaceId);
-    }),
-  },
-  {
-    id: 'space.overview',
-    label: 'Space: Overview',
-    category: 'space',
-    run: requireSpace((spaceId) => {
-      closePalette();
-      navigateToSpace(spaceId);
-    }),
   },
 ];
 
