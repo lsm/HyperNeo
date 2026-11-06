@@ -177,6 +177,7 @@ try {
                   rowVisibility: row ? getComputedStyle(row).visibility : null,
                   targets: keys.map((key) => targetBox(row, key)),
                   bubble: !!row?.querySelector('.neo-message-bubble'),
+                  quote: box(row?.querySelector('[data-quote-bar]')),
                   words: !!document.querySelector('[data-flight-words]'),
                   distance: scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight,
                 });
@@ -245,10 +246,13 @@ try {
           keys.forEach((key, index) => {
             for (const coordinate of ['x', 'y', 'width', 'height'])
               assert(
-                Math.abs(
-                  settled[0].targets[index][coordinate] - settled.at(-1).targets[index][coordinate]
-                ) < 3,
-                `${key} jumped after landing`
+                settled.every(
+                  (frame) =>
+                    Math.abs(
+                      settled[0].targets[index][coordinate] - frame.targets[index][coordinate]
+                    ) < 3
+                ),
+                `${key} jumped after landing (${coordinate})`
               );
           });
           const row = page.locator('[data-public-entry].neo-message-user').last();

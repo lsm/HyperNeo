@@ -28,7 +28,8 @@ a quote. Delay the actual send RPC by 250ms for a mid-flight replacement, then b
 Record source rectangles before clearing and each ghost/destination rectangle
 after frame work. Require all expected media ghosts, category order, a hidden
 row during flight, roughly 550ms travel, and final bounds within 5px of each
-live target. After landing, require less than 3px movement in each target bound,
+live target. After landing, require less than 3px movement in every recorded frame of each
+target bound,
 continued bottom pinning, and no dummy bubble for media alone. Include a 16×12 photo at 390px with a coarse pointer, measuring its actual image
 bounds alongside its wrapper. Open the landed
 photo or file reader with a 100ms held mouse click or a touch tap, checking
