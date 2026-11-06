@@ -166,17 +166,17 @@ export const SendWorkInputSchema = z.object({
   from: ForwardedOriginSchema,
 });
 export const WorkRefInputSchema = z.object({ ref: WorkRefSchema });
-const isCursorObject = (cursor: string) => {
+const TurnCursorSchema = z.object({ seq: z.number(), consumed: z.number() });
+const isTurnCursor = (cursor: string) => {
   try {
-    const parsed: unknown = JSON.parse(cursor);
-    return typeof parsed === 'object' && parsed !== null;
+    return TurnCursorSchema.safeParse(JSON.parse(cursor)).success;
   } catch {
     return false;
   }
 };
 const WorkTurnsInputSchema = z.object({
   ref: WorkRefSchema,
-  cursor: z.string().min(1).max(200).refine(isCursorObject).optional(),
+  cursor: z.string().min(1).max(200).refine(isTurnCursor).optional(),
 });
 const WorkTurnsResultSchema = workResultSchema(z.object({ turns: z.array(WorkTurnFactSchema) }));
 const WithdrawWorkInputSchema = z.object({

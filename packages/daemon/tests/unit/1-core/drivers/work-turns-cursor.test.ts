@@ -29,10 +29,16 @@ describe('work.turns cursor', () => {
   });
 
   test('a cursor a reader wrote is accepted', async () => {
-    expect(await read('{"seq":1}')).toMatchObject({ kind: 'completed', value: { ok: true } });
+    expect(await read('{"seq":1,"consumed":1,"at":null}')).toMatchObject({
+      kind: 'completed',
+      value: { ok: true },
+    });
   });
 
-  test.each(['not json', 'null', '7'])('%s is refused as invalid input', async (cursor) => {
-    expect(await read(cursor)).toMatchObject({ kind: 'failed', code: 'invalid_input' });
-  });
+  test.each(['not json', 'null', '7', '{}', '[1,2]'])(
+    '%s is refused as invalid input',
+    async (cursor) => {
+      expect(await read(cursor)).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+    }
+  );
 });
