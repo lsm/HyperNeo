@@ -74,6 +74,9 @@ const { startCuChecker } = await import('../../../packages/daemon/src/lib/driver
 const settle = async () => { for (let i = 0; i < 12; i++) await new Promise<void>((resolve) => setImmediate(resolve)); };
 const closeAll: (() => Promise<void>)[] = [];
 try {
+  await startCuChecker(() => true)();
+  assert.equal(timers.length, 0, 'NODE_ENV=test must not arm the host checker');
+  process.env.NODE_ENV = 'production';
   const close = startCuChecker(() => auto);
   closeAll.push(close);
   assert.equal(timers.length, 1);
@@ -184,6 +187,7 @@ try {
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ pass: true, notices, signals, commands, timers: timers.map(({ callback: _callback, ...timer }) => timer), events, realMachineProof: 'not covered by this synthetic helper' }, null, 2));
   process.stdout.write('PASS: synthetic macOS command adapter, automatic default, opt-out alert, reread, failures, cadence, overlap and cleanup\n');
 } finally {
+  process.env.NODE_ENV = 'test';
   for (const close of closeAll) await close();
   unsubscribe(); kill.mockRestore(); interval.mockRestore(); clear.mockRestore();
   Object.defineProperty(process, 'platform', platform);

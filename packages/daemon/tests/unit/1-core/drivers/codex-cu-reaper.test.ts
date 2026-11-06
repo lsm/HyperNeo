@@ -1,5 +1,9 @@
 import { describe, expect, spyOn, test } from 'bun:test';
-import { decideCuReap, createCuChecker } from '../../../../src/lib/drivers/codex-cu-reaper';
+import {
+  decideCuReap,
+  createCuChecker,
+  startCuChecker,
+} from '../../../../src/lib/drivers/codex-cu-reaper';
 import {
   configureLogger,
   getLoggerConfig,
@@ -78,6 +82,21 @@ describe('decideCuReap', () => {
 });
 
 describe('createCuChecker', () => {
+  test('test-mode driver setup never arms the host checker on macOS', async () => {
+    expect(process.env.NODE_ENV).toBe('test');
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    const interval = spyOn(globalThis, 'setInterval');
+    const close = startCuChecker(() => true);
+    try {
+      expect(interval).not.toHaveBeenCalled();
+    } finally {
+      await close();
+      interval.mockRestore();
+      Object.defineProperty(process, 'platform', platform);
+    }
+  });
+
   test('starts, checks and closes with a numeric timer handle', async () => {
     const timer = 42 as unknown as ReturnType<typeof setInterval>;
     const interval = spyOn(globalThis, 'setInterval').mockReturnValue(timer);
