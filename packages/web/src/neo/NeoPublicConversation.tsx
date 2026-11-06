@@ -79,22 +79,26 @@ function SentMedia({
       class="mb-3 flex flex-wrap justify-end gap-2"
       onPointerDown={(event) => event.preventDefault()}
     >
-      {photos.map((photo, index) =>
-        photo.kind === 'ref' ? (
-          <RefPhoto
-            key={photo.ref.imageId}
-            conversationId={conversationId}
-            photo={photo.ref}
-            label={t('chat.attachedPhoto', { n: String(index + 1) })}
-          />
-        ) : (
-          <PhotoThumbnail
-            key={index}
-            src={photo.src}
-            label={t('chat.attachedPhoto', { n: String(index + 1) })}
-          />
-        )
-      )}
+      {photos.map((photo, index) => (
+        <div
+          key={photo.kind === 'ref' ? photo.ref.imageId : index}
+          data-flight={`photo-${index}`}
+          class="max-w-full self-start"
+        >
+          {photo.kind === 'ref' ? (
+            <RefPhoto
+              conversationId={conversationId}
+              photo={photo.ref}
+              label={t('chat.attachedPhoto', { n: String(index + 1) })}
+            />
+          ) : (
+            <PhotoThumbnail
+              src={photo.src}
+              label={t('chat.attachedPhoto', { n: String(index + 1) })}
+            />
+          )}
+        </div>
+      ))}
       <NeoSentFiles files={files} />
     </div>
   );

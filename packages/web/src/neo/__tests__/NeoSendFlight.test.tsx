@@ -100,7 +100,9 @@ describe('NeoSendFlight', () => {
     expect(pending.style.visibility).toBe('');
     expect(accepted.style.visibility).toBe('hidden');
     tick(550);
-    expect((ghost as HTMLElement).style.lineHeight).toBe('1.7');
+    expect(document.querySelector<HTMLElement>('[data-flight-words]')!.style.lineHeight).toBe(
+      '1.7'
+    );
     expect(accepted.style.height).toBe('150px');
     expect(accepted.style.visibility).toBe('');
     expect(done).toHaveBeenCalledTimes(1);

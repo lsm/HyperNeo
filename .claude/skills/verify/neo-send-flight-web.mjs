@@ -104,8 +104,9 @@ try {
           let tracked;
           const frame = () =>
             setTimeout(() => {
-              const ghost = document.querySelector('[data-send-flight]');
-              if (ghost) tracked = ghost.dataset.sendFlight;
+              const overlay = document.querySelector('[data-send-flight]');
+              const ghost = overlay?.querySelector('[data-flight-words]');
+              if (overlay) tracked = overlay.dataset.sendFlight;
               const row = tracked
                 ? document.querySelector(
                     `[data-pending-ask="${CSS.escape(tracked)}"], [data-message-ref="${CSS.escape(tracked)}"]`

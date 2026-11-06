@@ -1170,7 +1170,7 @@ export function NeoLive() {
                     neoSplitSentMessage(input.text).words,
                     !!input.images?.length
                   );
-                  if (requestId && from && (words || input.quote))
+                  if (requestId && from && (words || input.quote || from.media?.length))
                     setSendFlight({ id: requestId, from, words, quote: input.quote });
                   if (requestId) acceptedCleanups.set(requestId, cleanup);
                   const receipt = await (recoveryReady ? flight : flight.finally(() => handoff));
