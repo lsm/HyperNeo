@@ -26,8 +26,9 @@ context. Any domain-client invocation fails the proof.
 Before the fix, run the identical helper in before mode on the baseline. It must
 fail the real MCP open-owner assertion, retaining observed.json with the smaller
 owner list. The wrapper saves evidence and removes the temporary daemon data
-when the helper exits, including failure. The helper closes the client and daemon
-in finally. Inspect run-status.json rather than trusting a PASS line alone.
+when the helper exits, including failure. The helper closes the client transport, clears its hub and closes the daemon
+in finally. Unit command tests retain their portable inline gateway seam; this
+isolated native daemon proves actual worker execution. Inspect run-status.json rather than trusting a PASS line alone.
 
 Mandatory owner headers take priority over the requested budget when even the
 headers alone exceed it. Unit tests pin this floor as well as UTF-8 byte sizing,

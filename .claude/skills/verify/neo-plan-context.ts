@@ -69,6 +69,6 @@ try {
   console.log('PASS: real RPC and agent MCP snapshot retain 12 open plans; gateway plan facts and compact digest retain all owners without target SQL on main');
 } finally {
   db.prepare=prepare;
-  await hub.cleanup(); await app.cleanup();
+  await transport.close(); hub.cleanup(); await app.cleanup();
   writeFileSync(join(run,'evidence/observed.json'),JSON.stringify(result,null,2));
 }
