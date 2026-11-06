@@ -893,7 +893,7 @@ export function PendingAsk({
           )}
 
           <NeoClampedText text={words}>
-            <p class="whitespace-pre-wrap text-base leading-relaxed">{words}</p>
+            <p class="whitespace-pre-wrap text-base leading-[1.7]">{words}</p>
           </NeoClampedText>
         </div>
       )}
@@ -907,6 +907,7 @@ export function PendingAsk({
           />
         </div>
       )}
+      {!failed && <div aria-hidden="true" class="neo-pending-actions mt-1 h-7" />}
       {failed && (
         <div class="mt-1 flex items-center justify-end gap-1">
           <button

@@ -84,6 +84,11 @@ if its reader assertions passed. Retain the log; ask-bookkeeping-actions provide
 a listener-free MCP/public-reader/audit proof, without claiming daemon startup
 or shutdown verification.
 
+A narrow viewport does not enable touch media queries. For pointer-dependent
+phone/tablet proofs, create a browser context with `hasTouch: true`, assert
+`matchMedia('(pointer: coarse)').matches`, and send with the visible button's tap
+interaction. Retain fine-pointer coverage independently of viewport width.
+
 The shared proof-run.sh wrapper forwards only these explicitly selected browser
 dependency paths, alongside VERIFY_CLAUDE. Other parent environment values stay
 scrubbed; set the browser paths on the wrapper invocation when using --web.

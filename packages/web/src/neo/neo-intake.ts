@@ -168,8 +168,7 @@ export function neoDraftThumbnails(submission: Submission): Promise<NeoThumbnail
 }
 
 export function neoQuoteExcerpt(text: string): string {
-  const chars = Array.from(text.replace(/\r\n?|\u2028|\u2029/g, '\n').trim());
-  return chars.length > 500 ? `${chars.slice(0, 500).join('')}…` : chars.join('');
+  return neoReplyExcerpt(text).replace(/\r\n?|\u2028|\u2029/g, '\n');
 }
 
 export function neoPublicationQuoteExcerpt(

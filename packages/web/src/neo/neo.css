@@ -824,6 +824,10 @@
 }
 
 @media (pointer: coarse) {
+  .neo-shell .neo-pending-actions {
+    min-height: 44px;
+  }
+
   .neo-shell :is(.copy-button, .neo-message-action, .mermaid-figure-toolbar button) {
     display: inline-flex;
     align-items: center;

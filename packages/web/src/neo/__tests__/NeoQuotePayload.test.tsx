@@ -1,3 +1,4 @@
+import { neoReplyExcerpt } from '@hyperneo/shared/types/neo-ask';
 import { describe, expect, it } from 'vitest';
 import { neoDraftPayload, neoQuoteExcerpt } from '../neo-intake.ts';
 import { neoMessageReplyLabels } from '../NeoPublicConversation.tsx';
@@ -23,16 +24,14 @@ describe('neoDraftPayload quote', () => {
 });
 
 describe('neoQuoteExcerpt', () => {
-  it('trims, keeps 500 characters and normalizes line endings', () => {
-    expect(neoQuoteExcerpt(` ${'a'.repeat(500)} `)).toBe('a'.repeat(500));
-    expect(neoQuoteExcerpt('a'.repeat(501))).toBe(`${'a'.repeat(500)}…`);
-    expect(neoQuoteExcerpt('a\rb\r\nc\u2028d\u2029e')).toBe('a\nb\nc\nd\ne');
-  });
-
-  it('counts Unicode characters without splitting surrogate pairs', () => {
-    const excerpt = neoQuoteExcerpt('😀'.repeat(501));
-    expect(Array.from(excerpt)).toHaveLength(501);
-    expect(excerpt.replaceAll('😀', '')).toBe('…');
+  it.each([
+    'a'.repeat(300),
+    'a'.repeat(301),
+    'a'.repeat(500),
+    '😀'.repeat(501),
+    ' a\rb\r\nc\u2028d\u2029e ',
+  ])('matches the stored reply excerpt with display line endings for %j', (text) => {
+    expect(neoQuoteExcerpt(text)).toBe(neoReplyExcerpt(text).replace(/\r\n?|\u2028|\u2029/g, '\n'));
   });
 });
 
