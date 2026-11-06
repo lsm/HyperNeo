@@ -19,11 +19,7 @@ import {
   currentSessionIdSignal,
   type CommandPaletteMode,
 } from '../lib/signals.ts';
-import {
-  type SpaceWithTaskList,
-  webExtension,
-  webExtensionDeclined,
-} from '../lib/web-extensions.ts';
+import { type SpaceWithTaskList, webExtension, extensionNav } from '../lib/web-extensions.ts';
 import { sessions } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
 import { cn } from '../lib/utils.ts';
@@ -361,18 +357,16 @@ export function CommandPalette() {
 
   const allSessions = sessions.value;
   const spacesWithTasks = webExtension('space')?.store.spacesWithTasks.value ?? EMPTY_SPACES;
-  const spaceDeclined = webExtensionDeclined('space');
+  const extensions: string[] = extensionNav().map((nav) => nav.extension);
+  const extensionsKey = extensions.join();
 
-  const items = useMemo(() => {
+  const rankedItems = useMemo(() => {
     const forcedCommand = query.trimStart().startsWith('>');
     const commandQuery = forcedCommand ? query.trimStart().slice(1).trimStart() : query;
     const commands = commandItems(
       commandRegistry
         .search(commandQuery)
-        .filter(
-          ({ command }) =>
-            !spaceDeclined || (command.id !== 'nav.spaces' && command.category !== 'space')
-        )
+        .filter(({ command }) => !command.extension || extensions.includes(command.extension))
     );
     const quickItems = [
       ...sessionItems(allSessions, query, query.trim() ? 8 : 5),
@@ -386,20 +380,21 @@ export function CommandPalette() {
       return query.trim() ? [...commands.slice(0, 8), ...quickItems.slice(0, 8)] : commands;
     }
     return query.trim() ? [...quickItems, ...commands.slice(0, 5)] : quickItems;
-  }, [query, mode, messageResults, allSessions, spacesWithTasks, registryVersion, spaceDeclined]);
+  }, [query, mode, messageResults, allSessions, spacesWithTasks, registryVersion, extensionsKey]);
 
   const groupedItems = useMemo(() => {
     const groups: Array<{ key: PaletteItem['group']; items: PaletteItem[] }> = [];
-    for (const item of items) {
-      const last = groups.at(-1);
-      if (last?.key === item.group) {
+    for (const item of rankedItems) {
+      const last = groups.find((group) => group.key === item.group);
+      if (last) {
         last.items.push(item);
       } else {
         groups.push({ key: item.group, items: [item] });
       }
     }
     return groups;
-  }, [items]);
+  }, [rankedItems]);
+  const items = useMemo(() => groupedItems.flatMap((group) => group.items), [groupedItems]);
 
   useEffect(() => {
     setSelectedIndex((index) => Math.min(index, Math.max(items.length - 1, 0)));
