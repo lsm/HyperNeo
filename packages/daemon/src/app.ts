@@ -1203,9 +1203,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       () => sessionManager.getOperationRegistry(),
       createUpgradeAuthenticator({ db: () => db.gateway, now: Date.now, agentRead: true })
     );
-    if (process.env.NODE_ENV !== 'test' || process.env.HYPERNEO_DATA_DIR) {
+    if (process.env.NODE_ENV !== 'test' || process.env.HYPERNEO_DATA_DIR)
       await ensureLocalCredential(db.gateway);
-    }
     const guardOrigin = createRequestGuard({
       db: () => db.gateway,
       allowedHosts: () => settingsManager.getGlobalSettings().allowedHosts ?? [],

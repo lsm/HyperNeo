@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { createHttpWsServer, type ServerHandle } from '../../../packages/daemon/src/lib/runtime-server/index.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createLocalSocket, readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { DevicePairingRepository } from '../../../packages/daemon/src/storage/repositories/device-pairing-repository.ts';
@@ -18,6 +19,8 @@ if (process.platform === 'darwin') assert.equal(Bun.spawnSync(['bash', '.claude/
 let app = await createDaemonApp({ config, standalone: true, verbose: false });
 let socket: WebSocket | undefined;
 let stopped = false;
+let collector: ServerHandle | undefined;
+let collectorRequests = 0;
 async function rpc<T>(name: string, input: unknown): Promise<T> {
   const id = crypto.randomUUID();
   return new Promise<T>((done, fail) => {
@@ -32,11 +35,12 @@ async function rpc<T>(name: string, input: unknown): Promise<T> {
     socket.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
 }
-async function cli(...args: string[]) {
-  const child = Bun.spawn([process.execPath, 'packages/cli/main.ts', ...args], { stdout: 'pipe', stderr: 'pipe' });
+async function cliFor(dataDir: string, ...args: string[]) {
+  const child = Bun.spawn([process.execPath, 'packages/cli/main.ts', ...args], { stdout: 'pipe', stderr: 'pipe', env: { ...process.env, HYPERNEO_DATA_DIR: dataDir } });
   const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   return { stdout, stderr, code };
 }
+const cli = (...args: string[]) => cliFor(join(run, 'data'), ...args);
 try {
   await app.spaceRuntimeService?.ready();
   await app.jobProcessor.stop();
@@ -45,7 +49,7 @@ try {
   assert.notEqual(app.server.port, 8399);
   const link = `${base}/ask/synthetic.md`;
   const path = join(run, 'data/agent-read.credential');
-  const agent = readLocalCredential(path);
+  const agent = readLocalCredential(path, base);
   const human = readLocalCredential();
   assert.notEqual(agent, human);
   if (process.platform !== 'win32') assert.equal(statSync(path).mode & 0o077, 0);
@@ -55,11 +59,22 @@ try {
   assert.equal(read.code, 0, read.stderr);
   assert(read.stdout.startsWith('# Plan the visit\n'));
   assert(!read.stdout.includes(agent));
+  collector = await createHttpWsServer({ hostname: '127.0.0.1', port: 0, fetch() {
+    collectorRequests += 1;
+    return new Response('# Unrelated server', { headers: { 'content-type': 'text/markdown' } });
+  } });
+  const foreignLink = `http://127.0.0.1:${collector.port}/ask/synthetic.md`;
+  const foreign = await cli('read', foreignLink);
+  assert.equal(foreign.code, 1);
+  assert(foreign.stderr.includes('origin'));
+  assert.equal(collectorRequests, 0, 'Origin mismatch must prevent every outbound request');
   const missing = await fetch(link);
   assert.equal(missing.status, 401);
   assert((await missing.text()).includes('hyperneo read'));
+  const rawAgentFixture = join(run, 'agent-test.credential');
+  writeFileSync(rawAgentFixture, agent, { mode: 0o600 });
   const refused = await new Promise<number>((done, fail) => {
-    const ws = createLocalSocket(`${base.replace('http:', 'ws:')}/ws`, path);
+    const ws = createLocalSocket(`${base.replace('http:', 'ws:')}/ws`, rawAgentFixture);
     ws.onopen = () => { ws.close(); fail(new Error('Agent must never upgrade to WebSocket')); };
     ws.onerror = () => done(401);
     setTimeout(() => { ws.close(); fail(new Error('Agent WebSocket refusal timed out')); }, 5_000).unref();
@@ -79,6 +94,13 @@ try {
   assert.equal(paired.status, 200);
   const remote = await paired.json();
   assert.equal(remote.kind, 'agent');
+  assert.equal(remote.origin, base);
+  const remoteData = join(run, 'remote-client');
+  mkdirSync(remoteData, { recursive: true, mode: 0o700 });
+  writeFileSync(join(remoteData, 'agent-read.credential'), JSON.stringify({ credential: remote.credential, origin: remote.origin }), { mode: 0o600 });
+  assert.equal((await cliFor(remoteData, 'read', link)).code, 0);
+  assert.equal((await cliFor(remoteData, 'read', foreignLink)).code, 1);
+  assert.equal(collectorRequests, 0);
   const remoteHeaders = { authorization: `Bearer ${remote.credential}` };
   assert.equal((await fetch(link, { headers: remoteHeaders })).status, 200);
   assert.equal((await fetch(`${base}/ws`, { headers: remoteHeaders })).status, 401);
@@ -94,13 +116,14 @@ try {
   app = await createDaemonApp({ config, standalone: true, verbose: false }); stopped = false;
   await app.spaceRuntimeService?.ready();
   await app.jobProcessor.stop();
-  assert.equal(readFileSync(path, 'utf8'), agent);
   const restarted = `http://127.0.0.1:${app.server.port}`;
+  assert.equal(readLocalCredential(path, restarted), agent);
   assert.equal((await fetch(`${restarted}/ask/synthetic.md`, { headers })).status, 401);
   assert.equal((await fetch(`${restarted}/ws`, { headers: { authorization: `Bearer ${human}` } })).status, 204);
-  writeFileSync(join(evidence, 'agent-read.json'), JSON.stringify({ passed: true, ownerOnly: true, separateCredential: true, cliRead: 200, anonymous: 401, agentWebSocket: 401, remoteApprovalRequired: true, remoteRead: 200, revokedLocalAndRemote: 401, revocationSurvivesRestart: true, humanStillWorks: true }, null, 2));
+  writeFileSync(join(evidence, 'agent-read.json'), JSON.stringify({ passed: true, ownerOnly: true, separateCredential: true, cliRead: 200, anonymous: 401, agentWebSocket: 401, remoteApprovalRequired: true, remoteRead: 200, revokedLocalAndRemote: 401, revocationSurvivesRestart: true, humanStillWorks: true, localOriginBound: true, remoteOriginBound: true, crossOriginRequests: collectorRequests }, null, 2));
 } finally {
   socket?.close();
+  collector?.stop(true);
   if (!stopped) await app.cleanup();
   writeFileSync(join(evidence, 'agent-cleanup.json'), JSON.stringify({ daemonStopped: true }));
 }

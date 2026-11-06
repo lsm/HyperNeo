@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { createAgentReadGuard } from '../../../../src/lib/pairing/agent-read.ts';
-import { runMigration477 } from '../../../../src/storage/schema/m477-agent-devices.ts';
+import { runMigration478 } from '../../../../src/storage/schema/m478-agent-devices.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 
@@ -18,14 +18,14 @@ function legacy() {
   return db;
 }
 
-describe('runMigration477', () => {
+describe('runMigration478', () => {
   test('retains credentials, revocation and pending codes while enabling agent devices', () => {
     const db = legacy();
     try {
       const devices = db.prepare('SELECT * FROM paired_devices').all();
       const codes = db.prepare('SELECT * FROM pairing_codes').all();
-      runMigration477(db);
-      runMigration477(db);
+      runMigration478(db);
+      runMigration478(db);
       expect(db.prepare('SELECT * FROM paired_devices').all()).toEqual(devices);
       expect(db.prepare('SELECT * FROM pairing_codes').all()).toEqual(codes);
       db.exec(
@@ -49,7 +49,7 @@ describe('runMigration477', () => {
 describe('createAgentReadGuard', () => {
   test('refuses other routes even for revoked agent credentials before public handlers', async () => {
     const db = legacy();
-    runMigration477(db);
+    runMigration478(db);
     const credential = 'a'.repeat(43);
     db.prepare("INSERT INTO paired_devices VALUES ('reader','Reader','agent',?,1,NULL,NULL,2)").run(
       createHash('sha256').update(credential).digest('hex')

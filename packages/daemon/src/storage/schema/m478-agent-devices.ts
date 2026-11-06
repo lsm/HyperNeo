@@ -1,6 +1,6 @@
 import type { Database } from '../sqlite-compat.ts';
 
-export function runMigration477(db: Database): void {
+export function runMigration478(db: Database): void {
   db.transaction(() => {
     for (const table of ['paired_devices', 'pairing_codes']) {
       const row = db

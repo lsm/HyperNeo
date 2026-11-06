@@ -10,6 +10,10 @@ its web UI. Lint, types and unit tests are not proof. Every helper named here
 lives next to this file in `.claude/skills/verify/`. Run commands from the repo
 root of your worktree.
 
+Check `bun --version` before proof jobs. Select the pinned Bun 1.4.2 binary's
+directory on PATH when the host default differs. The wrapper carries that PATH
+into its isolated child environment and CLI subprocesses.
+
 ## Rules
 
 - Never start, stop or mutate the human's daemon. Isolated runs never use port

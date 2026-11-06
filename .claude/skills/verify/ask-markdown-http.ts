@@ -24,6 +24,7 @@ if (process.argv[2] === '--server') {
   assert(mode in entrypoints);
   const module = await import(entrypoints[mode as keyof typeof entrypoints]);
   await (mode === 'development' ? module.startDevServer : module.startProdServer)({ ...config, port: Number(process.argv[4]) });
+  writeFileSync(join(run, `${mode}.ready`), 'ready');
   await new Promise(() => {});
 }
 mkdirSync(join(run, 'evidence'), { recursive: true });
@@ -58,7 +59,7 @@ async function checkHttp(base: string, mode: string, credential: string) {
   const missing = await fetch(`${base}/ask/missing.md`, { headers });
   assert.equal(missing.status, 404);
   assert.equal(missing.headers.get('cache-control'), 'no-store');
-  const agent = readLocalCredential(join(run, 'data/agent-read.credential'));
+  const agent = readLocalCredential(join(run, 'data/agent-read.credential'), base);
   assert.notEqual(agent, credential);
   const agentHeaders = { authorization: `Bearer ${agent}` };
   const agentCard = await fetch(`${base}/ask/synthetic.md`, { headers: agentHeaders });
@@ -140,7 +141,7 @@ for (const mode of ['production', 'embedded', 'development']) {
     const deadline = Date.now() + 30_000;
     let ready = false;
     while (Date.now() < deadline && child.exitCode === null) {
-      try { ready = (await fetch(`${base}/ws`)).status === 401; } catch {}
+      try { ready = existsSync(join(run, `${mode}.ready`)) && (await fetch(`${base}/ws`)).status === 401; } catch {}
       if (ready) break;
       await Bun.sleep(100);
     }

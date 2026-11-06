@@ -83,9 +83,6 @@ export async function ensureLocalCredential(
   } finally {
     await rm(temporary, { force: true });
   }
-  await db.run(enrollLocalDevice, {
-    credential: readLocalCredential(path, kind === 'agent' ? null : undefined),
-    now: Date.now(),
-    kind,
-  });
+  const credential = readLocalCredential(path, kind === 'agent' ? origin : undefined);
+  await db.run(enrollLocalDevice, { credential, now: Date.now(), kind });
 }

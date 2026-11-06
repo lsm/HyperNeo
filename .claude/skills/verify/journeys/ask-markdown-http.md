@@ -25,6 +25,9 @@ module in the owning checkout and removes it afterward. It refuses to overwrite
 an existing generated module. The real embedded HTTP handler runs unchanged.
 The development entrypoint runs its actual Vite server. All child daemons and
 Vite servers must stop before the wrapper saves evidence and removes the data.
+Wait for the source CLI start function to return before testing its listener.
+The helper's ready marker distinguishes the public server from the temporary
+internal daemon listener that the CLI replaces during startup.
 
 Each public entrypoint also accepts its startup-created agent credential on the
 card GET and rejects ten other route/method combinations, including /ws, public

@@ -13,17 +13,24 @@ or WebSocket upgrade. The embedded build-time asset fixture is synthetic. All
 servers and the real development Vite server stop before the next phase.
 
 The second phase reopens that synthetic database on an isolated daemon. Check
-that agent-read.credential is owner-only and different from local-rpc.credential.
+that agent-read.credential is owner-only and contains its credential and bound
+daemon origin together. Its token differs from local-rpc.credential.
 The real `hyperneo read <link>` command must print the card without a session
 identity. An anonymous request must receive 401 with the command hint. An actual
 agent WebSocket attempt must fail, while a human WebSocket can still read the card.
+Start a second synthetic HTTP server on another origin. The local CLI must reject
+its card-shaped URL with an origin error and zero requests to that server.
 
 Generate a remote agent code through the existing CLI. Redeeming it must return
 403 until the human approves through RPC. The resulting agent credential reads
-the card and is refused on /ws. Revoke both remote and local agent devices through
+the card and is refused on /ws. Save the pairing response's origin and credential
+as an owner-only JSON file in a separate synthetic remote client data directory.
+Its real CLI read must succeed for the issuer, reject the second origin and leave
+the collector request count at zero. Revoke both remote and local agent devices through
 human RPC. Both reads must become 401, and the CLI must fail. Restart the daemon
 against the same synthetic data. Startup must reuse the existing agent file and
-keep its revocation effective. The human credential must still work.
+keep its revocation effective while atomically binding its metadata to the new
+listener origin. The human credential must still work.
 
 Inspect observed.json for the four-server results, agent-read.json for the CLI,
 pairing, revocation and restart results, agent-cleanup.json and proof.log. No raw
@@ -39,6 +46,7 @@ with their package Vitest configurations, then the full repository check.
 For a remote agent, the human uses the existing pairing flow with kind agent,
 approves the pending code on an already paired human device, and redeems it with
 POST /pair from the remote client. Keep the returned credential in that client's
-owner-only agent-read.credential file in its configured data directory. The CLI
-uses that file, validates the card URL and refuses redirects. It never falls back
+owner-only agent-read.credential JSON file with both `credential` and `origin`
+in its configured data directory. The CLI validates the link origin against that
+same file before any request, then reads the card and refuses redirects. It never falls back
 to local-rpc.credential. No credential belongs in a link.

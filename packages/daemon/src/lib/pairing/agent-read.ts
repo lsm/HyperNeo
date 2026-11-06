@@ -21,12 +21,17 @@ export function createAgentReadGuard(db: () => DbGateway) {
     )
     .pipe((credential: string) => db().run(deviceKindByCredential, credential), 'response', 'kind')
     .pipe(
-      (kind: DeviceKind | null, req: Request) =>
-        kind === 'agent' && !isAgentReadRequest(req)
-          ? new Response(AGENT_READ_HINT, { status: 401, headers: { 'Cache-Control': 'no-store' } })
-          : null,
+      (kind: DeviceKind | null, req: Request) => ({
+        value:
+          kind === 'agent' && !isAgentReadRequest(req)
+            ? new Response(AGENT_READ_HINT, {
+                status: 401,
+                headers: { 'Cache-Control': 'no-store' },
+              })
+            : null,
+      }),
       ['kind', 'req'],
-      'response'
+      'result:response'
     )
     .endAsync('response') as (req: Request) => Promise<Response | null>;
 }
