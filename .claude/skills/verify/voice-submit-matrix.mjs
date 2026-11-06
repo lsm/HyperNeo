@@ -106,8 +106,14 @@ try {
       exact: true,
     });
     await stop.waitFor();
-    await page.waitForTimeout(450);
     const submit = form.locator('button[type=submit]');
+    await wait(
+      async () =>
+        (await stop.isEnabled()) &&
+        (await submit.getAttribute('aria-label')) === 'Stop recording and send the message',
+      'Recorder must finish starting before speech'
+    );
+    await page.waitForTimeout(450);
     if (item.action === 'recording-send') await submit.click();
     else {
       if (item.action === 'stop-then-send')
