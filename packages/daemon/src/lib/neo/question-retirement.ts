@@ -48,11 +48,11 @@ export function createQuestionRetirement(
     .input(['question', 'todo', 'now'])
     .pipe(questionCheckTodo, ['question', 'todo'], 'checked')
     .pipe(
-      (todo: NeoTodo, linked: NeoTodo | null) =>
+      (todo: NeoTodo) =>
         packs()
           .find((pack) => pack.id === todo.check?.pack)
-          ?.todos?.check(todo, { readOnly: true, detached: linked === null }) ?? null,
-      ['checked', 'todo'],
+          ?.todos?.check(todo, { readOnly: true }) ?? null,
+      'checked',
       'observed'
     )
     .pipe(passedQuestionCheck, 'observed', 'result:retired')

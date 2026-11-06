@@ -144,9 +144,8 @@ export class CodingTurnPrRepository {
     return row?.createdAt ?? undefined;
   }
 
-  ownedPrs(todoId: string): string[] | null {
+  ownedPrs(todoId: string): string[] {
     const own = this.own(todoId);
-    if (!own.length) return null;
     const row = this.db
       .prepare('SELECT check_json AS json FROM neo_todos WHERE id = ?')
       .get(todoId) as {
@@ -177,14 +176,10 @@ export const codingTurnPrReads = defineRepositoryOp(
 export const readCodingTurnFacts = (superpipe({})('coding.turn-facts') as PipelineAPI)
   .input(['todo', 'turns', 'readPrs'])
   .pipe(
-    async (todo: NeoTodo, turns: CodingTurnPrRepository) => {
-      const own = await turns.readOwn(todo.id);
-      return own.length ? { value: own } : { reason: null };
-    },
+    (todo: NeoTodo, turns: CodingTurnPrRepository) => turns.readOwn(todo.id),
     ['todo', 'turns'],
-    'result:facts'
+    'own'
   )
-  .pipe((facts: CodingTurn[]) => facts, 'facts', 'own')
   .pipe(planCodingTurnUrls, ['todo', 'own'], 'urls')
   .pipe((readPrs: NeoWorkPrReader, urls: string[]) => readPrs(urls), ['readPrs', 'urls'], 'read')
   .pipe(
@@ -198,4 +193,4 @@ export const readCodingTurnFacts = (superpipe({})('coding.turn-facts') as Pipeli
   todo: NeoTodo,
   turns: CodingTurnPrRepository,
   readPrs: NeoWorkPrReader
-) => Promise<ReturnType<typeof planCodingTurnFacts> | null>;
+) => Promise<ReturnType<typeof planCodingTurnFacts>>;

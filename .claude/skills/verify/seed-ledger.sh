@@ -16,11 +16,8 @@ INSERT INTO neo_project_workspaces (alias, project_id)
   VALUES ('repository:github.com/verify-test/demo', 'project:demo');
 INSERT INTO neo_asks (id, session_id, title, request, status, created_at, updated_at)
   VALUES ('ask-ledger', '$ROOT', 'Ship the loader fix', 'Ship the loader fix', 'open', $NOW_MS, $NOW_MS);
-INSERT INTO neo_todos (id, ask_id, position, title, done_when, state, created_at, updated_at, started_at)
-  VALUES ('todo-ledger', 'ask-ledger', 1, 'Fix the loader', 'PR merged', 'doing', $NOW_MS, $NOW_MS, $NOW_MS);
-INSERT INTO pack_coding_pr_claims (todo_id, url, claim, claimed_at)
-  VALUES ('todo-ledger', 'https://github.com/verify-test/demo/pull/8', 'named', $NOW_MS),
-    ('todo-ledger', 'https://github.com/verify-test/demo/pull/100', 'branch', $NOW_MS);
+INSERT INTO neo_todos (id, ask_id, position, title, done_when, check_json, state, created_at, updated_at, started_at)
+  VALUES ('todo-ledger', 'ask-ledger', 1, 'Fix the loader', 'PR merged', '{\"pack\":\"coding\",\"kind\":\"pr_merged\",\"params\":{\"urls\":[\"https://github.com/verify-test/demo/pull/8\"]}}', 'doing', $NOW_MS, $NOW_MS, $NOW_MS);
 INSERT INTO pack_coding_todo_prs (todo_id, prs_json, read_at)
   VALUES ('todo-ledger', '[{\"url\":\"https://github.com/verify-test/demo/pull/8\",\"state\":\"OPEN\",\"checks\":\"passing\",\"review\":\"approved\"}]', $NOW_MS);
 INSERT INTO pack_coding_pr_ledger (repo, number, title, branch, head, state, state_since, owner, read_at)

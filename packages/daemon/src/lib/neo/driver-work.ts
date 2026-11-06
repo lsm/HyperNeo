@@ -347,10 +347,6 @@ export function readDriverSessionFacts(
     : null;
 }
 
-export function readDriverOpenedPrs(outcome: OperationOutcome): string[] {
-  return parseDriverStatus(outcome)?.openedPrs ?? [];
-}
-
 export function readDriverLastInputAt(outcome: OperationOutcome): number | null {
   const inputs = readDriverInputs(outcome);
   return inputs?.length ? Math.max(...inputs.map((input) => input.at)) : null;

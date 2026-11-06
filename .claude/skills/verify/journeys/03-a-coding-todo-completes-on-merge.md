@@ -1,6 +1,6 @@
 3. **A coding todo completes on merge.** After journey 1 opened root, run
    `.claude/skills/verify/seed-todo.sh "$RUN"`. It writes an open ask for root
-   with a `doing` todo whose check is `pr_merged` and whose report names
+   with a `doing` todo whose check is `pr_merged` naming
    `https://github.com/verify-test/demo/pull/8`, and a `$RUN/pr.json` that reads
    that PR as `MERGED`. End state within ~3 min (one driver refresh plus the
    2-minute check window): the todo is `done` with evidence `#8 merged`,
@@ -13,8 +13,7 @@
    as done. See ask-bookkeeping-actions.md for that separate settlement proof.
    To verify PR ownership and URL edits, run
    `bun .claude/skills/verify/todo-pr-claims.ts <port> "$RUN"` on a fresh isolated
-   daemon. It seeds only this run's ask, URL-less session todo and coding ledger
-   claim, then uses the real `neo.todo.add/edit/remove` RPC door. End state: adding
+   daemon. It seeds only this run's ask and a todo naming the PR, then uses the real `neo.todo.add/edit/remove` RPC door. End state: adding
    a duplicate succeeds and records the existing todo id/title; `addUrls` pins the PR on
    that original; a competing edit succeeds with a bookkeeping record. The helper marks the stub PR merged
    and waits up to 210 seconds for the coding pack to finish the original without

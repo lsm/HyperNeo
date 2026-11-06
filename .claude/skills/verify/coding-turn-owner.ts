@@ -119,11 +119,10 @@ while (Date.now() < deadline && !(await swept() && states().filter((row) => row.
 await Bun.sleep(20_000);
 
 const final = states();
-const claims = db.prepare(`SELECT todo_id AS todoId, url FROM pack_coding_pr_claims WHERE todo_id IN (SELECT id FROM neo_todos WHERE ask_id = 'turn-ask') ORDER BY todo_id, url`).all();
 const results = final.map((row) => ({ ...row, expected: expected[row.id].state, why: expected[row.id].why, pass: row.state === expected[row.id].state }));
 const allRead = await swept();
-await writeFile(`${run}/evidence/coding-turn-owner.json`, JSON.stringify({ allRead, results, claims, gh: (await ghLog()).split('\n').slice(0, 40) }, null, 2));
-console.log(JSON.stringify({ allRead, results, claims }, null, 2));
+await writeFile(`${run}/evidence/coding-turn-owner.json`, JSON.stringify({ allRead, results, gh: (await ghLog()).split('\n').slice(0, 40) }, null, 2));
+console.log(JSON.stringify({ allRead, results }, null, 2));
 db.close();
 if (!allRead || results.some((row) => !row.pass)) throw new Error('turn ownership proof failed');
 console.log('PASS');

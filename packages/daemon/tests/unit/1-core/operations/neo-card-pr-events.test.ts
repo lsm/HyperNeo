@@ -101,7 +101,6 @@ describe('Neo todo pull request events', () => {
     service.todoSessions.create(row.id, { verb: 'send', ref: target });
     service.todoSessions.recordRef(row.id, target, 2);
     const doing = service.todos.updateTodo(row, { state: 'doing', report: `Opened ${PR}` }, 2);
-    service.todoPrs.claim(row.id, [{ url: PR, claim: 'named' }], 1);
     service.todoPrs.record(row.id, prs, 2);
     return doing;
   }

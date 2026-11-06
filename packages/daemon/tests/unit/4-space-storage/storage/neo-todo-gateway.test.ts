@@ -47,11 +47,9 @@ test('todo worker reads preserve lists, recovery and PR windows; live writes com
     const expected = {
       recovery: sessions.unrecordedStarts(),
       awaiting: sessions.awaitingReports(),
-      window: prs.window('t0'),
     };
     expect(await sessions.read('unrecordedStarts')).toEqual(expected.recovery);
     expect(await sessions.read('awaitingReports')).toEqual(expected.awaiting);
-    expect(await prs.readWindow('t0')).toEqual(expected.window);
     expect(
       await sessions.write(
         'recordLive',

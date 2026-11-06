@@ -148,7 +148,7 @@ try {
       {
         title: id,
         doneWhen: 'Merged',
-        check: { pack: 'coding', kind: 'pr_merged', params: {} },
+        check: { pack: 'coding', kind: 'pr_merged', params: id === 'feature' ? { urls: [url] } : {} },
         instruction: `Do ${id}`,
         named: null,
       },
@@ -158,7 +158,6 @@ try {
     sessions.recordRef(id, ref, at);
     store.updateTodo(todo, { state: 'doing', startedAt: at, report: `${id} report` }, at);
   }
-  prs.claim('feature', [{ url, claim: 'named' }], at);
   prs.record('feature', [{ url, state: 'OPEN', createdAt: at } as never], at);
   const last = await sessions.inputs.accept('docs', root, { verb: 'send', ref }, 'Docs PR', at);
   await sessions.inputs.recordOutcome(last, { ref }, at);

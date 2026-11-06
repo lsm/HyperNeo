@@ -41,7 +41,6 @@ import { Logger } from '../../../logger.ts';
 import type { LedgerQuota } from './ledger-quota.ts';
 import type { NeoSessionFacts } from '../../pack-contract.ts';
 import { codingPrKey } from './pr-key.ts';
-import { CodingTodoPrRepository } from './todo-prs.ts';
 import type { CodingLedgerRead } from './pr-ledger-source.ts';
 
 export {
@@ -224,7 +223,6 @@ export type CodingLedgerRow = {
   repo: string;
   number: number;
   title: string;
-  body?: string;
   branch: string;
   head: string;
   state: CodingPrState;
@@ -256,7 +254,6 @@ export function planCodingLedgerRead(
       repo: canonical,
       number: pr.number,
       title: pr.title,
-      ...(pr.body ? { body: pr.body } : {}),
       branch: pr.headRefName,
       head: pr.headRefOid,
       state: codingPrState(pr, repoHasCi, policy),
@@ -301,12 +298,9 @@ export const planCodingLedgerTurnOwner = (
 
 export function planCodingPrOwner(
   row: { repo: string; number: number; branch: string; owner: string | null },
-  claims: ReadonlyMap<string, string>,
   sessions: readonly CodingSessionLinks[]
 ): string | null {
   const url = codingLedgerPrUrl(row);
-  const claim = claims.get(url);
-  if (claim) return claim;
   const owned = sessions.filter((session) => session.owned.includes(url));
   const opened = sessions.filter(
     (session) =>
@@ -666,7 +660,6 @@ export class CodingPrLedgerRepository {
         ).map((row) => [row.number, row.state])
       );
       this.upsert(rows, now, observedAt);
-      new CodingTodoPrRepository(this.db).claimClosingIssues(rows, now);
       this.db
         .prepare(
           `DELETE FROM pack_coding_pr_ledger WHERE repo = ? AND closed_at IS NULL
@@ -825,18 +818,21 @@ export class CodingPrLedgerRepository {
   }
 
   assignOwners(): void {
-    const claimRows = this.db
-      .prepare(
-        `SELECT c.url, s.ref, c.claim FROM pack_coding_pr_claims c
-           JOIN neo_todo_sessions s ON s.todo_id = c.todo_id
-           JOIN neo_todos t ON t.id = c.todo_id
-          WHERE s.ref IS NOT NULL AND t.state <> 'removed'
-          ORDER BY c.claim = 'named', t.state IN ('todo', 'doing'), COALESCE(t.started_at, 0)`
-      )
-      .all() as { url: string; ref: string; claim: string }[];
-    const claims = new Map(claimRows.map((row) => [row.url, row.ref]));
     const named = new Map(
-      claimRows.filter((row) => row.claim === 'named').map((row) => [row.url, row.ref])
+      (
+        this.db
+          .prepare(
+            `SELECT urls.value AS url, s.ref FROM neo_todos t
+               JOIN neo_todo_sessions s ON s.todo_id = t.id
+               JOIN json_each(t.check_json, '$.params.urls') urls
+              WHERE s.ref IS NOT NULL AND t.state <> 'removed'
+              ORDER BY t.state IN ('todo', 'doing'), COALESCE(t.started_at, 0)`
+          )
+          .all() as { url: string; ref: string }[]
+      ).flatMap((row) => {
+        const key = codingPrKey(row.url);
+        return key ? [[key, row.ref] as const] : [];
+      })
     );
     const sessions = (
       this.db
@@ -881,7 +877,7 @@ export class CodingPrLedgerRepository {
         row,
         named.get(codingLedgerPrUrl(row)),
         planCodingLedgerTurnOwner(row, mentions),
-        () => planCodingPrOwner(row, claims, sessions)
+        () => planCodingPrOwner(row, sessions)
       );
       if (owner !== row.owner) update.run(owner, row.repo, row.number);
     }

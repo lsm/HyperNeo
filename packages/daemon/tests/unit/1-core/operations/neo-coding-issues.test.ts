@@ -202,7 +202,6 @@ function fixture() {
     pending() {
       pending = true;
     },
-    linked: () => new CodingTodoPrRepository(db).prs('first'),
   };
 }
 
@@ -274,13 +273,11 @@ test.each(['NOT_PLANNED', 'OPEN', null] as const)(
   }
 );
 
-test('GitHub closing links supply PR membership, not worker claims or PR merge alone', async () => {
+test('an open issue keeps its todo doing, whatever its closing PRs show', async () => {
   const f = fixture();
-  const todo = f.add('first', true);
+  f.add('first', true);
   f.issue('OPEN');
-  await f.pack.todos!.openedPrs!(todo, ['https://github.com/synthetic/plan/pull/99']);
   await f.at(1);
-  expect(f.linked().map((row) => row.url)).toEqual([pr]);
   expect(f.store.getTodo('first')?.state).toBe('doing');
 });
 

@@ -164,14 +164,12 @@ describe('Claude transcript PR creation evidence', () => {
     expect(
       planCodingPrOwner(
         { repo: 'synthetic/cart-sandbox', number: 4, branch: 'other', owner: null },
-        new Map(),
         [session]
       )
     ).toBe(JSON.stringify(ref));
     expect(
       planCodingPrOwner(
         { repo: 'synthetic/cart-sandbox', number: 5, branch: 'other', owner: null },
-        new Map(),
         [
           claudeOwnerSession(
             {
