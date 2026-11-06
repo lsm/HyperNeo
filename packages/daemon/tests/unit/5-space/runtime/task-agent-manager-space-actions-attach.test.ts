@@ -16,8 +16,8 @@ import {
 } from '../../../../src/lib/operations/registry.ts';
 import { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { hasRuntimeWorkerOperations } from '../../../../src/lib/session/sub-session-identity.ts';
-import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import type { TaskAgentManagerConfig } from '../../../../../space/src/runtime/task-agent-manager.ts';
+import { TaskAgentManager } from '../../../../../space/src/runtime/task-agent-manager.ts';
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import {

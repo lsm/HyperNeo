@@ -13,7 +13,7 @@ import type { AgentSession } from '../../../daemon/src/lib/agent/agent-session.t
 import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers.ts';
 import { createDefaultSessionResolutionDeps } from '../runtime/session-resolution-deps.ts';
 import { ensureSession } from '../../../daemon/src/lib/session-resolution/ensure-session.ts';
-import { TaskAgentManager } from '../../../daemon/src/lib/space/runtime/task-agent-manager.ts';
+import { TaskAgentManager } from '../runtime/task-agent-manager.ts';
 import { spaceTaskWriter } from '../../../daemon/src/storage/repositories/space-task-repository.ts';
 import { WorkflowHookStateRepository } from '../../../daemon/src/storage/repositories/workflow-hook-state-repository.ts';
 import {
@@ -24,7 +24,7 @@ import { resolveDeliverySession } from '../../../daemon/src/lib/session-resoluti
 import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers.ts';
 import { setupNodeExecutionHandlers } from './space-node-execution-handlers.ts';
 import { setupSpaceExportImportHandlers } from './space-export-import-handlers.ts';
-import type { TaskAgentManagerConfig } from '../../../daemon/src/lib/space/runtime/task-agent-manager.ts';
+import type { TaskAgentManagerConfig } from '../runtime/task-agent-manager.ts';
 import type { OperationDefinition } from '../../../daemon/src/lib/operations/registry.ts';
 import type { SessionReportHandler } from '../../../daemon/src/lib/messaging/message-send.ts';
 import type { createNeoCodingReaders } from '../../../daemon/src/lib/neo/packs/runtime.ts';

@@ -190,7 +190,7 @@ import {
   MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS,
   type PromptTooLongRecoveryState,
 } from '../../session/prompt-too-long-recovery.ts';
-import type { TaskAgentManager } from './task-agent-manager.ts';
+import type { TaskAgentManager } from '../../../../../space/src/runtime/task-agent-manager.ts';
 import { WorkflowExecutor } from '../../workflows/workflow-executor.ts';
 import {
   findMissingNodeAgentReferences,

@@ -47,7 +47,7 @@ ALLOWLIST=(
 
 
     # Task archive pipeline (UI-initiated via task.archive event cascade)
-    "packages/daemon/src/lib/space/runtime/task-agent-manager.ts"
+    "packages/space/src/runtime/task-agent-manager.ts"
 
     # Guard itself
     "scripts/check-session-deletion-callers.sh"

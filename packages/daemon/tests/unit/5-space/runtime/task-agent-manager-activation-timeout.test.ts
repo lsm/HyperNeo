@@ -1,7 +1,7 @@
 import { Database as BunDatabase } from 'bun:sqlite';
 import { describe, expect, mock, spyOn, test } from 'bun:test';
 import { configureLogger, LogLevel, subscribeToStructuredLogs } from '../../../../src/lib/logger';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { TaskAgentManager } from '../../../../../space/src/runtime/task-agent-manager.ts';
 
 const ACTIVATION_TIMEOUT_MS = 30_000;
 const SPACE_ID = 'space-activation-timeout';

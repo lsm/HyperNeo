@@ -150,7 +150,7 @@ import { WorkflowHookStateRepository } from './storage/repositories/workflow-hoo
 import type { SpaceManager } from '../../space/src/managers/space-manager.ts';
 import { loadSpaceDaemonModule } from './lib/space-module-loader.ts';
 import type { SpaceRuntimeService } from '../../space/src/runtime/space-runtime-service.ts';
-import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager.ts';
+import type { TaskAgentManager } from '../../space/src/runtime/task-agent-manager.ts';
 import type { SpaceWorktreeManager } from './lib/workspaces/worktree-manager.ts';
 import {
   cleanupJobsInBatches,

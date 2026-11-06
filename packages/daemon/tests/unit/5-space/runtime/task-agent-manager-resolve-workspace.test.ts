@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { configureLogger, LogLevel, subscribeToStructuredLogs } from '../../../../src/lib/logger';
 import type { SpaceTask, Space } from '@hyperneo/shared';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { TaskAgentManager } from '../../../../../space/src/runtime/task-agent-manager.ts';
 import type { SpawnExecutionFlowDeps } from '../../../../src/lib/tasks/spawn-flow.ts';
 import {
   WorkspaceNotGitRepositoryError,

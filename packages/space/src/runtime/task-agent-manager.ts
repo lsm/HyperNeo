@@ -27,52 +27,61 @@ import type {
 import { generateUUID, isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
-import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
-import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
-import type { AgentSessionInit } from '../../agent/agent-session.ts';
-import { AgentSession, ClearConversationCancelledError } from '../../agent/agent-session.ts';
+import type { ActorResolver } from '../../../messaging/src/contracts.ts';
+import type { ActorRef, MessageRecord } from '../../../messaging/src/types.ts';
+import type { AgentSessionInit } from '../../../daemon/src/lib/agent/agent-session.ts';
+import {
+  AgentSession,
+  ClearConversationCancelledError,
+} from '../../../daemon/src/lib/agent/agent-session.ts';
 import {
   acquireContextClearBoundary,
   type ContextClearBoundaryOwner,
   withSessionOperationLock,
-} from '../../agent/message-delivery.ts';
-import { activatePrompts, verifyPromptContent } from '../../agent/message-delivery-outbox.ts';
-import { decideInjectDelivery } from '../../agent/message-delivery-pipeline.ts';
-import type { Database } from '../../../storage/database.ts';
-import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
-import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository.ts';
-import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
-import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
-import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
-import type { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
-import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
+} from '../../../daemon/src/lib/agent/message-delivery.ts';
+import {
+  activatePrompts,
+  verifyPromptContent,
+} from '../../../daemon/src/lib/agent/message-delivery-outbox.ts';
+import { decideInjectDelivery } from '../../../daemon/src/lib/agent/message-delivery-pipeline.ts';
+import type { Database } from '../../../daemon/src/storage/database.ts';
+import type { ReactiveDatabase } from '../../../daemon/src/storage/reactive-database.ts';
+import type { AppMcpServerRepository } from '../../../daemon/src/storage/repositories/app-mcp-server-repository.ts';
+import type { ChannelCycleRepository } from '../../../daemon/src/storage/repositories/channel-cycle-repository.ts';
+import { McpAuditLogRepository } from '../../../daemon/src/storage/repositories/mcp-audit-log-repository.ts';
+import { SDKMessageRepository } from '../../../daemon/src/storage/repositories/sdk-message-repository.ts';
+import type { SpaceAgentTemplateRepository } from '../../../daemon/src/storage/repositories/space-agent-template-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../../daemon/src/storage/repositories/space-long-horizon-agent-repository.ts';
 import type {
   SpaceTaskRepository,
   WriteSpaceTask,
-} from '../../../storage/repositories/space-task-repository.ts';
-import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
-import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository.ts';
-import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
-import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
+} from '../../../daemon/src/storage/repositories/space-task-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../../daemon/src/storage/repositories/space-workflow-run-repository.ts';
+import type { ToolContinuationRecoveryRepository } from '../../../daemon/src/storage/repositories/tool-continuation-recovery-repository.ts';
+import type { WorkflowRunArtifactRepository } from '../../../daemon/src/storage/repositories/workflow-run-artifact-repository.ts';
+import type {
+  DaemonInternalEventMap,
+  InternalEventBus,
+} from '../../../daemon/src/lib/internal-event-bus.ts';
 import {
   inferAvailableSpawnRoute,
   inferProviderForModel,
   type SpawnRouteDecision,
-} from '../../providers/registry.js';
-import { validateImageSizes } from '../../session/message-persistence.ts';
-import { CleanupState, type SessionManager } from '../../session-manager.ts';
-import { createDefaultSessionResolutionDeps } from '../../../../../space/src/runtime/session-resolution-deps.ts';
-import { ensureSession } from '../../session-resolution/ensure-session.ts';
-import type { SkillsManager } from '../../skills-manager.ts';
-import { getLongHorizonAgentTemplate } from '../../agents/long-horizon-templates.ts';
-import { resolveEffectiveSpaceAgentTemplate } from '../../agents/template-manager.ts';
-import { isRunnableUnifiedAgent } from '../../agents/worker-long-horizon-mapper.ts';
-import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';
-import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
+} from '../../../daemon/src/lib/providers/registry.js';
+import { validateImageSizes } from '../../../daemon/src/lib/session/message-persistence.ts';
+import { CleanupState, type SessionManager } from '../../../daemon/src/lib/session-manager.ts';
+import { createDefaultSessionResolutionDeps } from './session-resolution-deps.ts';
+import { ensureSession } from '../../../daemon/src/lib/session-resolution/ensure-session.ts';
+import type { SkillsManager } from '../../../daemon/src/lib/skills-manager.ts';
+import { getLongHorizonAgentTemplate } from '../../../daemon/src/lib/agents/long-horizon-templates.ts';
+import { resolveEffectiveSpaceAgentTemplate } from '../../../daemon/src/lib/agents/template-manager.ts';
+import { isRunnableUnifiedAgent } from '../../../daemon/src/lib/agents/worker-long-horizon-mapper.ts';
+import type { SpaceManager } from '../managers/space-manager.ts';
+import type { SpaceWorkflowManager } from '../../../daemon/src/lib/workflows/workflow-manager.ts';
 import {
   type SpaceWorktreeManager,
   WorkspaceNotGitRepositoryError,
-} from '../../workspaces/worktree-manager.ts';
+} from '../../../daemon/src/lib/workspaces/worktree-manager.ts';
 import {
   activateModelPoolReservation,
   applyModelPoolToSlot,
@@ -80,10 +89,10 @@ import {
   raiseModelPoolDeferred,
   releaseModelPoolReservation,
   reserveModelPoolSlot,
-} from '../../session/model-pool-scheduler.ts';
-import { readRestartRecoveryNote } from '../../tasks/restart-recovery-note.ts';
-import type { SpaceRuntimeService } from '../../../../../space/src/runtime/space-runtime-service.ts';
-import type { NodeAgentTemplateSource } from '../../tasks/spawn-slot-resolution.ts';
+} from '../../../daemon/src/lib/session/model-pool-scheduler.ts';
+import { readRestartRecoveryNote } from '../../../daemon/src/lib/tasks/restart-recovery-note.ts';
+import type { SpaceRuntimeService } from './space-runtime-service.ts';
+import type { NodeAgentTemplateSource } from '../../../daemon/src/lib/tasks/spawn-slot-resolution.ts';
 export interface SubSessionMemberInfo {
   agentId?: string;
   agentName?: string;
@@ -92,15 +101,15 @@ export interface SubSessionMemberInfo {
   freshSessionOnly?: boolean;
 }
 
-import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository.ts';
-import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
-import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository.ts';
-import { Logger } from '../../logger.ts';
-import { renderAddress } from '../../mailbox/address.ts';
-import { assertNoPendingMailboxContentConflict } from '../../mailbox/enqueue.ts';
-import type { MailboxMessage } from '../../mailbox/entry.ts';
-import { handoffPromptToMailbox } from '../../mailbox/handoff.ts';
-import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager.ts';
+import type { AgentMemoryRepository } from '../../../daemon/src/storage/repositories/agent-memory-repository.ts';
+import type { NodeExecutionRepository } from '../../../daemon/src/storage/repositories/node-execution-repository.ts';
+import { WorkflowHookStateRepository } from '../../../daemon/src/storage/repositories/workflow-hook-state-repository.ts';
+import { Logger } from '../../../daemon/src/lib/logger.ts';
+import { renderAddress } from '../../../daemon/src/lib/mailbox/address.ts';
+import { assertNoPendingMailboxContentConflict } from '../../../daemon/src/lib/mailbox/enqueue.ts';
+import type { MailboxMessage } from '../../../daemon/src/lib/mailbox/entry.ts';
+import { handoffPromptToMailbox } from '../../../daemon/src/lib/mailbox/handoff.ts';
+import { sanitizeAssistantUsageInSDKSessionFile } from '../../../daemon/src/lib/sdk-session-file-manager.ts';
 import {
   buildExecutionBaseSessionId,
   buildPostApprovalSessionId,
@@ -108,50 +117,56 @@ import {
   isWorkflowSubSessionIdentity,
   sanitizeAgentNameForId,
   taskIdFromSubSessionIdentity,
-} from '../../session/sub-session-identity.ts';
-import { buildWorkerDispatcherContractTools } from '../../../../../space/src/actions/worker-contract-tools.ts';
+} from '../../../daemon/src/lib/session/sub-session-identity.ts';
+import { buildWorkerDispatcherContractTools } from '../actions/worker-contract-tools.ts';
 import {
   buildCustomAgentTaskMessage,
   DEFAULT_CUSTOM_AGENT_MODEL,
   resolveAgentInit,
-} from '../../agents/custom-agent.ts';
-import type { EvolutionScopeService } from '../../../../../space/src/evolution/scope-service.ts';
-import { TERMINAL_NODE_EXECUTION_STATUSES } from '../../workflows/node-execution-manager.ts';
-import { createAgentMemoryMcpServer } from '../../../../../space/src/tools/agent-memory-tools.ts';
-import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools.ts';
-import { POST_APPROVAL_TASK_AGENT_TARGET } from '../../workflows/post-approval-validator.ts';
-import { runTemplateSnapshotRecord } from '../../workflows/run-template-snapshot.ts';
+} from '../../../daemon/src/lib/agents/custom-agent.ts';
+import type { EvolutionScopeService } from '../evolution/scope-service.ts';
+import { TERMINAL_NODE_EXECUTION_STATUSES } from '../../../daemon/src/lib/workflows/node-execution-manager.ts';
+import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
+import {
+  createDbQueryMcpServer,
+  type DbQueryMcpServer,
+} from '../../../daemon/src/lib/db-query/tools.ts';
+import { POST_APPROVAL_TASK_AGENT_TARGET } from '../../../daemon/src/lib/workflows/post-approval-validator.ts';
+import { runTemplateSnapshotRecord } from '../../../daemon/src/lib/workflows/run-template-snapshot.ts';
 import {
   decideActivationRouting,
   resolveNodeAgentName,
   selectWorkflowNodeForAgent,
-} from '../../tasks/activation-routing.ts';
+} from '../../../daemon/src/lib/tasks/activation-routing.ts';
 import {
   type AgentMessageDeliveryDeps,
   deliverAgentMessageToTarget,
-} from '../../messaging/delivery-pipeline.ts';
-import { AgentMessageRouter } from '../../messaging/agent-message-router.ts';
-import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.ts';
-import { ChannelResolver } from '../../messaging/channel-resolver.ts';
-import type { NodeMessagingRuntime } from '../../messaging/node-messaging-context.ts';
-import { ChannelRouter } from '../../messaging/channel-router.ts';
-import { HookExecutor, type HookExecutorConfig } from '../../hooks/hook-executor.ts';
-import type { InjectionDeliveryRowDeps } from '../../messaging/injection-delivery-steps.ts';
+} from '../../../daemon/src/lib/messaging/delivery-pipeline.ts';
+import { AgentMessageRouter } from '../../../daemon/src/lib/messaging/agent-message-router.ts';
+import type { WorkflowArtifactProfile } from '../../../daemon/src/lib/workflows/artifact-profile.ts';
+import { ChannelResolver } from '../../../daemon/src/lib/messaging/channel-resolver.ts';
+import type { NodeMessagingRuntime } from '../../../daemon/src/lib/messaging/node-messaging-context.ts';
+import { ChannelRouter } from '../../../daemon/src/lib/messaging/channel-router.ts';
+import {
+  HookExecutor,
+  type HookExecutorConfig,
+} from '../../../daemon/src/lib/hooks/hook-executor.ts';
+import type { InjectionDeliveryRowDeps } from '../../../daemon/src/lib/messaging/injection-delivery-steps.ts';
 import {
   flipDeliveryRowToDeferred,
   reopenFailedDeliveryRow,
   settleDeliveryRowStatus,
-} from '../../messaging/injection-delivery-steps.ts';
-import { collectDispatchablePostApprovalRoutes } from '../../workflows/post-approval-router.ts';
-import type { ReplyRoutingRegistry } from '../../messaging/reply-routing-registry.ts';
-import { decideRestoredWorkerAdmission } from '../../tasks/restored-worker-admission-decision-pipeline.ts';
-import { isCanonicalTaskTerminalForSpawn } from '../../workflows/run-spawn-decisions.ts';
+} from '../../../daemon/src/lib/messaging/injection-delivery-steps.ts';
+import { collectDispatchablePostApprovalRoutes } from '../../../daemon/src/lib/workflows/post-approval-router.ts';
+import type { ReplyRoutingRegistry } from '../../../daemon/src/lib/messaging/reply-routing-registry.ts';
+import { decideRestoredWorkerAdmission } from '../../../daemon/src/lib/tasks/restored-worker-admission-decision-pipeline.ts';
+import { isCanonicalTaskTerminalForSpawn } from '../../../daemon/src/lib/workflows/run-spawn-decisions.ts';
 import {
   isSpawnFlowReusedSession,
   isSpawnFlowWaitConcurrent,
   runSpawnExecutionFlow,
   type SpawnExecutionFlowDeps,
-} from '../../tasks/spawn-flow.ts';
+} from '../../../daemon/src/lib/tasks/spawn-flow.ts';
 import {
   assembleNodeAgentSessionInit,
   buildSlotOverrides,
@@ -164,27 +179,30 @@ import {
   resolveTaskWorkspace,
   resolveWorkflowNodeSlot,
   spaceAgentTemplateToNodeSource,
-} from '../../tasks/spawn-slot-resolution.ts';
-import type { VerifiedSessionStop } from '../../tasks/stop-verification-gates.ts';
-import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from '../../tasks/verified-stop-flow.ts';
+} from '../../../daemon/src/lib/tasks/spawn-slot-resolution.ts';
+import type { VerifiedSessionStop } from '../../../daemon/src/lib/tasks/stop-verification-gates.ts';
+import {
+  runVerifiedStopFlow,
+  type VerifiedStopFlowDeps,
+} from '../../../daemon/src/lib/tasks/verified-stop-flow.ts';
 import {
   runLiveWorkspaceSyncFlow,
   type LiveWorkspaceSyncFlowDeps,
-} from '../../../../../space/src/runtime/live-workspace-sync-flow.ts';
+} from './live-workspace-sync-flow.ts';
 import {
   runSelfHealWorkspaceFlow,
   type SelfHealWorkspaceFlowDeps,
-} from '../../../../../space/src/runtime/self-heal-workspace-flow.ts';
+} from './self-heal-workspace-flow.ts';
 import {
   runProvisionWorkflowSessionFlow,
   type ProvisioningFlowDeps,
-} from '../../../../../space/src/runtime/provision-workflow-session-flow.ts';
+} from './provision-workflow-session-flow.ts';
 import {
   clearAllRetryableHookActionTimers,
   HookEngine,
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
-} from '../../hooks/hook-engine.ts';
-import { workflowHookAddressing } from '../../workflows/hook-matching.ts';
+} from '../../../daemon/src/lib/hooks/hook-engine.ts';
+import { workflowHookAddressing } from '../../../daemon/src/lib/workflows/hook-matching.ts';
 import {
   assertExecutionValidAgainstWorkflow,
   formatMissingTemplateReference,
@@ -195,7 +213,7 @@ import {
   SPAWN_RESERVABLE_TASK_STATUSES,
   SpawnSupersededError,
   validateTaskAllowsSpawn,
-} from '../../workflows/node-execution-validation.ts';
+} from '../../../daemon/src/lib/workflows/node-execution-validation.ts';
 
 const log = new Logger('task-agent-manager');
 
@@ -281,12 +299,14 @@ export interface TaskAgentManagerConfig {
     explicitMessageId?: string,
     options?: {
       onConsumed?: (settledSessionId: string) => void;
-      lateSettlement?: import('../../messaging/session-message-delivery.ts').SessionLateSettlementOwner;
+      lateSettlement?: import('../../../daemon/src/lib/messaging/session-message-delivery.ts').SessionLateSettlementOwner;
       onLateFailure?: () => void;
       disposeSignal?: AbortSignal;
     }
-  ) => Promise<import('../../messaging/session-message-delivery.ts').SessionInjectionOutcome>;
-  scheduleService?: import('../../schedule/schedule-service.ts').ScheduleService;
+  ) => Promise<
+    import('../../../daemon/src/lib/messaging/session-message-delivery.ts').SessionInjectionOutcome
+  >;
+  scheduleService?: import('../../../daemon/src/lib/schedule/schedule-service.ts').ScheduleService;
   replyRoutingRegistry?: ReplyRoutingRegistry;
   memoryRepo?: AgentMemoryRepository;
   messageResolverFactory?: (
@@ -303,9 +323,9 @@ export interface TaskAgentManagerConfig {
       message: MessageRecord
     ) => Promise<string | null | undefined>;
   };
-  goalService?: import('../../../../../space/src/goals/service.ts').SpaceGoalService;
+  goalService?: import('../goals/service.ts').SpaceGoalService;
   evolutionScopeService?: EvolutionScopeService;
-  externalEventStore?: import('../../../../../space/src/external-events/external-event-store.ts').ExternalEventStore;
+  externalEventStore?: import('../external-events/external-event-store.ts').ExternalEventStore;
 }
 
 type CompletionCallbackMap = Map<string, Array<() => Promise<void>>>;

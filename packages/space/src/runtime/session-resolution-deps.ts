@@ -7,7 +7,7 @@ import {
 } from '../../../daemon/src/lib/session/sub-session-identity.ts';
 import type { SessionManager } from '../../../daemon/src/lib/session-manager.ts';
 import type { SpaceRuntimeService } from './space-runtime-service.ts';
-import type { TaskAgentManager } from '../../../daemon/src/lib/space/runtime/task-agent-manager.ts';
+import type { TaskAgentManager } from './task-agent-manager.ts';
 import { resolveAgentSessionId } from '../../../daemon/src/lib/session-resolution/long-term-agent-session.ts';
 import {
   type SessionResolutionDeps,

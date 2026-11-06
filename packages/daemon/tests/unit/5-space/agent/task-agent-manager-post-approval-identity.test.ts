@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus';
-import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager';
+import type { TaskAgentManagerConfig } from '../../../../../space/src/runtime/task-agent-manager';
+import { TaskAgentManager } from '../../../../../space/src/runtime/task-agent-manager';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { createTables } from '../../../../src/storage/schema';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';

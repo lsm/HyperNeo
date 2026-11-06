@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { TaskAgentManager } from '../../../../../space/src/runtime/task-agent-manager.ts';
 import type { SpaceWorkflow, NodeExecution, Space } from '@hyperneo/shared';
 
 describe('TaskAgentManager Runtime Execution Contract', () => {
