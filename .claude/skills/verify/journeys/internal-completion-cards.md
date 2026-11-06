@@ -23,6 +23,10 @@ loopback URL in its browser.json. On the start card, Prepare the summary must
 have neither a completion label nor a result.md file card. Publish the report
 keeps its completion sentence and report.md file card. Open that report card and
 observe Travel report and A report for the human in the viewer.
+While the fixture is open, use its isolated RPC door to edit the internal todo's
+doneWhen to a human sentence without the path. Require that sentence on its start
+row, then restore the generated wording before creating doneFile. The RPC helper
+uses neo.todo.edit and neo.ask.read for the same transition without a browser.
 
 Save a screenshot and browser.json with passed:true in the supplied evidence
 directory only after observing those results, then create doneFile. Close the
