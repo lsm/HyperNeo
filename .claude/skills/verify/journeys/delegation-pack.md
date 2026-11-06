@@ -21,3 +21,15 @@ and runtime wiring, not a model's compliance with instructions or a native
 worker launch. observed.json retains RPC/MCP replies and both delivery texts.
 The helper closes its connection and daemon in finally; the wrapper preserves
 logs and removes its synthetic data. Require run-status.json exitCode 0.
+
+For the real SDK prompt-delivery seam, run the existing isolated fixture too.
+
+```sh
+bash .claude/skills/verify/neo-unsandboxed-sdk.sh /absolute/fresh/sdk-evidence-directory
+```
+
+Both store and daemon-gh variants must pass. Their expected coordinator prompt
+uses the delegation pack instance's current data, rather than its static catalog
+brief. The local scripted model observes that prompt, reads and uses tools,
+resumes the session and publishes a reply. This verifies SDK prompt delivery,
+not a generative model's adherence to delegation preferences.
