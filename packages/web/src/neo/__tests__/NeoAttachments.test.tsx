@@ -194,6 +194,43 @@ describe('Neo attachments', () => {
       })
     );
   });
+  it('captures photo thumbnails and whole file chips in message order without changing payloads', async () => {
+    render(composer());
+    await attach(new File(['first'], 'a.png', { type: 'image/png' }));
+    await attach(new File(['Hello'], 'b.txt', { type: 'text/plain' }));
+    await attach(new File(['second'], 'c.png', { type: 'image/png' }));
+    const input = screen.getByRole('textbox') as HTMLTextAreaElement;
+    input.getBoundingClientRect = () => new DOMRect(20, 780, 300, 52);
+    const chips = [...screen.getByRole('list', { name: 'Attachments' }).children];
+    chips.forEach((chip, index) => {
+      chip.getBoundingClientRect = () => new DOMRect(20 + index * 100, 700, 140, 56);
+      const image = chip.querySelector('img');
+      if (image) image.getBoundingClientRect = () => new DOMRect(20 + index * 100, 708, 40, 40);
+    });
+    fireEvent.submit(input.closest('form')!);
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    const [payload, origin] = sendMessage.mock.calls[0];
+    expect(payload.images.map((image: { data: string }) => image.data)).toEqual([
+      'Zmlyc3Q=',
+      'c2Vjb25k',
+    ]);
+    expect(payload.text).toContain('Hello');
+    expect(payload.media).toBeUndefined();
+    expect(
+      origin.media.map((item: { target: string; from: DOMRect }) => [
+        item.target,
+        item.from.x,
+        item.from.width,
+        item.from.height,
+      ])
+    ).toEqual([
+      ['photo-0', 20, 40, 40],
+      ['file-0', 120, 140, 56],
+      ['photo-1', 220, 40, 40],
+    ]);
+    expect(screen.queryByRole('list', { name: 'Attachments' })).toBeNull();
+  });
+
   it('clears attachments on send and isolates drafts across conversation remounts', async () => {
     const id = crypto.randomUUID();
     const view = render(composer(id));

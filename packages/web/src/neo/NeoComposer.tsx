@@ -1,4 +1,4 @@
-import type { NeoFlightRect } from './neo-send-flight.ts';
+import type { NeoFlightOrigin } from './neo-send-flight.ts';
 import './neo-composer.css';
 import { useCallback, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { Button } from '../components/ui/Button.tsx';
@@ -77,7 +77,7 @@ export function NeoComposer({
   onTranscript: (text: string) => void;
   onSend: (
     input: Parameters<ReturnType<typeof createNeoIntakeClient>['send']>[0],
-    from?: NeoFlightRect
+    from?: NeoFlightOrigin
   ) => ReturnType<ReturnType<typeof createNeoIntakeClient>['send']>;
 }) {
   const idSuffix = forSession ? '-session' : '';
@@ -212,9 +212,26 @@ export function NeoComposer({
       const top = quote
         ? thought.current?.form?.querySelector('[data-quote-bar]')?.getBoundingClientRect().y
         : box?.y;
+      const media = files.flatMap((file, index) => {
+        const chip = thought.current?.form?.querySelector(
+          `[data-attachment="${CSS.escape(file.id)}"]`
+        );
+        const source = file.kind === 'image' ? chip?.querySelector('img') : chip;
+        const bounds = source?.getBoundingClientRect();
+        const order = files.slice(0, index).filter((item) => item.kind === file.kind).length;
+        return bounds?.width && bounds.height
+          ? [{ from: bounds, file, target: `${file.kind === 'image' ? 'photo' : 'file'}-${order}` }]
+          : [];
+      });
       const from =
         !forSession && box?.width && box.height
-          ? { x: box.x, y: top ?? box.y, width: box.width, height: box.bottom - (top ?? box.y) }
+          ? {
+              x: box.x,
+              y: top ?? box.y,
+              width: box.width,
+              height: box.bottom - (top ?? box.y),
+              ...(media.length ? { media } : {}),
+            }
           : undefined;
       attachments.remove(files.map((file) => file.id));
       const input = {

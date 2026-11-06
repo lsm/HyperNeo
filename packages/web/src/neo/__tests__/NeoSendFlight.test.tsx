@@ -100,11 +100,91 @@ describe('NeoSendFlight', () => {
     expect(pending.style.visibility).toBe('');
     expect(accepted.style.visibility).toBe('hidden');
     tick(550);
-    expect((ghost as HTMLElement).style.lineHeight).toBe('1.7');
+    expect(document.querySelector<HTMLElement>('[data-flight-words]')!.style.lineHeight).toBe(
+      '1.7'
+    );
     expect(accepted.style.height).toBe('150px');
     expect(accepted.style.visibility).toBe('');
     expect(done).toHaveBeenCalledTimes(1);
   });
+  it.each([false, true])(
+    'flies each photo and file across replacement with words=%s',
+    (withWords) => {
+      const media = [
+        {
+          target: 'photo-0',
+          from: new DOMRect(20, 700, 40, 40),
+          file: {
+            id: 'a',
+            name: 'a.png',
+            size: 1,
+            kind: 'image' as const,
+            image: { data: 'YWJj', media_type: 'image/png' as const },
+          },
+        },
+        {
+          target: 'file-0',
+          from: new DOMRect(70, 690, 140, 56),
+          file: { id: 'b', name: 'b.txt', size: 5, kind: 'text' as const, text: 'Hello' },
+        },
+        {
+          target: 'photo-1',
+          from: new DOMRect(220, 700, 40, 40),
+          file: {
+            id: 'c',
+            name: 'c.png',
+            size: 1,
+            kind: 'image' as const,
+            image: { data: 'ZGVm', media_type: 'image/png' as const },
+          },
+        },
+      ];
+      const targetRow = (kind: 'pending' | 'accepted') => {
+        const target = row(kind);
+        if (!withWords) target.querySelector('.neo-message-bubble')!.remove();
+        media.forEach((item, index) => {
+          const node = document.createElement('div');
+          node.dataset.flight = item.target;
+          node.getBoundingClientRect = () => new DOMRect(100 + index * 100, 300, 90, 60);
+          target.append(node);
+        });
+        return target;
+      };
+      const pending = targetRow('pending');
+      const done = vi.fn();
+      const origin = { ...from, media };
+      const view = render(
+        <NeoSendFlight
+          flight={{ id: 'flight', from: origin, words: withWords ? 'Words with files' : '' }}
+          onDone={done}
+        />
+      );
+      tick(0);
+      const ghosts = [...document.querySelectorAll<HTMLElement>('[data-flight-ghost]')];
+      expect(ghosts.map((node) => node.dataset.flightGhost)).toEqual([
+        'photo-0',
+        'file-0',
+        'photo-1',
+      ]);
+      expect(ghosts[0].querySelector('img')?.src).toBe('data:image/png;base64,YWJj');
+      expect(ghosts[1].textContent).toContain('b.txt');
+      expect(ghosts[0].style.width).toBe('40px');
+      expect(ghosts[0].style.borderRadius).toBe('8px');
+      expect(!!document.querySelector('[data-flight-words]')).toBe(withWords);
+      pending.remove();
+      const accepted = targetRow('accepted');
+      tick(300);
+      expect(getComputedStyle(accepted).visibility).toBe('hidden');
+      tick(550);
+      expect(ghosts.map((node) => node.style.left)).toEqual(['100px', '200px', '300px']);
+      expect(ghosts[0].style.borderRadius).toBe('12px');
+      expect(done).toHaveBeenCalledTimes(1);
+      view.unmount();
+      expect(getComputedStyle(accepted).visibility).not.toBe('hidden');
+      expect(accepted.style.height).toBe('150px');
+    }
+  );
+
   it('restores the row and cancels its frame on unmount', () => {
     const target = row('pending');
     const view = render(<NeoSendFlight flight={flight} onDone={vi.fn()} />);
