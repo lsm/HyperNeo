@@ -122,6 +122,18 @@ describe('coding turn PRs', () => {
     db.close();
   });
 
+  test('both reads run on the read-only lane', () => {
+    const { db, send, record } = setup();
+    send('d1', 'a', 'receipt-a');
+    record(fact('t1', ['receipt-a'], [url], 100));
+    db.exec('PRAGMA query_only=ON');
+    const turns = new CodingTurnPrRepository(db);
+    expect(turns.own('a')).toHaveLength(1);
+    expect(turns.mentions([url]).turns).toHaveLength(1);
+    db.exec('PRAGMA query_only=OFF');
+    db.close();
+  });
+
   test('an unread turn keeps the check open', async () => {
     const { db, send, record } = setup();
     send('d1', 'a', 'receipt-a');
