@@ -28,6 +28,14 @@ vi.mock('node:fs/promises', async (original) => {
 describe('local credential creation', () => {
   const dataDir = process.env.HYPERNEO_DATA_DIR;
   let dir: string;
+  test('an agent credential without an issuer origin cannot be enrolled', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'agent-origin-'));
+    process.env.HYPERNEO_DATA_DIR = dir;
+    const run = vi.fn();
+    const db = { run } as unknown as DbGateway;
+    await expect(ensureLocalCredential(db, 'agent')).rejects.toThrow();
+    expect(run).not.toHaveBeenCalled();
+  });
   test('agent startup creates a separate owner-only credential and reuses it', async () => {
     dir = await mkdtemp(join(tmpdir(), 'agent-credential-'));
     process.env.HYPERNEO_DATA_DIR = dir;
