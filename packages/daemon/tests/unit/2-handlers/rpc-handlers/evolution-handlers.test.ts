@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { setupEvolutionHandlers } from '../../../../src/lib/rpc-handlers/evolution-handlers';
+import { setupEvolutionHandlers } from '../../../../src/lib/space/rpc/evolution-handlers';
 
 function createMessageHubStub() {
   const handlers = new Map<string, (payload: unknown) => Promise<unknown>>();
