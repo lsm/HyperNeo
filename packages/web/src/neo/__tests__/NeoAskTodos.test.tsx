@@ -1100,9 +1100,11 @@ describe('NeoAskTodos', () => {
   );
 
   it('marks an open ask done or drops it from its menu', () => {
+    const dropLabel = '放下这件事';
     const onSettle = vi.fn();
     const app = render(<NeoAskTodos entry={entry({})} onAnswer={() => {}} onSettle={onSettle} />);
     fireEvent.click(app.getByRole('button', { name: '更多操作' }));
+    expect(app.getByRole('menuitem', { name: dropLabel })).toBeTruthy();
     fireEvent.click(app.getByRole('menuitem', { name: '标记做完' }));
     expect(onSettle).toHaveBeenCalledWith('done');
     cleanup();
@@ -1116,7 +1118,7 @@ describe('NeoAskTodos', () => {
     fireEvent.click(settled.getByRole('button', { name: '更多操作' }));
     expect(settled.getByRole('menuitem', { name: '复制链接' })).toBeTruthy();
     expect(settled.queryByRole('menuitem', { name: '标记做完' })).toBeNull();
-    expect(settled.queryByRole('menuitem', { name: '放下这件事' })).toBeNull();
+    expect(settled.queryByRole('menuitem', { name: dropLabel })).toBeNull();
   });
 
   it('moves removed todos into Details, one line each with what replaced them', () => {
