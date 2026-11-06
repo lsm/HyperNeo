@@ -1,3 +1,4 @@
+import { gitHubWatchedConfigWrite } from '../repositories/github-watched-config-write.ts';
 import { gitHubWatchedRepoRead } from '../repositories/github-watched-repo-read.ts';
 import { peerReads, peerWrites } from '../repositories/neo-peer-repository.ts';
 import { neoStallReminderWrite } from '../repositories/neo-stall-reminder-write.ts';
@@ -345,5 +346,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     gitHubPollingCapabilityReads,
     gitHubPollingTimerReads,
     gitHubWatchedRepoRead,
+    gitHubWatchedConfigWrite,
   ].map((op) => [op.name, op])
 );

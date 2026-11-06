@@ -8,9 +8,11 @@ Finish real body copying and stop captured job processors before measuring.
 
 Real watchRepo RPC creates a disabled-Space row, updates that same identity, then
 creates a polling peer. Verify UUID/creation time, resolved Space fallback,
-existing UPDATE, saved config and activation cursor marker. Before/after both
-observe two main INSERTs: this extraction does not activate a worker command.
-The committed baseline must pass that user path then fail helper availability.
+existing UPDATE, saved config and activation cursor marker. Current public calls
+use three native config-write posts, create two rows and execute zero main INSERTs.
+Compare committed rows with receipts. The polling peer's cursor write may advance
+its update clock after creation; its activation marker retains creation time.
+Scratch/unit tests retain the exact function and initial SQL contracts below.
 
 Invoke the constructor-free function on scratch watched-table-only SQLite. Activate an
 existing row: preserve id/case/creation/last poll/webhook and COALESCE secret, clear only

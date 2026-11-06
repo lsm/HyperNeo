@@ -23,15 +23,15 @@ preserves the timer. A later explicit request succeeds independently. Focused te
 no-timer/session-provider admission skips and query/mapper interfaces, including malformed
 cursor errors.
 
-The approved boundary is fresh 167 / excluded 97 / known 264 lines. Count the
-complete 92-line watch callback, auth gate, timer owner/queue/fields, the full
-47-line operation module, import and smoke registration. Only the unchanged
-constructor-free `github-polling-repos-read.ts` (53) and
-`github-watched-repos-read.ts` (44) are excluded as already-merged audited stable
-dependencies, with full-file hashes and interface pins. The measurement script
-rejects drift beyond the one awaited call. This is no full public/runtime
-transitive closure or migration of watch's other SQL. Hash/contract changes must
-be reviewed together with remeasured scope; record the deliberate debt in #9418.
+The historical timer boundary retains its two already-audited data modules.
+The current measurement is fresh 162 / excluded 100 / known 262 lines, including
+the complete 88-line watch callback. Query module line counts changed in earlier
+reviewed extraction slices. Hash and interface pins remain in force.
+The config-writer slice separately measures its production diff and complete
+caller in github-watch-config-measure.cjs, with no new exclusion grant. Its reader
+and atomic-writer bridges update only the watch callback pin here. The timer
+proof counts actual native config-write posts when asserting no upsert replay.
+This timer measurement makes no full public/runtime transitive-closure claim.
 
 Keep JSON, wrapper status and latency/clone/RSS/WAL/loop metrics before cleanup.
 Held requests are not latency-target passes; internal SQL/queue timing is not

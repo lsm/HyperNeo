@@ -141,8 +141,8 @@ try {
   assert.equal(mainValidationReads, 0);
   assert.equal(nativeReadPosts, reads);
   evidence.nativeReadLaneObserved = nativeReadPosts > 0;
-  assert(remainingMainLookups > 0);
-  evidence.remainingMainLookupIsNextRung = remainingMainLookups;
+  assert.equal(remainingMainLookups, 0);
+  evidence.remainingMainLookups = remainingMainLookups;
   evidence.latencyTargetsMet = Number(evidence.validationRpcWhileWriterHeldMs) < 250 &&
     Number(evidence.healthWhileWriterHeldMs) < 250 && maxLag < 1000;
   evidence.maxLoopLagMs = maxLag;
