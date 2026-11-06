@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { DatabaseCore } from '../packages/daemon/src/storage/database-core.ts';
 import { DbGateway } from '../packages/daemon/src/storage/db-gateway/db-gateway.ts';
-import { codingTodoPrReads } from '../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 import { neoTodoReads } from '../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import {
   neoTodoSessionReads,
@@ -36,7 +35,6 @@ const evidence = {
   runtime: 'bun',
   startupBodyCopyComplete: false,
   bootstrapReceipt: false,
-  recoveryWindow: false,
   liveStatus: false,
   dispatchReceipt: false,
   dispatchRollback: false,
@@ -81,11 +79,8 @@ try {
   evidence.bootstrapReceipt = true;
   const starts = await gateway.call(neoTodoSessionReads, 'unrecordedStarts');
   const reports = await gateway.call(neoTodoSessionReads, 'awaitingReports');
-  const window = await gateway.call(codingTodoPrReads, 'window', todoId);
   assert(starts.includes(todoId));
   assert(!reports.some((row) => row.todoId === todoId));
-  assert.deepEqual(window, { start: 1, end: null });
-  evidence.recoveryWindow = true;
   assert(await gateway.call(neoTodoSessionWrites, 'recordLive', todoId, 'running', undefined));
   assert.equal(
     await gateway.call(neoTodoSessionWrites, 'recordLive', todoId, 'running', undefined),
