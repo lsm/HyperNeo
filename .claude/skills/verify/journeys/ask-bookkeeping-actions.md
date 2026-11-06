@@ -16,8 +16,8 @@ Supply an explicit completion check on that retry, as required for new todos;
 the settled-ask bookkeeping record must still return without adding the todo.
 
 A question naming a closed todo must supply an explicit retireWhen check with an
-absolute evidence path. It opens at ask level with a todo_closed
-record, without a stale todo link. Settling an ask done with unfinished todos
+absolute evidence path. It explicitly replaces the fixture's existing worker question to follow the one-open-card rule. It opens at ask
+level with a todo_closed record, without a stale todo link. Settling an ask done with unfinished todos
 must return a todos_unfinished record and close those rows as closed_unverified.
 Include a real worker question report: its todo must be blocked by needs-human
 before settlement, then remain closed_unverified afterward, rather than becoming
