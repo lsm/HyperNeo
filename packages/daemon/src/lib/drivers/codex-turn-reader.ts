@@ -19,18 +19,21 @@ export type CodexOpenTurn = {
 
 type Folded = { turn: CodexOpenTurn | null; fact?: WorkTurnFact };
 
-const withUrls = (turn: CodexOpenTurn, text: unknown): CodexOpenTurn => {
-  if (!text) return turn;
-  const body = typeof text === 'string' ? text : JSON.stringify(text);
-  return { ...turn, urls: new Set([...turn.urls, ...readTurnUrls([body])]) };
-};
+const textUrls = (text: unknown) =>
+  text ? readTurnUrls([typeof text === 'string' ? text : JSON.stringify(text)]) : [];
+
+const withUrls = (turn: CodexOpenTurn, text: unknown): CodexOpenTurn => ({
+  ...turn,
+  urls: new Set([...turn.urls, ...textUrls(text)]),
+});
 
 const turnFact = (
   turn: CodexOpenTurn,
   ended: string,
   endedAt: number,
   complete: boolean,
-  offset: number
+  offset: number,
+  finalUrls: string[] = []
 ): WorkTurnFact => ({
   id: turn.id,
   startedAt: turn.startedAt,
@@ -38,6 +41,7 @@ const turnFact = (
   ended,
   inputs: turn.inputs,
   urls: [...turn.urls],
+  finalUrls,
   complete,
   cursor: JSON.stringify({ seq: offset, consumed: 0 }),
 });
@@ -66,7 +70,11 @@ export function foldCodexTurnLine(
   if (entry.type === 'event_msg' && payload.type === 'task_complete') {
     const final = withUrls(turn, payload.last_agent_message);
     const ended = payload.error ? 'errored' : 'completed';
-    return { turn: null, fact: turnFact(final, ended, final.lastAt, final.complete, lineEnd) };
+    const finalUrls = textUrls(payload.last_agent_message);
+    return {
+      turn: null,
+      fact: turnFact(final, ended, final.lastAt, final.complete, lineEnd, finalUrls),
+    };
   }
   if (entry.type === 'event_msg' && payload.type === 'turn_aborted')
     return { turn: null, fact: turnFact(turn, 'aborted', turn.lastAt, turn.complete, lineEnd) };
