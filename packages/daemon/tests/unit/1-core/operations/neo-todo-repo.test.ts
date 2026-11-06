@@ -275,6 +275,31 @@ describe('repo child cards', () => {
     return { db, store, open, add };
   }
 
+  test('one cross-repository request keeps its steps and dependencies on one open card', async () => {
+    const { db, store, open, add } = setup();
+    try {
+      const result = await open({
+        title: 'Ship across repositories',
+        request: 'Keep the approved plan together',
+        todos: [pr('HyperNeo', 1), { ...pr('ops', 2), after: [0] }],
+      });
+      expect(result.ask.status).toBe('open');
+      expect(store.listChildAsks(result.ask.id)).toEqual([]);
+      const steps = store.listTodos(result.ask.id);
+      expect(steps.map((todo) => todo.repo)).toEqual([
+        'github.com/lsm/hyperneo',
+        'github.com/lsm/ops',
+      ]);
+      expect(steps[1].dependsOn).toEqual([steps[0].id]);
+      const extra = await add({ askId: result.ask.id, ...pr('web', 3) });
+      expect(extra.todo.askId).toBe(result.ask.id);
+      expect(store.getAsk(result.ask.id)?.status).toBe('open');
+      expect(store.listChildAsks(result.ask.id)).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
   test('a cross-repo request files each repo into a linked child card and settles itself', async () => {
     const { db, store, open } = setup();
     const request = {

@@ -64,6 +64,16 @@ for (const phase of ['initial', 'reopen']) {
     assert(described.description.includes('supply explicit retireWhen to open the question on the ask without linking that todo'));
     assert(described.description.includes('A successful unlinked card includes a todo_closed record'));
     if (phase === 'initial') {
+      const mixed = await call('neo.ask.open', {
+        title: 'One cross-repo request', request: 'Keep both repositories together',
+        todos: ['first', 'second'].map((repo) => ({
+          title: `Work in ${repo}`, check: { pack: 'coding', kind: 'pr_merged', params: { urls: [`https://github.com/synthetic/${repo}/pull/1`] } },
+        })),
+      });
+      assert.equal(mixed.ask.status, 'open');
+      assert.equal(mixed.todos.length, 2);
+      assert(mixed.todos.every((todo: { askId: string }) => todo.askId === mixed.ask.id));
+      assert.deepEqual(store.listChildAsks(mixed.ask.id), []);
       const ask = store.openAsk({ id: 'ask', projectId: null, sessionId: 'neo', originMessageId: null, title: 'Synthetic ask', request: 'Close unverified work visibly', createdAt: 1 });
       const repoAsk = store.openAsk({ ...ask, id: 'repository', title: 'Repository work', repo: 'github.com/synthetic/root' });
       const draft = {
