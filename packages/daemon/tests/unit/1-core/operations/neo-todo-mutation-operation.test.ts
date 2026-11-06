@@ -38,7 +38,10 @@ describe('Writer-backed todo operation activation', () => {
       order.push('commit');
     };
     const packs = createTodoCheckPacks(db);
-    packs.find((pack) => pack.id === 'coding')!.todos!.check = async () => ({ done: checkDone });
+    packs.find((pack) => pack.id === 'coding')!.todos!.check = async () => ({
+      done: checkDone,
+      evidence: null,
+    });
     store.openAsk({
       id: 'ask',
       projectId: null,
