@@ -17,7 +17,7 @@ export function workSessionRows(
   adapter: string,
   sessions: readonly WorkSessionFact[]
 ): WorkSessionRow[] {
-  return sessions.flatMap(({ id, name, status }) => (name ? [{ adapter, id, name, status }] : []));
+  return sessions.flatMap((session) => (session.name ? [{ adapter, ...session }] : []));
 }
 
 async function scanAdapters(adapters: readonly WorkAdapter[]): Promise<WorkSessionRow[]> {

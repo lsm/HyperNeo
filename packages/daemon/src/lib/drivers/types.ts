@@ -332,6 +332,7 @@ export interface WorkSessionFact {
   id: string;
   name: string;
   status: WorkStatus;
+  lastActivityAt: number;
 }
 
 export interface WorkAdapter {
