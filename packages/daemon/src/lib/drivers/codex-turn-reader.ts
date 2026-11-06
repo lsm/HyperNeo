@@ -84,7 +84,11 @@ export function foldCodexTurnLine(
   return { turn: input ? { ...turn, inputs: [...turn.inputs, input.id] } : turn };
 }
 
-export async function readCodexTurnFacts(path: string, cursor?: string): Promise<WorkTurnFact[]> {
+export async function readCodexTurnFacts(
+  path: string,
+  cursor?: string,
+  limit = TURNS_PER_READ
+): Promise<WorkTurnFact[]> {
   const handle = await open(path, 'r');
   const facts: WorkTurnFact[] = [];
   try {
@@ -93,7 +97,7 @@ export async function readCodexTurnFacts(path: string, cursor?: string): Promise
     let position = lineStart;
     let pending = Buffer.alloc(0);
     let turn: CodexOpenTurn | null = null;
-    while (facts.length < TURNS_PER_READ) {
+    while (facts.length < limit) {
       const { bytesRead } = await handle.read(chunk, 0, READ_BYTES, position);
       if (!bytesRead) break;
       position += bytesRead;
@@ -101,7 +105,7 @@ export async function readCodexTurnFacts(path: string, cursor?: string): Promise
       let from = 0;
       for (
         let newline = pending.indexOf(10);
-        newline >= 0 && facts.length < TURNS_PER_READ;
+        newline >= 0 && facts.length < limit;
         newline = pending.indexOf(10, from)
       ) {
         const lineEnd = lineStart + newline + 1 - from;

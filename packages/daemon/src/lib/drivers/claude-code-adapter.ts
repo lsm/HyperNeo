@@ -321,12 +321,12 @@ export function createClaudeCodeAdapter(deps: ClaudeCodeAdapterDeps): WorkAdapte
         })
     : undefined;
   const turns: WorkAdapter['turns'] = projectsDir
-    ? async (ref, cursor) => {
+    ? async (ref, cursor, limit) => {
         const path = /^[\w-]+$/.test(ref.id)
           ? await locateClaudeTranscript(projectsDir, { cliSessionId: ref.id })
           : null;
         return path
-          ? { ok: true, value: { turns: await readClaudeTurnFacts(path, cursor) } }
+          ? { ok: true, value: { turns: await readClaudeTurnFacts(path, cursor, limit) } }
           : reject('not_found', `No transcript for Claude Code session ${ref.id}.`);
       }
     : undefined;

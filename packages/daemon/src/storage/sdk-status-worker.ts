@@ -106,8 +106,8 @@ worker.onmessage = ({ data }) => {
           );
         }
         if ('hyperneoTurnFacts' in args) {
-          const { sessionId, cursor } = args.hyperneoTurnFacts;
-          return readHyperneoTurnFacts(db!, sessionId, cursor);
+          const { sessionId, cursor, limit } = args.hyperneoTurnFacts;
+          return readHyperneoTurnFacts(db!, sessionId, cursor, limit);
         }
         if ('turnVectors' in args) {
           const { model, dimensions, limit } = args.turnVectors;

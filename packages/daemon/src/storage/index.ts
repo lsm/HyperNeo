@@ -499,10 +499,10 @@ export class Database {
     return this.getSDKReader().readHyperneoTurnEnds(sessionId, since);
   }
 
-  async readHyperneoTurnFactsAsync(sessionId: string, cursor?: string) {
+  async readHyperneoTurnFactsAsync(sessionId: string, cursor?: string, limit?: number) {
     if (this.getDbPath() === ':memory:')
-      return readHyperneoTurnFacts(this.getDatabase(), sessionId, cursor);
-    return this.getSDKReader().readHyperneoTurnFacts(sessionId, cursor);
+      return readHyperneoTurnFacts(this.getDatabase(), sessionId, cursor, limit);
+    return this.getSDKReader().readHyperneoTurnFacts(sessionId, cursor, limit);
   }
 
   readClaudeRecordsAsync(sessionsDir: string) {

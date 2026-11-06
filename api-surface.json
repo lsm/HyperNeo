@@ -57920,6 +57920,11 @@
             "minLength": 1,
             "type": "string"
           },
+          "limit": {
+            "maximum": 500,
+            "minimum": 1,
+            "type": "integer"
+          },
           "ref": {
             "properties": {
               "adapter": {

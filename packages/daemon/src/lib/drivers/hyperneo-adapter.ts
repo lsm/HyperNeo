@@ -123,7 +123,7 @@ export interface HyperneoSessionControl {
 }
 
 export interface HyperneoAdapterDeps {
-  readTurnFacts: (sessionId: string, cursor?: string) => Promise<WorkTurnFact[]>;
+  readTurnFacts: (sessionId: string, cursor?: string, limit?: number) => Promise<WorkTurnFact[]>;
   readTurnEnds: (sessionId: string, since: number) => Promise<NonNullable<WorkDetail['turnEnds']>>;
   prepareExecution?: WorkExecutionPreparer;
   worktreeBaseDir?: (projectPath: string) => string;
@@ -856,9 +856,9 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
       return { ok: true, value: result.value };
     },
     start: (request, context) => runHyperneoStart(request, context, deps),
-    turns: async (ref, cursor) => ({
+    turns: async (ref, cursor, limit) => ({
       ok: true,
-      value: { turns: await deps.readTurnFacts(ref.id, cursor) },
+      value: { turns: await deps.readTurnFacts(ref.id, cursor, limit) },
     }),
     send: (ref, message, context) => runHyperneoSend(ref, message, context, deps),
     queue: (ref, message, context) => runHyperneoSend(ref, message, context, deps, 'defer'),

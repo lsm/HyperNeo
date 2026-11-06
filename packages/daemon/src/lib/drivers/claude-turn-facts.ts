@@ -99,7 +99,11 @@ const sameMessage = (end: End, row: Row | null) =>
   typeof row.message?.id === 'string' &&
   row.message.id === end.row.message?.id;
 
-export async function readClaudeTurnFacts(path: string, cursor?: string): Promise<WorkTurnFact[]> {
+export async function readClaudeTurnFacts(
+  path: string,
+  cursor?: string,
+  limit = TURNS_PER_READ
+): Promise<WorkTurnFact[]> {
   const start: number = cursor ? JSON.parse(cursor).seq : 0;
   const stream = createReadStream(path, { start });
   const facts: WorkTurnFact[] = [];
@@ -116,7 +120,7 @@ export async function readClaudeTurnFacts(path: string, cursor?: string): Promis
         facts.push(finishTurn(turn, end));
         turn = openTurn();
         end = null;
-        if (facts.length === TURNS_PER_READ) break;
+        if (facts.length === limit) break;
       }
       if (!row) {
         turn.complete = false;

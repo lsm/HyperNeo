@@ -557,8 +557,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     createHyperneoAdapter({
       readTurnEnds: (sessionId, since) =>
         context.deps.db.readHyperneoTurnEndsAsync(sessionId, since),
-      readTurnFacts: (sessionId, cursor) =>
-        context.deps.db.readHyperneoTurnFactsAsync(sessionId, cursor),
+      readTurnFacts: (sessionId, cursor, limit) =>
+        context.deps.db.readHyperneoTurnFactsAsync(sessionId, cursor, limit),
       prepareExecution,
       projects: () => context.deps.db.workspaceHistory.projects(),
       db,

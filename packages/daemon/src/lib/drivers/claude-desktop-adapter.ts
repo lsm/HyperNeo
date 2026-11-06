@@ -1794,13 +1794,13 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
     send: (ref, message, context) => runClaudeDesktopSend(ref, message, deps, cache, context),
     steer: (ref, message, context) => runClaudeDesktopSend(ref, message, deps, cache, context),
     status: (ref, since, receipt) => runClaudeDesktopStatus(ref, deps, cache, since, receipt),
-    turns: async (ref, cursor) => {
+    turns: async (ref, cursor, limit) => {
       const record = (await loadClaudeDesktopRecords(deps, cache)).find(
         (row) => row.sessionId === ref.id
       );
       const path = record && (await locateClaudeTranscript(deps.projectsDir, record));
       return path
-        ? { ok: true, value: { turns: await readClaudeTurnFacts(path, cursor) } }
+        ? { ok: true, value: { turns: await readClaudeTurnFacts(path, cursor, limit) } }
         : reject('not_found', `No transcript for Claude Desktop session ${ref.id}.`);
     },
     archive: (ref, admit) => archiveClaudeSession(ref, admit, deps),

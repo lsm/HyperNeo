@@ -44,7 +44,7 @@ export type CardSearchArgs = {
 };
 type SDKReadArgs =
   | SDKStatusArgs
-  | { hyperneoTurnFacts: { sessionId: string; cursor?: string } }
+  | { hyperneoTurnFacts: { sessionId: string; cursor?: string; limit?: number } }
   | { hyperneoTurnEnds: { sessionId: string; since: number } }
   | SDKPageArgs
   | WorkSearchArgs
@@ -222,8 +222,10 @@ export class SDKStatusReader {
     >;
   }
 
-  readHyperneoTurnFacts(sessionId: string, cursor?: string) {
-    return this.enqueue({ hyperneoTurnFacts: { sessionId, cursor } }) as Promise<WorkTurnFact[]>;
+  readHyperneoTurnFacts(sessionId: string, cursor?: string, limit?: number) {
+    return this.enqueue({ hyperneoTurnFacts: { sessionId, cursor, limit } }) as Promise<
+      WorkTurnFact[]
+    >;
   }
 
   readClaudeRecords(sessionsDir: string): Promise<ClaudeDesktopRecord[]> {
