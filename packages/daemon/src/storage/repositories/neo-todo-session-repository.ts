@@ -41,6 +41,12 @@ type StoredLinks = {
   remote: string | null;
 };
 
+function storedRefForms({ adapter, id, daemon }: WorkRef): [string, string] {
+  return daemon
+    ? [JSON.stringify({ adapter, id, daemon }), JSON.stringify({ adapter, daemon, id })]
+    : [JSON.stringify({ adapter, id }), JSON.stringify({ adapter, id })];
+}
+
 function sessionLinks(row: StoredLinks | null | undefined) {
   const ref: WorkRef | null = row?.ref
     ? JSON.parse(row.ref)
@@ -472,9 +478,9 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     const todo = this.db
       .prepare(
         `SELECT t.title FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
-         WHERE s.ref = ? ORDER BY t.updated_at DESC LIMIT 1`
+         WHERE s.ref IN (?, ?) ORDER BY t.updated_at DESC LIMIT 1`
       )
-      .get(JSON.stringify(ref)) as { title: string } | null;
+      .get(...storedRefForms(ref)) as { title: string } | null;
     return todo?.title ?? null;
   }
 

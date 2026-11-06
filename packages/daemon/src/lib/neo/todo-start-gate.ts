@@ -43,7 +43,7 @@ export const neoTodoAwaitsApproval = (todo: NeoTodo) =>
   todo.approvedAt === null &&
   (todo.state === 'todo' || (todo.state === 'blocked' && todo.blockedBy === 'question'));
 
-const neoTodoCancellationPending = (todo: NeoTodo, family: readonly NeoTodo[]) =>
+export const neoTodoCancellationPending = (todo: NeoTodo, family: readonly NeoTodo[]) =>
   todo.startedAt === null &&
   (todo.state === 'todo' ||
     (todo.state === 'blocked' && (todo.blockedBy === 'question' || todo.blockedBy === 'check'))) &&
@@ -54,25 +54,62 @@ export const neoTodoOnStartCard = (todo: NeoTodo, family: readonly NeoTodo[]) =>
 
 const quoted = (todos: readonly NeoTodo[]) => todos.map((todo) => `"${todo.title}"`).join(', ');
 
+const familyTodo = (family: readonly NeoTodo[], id: string | null) =>
+  family.find((todo) => todo.id === id);
+
+const replacedName = (family: readonly NeoTodo[], todo: NeoTodo) => {
+  const replacement = familyTodo(family, todo.replacedBy);
+  return replacement ? `"${todo.title}" (replaced by "${replacement.title}")` : null;
+};
+
+const waitLine = (family: readonly NeoTodo[], id: string) => {
+  const waiting = neoTodoDependenciesAfterApproval(family, id)
+    .map((other) => familyTodo(family, other))
+    .filter((todo): todo is NeoTodo => !!todo && !neoTodoFinished(todo));
+  return waiting.length ? [`It will wait for ${quoted(waiting)}.`] : [];
+};
+
 function cancellationLine(family: readonly NeoTodo[], id: string): string[] {
   const cancelled = neoTodoCancelledDependencies(family, id);
   if (!cancelled.length) return [];
-  const find = (other: string | null) => family.find((todo) => todo.id === other);
-  const waiting = neoTodoDependenciesAfterApproval(family, id)
-    .map(find)
-    .filter((todo): todo is NeoTodo => !!todo && !neoTodoFinished(todo));
-  const names = cancelled.map((todo) => {
-    const replacement = find(todo.replacedBy);
-    return replacement ? `"${todo.title}" (replaced by "${replacement.title}")` : `"${todo.title}"`;
-  });
+  const names = cancelled.map((todo) => replacedName(family, todo) ?? `"${todo.title}"`);
   return [
     [
-      `Prerequisite ${names.join(', ')} was cancelled. Go ahead with "${find(id)?.title}" anyway?`,
-      ...(waiting.length ? [`It will wait for ${quoted(waiting)}.`] : []),
+      `Prerequisite ${names.join(', ')} was cancelled. Go ahead with "${familyTodo(family, id)?.title}" anyway?`,
+      ...waitLine(family, id),
       'Select it to continue; leave it unticked to remove it.',
     ].join(' '),
   ];
 }
+
+export function neoCancelledPrerequisiteNote(todo: NeoTodo, family: readonly NeoTodo[]): string {
+  const names = neoTodoCancelledDependencies(family, todo.id).map(
+    (gone) =>
+      replacedName(family, gone) ??
+      (gone.reason ? `"${gone.title}" (${gone.reason})` : `"${gone.title}"`)
+  );
+  return [
+    `Prerequisite ${names.join(', ')} of todo "${todo.title}" (${todo.id}) was cancelled, so it will not start by itself.`,
+    'neo.todo.proceed continues it,',
+    ...waitLine(family, todo.id),
+    'neo.todo.remove stops it, and neo.question.ask is only for when you cannot tell what the human wants.',
+  ].join(' ');
+}
+
+export const neoCancelledPrerequisiteKey = (todo: NeoTodo, family: readonly NeoTodo[]) =>
+  `neo-todo-prereq:${todo.id}:${neoTodoCancelledDependencies(family, todo.id)
+    .map(({ id }) => id)
+    .join(',')}`;
+
+export const neoTodoProceedPatch = (
+  todo: NeoTodo,
+  family: readonly NeoTodo[],
+  now: number
+): NeoTodoPatch => ({
+  state: 'todo',
+  approvedAt: todo.approvedAt ?? now,
+  dependsOn: neoTodoDependenciesAfterApproval(family, todo.id),
+});
 
 export const neoStartCardText = (ids: readonly string[], family: readonly NeoTodo[]) =>
   [
@@ -130,7 +167,7 @@ export function planNeoQuestionPrune(
   };
 }
 
-export const neoTodosAwaitingCancellationCard = (
+export const neoTodosAwaitingNeoDecision = (
   family: readonly NeoTodo[],
   ask: NeoAsk | null,
   questions: readonly NeoQuestion[]
@@ -156,11 +193,7 @@ export function planNeoStartAnswer(
   if (cancelled) {
     if (withdrawn) return null;
     return ticked?.includes(todo.id)
-      ? {
-          state: 'todo',
-          approvedAt: todo.approvedAt ?? now,
-          dependsOn: neoTodoDependenciesAfterApproval(family, todo.id),
-        }
+      ? neoTodoProceedPatch(todo, family, now)
       : {
           state: 'removed',
           reason: 'The human declined after a prerequisite was cancelled.',

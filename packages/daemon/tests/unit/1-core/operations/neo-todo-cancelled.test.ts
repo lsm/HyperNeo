@@ -29,13 +29,16 @@ function setup() {
   const sessions = new NeoTodoSessionRepository(db);
   const packs = createTodoCheckPacks(db);
   const sent: Record<string, unknown>[] = [];
+  const told: { todo: string; note: string; key?: string }[] = [];
   const runner = createNeoTodoRunner({
     limits: () => ({ running: 99, perGroup: 99 }),
     write: gatewayFor(db).run.bind(gatewayFor(db)),
     store,
     sessions,
     packs: () => packs,
-    tell: async () => {},
+    tell: async (_ask, todo, note, key) => {
+      told.push({ todo: todo.id, note, key });
+    },
     changed: () => {},
     invoke: async (_caller, name, input) => {
       if (name === 'work.send') {
@@ -127,7 +130,7 @@ function setup() {
       Date.now()
     );
   };
-  return { db, store, sessions, invoke, step, runner, sent, target, work, seedLegacy };
+  return { db, store, sessions, invoke, step, runner, sent, told, target, work, seedLegacy };
 }
 
 const complete = (runner: ReturnType<typeof createNeoTodoRunner>, todo: NeoTodo) =>
@@ -168,11 +171,8 @@ describe('cancelled prerequisites', () => {
         expect(await runner.start(candidate!.id)).toMatchObject({ ok: false });
         expect(store.getTodo(b.id)?.startedAt).toBeNull();
         expect(sent).toHaveLength(0);
-        const card = store
-          .listQuestions(b.askId)
-          .find((q) => q.state === 'open' && q.startTodos?.includes(b.id))!;
-        expect(card).toBeDefined();
-        store.answerQuestion(card, [b.id], 'button', Date.now());
+        expect(card(store, b)).toBeUndefined();
+        expect(await invoke('neo.todo.proceed', { todoId: b.id })).toMatchObject({ ok: true });
         await runner.advance();
         if (mode === 'replacement') {
           expect(store.getTodo(b.id)).toMatchObject({ state: 'todo', dependsOn: [replacement.id] });
@@ -203,8 +203,8 @@ describe('cancelled prerequisites', () => {
     'held',
     'failed',
     'failed-after-cancel',
-  ])('cancelled prerequisites need one human decision: %s', async (mode) => {
-    const { db, store, invoke, step, runner, sent, work } = setup();
+  ])('a cancelled prerequisite waits for one Neo decision: %s', async (mode) => {
+    const { db, store, invoke, step, runner, sent, told, work } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
         title: 'Cancelled prerequisite',
@@ -278,39 +278,28 @@ describe('cancelled prerequisites', () => {
           { ok: true }
         );
       }
-      const initialCard = store
-        .listQuestions(dependent.askId)
-        .find((q) => q.state === 'open' && q.startTodos?.includes(dependent.id))?.id;
       await runner.refresh(() => {});
       await runner.refresh(() => {});
       expect(sent).toHaveLength(before);
-      expect(store.getTodo(dependent.id)?.state).not.toBe('doing');
-      const cards = store
-        .listQuestions(dependent.askId)
-        .filter((q) => q.state === 'open' && q.startTodos?.includes(dependent.id));
-      expect(cards).toHaveLength(1);
-      expect(cards[0].id).toBe(initialCard!);
-      expect(cards[0].text).toContain(cancelled.title);
-      expect(cards[0].text).toContain('cancelled');
+      expect(store.getTodo(dependent.id)?.state).toBe('todo');
+      expect(card(store, dependent)).toBeUndefined();
+      const notes = told.filter((item) => item.todo === dependent.id);
+      expect(notes).toHaveLength(1);
+      expect(notes[0].note).toContain(cancelled.title);
       if (mode.startsWith('replacement'))
-        expect(cards[0].text).toContain(`replaced by "${replacement.title}"`);
-      store.answerQuestion(
-        cards[0],
-        mode === 'decline' ? [] : [dependent.id],
-        'button',
-        Date.now()
-      );
-      await runner.refresh(() => {});
+        expect(notes[0].note).toContain(`replaced by "${replacement.title}"`);
+      else if (mode !== 'legacy-close') expect(notes[0].note).toContain('Cancelled by the human.');
       if (mode === 'decline') {
+        await invoke('neo.todo.remove', { todoId: dependent.id, reason: 'Neo stopped it.' });
+        await runner.refresh(() => {});
         expect(store.getTodo(dependent.id)?.state).toBe('removed');
         expect(sent).toHaveLength(before);
-        expect(
-          store
-            .listQuestions(c.askId)
-            .filter((q) => q.state === 'open' && q.startTodos?.includes(c.id))
-        ).toHaveLength(1);
         return;
       }
+      expect(await invoke('neo.todo.proceed', { todoId: dependent.id })).toMatchObject({
+        ok: true,
+      });
+      await runner.refresh(() => {});
       if (mode.startsWith('replacement')) {
         expect(store.getTodo(dependent.id)).toMatchObject({
           state: 'todo',
@@ -338,36 +327,67 @@ describe('cancelled prerequisites', () => {
     }
   });
 
-  test('answering a cancellation card makes no second card', async () => {
-    const { db, store, invoke, step, runner, work } = setup();
+  test('an open legacy card still answers, and Neo is not told about it', async () => {
+    const { db, store, invoke, step, runner, told, work, seedLegacy } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
-        title: 'One card',
-        request: 'A, then D and E.',
-        todos: [
-          step('A', []),
-          { ...step('D', [0]), ...work, start: true },
-          { ...step('E', [0]), ...work, start: true },
-        ],
+        title: 'Legacy card',
+        request: 'A, then D.',
+        todos: [step('A', []), { ...step('D', [0]), ...work, start: true }],
       });
-      const [a, d, e] = opened.todos;
+      const [a, d] = opened.todos;
       await invoke('neo.todo.remove', { todoId: a.id, reason: 'Cancelled by the human.' });
-      const answer = card(store, d)!;
-      expect(answer.startTodos).toEqual([d.id, e.id]);
-      const before = store.listQuestions(a.askId).length;
-      store.answerQuestion(answer, [d.id], 'button', Date.now());
-      expect(store.listQuestions(a.askId)).toHaveLength(before);
+      seedLegacy(store.getTodo(d.id)!);
       await runner.refresh(() => {});
-      expect(store.getTodo(e.id)?.state).toBe('removed');
+      expect(told.filter((item) => item.todo === d.id)).toHaveLength(0);
+      store.answerQuestion(card(store, d)!, [d.id], 'button', Date.now());
+      await runner.refresh(() => {});
       expect(store.getTodo(d.id)?.state).toBe('doing');
-      expect(store.listQuestions(a.askId).filter((q) => q.state === 'open')).toHaveLength(0);
     } finally {
       db.close();
     }
   });
 
-  test('a started step added after a removed one gets its card at once', async () => {
-    const { db, store, invoke, step, sent, work } = setup();
+  test('Neo cannot approve a step the human has not approved', async () => {
+    const { db, store, invoke, step, work } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Unapproved',
+        request: 'A, then D.',
+        todos: [step('A', []), { ...step('D', [0]), ...work }],
+      });
+      const [a, d] = opened.todos;
+      await invoke('neo.todo.remove', { todoId: a.id, reason: 'Cancelled by the human.' });
+      expect(await invoke('neo.todo.proceed', { todoId: d.id })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('not_approved'),
+      });
+      expect(store.getTodo(d.id)?.approvedAt).toBeNull();
+      expect(card(store, d)).toBeDefined();
+    } finally {
+      db.close();
+    }
+  });
+
+  test('proceed is refused with no cancelled prerequisite', async () => {
+    const { db, invoke, step, work } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Nothing cancelled',
+        request: 'A, then D.',
+        todos: [step('A', []), { ...step('D', [0]), ...work, start: true }],
+      });
+      expect(await invoke('neo.todo.proceed', { todoId: opened.todos[1].id })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('no_cancelled_prerequisite'),
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a started step added after a removed one goes to Neo', async () => {
+    const { db, store, invoke, step, runner, sent, told, work } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
         title: 'Late step',
@@ -383,11 +403,10 @@ describe('cancelled prerequisites', () => {
         start: true,
       });
       expect(added).toMatchObject({ ok: true });
-      expect(card(store, added.todo)).toBeDefined();
-      expect(store.getTodo(added.todo.id)).toMatchObject({
-        state: 'blocked',
-        blockedBy: 'question',
-      });
+      await runner.refresh(() => {});
+      expect(card(store, added.todo)).toBeUndefined();
+      expect(store.getTodo(added.todo.id)?.state).toBe('todo');
+      expect(told.map((item) => item.todo)).toContain(added.todo.id);
       expect(sent).toHaveLength(0);
     } finally {
       db.close();
@@ -417,8 +436,8 @@ describe('cancelled prerequisites', () => {
     ['work', 'no'],
     ['check-only', 'yes'],
     ['check-only', 'no'],
-  ] as const)('a check-blocked %s step still asks: %s', async (kind, answer) => {
-    const { db, store, invoke, step, runner, sent, work } = setup();
+  ] as const)('a check-blocked %s step still waits for Neo: %s', async (kind, answer) => {
+    const { db, store, invoke, step, runner, sent, told, work } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
         title: 'Check blocked',
@@ -437,10 +456,11 @@ describe('cancelled prerequisites', () => {
       );
       await invoke('neo.todo.remove', { todoId: a.id, reason: 'Cancelled by the human.' });
       await runner.refresh(() => {});
-      const open = card(store, d)!;
-      expect(open.text).toContain('cancelled');
+      expect(card(store, d)).toBeUndefined();
+      expect(told.map((item) => item.todo)).toContain(d.id);
       expect(sent).toHaveLength(0);
-      store.answerQuestion(open, answer === 'yes' ? [d.id] : [], 'button', Date.now());
+      if (answer === 'yes') await invoke('neo.todo.proceed', { todoId: d.id });
+      else await invoke('neo.todo.remove', { todoId: d.id, reason: 'Neo stopped it.' });
       await runner.refresh(() => {});
       await runner.refresh(() => {});
       expect(card(store, d)).toBeUndefined();
@@ -453,8 +473,8 @@ describe('cancelled prerequisites', () => {
     }
   });
 
-  test('approval follows a replaced replacement to the live step', async () => {
-    const { db, store, invoke, step, runner, sent, work } = setup();
+  test('proceed follows a replaced replacement to the live step', async () => {
+    const { db, store, invoke, step, runner, sent, told, work } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
         title: 'Replacement chain',
@@ -469,9 +489,9 @@ describe('cancelled prerequisites', () => {
       const [a, d, b, c] = opened.todos;
       await invoke('neo.todo.remove', { todoId: a.id, reason: 'Replaced.', replacedBy: b.id });
       await invoke('neo.todo.remove', { todoId: b.id, reason: 'Replaced.', replacedBy: c.id });
-      const answer = card(store, d)!;
-      expect(answer.text).toContain('It will wait for "C"');
-      store.answerQuestion(answer, [d.id], 'button', Date.now());
+      await runner.refresh(() => {});
+      expect(told.find((item) => item.todo === d.id)?.note).toContain('It will wait for "C"');
+      await invoke('neo.todo.proceed', { todoId: d.id });
       await runner.refresh(() => {});
       expect(store.getTodo(d.id)).toMatchObject({ state: 'todo', dependsOn: [c.id] });
       expect(sent).toHaveLength(0);
@@ -480,7 +500,7 @@ describe('cancelled prerequisites', () => {
     }
   });
 
-  test('approval never waits on a replacement that waits for the dependent', async () => {
+  test('proceed never waits on a replacement that waits for the dependent', async () => {
     const { db, store, invoke, step, runner, work } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
@@ -497,7 +517,7 @@ describe('cancelled prerequisites', () => {
       expect(await invoke('neo.todo.edit', { todoId: b.id, after: [d.id] })).toMatchObject({
         ok: true,
       });
-      store.answerQuestion(card(store, d)!, [d.id], 'button', Date.now());
+      await invoke('neo.todo.proceed', { todoId: d.id });
       await runner.refresh(() => {});
       expect(store.getTodo(d.id)).toMatchObject({ state: 'doing', dependsOn: [] });
     } finally {
@@ -505,7 +525,7 @@ describe('cancelled prerequisites', () => {
     }
   });
 
-  test('approving a cancelled prerequisite keeps waiting on the other prerequisites', async () => {
+  test('proceed keeps waiting on the other prerequisites', async () => {
     const { db, store, invoke, step, runner, sent, work } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
@@ -522,12 +542,7 @@ describe('cancelled prerequisites', () => {
       expect(store.getTodo(b.id)?.state).toBe('doing');
       const before = sent.length;
       await invoke('neo.todo.remove', { todoId: a.id, reason: 'Cancelled by the human.' });
-      const card = store
-        .listQuestions(d.askId)
-        .find((q) => q.state === 'open' && q.startTodos?.includes(d.id))!;
-      expect(card.text).toContain('"B"');
-      expect(card.text).not.toContain('independently');
-      store.answerQuestion(card, [d.id], 'button', Date.now());
+      await invoke('neo.todo.proceed', { todoId: d.id });
       await runner.refresh(() => {});
       expect(store.getTodo(d.id)).toMatchObject({ state: 'todo', dependsOn: [b.id] });
       expect(sent).toHaveLength(before);
@@ -547,9 +562,7 @@ describe('cancelled prerequisites', () => {
     'plan-repeat',
     'plan-repeat-start',
     'bind',
-    'card-withdrawn',
-    'card-replaced',
-  ] as const)('only the human can clear a cancelled prerequisite: %s', async (mode) => {
+  ] as const)('only neo.todo.proceed clears a cancelled prerequisite: %s', async (mode) => {
     const { db, store, invoke, step, runner, sent, work } = setup();
     try {
       const plan = { title: 'Human gate', request: 'Finish A, B and X before D.' };
@@ -563,11 +576,6 @@ describe('cancelled prerequisites', () => {
       const [a, b, x, d] = opened.todos;
       store.updateTodo(x, { state: 'done' }, Date.now());
       await invoke('neo.todo.remove', { todoId: a.id, reason: 'Cancelled by the human.' });
-      const card = () =>
-        store
-          .listQuestions(d.askId)
-          .filter((q) => q.state === 'open' && q.startTodos?.includes(d.id));
-      expect(card()).toHaveLength(1);
       const before = sent.length;
       if (mode === 'after-finished')
         expect(await invoke('neo.todo.edit', { todoId: d.id, after: [x.id] })).toMatchObject({
@@ -597,32 +605,11 @@ describe('cancelled prerequisites', () => {
             ref: { adapter: 'hyperneo', id: 'other-worker' },
           })
         ).toMatchObject({ ok: false, reason: expect.stringContaining('cancelled_dependency') });
-      if (mode === 'card-withdrawn')
-        store.retireQuestion(card()[0], 'Neo withdrew the card.', null, Date.now());
-      if (mode === 'card-replaced')
-        store.replaceQuestion(
-          card()[0],
-          crypto.randomUUID(),
-          {
-            text: 'A different question.',
-            kind: 'reply',
-            options: null,
-            multiple: false,
-            noLabel: null,
-            yesLabel: null,
-            startTodos: null,
-          },
-          Date.now()
-        );
       await runner.refresh(() => {});
       await runner.refresh(() => {});
-      expect(store.getTodo(d.id)).toMatchObject({
-        state: 'blocked',
-        blockedBy: 'question',
-        dependsOn: [a.id, b.id],
-      });
+      expect(store.getTodo(d.id)).toMatchObject({ state: 'todo', dependsOn: [a.id, b.id] });
       expect(sent).toHaveLength(before);
-      expect(card()).toHaveLength(1);
+      expect(card(store, d)).toBeUndefined();
     } finally {
       db.close();
     }
@@ -634,42 +621,14 @@ describe('cancelled prerequisites', () => {
       const opened = await invoke('neo.ask.open', {
         title: 'Moved step',
         request: 'Finish A before D.',
-        todos: [step('A', []), { ...step('D'), ...work }],
+        todos: [step('A', []), { ...step('D'), ...work, start: true }],
       });
       const [a, d] = opened.todos;
       await invoke('neo.todo.remove', { todoId: a.id, reason: 'Cancelled by the human.' });
       neoMoveTodo(store, store.getTodo(d.id)!, 'synthetic/elsewhere');
       await runner.refresh(() => {});
-      expect(store.getTodo(d.id)).toMatchObject({
-        state: 'blocked',
-        blockedBy: 'question',
-        dependsOn: [a.id],
-      });
+      expect(store.getTodo(d.id)).toMatchObject({ state: 'todo', dependsOn: [a.id] });
       expect(sent).toHaveLength(0);
-    } finally {
-      db.close();
-    }
-  });
-
-  test('moving an approved step to another ask frees it from the card it left', async () => {
-    const { db, store, invoke, step, work } = setup();
-    try {
-      const opened = await invoke('neo.ask.open', {
-        title: 'Moved out',
-        request: 'Finish A before D.',
-        todos: [step('A', []), { ...step('D'), ...work }],
-      });
-      const other = await invoke('neo.ask.open', {
-        title: 'Elsewhere',
-        request: 'Other work.',
-        todos: [step('Z', [])],
-      });
-      const [a, d] = opened.todos;
-      store.approveTodo(store.getTodo(d.id)!, 1);
-      await invoke('neo.todo.remove', { todoId: a.id, reason: 'Cancelled by the human.' });
-      expect(store.getTodo(d.id)).toMatchObject({ state: 'blocked', blockedBy: 'question' });
-      store.moveTodo(store.getTodo(d.id)!, other.todos[0].askId, 'synthetic/elsewhere', 2);
-      expect(store.getTodo(d.id)).toMatchObject({ state: 'todo', blockedBy: null });
     } finally {
       db.close();
     }

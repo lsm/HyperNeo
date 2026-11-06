@@ -7,7 +7,11 @@ import type { SpaceFamilyContext } from '../../../../src/lib/space/rpc/family-op
 function fakeContext(): SpaceFamilyContext {
   return {
     deps: {
-      db: { getSession: () => null, getDatabase: () => ({}) },
+      db: {
+        getSession: () => null,
+        getDatabase: () => ({}),
+        gateway: { call: async () => null },
+      },
       config: { dbPath: '/synthetic/family-operations.db' },
       jobProcessor: { register: () => {} },
     },

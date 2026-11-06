@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { runMigration478 } from '../../../../src/storage/schema/m478-work-sessions';
@@ -93,6 +94,12 @@ describe('workerName', () => {
     }
     expect(repository.workerName({ adapter: 'claude-code', id: 'none' })).toBeNull();
     expect(repository.workerName(ref)).toBe('Newer todo');
+    expect(repository.workerName(workerIdentity(ref, null))).toBe('Newer todo');
+    todo.run('t3', 'Remote todo', 3);
+    session.run('t3', '{}', '{"adapter":"codex-desktop","daemon":"other","id":"b"}');
+    expect(repository.workerName({ adapter: 'codex-desktop', id: 'b', daemon: 'other' })).toBe(
+      'Older todo'
+    );
     new workSessionWrites.Repository(db).saveSessions(
       [{ ...ref, name: 'Synced', status: 'done' }],
       1

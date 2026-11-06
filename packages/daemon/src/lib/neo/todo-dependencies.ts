@@ -89,7 +89,7 @@ export const planNeoTodoDependencies = (superpipe({})('neo.todo.plan-dependencie
 ) => string[] | DependencyRejection;
 
 export const NEO_TODO_CANCELLED_DEPENDENCY =
-  'cancelled_dependency: a prerequisite of this step was cancelled; only the human can clear it by answering its card.';
+  'cancelled_dependency: a prerequisite of this step was cancelled; continue it with neo.todo.proceed or stop it with neo.todo.remove.';
 
 export const NEO_TODO_NOT_READY =
   'not_ready: this step waits for unfinished steps; add it without start and the daemon starts it once they are done.';
