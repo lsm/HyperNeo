@@ -162,7 +162,7 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(snapshot: T, budget:
     skeleton = {
       ...skeleton,
       todoAsks,
-      packRows: todoPackRows(fitted.packRows, todoAsks),
+      packRows: todoPackRows(fitted.packRows, fitted.todoAsks),
       trimmed: `${NEO_SNAPSHOT_SKELETON} Use neo.ask.read with an ask id for omitted steps.`,
     };
   }
@@ -170,7 +170,6 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(snapshot: T, budget:
     skeleton = {
       ...skeleton,
       todoAsks: skeleton.todoAsks?.map((entry) => ({ ...entry, todos: [] })),
-      packRows: [],
     };
   if (size(skeleton) > budget) skeleton = { ...skeleton, standingRules: [] };
   if (size(skeleton) > budget) skeleton = { ...skeleton, packRows: [] };

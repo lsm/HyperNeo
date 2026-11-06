@@ -33,6 +33,7 @@ isolated native daemon proves actual worker execution. Inspect run-status.json r
 Mandatory owner headers take priority over the requested budget when even the
 headers alone exceed it. Unit tests pin this floor as well as UTF-8 byte sizing,
 question counts, prerequisite/hold readiness, change-only context and closures.
-Run snapshot-compact and the storage reader-worker regression, then
+Run snapshot-compact, ask-entry/pack-row retention, the refusal-catalog audit
+and the storage reader-worker regression, then
 check:neo-pack-imports and check:db-main-thread. New core files contain no domain
 vocabulary. Per-turn SDK delivery and streaming-hook behavior belong to 7-B.

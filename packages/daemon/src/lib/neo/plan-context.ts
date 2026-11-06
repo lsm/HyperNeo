@@ -49,7 +49,7 @@ export function neoPlanLines(
               kind: 'todo' as const,
               id: todo.id,
               askId: ask.id,
-              text: `  Todo ${todo.id} [${todo.state}] ${todo.title}; waits=${waits.join(',') || 'none'}; reason=${todo.blockedReason ?? wait ?? todo.reason ?? 'none'}; ready=${ready}; questions=${open.filter((q) => !q.todoId || q.todoId === todo.id).length}`.replace(
+              text: `  Todo ${todo.id} [${todo.state}] ${todo.title}; waits=${waits.join(',') || 'none'}; reason=${todo.blockedReason ?? wait ?? todo.reason ?? 'not recorded'}; ready=${ready}; questions=${open.filter((q) => !q.todoId || q.todoId === todo.id).length}`.replace(
                 /\s+/g,
                 ' '
               ),
