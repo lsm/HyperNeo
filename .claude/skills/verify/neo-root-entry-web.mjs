@@ -24,6 +24,9 @@ try {
   }));
   assert(observed.pairing.some(cookie => cookie.name === 'hyperneo_device' && cookie.httpOnly && cookie.sameSite === 'Strict'));
   await page.getByRole('link', { name: 'Open HyperNeo' }).click();
+  await page.getByRole('textbox', { name: 'Message Neo', exact: true }).waitFor();
+  assert.equal(page.url(), `${base}/`);
+  observed.openAfterPairing = '/';
   for (const [name, path, neo] of [
     ['root', '/', true],
     ['root-query', '/?source=entry&x=a%20b#message', true],
@@ -34,14 +37,16 @@ try {
   ]) {
     await page.goto(`${base}${path}`);
     await page.waitForFunction(() => document.getElementById('root')?.childElementCount > 0);
+    if (neo) await page.getByRole('textbox', { name: 'Message Neo', exact: true }).waitFor();
+    if (name === 'sessions') await page.getByRole('button', { name: 'Start chat', exact: true }).waitFor();
+    if (name === 'settings') await page.getByRole('heading', { name: 'Devices', exact: true }).waitFor();
     const title = await page.title();
-    await page.screenshot({ path: `${run}/evidence/${name}.png` });
+    await page.screenshot({ path: `${run}/evidence/${name}.png`, animations: 'disabled' });
     observed.routes.push({ name, path: new URL(page.url()).pathname, search: new URL(page.url()).search, title });
     assert.equal(page.url(), `${base}${path}`, name);
     assert.equal(title.startsWith('Neo ·'), neo, `${name} entry title`);
     if (neo) await page.locator('.neo-shell').waitFor();
     else assert.equal(await page.locator('.neo-shell').count(), 0);
-    if (name === 'settings') await page.getByRole('heading', { name: 'Devices', exact: true }).waitFor();
   }
   observed.verified = true;
 } finally {
