@@ -227,6 +227,12 @@ export const WorkTurnEndSchema = z.object({
   message: z.string(),
 });
 
+export const WorkTurnQuestionSchema = z.object({
+  text: z.string(),
+  actions: z.array(z.string()),
+});
+export type WorkTurnQuestion = z.infer<typeof WorkTurnQuestionSchema>;
+
 export const WorkDetailSchema = WorkSummarySchema.extend({
   turnEnds: z.array(WorkTurnEndSchema).optional(),
   inputEvidence: WorkInputEvidenceSchema.optional(),
@@ -234,6 +240,9 @@ export const WorkDetailSchema = WorkSummarySchema.extend({
   lastReply: z.string().optional(),
   lastReplyAt: z.number().optional(),
   waitingFor: z.string().max(200).optional(),
+  turnQuestion: WorkTurnQuestionSchema.optional().describe(
+    'The worker ended its turn on this question. It is idle, so a reply is a normal next turn.'
+  ),
   recentInputs: z.array(WorkInputSchema).optional(),
   exchange: z.array(WorkExchangeEntrySchema).optional(),
   exchangeCut: z.boolean().optional(),

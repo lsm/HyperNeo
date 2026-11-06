@@ -23,7 +23,7 @@ import {
   neoWorkerKey,
   type NeoTodoSessionRepository,
 } from '../../storage/repositories/neo-todo-session-repository.ts';
-import type { Place, WorkRef } from '../drivers/types.ts';
+import type { Place, WorkRef, WorkTurnQuestion } from '../drivers/types.ts';
 import { isBusyWork } from '../drivers/work-operations.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
@@ -37,6 +37,7 @@ import {
   readDriverIdentity,
   readDriverInputs,
   readDriverFollowUp,
+  isWaitingOnPrompt,
   readDriverLive,
   readDriverOutcome,
   readDriverSendBaseline,
@@ -44,6 +45,7 @@ import {
   readDriverTurnEnds,
   withWorkGoal,
 } from './driver-work.ts';
+import { neoHumanCardLine, neoTurnQuestionLine } from './session-watch.ts';
 import type { NeoPack, NeoTodoCheckResult, NeoTodoJudgement } from './pack-contract.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
 import { sameNeoTodoCheck } from './todo-completion.ts';
@@ -156,9 +158,16 @@ export function requireNeoTodoContinuable(read: {
 
 export function neoTodoNeedsYouNote(
   todo: Pick<NeoTodo, 'title'>,
-  live: { waitingFor?: string; link?: string; remoteLink?: string }
+  live: {
+    waitingFor?: string;
+    link?: string;
+    remoteLink?: string;
+    turnQuestion?: WorkTurnQuestion;
+  }
 ): string {
   const link = live.remoteLink ?? live.link;
+  if (live.turnQuestion)
+    return `Todo "${todo.title}": its session ended its turn with a question: ${neoTurnQuestionLine(live.turnQuestion)} If the plan, saved rules or your authority settle it, answer with neo.todo.continue. ${neoHumanCardLine(link)}`;
   return `Todo "${todo.title}": its session is waiting on the human (${live.waitingFor ?? 'a prompt or question'}). Ask the human once to answer it there${link ? `: ${link}` : ''}. Do not send to it until it runs again.`;
 }
 
@@ -1397,7 +1406,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       doneWhen: todo.doneWhen,
       checkKind: todo.check?.kind ?? null,
     });
-    if (readDriverLive(status)?.status === 'needs_you')
+    const live = readDriverLive(status);
+    if (live && isWaitingOnPrompt(live))
       return fail(
         'needs_you: its session is waiting on the human; ask them to answer it there, then continue.'
       ).reason;

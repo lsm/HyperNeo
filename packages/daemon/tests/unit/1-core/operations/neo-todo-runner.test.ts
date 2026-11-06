@@ -1849,6 +1849,29 @@ describe('a todo session waiting on the human', () => {
     expect(told.filter((note) => note.includes('waiting on the human'))).toHaveLength(2);
   });
 
+  test('a question the worker ended its turn on goes to Neo, and Neo can answer it', async () => {
+    const { runner, told, calls, add, setStatus } = setup();
+    const todo = add();
+    await runner.start(todo.id);
+    setStatus({
+      ok: true,
+      value: {
+        status: 'needs_you',
+        lastActivityAt: 2_000,
+        waitingFor: 'Ship it?',
+        turnQuestion: { text: 'Ship it?', actions: ['Yes', 'Not now'] },
+        link: 'claude://claude.ai/epitaxy/local_x',
+      },
+    });
+    await runner.refresh(warn);
+    expect(told.filter((note) => note.includes('ended its turn'))).toEqual([
+      'Todo "Rows": its session ended its turn with a question: Ship it? Options: Yes; Not now. If the plan, saved rules or your authority settle it, answer with neo.todo.continue. If not, open a human card with sourceSession and this link: claude://claude.ai/epitaxy/local_x.',
+    ]);
+    const sends = calls.filter((call) => call.name === 'work.send').length;
+    expect(await runner.proceed(todo.id, 'Yes, ship it')).toMatchObject({ ok: true });
+    expect(calls.filter((call) => call.name === 'work.send')).toHaveLength(sends + 1);
+  });
+
   test('continue reads the session fresh, so a todo closed while it waited is not stuck', async () => {
     const { store, runner, add, setStatus } = setup();
     const todo = add();

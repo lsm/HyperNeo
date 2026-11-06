@@ -28531,6 +28531,25 @@
                           "link": {
                             "type": "string"
                           },
+                          "question": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "actions": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
+                              "text": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "text",
+                              "actions"
+                            ],
+                            "type": "object"
+                          },
                           "ref": {
                             "additionalProperties": false,
                             "properties": {
@@ -28634,6 +28653,25 @@
                     },
                     "link": {
                       "type": "string"
+                    },
+                    "question": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "actions": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "text",
+                        "actions"
+                      ],
+                      "type": "object"
                     },
                     "ref": {
                       "additionalProperties": false,
@@ -36773,6 +36811,25 @@
                           "link": {
                             "type": "string"
                           },
+                          "question": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "actions": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
+                              "text": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "text",
+                              "actions"
+                            ],
+                            "type": "object"
+                          },
                           "ref": {
                             "additionalProperties": false,
                             "properties": {
@@ -36876,6 +36933,25 @@
                     },
                     "link": {
                       "type": "string"
+                    },
+                    "question": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "actions": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "text",
+                        "actions"
+                      ],
+                      "type": "object"
                     },
                     "ref": {
                       "additionalProperties": false,
@@ -57726,6 +57802,26 @@
                       "type": "object"
                     },
                     "type": "array"
+                  },
+                  "turnQuestion": {
+                    "additionalProperties": false,
+                    "description": "The worker ended its turn on this question. It is idle, so a reply is a normal next turn.",
+                    "properties": {
+                      "actions": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "text": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "text",
+                      "actions"
+                    ],
+                    "type": "object"
                   },
                   "waitingFor": {
                     "maxLength": 200,

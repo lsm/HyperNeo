@@ -95,7 +95,11 @@ import { neoEnabledPacks, neoPackBriefs, neoPacks } from './pack-selection.ts';
 import type { NeoPack, NeoPackBrief, NeoPackRuntime } from './pack-contract.ts';
 import { neoPromptTools, planNeoSessionConfig } from './session-config.ts';
 import { createNeoPublisher } from './publication-operation.ts';
-import type { NeoSessionNotice, NeoSessionNoticeGroup } from './session-watch.ts';
+import {
+  neoSessionQuestionNote,
+  type NeoSessionNotice,
+  type NeoSessionNoticeGroup,
+} from './session-watch.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
 import { createNeoTodoRunner, type NeoTodoRunner } from './todo-runner.ts';
 import { neoWorkingKey, readNeoWorking } from './working.ts';
@@ -175,6 +179,14 @@ export class NeoService {
       announceSessionNoticeGroup: (group) => hub.event('neo.session.notices', { group }),
       seen: new NeoSessionSeenRepository(db.getDatabase()),
       announceSessionNotice: (notice) => hub.event('neo.session.notice', notice),
+      tellSessionQuestion: (root, notice) =>
+        this.deliverForward(
+          root,
+          `neo-session-question:${notice.key}:${notice.at}`,
+          neoSessionQuestionNote(notice),
+          root,
+          'event'
+        ),
       log: this.log,
       registry: () => this.sessions.getOperationRegistry(),
       followedCardRefs: (now) => this.followedCardRefs(now),

@@ -16,6 +16,11 @@ describe('root Neo system prompt', () => {
       'Add all ask steps as todos together, in order, before starting the first.'
     );
   });
+  test('tells Neo to answer a worker question itself before asking the human', () => {
+    expect(NEO_ROOT_TURN_END).toContain(
+      'A worker that ended its turn with a question waits on you. Answer it yourself when the plan, saved rules or your authority settle it; only otherwise open a human card, with sourceSession so it links the session.'
+    );
+  });
   test('tells Neo to add parallel running work with after: [] before binding', () => {
     expect(NEO_ROOT_TURN_END).toContain('so pass after: [] for parallel running work.');
   });
