@@ -14,7 +14,7 @@ synthetic desk helper so the `claude-desktop` adapter exists, and starts an isol
 with `launch.sh` (`env -i`, NODE_ENV=test, its own HOME, data dir and DB, no provider key).
 `neo-worker-permission-view.mjs` seeds `neo` with synthetic rules, packs, mutes and
 autoDispatch, then for unset and each of `bypassPermissions`, `auto`, `acceptEdits`,
-`default` opens `/settings?tab=neo-model` headless and compares the settings row before and
+`default` opens `/settings?tab=harness` headless and compares the settings row before and
 after. It picks `acceptEdits` in the page, then `work.start` on `claude-desktop` launches a
 synthetic worker. No real Claude, app or GUI runs.
 

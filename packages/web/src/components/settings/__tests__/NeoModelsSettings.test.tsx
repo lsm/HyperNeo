@@ -183,7 +183,7 @@ test('preserves an inherited fallback chain when only primary thinking is edited
   );
 });
 
-test('lists only runnable providers and offers every thinking level', async () => {
+test('lists only runnable providers and offers each model its thinking levels', async () => {
   auth.mockResolvedValue({
     providers: models.map((model) => ({
       id: model.provider,
@@ -192,11 +192,20 @@ test('lists only runnable providers and offers every thinking level', async () =
   });
   const ui = await editor();
   expect(ui.getByText(/Providers with usable models:/).textContent).not.toContain('OpenRouter');
-  expect(
-    [...ui.getByLabelText('Neo model 3 thinking').querySelectorAll('option')].map(
+  const values = (index: number) =>
+    [...ui.getByLabelText(`Neo model ${index} thinking`).querySelectorAll('option')].map(
       (option) => option.value
-    )
-  ).toEqual(['off', 'think8k', 'think16k', 'think24k', 'think32k', 'think48k', 'think64k']);
+    );
+  expect(values(1)).toEqual([
+    'off',
+    'think8k',
+    'think16k',
+    'think24k',
+    'think32k',
+    'think48k',
+    'think64k',
+  ]);
+  expect(values(3)).toEqual(['off']);
 });
 
 test('the first model added to an empty list becomes the primary', async () => {
@@ -357,4 +366,62 @@ test('refresh reloads the model list and never saves a Neo default', async () =>
   expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
   expect(updateGlobalSettings).not.toHaveBeenCalled();
   expect(screen.getByText(/Refresh reloads the model list only/)).toBeTruthy();
+});
+
+test('offers only what each model supports and keeps an unsupported saved level', async () => {
+  (globalSettings as { value: GlobalSettings | null }).value = {
+    neo: {
+      preferences: {
+        ...primary,
+        thinkingLevel: 'think32k',
+        fallbacks: [{ ...glm, thinkingLevel: 'think24k' }],
+      },
+    },
+  } as GlobalSettings;
+  request.mockImplementation(async (method, data) => {
+    if (method === 'models.list')
+      return {
+        models: [
+          { ...models[0], effortLevels: ['low', 'high'] },
+          { ...models[1], thinkingModes: 'off' },
+        ],
+      };
+    if (method === 'operation.invoke') return { ok: true, preferences: data.input };
+    throw new Error(`Unexpected ${method}`);
+  });
+  const ui = await editor();
+  const values = (index: number) =>
+    [...ui.getByLabelText(`Neo model ${index} thinking`).querySelectorAll('option')].map(
+      (option) => option.value
+    );
+
+  await waitFor(() => expect(values(1)).toEqual(['off', 'think8k', 'think24k', 'think32k']));
+  expect(values(2)).toEqual(['off', 'think24k']);
+  expect((ui.getByLabelText('Neo model 1 thinking') as HTMLSelectElement).value).toBe('think32k');
+  expect((ui.getByLabelText('Neo model 2 thinking') as HTMLSelectElement).value).toBe('think24k');
+  expect(ui.getAllByText(/not supported by this model/).length).toBe(2);
+  expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
+
+  fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
+
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith(
+      'operation.invoke',
+      expect.objectContaining({
+        input: expect.objectContaining({
+          thinkingLevel: 'think32k',
+          fallbacks: [expect.objectContaining({ thinkingLevel: 'think24k' })],
+        }),
+      })
+    )
+  );
+});
+
+test('says nothing about support while the catalog is loading', async () => {
+  request.mockImplementation(() => new Promise(() => {}));
+  render(<NeoModelSettings />);
+
+  const section = await screen.findByRole('region', { name: 'Neo models' });
+  expect(section.textContent).not.toContain('not supported by this model');
+  expect(section.textContent).not.toContain('support for this model is unknown');
 });

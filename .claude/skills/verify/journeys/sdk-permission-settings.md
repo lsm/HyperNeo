@@ -14,7 +14,7 @@ The script starts an isolated daemon with `launch.sh` (`env -i`, NODE_ENV=test, 
 HOME, data dir and database, no provider key) and drives headless Chromium with
 `sdk-permission-settings-view.mjs`. For each saved global `permissionMode` (unset,
 `default`, `bypassPermissions`, `acceptEdits`, `plan`, legacy `delegate`) it seeds the run's
-synthetic DB, opens `/settings?tab=general`, and compares the `global_settings` row before
+synthetic DB, opens `/settings?tab=harness`, and compares the `global_settings` row before
 and after the page opens.
 
 End state, in `$RUN/evidence/sdk-permission-settings.json` and `permission-*.png`:

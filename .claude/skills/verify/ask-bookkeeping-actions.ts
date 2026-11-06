@@ -23,6 +23,7 @@ assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert(!existsSync(join(run, 'data')));
 mkdirSync(join(run, 'data'), { recursive: true }); mkdirSync(join(run, 'evidence'), { recursive: true });
 const evidence: unknown[] = [];
+let mixedAskId = '';
 for (const phase of ['initial', 'reopen']) {
   const db = new Database(join(run, 'data/daemon.db'));
   try {
@@ -64,6 +65,17 @@ for (const phase of ['initial', 'reopen']) {
     assert(described.description.includes('supply explicit retireWhen to open the question on the ask without linking that todo'));
     assert(described.description.includes('A successful unlinked card includes a todo_closed record'));
     if (phase === 'initial') {
+      const mixed = await call('neo.ask.open', {
+        title: 'One cross-repo request', request: 'Keep both repositories together',
+        todos: ['first', 'second'].map((repo) => ({
+          title: `Work in ${repo}`, check: { pack: 'coding', kind: 'pr_merged', params: { urls: [`https://github.com/synthetic/${repo}/pull/1`] } },
+        })),
+      });
+      mixedAskId = mixed.ask.id;
+      assert.equal(mixed.ask.status, 'open');
+      assert.equal(mixed.todos.length, 2);
+      assert(mixed.todos.every((todo: { askId: string }) => todo.askId === mixed.ask.id));
+      assert.deepEqual(store.listChildAsks(mixed.ask.id), []);
       const ask = store.openAsk({ id: 'ask', projectId: null, sessionId: 'neo', originMessageId: null, title: 'Synthetic ask', request: 'Close unverified work visibly', createdAt: 1 });
       const repoAsk = store.openAsk({ ...ask, id: 'repository', title: 'Repository work', repo: 'github.com/synthetic/root' });
       const draft = {
@@ -95,13 +107,13 @@ for (const phase of ['initial', 'reopen']) {
       store.updateTodo(unfinished, { state: 'doing', startedAt: 2 }, 2);
       const writer = createNeoWorkerQuestionWriter(store, sessions, () => 'en', async () => ({ ...ref, name: 'Worker', label: 'HyperNeo · Worker', provider: 'HyperNeo', link: null }));
       const workerQuestion = await writer(ref, { todoId: unfinished.id, kind: 'question', title: 'Which target?', options: ['First', 'Second'], language: 'en', report: 'Synthetic human decision required.' });
-      assert.equal(workerQuestion.ok, true); assert.equal(store.getTodo(unfinished.id)?.blockedBy, 'needs-human');
+      assert(workerQuestion.ok); assert.equal(store.getTodo(unfinished.id)?.blockedBy, 'needs-human');
       evidence.push({ beforeSettlement: store.getTodo(unfinished.id), workerQuestion });
       const closed = store.addTodo('closed', ask.id, { title: 'Closed work', doneWhen: 'Checked', instruction: null, check: null, named: null }, 1);
       const failed = store.addTodo('failed', ask.id, { title: 'Failed work', doneWhen: 'Build observed', instruction: null, check: null, named: null }, 1);
       store.updateTodo(failed, { state: 'failed', reason: 'check_failed: build exited 7' }, 2);
       store.updateTodo(closed, { state: 'closed_unverified', reason: 'Not observed' }, 2);
-      const question = await call('neo.question.ask', { askId: ask.id, todoId: closed.id, text: 'What next?', kind: 'reply', retireWhen: { pack: 'core', kind: 'evidence', params: { path: join(run, 'not-created') } } });
+      const question = await call('neo.question.ask', { askId: ask.id, todoId: closed.id, text: 'What next?', kind: 'reply', replaces: workerQuestion.question.id, retireWhen: { pack: 'core', kind: 'evidence', params: { path: join(run, 'not-created') } } });
       assert(question.records[0].startsWith('todo_closed:')); assert.equal(question.question.todoId ?? null, null);
       const settled = await call('neo.ask.settle', { askId: ask.id, status: 'done', outcome: 'Closing without verified outcomes' });
       assert(settled.records[0].startsWith('todos_unfinished:'));
@@ -113,6 +125,10 @@ for (const phase of ['initial', 'reopen']) {
       assert(retry.records[0].includes('Open a new ask for it with a different title'));
 
     }
+    const mixed = await call('neo.ask.read', { askId: mixedAskId });
+    assert.equal(mixed.entry.ask.status, 'open');
+    assert.equal(mixed.entry.todos.length, 2);
+    assert(mixed.entry.todos.every((todo: { askId: string }) => todo.askId === mixedAskId));
     const read = await call('neo.ask.read', { askId: 'ask' });
     const child = await call('neo.ask.read', { askId: 'child' });
     assert.equal(child.entry.ask.parentId, 'ask');

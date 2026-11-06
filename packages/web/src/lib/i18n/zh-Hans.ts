@@ -1,7 +1,11 @@
 import type { en } from './en.ts';
 
 export const zhHans: Record<keyof typeof en, string> = {
-  'connections.title': '连接',
+  'connections.page': '连接与服务',
+  'connections.tabProviders': 'Providers',
+  'connections.tabAccounts': '账号',
+  'connections.tabDevices': '设备',
+  'connections.tabRemoteDaemons': '远程 Daemon',
   'connections.description': '为此实例连接 Google 账号。',
   'connections.connect': '连接 Google',
   'connections.reconnect': '重新连接',

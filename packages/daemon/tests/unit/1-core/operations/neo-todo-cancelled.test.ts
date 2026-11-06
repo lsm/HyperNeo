@@ -4,7 +4,6 @@ import { createNeoAskRecordOperations } from '../../../../src/lib/neo/ask-record
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
 import { wireNeoTodoMutations } from '../../../../src/lib/neo/todo-mutation-operation.ts';
-import { neoMoveTodo } from '../../../../src/lib/neo/todo-repo.ts';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
@@ -615,17 +614,19 @@ describe('cancelled prerequisites', () => {
     }
   });
 
-  test('moving a step to another repository keeps its cancelled prerequisite', async () => {
+  test('work in another repository keeps its cancelled prerequisite', async () => {
     const { db, store, invoke, step, sent, runner, work } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
         title: 'Moved step',
         request: 'Finish A before D.',
-        todos: [step('A', []), { ...step('D'), ...work, start: true }],
+        todos: [
+          step('A', []),
+          { ...step('D', [0]), ...work, named: { repository: 'synthetic/elsewhere' }, start: true },
+        ],
       });
       const [a, d] = opened.todos;
       await invoke('neo.todo.remove', { todoId: a.id, reason: 'Cancelled by the human.' });
-      neoMoveTodo(store, store.getTodo(d.id)!, 'synthetic/elsewhere');
       await runner.refresh(() => {});
       expect(store.getTodo(d.id)).toMatchObject({ state: 'todo', dependsOn: [a.id] });
       expect(sent).toHaveLength(0);

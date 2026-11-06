@@ -1,7 +1,7 @@
 import type { Space } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { type Signal, signal } from '@preact/signals';
-import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
@@ -35,7 +35,16 @@ let mockCurrentSpaceTasksFilterTabSignal!: Signal<
 >;
 let mockCurrentSpaceViewModeSignal!: Signal<'overview' | 'goals' | 'tasks' | 'configure'>;
 let mockSettingsSectionSignal!: Signal<
-  'general' | 'providers' | 'app-mcp-servers' | 'skills' | 'models' | 'usage' | 'about'
+  | 'general'
+  | 'providers'
+  | 'connections'
+  | 'devices'
+  | 'remote-daemons'
+  | 'app-mcp-servers'
+  | 'skills'
+  | 'models'
+  | 'usage'
+  | 'about'
 >;
 let mockConnectionStateSignal!: Signal<'connecting' | 'connected'>;
 let mockSpacesWithTasksSignal!: Signal<Array<Space & { tasks: unknown[]; sessions: unknown[] }>>;
@@ -312,6 +321,24 @@ describe('ContextPanel', () => {
     expect(mockNavigateToSessions).toHaveBeenCalledTimes(1);
     expect(mockNavigateToSettings).toHaveBeenCalledTimes(1);
   });
+
+  it.each(['providers', 'connections', 'devices', 'remote-daemons'] as const)(
+    'lists one Connections & Services entry, active on %s',
+    (section) => {
+      mockNavSectionSignal.value = 'settings';
+      mockSettingsSectionSignal.value = section;
+      render(<ContextPanel />);
+
+      const nav = within(screen.getByRole('navigation', { name: 'Settings sections' }));
+      const entry = nav.getByRole('button', { name: 'Connections & Services' });
+      expect(entry.className).toContain('bg-fill text-fg');
+      for (const name of ['Providers', 'Connections', 'Devices', 'Remote Daemons'])
+        expect(nav.queryByRole('button', { name })).toBeNull();
+
+      fireEvent.click(entry);
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('providers');
+    }
+  );
 
   it('opens the create space dialog directly from the mobile switcher', () => {
     mockCurrentSpaceIdSignal.value = null;

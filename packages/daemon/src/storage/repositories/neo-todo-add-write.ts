@@ -3,7 +3,7 @@ import type { z } from 'zod';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { neoTodoPolicies } from '../../lib/neo/packs/todo-policies.ts';
 import { type NeoTodoDraftSchema, planNeoTodoDraft } from '../../lib/neo/todo-operations.ts';
-import { neoTodoHome, neoTodoRepo } from '../../lib/neo/todo-repo.ts';
+import { neoTodoRepo } from '../../lib/neo/todo-repo.ts';
 import { planNeoTodoAwaitingStart } from '../../lib/neo/todo-runner.ts';
 import { ChangeRecorder, defineDbOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
@@ -14,7 +14,6 @@ type Input = {
   askId: string;
   todoId: string;
   draft: z.infer<typeof NeoTodoDraftSchema>;
-  split: boolean;
   now: number;
 };
 type Receipt =
@@ -23,7 +22,6 @@ type Receipt =
 type Plan = {
   ask: NeoAsk;
   repo: string | null;
-  split: boolean;
   draft: Input['draft'] & { doneWhen: string; records?: string[] };
 };
 
@@ -62,24 +60,8 @@ const add = (superpipe({})('neo.todo.commit-add') as PipelineAPI)
       const planned = planNeoTodoDraft(input.draft, policies);
       if ('reason' in planned) return planned;
       const repo = neoTodoRepo(input.draft, policies, ask);
-      const split = input.split || store.listChildAsks(ask.id).length > 0;
-      const home =
-        !repo || ask.repo === repo || (!split && !ask.repo) ? ask : store.childAsk(ask.id, repo);
-      if (home && home.status !== 'open')
-        return {
-          reason: {
-            ok: true,
-            records: [`ask_settled: ${home.title} is settled; nothing was added.`],
-          },
-        };
-      const accepted = planNeoTodoDraft(
-        input.draft,
-        policies,
-        home ? store.listTodos(home.id) : []
-      );
-      return 'reason' in accepted
-        ? accepted
-        : { value: { ask, repo, split, draft: accepted.value } };
+      const accepted = planNeoTodoDraft(input.draft, policies, store.listTodos(ask.id));
+      return 'reason' in accepted ? accepted : { value: { ask, repo, draft: accepted.value } };
     },
     ['db', 'store', 'input'],
     'result:outcome'
@@ -93,8 +75,7 @@ const add = (superpipe({})('neo.todo.commit-add') as PipelineAPI)
       changes: ChangeRecorder
     ): Receipt => {
       const { draft } = plan;
-      const home = neoTodoHome(store, plan.ask, plan.repo, plan.split);
-      let todo = store.addTodo(input.todoId, home.id, draft, input.now, plan.repo);
+      let todo = store.addTodo(input.todoId, plan.ask.id, draft, input.now, plan.repo);
       if (draft.target) new NeoTodoSessionRepository(db).create(todo.id, draft.target);
       if (!draft.start && todo.instruction) {
         store.joinStartQuestion(todo, input.now);

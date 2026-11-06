@@ -187,12 +187,7 @@ export function createNeoAskRecordOperations(
           );
         };
         const homeless =
-          priorAsk &&
-          priorAsk.status !== 'open' &&
-          input.todos.find((todo) => {
-            const repo = neoTodoRepo(todo, packs(), priorAsk);
-            return !recordedRow(todo) && (!repo || !store.childAsk(priorAsk.id, repo));
-          });
+          priorAsk && priorAsk.status !== 'open' && input.todos.find((todo) => !recordedRow(todo));
         if (priorAsk && homeless)
           return {
             ok: true,
@@ -236,12 +231,7 @@ export function createNeoAskRecordOperations(
         if (badAfter) return { ok: false as const, reason: badAfter };
         const drafts: typeof input.todos = [];
         for (const todo of input.todos) {
-          const repo = neoTodoRepo(todo, packs(), priorAsk ?? { repo: null });
-          const home =
-            priorAsk && repo && priorAsk.repo !== repo
-              ? (store.childAsk(priorAsk.id, repo) ?? priorAsk)
-              : priorAsk;
-          if (recordedRow(todo) || (home && home.status !== 'open')) {
+          if (recordedRow(todo) || (priorAsk && priorAsk.status !== 'open')) {
             drafts.push(todo);
             continue;
           }
@@ -266,9 +256,6 @@ export function createNeoAskRecordOperations(
             createdAt: Date.now(),
           });
         recorded.push(...family(ask));
-        const split =
-          store.listChildAsks(ask.id).length > 0 ||
-          new Set(drafts.map((todo) => neoTodoRepo(todo, packs(), ask)).filter(Boolean)).size > 1;
         const records: string[] = [];
         const ids: (string | undefined)[] = [];
         for (const [index, todo] of drafts.entries()) {
@@ -283,8 +270,7 @@ export function createNeoAskRecordOperations(
                 controls,
                 store.getAsk(ask.id)!,
                 { ...todo, ...(after ? { after } : {}) },
-                packs(),
-                split
+                packs()
               )
             : todo.start && isNeoTodoStartable(row)
               ? await startNeoTodoWhenFree(store, controls, store.approveTodo(row, Date.now()))
@@ -297,13 +283,9 @@ export function createNeoAskRecordOperations(
           ids.push(row?.id ?? ('todo' in added ? added.todo?.id : undefined));
           if ('records' in added && added.records) records.push(...added.records);
         }
-        const settled = split
-          ? await settlement.gateway.call(neoAskSettlementWrites, 'splitParent', ask.id, Date.now())
-          : null;
-        if (settled?.ok) settlement.changed();
         return {
           ok: true,
-          ask: settled?.ok ? settled.ask : (store.getAsk(ask.id) ?? ask),
+          ask: store.getAsk(ask.id) ?? ask,
           todos: family(ask),
           ...(records.length ? { records } : {}),
         };

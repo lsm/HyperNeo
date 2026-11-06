@@ -78,11 +78,11 @@ try {
   record=true;
   const claims=await Promise.all([runCommand<Claim>('claim',['claim',11]),runCommand<Claim>('claim',['claim',12])]);
   record=false; assert(claims[0].ok && claims[0].ask); assert(!claims[1].ok && !claims[1].changed);
-  assert.equal(claims[0].target?.ref?.id,'current-worker'); assert.equal(claims[0].ask.repo,'github.com/synthetic/other');
+  assert.equal(claims[0].target?.ref?.id,'current-worker'); assert.equal(claims[0].ask.id,'ask'); assert.equal(claims[0].todo?.askId,'ask'); assert.deepEqual(store.listChildAsks('ask'),[]);
   assert.equal(claims[0].todo.askId,claims[0].ask.id);
   assert((await visible(claims[0].ask.id)).entry.todos.some(todo=>todo.id==='claim' && todo.state==='doing'));
   assert.equal(sessions.readRef('claim'),null); assert.deepEqual(sessionCount(),originalSessions);
-  result.singleClaimWinner=true; result.currentTarget=true; result.atomicRelocation=true;
+  result.singleClaimWinner=true; result.currentTarget=true; result.originalAskPreserved=true;
   store.addTodo('stable','ask',{ approvedAt: 1,title:'Stable',doneWhen:'Observed',check:null,instruction:null,named:null},4);
   prepare("UPDATE neo_todos SET state='doing',started_at=4 WHERE id='stable'").run();
   store.askQuestion('stale','ask',{kind:'start',text:'Start?',startTodos:['stable'],options:null,multiple:false,yesLabel:null,noLabel:null},4);

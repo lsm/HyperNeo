@@ -306,7 +306,7 @@ describe('router', () => {
     );
   });
 
-  it.each(['providers', 'neo-model', 'coding-pack', 'connections'])(
+  it.each(['providers', 'neo-model', 'coding-pack', 'connections', 'harness'])(
     'initializes settings route %s from tab query parameters',
     (section) => {
       setPath(`/settings?tab=${section}`);
@@ -325,6 +325,13 @@ describe('router', () => {
       expect(settingsSectionSignal.value).toBe('preferences');
     }
   );
+
+  it('opens Sessions & Harness for the old Models link', () => {
+    setPath('/settings?tab=models');
+    initializeRouter();
+    expect(navSectionSignal.value).toBe('settings');
+    expect(settingsSectionSignal.value).toBe('harness');
+  });
 
   it('opens Preferences for the bare settings route and the old Appearance link', () => {
     setPath('/settings');

@@ -19,13 +19,17 @@ runner must preserve the complete Unicode report and dispatch its successor
 once, using the current stored target. Pruning alone announces a change;
 repeated no-ops and a settled ask remain quiet and retain successful receipts.
 Competing claims dispatch once. Admission/recomputation execute without main
-SQL; the later dispatch preparation and session observation still use existing
-main-thread reads and are outside this slice's SQL claim.
+SQL inside the guarded writer-command window. Each writer call arms that guard;
+the window ends when its committed receipt returns. The following worker-availability scan, dispatch preparation
+and session observation use existing main-thread reads outside that window. A
+failure prints the guarded SQL and call stack for diagnosis.
 
 The helper also invokes `neo.todo.retry` over the real WebSocket operation
 door. Only the work driver operations are replaced by synthetic responses.
-The real Neo service must commit the claim before the scripted driver sees
-it, and must not use either legacy main-thread claim/recompute method.
+The real Neo service must commit the claim before the scripted work.send sees
+it, and must not use either legacy main-thread claim/recompute method. Read-only
+work.status checks may run before admission to determine whether a worker is busy;
+the fixture returns an idle status without recording a dispatch effect.
 No provider, browser, real worker or external service participates.
 
 Unit regressions additionally hold a committed claim's return while recovery runs:
