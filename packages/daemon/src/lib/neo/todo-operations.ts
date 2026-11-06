@@ -37,6 +37,7 @@ import {
   NEO_TODO_NOT_APPROVED,
   neoTodoCancellationPending,
   neoTodoProceedPatch,
+  neoTodoPrerequisiteRefusal,
   neoTodoStartRefusal,
 } from './todo-start-gate.ts';
 
@@ -272,6 +273,14 @@ const bindNeoTodo = (superpipe({})('neo.todo.bind-worker') as PipelineAPI)
               ? fail(NEO_TODO_CANCELLED_DEPENDENCY)
               : { value: todo },
     ['todos', 'todo'],
+    'result:bound'
+  )
+  .pipe(
+    (todos: NeoAskTodoRepository, bound: NeoTodo): Gate<NeoTodo> => {
+      const waiting = neoTodoPrerequisiteRefusal(bound, todos.listFamilyTodos(bound.askId));
+      return waiting ? fail(waiting) : { value: bound };
+    },
+    ['todos', 'bound'],
     'result:bound'
   )
   .pipe(
@@ -817,7 +826,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.add',
       description:
-        'Add a todo to an open ask you own. For a human request, pass input (its [message id]) and the daemon picks the ask; never pick an ask yourself. askId alone is only for follow-up work with no human input; passing both when they differ is refused with ask_mismatch. A coding PR already tracked by another live todo on that ask is recorded without blocking; prefer continuing the original todo. neo.todo.edit addUrls only pins URLs to an existing PR-merge check. Pass title and a required check {pack, kind, params}; doneWhen is generated, never supplied. Use a completion check the installed pack supports; core.human_confirmed {questionId}, core.evidence {} (preferred: the daemon assigns the path and gives it to the worker; {path: absolute file path} only for a result the human should see), or core.deployed {repo: lsm/HyperNeo, sha: full commit}. A pack may reject malformed checks or record bookkeeping conditions. Workers are long-lived sessions: name them for the matter, never a task title; use work.rename after starting if the session inherits this todo title. instruction is the task for a session and target says where it runs ({verb: start, adapter, place?} or {verb: send, ref}). Spell out the task: every step that needs work done gets its instruction and target when you add it; leave both out only for a step that just waits on its check, such as a merge or a deploy, since nothing runs a step without them. non-coding todos share one visible user folder across projects when place is omitted: ~/HyperNeo by default, or exactly the instance workspace path. A different place needs an exact path the user named in chat, even inside the workspace; never invent folders under home. Coding keeps its repository place. To give a running worker this task use target {verb: send, ref}; to attach work that is already doing it, add the todo without instruction or target and call neo.todo.bind {todoId, ref}; without them the daemon checks the todo itself. named records what the human named for it (engine, session, repository, folder). A session the human named is sent to only through the ref work.find {session} returns as an exact match. start:true records that the human approved it: it starts once what it waits for is finished, so put it on every step of an approved plan. Otherwise the daemon lists it, ticked, in the start question of the ask, and one answer approves everything ticked. priority (urgent, high, normal, low; default normal) orders waiting work, urgent first: set it from how urgent the human made it; it can change later with neo.todo.edit. Steps the human approved start themselves in order as worker slots free; do not start them yourself. A step added after the ask started still waits for its own start answer.',
+        'Add a todo to an open ask you own. For a human request, pass input (its [message id]) and the daemon picks the ask; never pick an ask yourself. askId alone is only for follow-up work with no human input; passing both when they differ is refused with ask_mismatch. A coding PR already tracked by another live todo on that ask is recorded without blocking; prefer continuing the original todo. neo.todo.edit addUrls only pins URLs to an existing PR-merge check. Pass title and a required check {pack, kind, params}; doneWhen is generated, never supplied. Use a completion check the installed pack supports; core.human_confirmed {questionId}, core.evidence {} (preferred: the daemon assigns the path and gives it to the worker; {path: absolute file path} only for a result the human should see), or core.deployed {repo: lsm/HyperNeo, sha: full commit}. A pack may reject malformed checks or record bookkeeping conditions. Workers are long-lived sessions: name them for the matter, never a task title; use work.rename after starting if the session inherits this todo title. instruction is the task for a session and target says where it runs ({verb: start, adapter, place?} or {verb: send, ref}). Spell out the task: every step that needs work done gets its instruction and target when you add it; leave both out only for a step that just waits on its check, such as a merge or a deploy, since nothing runs a step without them. non-coding todos share one visible user folder across projects when place is omitted: ~/HyperNeo by default, or exactly the instance workspace path. A different place needs an exact path the user named in chat, even inside the workspace; never invent folders under home. Coding keeps its repository place. To give a running worker this task use target {verb: send, ref}; to attach work that is already doing it, add the todo without instruction or target and call neo.todo.bind {todoId, ref}, with after: [] when it runs in parallel, since bind waits for unfinished prerequisites; without them the daemon checks the todo itself. named records what the human named for it (engine, session, repository, folder). A session the human named is sent to only through the ref work.find {session} returns as an exact match. start:true records that the human approved it: it starts once what it waits for is finished, so put it on every step of an approved plan. Otherwise the daemon lists it, ticked, in the start question of the ask, and one answer approves everything ticked. priority (urgent, high, normal, low; default normal) orders waiting work, urgent first: set it from how urgent the human made it; it can change later with neo.todo.edit. Steps the human approved start themselves in order as worker slots free; do not start them yourself. A step added after the ask started still waits for its own start answer.',
       inputSchema: Add,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -826,7 +835,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.bind',
       description:
-        'Bind an unfinished todo on an open ask to an existing running worker, without sending or starting anything. Use this to repair a failed backfill instead of retrying its instruction. Records worker and doing, clears failure and old delivery evidence; does not stop the existing worker.',
+        'Bind an unfinished todo on an open ask to an existing running worker, without sending or starting anything. Use this to repair a failed backfill instead of retrying its instruction. Records worker and doing, clears failure and old delivery evidence; does not stop the existing worker. A step with unfinished prerequisites is refused, so add independent running work with after: [].',
       inputSchema: Bind,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

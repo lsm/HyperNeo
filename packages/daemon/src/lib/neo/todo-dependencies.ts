@@ -94,6 +94,9 @@ export const NEO_TODO_CANCELLED_DEPENDENCY =
 export const NEO_TODO_NOT_READY =
   'not_ready: this step waits for unfinished steps; add it without start and the daemon starts it once they are done.';
 
+export const NEO_TODO_PREREQUISITE_UNFINISHED =
+  'not_ready: this step waits for unfinished steps; nothing was sent, try again once they are done.';
+
 export function neoTodoAfterRefusal(
   existing: readonly NeoTodo[],
   index: number | null,
