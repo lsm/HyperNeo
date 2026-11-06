@@ -1,7 +1,6 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getSessionSidebarStatus } from '../../lib/session-sidebar-status.ts';
-import { getTaskSidebarStatus } from '../../lib/space-task-sidebar-status.ts';
 import { ConversationRow } from '../ConversationRow.tsx';
 
 afterEach(cleanup);
@@ -80,7 +79,7 @@ describe('ConversationRow', () => {
   });
 
   it('uses the unread dot for an open task and no icon when it is read', () => {
-    const status = getTaskSidebarStatus({ status: 'open' }, []);
+    const status = { tone: 'neutral', label: 'Open', pulse: false, kind: 'open' } as const;
     const { rerender } = render(
       <ConversationRow title="Unify unread placement" status={status} unread onClick={() => {}} />
     );
