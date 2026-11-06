@@ -236,7 +236,7 @@ describe('human send recovery wiring', () => {
       recovery.watch('s', 'first');
       recovery.watch('s', 'second');
       await new Promise((resolve) => setTimeout(resolve, 30));
-      expect(calls.slice(0, 2)).toEqual(['reopen first', 'reopen second']);
+      expect(calls).toEqual(['reopen first', 'reopen second']);
     } finally {
       recovery.stop();
       delete process.env.HYPERNEO_HUMAN_SEND_SILENCE_MS;

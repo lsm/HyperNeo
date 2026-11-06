@@ -131,7 +131,7 @@ export function createHumanSendRecovery(deps: HumanSendRecoveryDeps) {
   const resends = new Map<string, number>();
   const silent = new Set<string>();
   const watched = new Map<string, Set<string>>();
-  const timers = new Set<ReturnType<typeof setTimeout>>();
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const key = (sessionId: string, messageUuid: string) => `${sessionId}\0${messageUuid}`;
 
   async function prepare(sessionId: string): Promise<HumanSendRoute> {
@@ -198,7 +198,14 @@ export function createHumanSendRecovery(deps: HumanSendRecoveryDeps) {
       silent.add(sessionId);
       const others = [...(watched.get(sessionId) ?? [])].filter((uuid) => uuid !== messageUuid);
       const reopened = await deps.reopen(sessionId, messageUuid);
-      for (const uuid of others) await deps.reopen(sessionId, uuid);
+      for (const uuid of others) {
+        const other = key(sessionId, uuid);
+        clearTimeout(timers.get(other));
+        timers.delete(other);
+        unwatch(sessionId, uuid);
+        resends.set(other, (resends.get(other) ?? 0) + 1);
+        await deps.reopen(sessionId, uuid);
+      }
       if (reopened) return;
       silent.delete(sessionId);
     }
@@ -214,14 +221,16 @@ export function createHumanSendRecovery(deps: HumanSendRecoveryDeps) {
   }
 
   function arm(sessionId: string, messageUuid: string, sentAt: number, delayMs: number): void {
+    const id = key(sessionId, messageUuid);
+    clearTimeout(timers.get(id));
     const timer = setTimeout(() => {
-      timers.delete(timer);
+      timers.delete(id);
       void checkSilence(sessionId, messageUuid, sentAt).catch((error: unknown) =>
         log.error(`Checking a silent human send failed: ${String(error)}`)
       );
     }, delayMs);
     timer.unref?.();
-    timers.add(timer);
+    timers.set(id, timer);
   }
 
   function watch(sessionId: string, messageUuid: string): void {
@@ -232,7 +241,7 @@ export function createHumanSendRecovery(deps: HumanSendRecoveryDeps) {
   }
 
   function stop(): void {
-    for (const timer of timers) clearTimeout(timer);
+    for (const timer of timers.values()) clearTimeout(timer);
     timers.clear();
     for (const entries of [lastSentAt, resends, watched]) entries.clear();
     silent.clear();
