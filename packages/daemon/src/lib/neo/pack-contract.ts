@@ -1,7 +1,7 @@
 import type { NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoTodo, NeoTodoCheck } from '@hyperneo/shared/types/neo-ask';
 import type { WorkExecutionPreparation } from '../drivers/start-preparation.ts';
-import type { WorkRef, WorkStatus } from '../drivers/types.ts';
+import type { WorkRef } from '../drivers/types.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import type { NeoStatusLine } from './status-codes.ts';
 import type { OperationDefinition } from '../operations/registry.ts';
@@ -10,18 +10,6 @@ export interface NeoPackBrief {
   id: string;
   describe: string;
   guidance?: string;
-}
-
-export interface NeoSessionFacts {
-  ref: WorkRef;
-  status: WorkStatus;
-  lastActivityAt: number;
-  folder?: string;
-  remotes: string[];
-  branches: string[];
-  linkedPrs?: { url: string; dismissed?: true; own?: true }[];
-  linkedPrsWindow?: true;
-  openedPrs: string[];
 }
 
 export interface NeoTodoCheckResult {
@@ -83,13 +71,11 @@ export interface NeoPackPreferenceDeclaration {
 
 export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
   forgetRepositories?(repos: readonly string[]): void;
-  sessionLinks?(ref: WorkRef | null): Promise<string[]>;
   operations?: readonly OperationDefinition[];
   preferences?: Record<string, NeoPackPreferenceDeclaration>;
   todos?: NeoTodoPack;
   sweep?(now: number): Promise<void>;
   stats?(now: number): Record<string, number> | Promise<Record<string, number>>;
-  observeSessions?(sessions: readonly NeoSessionFacts[], now: number): Promise<void>;
   snapshotRows?(
     repos: readonly string[] | null,
     now: number,

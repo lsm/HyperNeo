@@ -1,3 +1,4 @@
+import { seedPrOwner } from './seed-pr-owner.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -35,8 +36,7 @@ async function open() {
   app.db.updateGlobalSettings({ neo: { packs: [] } });
   neo = createNeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
   ledger = new CodingPrLedgerRepository(sql());
-  pack = createCodingPack({ database: sql, readPrs: async () => [], readClaudeOwners: async () => [],
-    todoPrs: new CodingTodoPrRepository(sql()), prLedger: ledger, prEvents: new CodingPrEventRepository(sql()),
+  pack = createCodingPack({ database: sql, readPrs: async () => [], todoPrs: new CodingTodoPrRepository(sql()), prLedger: ledger, prEvents: new CodingPrEventRepository(sql()),
     prSweep: new CodingPrSweepRepository(sql()), projectRepos: () => [repo], readLedgerRepo: async () => { if (readFails) throw new Error('synthetic GitHub reader unavailable'); return raw(); },
     prSweepDeps: { tell: (ref, key, text) => neo!.sendToRef(ref, key, text), wake: (key, text) => neo!.wakeNeo(key, text) } });
 }
@@ -56,7 +56,7 @@ try {
   assert.equal(jobs().length, 0); evidence.afterLostReturn = pending();
   await close(); await open();
   assert.equal((sql().prepare('SELECT activated_at FROM pack_coding_pr_event_state').get() as { activated_at: number }).activated_at, activation.activated_at);
-  await ledger!.write('observeSessions', [{ ref: { adapter: 'hyperneo', id: worker }, status: 'done', lastActivityAt: closedAt, remotes: [`git@github.com:${repo}.git`], branches: ['synthetic-8548', 'synthetic-8549'], openedPrs: [] }], closedAt + 2);
+  seedPrOwner(sql(), repo, { adapter: 'hyperneo', id: worker });
   sql().exec("CREATE TRIGGER reject_terminal_mail BEFORE INSERT ON job_queue WHEN NEW.queue='mailbox' BEGIN SELECT RAISE(ABORT,'synthetic recipient rejection'); END");
   await pack!.sweep!(closedAt + 3);
   assert.equal(jobs().length, 0); assert.equal(pending().filter(row => row.terminal_event_json).length, 2);

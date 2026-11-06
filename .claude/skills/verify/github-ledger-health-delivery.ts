@@ -41,8 +41,7 @@ async function close() { await neo?.dispose(); neo = undefined; await app?.clean
 async function cycle(at: number) {
   const db = sql();
   const pack = createCodingPack({
-    database: () => db, readPrs: async () => [], readClaudeOwners: async () => [],
-    todoPrs: new CodingTodoPrRepository(db), prLedger: new CodingPrLedgerRepository(db),
+    database: () => db, readPrs: async () => [], todoPrs: new CodingTodoPrRepository(db), prLedger: new CodingPrLedgerRepository(db),
     prEvents: new CodingPrEventRepository(db), prSweep: new CodingPrSweepRepository(db), projectRepos: () => [repo],
     prSweepDeps: { tell: async () => true, wake: (key, text) => { wakeAttempts.push({ key, text }); return neo!.wakeNeo(key, text); } },
     readLedgerRepo: async () => complete ? { data: { rateLimit: { remaining: 4000 }, repository: { nameWithOwner: repo, open: { pageInfo: { hasNextPage: false }, nodes: [] }, done: { nodes: [] } } } } : null,

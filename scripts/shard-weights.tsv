@@ -171,7 +171,6 @@
 4	packages/daemon/tests/unit/1-core/drivers/match-chats.test.ts
 4	packages/daemon/tests/unit/1-core/drivers/neo-places.test.ts
 5	packages/daemon/tests/unit/1-core/drivers/neo-project.test.ts
-5	packages/daemon/tests/unit/1-core/drivers/opened-prs.test.ts
 11	packages/daemon/tests/unit/1-core/drivers/read-operation.test.ts
 26	packages/daemon/tests/unit/1-core/drivers/space-adapter.test.ts
 20	packages/daemon/tests/unit/1-core/drivers/space-verbs.test.ts

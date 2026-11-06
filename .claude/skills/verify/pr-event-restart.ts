@@ -38,8 +38,7 @@ async function open() {
   app.db.updateGlobalSettings({ neo: { packs: [] } });
   neo = createNeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
   ledger = new CodingPrLedgerRepository(sql());
-  pack = createCodingPack({ database: sql, readPrs: async () => [], readClaudeOwners: async () => [],
-    todoPrs: new CodingTodoPrRepository(sql()), prLedger: ledger, prEvents: new CodingPrEventRepository(sql()),
+  pack = createCodingPack({ database: sql, readPrs: async () => [], todoPrs: new CodingTodoPrRepository(sql()), prLedger: ledger, prEvents: new CodingPrEventRepository(sql()),
     prSweep: new CodingPrSweepRepository(sql()), projectRepos: () => [repo], readLedgerRepo: async () => raw(),
     prSweepDeps: { tell: (ref, key, text) => neo!.sendToRef(ref, key, text), wake: (key, text) => neo!.wakeNeo(key, text) } });
 }
@@ -53,8 +52,8 @@ try {
   const now = Date.now();
   for (const id of ['synthetic-event-neo', worker]) await app!.db.createSession({ id, title: id, workspacePath: join(run, 'home'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
   neo!.repo.reserveBinding({ sessionId: 'synthetic-event-neo', projectId: null, kind: 'neo' });
-  await ledger!.write('observeSessions', [{ ref: { adapter: 'hyperneo', id: worker }, status: 'running', lastActivityAt: now, remotes: [`git@github.com:${repo}.git`], branches: ['synthetic-188'], openedPrs: [] }], now);
   await pack!.sweep!(now + 1);
+  sql().prepare("UPDATE pack_coding_pr_ledger SET owner = ? WHERE repo = ? AND branch = 'synthetic-188'").run(JSON.stringify({ adapter: 'hyperneo', id: worker }), repo);
   evidence.waitingHuman = rows();
   decision = 'CHANGES_REQUESTED'; ci = 'FAILURE';
   await ledger!.write('replace', repo, planCodingLedgerRead(raw(), now + 2, () => ({}))!.rows, now + 2);

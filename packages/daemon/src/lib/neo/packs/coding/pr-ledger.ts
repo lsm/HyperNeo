@@ -39,7 +39,6 @@ import { z } from 'zod';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { Logger } from '../../../logger.ts';
 import type { LedgerQuota } from './ledger-quota.ts';
-import type { NeoSessionFacts } from '../../pack-contract.ts';
 import { codingPrKey } from './pr-key.ts';
 import type { CodingLedgerRead } from './pr-ledger-source.ts';
 
@@ -267,22 +266,6 @@ export function planCodingLedgerRead(
   return { repo: canonical, rows, remaining: parsed.data.data.rateLimit.remaining };
 }
 
-type CodingSessionLinks = {
-  ref: string;
-  repos: string[];
-  branches: string[];
-  owned: string[];
-  opened?: string[];
-  prs: string[];
-  dismissed: string[];
-  sidebar?: boolean;
-};
-
-export function codingRemoteRepo(remote: string): string | null {
-  const match = /github\.com[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?\/*$/i.exec(remote.trim());
-  return match ? match[1].toLowerCase() : null;
-}
-
 export const codingLedgerPrUrl = (row: { repo: string; number: number }) =>
   `https://github.com/${row.repo.toLowerCase()}/pull/${row.number}`;
 
@@ -296,46 +279,13 @@ export const planCodingLedgerTurnOwner = (
     todos
   );
 
-export function planCodingPrOwner(
-  row: { repo: string; number: number; branch: string; owner: string | null },
-  sessions: readonly CodingSessionLinks[]
-): string | null {
-  const url = codingLedgerPrUrl(row);
-  const owned = sessions.filter((session) => session.owned.includes(url));
-  const opened = sessions.filter(
-    (session) =>
-      session.opened?.includes(url) &&
-      !session.dismissed.includes(url) &&
-      (session.sidebar === false ||
-        (JSON.parse(session.ref) as { adapter: string }).adapter !== 'claude-desktop')
-  );
-  const linked = sessions.filter(
-    (session) =>
-      session.prs.includes(url) &&
-      (session.sidebar === false ||
-        (JSON.parse(session.ref) as { adapter: string }).adapter !== 'claude-desktop')
-  );
-  const branched = sessions.filter(
-    (session) =>
-      !session.dismissed.includes(url) &&
-      session.repos.includes(row.repo.toLowerCase()) &&
-      session.branches.includes(row.branch)
-  );
-  const candidates = [owned, opened, linked, branched].find((tier) => tier.length) ?? [];
-  if (candidates.some((session) => session.ref === row.owner)) return row.owner;
-  if (candidates.length) return candidates[0].ref;
-  return sessions.some((session) => session.ref === row.owner) ? null : row.owner;
-}
-
 export function planCodingRowOwner(
   row: { owner: string | null },
   named: string | undefined,
-  placed: CodingTurnOwner,
-  guessed: () => string | null
+  placed: CodingTurnOwner
 ): string | null {
   if (named) return named;
-  if (placed.state === 'placed') return JSON.stringify(placed.session);
-  return placed.state === 'unknown' ? row.owner : guessed();
+  return placed.state === 'placed' ? JSON.stringify(placed.session) : row.owner;
 }
 
 type CodingLedgerSnapshotRow = {
@@ -744,79 +694,6 @@ export class CodingPrLedgerRepository {
     }
   }
 
-  observeSessions(sessions: readonly NeoSessionFacts[], now: number): void {
-    const upsert = this.db.prepare(
-      `INSERT INTO pack_coding_session_facts
-         (ref, repos, branches, linked, linked_window, owned, opened, dismissed, active_at, seen_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(ref) DO UPDATE SET
-         repos = (SELECT json_group_array(DISTINCT value) FROM
-           (SELECT value FROM json_each(repos) UNION SELECT value FROM json_each(excluded.repos))),
-         branches = (SELECT json_group_array(DISTINCT value) FROM
-           (SELECT value FROM json_each(branches) UNION SELECT value FROM json_each(excluded.branches))),
-         opened = (SELECT json_group_array(DISTINCT value) FROM
-           (SELECT value FROM json_each(opened) UNION SELECT value FROM json_each(excluded.opened))),
-         linked = CASE WHEN excluded.linked_window AND linked IS NOT NULL THEN
-           (SELECT json_group_array(DISTINCT value) FROM
-             (SELECT value FROM json_each(linked) UNION SELECT value FROM json_each(excluded.linked))
-            WHERE value NOT IN (SELECT value FROM json_each(excluded.dismissed)))
-           ELSE excluded.linked END,
-         owned = (SELECT json_group_array(DISTINCT value) FROM
-             (SELECT value FROM json_each(owned) UNION SELECT value FROM json_each(excluded.owned))
-            WHERE value NOT IN (SELECT value FROM json_each(excluded.dismissed))),
-         linked_window = excluded.linked_window, dismissed = excluded.dismissed,
-         active_at = excluded.active_at, seen_at = excluded.seen_at`
-    );
-    const keys = (urls: readonly string[]) =>
-      urls.flatMap((url) => {
-        const key = codingPrKey(url);
-        const repo = key && /github\.com\/([^/]+\/[^/]+)\/pull\//.exec(key)?.[1];
-        return key && repo && codingRepoWatched(this.db, repo) ? [key] : [];
-      });
-    for (const session of sessions) {
-      const remotes = session.remotes.flatMap((remote) => {
-        const repo = codingRemoteRepo(remote);
-        return repo && codingRepoWatched(this.db, repo) ? [repo] : [];
-      });
-      const ref = JSON.stringify(session.ref);
-      const previous = this.db
-        .prepare('SELECT repos FROM pack_coding_session_facts WHERE ref = ?')
-        .get(ref) as { repos: string } | undefined;
-      const knownRepos = JSON.parse(previous?.repos ?? '[]') as string[];
-      if (
-        !remotes.length &&
-        !keys(session.openedPrs).length &&
-        !keys((session.linkedPrs ?? []).map((pr) => pr.url)).length &&
-        codingWatchedRepos(this.db) !== null &&
-        !knownRepos.some((repo) => this.watches(repo))
-      )
-        continue;
-      upsert.run(
-        ref,
-        JSON.stringify(remotes),
-        JSON.stringify(session.branches),
-        session.linkedPrs
-          ? JSON.stringify(
-              keys(session.linkedPrs.filter((pr) => !pr.dismissed).map((pr) => pr.url))
-            )
-          : null,
-        session.linkedPrsWindow ? 1 : 0,
-        JSON.stringify(
-          keys(
-            (session.linkedPrs ?? []).filter((pr) => pr.own && !pr.dismissed).map((pr) => pr.url)
-          )
-        ),
-        JSON.stringify(keys(session.openedPrs)),
-        JSON.stringify(
-          keys((session.linkedPrs ?? []).filter((pr) => pr.dismissed).map((pr) => pr.url))
-        ),
-        session.lastActivityAt,
-        now
-      );
-    }
-    this.assignOwners();
-  }
-
   assignOwners(): void {
     const named = new Map(
       (
@@ -834,28 +711,6 @@ export class CodingPrLedgerRepository {
         return key ? [[key, row.ref] as const] : [];
       })
     );
-    const sessions = (
-      this.db
-        .prepare(
-          `SELECT ref, repos, branches, linked, owned, opened, dismissed FROM pack_coding_session_facts
-            ORDER BY active_at DESC`
-        )
-        .all() as (Record<
-        'ref' | 'repos' | 'branches' | 'owned' | 'opened' | 'dismissed',
-        string
-      > & {
-        linked: string | null;
-      })[]
-    ).map((row) => ({
-      ref: row.ref,
-      repos: JSON.parse(row.repos) as string[],
-      branches: JSON.parse(row.branches) as string[],
-      owned: JSON.parse(row.owned) as string[],
-      opened: JSON.parse(row.opened) as string[],
-      prs: JSON.parse(row.linked ?? row.opened) as string[],
-      sidebar: row.linked !== null,
-      dismissed: JSON.parse(row.dismissed) as string[],
-    }));
     const rows = this.db
       .prepare(
         'SELECT repo, number, branch, owner, created_at AS createdAt FROM pack_coding_pr_ledger'
@@ -876,17 +731,10 @@ export class CodingPrLedgerRepository {
       const owner = planCodingRowOwner(
         row,
         named.get(codingLedgerPrUrl(row)),
-        planCodingLedgerTurnOwner(row, mentions),
-        () => planCodingPrOwner(row, sessions)
+        planCodingLedgerTurnOwner(row, mentions)
       );
       if (owner !== row.owner) update.run(owner, row.repo, row.number);
     }
-  }
-
-  pruneSessions(now: number): void {
-    this.db
-      .prepare('DELETE FROM pack_coding_session_facts WHERE seen_at < ?')
-      .run(now - CODING_LEDGER_KEEP_MS);
   }
 
   lastReads(): Map<string, number> {
@@ -1097,7 +945,6 @@ export async function reconcileCodingPrLedger(
     if (observation.canonical) seen.add(observation.canonical);
   }
   await ledger.write('prune', [...repos, ...seen], now);
-  await ledger.write('pruneSessions', now);
   await ledger.write('assignOwners');
   return transitions;
 }
@@ -1114,9 +961,7 @@ type CodingLedgerWrite =
   | 'dropRepo'
   | 'replace'
   | 'prune'
-  | 'pruneSessions'
   | 'assignOwners'
-  | 'observeSessions'
   | 'observePoll';
 
 export const codingLedgerWrites = defineRepositoryOp<CodingPrLedgerRepository, CodingLedgerWrite>(
@@ -1135,9 +980,7 @@ export const codingLedgerWrites = defineRepositoryOp<CodingPrLedgerRepository, C
     'dropRepo',
     'replace',
     'prune',
-    'pruneSessions',
     'assignOwners',
-    'observeSessions',
     'observePoll',
   ]
 );

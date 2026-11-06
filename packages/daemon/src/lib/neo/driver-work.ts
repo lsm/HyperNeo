@@ -29,7 +29,6 @@ import {
 import { WORK_MESSAGE_MAX } from '../drivers/work-operations.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
-import type { NeoSessionFacts } from './pack-contract.ts';
 import { NeoReadWorkTarget } from './read-work.ts';
 
 const NeoStartWorkTarget = z.object({
@@ -215,18 +214,6 @@ const DriverStatusSchema = z.discriminatedUnion('ok', [
         recentInputs: z.array(WorkInputSchema).optional(),
         exchange: z.array(WorkExchangeEntrySchema).optional(),
         exchangeCut: z.boolean().optional(),
-        openedPrs: z.array(z.string()).optional(),
-        linkedPrs: z
-          .array(
-            z.object({
-              url: z.string(),
-              dismissed: z.literal(true).optional(),
-              own: z.literal(true).optional(),
-            })
-          )
-          .optional(),
-        linkedPrsWindow: z.literal(true).optional(),
-        branches: z.array(z.string()).optional(),
         execution: z.object({ directory: z.string() }).passthrough().optional(),
       })
       .passthrough(),
@@ -330,21 +317,6 @@ export function messageOpening(message: string): string {
 
 export function readDriverInputs(outcome: OperationOutcome): WorkInput[] | null {
   return parseDriverStatus(outcome)?.recentInputs ?? null;
-}
-
-export function readDriverSessionFacts(
-  outcome: OperationOutcome
-): Omit<NeoSessionFacts, 'ref' | 'status' | 'lastActivityAt' | 'remotes'> | null {
-  const value = parseDriverStatus(outcome);
-  return value
-    ? {
-        ...(value.execution ? { folder: value.execution.directory } : {}),
-        branches: value.branches ?? [],
-        ...(value.linkedPrs ? { linkedPrs: value.linkedPrs } : {}),
-        ...(value.linkedPrsWindow ? { linkedPrsWindow: true as const } : {}),
-        openedPrs: value.openedPrs ?? [],
-      }
-    : null;
 }
 
 export function readDriverLastInputAt(outcome: OperationOutcome): number | null {

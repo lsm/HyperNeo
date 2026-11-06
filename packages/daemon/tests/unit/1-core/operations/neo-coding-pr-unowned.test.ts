@@ -48,7 +48,6 @@ function setup() {
     createCodingPack({
       database: () => db,
       readPrs: async () => [],
-      readClaudeOwners: async () => [],
       todoPrs: new CodingTodoPrRepository(db),
       prLedger: ledger,
       prEvents: new CodingPrEventRepository(db),
@@ -134,22 +133,9 @@ describe('coding pack newly unowned PR notifications', () => {
     ).run(JSON.stringify(worker));
   };
 
-  test('the turn that produced a PR makes its session the owner, ahead of a branch guess', async () => {
-    const { db, ledger, wakes, cycle } = setup();
+  test('the turn that produced a PR makes its session the owner', async () => {
+    const { db, wakes, cycle } = setup();
     try {
-      ledger.observeSessions(
-        [
-          {
-            ref: { adapter: 'codex-desktop', id: 'guessed' },
-            status: 'running',
-            lastActivityAt: ship,
-            remotes: ['git@github.com:synthetic/a.git'],
-            branches: ['b1'],
-            openedPrs: [],
-          },
-        ],
-        ship
-      );
       await new WorkTurnRepository(db).record(worker, [turn(url, true)]);
       await cycle([pr(1)]);
       expect(
@@ -283,20 +269,7 @@ describe('coding pack newly unowned PR notifications', () => {
   test('a known owner is not announced, and each PR is listed once through restart, head change and pruning', async () => {
     const { db, ledger, wakes, cycle, restart } = setup();
     try {
-      ledger.observeSessions(
-        [
-          {
-            ref: { adapter: 'codex-desktop', id: 'owner' },
-            status: 'running',
-            lastActivityAt: ship,
-            remotes: [],
-            branches: [],
-            openedPrs: [],
-            linkedPrs: [{ url: 'https://github.com/synthetic/a/pull/1', own: true }],
-          },
-        ],
-        ship
-      );
+      await new WorkTurnRepository(db).record(worker, [turn(url, true)]);
       await cycle([pr(1)]);
       expect(wakes).toHaveLength(1);
       expect(wakes[0].text).not.toContain('synthetic/a#1');

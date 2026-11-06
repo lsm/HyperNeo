@@ -82,7 +82,6 @@ function describeCliWork(
       ...(transcript
         ? { recentInputs: transcript.inputs, ...withExchange(transcript.exchange) }
         : {}),
-      ...(transcript?.openedPrs ? { openedPrs: transcript.openedPrs } : {}),
       ...(evidence ? { inputEvidence: evidence } : {}),
     },
   };

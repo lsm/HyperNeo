@@ -14,7 +14,6 @@ import { createCodingGithubReadOperation } from './github-read-operation.ts';
 import type { NeoRefStateReader } from './ask-prs.ts';
 import { createCodingRefReader } from './ref-reader.ts';
 import { listNeoGithub, type NeoGithubLister } from './github-query.ts';
-import { createCodingClaudeOwnerReader } from './claude-pr-owners.ts';
 import { NEO_PACK_CODING_INSTRUCTIONS, NEO_PACK_CODING_WORKER_RULES } from '@hyperneo/prompts';
 import { type CodingTodoPrRepository, createCodingTodoPack } from './todo-prs.ts';
 import type { NeoPack, NeoPackBrief } from '../../pack-contract.ts';
@@ -55,7 +54,6 @@ export function createCodingPack(deps: {
   prSweepDeps: Omit<CodingSweepDeps, 'host'>;
   projectRepos: () => string[];
   readLedgerRepo?: CodingLedgerRead;
-  readClaudeOwners?: ReturnType<typeof createCodingClaudeOwnerReader>;
 }): NeoPack & {
   readMergeFacts: typeof readCodingDaemonMergeFacts;
   decideMerge: typeof decideCodingDaemonMerge;
@@ -63,7 +61,6 @@ export function createCodingPack(deps: {
   prepareMerge: typeof prepareCodingMerge;
   review: typeof runCodingReview;
 } {
-  const readClaudeOwners = deps.readClaudeOwners ?? createCodingClaudeOwnerReader();
   const workerContext = (text: string) =>
     withCodingMergeContext(text, deps.prLedger.policyContext(text, deps.projectRepos()));
   const notificationContext = async (text: string) =>
@@ -201,9 +198,7 @@ export function createCodingPack(deps: {
     },
     readFacts: todos.readFacts,
     judge: todos.judge,
-    observeSessions: (sessions, now) => deps.prLedger.write('observeSessions', sessions, now),
     sweep: async (now) => {
-      await deps.prLedger.write('observeSessions', await readClaudeOwners(), now);
       const transitions = await reconcileCodingPrLedger(
         deps.prLedger,
         codingWatchedRepos(deps.database()) ?? deps.projectRepos(),

@@ -37,7 +37,6 @@ import { selectCodexConfiguration } from './codex-start-configuration.ts';
 import { workExecutionLocation } from './execution-location.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import { matchChatsBy } from './match-chats.ts';
-import { codexOpenedPrs, createCodexPrReader } from './opened-prs.ts';
 import { withChatEvidence } from './places.ts';
 import { workStartConfiguration } from './start-configuration.ts';
 import { selectLocalStartFolder } from './start-folder.ts';
@@ -157,7 +156,6 @@ export interface CodexTurnState {
   replyAt?: number;
   inputs?: WorkInput[];
   exchange?: WorkExchange;
-  openedPrs?: string[];
 }
 
 type Gate<Value> = { value: Value } | { reason: Rejected };
@@ -543,14 +541,10 @@ function recordedCodexConfiguration(
 
 export async function readCodexTurn(
   detail: CodexThreadDetail,
-  since?: number,
-  readOpenedPrs?: ReturnType<typeof createCodexPrReader>
+  since?: number
 ): Promise<CodexTurnState> {
   try {
     const { lines, truncated } = await readTailLines(detail.thread.rolloutPath, ROLLOUT_TAIL_BYTES);
-    const openedPrs = readOpenedPrs
-      ? readOpenedPrs(detail.thread.rolloutPath, lines)
-      : codexOpenedPrs(lines);
     let startedAt: number | undefined;
     const turnEnds = lines.flatMap((line, index) => {
       const entry = parseLine(line),
@@ -587,7 +581,6 @@ export async function readCodexTurn(
       ...(turnEnds.length ? { turnEnds } : {}),
       inputs: codexRecentInputs(lines, since),
       ...(since !== undefined ? { exchange: codexExchange(lines, since, truncated) } : {}),
-      ...(openedPrs.length ? { openedPrs } : {}),
     };
   } catch {
     return { marker: null, reply: null };
@@ -619,7 +612,6 @@ export async function describeCodexThread(
       ...(state.reply && state.replyAt !== undefined ? { lastReplyAt: state.replyAt } : {}),
       ...(state.inputs ? { recentInputs: state.inputs } : {}),
       ...withExchange(state.exchange),
-      ...(state.openedPrs ? { openedPrs: state.openedPrs } : {}),
       ...(detail.linkedPrs ? { linkedPrs: detail.linkedPrs.map((url) => ({ url })) } : {}),
       ...(thread.branch ? { branches: [thread.branch] } : {}),
     },
@@ -1044,10 +1036,10 @@ export async function withdrawCodexMessage(
 }
 
 const runCodexStatus = (superpipe({})('codex-work-status') as PipelineAPI)
-  .input(['ref', 'deps', 'since', 'receipt', 'readOpenedPrs'])
+  .input(['ref', 'deps', 'since', 'receipt'])
   .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
   .pipe((detail: CodexThreadDetail) => detail, 'outcome', 'detail')
-  .pipe(readCodexTurn, ['detail', 'since', 'readOpenedPrs'], 'turn')
+  .pipe(readCodexTurn, ['detail', 'since'], 'turn')
   .pipe(readCodexInputEvidence, ['detail', 'receipt'], 'evidence')
   .pipe(describeCodexThread, ['detail', 'turn', 'deps'], 'outcome')
   .pipe(withCodexInputEvidence, ['outcome', 'evidence'], 'outcome')
@@ -1055,8 +1047,7 @@ const runCodexStatus = (superpipe({})('codex-work-status') as PipelineAPI)
   ref: WorkRef,
   deps: CodexDesktopAdapterDeps,
   since: number | undefined,
-  receipt: CodexReceipt | undefined,
-  readOpenedPrs: ReturnType<typeof createCodexPrReader>
+  receipt: CodexReceipt | undefined
 ) => Promise<Result<WorkDetail>>;
 
 const runCodexSend = (superpipe({})('codex-send-work') as PipelineAPI)
@@ -1366,7 +1357,6 @@ const runCodexTurns = (superpipe({})('codex-turns') as PipelineAPI)
 ) => Promise<Result<{ turns: WorkTurnFact[] }>>;
 
 export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAdapter {
-  const readOpenedPrs = createCodexPrReader();
   return {
     id: 'codex-desktop',
     supportsStartPreparation: !!deps.prepareExecution,
@@ -1425,7 +1415,7 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
         'queue'
       ),
     withdraw: (ref, queuedSubmissionId) => runCodexWithdraw(ref, queuedSubmissionId, deps),
-    status: (ref, since, receipt) => runCodexStatus(ref, deps, since, receipt, readOpenedPrs),
+    status: (ref, since, receipt) => runCodexStatus(ref, deps, since, receipt),
     turns: (ref, cursor, limit) => runCodexTurns(ref, cursor, limit, deps),
     stop: (ref) => runCodexStop(ref, deps),
     archive: async (ref, admit) => {

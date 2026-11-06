@@ -10,17 +10,7 @@ import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/tod
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { createPackPreferenceOperations } from '../../../../src/lib/neo/preference-operations.ts';
 import { getNeoPackPreference } from '../../../../src/lib/neo/preferences.ts';
-import type { NeoSessionFacts } from '../../../../src/lib/neo/pack-contract.ts';
 
-const opened = (repo: string): NeoSessionFacts => ({
-  ref: { adapter: 'codex-desktop', id: 'foreign-thread' },
-  status: 'done',
-  lastActivityAt: 1,
-  remotes: [`https://github.com/${repo}.git`],
-  branches: ['work'],
-  openedPrs: [`https://github.com/${repo}/pull/1`],
-  linkedPrs: [{ url: `https://github.com/${repo}/pull/1`, own: true }],
-});
 const databases: Database[] = [];
 afterEach(() => {
   for (const db of databases.splice(0)) db.close();
@@ -42,7 +32,6 @@ function setup(legacy = false) {
     prEvents: new CodingPrEventRepository(db),
     prSweep: new CodingPrSweepRepository(db),
     projectRepos: () => ['foreign/repo'],
-    readClaudeOwners: async () => [opened('foreign/repo')],
     readLedgerRepo: async (repo) => {
       reads.push(repo);
       return {
@@ -83,20 +72,13 @@ function setup(legacy = false) {
 describe('Coding watched repositories', () => {
   test('a fresh instance ignores machine sessions and project repos until explicitly added', async () => {
     const f = setup();
-    await f.pack.observeSessions!([opened('foreign/repo')], 100);
     await f.pack.sweep!(100);
     expect(f.reads).toEqual([]);
     expect(f.setting()).toEqual([]);
-    expect(f.db.prepare('SELECT ref FROM pack_coding_session_facts').all()).toEqual([]);
     expect(f.notices).toEqual([]);
     expect(await f.save(['chosen/repo'])).toEqual({ ok: true });
-    await f.pack.observeSessions!([opened('foreign/repo'), opened('chosen/repo')], 101);
     await f.pack.sweep!(101);
     expect(f.reads).toEqual(['chosen/repo']);
-    const facts = f.db.prepare('SELECT repos, opened FROM pack_coding_session_facts').all();
-    expect(facts).toEqual([
-      { repos: '["chosen/repo"]', opened: '["https://github.com/chosen/repo/pull/1"]' },
-    ]);
   });
   test('upgrade leaves an unset watch list empty despite project and PR history', async () => {
     const f = setup(true);
@@ -171,7 +153,7 @@ describe('Coding watched repositories', () => {
     expect(pending?.text).toContain('chosen/repo#1');
     f.db
       .prepare('UPDATE pack_coding_pr_ledger SET owner = ?')
-      .run(JSON.stringify(opened(row.repo).ref));
+      .run(JSON.stringify({ adapter: 'codex-desktop', id: 'foreign-thread' }));
     f.ledger.replace(
       row.repo,
       [{ ...row, state: 'merged', closedAt: Date.now() + 3 }],
@@ -195,10 +177,6 @@ describe('Coding watched repositories', () => {
     const f = setup();
     await f.save(['Chosen/Old']);
     f.ledger.recordAlias('chosen/old', 'chosen/new');
-    await f.pack.observeSessions!([opened('chosen/new'), opened('foreign/repo')], 100);
-    expect(f.db.prepare('SELECT repos FROM pack_coding_session_facts').all()).toEqual([
-      { repos: '["chosen/new"]' },
-    ]);
     await f.pack.sweep!(100);
     expect(f.reads).toEqual(['chosen/old']);
   });
