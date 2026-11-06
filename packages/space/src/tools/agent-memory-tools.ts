@@ -1,8 +1,8 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository.ts';
-import type { ToolResult } from '../../tools/tool-result.ts';
-import { jsonResult } from '../../tools/tool-result.ts';
+import type { AgentMemoryRepository } from '../../../daemon/src/storage/repositories/agent-memory-repository.ts';
+import type { ToolResult } from '../../../daemon/src/lib/tools/tool-result.ts';
+import { jsonResult } from '../../../daemon/src/lib/tools/tool-result.ts';
 
 const MemoryWriteSchema = z.object({
   key: z.string().min(1).max(200).describe('Stable memory key, unique within this Space.'),

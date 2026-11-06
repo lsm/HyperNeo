@@ -117,7 +117,7 @@ import {
 } from '../../agents/custom-agent.ts';
 import type { EvolutionScopeService } from '../evolution/scope-service.ts';
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../../workflows/node-execution-manager.ts';
-import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
+import { createAgentMemoryMcpServer } from '../../../../../space/src/tools/agent-memory-tools.ts';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools.ts';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from '../../workflows/post-approval-validator.ts';
 import { runTemplateSnapshotRecord } from '../../workflows/run-template-snapshot.ts';

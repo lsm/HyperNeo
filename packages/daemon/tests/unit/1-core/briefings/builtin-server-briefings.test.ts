@@ -7,7 +7,7 @@ import {
   DB_QUERY_MCP_SERVER_NAME,
   isBuiltInMcpServer,
 } from '../../../../src/lib/mcp/built-in-servers.ts';
-import { agentMemoryCapabilityContribution } from '../../../../src/lib/space/tools/agent-memory-briefing.ts';
+import { agentMemoryCapabilityContribution } from '../../../../../space/src/tools/agent-memory-briefing.ts';
 
 function attached(name: string): AttachedMcpServerConfig {
   return { type: 'sdk', name, instance: {} as McpServer };
