@@ -32,6 +32,7 @@ import { createCodingReviewThreadReader } from './coding/connector-review-thread
 import { createCodingConnectorPrReader } from './coding/connector-pr-reader.ts';
 import { createCodingPrStateReader } from './coding/pr-state-reader.ts';
 import { createLifeAdminPack } from './life-admin/pack.ts';
+import { createDelegationPack } from './delegation/pack.ts';
 import { createCoreTodoPack } from '../core-todo-checks.ts';
 import type { DaemonExtension } from '../../extensions/contract.ts';
 
@@ -78,6 +79,7 @@ export function createNeoBuiltinPacks(
       prEvents: new CodingPrEventRepository(db),
     }),
     lifeAdmin: createLifeAdminPack(),
+    delegation: createDelegationPack(() => db),
   };
 }
 
@@ -91,7 +93,7 @@ export function createNeoService(...args: NeoServiceArgs) {
   const service = new NeoService(
     (core) => {
       const configured = Object.assign(core, readers, { todoPrs });
-      const { coding, lifeAdmin } = createNeoBuiltinPacks(db.getDatabase(), {
+      const { coding, lifeAdmin, delegation } = createNeoBuiltinPacks(db.getDatabase(), {
         readPrs: (urls) => configured.readPrs(urls),
         readRefStates: (refs) => configured.readRefStates(refs),
         listGithub: (args, coverage) => configured.listGithub(args, coverage),
@@ -148,6 +150,7 @@ export function createNeoService(...args: NeoServiceArgs) {
         packs: [
           coding,
           lifeAdmin,
+          delegation,
           createCoreTodoPack(db.getDatabase(), async (repo, sha, build) => {
             const fact = await new CodingPrLedgerRepository(db.getDatabase()).ancestryFacts.refresh(
               {

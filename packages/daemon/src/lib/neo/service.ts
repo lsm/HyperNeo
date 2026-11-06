@@ -243,6 +243,7 @@ export class NeoService {
       invoke: (caller, name, input) =>
         invokeOperation(this.sessions.getOperationRegistry(), name, input, caller),
       packs: () => this.installedPacks(),
+      enabledPacks: () => this.packs(),
       tell: (ask, todo, note, key, kind) => {
         return this.deliverForward(
           ask.sessionId,

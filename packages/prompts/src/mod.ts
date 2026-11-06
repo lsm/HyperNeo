@@ -60,6 +60,9 @@ import mdneoPacksCodingGoalPrSubscribe from './neo/packs/coding/goal-pr-subscrib
 import mdneoPacksLifeAdminInstructions from './neo/packs/life-admin/instructions.md' with {
   type: 'text',
 };
+import mdneoPacksDelegationInstructions from './neo/packs/delegation/instructions.md' with {
+  type: 'text',
+};
 import mdneoWorkGoalRemaining from './neo/work/goal-remaining.md' with { type: 'text' };
 import mdneoWorkBlocker from './neo/work/blocker.md' with { type: 'text' };
 
@@ -286,6 +289,7 @@ const registry: Record<string, string> = {
   'neo/packs/coding/goal-pr-events.md': mdneoPacksCodingGoalPrEvents,
   'neo/packs/coding/goal-pr-subscribe.md': mdneoPacksCodingGoalPrSubscribe,
   'neo/packs/life-admin/instructions.md': mdneoPacksLifeAdminInstructions,
+  'neo/packs/delegation/instructions.md': mdneoPacksDelegationInstructions,
   'neo/work/goal-remaining.md': mdneoWorkGoalRemaining,
   'neo/work/files.md': mdneoWorkFiles,
   'neo/work/goal.md': mdneoWorkGoal,
@@ -412,6 +416,7 @@ export const {
   NEO_PACK_CODING_WORKER_RULES,
   NEO_PACK_CODING_WORKTREE_BRIEF,
   NEO_PACK_LIFE_ADMIN_INSTRUCTIONS,
+  NEO_PACK_DELEGATION_INSTRUCTIONS,
   NEO_SESSION_TRACK,
   NEO_GOAL_CYCLE,
   NEO_FOCUSED_DISCUSSION,

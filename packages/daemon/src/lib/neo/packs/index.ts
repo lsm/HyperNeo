@@ -3,12 +3,13 @@ import {
   neoPackBriefs as selectPackBriefs,
 } from '../pack-selection.ts';
 export { neoPacks } from '../pack-selection.ts';
-export const NEO_DEFAULT_PACKS = ['coding'];
+export const NEO_DEFAULT_PACKS = ['coding', 'delegation'];
 export function neoEnabledPacks(settings?: { packs?: string[] }): string[] {
   return selectEnabledPacks(settings, NEO_DEFAULT_PACKS);
 }
 import { CODING_PACK_BRIEF } from './coding/pack.ts';
 import { LIFE_ADMIN_PACK_BRIEF } from './life-admin/pack.ts';
+import { DELEGATION_PACK_BRIEF } from './delegation/pack.ts';
 import type { NeoPack, NeoPackBrief } from '../pack-contract.ts';
 
 let fileBriefs: readonly NeoPackBrief[] = [];
@@ -20,6 +21,7 @@ export function neoSettingsPackBriefs(settings?: { packs?: string[] }): NeoPackB
 export const NEO_BUILTIN_PACK_BRIEFS: readonly NeoPackBrief[] = [
   CODING_PACK_BRIEF,
   LIFE_ADMIN_PACK_BRIEF,
+  DELEGATION_PACK_BRIEF,
 ];
 
 export function adoptNeoFilePacks(packs: readonly NeoPack[]): readonly NeoPack[] {

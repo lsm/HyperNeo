@@ -145,7 +145,7 @@ describe('root Neo system prompt', () => {
       'Do not assign again',
       'stay quiet',
       'tools and access this instance actually has',
-      'password-manager tools',
+      'Follow the human preferences supplied by enabled packs',
       'concrete next step',
     ])
       expect(prompt).toContain(rule);
