@@ -117,6 +117,10 @@ function daemon(state: { paired: boolean; pending?: unknown[] }) {
       pending = [];
       return { ok: true };
     }
+    if (name === 'device.pair.deny') {
+      pending = [];
+      return { ok: true };
+    }
     if (name === 'device.revoke') {
       const index = devices.findIndex((device) => device.id === input.deviceId);
       devices[index] = { ...devices[index], revokedAt: Date.now() };
@@ -179,6 +183,23 @@ describe('DevicesSettings', () => {
     expect(invoked('device.pair.approve')).toEqual([
       { name: 'device.pair.approve', input: { codeId: 'code-1' } },
     ]);
+  });
+
+  it('denies a pending code from a button left of Allow', async () => {
+    daemon({
+      paired: true,
+      pending: [{ id: 'code-1', kind: 'human', name: 'Laptop', expiresAt: Date.now() + 300_000 }],
+    });
+    render(<DevicesSettings />);
+    const deny = await screen.findByRole('button', { name: 'Deny Laptop' });
+    const allow = screen.getByRole('button', { name: 'Allow Laptop' });
+    expect(deny.compareDocumentPosition(allow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(deny);
+    await waitFor(() => screen.getByText('No codes are waiting for Allow.'));
+    expect(invoked('device.pair.deny')).toEqual([
+      { name: 'device.pair.deny', input: { codeId: 'code-1' } },
+    ]);
+    expect(invoked('device.pair.approve')).toEqual([]);
   });
 
   it('shows requests the Origin/Host checks would refuse, and edits the allowed hosts', async () => {

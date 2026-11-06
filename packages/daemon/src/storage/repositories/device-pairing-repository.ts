@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Database } from '../sqlite-compat.ts';
 import { defineDbOp } from '../db-gateway/db-op.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
-import { pairingApproveWrite } from './pairing-approve-write.ts';
+import { pairingApproveWrite, pairingDenyWrite } from './pairing-approve-write.ts';
 import { pairingRedeemWrite } from './pairing-redeem-write.ts';
 import { pairingCodeCreateWrites, type PairingCodeCaller } from './pairing-code-create-write.ts';
 import { pairingRevokeWrites } from './pairing-revoke-write.ts';
@@ -313,6 +313,21 @@ export class DevicePairingRepository {
       this.db
         .prepare(
           `UPDATE pairing_codes SET approved_at = ?
+           WHERE id = ? AND approved_at IS NULL AND used_at IS NULL AND expires_at > ?`
+        )
+        .run(now, id, now).changes > 0
+    );
+  }
+
+  denyAsync(codeId: string, deviceId: string, now: number) {
+    return gatewayFor(this.db).run(pairingDenyWrite, { codeId, deviceId, now });
+  }
+
+  deny(id: string, now: number): boolean {
+    return (
+      this.db
+        .prepare(
+          `UPDATE pairing_codes SET expires_at = ?
            WHERE id = ? AND approved_at IS NULL AND used_at IS NULL AND expires_at > ?`
         )
         .run(now, id, now).changes > 0

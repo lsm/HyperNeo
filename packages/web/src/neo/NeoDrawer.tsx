@@ -142,7 +142,7 @@ type PendingResult = { ok: true; pending: PendingDevice[] } | { ok: false; reaso
 function PendingDevices({ connection }: { connection: ConnectionState }) {
   const [pending, setPending] = useState<PendingDevice[]>([]);
   const [error, setError] = useState('');
-  const [allowing, setAllowing] = useState<string | null>(null);
+  const [deciding, setDeciding] = useState<string | null>(null);
   const live = useRef(true);
   const read = async () => {
     const hub = connectionManager.getHubIfConnected();
@@ -169,22 +169,20 @@ function PendingDevices({ connection }: { connection: ConnectionState }) {
       live.current = false;
     };
   }, [connection]);
-  const allow = async (codeId: string) => {
-    setAllowing(codeId);
+  const decide = async (operation: 'device.pair.approve' | 'device.pair.deny', codeId: string) => {
+    setDeciding(codeId);
     try {
       const hub = connectionManager.getHubIfConnected();
-      if (!hub) throw new Error('Reconnect before allowing a device.');
-      const result = await invokeOperation<{ ok: boolean; reason?: string }>(
-        hub,
-        'device.pair.approve',
-        { codeId }
-      );
-      if (!result.ok) throw new Error(result.reason ?? 'Could not allow device.');
+      if (!hub) throw new Error('Reconnect before deciding on a device.');
+      const result = await invokeOperation<{ ok: boolean; reason?: string }>(hub, operation, {
+        codeId,
+      });
+      if (!result.ok) throw new Error(result.reason ?? 'Could not update the device.');
       await read();
     } catch (cause) {
       if (live.current) setError(String(cause));
     } finally {
-      if (live.current) setAllowing(null);
+      if (live.current) setDeciding(null);
     }
   };
   if (!pending.length && !error) return null;
@@ -199,15 +197,26 @@ function PendingDevices({ connection }: { connection: ConnectionState }) {
               {device.kind} · expires {new Date(device.expiresAt).toLocaleTimeString()}
             </p>
           </div>
-          <button
-            type="button"
-            class="neo-drawer-action"
-            disabled={allowing !== null}
-            aria-label={`Allow ${device.name ?? 'Unnamed device'}`}
-            onClick={() => void allow(device.id)}
-          >
-            Allow
-          </button>
+          <div class="flex shrink-0 gap-2">
+            <button
+              type="button"
+              class="neo-drawer-action"
+              disabled={deciding !== null}
+              aria-label={`Deny ${device.name ?? 'Unnamed device'}`}
+              onClick={() => void decide('device.pair.deny', device.id)}
+            >
+              Deny
+            </button>
+            <button
+              type="button"
+              class="neo-drawer-action"
+              disabled={deciding !== null}
+              aria-label={`Allow ${device.name ?? 'Unnamed device'}`}
+              onClick={() => void decide('device.pair.approve', device.id)}
+            >
+              Allow
+            </button>
+          </div>
         </div>
       ))}
       {error && (

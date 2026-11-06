@@ -42,7 +42,7 @@ describe('pairing approval writer admission', () => {
     writer.close();
   });
 
-  const approve = (kind?: 'human' | 'relay') =>
+  const decide = (name: string, kind?: 'human' | 'relay') =>
     invokeOperation(
       createOperationRegistry(
         createDevicePairingOperations({
@@ -52,7 +52,7 @@ describe('pairing approval writer admission', () => {
           revoked: () => {},
         })
       ),
-      'device.pair.approve',
+      name,
       { codeId },
       {
         source: 'rpc',
@@ -60,6 +60,12 @@ describe('pairing approval writer admission', () => {
         ...(kind ? { device: { deviceId: humanId, kind } } : {}),
       }
     );
+  const approve = (kind?: 'human' | 'relay') => decide('device.pair.approve', kind);
+  const deny = (kind?: 'human' | 'relay') => decide('device.pair.deny', kind);
+  const code = () =>
+    writer
+      .prepare('SELECT approved_at, used_at, expires_at FROM pairing_codes WHERE id = ?')
+      .get(codeId);
 
   test('an active human receives success only after the code approval commits without main SQL', async () => {
     expect(await approve('human')).toMatchObject({ kind: 'completed', value: { ok: true } });
@@ -100,6 +106,29 @@ describe('pairing approval writer admission', () => {
 
   test('relay callers are refused by the operation policy', async () => {
     expect(await approve('relay')).toMatchObject({ kind: 'failed', code: 'forbidden' });
+    expect(mainSql).toBe(0);
+  });
+
+  test('an active human denies a code on the writer and the row stays', async () => {
+    expect(await deny('human')).toMatchObject({ kind: 'completed', value: { ok: true } });
+    expect(code()).toEqual({ approved_at: null, used_at: null, expires_at: now });
+    expect(repo.listPending(now)).toEqual([]);
+    expect(mainSql).toBe(0);
+  });
+
+  test('deny refuses revoked, unpaired and relay callers without touching the code', async () => {
+    const before = code();
+    expect(await deny()).toMatchObject({
+      kind: 'completed',
+      value: { ok: false, reason: expect.stringContaining('not_paired') },
+    });
+    expect(await deny('relay')).toMatchObject({ kind: 'failed', code: 'forbidden' });
+    repo.revokeDevice(humanId, now);
+    expect(await deny('human')).toMatchObject({
+      kind: 'completed',
+      value: { ok: false, reason: expect.stringContaining('not_paired') },
+    });
+    expect(code()).toEqual(before);
     expect(mainSql).toBe(0);
   });
 });

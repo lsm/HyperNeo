@@ -218,6 +218,74 @@ describe('device pairing', () => {
     db.close();
   });
 
+  test('a denied code leaves the list, can never pair, and leaves other codes Allowable', async () => {
+    const { db, call, pair } = setup();
+    try {
+      const first = await call('device.pair.create', { kind: 'human' }, human);
+      const laptop = await pair(first.code, 'Laptop');
+      const owner = pairedHuman(laptop.body.deviceId);
+      const denied = await call('device.pair.create', { kind: 'human' }, door);
+      const allowed = await call('device.pair.create', { kind: 'human' }, door);
+
+      for (const caller of [agent, door, human, pairedHuman('phone')])
+        expect((await call('device.pair.deny', { codeId: denied.codeId }, caller)).ok).toBe(false);
+      expect(await pair(denied.code)).toMatchObject({
+        status: 403,
+        body: { error: 'awaiting_approval' },
+      });
+
+      expect(await call('device.pair.deny', { codeId: denied.codeId }, owner)).toEqual({
+        ok: true,
+      });
+      expect((await call('device.pair.pending', {}, owner)).pending).toEqual([
+        { id: allowed.codeId, kind: 'human', name: null, expiresAt: allowed.expiresAt },
+      ]);
+      expect(await pair(denied.code)).toMatchObject({
+        status: 401,
+        body: { error: 'invalid_code' },
+      });
+      expect(await call('device.pair.approve', { codeId: denied.codeId }, owner)).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('not_pending'),
+      });
+      expect(await call('device.pair.deny', { codeId: denied.codeId }, owner)).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('not_pending'),
+      });
+
+      expect(await call('device.pair.approve', { codeId: allowed.codeId }, owner)).toEqual({
+        ok: true,
+      });
+      expect((await pair(allowed.code, 'Phone')).status).toBe(200);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a code already approved or used cannot be denied', async () => {
+    const { db, call, pair } = setup();
+    try {
+      const first = await call('device.pair.create', { kind: 'human' }, human);
+      const laptop = await pair(first.code, 'Laptop');
+      const owner = pairedHuman(laptop.body.deviceId);
+      const notPending = { ok: false, reason: expect.stringContaining('not_pending') };
+      const approved = await call('device.pair.create', { kind: 'human' }, owner);
+      expect(approved.approval).toBe('approved');
+      expect(await call('device.pair.deny', { codeId: approved.codeId }, owner)).toMatchObject(
+        notPending
+      );
+      expect((await pair(approved.code, 'Phone')).status).toBe(200);
+      expect(await call('device.pair.deny', { codeId: approved.codeId }, owner)).toMatchObject(
+        notPending
+      );
+      expect(await call('device.pair.deny', { codeId: 'missing' }, owner)).toMatchObject(
+        notPending
+      );
+    } finally {
+      db.close();
+    }
+  });
+
   test('only an active paired human can see codes waiting for Allow', async () => {
     const h = setup();
     try {

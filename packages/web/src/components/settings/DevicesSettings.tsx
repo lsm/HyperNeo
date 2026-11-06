@@ -201,6 +201,14 @@ export function DevicesSettings() {
                 </div>
                 <Button
                   size="sm"
+                  variant="secondary"
+                  aria-label={`Deny ${item.name ?? 'Unnamed device'}`}
+                  onClick={() => act(() => call('device.pair.deny', { codeId: item.id }))}
+                >
+                  Deny
+                </Button>
+                <Button
+                  size="sm"
                   aria-label={`Allow ${item.name ?? 'Unnamed device'}`}
                   onClick={() => act(() => call('device.pair.approve', { codeId: item.id }))}
                 >
