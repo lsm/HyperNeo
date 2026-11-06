@@ -9,8 +9,8 @@ export const sessionsSignal = signal<Session[]>([]);
 
 export const slashCommandsSignal = signal<string[]>([]);
 
-export type NavSection = 'chats' | 'spaces' | 'settings';
-export const navSectionSignal = signal<NavSection>('spaces');
+export type NavSection = string;
+export const navSectionSignal = signal<NavSection>('chats');
 
 export interface SearchMessageLoadTarget {
   sessionId: string;

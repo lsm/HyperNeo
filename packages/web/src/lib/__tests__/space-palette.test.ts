@@ -5,6 +5,10 @@ const { navigateToSpace, navigateToSpaceTask } = vi.hoisted(() => ({
   navigateToSpaceTask: vi.fn(),
 }));
 
+vi.mock('../space-router.ts', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../router.ts')),
+}));
 vi.mock('../router.ts', () => ({ navigateToSpace, navigateToSpaceTask }));
 
 import { openSpaceSearchResult, spacePaletteItems, warmSpacePalette } from '../space-palette';

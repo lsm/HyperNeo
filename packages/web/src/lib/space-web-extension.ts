@@ -3,7 +3,7 @@ import { GoalDetailPanel } from '../components/space/GoalDetailPanel.tsx';
 import { ScopeDetailPanel } from '../components/space/ScopeDetailPanel.tsx';
 import { SpaceMain } from '../components/space/SpaceMain.tsx';
 import { SpaceSidebar } from '../components/space/SpaceSidebar.tsx';
-import { navigateToSpaceAgent } from './router.ts';
+import { navigateToSpaceAgent } from './space-router.ts';
 import { type ExtensionPanelTarget, navSectionSignal, rightPanelTargetSignal } from './signals.ts';
 import {
   currentSpaceCanonicalIdSignal,

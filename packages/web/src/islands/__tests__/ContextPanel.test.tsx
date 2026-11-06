@@ -125,6 +125,10 @@ vi.mock('../../components/ui/NavIconButton.tsx', () => ({
   ),
 }));
 
+vi.mock('../../lib/space-router.ts', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../../lib/router.ts')),
+}));
 vi.mock('../../lib/router.ts', () => ({
   navigateToSession: mockNavigateToSession,
   navigateToSessions: mockNavigateToSessions,

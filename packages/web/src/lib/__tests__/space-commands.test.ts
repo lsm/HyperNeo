@@ -5,6 +5,10 @@ const { navigateToSpaceTasks, error } = vi.hoisted(() => ({
   error: vi.fn(),
 }));
 
+vi.mock('../space-router.ts', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../router.ts')),
+}));
 vi.mock('../router.ts', () => ({ navigateToSpaceTasks }));
 vi.mock('../toast.ts', () => ({ toast: { error } }));
 

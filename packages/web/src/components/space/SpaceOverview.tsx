@@ -13,7 +13,7 @@ import {
   navigateToSpaceTask,
   navigateToSpaceSession,
   navigateToSpaceTasks,
-} from '../../lib/router';
+} from '../../lib/space-router';
 import { cn, getRelativeTime } from '../../lib/utils';
 import { toast } from '../../lib/toast';
 import { AUTONOMY_LABELS } from '../../lib/space-constants';

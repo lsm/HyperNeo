@@ -15,7 +15,7 @@ vi.mock('../../../lib/connection-manager', () => ({
   },
 }));
 
-vi.mock('../../../lib/router', () => ({
+vi.mock('../../../lib/space-router', () => ({
   get navigateToSpace() {
     return mockNavigateToSpace;
   },
