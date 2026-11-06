@@ -17,7 +17,14 @@ export type FollowThroughIncident = {
   };
   checkOnlyReminder?: FollowThroughIncident['stallReminder'];
   workerQuestion?: StagedWorkerQuestion;
-  blockerReport?: { id: string; dispatchId: string; at: number; triagedAt?: number };
+  blockerReport?: {
+    id: string;
+    dispatchId: string;
+    at: number;
+    triagedAt?: number;
+    remindedAt?: number;
+  };
+  unreachableToldAt?: number;
   since: number;
   nudges: number;
   at?: number;
