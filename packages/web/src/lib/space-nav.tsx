@@ -1,17 +1,25 @@
 import {
+  currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,
   currentSpaceSessionIdSignal,
   currentSpaceTaskIdSignal,
   currentSpaceViewModeSignal,
   navSectionSignal,
+  spaceOverlayPendingAgentNameSignal,
+  spaceOverlaySessionIdSignal,
 } from './signals.ts';
 import {
+  createSpaceSessionPath,
+  createSpaceTaskPath,
   navigateToSpace,
   navigateToSpaceAgent,
   navigateToSpaceConfigure,
   navigateToSpaces,
+  navigateToSpaceSession,
+  navigateToSpaceTask,
   navigateToSpaceTasks,
 } from './router.ts';
+import { voiceReturnTaskTargetSessionSignal } from './voice/voice-composer-registry.ts';
 import { isActionRequired, isActiveTask } from './task-filters.ts';
 import { type ExtensionNav, webExtension } from './web-extensions.ts';
 
@@ -123,11 +131,50 @@ function spaceContextTabs(): ReturnType<ExtensionNav['contextTabs']> {
   };
 }
 
+const SPACE_SCOPE_PREFIX = 'space:';
+
+export function spaceVoiceScope(spaceId: string | null): string | null {
+  return spaceId ? `${SPACE_SCOPE_PREFIX}${spaceId}` : null;
+}
+
+function spaceSessionFocus(): ReturnType<ExtensionNav['sessionFocus']> {
+  const overlaySessionId = spaceOverlaySessionIdSignal.value;
+  const overlayPending = spaceOverlayPendingAgentNameSignal.value !== null;
+  const overlayOpen = overlaySessionId !== null || overlayPending;
+  const sessionId = overlaySessionId ?? (overlayPending ? null : currentSpaceSessionIdSignal.value);
+  return overlayOpen || sessionId !== null ? { overlayOpen, overlaySessionId, sessionId } : null;
+}
+
+function spaceRecordingReturn(
+  scopeId: string,
+  sessionId: string,
+  taskId: string | null
+): ReturnType<ExtensionNav['recordingReturn']> {
+  if (!scopeId.startsWith(SPACE_SCOPE_PREFIX)) return null;
+  const spaceId = scopeId.slice(SPACE_SCOPE_PREFIX.length);
+  if (taskId === null)
+    return {
+      path: createSpaceSessionPath(spaceId, sessionId),
+      open: (replace) => navigateToSpaceSession(spaceId, sessionId, replace),
+    };
+  return {
+    path: createSpaceTaskPath(spaceId, taskId),
+    open: (replace) => {
+      voiceReturnTaskTargetSessionSignal.value = sessionId;
+      navigateToSpaceTask(spaceId, taskId, replace);
+    },
+  };
+}
+
 export const spaceNav: ExtensionNav = {
   extension: 'space',
   section: 'spaces',
   label: 'Spaces',
   icon: SpacesIcon,
-  open: navigateToSpaces,
+  open: () => navigateToSpaces(),
   contextTabs: spaceContextTabs,
+  voiceScope: () =>
+    spaceVoiceScope(currentSpaceCanonicalIdSignal.value ?? currentSpaceIdSignal.value),
+  sessionFocus: spaceSessionFocus,
+  recordingReturn: spaceRecordingReturn,
 };

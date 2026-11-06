@@ -1,19 +1,19 @@
-import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
+import { McpAuditLogRepository } from '../../../../storage/repositories/mcp-audit-log-repository.ts';
 import {
   type AgentTemplateOperationDependencies,
   createAgentTemplateOperations,
-} from '../../agents/agent-template-operations.ts';
-import type { CreateAgentDependencies } from '../../agents/create-agent-operation.ts';
-import { createInactivityOperations } from '../../agents/inactivity-operations.ts';
-import { reminderOccurrenceIsClaimed } from '../../agents/reminder-delivery-registry.ts';
-import { resolveAgentSessionId } from '../../session-resolution/long-term-agent-session.ts';
-import { createAgentOperations } from '../../agents/operations.ts';
+} from '../../../agents/agent-template-operations.ts';
+import type { CreateAgentDependencies } from '../../../agents/create-agent-operation.ts';
+import { createInactivityOperations } from '../../../agents/inactivity-operations.ts';
+import { reminderOccurrenceIsClaimed } from '../../../agents/reminder-delivery-registry.ts';
+import { resolveAgentSessionId } from '../../../session-resolution/long-term-agent-session.ts';
+import { createAgentOperations } from '../../../agents/operations.ts';
 import {
   publishSpaceAgentV2Mirror,
   publishUnifiedAgentCreated,
   publishUnifiedAgentUpdated,
-} from '../../agents/unified-agent-events.ts';
-import type { OperationDefinition } from '../../operations/registry.ts';
+} from '../../../agents/unified-agent-events.ts';
+import type { OperationDefinition } from '../../../operations/registry.ts';
 import type { SpaceFamilyContext } from './space-context.ts';
 
 export function registerAgentOperations(context: SpaceFamilyContext): OperationDefinition[] {

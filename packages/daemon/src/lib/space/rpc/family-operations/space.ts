@@ -1,10 +1,13 @@
-import type { OperationDefinition } from '../../operations/registry.ts';
-import { resolveSessionSpaceId } from '../../session-resolution/space-caller-scope.ts';
-import { resolveSpaceMcpSessionPolicy } from '../../session-resolution/space-mcp-session-policy.ts';
+import type { OperationDefinition } from '../../../operations/registry.ts';
+import { resolveSessionSpaceId } from '../../../session-resolution/space-caller-scope.ts';
+import { resolveSpaceMcpSessionPolicy } from '../../../session-resolution/space-mcp-session-policy.ts';
 import { registerAgentOperations } from './agents.ts';
 import { registerArtifactOperations } from './artifacts.ts';
-import { registerAuditOperations } from './audit.ts';
-import type { FamilyOperationContext, SessionSpacePort } from './context.ts';
+import { registerAuditOperations } from '../../../rpc-handlers/family-operations/audit.ts';
+import type {
+  FamilyOperationContext,
+  SessionSpacePort,
+} from '../../../rpc-handlers/family-operations/context.ts';
 import { registerEvolutionOperations } from './evolution.ts';
 import { registerExternalEventOperations } from './external-events.ts';
 import { registerGoalOperations } from './goals.ts';

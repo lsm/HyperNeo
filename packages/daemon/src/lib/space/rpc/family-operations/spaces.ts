@@ -1,5 +1,5 @@
-import type { OperationDefinition } from '../../operations/registry.ts';
-import { createSpaceReadOperations } from '../../space/space-read-operations.ts';
+import type { OperationDefinition } from '../../../operations/registry.ts';
+import { createSpaceReadOperations } from '../../space-read-operations.ts';
 import type { SpaceFamilyContext } from './space-context.ts';
 
 export function registerSpaceOperations(context: SpaceFamilyContext): OperationDefinition[] {
