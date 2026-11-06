@@ -21,7 +21,9 @@ Build web for the current head and add `--browser /absolute/fresh/control-dir` t
 the helper for the visual journey. Use its browser.json loopback proof-entry URL.
 Open the completed Prepare the human report row. Require the human report text
 and report.md card, no result.md card or hidden completion sentence. Open the
-report card and observe Travel report and A report for the human. Save screenshots
+report card. If All still overlays the preview, close that dialog before reading
+the preview panel and record that extra action. Observe Travel report and A report
+for the human. Save screenshots
 and browser.json with passed:true under the supplied evidence directory, then
 create doneFile. Close the owned tab. The helper stops its servers, and the
 wrapper saves evidence and immediately removes the synthetic data.
