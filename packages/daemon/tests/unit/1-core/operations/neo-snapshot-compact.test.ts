@@ -60,6 +60,17 @@ describe('fitNeoSnapshotBudget', () => {
     expect(fitted.trimmed).toContain('neo.ask.read');
   });
 
+  test('drops remaining step payloads before dropping any open ask', () => {
+    const full = snapshot(12, 0);
+    for (const item of full.todoAsks ?? []) {
+      item.todos[0].worker = { adapter: 'hyperneo', id: 'w'.repeat(10_000) };
+    }
+    const fitted = fitNeoSnapshotBudget(full, 4_000);
+    expect(fitted.todoAsks).toHaveLength(12);
+    expect(fitted.todoAsks?.every((item) => item.todos.length === 0)).toBe(true);
+    expect(bytes(fitted)).toBeLessThanOrEqual(4_000);
+  });
+
   test('keeps the daemon counts when the snapshot falls back to its skeleton', () => {
     const fitted = fitNeoSnapshotBudget(
       { ...snapshot(40, 0), needsYou: 3, neoUnhandled: 2 },
