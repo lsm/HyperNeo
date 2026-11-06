@@ -279,6 +279,8 @@ export const zhHans: Record<keyof typeof en, string> = {
   'session.chat': '{title} 会话',
   'session.opening': '正在打开会话…',
   'session.working': '正在做…',
+  'session.waitingModel': '模型还没回复。仍在等待；3 分钟后会自动重连。',
+  'session.waitingReconnect': '连接卡住了，正在重连。',
   'session.workingNow': '正在做',
   'session.worked': '做了 {duration}',
   'session.toolCall': '{count} 次工具调用',

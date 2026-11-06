@@ -96,6 +96,8 @@ export interface ResolvedQuestion {
   cancelReason?: QuestionCancelReason;
 }
 
+export type ProcessingWaiting = 'model' | 'reconnecting';
+
 export type AgentProcessingState =
   | { status: 'idle' }
   | { status: 'queued'; messageId: string }
@@ -106,6 +108,7 @@ export type AgentProcessingState =
       streamingStartedAt?: number;
       isCompacting?: boolean;
       messageIds?: string[];
+      waiting?: ProcessingWaiting;
     }
   | { status: 'waiting_for_input'; pendingQuestion: PendingUserQuestion }
   | {

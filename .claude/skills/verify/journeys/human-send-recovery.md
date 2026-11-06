@@ -27,6 +27,8 @@ exactly one `neo.message.send`. The model must answer that message.
 - `two_messages_in_a_hang`: a second message sent during the hang also gets through
 - `parked_deliveries`: system deliveries parked behind a latch run right after
 - `expired_token_401`: the refresh runs once and the turn succeeds
+- `waiting_lines`: a silent turn shows the model line after the silence window, the reconnecting line at recovery, and neither once output returns; the browser sees all three
+- `fast_reply_shows_no_line`: a normal reply never sets a waiting reason
 - `daemon_restart_mid_outage`
 - `no_network`: the message waits, the session reports `reason: network`, web
   Neo shows the one line with Send disabled, and the turn finishes on its own

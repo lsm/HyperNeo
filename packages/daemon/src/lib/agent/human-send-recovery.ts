@@ -1,4 +1,4 @@
-import { type AgentProcessingState, createLogger } from '@hyperneo/shared';
+import { type AgentProcessingState, createLogger, type ProcessingWaiting } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { getStreamSilenceTimeoutMs } from './stream-silence-watch.ts';
 
@@ -117,6 +117,7 @@ export interface HumanSendSession {
     hardReset: boolean;
   }): Promise<{ success: boolean; error?: string }>;
   showNotice(text: string): Promise<void>;
+  setWaiting(waiting: ProcessingWaiting): Promise<void>;
 }
 
 export interface HumanSendRecoveryDeps {
@@ -153,8 +154,10 @@ export function createHumanSendRecovery(deps: HumanSendRecoveryDeps) {
       reachable: () => session.providerReachable(),
       refresh: () => deps.refreshCredentials(session.providerId()),
       rebuild: async () => {
+        await session.setWaiting('reconnecting');
         const reset = await session.resetQuery({ restartQuery: true, hardReset: true });
         if (!reset.success) throw new Error(reset.error ?? 'Session rebuild failed');
+        await (await deps.getSession(sessionId))?.setWaiting('reconnecting');
       },
       wake: () => deps.wakeParked(sessionId),
     });
@@ -191,6 +194,12 @@ export function createHumanSendRecovery(deps: HumanSendRecoveryDeps) {
     });
     if (plan === 'wait') {
       arm(sessionId, messageUuid, sentAt, sentAt + stallMs - now);
+      const stillQuiet = isQuietTurn({
+        ...turn,
+        lastOutputAt: session.lastSdkOutputAt(),
+        lastInterruptAt: session.lastInterruptAt(),
+      });
+      if (stillQuiet) await session.setWaiting('model');
       return;
     }
     if (plan === 'resend') {

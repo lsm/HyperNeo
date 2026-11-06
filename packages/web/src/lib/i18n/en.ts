@@ -282,6 +282,9 @@ export const en = {
   'session.chat': '{title} chat',
   'session.opening': 'Opening chat…',
   'session.working': 'Working…',
+  'session.waitingModel':
+    "The model hasn't answered yet. Still waiting; it reconnects by itself after 3 minutes.",
+  'session.waitingReconnect': 'The connection got stuck. Reconnecting.',
   'session.workingNow': 'Working',
   'session.worked': 'Worked {duration}',
   'session.toolCall': '{count} tool call',

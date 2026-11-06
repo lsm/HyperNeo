@@ -243,6 +243,27 @@ const cases: Record<string, (marker: string) => Promise<Record<string, unknown>>
     await answered(marker, 45_000);
     return { browserView, messagesSent: 1 };
   },
+  async waiting_lines(marker) {
+    const watch = watchWaiting();
+    const browserView = await waitingView(`http://127.0.0.1:${web.port}/neo`, async () => {
+      hang = { marker, until: Date.now() + 6_200 };
+      slow = { marker, ms: 1_500 };
+      await send(marker);
+    });
+    await answered(marker, 30_000);
+    slow = null;
+    const lines = watch.stop();
+    assert.deepEqual(lines.map((line) => line.waiting).filter((line) => line !== 'none'), ['model', 'reconnecting']);
+    assert.equal(lines.at(-1)?.waiting, 'none');
+    return { lines, browserView };
+  },
+  async fast_reply_shows_no_line(marker) {
+    const watch = watchWaiting();
+    await send(marker);
+    await answered(marker);
+    assert.deepEqual(watch.stop(), []);
+    return {};
+  },
   async daemon_restart_mid_outage(marker) {
     modelDown();
     await live().onNetworkOutage('API Error: Connection error.', null);
@@ -267,6 +288,42 @@ const cases: Record<string, (marker: string) => Promise<Record<string, unknown>>
     return { triedAfterMs };
   },
 };
+
+function watchWaiting() {
+  const startedAt = Date.now();
+  const lines: { waiting: string; atMs: number }[] = [];
+  const timer = setInterval(() => {
+    const state = daemon.app.sessionManager.getCachedSession(root)?.getProcessingState();
+    const waiting = state?.status === 'processing' ? state.waiting : undefined;
+    const last = lines.at(-1)?.waiting;
+    if (waiting ? waiting !== last : last && last !== 'none') lines.push({ waiting: waiting ?? 'none', atMs: Date.now() - startedAt });
+  }, 20);
+  return { stop: () => { clearInterval(timer); return lines; } };
+}
+
+async function waitingView(url: string, act: () => Promise<void>) {
+  if (!process.env.VERIFY_BROWSER) { await act(); return 'skipped: VERIFY_BROWSER not set'; }
+  const { chromium } = createRequire(import.meta.url)('playwright');
+  const browser = await chromium.launch({ headless: true, executablePath: process.env.VERIFY_BROWSER });
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 780 } });
+    await page.goto(url);
+    await page.locator('textarea').first().waitFor({ timeout: 15_000 });
+    await act();
+    const model = page.getByText("The model hasn't answered yet. Still waiting; it reconnects by itself after 3 minutes.");
+    await model.waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(run, 'evidence/waiting-model.png') });
+    const reconnecting = page.getByText('The connection got stuck. Reconnecting.');
+    await reconnecting.waitFor({ timeout: 15_000 });
+    await page.screenshot({ path: join(run, 'evidence/waiting-reconnecting.png') });
+    await reconnecting.waitFor({ state: 'hidden', timeout: 15_000 });
+    assert.equal(await model.count(), 0);
+    await page.screenshot({ path: join(run, 'evidence/waiting-cleared.png') });
+    return { model: true, reconnecting: true, cleared: true };
+  } finally {
+    await browser.close();
+  }
+}
 
 async function composerView(url: string) {
   if (!process.env.VERIFY_BROWSER) return 'skipped: VERIFY_BROWSER not set';

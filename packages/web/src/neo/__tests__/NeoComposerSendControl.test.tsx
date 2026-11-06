@@ -56,6 +56,20 @@ afterEach(() => {
 });
 
 describe('Neo composer send slot', () => {
+  it('shows why a silent turn waits, then drops the line when output returns', () => {
+    const { store } = mount(true, '');
+    const line = 'The connection got stuck. Reconnecting.';
+    expect(screen.queryByText(line)).toBeNull();
+    act(() => {
+      store.agentState.value = { status: 'processing', waiting: 'reconnecting' } as never;
+    });
+    expect(screen.getByText(line)).toBeTruthy();
+    act(() => {
+      store.agentState.value = { status: 'processing' } as never;
+    });
+    expect(screen.queryByText(line)).toBeNull();
+  });
+
   it('offers no send button until the empty composer is focused', () => {
     mount(false, '');
     expect(send()).toBeNull();

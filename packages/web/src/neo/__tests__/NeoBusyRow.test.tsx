@@ -1,8 +1,20 @@
 import { act, cleanup, render, screen } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NeoBusyRow } from '../NeoBusyRow.tsx';
+import { NeoBusyRow, neoWaitingLine } from '../NeoBusyRow.tsx';
 
 afterEach(cleanup);
+
+describe('neoWaitingLine', () => {
+  const processing = { status: 'processing', messageId: 'm', phase: 'initializing' } as const;
+  it('says why a silent turn is waiting, and nothing otherwise', () => {
+    expect(neoWaitingLine({ ...processing, waiting: 'model' })).toContain('3 minutes');
+    expect(neoWaitingLine({ ...processing, waiting: 'reconnecting' })).toBe(
+      'The connection got stuck. Reconnecting.'
+    );
+    expect(neoWaitingLine(processing)).toBeNull();
+    expect(neoWaitingLine({ status: 'idle' })).toBeNull();
+  });
+});
 
 describe('NeoBusyRow', () => {
   beforeEach(() => vi.useFakeTimers());
