@@ -12,7 +12,7 @@ const draft = (text: string, kind: 'reply' | 'yesno' | 'choice' = 'yesno') => ({
   startTodos: null,
 });
 const open = (id: string, kind = 'yesno', text = 'Ship it?') =>
-  ({ id, kind, text, state: 'open' }) as NeoQuestion;
+  ({ id, kind, text, state: 'open', todoId: 'todo' }) as NeoQuestion;
 const reason = (gate: ReturnType<typeof requireHumanCard>) =>
   'reason' in gate ? gate.reason.reason : null;
 
@@ -42,6 +42,11 @@ describe('requireHumanCard', () => {
         requireHumanCard(draft('Ship it?'), [{ ...prior, state: 'answered' }], null, undefined)
       )
     ).toBeNull();
+  });
+
+  test('a fixed daemon proposal does not block the next card', () => {
+    const proposal = { ...open('proposal'), todoId: undefined };
+    expect(reason(requireHumanCard(draft('Ship it?'), [proposal], null, undefined))).toBeNull();
   });
 
   test('long text belongs in the document', () => {

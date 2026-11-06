@@ -44,6 +44,7 @@ const onlyCard = (open: readonly NeoQuestion[], replaced: NeoQuestion | null) =>
     (question) =>
       question.state === 'open' &&
       question.kind !== 'start' &&
+      (question.todoId || question.retireWhen) &&
       question.id !== replaced?.id &&
       !isNeoTodoStalledCard(question.text)
   );

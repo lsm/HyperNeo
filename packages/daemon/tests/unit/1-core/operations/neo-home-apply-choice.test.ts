@@ -187,7 +187,6 @@ describe('Human-recorded conflict version saves', () => {
         text: 'Which version?',
         options: ['Keep local', 'Use remote'],
         multiple: false,
-        replaces: question.id,
       },
       owner
     );

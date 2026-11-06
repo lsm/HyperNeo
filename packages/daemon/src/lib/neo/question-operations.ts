@@ -187,6 +187,18 @@ export function createNeoWorkerQuestionWriter(
           if (open && daemonCard)
             store.retireQuestion(open, 'its worker asked its own question', null, Date.now());
           const existing = daemonCard ? null : open;
+          const allowed = existing
+            ? null
+            : requireHumanCard(
+                { text: input.title, kind: 'choice' as const },
+                store.listQuestions(todo.askId),
+                null,
+                language()
+              );
+          if (allowed && 'reason' in allowed) {
+            rejection = allowed.reason.reason;
+            return null;
+          }
           const card =
             existing ??
             openHumanCard(
