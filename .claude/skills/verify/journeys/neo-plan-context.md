@@ -1,0 +1,37 @@
+# Retain every open plan through compact snapshots
+
+Use SKILL.md shared pinned runtime, dependency and resource setup. From the
+owned checkout, run this metadata-only proof with the shared wrapper.
+
+```bash
+bash .claude/skills/verify/proof-run.sh /absolute/evidence-directory \
+  .claude/skills/verify/neo-plan-context.ts verify
+```
+
+It owns a fresh keyless NODE_ENV=test daemon on a random port excluding 8399/8499,
+a synthetic local RPC client and the actual agent MCP handler. It seeds 12 local
+asks, 480 unfinished steps and 12 questions, with no domain checks or configured
+domain client. A refusing executable records any attempted domain-client call.
+No provider or model turn is needed for this data-projection slice.
+
+The ordinary RPC snapshot contains all 12 owners. The same snapshot through the
+agent MCP door exceeds the normal budget, so it must omit details while retaining
+all 12 open owners. Instrumentation must observe zero target-table reads on the
+main connection during both snapshot and gateway plan reads. The new read must
+return 12 asks, 480 family steps and 12 questions. The fitted digest must keep all
+12 headers, naming neo.ask.read and each owner's id for omitted steps. A full
+compact-source digest includes the last owner and an unchanged prompt emits no
+context. Any domain-client invocation fails the proof.
+
+Before the fix, run the identical helper in before mode on the baseline. It must
+fail the real MCP open-owner assertion, retaining observed.json with the smaller
+owner list. The wrapper saves evidence and removes the temporary daemon data
+when the helper exits, including failure. The helper closes the client and daemon
+in finally. Inspect run-status.json rather than trusting a PASS line alone.
+
+Mandatory owner headers take priority over the requested budget when even the
+headers alone exceed it. Unit tests pin this floor as well as UTF-8 byte sizing,
+question counts, prerequisite/hold readiness, change-only context and closures.
+Run snapshot-compact and the storage reader-worker regression, then
+check:neo-pack-imports and check:db-main-thread. New core files contain no domain
+vocabulary. Per-turn SDK delivery and streaming-hook behavior belong to 7-B.

@@ -47,6 +47,19 @@ test('Neo snapshot facts, check lists and done-page facts come from a reader sna
     expect(page.todos).toEqual(expected);
     expect(page.links).toBeInstanceOf(Map);
     expect((await todos.read('doneTodoFacts', 'missing')).ask).toBeNull();
+    const prepare = db.prepare.bind(db);
+    db.prepare = ((sql: string) => {
+      if (/neo_asks|neo_todos|neo_questions/.test(sql)) throw new Error('Plan facts read on main');
+      return prepare(sql);
+    }) as typeof db.prepare;
+    try {
+      const plan = await todos.read('planContext');
+      expect(plan.asks.map((ask) => ask.id)).toEqual(['a']);
+      expect(plan.todos).toEqual(expected);
+      expect(plan.questions).toEqual([]);
+    } finally {
+      db.prepare = prepare;
+    }
   } finally {
     await gateway.close();
     db.close();

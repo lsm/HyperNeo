@@ -52,10 +52,12 @@ describe('fitNeoSnapshotBudget', () => {
     expect(fitted.trimmed).toContain('settled asks are left out');
   });
 
-  test('says how many open asks it left out when even the open ones do not fit', () => {
+  test('keeps all mandatory ask headers even when they exceed a tiny budget', () => {
     const fitted = fitNeoSnapshotBudget(snapshot(40, 0), 4_000);
-    expect(bytes(fitted)).toBeLessThanOrEqual(4_000);
-    expect(fitted.trimmed).toMatch(/older open asks are also left out|only open asks/);
+    expect(fitted.todoAsks).toHaveLength(40);
+    expect(fitted.todoAsks?.every((entry) => entry.todos.length === 0)).toBe(true);
+    expect(bytes(fitted)).toBeGreaterThan(4_000);
+    expect(fitted.trimmed).toContain('neo.ask.read');
   });
 
   test('keeps the daemon counts when the snapshot falls back to its skeleton', () => {
@@ -67,8 +69,8 @@ describe('fitNeoSnapshotBudget', () => {
     expect(fitted.neoUnhandled).toBe(2);
   });
 
-  test('the trimmed note never pushes the result past the budget', () => {
-    for (const budget of [2_000, 6_000, 20_000]) {
+  test('the trimmed note fits when mandatory headers fit the budget', () => {
+    for (const budget of [6_000, 20_000]) {
       const fitted = fitNeoSnapshotBudget(snapshot(30, 30), budget);
       expect(bytes(fitted)).toBeLessThanOrEqual(budget);
     }
