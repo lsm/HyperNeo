@@ -47,6 +47,14 @@ test('the CI command rejects an added main-thread prepare', () => {
   expect(result.code).toBe(1);
 });
 
+test('the CI command rejects an added main-thread prepare in the Space package', () => {
+  const f = fixture();
+  f.put('packages/space/src/action.ts', "db.prepare('SELECT 2');");
+  const result = f.run();
+  expect(result.output).toContain('prepare: 2 > baseline 1');
+  expect(result.code).toBe(1);
+});
+
 test('unchanged source passes; schema and actual worker entrypoints are excluded', () => {
   const f = fixture();
   f.put('packages/daemon/src/storage/schema/m999.ts', 'db.prepare(); db.transaction();');

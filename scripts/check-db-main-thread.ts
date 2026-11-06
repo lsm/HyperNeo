@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const baselinePath = 'scripts/db-main-thread-baseline.json';
@@ -54,6 +54,8 @@ function count(root: string): Counts {
     }
   };
   walk(join(root, 'packages/daemon/src'));
+  const spaceRoot = join(root, 'packages/space/src');
+  if (existsSync(spaceRoot)) walk(spaceRoot, 'lib/space/');
   return counts;
 }
 
