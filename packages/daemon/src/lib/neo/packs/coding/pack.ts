@@ -234,7 +234,7 @@ export function createCodingPack(deps: {
         repos,
         now,
         openTodoIds.flatMap((todoId) =>
-          deps.todoPrs.pinned(todoId).map((pr) => ({ todoId, url: pr.url, state: pr.state }))
+          deps.todoPrs.prs(todoId).map((pr) => ({ todoId, url: pr.url, state: pr.state }))
         )
       ),
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,

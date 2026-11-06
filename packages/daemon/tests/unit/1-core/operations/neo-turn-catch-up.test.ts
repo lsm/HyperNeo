@@ -132,7 +132,13 @@ describe('openWorkerRefs', () => {
     send('d4', 'b', { ref: { adapter: 'hyperneo', id: 'done' } });
     send('d5', 'c', { ref: { adapter: 'hyperneo', id: 'shut' } });
     send('d6', 'e', { ref: { adapter: 'hyperneo', id: 'failed' } });
+    todo('f', 'open', 'doing');
+    const bound = { adapter: 'hyperneo', id: 'bound' };
+    db.prepare(
+      `INSERT INTO neo_todo_sessions (todo_id, target, ref, started_at) VALUES ('f', ?, ?, 5)`
+    ).run(JSON.stringify({ verb: 'adopt', ref: bound, boundAt: 5 }), JSON.stringify(bound));
     expect(new WorkDeliveryInputRepository(db).openWorkerRefs()).toEqual([
+      { ref: bound, lastActivityAt: null },
       { ref, lastActivityAt: 9 },
     ]);
     db.close();

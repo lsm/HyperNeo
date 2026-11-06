@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  planCodingLedgerTurnOwner,
+  planCodingRowOwner,
+} from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
+import {
   type CodingTurn,
   codingTurnSessionKey,
   planCodingTurnFacts,
@@ -155,6 +159,65 @@ describe('coding turn ownership', () => {
   test('the same session keeps the turn holding the creation', () => {
     const early = turn({ id: 't0', startedAt: 1, endedAt: 50, inputs: ['receipt-b'] });
     expect(owner([early, turn()])).toEqual({ state: 'placed', session, todo: 'todo-a' });
+  });
+});
+
+describe('bound todos', () => {
+  const bind = (todo: string, boundAt: number, finishedAt: number | null = null) => ({
+    todo,
+    boundAt,
+    finishedAt,
+  });
+  const typed = { inputs: ['typed-by-a-person'] };
+
+  test('the turn running at the bind places the PR on the bound todo', () => {
+    expect(owner([turn({ ...typed, bound: [bind('todo-c', 150)] })])).toEqual({
+      state: 'placed',
+      session,
+      todo: 'todo-c',
+    });
+  });
+
+  test('a later turn with no input continues the bound todo', () => {
+    expect(owner([turn({ inputs: [], bound: [bind('todo-c', 50)] })])).toMatchObject({
+      todo: 'todo-c',
+    });
+  });
+
+  test('a turn that ended before the bind does not count', () => {
+    expect(owner([turn({ ...typed, bound: [bind('todo-c', 250)] })])).toMatchObject({
+      state: 'placed',
+      todo: null,
+    });
+  });
+
+  test('a turn after the bound todo finished does not count', () => {
+    expect(owner([turn({ ...typed, bound: [bind('todo-c', 50, 90)] })])).toMatchObject({
+      state: 'placed',
+      todo: null,
+    });
+  });
+
+  test('a human or no-todo turn after the bind stays unknown', () => {
+    expect(owner([turn({ ...typed, bound: [bind('todo-c', 50)] })])).toEqual({ state: 'unknown' });
+  });
+
+  test('a receipt for another todo wins', () => {
+    expect(owner([turn({ bound: [bind('todo-c', 50)] })])).toMatchObject({ todo: 'todo-a' });
+  });
+
+  test('two todos bound to one turn stay unknown', () => {
+    const bound = [bind('todo-c', 150), bind('todo-d', 160)];
+    expect(owner([turn({ ...typed, bound })])).toEqual({ state: 'unknown' });
+  });
+
+  test('an unknown human turn after a bind leaves the PR unowned, so the notice fires', () => {
+    const shown = turn({ ...typed, bound: [bind('todo-c', 50)] });
+    const placed = planCodingLedgerTurnOwner(
+      { repo: 'acme/app', number: 7, createdAt: 150 },
+      { turns: [shown], todos }
+    );
+    expect(planCodingRowOwner({ owner: null }, undefined, placed, () => 'guess')).toBeNull();
   });
 });
 

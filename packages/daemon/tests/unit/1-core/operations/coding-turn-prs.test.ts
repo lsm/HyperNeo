@@ -12,6 +12,7 @@ import {
   WorkTurnRepository,
 } from '../../../../src/storage/repositories/work-turn-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
+import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 
@@ -213,12 +214,28 @@ describe('coding turn PRs', () => {
     db.close();
   });
 
-  test('the snapshot pins what the rule places', () => {
-    const { db, send, record } = setup();
-    send('d1', 'a', 'receipt-a');
-    record(fact('t1', ['receipt-a'], [url], 100));
-    ledger(db, 105);
-    expect(new CodingTodoPrRepository(db).pinned('a')).toEqual([{ url, state: null }]);
+  test('a bound todo owns the turn running at its bind, with no delivery row', async () => {
+    const { db, record } = setup();
+    db.exec('PRAGMA foreign_keys = OFF');
+    record(fact('t1', ['typed'], [url], 100), fact('t0', ['typed'], [url], 50));
+    new NeoTodoSessionRepository(db).bind('c', ref, 105);
+    const turns = new CodingTurnPrRepository(db);
+    expect(turns.own('c').map(({ id }) => id)).toEqual(['t1']);
+    expect(turns.mentions([url]).turns.find(({ id }) => id === 't1')?.bound).toMatchObject([
+      { todo: 'c', boundAt: 105 },
+    ]);
+    const pack = createCodingTodoPack(new CodingTodoPrRepository(db), async () => [merged(105)]);
+    expect((await pack.readFacts(todo('c'), false))?.prs).toHaveLength(1);
+    db.close();
+  });
+
+  test('a human turn after the bind keeps a bound todo open', async () => {
+    const { db, record } = setup();
+    db.exec('PRAGMA foreign_keys = OFF');
+    record(fact('t1', ['typed'], [url], 100));
+    new NeoTodoSessionRepository(db).bind('c', ref, 50);
+    const pack = createCodingTodoPack(new CodingTodoPrRepository(db), async () => [merged(105)]);
+    expect((await pack.readFacts(todo('c'), false))?.incomplete).toBe(true);
     db.close();
   });
 

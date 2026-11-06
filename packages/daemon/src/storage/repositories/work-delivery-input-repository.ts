@@ -114,14 +114,24 @@ export class WorkDeliveryInputRepository {
 
   openWorkerRefs(): { ref: WorkRef; lastActivityAt: number | null }[] {
     const rows = this.db
-      .prepare(`SELECT DISTINCT json_extract(d.outcome, '$.ref') AS ref,
-          w.last_activity_at AS lastActivityAt
-        FROM neo_asks a JOIN neo_todos t ON t.ask_id = a.id
-        JOIN work_delivery_inputs d ON d.todo_id = t.id
-        LEFT JOIN work_sessions w ON w.adapter = json_extract(d.outcome, '$.ref.adapter')
-          AND w.id = json_extract(d.outcome, '$.ref.id')
-        WHERE a.status = 'open' AND t.state NOT IN ('done', 'closed_unverified', 'failed', 'removed')
-          AND json_extract(d.outcome, '$.ref') IS NOT NULL`)
+      .prepare(`WITH workers(ref) AS (
+          SELECT json_extract(d.outcome, '$.ref')
+            FROM neo_asks a JOIN neo_todos t ON t.ask_id = a.id
+            JOIN work_delivery_inputs d ON d.todo_id = t.id
+            WHERE a.status = 'open'
+              AND t.state NOT IN ('done', 'closed_unverified', 'failed', 'removed')
+          UNION
+          SELECT s.ref
+            FROM neo_asks a JOIN neo_todos t ON t.ask_id = a.id
+            JOIN neo_todo_sessions s ON s.todo_id = t.id
+            WHERE a.status = 'open'
+              AND t.state NOT IN ('done', 'closed_unverified', 'failed', 'removed')
+              AND json_extract(s.target, '$.verb') = 'adopt'
+        )
+        SELECT workers.ref AS ref, w.last_activity_at AS lastActivityAt FROM workers
+        LEFT JOIN work_sessions w ON w.adapter = json_extract(workers.ref, '$.adapter')
+          AND w.id = json_extract(workers.ref, '$.id')
+        WHERE workers.ref IS NOT NULL ORDER BY workers.ref`)
       .all() as { ref: string; lastActivityAt: number | null }[];
     return rows.map((row) => ({ ...row, ref: JSON.parse(row.ref) as WorkRef }));
   }

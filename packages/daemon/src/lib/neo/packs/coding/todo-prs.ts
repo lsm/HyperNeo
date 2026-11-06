@@ -110,13 +110,6 @@ export class CodingTodoPrRepository {
     return (this.turnPrs.ownedPrs(todoId) ?? this.urls(todoId)).includes(codingPrKey(url) ?? url);
   }
 
-  pinned(todoId: string): { url: string; state: string | null }[] {
-    const recorded = this.prs(todoId);
-    const state = (url: string) =>
-      recorded.find((pr) => codingPrKey(pr.url) === url)?.state ?? null;
-    return this.turnPrs.ownedPrs(todoId)?.map((url) => ({ url, state: state(url) })) ?? recorded;
-  }
-
   claimsOn(urls: readonly string[]): CodingPrClaimRow[] {
     return this.db
       .prepare(

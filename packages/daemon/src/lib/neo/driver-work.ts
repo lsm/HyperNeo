@@ -69,7 +69,7 @@ export const NeoDriverTargetSchema = z.discriminatedUnion('verb', [
   NeoReadWorkTarget,
   NeoStartWorkTarget,
   NeoSendWorkTarget,
-  z.object({ verb: z.literal('adopt'), ref: WorkRefSchema }),
+  z.object({ verb: z.literal('adopt'), ref: WorkRefSchema, boundAt: z.number().optional() }),
 ]);
 
 export type NeoDriverTarget = z.infer<typeof NeoDriverTargetSchema>;

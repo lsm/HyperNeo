@@ -10,7 +10,9 @@ import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import type { NeoWorkPrReader } from './work-prs.ts';
 import {
   type CodingTurn,
+  type CodingTurnBind,
   type CodingTurnMentions,
+  codingTurnBoundUnknown,
   codingTurnSessionKey,
   codingTurnTodos,
   planCodingTurnFacts,
@@ -57,27 +59,62 @@ export class CodingTurnPrRepository {
     );
   }
 
+  private bindsOf(ref: WorkRef): CodingTurnBind[] {
+    return this.db
+      .prepare(`SELECT s.todo_id AS todo, json_extract(s.target, '$.boundAt') AS boundAt,
+          t.finished_at AS finishedAt
+        FROM neo_todo_sessions s LEFT JOIN neo_todos t ON t.id = s.todo_id
+        WHERE json_extract(s.target, '$.verb') = 'adopt'
+          AND json_extract(s.target, '$.boundAt') IS NOT NULL
+          AND json_extract(s.ref, '$.adapter') = ? AND json_extract(s.ref, '$.id') = ?
+          AND json_extract(s.ref, '$.daemon') IS ?`)
+      .all(ref.adapter, ref.id, ref.daemon ?? null) as CodingTurnBind[];
+  }
+
+  private boundRef(todoId: string): WorkRef | null {
+    const row = this.db
+      .prepare(`SELECT ref FROM neo_todo_sessions
+        WHERE todo_id = ? AND json_extract(target, '$.verb') = 'adopt' AND ref IS NOT NULL`)
+      .get(todoId) as { ref: string } | null;
+    return row ? (JSON.parse(row.ref) as WorkRef) : null;
+  }
+
   own(todoId: string): CodingTurn[] {
-    const refs = new Map(
-      this.deliveries.list(todoId).flatMap((row) => {
+    const bound = this.boundRef(todoId);
+    const refs = new Map([
+      ...this.deliveries.list(todoId).flatMap((row) => {
         const ref = deliveryRef(row);
         return ref ? [[JSON.stringify(ref), ref] as const] : [];
-      })
-    );
+      }),
+      ...(bound ? [[JSON.stringify(bound), bound] as const] : []),
+    ]);
     return [...refs.values()].flatMap((ref) => {
       const todos = this.todosOf(ref);
+      const binds = this.bindsOf(ref);
       return this.turns
         .list(ref)
-        .map((turn, index, all): CodingTurn => ({ ...turn, ref, previous: all[index - 1] ?? null }))
-        .filter((turn) => codingTurnTodos(turn, todos).includes(todoId));
+        .map(
+          (turn, index, all): CodingTurn => ({
+            ...turn,
+            ref,
+            previous: all[index - 1] ?? null,
+            bound: binds,
+          })
+        )
+        .filter(
+          (turn) =>
+            codingTurnTodos(turn, todos).includes(todoId) ||
+            (codingTurnBoundUnknown(turn, todos) && binds.some(({ todo }) => todo === todoId))
+        );
     });
   }
 
   mentions(urls: readonly string[]): CodingTurnMentions {
-    const turns = this.turns.mentioning(urls);
-    const refs = new Map(turns.map((turn) => [JSON.stringify(turn.ref), turn.ref]));
+    const found = this.turns.mentioning(urls);
+    const refs = new Map(found.map((turn) => [JSON.stringify(turn.ref), turn.ref]));
+    const binds = new Map([...refs].map(([key, ref]) => [key, this.bindsOf(ref)]));
     return {
-      turns,
+      turns: found.map((turn) => ({ ...turn, bound: binds.get(JSON.stringify(turn.ref)) })),
       todos: Object.fromEntries(
         [...refs.values()].map((ref) => [codingTurnSessionKey(ref), this.todosOf(ref)])
       ),
