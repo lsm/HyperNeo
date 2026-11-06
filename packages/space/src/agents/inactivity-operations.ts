@@ -4,18 +4,18 @@ import type {
   SpaceAgentInactivityClaimRepository,
   SpaceAgentInactivityConfig,
   SpaceAgentInactivityConfigRepository,
-} from '../../../storage/repositories/space-agent-inactivity-repository.ts';
+} from '../../../daemon/src/storage/repositories/space-agent-inactivity-repository.ts';
 import {
   admitEventCallerSpace,
   callerSessionActiveIn,
   type EventCallerDependencies,
-} from '../../../../../space/src/external-events/operation-admission.ts';
+} from '../external-events/operation-admission.ts';
 import {
   defineOperation,
   type OperationCaller,
   type OperationCallerRole,
   type OperationDefinition,
-} from '../../operations/registry.ts';
+} from '../../../daemon/src/lib/operations/registry.ts';
 
 export const DEFAULT_INACTIVITY_THRESHOLD_MS = 24 * 60 * 60 * 1000;
 
