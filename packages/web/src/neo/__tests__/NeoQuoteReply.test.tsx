@@ -452,6 +452,9 @@ describe('Neo quote reply through live chat and durable intake', () => {
       submit();
       await waitFor(() => expect(calls()).toHaveLength(1));
       expect(screen.queryByRole('region', { name: /^回复/ })).toBeNull();
+      expect(
+        screen.getByRole('textbox', { name: '给 Neo 发消息' }).getAttribute('aria-describedby')
+      ).toBeNull();
       if (change === 'replacement') quote('You');
       if (change === 'cancel' || change === 'reselection') {
         quote('You');
