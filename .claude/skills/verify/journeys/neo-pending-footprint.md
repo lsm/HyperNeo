@@ -14,8 +14,11 @@ random ports excluding 8399/8499. It saves evidence, stops its servers and delet
 temporary daemon data. The browser stays on its isolated origin and delays the
 real send request by 1100ms without substituting its reply.
 
-At 1280px and 390px, send synthetic history, quote a message longer than the stored
-300-character excerpt and send plain and multiline replies. Capture the pending row after 650ms and
+At 1280px and 390px, use separate fine-pointer and touch browser contexts. Set
+`hasTouch: true` for touch and assert the actual `(pointer: coarse)` media query.
+Use tap on the send button for touch, and Enter for the fine-pointer keyboard.
+Reuse only the synthetic pairing state in memory. Send synthetic history, quote a
+message longer than the stored 300-character excerpt and send plain and multiline replies. Capture the pending row after 650ms and
 the durable row after acceptance. Require identical composer/pending/durable quote
 text, row heights, and the bubble's offset from its row's bottom, within 2px.
 Inspect the pending/durable screenshots and evidence.json. Record text typography
