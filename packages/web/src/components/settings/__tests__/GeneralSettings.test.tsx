@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render } from '@testing-library/preact';
+import { cleanup, render } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const { updateGlobalSettings } = vi.hoisted(() => ({
@@ -15,24 +15,13 @@ describe('GeneralSettings', () => {
     updateGlobalSettings.mockClear();
   });
 
-  it('saves the default chat view', () => {
-    const { container } = render(<GeneralSettings />);
-    const select = [...container.querySelectorAll('select')].find((element) =>
-      [...element.options].some((option) => option.value === 'compact')
-    )!;
-    expect(select.value).toBe('compact');
-    fireEvent.change(select, { target: { value: 'full' } });
-    expect(updateGlobalSettings).toHaveBeenCalledWith({ chatDisplayMode: 'full' });
-  });
-
-  it('saves the language, defaulting to the browser language', () => {
-    const { container } = render(<GeneralSettings />);
-    const select = [...container.querySelectorAll('select')].find((element) =>
-      [...element.options].some((option) => option.value === 'zh-Hans')
-    )!;
-    expect(select.value).toBe('system');
-    fireEvent.change(select, { target: { value: 'zh-Hans' } });
-    expect(updateGlobalSettings).toHaveBeenCalledWith({ language: 'zh-Hans' });
+  it('leaves the everyday items to Preferences', () => {
+    const { queryByText } = render(<GeneralSettings />);
+    for (const label of ['Language', 'Default chat view', 'Show Archived Sessions'])
+      expect(queryByText(label)).toBeNull();
+    expect(queryByText('Permission Mode')).toBeTruthy();
+    expect(queryByText('GitHub polling interval (seconds)')).toBeTruthy();
+    expect(queryByText('Setting Sources')).toBeTruthy();
   });
 
   it('has no default thinking control; it lives beside the default model', () => {

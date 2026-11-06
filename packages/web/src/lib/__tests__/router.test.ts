@@ -322,9 +322,22 @@ describe('router', () => {
       initializeRouter();
 
       expect(navSectionSignal.value).toBe('settings');
-      expect(settingsSectionSignal.value).toBe('general');
+      expect(settingsSectionSignal.value).toBe('preferences');
     }
   );
+
+  it('opens Preferences for the bare settings route and the old Appearance link', () => {
+    setPath('/settings');
+    initializeRouter();
+    expect(settingsSectionSignal.value).toBe('preferences');
+
+    cleanupRouter();
+    settingsSectionSignal.value = 'providers';
+    setPath('/settings?tab=appearance');
+    initializeRouter();
+    expect(navSectionSignal.value).toBe('settings');
+    expect(settingsSectionSignal.value).toBe('preferences');
+  });
 
   it('navigates to settings tabs and updates URL query parameters', () => {
     navigateToSettings('skills');
