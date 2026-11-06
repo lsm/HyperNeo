@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
+import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPack, NeoTodoCheckResult } from '../../../../src/lib/neo/pack-contract.ts';
 import {
@@ -2376,6 +2377,10 @@ describe('stopped worker ladder', () => {
       await h.at(20);
       expect(h.told).toEqual([expect.stringContaining('did not reach its worker')]);
       expect(h.store.getTodo(h.todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
+      await h.at(21);
+      await h.at(22);
+      expect(h.told.filter((note) => note.includes('has nobody working on it'))).toHaveLength(1);
+      expect(h.store.listQuestions(h.todo.askId).filter((q) => q.state === 'open')).toEqual([]);
     } finally {
       h.clock.mockRestore();
       h.db.close();
@@ -2772,7 +2777,7 @@ describe('worker final-line blockers', () => {
     }
   );
   test.each(['unchanged', 'edited', 'question', 'closed', 'new-input'] as const)(
-    'only falls back after an untouched hour: %s',
+    'reminds Neo once after an untouched hour and never opens a card: %s',
     async (action) => {
       const h = setup(false);
       const clock = vi.spyOn(Date, 'now');
@@ -2839,18 +2844,15 @@ describe('worker final-line blockers', () => {
         const open = h.store
           .listQuestions('ask')
           .filter((q) => q.todoId === todo.id && q.state === 'open');
-        expect(open).toHaveLength(action === 'unchanged' || action === 'question' ? 1 : 0);
+        expect(open).toHaveLength(action === 'question' ? 1 : 0);
         if (action === 'edited') expect(h.store.getTodo(todo.id)?.blockedBy).toBe('needs-human');
+        const reminders = () => h.told.filter((note) => note.includes('still waits on'));
+        expect(reminders()).toHaveLength(action === 'unchanged' ? 1 : 0);
         if (action === 'unchanged') {
-          expect(open[0]).toMatchObject({
-            kind: 'reply',
-            text: 'Awaiting Neo confirmation',
-            sourceSession: { id: ref.id },
-          });
+          expect(reminders()[0]).toContain('Awaiting Neo confirmation');
           await h.runner.refresh(() => {});
-          expect(
-            h.store.listQuestions('ask').filter((q) => q.todoId === todo.id && q.state === 'open')
-          ).toHaveLength(1);
+          expect(reminders()).toHaveLength(1);
+          expect(h.store.listQuestions('ask').filter((q) => q.todoId === todo.id)).toHaveLength(0);
         }
         expect(h.calls.filter((c) => c.name === 'work.send')).toHaveLength(0);
       } finally {
@@ -2895,6 +2897,31 @@ describe('worker final-line blockers', () => {
     }
   });
 });
+
+function askForWorker(h: ReturnType<typeof setup>, todoId: string) {
+  const question = h.store.askQuestion(
+    crypto.randomUUID(),
+    'ask',
+    {
+      text: 'Approve it?',
+      kind: 'yesno',
+      options: null,
+      multiple: false,
+      noLabel: null,
+      yesLabel: null,
+      startTodos: null,
+      todoId,
+      document: null,
+    },
+    Date.now()
+  );
+  h.store.questionAnswers.bind(question.id, todoId, {
+    ...workerIdentity(ref, null),
+    provider: ref.adapter,
+    link: null,
+  });
+  return question;
+}
 
 describe('worker blocker ownership', () => {
   test.each(['focused', 'old-input', 'held', 'replaced'] as const)(
@@ -2998,7 +3025,7 @@ describe('worker blocker ownership', () => {
       h.db.close();
     }
   });
-  test('does not re-ask while an answered fallback cannot reach the worker', async () => {
+  test('does not re-ask while an answered card cannot reach the worker', async () => {
     const h = setup(false);
     const clock = vi.spyOn(Date, 'now');
     try {
@@ -3019,8 +3046,7 @@ describe('worker blocker ownership', () => {
       });
       await h.runner.refresh(() => {});
       clock.mockReturnValue(start + 60 * 60_000);
-      await h.runner.refresh(() => {});
-      const question = h.store.listQuestions('ask').find((q) => q.todoId === todo.id)!;
+      const question = askForWorker(h, todo.id);
       h.store.answerQuestion(question, 'Approved', 'chat', Date.now());
       await createNeoQuestionAnswerDelivery(
         h.store,
@@ -3066,13 +3092,7 @@ describe('worker blocker ownership', () => {
         },
       });
       await h.runner.refresh(() => {});
-      const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 60 * 60_000);
-      try {
-        await h.runner.refresh(() => {});
-      } finally {
-        clock.mockRestore();
-      }
-      const question = h.store.listQuestions('ask').find((q) => q.todoId === todo.id)!;
+      const question = askForWorker(h, todo.id);
       h.store.answerQuestion(question, 'Approved', 'chat', Date.now());
       await createNeoQuestionAnswerDelivery(
         h.store,
