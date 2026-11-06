@@ -66,7 +66,7 @@ import { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-
 import { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import { createConversationFrictionEvidenceHandler } from '../../../../../space/src/job-handlers/conversation-friction-evidence.handler.ts';
 import { handleGoalAutomationExecute } from '../../../../../space/src/job-handlers/goal-automation-execute.handler.ts';
-import { GoalAutomationService } from '../goals/automation-service.ts';
+import { GoalAutomationService } from '../../../../../space/src/goals/automation-service.ts';
 import {
   GOAL_AUTOMATION_EXECUTE,
   SPACE_CONVERSATION_FRICTION_ANALYZE,
@@ -119,7 +119,7 @@ import { ScheduleService } from '../../schedule/schedule-service.ts';
 import { SpaceGoalEventRepository } from '../../../storage/repositories/space-goal-event-repository.ts';
 import { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
 import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
-import { SpaceGoalService } from '../goals/service.ts';
+import { SpaceGoalService } from '../../../../../space/src/goals/service.ts';
 import { mergeEvolutionPolicy } from '../evolution/scope-service.ts';
 import type { RPCHandlerDependencies } from '../../rpc-handlers/index.ts';
 import type { ExternalEventService } from '../../external-events/external-event-service.ts';

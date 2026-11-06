@@ -1,17 +1,20 @@
 import type { SpaceGoal, SpaceGoalOwnerResolution } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import type { SpaceAgentGoalScopeRepository } from '../../../storage/repositories/space-agent-goal-scope-repository.ts';
-import { defineOperation, type OperationCaller } from '../../operations/registry.ts';
+import type { SpaceAgentGoalScopeRepository } from '../../../daemon/src/storage/repositories/space-agent-goal-scope-repository.ts';
+import {
+  defineOperation,
+  type OperationCaller,
+} from '../../../daemon/src/lib/operations/registry.ts';
 import {
   admitGoalAccess,
   GoalRejectionSchema,
   GoalSpaceScopeShape,
   type GoalCallerContext,
   type GoalRejection,
-} from '../../../../../space/src/goals/goal-operation-scope.ts';
-import { GOAL_READ_POLICY } from '../../goals/goal-contract.ts';
-import { GoalOwnerResolutionSchema } from '../../../../../space/src/goals/goal-result-schemas.ts';
+} from './goal-operation-scope.ts';
+import { GOAL_READ_POLICY } from '../../../daemon/src/lib/goals/goal-contract.ts';
+import { GoalOwnerResolutionSchema } from './goal-result-schemas.ts';
 import type { SpaceGoalService } from './service.ts';
 
 const inputSchema = z

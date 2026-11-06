@@ -9,10 +9,7 @@ import { Logger } from '../../../daemon/src/lib/logger.ts';
 import { recordGoalEvent } from './event-recording.ts';
 import { recordOutcomeNotification } from './outcome-notifications.ts';
 import { requireActiveSpaceForTaskCreation, requireGoal, runAtomic } from './persistence.ts';
-import type {
-  SpaceGoalMutationContext,
-  SpaceGoalServiceDeps,
-} from '../../../daemon/src/lib/space/goals/service.ts';
+import type { SpaceGoalMutationContext, SpaceGoalServiceDeps } from './service.ts';
 import { isActiveTaskStatus, isTerminalTaskStatus } from './task-status.ts';
 import { buildTaskDescription, goalTaskLabels } from './task-template.ts';
 

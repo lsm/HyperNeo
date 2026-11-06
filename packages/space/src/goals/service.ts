@@ -11,37 +11,33 @@ import type {
   InternalUpdateSpaceTaskParams,
   UpdateSpaceGoalParams,
 } from '@hyperneo/shared';
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
-import type { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
-import type { SpaceGoalEventRepository } from '../../../storage/repositories/space-goal-event-repository.ts';
-import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
-import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
-import type { SpaceAgentGoalScopeRepository } from '../../../storage/repositories/space-agent-goal-scope-repository.ts';
-import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository.ts';
-import type { ScheduleService } from '../../schedule/schedule-service.ts';
+import type { Database as BunDatabase } from '../../../daemon/src/storage/sqlite-compat.ts';
+import type { SpaceRepository } from '../../../daemon/src/storage/repositories/space-repository.ts';
+import type { SpaceTaskRepository } from '../../../daemon/src/storage/repositories/space-task-repository.ts';
+import type { SpaceGoalEventRepository } from '../../../daemon/src/storage/repositories/space-goal-event-repository.ts';
+import type { SpaceGoalOutcomeNotificationRepository } from '../../../daemon/src/storage/repositories/space-goal-outcome-notification-repository.ts';
+import type { SpaceGoalRepository } from '../../../daemon/src/storage/repositories/space-goal-repository.ts';
+import type { SpaceAgentGoalScopeRepository } from '../../../daemon/src/storage/repositories/space-agent-goal-scope-repository.ts';
+import type { SpaceAgentRepository } from '../../../daemon/src/storage/repositories/space-agent-repository.ts';
+import type { ScheduleService } from '../../../daemon/src/lib/schedule/schedule-service.ts';
 import type { GoalAutomationService } from './automation-service.ts';
-import { updateScheduledCheckIn } from '../../../../../space/src/goals/check-in-schedule.ts';
-import type { ClaimAdmissionDenyReason } from '../../../../../space/src/goals/claim-admission-gates.ts';
-import { listGoalEvents } from '../../../../../space/src/goals/event-recording.ts';
-import {
-  createGoal,
-  resolveGoalWorkspacePath,
-  updateGoal,
-} from '../../../../../space/src/goals/lifecycle.ts';
+import { updateScheduledCheckIn } from './check-in-schedule.ts';
+import type { ClaimAdmissionDenyReason } from './claim-admission-gates.ts';
+import { listGoalEvents } from './event-recording.ts';
+import { createGoal, resolveGoalWorkspacePath, updateGoal } from './lifecycle.ts';
 import {
   applyOutcomeGoalUpdate,
   claimOutcomeNotification,
   listClaimableOutcomeNotifications,
   supersedeOutcomeNotificationsForTask,
-} from '../../../../../space/src/goals/outcome-notifications.ts';
+} from './outcome-notifications.ts';
 import {
   canClaimScheduledTask,
   claimScheduledTask,
   createImmediateTask,
   handleTaskTerminal,
   retryQueuedRunsForSpace,
-} from '../../../../../space/src/goals/task-pointers.ts';
+} from './task-pointers.ts';
 
 export type PublicSpaceGoalUpdateParams = Pick<
   UpdateSpaceGoalParams,
@@ -121,11 +117,11 @@ export interface SpaceGoalServiceDeps {
   outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
   onOutcomeNotification?: (notification: SpaceGoalOutcomeNotification) => void;
   evolutionScopeService?: Pick<
-    import('../evolution/scope-service.ts').EvolutionScopeService,
+    import('../../../daemon/src/lib/space/evolution/scope-service.ts').EvolutionScopeService,
     'captureCompletedTaskEvidence'
   >;
   reactiveDb?: Pick<
-    import('../../../storage/reactive-database.ts').ReactiveDatabase,
+    import('../../../daemon/src/storage/reactive-database.ts').ReactiveDatabase,
     'beginTransaction' | 'commitTransaction' | 'abortTransaction'
   >;
   resolveWorkspacePath?: (spaceId: string, rawPath: string) => Promise<string>;

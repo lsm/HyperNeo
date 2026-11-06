@@ -1,4 +1,4 @@
-import type { OperationDefinition } from '../../operations/registry.ts';
+import type { OperationDefinition } from '../../../daemon/src/lib/operations/registry.ts';
 import { type CreateGoalDependencies, createCreateGoalOperation } from './create-goal-operation.ts';
 import {
   createGetGoalOwnerOperation,

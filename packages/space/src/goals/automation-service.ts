@@ -1,4 +1,4 @@
-import { uniqueJobMatchPayload } from '../../../../../space/src/goals/automation-job-payload.ts';
+import { uniqueJobMatchPayload } from './automation-job-payload.ts';
 import type {
   EvidenceRef,
   EvolutionScope,
@@ -6,21 +6,21 @@ import type {
   SpaceGoal,
   SpaceTask,
 } from '@hyperneo/shared';
-import { GOAL_AUTOMATION_EXECUTE } from '../../job-queue-constants.ts';
-import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service.ts';
-import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
-import type { EvolutionRepository } from '../../../storage/repositories/evolution-repository.ts';
-import type { GoalAutomationCursorRepository } from '../../../storage/repositories/goal-automation-cursor-repository.ts';
-import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
-import type { EvolutionScopeService } from '../evolution/scope-service.ts';
-import type { GoalAutomationExecutePayload } from '../../../../../space/src/job-handlers/goal-automation-execute.handler.ts';
-import { Logger } from '../../logger.ts';
+import { GOAL_AUTOMATION_EXECUTE } from '../../../daemon/src/lib/job-queue-constants.ts';
+import type { ExternalEventPublishedPayload } from '../../../daemon/src/lib/external-events/external-event-service.ts';
+import type { JobQueueRepository } from '../../../daemon/src/storage/repositories/job-queue-repository.ts';
+import type { EvolutionRepository } from '../../../daemon/src/storage/repositories/evolution-repository.ts';
+import type { GoalAutomationCursorRepository } from '../../../daemon/src/storage/repositories/goal-automation-cursor-repository.ts';
+import type { SpaceGoalRepository } from '../../../daemon/src/storage/repositories/space-goal-repository.ts';
+import type { SpaceTaskRepository } from '../../../daemon/src/storage/repositories/space-task-repository.ts';
+import type { EvolutionScopeService } from '../../../daemon/src/lib/space/evolution/scope-service.ts';
+import type { GoalAutomationExecutePayload } from '../job-handlers/goal-automation-execute.handler.ts';
+import { Logger } from '../../../daemon/src/lib/logger.ts';
 import {
   findMatchingSubscription,
   readAutomationPolicyForScope,
   readCompletedTaskThreshold,
-} from '../../../../../space/src/goals/automation-policy.ts';
+} from './automation-policy.ts';
 
 const DEFAULT_MAX_EVIDENCE_PER_EPISODE = 12;
 const log = new Logger('goal-automation-service');
