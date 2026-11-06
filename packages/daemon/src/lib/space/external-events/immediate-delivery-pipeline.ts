@@ -8,7 +8,7 @@ import { ensurePrompt, retryPrompt } from '../../agent/message-delivery-outbox.t
 import { buildSyntheticExternalEventMessage } from '../../external-events/deferred-event-digest.ts';
 import { buildImmediateEventMessageUuid } from '../../external-events/event-delivery-rules.ts';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service.ts';
-import type { ExternalEventStore } from './external-event-store.ts';
+import type { ExternalEventStore } from '../../../../../space/src/external-events/external-event-store.ts';
 import {
   prepareExternalEventTask,
   resolveCurrentQueueableOrActiveExecution,

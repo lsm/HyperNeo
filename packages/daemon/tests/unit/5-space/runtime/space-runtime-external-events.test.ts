@@ -11,8 +11,8 @@ import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-run
 import { renderEventBlock } from '../../../../src/lib/external-events/deferred-event-digest';
 import { essenceEntryFromExternalEvent } from '../../../../src/lib/external-events/event-essence-entry';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
-import { ExternalEventStore } from '../../../../src/lib/space/external-events/external-event-store';
-import { ExternalEventQueueMetrics } from '../../../../src/lib/space/external-events/queue-health-metrics';
+import { ExternalEventStore } from '../../../../../space/src/external-events/external-event-store';
+import { ExternalEventQueueMetrics } from '../../../../../space/src/external-events/queue-health-metrics';
 import type {
   ExternalEvent,
   ExternalEventDeliveryRecord,

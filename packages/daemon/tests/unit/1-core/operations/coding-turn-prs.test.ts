@@ -5,6 +5,7 @@ import {
   createCodingTodoPack,
   CodingTodoPrRepository,
 } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
+import { codingTurnSessionKey } from '../../../../src/lib/neo/packs/coding/turn-owner.ts';
 import { CodingTurnPrRepository } from '../../../../src/lib/neo/packs/coding/turn-prs.ts';
 import {
   recordWorkTurns,
@@ -136,7 +137,10 @@ describe('coding turn PRs', () => {
     const turns = new CodingTurnPrRepository(db);
     expect(turns.own('a').map(({ id }) => id)).toEqual(['t1']);
     expect(turns.own('b').map(({ id }) => id)).toEqual(['t2']);
-    expect(turns.mentions([url]).todos).toMatchObject({ 'desktop-pending:abc123': 'a', t2: 'b' });
+    expect(turns.mentions([url]).todos[codingTurnSessionKey(ref)]).toMatchObject({
+      'desktop-pending:abc123': 'a',
+      t2: 'b',
+    });
     db.close();
   });
 
@@ -154,6 +158,7 @@ describe('coding turn PRs', () => {
 
   test('a PR the check names keeps its named claim', async () => {
     const { db, send, record } = setup();
+    db.exec('PRAGMA foreign_keys = OFF');
     send('d1', 'a', 'receipt-a');
     record(fact('t1', ['receipt-a'], [url], 100));
     const pack = createCodingTodoPack(new CodingTodoPrRepository(db), async () => [merged(105)]);
