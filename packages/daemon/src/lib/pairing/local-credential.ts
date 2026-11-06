@@ -1,6 +1,6 @@
 import { constants, openSync, fstatSync, readFileSync, closeSync, lstatSync } from 'node:fs';
 import NodeWebSocket from 'ws';
-import { mkdir, open, link, rm } from 'node:fs/promises';
+import { mkdir, open, link, rm, rename, writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { getDataDir } from '../data-dir.ts';
@@ -12,14 +12,14 @@ export const localCredentialPath = () => join(getDataDir(), 'local-rpc.credentia
 export const agentReadCredentialPath = (dataDir = getDataDir()) =>
   join(dataDir, 'agent-read.credential');
 
-export function readLocalCredential(path = localCredentialPath()): string {
+export function readLocalCredential(path = localCredentialPath(), origin?: string | null): string {
   if (lstatSync(path).isSymbolicLink()) throw new Error('Local credential cannot be a symlink.');
   const file = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const stat = fstatSync(file);
     if (
       !stat.isFile() ||
-      stat.size > 64 ||
+      stat.size > (origin === undefined ? 64 : 4096) ||
       (process.platform !== 'win32' && (stat.mode & 0o077) !== 0) ||
       (process.platform !== 'win32' && process.getuid && stat.uid !== process.getuid())
     )
@@ -30,9 +30,18 @@ export function readLocalCredential(path = localCredentialPath()): string {
         false,
         `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`
       );
-    const credential = readFileSync(file, 'utf8').trim();
+    let credential = readFileSync(file, 'utf8').trim();
+    if (origin !== undefined) {
+      const bound = JSON.parse(credential) as { credential?: string; origin?: string } | null;
+      if (origin !== null && bound?.origin !== origin)
+        throw new Error('Card link origin does not match this agent credential.');
+      credential = bound?.credential ?? '';
+    }
     if (!/^[A-Za-z0-9_-]{43}$/.test(credential)) throw new Error('Invalid local RPC credential.');
     return credential;
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new Error('Invalid bound agent credential.');
+    throw error;
   } finally {
     closeSync(file);
   }
@@ -46,7 +55,8 @@ export function createLocalSocket(url: string, path = localCredentialPath()): We
 
 export async function ensureLocalCredential(
   db: DbGateway,
-  kind: 'human' | 'agent' = 'human'
+  kind: 'human' | 'agent' = 'human',
+  origin?: string
 ): Promise<void> {
   await mkdir(getDataDir(), { recursive: true, mode: 0o700 });
   const path = kind === 'agent' ? agentReadCredentialPath() : localCredentialPath();
@@ -55,15 +65,27 @@ export async function ensureLocalCredential(
     const file = await open(temporary, 'wx', 0o600);
     try {
       if (process.platform === 'win32') checkWindowsCredential(temporary, true);
-      await file.writeFile(randomBytes(32).toString('base64url'));
+      const credential = randomBytes(32).toString('base64url');
+      await file.writeFile(kind === 'agent' ? JSON.stringify({ credential, origin }) : credential);
     } finally {
       await file.close();
     }
-    await link(temporary, path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    try {
+      await link(temporary, path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+    if (kind === 'agent') {
+      const credential = readLocalCredential(path, null);
+      await writeFile(temporary, JSON.stringify({ credential, origin }));
+      await rename(temporary, path);
+    }
   } finally {
     await rm(temporary, { force: true });
   }
-  await db.run(enrollLocalDevice, { credential: readLocalCredential(path), now: Date.now(), kind });
+  await db.run(enrollLocalDevice, {
+    credential: readLocalCredential(path, kind === 'agent' ? null : undefined),
+    now: Date.now(),
+    kind,
+  });
 }

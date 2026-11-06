@@ -35,7 +35,7 @@ import { DaemonConfigService } from './lib/daemon-config-service.ts';
 import { SettingsManager } from './lib/settings-manager.ts';
 import { StateProjectionService } from './lib/state-projection-service.ts';
 import { BUILD_METADATA } from './lib/build-metadata.ts';
-import { writeRuntimeDescriptor } from './lib/runtime-descriptor.ts';
+import { dialableHost, writeRuntimeDescriptor } from './lib/runtime-descriptor.ts';
 import { createClientEventBridge } from './lib/client-event-bridge.ts';
 import {
   MAX_GITHUB_POLLING_INTERVAL_SECONDS,
@@ -1205,7 +1205,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     );
     if (process.env.NODE_ENV !== 'test' || process.env.HYPERNEO_DATA_DIR) {
       await ensureLocalCredential(db.gateway);
-      await ensureLocalCredential(db.gateway, 'agent');
     }
     const guardOrigin = createRequestGuard({
       db: () => db.gateway,
@@ -1372,6 +1371,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         );
       },
     });
+
+    if (process.env.NODE_ENV !== 'test' || process.env.HYPERNEO_DATA_DIR)
+      await ensureLocalCredential(
+        db.gateway,
+        'agent',
+        new URL(`http://${dialableHost(config.host)}:${server.port}`).origin
+      );
 
     startupTimer.start('post-bind jobs + background services');
     void db.startSdkMessageColumnsBackfill(() => {

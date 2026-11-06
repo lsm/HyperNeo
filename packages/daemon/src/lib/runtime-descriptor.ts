@@ -14,7 +14,7 @@ export interface RuntimeDescriptor {
 
 const LOOPBACK_HOSTS = new Set(['0.0.0.0', '::', '::0', '']);
 
-function dialableHost(bindHost: string): string {
+export function dialableHost(bindHost: string): string {
   if (LOOPBACK_HOSTS.has(bindHost)) return '127.0.0.1';
   if (bindHost === '::1') return '[::1]';
   return bindHost;
