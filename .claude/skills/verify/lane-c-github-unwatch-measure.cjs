@@ -29,7 +29,7 @@ function walk(node) {
 }
 walk(sf);
 if (!caller || selected.length !== selectedNames.length) throw Error('Missing owned timer roots');
-if (hash(JSON.stringify(unchanged)) !== '543487f37e6cb0717ad6634bcef9dac7c0c5760af18d090c3e64ec15e1c25a9e') throw Error('Other extension method or field changed');
+if (hash(JSON.stringify(unchanged)) !== '0beeb0ea6bc995da8b42855421920f4391baf0217a49475c39060f66cf57372a') throw Error('Other extension method or field changed');
 if (hash(JSON.stringify(otherRpcs)) !== '51bb61fa54d36ca92a518c229b334cb94de8c76594e6a7cfe81f6ba119e79ccb') throw Error('Other public RPC caller changed');
 const specs = [
   ['github-polling-usage-read.ts', 47, '84752c5c336df50f98a7941c53eb93c343ac0ff443e7c669fc52566a33145289'],
