@@ -11,7 +11,7 @@ import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import type { AgentSession } from '../../agent/agent-session.ts';
 import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers.ts';
-import { createDefaultSessionResolutionDeps } from '../../session-resolution/default-deps.ts';
+import { createDefaultSessionResolutionDeps } from '../runtime/session-resolution-deps.ts';
 import { ensureSession } from '../../session-resolution/ensure-session.ts';
 import { TaskAgentManager } from '../runtime/task-agent-manager.ts';
 import { spaceTaskWriter } from '../../../storage/repositories/space-task-repository.ts';
