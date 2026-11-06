@@ -1,6 +1,6 @@
 import type { Database } from '../sqlite-compat.ts';
 
-export function runMigration478(db: Database): void {
+export function runMigration479(db: Database): void {
   db.exec(`CREATE TABLE IF NOT EXISTS work_turn_urls (
     url TEXT NOT NULL,
     ref TEXT NOT NULL,

@@ -158,7 +158,7 @@ describe('Public watch timer callback reader wiring', () => {
         fresh: 166,
         excludedLines: 100,
         knownTotal: 266,
-        caller: { name: 'space.github.watchRepo', lines: 92, onlyAwaitedTimerCallChanged: true },
+        caller: { name: 'space.github.watchRepo', lines: 92, reviewedReaderCallsOnly: true },
       });
       expect(
         report.data.filter((row: { auditedStable: boolean }) => row.auditedStable)

@@ -5,6 +5,7 @@ import type { Database } from '../../storage/sqlite-compat.ts';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { applyPackPreferenceAnswer } from '../../storage/repositories/pack-preference-answer.ts';
 import { defineOperation } from '../operations/registry.ts';
+import { openHumanCard } from './human-card.ts';
 import { PackPreferenceInput, validatePackPreference } from './preference-operations.ts';
 import { formatPreferenceProposal } from './preference-proposal.ts';
 import type { NeoPack } from './pack-contract.ts';
@@ -67,7 +68,8 @@ export function createPackPreferenceQuestions(
             packs(),
             language()
           );
-          store.askQuestion(
+          openHumanCard(
+            store,
             questionId,
             input.askId,
             {

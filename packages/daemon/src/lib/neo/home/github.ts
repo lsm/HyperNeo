@@ -6,6 +6,7 @@ import { neoFolderPath } from '../folder.ts';
 import { readNeoQuestion } from '../question-operations.ts';
 import type { NeoService } from '../service.ts';
 import { NeoHomeRepository } from './repository.ts';
+import { openHumanCard } from '../human-card.ts';
 
 const Input = z.union([
   z.object({ askId: z.string().min(1) }).strict(),
@@ -120,7 +121,8 @@ export function createNeoHomeGithubOperation(
               const repository = `${owner.text}/neo-home`;
               const questionId = crypto.randomUUID();
               const body = text(repository);
-              service.todos.askQuestion(
+              openHumanCard(
+                service.todos,
                 questionId,
                 input.askId,
                 {

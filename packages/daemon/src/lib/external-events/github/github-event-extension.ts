@@ -1,3 +1,4 @@
+import { gitHubWatchedRepoRead } from '../../../storage/repositories/github-watched-repo-read.ts';
 import { gitHubPollingTimerReads } from '../../../storage/repositories/github-polling-usage-read.ts';
 import { gitHubPollingCapabilityReads } from '../../../storage/repositories/github-polling-usage-read.ts';
 import { gitHubPollingWrites } from '../../../storage/repositories/github-polling-enabled-write.ts';
@@ -416,11 +417,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (!params.spaceId || !params.owner || !params.repo) {
         throw new Error('spaceId, owner and repo are required');
       }
-      const existingForValidation = this.repo.getWatchedRepo(
-        params.spaceId,
-        params.owner,
-        params.repo
-      );
+      const existingForValidation = await gatewayFor(this.db).run(gitHubWatchedRepoRead, {
+        spaceId: params.spaceId,
+        owner: params.owner,
+        repo: params.repo,
+      });
       if (params.pollingEnabled && !existingForValidation?.pollingEnabled) {
         this.assertPollingIntervalEnabled();
       }

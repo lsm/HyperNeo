@@ -1779,6 +1779,17 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
         cache,
         query.text && !query.spaceId && deps.searchChats ? await deps.searchChats(query.text) : []
       ),
+    sessions: async () => {
+      const records = await loadClaudeDesktopRecords(reused, cache);
+      const live = new Map(
+        (await loadLiveClaudeSessions(reused, records)).map((row) => [row.sessionId, row.status])
+      );
+      return records.map((record) => ({
+        id: record.sessionId,
+        name: record.title,
+        status: claudeDesktopWorkStatus(record, live),
+      }));
+    },
     start: (request, context) => runClaudeDesktopStart(request, deps, cache, context),
     send: (ref, message, context) => runClaudeDesktopSend(ref, message, deps, cache, context),
     steer: (ref, message, context) => runClaudeDesktopSend(ref, message, deps, cache, context),
