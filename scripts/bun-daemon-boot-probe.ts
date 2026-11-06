@@ -125,6 +125,28 @@ try {
     workspacePath: join(run, 'workspace'),
     config: { queryMode: 'manual' },
   });
+  const created = await hub.request<{ accepted: boolean; goal?: { id: string } }>(
+    'operation.invoke',
+    {
+      name: 'goal.session.create',
+      input: {
+        ownerSessionId: sessionId,
+        title: 'Boot probe goal',
+        doneTest: 'Listed after create',
+        cadence: { kind: 'every', everyMs: 900000 },
+      },
+    }
+  );
+  assert.equal(created.accepted, true);
+  const listed = await hub.request<{ goals: { id: string }[] }>('operation.invoke', {
+    name: 'goal.session.list',
+    input: { ownerSessionId: sessionId },
+  });
+  assert.deepEqual(
+    listed.goals.map((goal) => goal.id),
+    [created.goal?.id]
+  );
+  evidence.goalListed = true;
   const status = await hub.request<{ total: number; messages: unknown[] }>(
     'session.messages.byStatus',
     {
