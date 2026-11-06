@@ -120,7 +120,7 @@ export class WorkDeliveryInputRepository {
         JOIN work_delivery_inputs d ON d.todo_id = t.id
         LEFT JOIN work_sessions w ON w.adapter = json_extract(d.outcome, '$.ref.adapter')
           AND w.id = json_extract(d.outcome, '$.ref.id')
-        WHERE a.status = 'open' AND t.state NOT IN ('done', 'closed_unverified', 'removed')
+        WHERE a.status = 'open' AND t.state NOT IN ('done', 'closed_unverified', 'failed', 'removed')
           AND json_extract(d.outcome, '$.ref') IS NOT NULL`)
       .all() as { ref: string; lastActivityAt: number | null }[];
     return rows.map((row) => ({ ...row, ref: JSON.parse(row.ref) as WorkRef }));

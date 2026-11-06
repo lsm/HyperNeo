@@ -63,7 +63,9 @@ describe('catchUpWorkerTurns', () => {
     const { deps } = reader(0);
     const down = { ok: false, reason: 'unreachable', detail: 'Offline' };
     const read = async () => ({ kind: 'completed' as const, value: down });
-    await expect(catchUpWorkerTurns(ref, { ...deps, read } as never)).rejects.toThrow('unreachable');
+    await expect(catchUpWorkerTurns(ref, { ...deps, read } as never)).rejects.toThrow(
+      'unreachable'
+    );
   });
 
   test('a full read is not caught up', async () => {

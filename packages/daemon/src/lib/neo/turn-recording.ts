@@ -16,7 +16,7 @@ export const readRecordableTurns = (outcome: OperationOutcome): WorkTurnFact[] =
     | { ok: true; value: { turns: WorkTurnFact[] } }
     | { ok: false; reason: string; detail: string };
   if (reply.ok) return reply.value.turns;
-  if (reply.reason === 'unsupported') return [];
+  if (reply.reason === 'unsupported' || reply.reason === 'not_found') return [];
   throw new Error(`${reply.reason}: ${reply.detail}`);
 };
 
