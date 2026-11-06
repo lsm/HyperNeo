@@ -15,8 +15,8 @@
       "maxLines": 4687,
       "followUp": "M9 tool-handler split"
     },
-    "packages/daemon/src/lib/space/runtime/task-agent-manager.ts": {
-      "maxLines": 4185,
+    "packages/space/src/runtime/task-agent-manager.ts": {
+      "maxLines": 4205,
       "followUp": "M9 runtime component extraction"
     },
     "packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts": {

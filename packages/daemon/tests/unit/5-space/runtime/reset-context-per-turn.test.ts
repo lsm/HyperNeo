@@ -13,8 +13,8 @@ import {
   QueryModeHandler,
   type QueryModeHandlerContext,
 } from '../../../../src/lib/agent/query-mode-handler.ts';
-import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import type { TaskAgentManagerConfig } from '../../../../../space/src/runtime/task-agent-manager.ts';
+import { TaskAgentManager } from '../../../../../space/src/runtime/task-agent-manager.ts';
 import { createOutboxTestDb, type OutboxTestDb } from '../../../helpers/outbox-test-db';
 
 const SESSION_ID = 'reviewer-session-1';

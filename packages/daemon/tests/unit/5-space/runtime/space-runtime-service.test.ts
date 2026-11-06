@@ -47,7 +47,7 @@ import type { SpaceRuntimeServiceConfig } from '../../../../../space/src/runtime
 import { createAgentSubscriptionOperations } from '../../../../../space/src/external-events/agent-subscription-operations.ts';
 import { isOperationAdmitted } from '../../../../src/lib/operations/invoke.ts';
 import { SpaceRuntimeService } from '../../../../../space/src/runtime/space-runtime-service.ts';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { TaskAgentManager } from '../../../../../space/src/runtime/task-agent-manager.ts';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';

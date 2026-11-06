@@ -1,6 +1,6 @@
 import { describe, expect, it, mock } from 'bun:test';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { TaskAgentManager } from '../../../../../space/src/runtime/task-agent-manager.ts';
 
 const TASK_ID = 'task-1';
 const SESSION_ID = `space:space-1:task:${TASK_ID}:post-approval:worker`;

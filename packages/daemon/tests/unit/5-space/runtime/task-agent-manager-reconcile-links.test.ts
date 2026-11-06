@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { TaskAgentManager } from '../../../../../space/src/runtime/task-agent-manager.ts';
 import { isOrphanedInProgressTask } from '../../../../src/lib/tasks/orphaned-task-recovery.ts';
 import { createSpaceTables } from '../../helpers/space-test-db.ts';
 import type { SpaceTask } from '@hyperneo/shared';

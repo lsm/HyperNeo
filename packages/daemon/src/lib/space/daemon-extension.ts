@@ -27,7 +27,7 @@ import {
   spaceTaskControl,
 } from '../../../../space/src/drivers/space-adapter.ts';
 import type { SessionManager } from '../session/session-manager.ts';
-import type { TaskAgentManager } from './runtime/task-agent-manager.ts';
+import type { TaskAgentManager } from '../../../../space/src/runtime/task-agent-manager.ts';
 import { hostname } from 'node:os';
 import type { ReactiveDatabase } from '../../storage/reactive-database.ts';
 import type { SpaceAgentInactivityWatchdogService } from '../agents/inactivity-watchdog-service.ts';

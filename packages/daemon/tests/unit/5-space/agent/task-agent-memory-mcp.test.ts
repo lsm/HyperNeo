@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { McpServerConfig } from '@hyperneo/shared';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { TaskAgentManager } from '../../../../../space/src/runtime/task-agent-manager.ts';
 
 function makeManager(memoryRepo?: unknown): TaskAgentManager {
   return Object.create(TaskAgentManager.prototype, {

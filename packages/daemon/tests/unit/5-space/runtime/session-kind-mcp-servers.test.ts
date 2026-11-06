@@ -15,7 +15,7 @@ import {
   SpaceRuntimeService,
   type SpaceRuntimeServiceConfig,
 } from '../../../../../space/src/runtime/space-runtime-service.ts';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { TaskAgentManager } from '../../../../../space/src/runtime/task-agent-manager.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import type { SettingsManager } from '../../../../src/lib/settings-manager.ts';
 import type { SpaceManager } from '../../../../../space/src/managers/space-manager.ts';

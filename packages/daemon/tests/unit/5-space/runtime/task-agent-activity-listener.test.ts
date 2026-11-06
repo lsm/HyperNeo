@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager';
-import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager';
+import { TaskAgentManager } from '../../../../../space/src/runtime/task-agent-manager';
+import type { TaskAgentManagerConfig } from '../../../../../space/src/runtime/task-agent-manager';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
