@@ -1,18 +1,11 @@
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../packages/daemon/src/storage/schema/index.ts';
-import { CODING_TODO_WINDOW_QUERY, CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 
 export const todoQueries = {
   list: `SELECT id, ask_id, position, title, done_when FROM neo_todos
     WHERE ask_id = ? ORDER BY position, created_at`,
   recovery: `SELECT s.todo_id FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
     WHERE s.ref IS NULL AND t.state = 'doing'`,
-  window: `SELECT t.started_at AS start,
-    (SELECT MIN(next.started_at) FROM neo_todo_sessions other
-      JOIN neo_todos next ON next.id = other.todo_id
-      WHERE other.ref = own.ref AND other.todo_id != t.id
-        AND next.started_at > t.started_at) AS end
-    FROM neo_todos t LEFT JOIN neo_todo_sessions own ON own.todo_id = t.id WHERE t.id = ?`,
   live: `UPDATE neo_todo_sessions SET live_status = ?1, link = COALESCE(?2, link), remote_link = ?4
     WHERE todo_id = ?3 AND (live_status IS NOT ?1 OR (?2 IS NOT NULL AND link IS NOT ?2)
       OR remote_link IS NOT ?4)`,
@@ -47,8 +40,8 @@ export function todoPlan(db: Database, sql: string, args: (string | number | nul
 
 if (import.meta.main) {
   const db = syntheticTodoDb();
-  const bindings = { list: ['a0'], recovery: [], window: ['t48'], live: ['running', null, 't48', null] };
-  const report = Object.entries({ ...todoQueries, window: CODING_TODO_WINDOW_QUERY }).map(([name, sql]) => {
+  const bindings = { list: ['a0'], recovery: [], live: ['running', null, 't48', null] };
+  const report = Object.entries(todoQueries).map(([name, sql]) => {
     const measured = syntheticTodoDb();
     const args = bindings[name as keyof typeof bindings];
     const statement = measured.prepare(sql);
@@ -62,7 +55,6 @@ if (import.meta.main) {
     measured.close();
     return { name, plan, meanMs: samples.reduce((a, b) => a + b) / samples.length, maxMs: Math.max(...samples) };
   });
-  const repo = new CodingTodoPrRepository(db);
-  console.log(JSON.stringify({ counts: { asks: 376, todos: 1213, sessions: 989 }, report, windows: ['t0', 't48', 't49', 't1000', 'missing'].map((id) => ({ id, ...repo.window(id) })) }, null, 2));
+  console.log(JSON.stringify({ counts: { asks: 376, todos: 1213, sessions: 989 }, report }, null, 2));
   db.close();
 }

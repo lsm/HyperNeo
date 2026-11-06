@@ -191,7 +191,7 @@ export async function verifySyntheticPrOwners(runText: string) {
       .prepare('SELECT repo, number, branch, owner FROM pack_coding_pr_ledger')
       .all() as { repo: string; number: number; branch: string; owner: string | null }[];
     for (const row of ledgerRows)
-      assert.equal(planCodingPrOwner({ ...row, owner: null }, new Map(), replay), row.owner);
+      assert.equal(planCodingPrOwner({ ...row, owner: null }, replay), row.owner);
     assert.equal(
       identityReads,
       1,
