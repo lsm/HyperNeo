@@ -3,7 +3,7 @@ import type { OperationDefinition } from '../../operations/registry.ts';
 import {
   createEvolutionEpisodeOperations,
   type EvolutionEpisodeOperationDependencies,
-} from './episode-operations.ts';
+} from '../../../../../space/src/evolution/episode-operations.ts';
 import {
   createEvolutionEvidenceAttachOperation,
   type EvolutionEvidenceAttachDependencies,
