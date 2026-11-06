@@ -13,6 +13,8 @@ import {
 import { runLagPhase } from '../event-loop-activity.ts';
 import { Logger } from '../logger.ts';
 import { codexHeartbeatQuiet } from './codex-heartbeat.ts';
+import { codexUserInput, INJECTED_INPUT, messageText, parseLine } from './codex-rollout-lines.ts';
+import { readCodexTurnFacts } from './codex-turn-reader.ts';
 import { type WorkExecutionPreparer, workStartPreparation } from './start-preparation.ts';
 import {
   codexWorkerSandbox,
@@ -54,6 +56,7 @@ import type {
   WorkRef,
   WorkStarted,
   WorkStatus,
+  WorkTurnFact,
   WorkSummary,
   WorkWithdrawal,
 } from './types.ts';
@@ -80,7 +83,6 @@ const QUEUE_TIMEOUT_MS = 30_000;
 const START_RECEIPT_TRIES = 10;
 const START_RECEIPT_WAIT_MS = 200;
 const TURN_MARKERS = new Set(['task_started', 'task_complete', 'turn_aborted']);
-const INJECTED_INPUT = /^<([a-z_]+)>[\s\S]*<\/\1>$/;
 const CODEX_ASK_TOOL = 'request_user_input_async';
 
 export interface CodexRootRow {
@@ -365,35 +367,6 @@ export async function readRolloutTail(path: string, bytes = ROLLOUT_TAIL_BYTES):
   return (await readTailLines(path, bytes)).lines;
 }
 
-function parseLine(
-  line: string
-): { type?: unknown; payload?: Record<string, unknown>; timestamp?: unknown } | null {
-  try {
-    const entry = JSON.parse(line) as {
-      type?: unknown;
-      payload?: Record<string, unknown>;
-      timestamp?: unknown;
-    };
-    return entry && typeof entry === 'object' ? entry : null;
-  } catch {
-    return null;
-  }
-}
-
-function messageText(payload: Record<string, unknown>, role: string): string | null {
-  if (payload.type !== 'message' || payload.role !== role) return null;
-  const parts = Array.isArray(payload.content) ? payload.content : [];
-  const text = parts
-    .flatMap((part) =>
-      part && typeof part === 'object' && typeof (part as { text?: unknown }).text === 'string'
-        ? [(part as { text: string }).text]
-        : []
-    )
-    .join('\n')
-    .trim();
-  return text || null;
-}
-
 function withReplyAt(state: CodexTurnState, replyAt: number | undefined): CodexTurnState {
   return state.reply !== null && replyAt !== undefined ? { ...state, replyAt } : state;
 }
@@ -655,16 +628,6 @@ export async function describeCodexThread(
 
 type CodexReceipt = NonNullable<WorkDelivery['receipt']>;
 type CodexInputEvidence = NonNullable<WorkDetail['inputEvidence']>;
-
-function codexUserInput(
-  entry: ReturnType<typeof parseLine>
-): { id: string; text: string; at: number | undefined } | null {
-  const payload = entry?.type === 'response_item' ? (entry.payload ?? {}) : null;
-  const text = payload ? messageText(payload, 'user') : null;
-  if (!payload || text === null || INJECTED_INPUT.test(text) || typeof payload.id !== 'string')
-    return null;
-  return payload.id ? { id: payload.id, text, at: workEntryTime(entry?.timestamp) } : null;
-}
 
 export function codexUserInputIds(lines: readonly string[]): Set<string> {
   return new Set(lines.flatMap((line) => codexUserInput(parseLine(line))?.id ?? []));
@@ -1384,6 +1347,23 @@ const runCodexStop = (superpipe({})('codex-stop-work') as PipelineAPI)
   deps: CodexDesktopAdapterDeps
 ) => Promise<Result<{ stopped: boolean }>>;
 
+const runCodexTurns = (superpipe({})('codex-turns') as PipelineAPI)
+  .input(['ref', 'cursor', 'deps'])
+  .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
+  .pipe(
+    async (detail: CodexThreadDetail, cursor: string | undefined) => ({
+      ok: true as const,
+      value: { turns: await readCodexTurnFacts(detail.thread.rolloutPath, cursor) },
+    }),
+    ['outcome', 'cursor'],
+    'outcome'
+  )
+  .endAsync('outcome') as (
+  ref: WorkRef,
+  cursor: string | undefined,
+  deps: CodexDesktopAdapterDeps
+) => Promise<Result<{ turns: WorkTurnFact[] }>>;
+
 export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAdapter {
   const readOpenedPrs = createCodexPrReader();
   return {
@@ -1399,6 +1379,7 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
       'queue',
       'withdraw',
       'status',
+      'turns',
       'stop',
       'archive',
     ],
@@ -1437,6 +1418,7 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
       ),
     withdraw: (ref, queuedSubmissionId) => runCodexWithdraw(ref, queuedSubmissionId, deps),
     status: (ref, since, receipt) => runCodexStatus(ref, deps, since, receipt, readOpenedPrs),
+    turns: (ref, cursor) => runCodexTurns(ref, cursor, deps),
     stop: (ref) => runCodexStop(ref, deps),
     archive: async (ref, admit) => {
       const found = requireCodexThread(ref, deps);
