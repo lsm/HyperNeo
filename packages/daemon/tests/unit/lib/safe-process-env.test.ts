@@ -1,14 +1,11 @@
+import { parseCommand } from '@hyperneo/shared/command';
 import { describe, expect, test } from 'bun:test';
-import {
-  buildAcpSafeEnv,
-  getAcpCommandIdentity,
-  parseAcpCommand,
-} from '../../../../src/lib/acp/acp-command';
+import { buildSafeProcessEnv } from '../../../src/lib/safe-process-env';
 
-describe('buildAcpSafeEnv', () => {
+describe('buildSafeProcessEnv', () => {
   test('keeps worker location hints while stripping credentials from terminal children', () => {
     expect(
-      buildAcpSafeEnv({
+      buildSafeProcessEnv({
         HYPERNEO_WORKTREES: '/synthetic/data/worktrees',
         HYPERNEO_EVIDENCE: '/synthetic/data/work/evidence/worker',
         HYPERNEO_BUILDS: '/synthetic/data/work/builds/worker',
@@ -23,7 +20,7 @@ describe('buildAcpSafeEnv', () => {
 
   test('keeps only safe environment variables without unrelated secrets', () => {
     expect(
-      buildAcpSafeEnv({
+      buildSafeProcessEnv({
         HOME: '/Users/devin',
         PATH: '/usr/local/bin:/usr/bin:/bin',
         SHELL: '/bin/zsh',
@@ -66,34 +63,26 @@ describe('buildAcpSafeEnv', () => {
       COMSPEC: 'C:\\Windows\\system32\\cmd.exe',
     };
 
-    expect(buildAcpSafeEnv(windowsEnv)).toEqual(windowsEnv);
+    expect(buildSafeProcessEnv(windowsEnv)).toEqual(windowsEnv);
   });
 });
 
-describe('parseAcpCommand', () => {
+describe('parseCommand', () => {
   test('parses quoted paths, quoted arguments, and escapes', () => {
-    expect(
-      parseAcpCommand('"/Applications/Devin CLI/devin" acp "model one" escaped\\ arg')
-    ).toEqual({
-      command: '/Applications/Devin CLI/devin',
-      args: ['acp', 'model one', 'escaped arg'],
-    });
+    expect(parseCommand('"/Applications/Devin CLI/devin" serve "model one" escaped\\ arg')).toEqual(
+      {
+        command: '/Applications/Devin CLI/devin',
+        args: ['serve', 'model one', 'escaped arg'],
+      }
+    );
   });
 
   test('rejects empty commands', () => {
-    expect(() => parseAcpCommand('   ')).toThrow('Invalid ACP command: command is empty');
+    expect(() => parseCommand('   ')).toThrow('Invalid command: command is empty');
   });
 
   test('rejects unmatched quotes', () => {
-    expect(() => parseAcpCommand("devin 'acp")).toThrow('Invalid ACP command: unmatched quote');
-    expect(() => parseAcpCommand('devin "acp')).toThrow('Invalid ACP command: unmatched quote');
-  });
-});
-
-describe('getAcpCommandIdentity', () => {
-  test('normalizes equivalent command identities', () => {
-    expect(getAcpCommandIdentity('devin   acp "model one"')).toBe(
-      getAcpCommandIdentity("devin acp 'model one'")
-    );
+    expect(() => parseCommand("devin 'serve")).toThrow('Invalid command: unmatched quote');
+    expect(() => parseCommand('devin "serve')).toThrow('Invalid command: unmatched quote');
   });
 });

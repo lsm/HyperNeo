@@ -1,11 +1,9 @@
-import { existsSync } from 'node:fs';
-import { open, readFile, stat } from 'node:fs/promises';
-import { runLagPhase } from '../event-loop-activity.ts';
+import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, delimiter, join } from 'node:path';
+import { basename, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { AcpClient } from '../acp/acp-client.ts';
-import { buildAcpSafeEnv } from '../acp/acp-command.ts';
+import { buildSafeProcessEnv } from '../safe-process-env.ts';
 import { isTempCwd } from './claude-feed.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter, WorkStatus, WorkSummary } from './types.ts';
@@ -61,7 +59,6 @@ export const ACP_AGENTS: readonly AcpAgentSpec[] = [
       link: (session) => `ghapp://sessions/${encodeURIComponent(session.sessionId)}`,
     },
   },
-  { id: 'opencode', name: 'OpenCode', bin: 'opencode', args: ['acp'] },
 ];
 
 export interface AcpAgentSession {
@@ -79,44 +76,6 @@ export interface AcpAgentAdapterDeps {
   ownSessions: () => Pick<ReadonlySet<string>, 'has'>;
   projectFolder: (folder: string) => string | Promise<string>;
   link?: (session: AcpAgentSession) => string;
-}
-
-const worktreeProjects = new Map<string, { stamp: string; project: Promise<string> }>();
-
-export async function gitWorktreeProject(folder: string): Promise<string> {
-  try {
-    const path = join(folder, '.git');
-    const info = await runLagPhase('scanner:worktree:metadata', () => stat(path));
-    if (info.isDirectory())
-      return readFile(join(path, 'hyperneo-source-checkout'), 'utf8')
-        .then((source) => source.trim() || folder)
-        .catch(() => folder);
-    const stamp = `${info.ino}:${info.mtimeMs}:${info.ctimeMs}:${info.size}`;
-    const cached = worktreeProjects.get(folder);
-    if (cached?.stamp === stamp) return cached.project;
-    const project = runLagPhase('scanner:worktree:read', () => readFile(path, 'utf8'))
-      .then((text) => {
-        const pointer = text.match(/^gitdir:\s*(.+)$/m)?.[1];
-        const at = pointer?.trim().lastIndexOf('/.git/worktrees/') ?? -1;
-        return pointer && at > 0 ? pointer.trim().slice(0, at) : folder;
-      })
-      .catch(() => {
-        if (worktreeProjects.get(folder)?.project === project) worktreeProjects.delete(folder);
-        return folder;
-      });
-    worktreeProjects.set(folder, { stamp, project });
-    return project;
-  } catch {
-    worktreeProjects.delete(folder);
-    return folder;
-  }
-}
-
-export function findAcpAgentBinary(bin: string, path = process.env.PATH ?? ''): string | null {
-  for (const dir of path.split(delimiter)) {
-    if (dir && existsSync(join(dir, bin))) return join(dir, bin);
-  }
-  return null;
 }
 
 export function acpSessionTitle(title: string | null | undefined): string {
@@ -166,7 +125,7 @@ export async function listAcpAgentSessions(
     command,
     args: [...agent.args],
     cwd,
-    env: buildAcpSafeEnv(),
+    env: buildSafeProcessEnv(),
     replaceEnv: true,
     requestTimeoutMs: LIST_TIMEOUT_MS,
   });

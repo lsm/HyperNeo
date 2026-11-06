@@ -1,7 +1,7 @@
-import { parseAcpCommand } from '@hyperneo/shared/acp';
+import { parseCommand } from '@hyperneo/shared/command';
 
 export function parseMcpArgs(value: string): string[] {
-  return parseAcpCommand(`mcp ${value}`).args;
+  return parseCommand(`mcp ${value}`).args;
 }
 
 export function formatMcpArgs(args: string[] = []): string {

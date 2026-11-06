@@ -1,12 +1,12 @@
 import type { ChildProcess } from 'node:child_process';
 
-export interface AcpProcessTree {
+export interface ProcessTree {
   terminate(signal: NodeJS.Signals): void;
 }
 
-export type AcpProcessTreeOwner = (child: ChildProcess) => AcpProcessTree;
+export type ProcessTreeOwner = (child: ChildProcess) => ProcessTree;
 
-export const basicAcpProcessTreeOwner: AcpProcessTreeOwner = (child) => ({
+export const basicProcessTreeOwner: ProcessTreeOwner = (child) => ({
   terminate: (signal) => {
     if (child.pid != null) {
       try {
@@ -18,7 +18,7 @@ export const basicAcpProcessTreeOwner: AcpProcessTreeOwner = (child) => ({
   },
 });
 
-export function acpProcessGroupAlive(
+export function processGroupAlive(
   pid: number,
   platform: NodeJS.Platform = process.platform
 ): boolean {

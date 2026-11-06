@@ -9,8 +9,8 @@ import { SPACE_SCHEMA } from '../src/storage/schema/space-schema';
 process.env.HYPERNEO_SPACE ??= 'on';
 registerSchemaExtension(SPACE_SCHEMA);
 
-vi.mock('../src/lib/acp/acp-safe-fs.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/lib/acp/acp-safe-fs.ts')>();
+vi.mock('../src/lib/safe-fs.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/lib/safe-fs.ts')>();
   const { spawnSync } = await import('node:child_process');
   const { fileURLToPath } = await import('node:url');
   const helper = fileURLToPath(new URL('./helpers/native-workspace-replace.ts', import.meta.url));
@@ -22,7 +22,7 @@ vi.mock('../src/lib/acp/acp-safe-fs.ts', async (importOriginal) => {
       data: Uint8Array | null,
       signal?: AbortSignal
     ) => {
-      if (signal?.aborted) throw new Error('ACP filesystem write cancelled');
+      if (signal?.aborted) throw new Error('workspace filesystem write cancelled');
       const child = spawnSync('bun', [helper], {
         input: JSON.stringify({
           workspace,
@@ -190,7 +190,6 @@ process.env.MINIMAX_API_KEY = '';
 process.env.OPENAI_API_KEY = '';
 process.env.KIMI_API_KEY = '';
 process.env.MOONSHOT_API_KEY = '';
-process.env.HYPERNEO_ACP_COMMAND = '';
 
 delete process.env.ENABLE_TOOL_SEARCH;
 delete process.env.ANTHROPIC_MODEL;

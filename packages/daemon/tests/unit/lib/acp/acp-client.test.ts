@@ -1,20 +1,16 @@
 import { describe, expect, test, mock, beforeEach, afterAll } from 'bun:test';
-import type {
-  AcpJsonRpcNotification,
-  AcpJsonRpcRequest,
-  AcpJsonRpcResponse,
-} from '@hyperneo/shared';
-import type { AcpTransportOptions } from '../../../../src/lib/acp/acp-transport';
+import type { JsonRpcNotification, JsonRpcRequest, JsonRpcResponse } from '@hyperneo/shared';
+import type { ProcessJsonRpcTransportOptions } from '../../../../src/lib/process-json-rpc';
 
-let lastMockTransport: MockAcpTransport | null = null;
+let lastMockTransport: MockProcessJsonRpcTransport | null = null;
 
-class MockAcpTransport {
-  options: AcpTransportOptions | undefined;
+class MockProcessJsonRpcTransport {
+  options: ProcessJsonRpcTransportOptions | undefined;
   private requestId = 1;
-  private pending = new Map<number | string, (response: AcpJsonRpcResponse) => void>();
+  private pending = new Map<number | string, (response: JsonRpcResponse) => void>();
   sendRequest = mock(async (method: string, params?: unknown) => {
     const id = this.requestId++;
-    return new Promise<AcpJsonRpcResponse>((resolve) => {
+    return new Promise<JsonRpcResponse>((resolve) => {
       this.pending.set(id, resolve);
     });
   });
@@ -23,7 +19,7 @@ class MockAcpTransport {
   sendErrorResponse = mock((_id: unknown, _error: unknown) => {});
   close = mock(async () => {});
 
-  constructor(options: AcpTransportOptions) {
+  constructor(options: ProcessJsonRpcTransportOptions) {
     this.options = options;
     lastMockTransport = this;
   }
@@ -31,7 +27,7 @@ class MockAcpTransport {
   resolveRequest(id: number | string, result: unknown) {
     const resolver = this.pending.get(id);
     if (resolver) {
-      resolver({ jsonrpc: '2.0', id, result } as AcpJsonRpcResponse);
+      resolver({ jsonrpc: '2.0', id, result } as JsonRpcResponse);
       this.pending.delete(id);
     }
   }
@@ -39,34 +35,36 @@ class MockAcpTransport {
   resolveError(id: number | string, error: { code: number; message: string }) {
     const resolver = this.pending.get(id);
     if (resolver) {
-      resolver({ jsonrpc: '2.0', id, error } as AcpJsonRpcResponse);
+      resolver({ jsonrpc: '2.0', id, error } as JsonRpcResponse);
       this.pending.delete(id);
     }
   }
 
-  emitNotification(notification: AcpJsonRpcNotification) {
+  emitNotification(notification: JsonRpcNotification) {
     this.options?.onNotification?.(notification);
   }
 
-  emitRequest(request: AcpJsonRpcRequest) {
+  emitRequest(request: JsonRpcRequest) {
     this.options?.onRequest?.(request);
   }
 }
 
-let originalAcpTransport: typeof import('../../../../src/lib/acp/acp-transport') | undefined;
+let originalProcessJsonRpcTransport:
+  | typeof import('../../../../src/lib/process-json-rpc')
+  | undefined;
 if (typeof Bun !== 'undefined') {
-  originalAcpTransport = require('../../../../src/lib/acp/acp-transport');
+  originalProcessJsonRpcTransport = require('../../../../src/lib/process-json-rpc');
 }
 
-mock.module('../../../../src/lib/acp/acp-transport', () => ({
-  AcpTransport: MockAcpTransport,
+mock.module('../../../../src/lib/process-json-rpc', () => ({
+  ProcessJsonRpcTransport: MockProcessJsonRpcTransport,
 }));
 
 const { AcpClient } = await import('../../../../src/lib/acp/acp-client');
 
 afterAll(() => {
-  if (originalAcpTransport) {
-    mock.module('../../../../src/lib/acp/acp-transport', () => originalAcpTransport);
+  if (originalProcessJsonRpcTransport) {
+    mock.module('../../../../src/lib/process-json-rpc', () => originalProcessJsonRpcTransport);
   }
 });
 

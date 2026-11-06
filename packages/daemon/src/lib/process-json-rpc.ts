@@ -1,25 +1,25 @@
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import type {
-  AcpJsonRpcError,
-  AcpJsonRpcNotification,
-  AcpJsonRpcRequest,
-  AcpJsonRpcResponse,
+  JsonRpcError,
+  JsonRpcNotification,
+  JsonRpcRequest,
+  JsonRpcResponse,
 } from '@hyperneo/shared';
-import { Logger } from '../logger.ts';
+import { Logger } from './logger.ts';
 import {
-  acpProcessGroupAlive,
-  type AcpProcessTree,
-  type AcpProcessTreeOwner,
-  basicAcpProcessTreeOwner,
-} from './acp-process-tree.ts';
+  processGroupAlive,
+  type ProcessTree,
+  type ProcessTreeOwner,
+  basicProcessTreeOwner,
+} from './process-tree.ts';
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
 const CLOSE_SIGTERM_TIMEOUT_MS = 5_000;
 
-const logger = new Logger('AcpTransport');
+const logger = new Logger('ProcessJsonRpcTransport');
 
-export function buildAcpProcessEnv(
+export function buildProcessEnv(
   env?: Record<string, string | undefined>,
   replaceEnv = false
 ): NodeJS.ProcessEnv {
@@ -34,15 +34,15 @@ export function buildAcpProcessEnv(
   return processEnv;
 }
 
-export interface AcpTransportCallbacks {
-  onNotification?: (notification: AcpJsonRpcNotification) => void;
-  onRequest?: (request: AcpJsonRpcRequest) => void;
+export interface ProcessJsonRpcTransportCallbacks {
+  onNotification?: (notification: JsonRpcNotification) => void;
+  onRequest?: (request: JsonRpcRequest) => void;
   onExit?: (code: number | null, signal: string | null) => void;
   onStderr?: (data: string) => void;
   onProcessSpawn?: (process: ChildProcess) => void;
 }
 
-export interface AcpTransportOptions extends AcpTransportCallbacks {
+export interface ProcessJsonRpcTransportOptions extends ProcessJsonRpcTransportCallbacks {
   command: string;
   args?: string[];
   env?: Record<string, string>;
@@ -51,18 +51,18 @@ export interface AcpTransportOptions extends AcpTransportCallbacks {
   requestTimeoutMs?: number;
   closeSIGKILLTimeoutMs?: number;
   processGroupProbe?: (pid: number) => boolean;
-  processTreeOwner?: AcpProcessTreeOwner;
+  processTreeOwner?: ProcessTreeOwner;
 }
 
 interface PendingRequest {
-  resolve: (response: AcpJsonRpcResponse) => void;
+  resolve: (response: JsonRpcResponse) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 }
 
-export class AcpTransport {
+export class ProcessJsonRpcTransport {
   private process: ChildProcess | null = null;
-  private processTree: AcpProcessTree | null = null;
+  private processTree: ProcessTree | null = null;
   private nextId = 1;
   private pendingRequests = new Map<number | string, PendingRequest>();
   private buffer = '';
@@ -74,7 +74,7 @@ export class AcpTransport {
   private closePromise: Promise<void> | null = null;
   private closeResolve: (() => void) | null = null;
 
-  constructor(private readonly options: AcpTransportOptions) {
+  constructor(private readonly options: ProcessJsonRpcTransportOptions) {
     this.spawnProcess();
   }
 
@@ -87,7 +87,7 @@ export class AcpTransport {
 
     const proc = spawn(command, args, {
       cwd,
-      env: buildAcpProcessEnv(env, this.options.replaceEnv),
+      env: buildProcessEnv(env, this.options.replaceEnv),
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
       detached: process.platform !== 'win32',
@@ -97,11 +97,11 @@ export class AcpTransport {
     this.processPid = proc.pid ?? undefined;
 
     proc.on('error', (err) => {
-      logger.error('ACP agent process error:', err.message);
+      logger.error('JSON-RPC process error:', err.message);
       this.recordProcessGroupGone();
       this.process = null;
       this.processExited = true;
-      this.rejectAllPending(new Error(`ACP agent process error: ${err.message}`));
+      this.rejectAllPending(new Error(`JSON-RPC process error: ${err.message}`));
       if (this.options.onExit) {
         this.options.onExit(null, null);
       }
@@ -111,10 +111,10 @@ export class AcpTransport {
     });
 
     try {
-      this.processTree = (this.options.processTreeOwner ?? basicAcpProcessTreeOwner)(proc);
+      this.processTree = (this.options.processTreeOwner ?? basicProcessTreeOwner)(proc);
     } catch (err) {
       try {
-        basicAcpProcessTreeOwner(proc).terminate('SIGKILL');
+        basicProcessTreeOwner(proc).terminate('SIGKILL');
       } catch {}
       throw err;
     }
@@ -129,12 +129,12 @@ export class AcpTransport {
       if (this.options.onStderr) {
         this.options.onStderr(data);
       } else {
-        logger.warn('ACP agent stderr:', data.trimEnd());
+        logger.warn('JSON-RPC process stderr:', data.trimEnd());
       }
     });
 
     proc.on('exit', (code, signal) => {
-      logger.info(`ACP agent exited (code=${code}, signal=${signal})`);
+      logger.info(`JSON-RPC process exited (code=${code}, signal=${signal})`);
       this.recordProcessGroupGone();
       this.process = null;
       this.processExited = true;
@@ -144,7 +144,7 @@ export class AcpTransport {
     });
 
     proc.on('close', () => {
-      this.rejectAllPending(new Error('ACP agent process exited'));
+      this.rejectAllPending(new Error('JSON-RPC process exited'));
       if (this.closeResolve) {
         this.closeResolve();
       }
@@ -164,16 +164,16 @@ export class AcpTransport {
       }
 
       try {
-        const message = JSON.parse(line) as AcpJsonRpcResponse | AcpJsonRpcNotification;
+        const message = JSON.parse(line) as JsonRpcResponse | JsonRpcNotification;
 
         if ('method' in message) {
           if ('id' in message) {
-            this.handleRequest(message as AcpJsonRpcRequest);
+            this.handleRequest(message as JsonRpcRequest);
           } else {
-            this.handleNotification(message as AcpJsonRpcNotification);
+            this.handleNotification(message as JsonRpcNotification);
           }
         } else if ('id' in message) {
-          this.handleResponse(message as AcpJsonRpcResponse);
+          this.handleResponse(message as JsonRpcResponse);
         } else {
           logger.warn('Unrecognized JSON-RPC message:', line);
         }
@@ -183,7 +183,7 @@ export class AcpTransport {
     }
   }
 
-  private handleResponse(response: AcpJsonRpcResponse): void {
+  private handleResponse(response: JsonRpcResponse): void {
     if (response.id == null) {
       logger.warn('Received response with null id');
       return;
@@ -199,7 +199,7 @@ export class AcpTransport {
     pending.resolve(response);
   }
 
-  private handleNotification(notification: AcpJsonRpcNotification): void {
+  private handleNotification(notification: JsonRpcNotification): void {
     if (this.options.onNotification) {
       try {
         this.options.onNotification(notification);
@@ -209,7 +209,7 @@ export class AcpTransport {
     }
   }
 
-  private handleRequest(request: AcpJsonRpcRequest): void {
+  private handleRequest(request: JsonRpcRequest): void {
     if (this.options.onRequest) {
       try {
         const result = this.options.onRequest(request) as unknown;
@@ -241,17 +241,17 @@ export class AcpTransport {
     method: string,
     params?: unknown,
     options?: { onSubmitted?: () => void | Promise<void> }
-  ): Promise<AcpJsonRpcResponse> {
+  ): Promise<JsonRpcResponse> {
     if (this.closed) {
       return Promise.reject(new Error('Transport is closed'));
     }
 
     if (!this.process || this.process.killed) {
-      return Promise.reject(new Error('ACP agent process is not running'));
+      return Promise.reject(new Error('JSON-RPC process is not running'));
     }
 
     const id = this.nextId++;
-    const request: AcpJsonRpcRequest = {
+    const request: JsonRpcRequest = {
       jsonrpc: '2.0',
       id,
       method,
@@ -266,7 +266,7 @@ export class AcpTransport {
       }, timeoutMs);
 
       let submitted: Promise<Error | undefined> = Promise.resolve(undefined);
-      const settleAfterSubmit = (response: AcpJsonRpcResponse) => {
+      const settleAfterSubmit = (response: JsonRpcResponse) => {
         const hold = setTimeout(() => {
           this.pendingRequests.delete(id);
           reject(new Error(`Submission check timed out after ${timeoutMs}ms: ${method}`));
@@ -316,7 +316,7 @@ export class AcpTransport {
       return;
     }
 
-    const notification: AcpJsonRpcNotification = {
+    const notification: JsonRpcNotification = {
       jsonrpc: '2.0',
       method,
       params,
@@ -335,7 +335,7 @@ export class AcpTransport {
       return;
     }
 
-    const response: AcpJsonRpcResponse = {
+    const response: JsonRpcResponse = {
       jsonrpc: '2.0',
       id,
       result,
@@ -348,13 +348,13 @@ export class AcpTransport {
     }
   }
 
-  sendErrorResponse(id: number | string | null, error: AcpJsonRpcError): void {
+  sendErrorResponse(id: number | string | null, error: JsonRpcError): void {
     if (this.closed || !this.process || this.processExited) {
       logger.warn('Cannot send error response: transport is closed or process has exited');
       return;
     }
 
-    const response: AcpJsonRpcResponse = {
+    const response: JsonRpcResponse = {
       jsonrpc: '2.0',
       id,
       error,
@@ -374,7 +374,7 @@ export class AcpTransport {
   private recordProcessGroupGone(): void {
     if (!this.processGroupGone) {
       const pid = this.processPid;
-      if (pid != null && !(this.options.processGroupProbe ?? acpProcessGroupAlive)(pid)) {
+      if (pid != null && !(this.options.processGroupProbe ?? processGroupAlive)(pid)) {
         this.processGroupGone = true;
       }
     }
@@ -407,7 +407,7 @@ export class AcpTransport {
           this.killTimer = setTimeout(() => {
             this.killTimer = null;
             if (this.processExited) return;
-            logger.warn('ACP agent cleanup escalation after SIGTERM');
+            logger.warn('JSON-RPC process cleanup escalation after SIGTERM');
             this.killProcess('SIGKILL');
           }, this.options.closeSIGKILLTimeoutMs ?? CLOSE_SIGTERM_TIMEOUT_MS);
           this.killTimer.unref();
@@ -422,7 +422,7 @@ export class AcpTransport {
         this.killTimer = null;
         this.recordProcessGroupGone();
         if (this.processGroupGone) return;
-        logger.warn('ACP agent cleanup escalation after SIGTERM');
+        logger.warn('JSON-RPC process cleanup escalation after SIGTERM');
         this.killProcess('SIGKILL');
       }, this.options.closeSIGKILLTimeoutMs ?? CLOSE_SIGTERM_TIMEOUT_MS);
       this.killTimer.unref();

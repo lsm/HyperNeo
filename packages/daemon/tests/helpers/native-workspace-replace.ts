@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { replaceFileWithinWorkspace } from '../../src/lib/acp/acp-safe-fs-backend.ts';
+import { replaceFileWithinWorkspace } from '../../src/lib/safe-fs-backend.ts';
 
 const input = JSON.parse(readFileSync(0, 'utf8')) as {
   workspace: string;

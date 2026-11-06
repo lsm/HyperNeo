@@ -1,20 +1,22 @@
 ## Copilot owned history and discovery (worker slice 5)
 
-Run from the worktree root, with a fresh run and free loopback port:
+Run from the worktree root with the shared guarded proof wrapper. Pick a free
+loopback port other than 8399 and pass it before the wrapper adds its run path.
 
 ```bash
-RUN=$(mktemp -d /private/tmp/hn-copilot-history-XXXXXX)
-mkdir -p "$RUN/home"
-env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin" \
-  NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
-  bun .claude/skills/verify/copilot-history-find.ts 9386 "$RUN"
+TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh \
+  /absolute/fresh/evidence-directory .claude/skills/verify/copilot-history-find.ts 9386
 ```
 
-The actual isolated daemon's public `operation.invoke` door drives the pinned
-SDK against synthetic framed-JSON-RPC and ACP processes. Evidence stays in
-`$RUN/evidence/observed.json`. All stored synthetic data and evidence are retained;
-cleanup closes only the helper's socket/daemon and confirms its SDK fixture PIDs
-have exited. No GUI, account, credentials, provider or human session is used.
+The actual isolated daemon's public operation.invoke door drives the pinned
+SDK against synthetic framed-JSON-RPC and ACP processes. The helper authenticates
+with the synthetic daemon's owner-only credential, closes its socket and daemon,
+and checks its fixture PIDs have exited. The wrapper preserves observed.json and
+proof.log, then removes the synthetic HOME, database and transcripts.
+The helper pins COPILOT_CLI_PATH to its synthetic runtime and rejects external
+HTTP. A synthetic opencode executable is present, but work.adapters must omit it.
+Copilot retains find/start/send/queue/status/stop. No GUI, account, provider or
+human session is used.
 
 Observe:
 

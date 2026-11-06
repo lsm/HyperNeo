@@ -10,7 +10,7 @@ bash .claude/skills/verify/proof-run.sh "$EVIDENCE/bun" "$PROOF"
 The helper changes a leaf or parent in a microtask after a directory handle has
 opened. Writes must stay on that handle, leaf replacement/deletion must not follow
 a link, and parent-link deletion must fail without changing the outside sentinel.
-It also checks exact binary bytes, a document above the ACP text limit, mode
+It also checks exact binary bytes, a document above 4 MiB, mode
 preservation and actual EACCES/ENAMETOOLONG errors. During the parent swap the
 outside file has mode 0666 and the home file 0640: the home replacement must keep
 0640, deriving metadata from the pinned directory. Inspect the saved JSON and logs.
