@@ -3292,3 +3292,43 @@ describe('a todo for a busy worker', () => {
     }
   });
 });
+
+describe('refresh worker status gate', () => {
+  test('reads a synced worker only when it changed, and an unsynced one every time', async () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      await h.runner.start(todo.id);
+      const ref = h.sessions.readRef(todo.id)!;
+      h.db.prepare('UPDATE neo_todo_sessions SET started_at = 1 WHERE todo_id = ?').run(todo.id);
+      h.setStatus({ ok: true, value: { status: 'running', lastActivityAt: 1 } });
+      const reads = () => h.calls.filter((call) => call.name === 'work.status').length;
+      const sync = (at: number) =>
+        h.db
+          .prepare(
+            `INSERT OR REPLACE INTO work_sessions
+             (adapter, id, name, status, last_activity_at, updated_at) VALUES (?, ?, 'W', 'running', ?, 0)`
+          )
+          .run(ref.adapter, ref.id, at);
+
+      const start = reads();
+      await h.runner.refresh(() => {});
+      const unsynced = reads();
+      expect(unsynced).toBeGreaterThan(start);
+      await h.runner.refresh(() => {});
+      expect(reads()).toBeGreaterThan(unsynced);
+
+      sync(5);
+      await h.runner.refresh(() => {});
+      const first = reads();
+      await h.runner.refresh(() => {});
+      expect(reads()).toBe(first);
+
+      sync(6);
+      await h.runner.refresh(() => {});
+      expect(reads()).toBeGreaterThan(first);
+    } finally {
+      h.db.close();
+    }
+  });
+});
