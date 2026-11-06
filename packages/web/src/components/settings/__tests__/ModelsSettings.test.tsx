@@ -829,3 +829,139 @@ describe('ModelsSettings — default fallback chain thinking', () => {
     await waitFor(() => expect(row(1).value).toBe('think24k'));
   });
 });
+
+describe('ModelsSettings — override fallback thinking', () => {
+  const settingsRef = globalSettings as { value: unknown };
+  const models = [
+    {
+      id: 'claude-opus-5',
+      display_name: 'Opus',
+      description: '',
+      provider: 'anthropic',
+      thinkingModes: 'granular',
+    },
+    {
+      id: 'claude-sonnet-5',
+      display_name: 'Sonnet',
+      description: '',
+      provider: 'anthropic',
+      thinkingModes: 'granular',
+    },
+    {
+      id: 'minimax-m3',
+      display_name: 'MiniMax M3',
+      description: '',
+      provider: 'minimax',
+      thinkingModes: 'off',
+    },
+  ];
+  const key = 'anthropic/claude-opus-5';
+  const other = { 'anthropic/claude-sonnet-5': [{ model: 'minimax-m3', provider: 'minimax' }] };
+  const chain = [
+    { model: 'claude-sonnet-5', provider: 'anthropic', thinkingLevel: 'think24k' },
+    { model: 'minimax-m3', provider: 'minimax' },
+  ];
+
+  async function edit(overrideChain: unknown[] = chain) {
+    settingsRef.value = {
+      model: 'claude-opus-5',
+      modelProvider: 'anthropic',
+      modelFallbackMap: { [key]: overrideChain, ...other },
+    };
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockResolvedValue({ models });
+    render(<ModelsSettings />);
+    await waitFor(() => expect(screen.getByText(/Opus · /)).toBeTruthy());
+    fireEvent.click(screen.getAllByTitle('Edit')[0] as HTMLElement);
+    await screen.findByLabelText('Override fallback 1 thinking');
+  }
+  const row = (index: number) =>
+    screen.getByLabelText(`Override fallback ${index} thinking`) as HTMLSelectElement;
+  const save = () => fireEvent.click(screen.getByText('Save'));
+
+  beforeEach(() => {
+    cleanup();
+    mockConnectionState.value = 'connected';
+    mockRequest.mockReset();
+    mockListProviderAuthStatus.mockReset().mockResolvedValue({ providers: [] });
+    vi.mocked(updateGlobalSettings)
+      .mockReset()
+      .mockResolvedValue(undefined as never);
+  });
+
+  afterEach(() => {
+    cleanup();
+    settingsRef.value = null;
+  });
+
+  it('shows each saved level and writes nothing on open', async () => {
+    await edit();
+
+    expect(row(1).value).toBe('think24k');
+    expect(row(2).value).toBe('');
+    expect(updateGlobalSettings).not.toHaveBeenCalled();
+  });
+
+  it('saves the chosen level on Save and leaves other overrides alone', async () => {
+    await edit();
+
+    fireEvent.change(row(1), { target: { value: 'think8k' } });
+    expect(updateGlobalSettings).not.toHaveBeenCalled();
+    save();
+
+    await waitFor(() =>
+      expect(updateGlobalSettings).toHaveBeenCalledWith({
+        modelFallbackMap: {
+          [key]: [{ ...chain[0], thinkingLevel: 'think8k' }, chain[1]],
+          ...other,
+        },
+      })
+    );
+  });
+
+  it('drops an edit on Cancel', async () => {
+    await edit();
+
+    fireEvent.change(row(1), { target: { value: 'think8k' } });
+    fireEvent.click(screen.getByText('Cancel'));
+    fireEvent.click(screen.getAllByTitle('Edit')[0] as HTMLElement);
+
+    await screen.findByLabelText('Override fallback 1 thinking');
+    expect(row(1).value).toBe('think24k');
+    expect(updateGlobalSettings).not.toHaveBeenCalled();
+  });
+
+  it('keeps each level with its model when reordering', async () => {
+    await edit();
+
+    fireEvent.click(screen.getAllByTitle('Move down')[0] as HTMLElement);
+    await waitFor(() => expect(row(2).value).toBe('think24k'));
+    save();
+
+    await waitFor(() =>
+      expect(updateGlobalSettings).toHaveBeenCalledWith({
+        modelFallbackMap: { [key]: [chain[1], chain[0]], ...other },
+      })
+    );
+  });
+
+  it('removes the saved level when a row goes back to Use default', async () => {
+    await edit();
+
+    fireEvent.change(row(1), { target: { value: '' } });
+    save();
+
+    await waitFor(() => expect(updateGlobalSettings).toHaveBeenCalledTimes(1));
+    const saved = vi.mocked(updateGlobalSettings).mock.calls[0]?.[0].modelFallbackMap;
+    expect(saved?.[key]?.[0]).toEqual({ model: 'claude-sonnet-5', provider: 'anthropic' });
+  });
+
+  it('keeps an unsupported saved level with a warning', async () => {
+    await edit([{ model: 'minimax-m3', provider: 'minimax', thinkingLevel: 'think32k' }]);
+
+    expect(row(1).value).toBe('think32k');
+    expect([...row(1).options].map((option) => option.value)).toEqual(['', 'off', 'think32k']);
+    expect(screen.getByText(/not supported by this model/)).toBeTruthy();
+    expect(updateGlobalSettings).not.toHaveBeenCalled();
+  });
+});

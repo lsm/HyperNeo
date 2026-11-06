@@ -12,6 +12,7 @@ import type { Session } from '@hyperneo/shared';
 
 const run = resolve(process.argv.at(-1)!);
 const cancel = process.argv.includes('--cancel');
+const override = process.argv.includes('--override');
 let resultAnnounced = false;
 let allowInterrupt = () => {};
 const interruptGate = new Promise<void>((done) => {
@@ -184,7 +185,11 @@ try {
   for (const server of registry.servers)
     await hub.request('mcp.registry.setEnabled', { id: server.id, enabled: false });
   await app.settingsManager.updateGlobalSettingsAsync({
-    modelFallbackMap: {},
+    modelFallbackMap: {
+      [override ? 'anthropic/haiku' : 'anthropic/opus']: [
+        { provider: 'anthropic', model: 'sonnet', thinkingLevel: 'think16k' },
+      ],
+    },
     fallbackModels: [{ provider: 'anthropic', model: 'sonnet', thinkingLevel: 'think24k' }],
   });
   const { sessionId } = await hub.request<{ sessionId: string }>('session.create', {
@@ -242,7 +247,7 @@ try {
     assert(oldClosed && oldInterrupted);
     assert.equal(starts.length, 2);
     assert(starts[1].model.includes('sonnet'));
-    assert.equal((evidence.session as Session).config.thinkingLevel, 'think24k');
+    assert.equal((evidence.session as Session).config.thinkingLevel, override ? 'think16k' : 'think24k');
     assert.equal(consumed.length, 2);
     const content = (value: unknown) =>
       (value as { message: { content: unknown } }).message.content;

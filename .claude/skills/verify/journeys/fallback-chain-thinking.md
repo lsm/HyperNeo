@@ -1,4 +1,4 @@
-## Each default fallback row has its own thinking
+## Each fallback row has its own thinking
 
 Build the web UI with `bun run --cwd packages/web build`, then run:
 
@@ -17,11 +17,13 @@ It checks, in Settings > Models against a real isolated daemon:
 - Choosing a level changes only that row and only `fallbackModels`.
 - Move down carries model, provider and thinking together.
 - Use default removes the saved level instead of writing one.
+- In an override's editor, Cancel writes nothing and Save writes only that
+  override, with each level still on its model after a move.
 - After reload at 1280px and 390px the values persist and the control fits.
 
 The runtime side is in `fallback-query-wait.md`: its fallback entry carries a
 level, and the recovered session must end with that level.
 
 Evidence: `evidence/fallback-thinking-settings.json` and
-`evidence/fallback-thinking-{1280,390}.png`. Unsupported saved levels, unknown
+`evidence/{fallback,override}-thinking-{1280,390}.png`. Unsupported saved levels, unknown
 capability and save rollback are covered by the ModelsSettings component tests.
