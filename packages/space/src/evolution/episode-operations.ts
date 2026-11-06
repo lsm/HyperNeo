@@ -1,4 +1,4 @@
-import { errorMessage as failureDetail } from '../../utils/error-message.ts';
+import { errorMessage as failureDetail } from '../../../daemon/src/lib/utils/error-message.ts';
 import type {
   EvolutionEpisode,
   EvolutionLesson,
@@ -12,8 +12,8 @@ import {
   defineOperation,
   type OperationCaller,
   type OperationPolicy,
-} from '../../operations/registry.ts';
-import { TaskWithSpaceFieldsSchema } from '../../tasks/get-operation.ts';
+} from '../../../daemon/src/lib/operations/registry.ts';
+import { TaskWithSpaceFieldsSchema } from '../../../daemon/src/lib/tasks/get-operation.ts';
 import {
   admitEvolutionMutator,
   denyEvolution,
@@ -22,7 +22,7 @@ import {
   type EvolutionAdmissionDependencies,
   type EvolutionAuditWriter,
   type EvolutionGate,
-} from './admission.ts';
+} from '../../../daemon/src/lib/space/evolution/admission.ts';
 import {
   EvolutionEpisodeSchema,
   EvolutionEpisodeStatusSchema,
@@ -33,9 +33,9 @@ import {
   EvolutionPrioritySchema,
   EvolutionProposalSchema,
 } from './episode-schemas.ts';
-import { EvolutionMetricValuesSchema } from './result-schemas.ts';
+import { EvolutionMetricValuesSchema } from '../../../daemon/src/lib/space/evolution/result-schemas.ts';
 import type { EvolutionEpisodeService } from './episode-service.ts';
-import type { EvolutionScopeService } from './scope-service.ts';
+import type { EvolutionScopeService } from '../../../daemon/src/lib/space/evolution/scope-service.ts';
 
 export interface EvolutionEpisodeOperationDependencies extends EvolutionAdmissionDependencies {
   readonly episodeService: Pick<

@@ -15,7 +15,7 @@ import {
   type OperationCaller,
   type OperationPolicy,
 } from '../../operations/registry.ts';
-import type { EvolutionEpisodeService } from './episode-service.ts';
+import type { EvolutionEpisodeService } from '../../../../../space/src/evolution/episode-service.ts';
 import {
   admitEvolutionReader,
   denyEvolution,
@@ -32,7 +32,7 @@ import {
   EvolutionLessonStatusSchema,
   EvolutionProposalSchema,
   EvolutionProposalStatusSchema,
-} from './episode-schemas.ts';
+} from '../../../../../space/src/evolution/episode-schemas.ts';
 import {
   EvolutionEvidenceRefSchema,
   EvolutionMetricSnapshotSchema,

@@ -1,10 +1,10 @@
 import type { EvolutionScope } from '@hyperneo/shared';
-import type { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
-import { oneShotModelIds, runOneShotModel } from '../../agent/one-shot-model.ts';
-import { Logger } from '../../logger.ts';
-import { getProviderService } from '../../provider-service.ts';
-import { getAvailableModels } from '../../model-service.ts';
-import { inferProviderForModel } from '../../providers/registry.ts';
+import type { SpaceRepository } from '../../../daemon/src/storage/repositories/space-repository.ts';
+import { oneShotModelIds, runOneShotModel } from '../../../daemon/src/lib/agent/one-shot-model.ts';
+import { Logger } from '../../../daemon/src/lib/logger.ts';
+import { getProviderService } from '../../../daemon/src/lib/provider-service.ts';
+import { getAvailableModels } from '../../../daemon/src/lib/model-service.ts';
+import { inferProviderForModel } from '../../../daemon/src/lib/providers/registry.ts';
 import type { EpisodeJudgeOutput, EpisodeJudgePromptInput } from './episode-service-types.ts';
 import { buildEpisodeJudgePrompt } from './episode-judge-prompt.ts';
 import { parseEpisodeJudgeJson } from './episode-judge-output.ts';

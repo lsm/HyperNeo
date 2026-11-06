@@ -6,7 +6,7 @@ import type {
   EvolutionAuditEntry,
   EvolutionAuditWriter,
 } from '../../../../src/lib/space/evolution/admission.ts';
-import { EvolutionEpisodeService } from '../../../../src/lib/space/evolution/episode-service.ts';
+import { EvolutionEpisodeService } from '../../../../../space/src/evolution/episode-service.ts';
 import { EvolutionScopeService } from '../../../../src/lib/space/evolution/scope-service.ts';
 import { SpaceGoalService } from '../../../../src/lib/space/goals/service.ts';
 import { ScheduleService } from '../../../../src/lib/schedule/schedule-service.ts';
