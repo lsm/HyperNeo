@@ -122,6 +122,11 @@ describe('admitCreateSessionConfig', () => {
     expect(() => admitUpdateSessionConfig({ toolProfile: 'manual' })).toThrow(/toolProfile/);
   });
 
+  it('rejects client-supplied harness selection until wiring is available', () => {
+    expect(() => admitCreateSessionConfig({ harness: 'codex' })).toThrow(/harness/);
+    expect(() => admitUpdateSessionConfig({ harness: 'sdk' })).toThrow(/harness/);
+  });
+
   it('ignores rejected keys that are present but undefined', () => {
     expect(() => admitCreateSessionConfig({ env: undefined, cwd: undefined })).not.toThrow();
   });
