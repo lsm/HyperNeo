@@ -17,8 +17,8 @@ import {
 import { cn, getRelativeTime } from '../../lib/utils';
 import { toast } from '../../lib/toast';
 import { AUTONOMY_LABELS } from '../../lib/space-constants';
-import { isActionRequired } from '../../lib/task-filters';
-import { getTaskStatusConfig } from '../../lib/task-status';
+import { isActionRequired } from '../../lib/space-task-filters';
+import { getTaskStatusConfig } from '../../lib/space-task-status';
 import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { AutonomyWorkflowSummary } from './AutonomyWorkflowSummary';

@@ -1,6 +1,6 @@
 import type { SpaceTask, SpaceTaskStatus } from '@hyperneo/shared';
 import { describe, expect, it } from 'vitest';
-import { isActionRequired, isActiveTask } from '../task-filters';
+import { isActionRequired, isActiveTask } from '../space-task-filters';
 
 const ALL_STATUSES: SpaceTaskStatus[] = [
   'open',

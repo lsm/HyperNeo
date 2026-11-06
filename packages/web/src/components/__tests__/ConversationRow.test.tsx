@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getSessionSidebarStatus, getTaskSidebarStatus } from '../../lib/session-sidebar-status.ts';
+import { getSessionSidebarStatus } from '../../lib/session-sidebar-status.ts';
+import { getTaskSidebarStatus } from '../../lib/space-task-sidebar-status.ts';
 import { ConversationRow } from '../ConversationRow.tsx';
 
 afterEach(cleanup);

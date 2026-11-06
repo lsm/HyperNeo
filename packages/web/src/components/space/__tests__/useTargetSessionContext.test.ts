@@ -9,13 +9,13 @@ const mockJoinChannel = vi.fn();
 const mockLeaveChannel = vi.fn();
 const mockConnectionState = vi.hoisted(() => ({ value: 'connected' }));
 
-vi.mock('../../lib/connection-manager', () => ({
+vi.mock('../../../lib/connection-manager', () => ({
   connectionManager: {
     getHubIfConnected: () => mockGetHubIfConnected(),
   },
 }));
 
-vi.mock('../../lib/toast', () => ({
+vi.mock('../../../lib/toast', () => ({
   toast: {
     success: vi.fn(),
     error: vi.fn(),
@@ -23,7 +23,7 @@ vi.mock('../../lib/toast', () => ({
   },
 }));
 
-vi.mock('../../lib/state', () => ({
+vi.mock('../../../lib/state', () => ({
   connectionState: mockConnectionState,
 }));
 
