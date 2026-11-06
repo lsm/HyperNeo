@@ -10,6 +10,7 @@ import type { NeoWorkPrReader } from './work-prs.ts';
 import {
   type CodingTurn,
   type CodingTurnMentions,
+  codingTurnSessionKey,
   codingTurnTodos,
   planCodingTurnFacts,
   planCodingTurnUrls,
@@ -75,7 +76,9 @@ export class CodingTurnPrRepository {
     const refs = new Map(turns.map((turn) => [JSON.stringify(turn.ref), turn.ref]));
     return {
       turns,
-      todos: Object.assign({}, ...[...refs.values()].map((ref) => this.todosOf(ref))),
+      todos: Object.fromEntries(
+        [...refs.values()].map((ref) => [codingTurnSessionKey(ref), this.todosOf(ref)])
+      ),
     };
   }
 
