@@ -701,3 +701,131 @@ describe('ModelsSettings — default thinking beside the default model', () => {
     await waitFor(() => expect(select.value).toBe('think8k'));
   });
 });
+
+describe('ModelsSettings — default fallback chain thinking', () => {
+  const settingsRef = globalSettings as { value: unknown };
+  const models = [
+    {
+      id: 'claude-opus-5',
+      display_name: 'Opus',
+      description: '',
+      provider: 'anthropic',
+      thinkingModes: 'granular',
+    },
+    {
+      id: 'claude-sonnet-5',
+      display_name: 'Sonnet',
+      description: '',
+      provider: 'anthropic',
+      thinkingModes: 'granular',
+    },
+    {
+      id: 'minimax-m3',
+      display_name: 'MiniMax M3',
+      description: '',
+      provider: 'minimax',
+      thinkingModes: 'off',
+    },
+    { id: 'custom-1', display_name: 'Custom', description: '', provider: 'custom-endpoint' },
+  ];
+  const chain = [
+    { model: 'claude-opus-5', provider: 'anthropic', thinkingLevel: 'think24k' },
+    { model: 'claude-sonnet-5', provider: 'anthropic' },
+  ];
+
+  async function open(fallbackModels: unknown[]) {
+    settingsRef.value = { model: 'claude-opus-5', modelProvider: 'anthropic', fallbackModels };
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockResolvedValue({ models });
+    render(<ModelsSettings />);
+    await screen.findByLabelText('Fallback 1 thinking');
+    await waitFor(() => expect(screen.getByText(/Opus · /)).toBeTruthy());
+  }
+  const row = (index: number) =>
+    screen.getByLabelText(`Fallback ${index} thinking`) as HTMLSelectElement;
+
+  beforeEach(() => {
+    cleanup();
+    mockConnectionState.value = 'connected';
+    mockRequest.mockReset();
+    mockListProviderAuthStatus.mockReset().mockResolvedValue({ providers: [] });
+    vi.mocked(updateGlobalSettings)
+      .mockReset()
+      .mockResolvedValue(undefined as never);
+  });
+
+  afterEach(() => {
+    cleanup();
+    settingsRef.value = null;
+  });
+
+  it('shows each saved level, keeps unset rows on Use default and writes nothing on open', async () => {
+    await open(chain);
+
+    expect(row(1).value).toBe('think24k');
+    expect(row(2).value).toBe('');
+    expect(row(2).options[0]?.textContent).toBe('Use default');
+    expect(updateGlobalSettings).not.toHaveBeenCalled();
+  });
+
+  it('saves the chosen level on its own row and leaves the others as they were', async () => {
+    await open(chain);
+
+    fireEvent.change(row(2), { target: { value: 'think8k' } });
+
+    await waitFor(() =>
+      expect(updateGlobalSettings).toHaveBeenCalledWith({
+        fallbackModels: [chain[0], { ...chain[1], thinkingLevel: 'think8k' }],
+      })
+    );
+  });
+
+  it('removes the saved level when a row goes back to Use default', async () => {
+    await open(chain);
+
+    fireEvent.change(row(1), { target: { value: '' } });
+
+    await waitFor(() => expect(updateGlobalSettings).toHaveBeenCalledTimes(1));
+    const saved = vi.mocked(updateGlobalSettings).mock.calls[0]?.[0].fallbackModels;
+    expect(saved?.[0]).toEqual({ model: 'claude-opus-5', provider: 'anthropic' });
+    expect(saved?.[1]).toEqual(chain[1]);
+  });
+
+  it('moves model, provider and thinking together when reordering', async () => {
+    await open(chain);
+
+    fireEvent.click(screen.getAllByTitle('Move down')[0] as HTMLElement);
+
+    await waitFor(() =>
+      expect(updateGlobalSettings).toHaveBeenCalledWith({ fallbackModels: [chain[1], chain[0]] })
+    );
+    await waitFor(() => expect(row(2).value).toBe('think24k'));
+    expect(row(1).value).toBe('');
+  });
+
+  it('offers what the row model supports and keeps an unsupported saved level with a warning', async () => {
+    await open([{ model: 'minimax-m3', provider: 'minimax', thinkingLevel: 'think32k' }]);
+
+    expect(row(1).value).toBe('think32k');
+    expect([...row(1).options].map((option) => option.value)).toEqual(['', 'off', 'think32k']);
+    expect(screen.getByText(/not supported by this model/)).toBeTruthy();
+    expect(updateGlobalSettings).not.toHaveBeenCalled();
+  });
+
+  it('says when a row model has no known thinking support', async () => {
+    await open([{ model: 'custom-1', provider: 'custom-endpoint' }]);
+
+    expect(screen.getByText(/support for this model is unknown/)).toBeTruthy();
+    expect(row(1).options.length).toBe(8);
+  });
+
+  it('puts the row back when the save fails', async () => {
+    vi.mocked(updateGlobalSettings).mockRejectedValue(new Error('offline'));
+    await open(chain);
+
+    fireEvent.change(row(1), { target: { value: 'think8k' } });
+
+    await waitFor(() => expect(updateGlobalSettings).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(row(1).value).toBe('think24k'));
+  });
+});
