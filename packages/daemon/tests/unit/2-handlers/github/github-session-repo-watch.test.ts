@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { GitHubEventExtension } from '../../../../src/lib/external-events/github';
 import { SESSION_EVENT_SCOPE } from '../../../../src/lib/external-events/session-external-event-store';
 import { githubRepoOfTopic } from '../../../../src/lib/external-events/session-event-operations';
@@ -95,6 +98,32 @@ describe('watchSessionRepo', () => {
     expect(extension.repo.listPollingRepos(SESSION_EVENT_SCOPE).map((row) => row.repo)).toEqual([
       'widgets',
     ]);
+  });
+
+  test('checks the repo through gh when the daemon has no token', async () => {
+    const bin = mkdtempSync(join(tmpdir(), 'hyperneo-gh-watch-'));
+    const saved = {
+      PATH: process.env.PATH,
+      GH_TOKEN: process.env.GH_TOKEN,
+      GITHUB_TOKEN: process.env.GITHUB_TOKEN,
+    };
+    writeFileSync(
+      join(bin, 'gh'),
+      `#!/bin/sh\nprintf 'HTTP/2.0 200 OK\\r\\nContent-Type: application/json\\r\\n\\r\\n{}'\n`
+    );
+    chmodSync(join(bin, 'gh'), 0o700);
+    process.env.PATH = `${bin}:${saved.PATH}`;
+    delete process.env.GH_TOKEN;
+    delete process.env.GITHUB_TOKEN;
+    try {
+      extension = new GitHubEventExtension(freshDb(), undefined, { getPollIntervalMs: () => 0 });
+      expect(await extension.watchSessionRepo('acme', 'widgets')).toBeNull();
+    } finally {
+      for (const [key, value] of Object.entries(saved))
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      rmSync(bin, { recursive: true });
+    }
   });
 
   test('answers that the token cannot read a repo GitHub hides from it, and keeps the watch', async () => {
