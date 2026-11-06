@@ -13,7 +13,9 @@ test('migration 482 dates old binds from when they started, and leaves other tar
   runMigration482(db);
   const bound = (id: string) =>
     db
-      .prepare("SELECT json_extract(target, '$.boundAt') AS at FROM neo_todo_sessions WHERE todo_id = ?")
+      .prepare(
+        "SELECT json_extract(target, '$.boundAt') AS at FROM neo_todo_sessions WHERE todo_id = ?"
+      )
       .get(id);
   expect([bound('old'), bound('new'), bound('sent')]).toEqual([{ at: 7 }, { at: 9 }, { at: null }]);
   db.close();

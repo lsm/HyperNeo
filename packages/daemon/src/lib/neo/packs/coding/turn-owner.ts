@@ -4,7 +4,8 @@ import type { WorkRef } from '../../../drivers/types.ts';
 import type { WorkTurnMention } from '../../../../storage/repositories/work-turn-repository.ts';
 import { codingPrKey } from './pr-key.ts';
 
-export type CodingTurn = WorkTurnMention;
+export type CodingTurnBind = { todo: string; boundAt: number; finishedAt: number | null };
+export type CodingTurn = WorkTurnMention & { bound?: readonly CodingTurnBind[] };
 export type CodingTurnTodos = Readonly<Record<string, string>>;
 export type CodingSessionTodos = Readonly<Record<string, CodingTurnTodos>>;
 export type CodingTurnMentions = { turns: readonly CodingTurn[]; todos: CodingSessionTodos };
@@ -26,11 +27,30 @@ const todosIn = (turn: Pick<CodingTurn, 'id' | 'inputs'>, todos: CodingTurnTodos
   ...new Set([turn.id, ...turn.inputs].flatMap((id) => todos[id] ?? [])),
 ];
 
+const bindsOf = (turn: CodingTurn) =>
+  (turn.bound ?? []).filter(
+    ({ boundAt, finishedAt }) =>
+      turn.endedAt >= boundAt && (finishedAt === null || turn.startedAt <= finishedAt)
+  );
+
+const startedAfterBind = (turn: CodingTurn) =>
+  turn.inputs.length > 0 && bindsOf(turn).every(({ boundAt }) => turn.startedAt > boundAt);
+
 export function codingTurnTodos(turn: CodingTurn, todos: CodingTurnTodos): string[] {
   const own = todosIn(turn, todos);
-  return own.length || turn.inputs.length || !turn.previous || !ABORTED.test(turn.previous.ended)
-    ? own
-    : todosIn(turn.previous, todos);
+  if (own.length) return own;
+  if (!turn.inputs.length && turn.previous && ABORTED.test(turn.previous.ended)) {
+    const continued = todosIn(turn.previous, todos);
+    if (continued.length) return continued;
+  }
+  return startedAfterBind(turn) ? [] : bindsOf(turn).map(({ todo }) => todo);
+}
+
+export function codingTurnBoundUnknown(turn: CodingTurn, todos: CodingTurnTodos): boolean {
+  const binds = bindsOf(turn);
+  return (
+    binds.length > 0 && !todosIn(turn, todos).length && (startedAfterBind(turn) || binds.length > 1)
+  );
 }
 
 export const codingTurnSessionKey = ({ adapter, id, daemon }: WorkRef) =>
@@ -54,6 +74,9 @@ export function planCodingTurnOwner(
   if (new Set(placing.map((turn) => codingTurnSessionKey(turn.ref))).size > 1)
     return { state: 'unknown' };
   if (!reported.length && (inside.length > 1 || inside[0].finalUrls.some(codingPrKey)))
+    return { state: 'unknown' };
+  const sessionTodos = (turn: CodingTurn) => todos[codingTurnSessionKey(turn.ref)] ?? {};
+  if (placing.some((turn) => codingTurnBoundUnknown(turn, sessionTodos(turn))))
     return { state: 'unknown' };
   const owners = [
     ...new Set(

@@ -448,7 +448,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
         sent_receipt = NULL, live_status = NULL, start_interrupted = 0, needs_you_since = NULL`)
       .run(
         todoId,
-        JSON.stringify({ verb: 'adopt', ref }),
+        JSON.stringify({ verb: 'adopt', ref, boundAt: now }),
         JSON.stringify(ref),
         now,
         now,
