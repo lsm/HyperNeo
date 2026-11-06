@@ -313,6 +313,33 @@ describe('device pairing', () => {
     db.close();
   });
 
+  test('redeeming an agent code in a browser retains the existing device cookie', async () => {
+    const { db, repo } = setup();
+    try {
+      const route = createPairRoute({
+        repo,
+        limiter: createPairingLimiter(),
+        now: () => 1_000_000,
+      });
+      const made = repo.createCode('agent', null, true, 1_000_000);
+      const response = await route(
+        new Request('https://daemon.example/pair', {
+          method: 'POST',
+          headers: { origin: 'https://daemon.example', cookie: 'hyperneo_device=existing-human' },
+          body: JSON.stringify({ code: made.code, name: 'Reader' }),
+        })
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get('set-cookie')).toBeNull();
+      expect(await response.json()).toMatchObject({
+        kind: 'agent',
+        credential: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   test('a browser gets its credential only as an HttpOnly cookie, Secure when its page is HTTPS', async () => {
     const { db, repo } = setup();
     const route = createPairRoute({ repo, limiter: createPairingLimiter(), now: () => 1_000_000 });

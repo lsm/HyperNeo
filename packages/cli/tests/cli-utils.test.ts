@@ -19,6 +19,8 @@ describe('printServerUrls', () => {
     ['0.0.0.0', '127.0.0.1'],
     ['::', '127.0.0.1'],
     ['::1', '[::1]'],
+    ['0:0:0:0:0:0:0:1', '[0:0:0:0:0:0:0:1]'],
+    ['2001:db8::1', '[2001:db8::1]'],
     ['daemon.example', 'daemon.example'],
   ])('advertises the issuer origin for host %s', (host, dialable) => {
     const output = spyOn(console, 'log').mockImplementation(() => {});
