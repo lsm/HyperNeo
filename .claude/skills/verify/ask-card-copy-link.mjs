@@ -44,8 +44,14 @@ try {
       assert.equal(copied.split('\n').length, 1);
       assert.equal(page.url(), url);
       assert.deepEqual(operations.slice(count), []);
+      const target = copied.slice(copied.lastIndexOf('](') + 2, -1);
+      const response = await context.request.get(target);
+      assert.equal(response.status(), 200);
+      assert.match(response.headers()['content-type'], /^text\/markdown/);
+      assert.equal(response.headers()['cache-control'], 'no-store');
+      assert((await response.text()).startsWith(`# ${fixture.label}\n`));
       await page.getByRole('menuitem', { name: label, exact: true }).waitFor({ state: 'hidden' });
-      observed.push({ width, language, copied, stayedOnCard: true, extraOperations: [] });
+      observed.push({ width, language, copied, stayedOnCard: true, extraOperations: [], targetStatus: 200, targetType: 'text/markdown' });
       await context.close();
     }
   }

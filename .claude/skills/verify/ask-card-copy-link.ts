@@ -28,6 +28,9 @@ const front = Bun.serve({
   port: 0,
   async fetch(request, server) {
     const path = new URL(request.url).pathname;
+    if (path.startsWith('/ask/')) {
+      return fetch(new Request(`http://127.0.0.1:${app.server.port}${path}`, request));
+    }
     if (path === '/ws') {
       if (server.upgrade(request, { data: {
         connectionSessionId: 'global',

@@ -19,11 +19,14 @@ menu and click Copy link / 复制链接. The real clipboard must equal one Markd
 line containing the full escaped card title and `<location.origin>/ask/<askId>.md`. The
 fixture covers brackets, backslashes and a multiline title. The page URL stays
 unchanged and clicking Copy link sends no operation request. A synthetic query
-and fragment on the page must be absent from the copied link. Inspect each saved
+and fragment on the page must be absent from the copied link. Then fetch the copied
+URL with the isolated credential and require HTTP 200, text/markdown, no-store,
+and the expected card heading. The fixture forwards that path to the real daemon
+HTTP handler supplied by the base branch. Inspect each saved
 menu PNG and browser.json. Component tests additionally cover settled cards and
 copying while mutation actions are disabled.
 
 The helper closes its browser, listeners and daemon even on failure. The shared
 wrapper preserves evidence and removes its temporary HOME/DB. No provider keys,
-live daemon or native navigation are involved. The separate Markdown GET endpoint
-is outside this copy-only journey.
+live daemon or native navigation are involved. The Markdown GET implementation
+belongs to the base branch; this journey verifies that the copied target resolves.
