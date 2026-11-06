@@ -365,7 +365,6 @@ describe('QueryRunner', () => {
         },
         messageQueue: queue,
       });
-      // @ts-expect-error The injectable factory is added after this pin.
       runner = new QueryRunner(ctx, factory);
       const handle = jest.spyOn(runner, 'handleSDKMessage').mockImplementation(async () => {});
       await runner.start();
