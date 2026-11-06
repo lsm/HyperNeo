@@ -24,7 +24,8 @@ then grows the durable row. The historical flight draft lost 262px with a fine
 pointer and 153px with touch at 390px. The independent pre-fix dev reproduction
 lost 362px in its first delayed multiline case.
 
-Then scroll up in one window and send new content from a second paired window.
+Then use actual wheel input to scroll up in one window and send new content from
+a second paired window.
 Require the first window's visible message anchor to stay within 2px and remain
 away from bottom. Inspect pending/durable and manual-reading screenshots, the
 per-frame evidence.json and manual-reading.json.

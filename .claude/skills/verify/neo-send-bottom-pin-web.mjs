@@ -147,12 +147,13 @@ try {
         );
       }
     }
+    await page.mouse.move(195, 350);
+    await page.mouse.wheel(0, -650);
+    await page.waitForTimeout(250);
     const anchor = await page.evaluate(() => {
       const rail = document.querySelector('.neo-chat-rail');
       const main = document.querySelector('main.neo-scroll');
       const scroll = rail.scrollHeight > rail.clientHeight + 100 ? rail : main;
-      scroll.scrollTop = 400;
-      scroll.dispatchEvent(new Event('scroll'));
       const entry = [...document.querySelectorAll('[data-public-entry]')].find(
         (element) =>
           element.getBoundingClientRect().bottom > scroll.getBoundingClientRect().top + 30
