@@ -11,6 +11,12 @@ describe('neoFlightBox', () => {
     expect(neoFlightBox(from, to, 0)).toEqual({ ...from, chrome: 0 });
     expect(neoFlightBox(from, to, 1)).toEqual({ ...to, chrome: 1 });
   });
+  it('lands exactly on native browser rectangle bounds at both endpoints', () => {
+    const nativeFrom = new DOMRect(from.x, from.y, from.width, from.height);
+    const nativeTo = new DOMRect(to.x, to.y, to.width, to.height);
+    expect(neoFlightBox(nativeFrom, nativeTo, 0)).toEqual({ ...from, chrome: 0 });
+    expect(neoFlightBox(nativeFrom, nativeTo, 1)).toEqual({ ...to, chrome: 1 });
+  });
   it('follows the phone easing and bows to the right while size changes linearly', () => {
     const box = neoFlightBox(from, to, 0.5);
     expect(box.chrome).toBeCloseTo(0.77556, 4);
