@@ -64,7 +64,7 @@ import type { SpaceAgentLookup } from '../../workflows/workflow-manager.ts';
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
-import { createConversationFrictionEvidenceHandler } from '../../job-handlers/conversation-friction-evidence.handler.ts';
+import { createConversationFrictionEvidenceHandler } from '../job-handlers/conversation-friction-evidence.handler.ts';
 import { handleGoalAutomationExecute } from '../job-handlers/goal-automation-execute.handler.ts';
 import { GoalAutomationService } from '../goals/automation-service.ts';
 import {
@@ -110,7 +110,7 @@ import { setupTaskScheduleHandlers } from './task-schedule-handlers.ts';
 import { setupSpaceGoalHandlers } from './space-goal-handlers.ts';
 import { subscribeAgentActivationOutcomeRedelivery } from '../goals/agent-activation-outcome-redelivery.ts';
 import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../goals/owner-change-outcome-redelivery.ts';
-import { setupEvolutionHandlers } from '../../rpc-handlers/evolution-handlers.ts';
+import { setupEvolutionHandlers } from './evolution-handlers.ts';
 import { EvolutionConversationAnalysisService } from '../../evolution/conversation-analysis-service.ts';
 import { EvolutionEpisodeService } from '../../evolution/episode-service.ts';
 import { EvolutionScopeService } from '../../evolution/scope-service.ts';
