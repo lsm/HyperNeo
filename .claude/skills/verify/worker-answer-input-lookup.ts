@@ -99,7 +99,9 @@ try {
   await app.spaceRuntimeService.ready(); await app.jobProcessor.stop();
   await seed();
   if (peerMode) {
-    console.log(JSON.stringify({ port: app.server.port }));
+    const pairing = await rpc('device.pair.create', { kind: 'human', name: 'Synthetic querying daemon' });
+    assert(pairing.ok && pairing.approval === 'approved');
+    console.log(JSON.stringify({ port: app.server.port, code: pairing.code }));
     await new Response(Bun.stdin).text();
   } else {
     const lookup = (name: string, extra: Record<string, unknown> = {}, adapter = 'codex-desktop') => rpc('work.read', { sessionId: 'worker', input: { adapter, marker: marker(name) }, ...extra });
@@ -146,8 +148,8 @@ try {
     let ready = '';
     while (!ready.includes('\n')) { const part = await reader.read(); assert(!part.done); ready += new TextDecoder().decode(part.value); }
     reader.releaseLock();
-    const port = JSON.parse(ready.split('\n')[0]).port;
-    await rpc('daemon.attach', { daemonId: 'synthetic-owner', url: `ws://127.0.0.1:${port}/ws` });
+    const { port, code } = JSON.parse(ready.split('\n')[0]);
+    await rpc('daemon.attach', { daemonId: 'synthetic-owner', url: `ws://127.0.0.1:${port}/ws`, code });
     const remote = await lookup('remote-only', { daemon: 'synthetic-owner' });
     assert.equal(remote.value.turns[0].messageId, 'peer-input');
     assert.deepEqual(remote.value.matchedInput, { adapter: 'codex-desktop', marker: marker('remote-only') });
