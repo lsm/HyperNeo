@@ -165,7 +165,7 @@ describe('todos given work later', () => {
   });
 
   test('coding work with a start target but no place is refused when added or edited', async () => {
-    const { db, store, invoke, step } = setup();
+    const { db, store, sessions, invoke, step } = setup();
     try {
       const ask = store.openAsk({
         id: 'coding-ask',
@@ -185,6 +185,7 @@ describe('todos given work later', () => {
       expect(
         await invoke('neo.todo.add', { askId: ask.id, ...step('New'), ...placeless })
       ).toMatchObject({ ok: false, reason: expect.stringContaining('place_required') });
+      expect(store.listTodos(ask.id)).toEqual([]);
       const waiting = store.addTodo(
         'waiting',
         ask.id,
@@ -203,6 +204,8 @@ describe('todos given work later', () => {
         ok: false,
         reason: expect.stringContaining('place_required'),
       });
+      expect(store.getTodo(waiting.id)).toEqual(waiting);
+      expect(sessions.get(waiting.id)).toBeNull();
     } finally {
       db.close();
     }

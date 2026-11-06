@@ -6,8 +6,8 @@ import type { SpaceRepository } from '../../../storage/repositories/space-reposi
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
-import type { EvolutionTraceEvidenceService } from './trace-evidence-service.ts';
-import type { TraceEvidenceDiagnostic } from './trace-evidence-types.ts';
+import type { EvolutionTraceEvidenceService } from '../../../../../space/src/evolution/trace-evidence-service.ts';
+import type { TraceEvidenceDiagnostic } from '../../../../../space/src/evolution/trace-evidence-types.ts';
 
 export interface EvolutionScopeServiceDeps {
   evolutionRepo: EvolutionRepository;

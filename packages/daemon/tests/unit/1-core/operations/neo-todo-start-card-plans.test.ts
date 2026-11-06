@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import {
-  neoTodosAwaitingCancellationCard,
+  neoTodosAwaitingNeoDecision,
   planNeoQuestionPrune,
   planNeoStartRelease,
 } from '../../../../src/lib/neo/todo-start-gate.ts';
@@ -82,7 +82,7 @@ describe('planNeoQuestionPrune', () => {
   });
 });
 
-describe('neoTodosAwaitingCancellationCard', () => {
+describe('neoTodosAwaitingNeoDecision', () => {
   const family = [
     step('gone', { state: 'removed', blockedBy: null }),
     step('first', { state: 'todo', blockedBy: null, dependsOn: ['gone'] }),
@@ -90,13 +90,11 @@ describe('neoTodosAwaitingCancellationCard', () => {
 
   test('finds a step in an open ask that no card lists', () => {
     const ask = { id: 'ask', status: 'open' } as NeoAsk;
-    expect(neoTodosAwaitingCancellationCard(family, ask, []).map(({ id }) => id)).toEqual([
-      'first',
-    ]);
+    expect(neoTodosAwaitingNeoDecision(family, ask, []).map(({ id }) => id)).toEqual(['first']);
   });
 
   test('asks nothing once the ask is closed', () => {
     const ask = { id: 'ask', status: 'done' } as NeoAsk;
-    expect(neoTodosAwaitingCancellationCard(family, ask, [])).toEqual([]);
+    expect(neoTodosAwaitingNeoDecision(family, ask, [])).toEqual([]);
   });
 });
