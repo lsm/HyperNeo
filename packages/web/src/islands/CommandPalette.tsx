@@ -357,9 +357,8 @@ export function CommandPalette() {
 
   const allSessions = sessions.value;
   const spacesWithTasks = webExtension('space')?.store.spacesWithTasks.value ?? EMPTY_SPACES;
-  const extensions = extensionNav()
-    .map((nav) => nav.extension as string)
-    .join();
+  const extensions: string[] = extensionNav().map((nav) => nav.extension);
+  const extensionsKey = extensions.join();
 
   const items = useMemo(() => {
     const forcedCommand = query.trimStart().startsWith('>');
@@ -381,13 +380,13 @@ export function CommandPalette() {
       return query.trim() ? [...commands.slice(0, 8), ...quickItems.slice(0, 8)] : commands;
     }
     return query.trim() ? [...quickItems, ...commands.slice(0, 5)] : quickItems;
-  }, [query, mode, messageResults, allSessions, spacesWithTasks, registryVersion, extensions]);
+  }, [query, mode, messageResults, allSessions, spacesWithTasks, registryVersion, extensionsKey]);
 
   const groupedItems = useMemo(() => {
     const groups: Array<{ key: PaletteItem['group']; items: PaletteItem[] }> = [];
     for (const item of items) {
-      const last = groups.at(-1);
-      if (last?.key === item.group) {
+      const last = groups.find((group) => group.key === item.group);
+      if (last) {
         last.items.push(item);
       } else {
         groups.push({ key: item.group, items: [item] });

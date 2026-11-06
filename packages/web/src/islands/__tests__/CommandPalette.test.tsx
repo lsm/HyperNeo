@@ -8,6 +8,7 @@ import { commandRegistry } from '../../lib/command-registry.ts';
 import { commandPaletteModeSignal, commandPaletteOpenSignal } from '../../lib/signals.ts';
 import { declareExtensionNav, registerWebExtension } from '../../lib/web-extensions.ts';
 import { spaceNav } from '../../lib/space-nav';
+import type { SpaceWebExtension } from '../../lib/web-extensions';
 
 describe('CommandPalette', () => {
   beforeEach(() => {
@@ -52,6 +53,51 @@ describe('CommandPalette', () => {
     expect(await screen.findByText('Go to chats')).toBeTruthy();
     expect(screen.queryByText('Go to spaces')).toBeNull();
     expect(screen.queryByText('Space: Overview')).toBeNull();
+  });
+
+  it('shows one header for a category registered in two runs', async () => {
+    const command = (id: string, category: 'navigation' | 'settings') => ({
+      id,
+      label: id,
+      category,
+      run: () => {},
+    });
+    commandRegistry.registerAll([
+      command('nav.first', 'navigation'),
+      command('settings.one', 'settings'),
+      command('nav.second', 'navigation'),
+    ]);
+    commandPaletteOpenSignal.value = true;
+    render(<CommandPalette />);
+
+    expect(await screen.findByText('nav.second')).toBeTruthy();
+    expect(screen.getAllByText('Navigation')).toHaveLength(1);
+  });
+
+  it('keeps commands of an extension whose id only contains a loaded one hidden', async () => {
+    declareExtensionNav(spaceNav);
+    registerWebExtension('space', {
+      store: { initGlobalList: async () => {}, spacesWithTasks: { value: [] } },
+    } as unknown as SpaceWebExtension);
+    commandRegistry.register({
+      id: 'other.command',
+      label: 'Other command',
+      category: 'navigation',
+      extension: 'spa',
+      run: () => {},
+    });
+    commandRegistry.register({
+      id: 'nav.chats',
+      label: 'Go to chats',
+      category: 'navigation',
+      run: () => {},
+    });
+    commandPaletteOpenSignal.value = true;
+    render(<CommandPalette />);
+
+    expect(await screen.findByText('Go to chats')).toBeTruthy();
+    expect(screen.queryByText('Other command')).toBeNull();
+    registerWebExtension('space', null);
   });
 
   it('renders nothing visible when closed', () => {
