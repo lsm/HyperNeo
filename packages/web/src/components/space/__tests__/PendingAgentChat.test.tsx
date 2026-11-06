@@ -10,6 +10,10 @@ const { taskActivity, activateTaskNodeAgent, replaceOverlayHistory } = vi.hoiste
 vi.mock('../../../lib/space-store.ts', () => ({
   spaceStore: { taskActivity, activateTaskNodeAgent },
 }));
+vi.mock('../../../lib/space-router.ts', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../../../lib/router.ts')),
+}));
 vi.mock('../../../lib/router.ts', () => ({ replaceOverlayHistory }));
 
 import { PendingAgentChat } from '../PendingAgentChat';

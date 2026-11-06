@@ -11,7 +11,7 @@ import {
   navigateToSpaceMemories,
   navigateToSpaces,
   navigateToSpaceTasks,
-} from '../../lib/router.ts';
+} from '../../lib/space-router.ts';
 import {
   currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,

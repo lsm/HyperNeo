@@ -33,6 +33,10 @@ vi.mock('../../lib/space-store', () => ({
     },
   },
 }));
+vi.mock('../../lib/space-router', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../../lib/router')),
+}));
 vi.mock('../../lib/router', () => ({
   navigateToSpaceAgent: (...args: unknown[]) => mockNavigateToSpaceAgent(...args),
 }));

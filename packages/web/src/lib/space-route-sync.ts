@@ -18,7 +18,7 @@ import {
   navigateToSpacesPage,
   navigateToSpaceTask,
   navigateToSpaceTasks,
-} from './router.ts';
+} from './space-router.ts';
 import { navSectionSignal } from './signals.ts';
 import {
   currentSpaceAgentHandleSignal,

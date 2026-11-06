@@ -11,6 +11,11 @@ import { neoSettingsPackBriefs } from '../../../../src/lib/neo/packs/index.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 
 describe('root Neo system prompt', () => {
+  test('adds every ask step together before starting the first', () => {
+    expect(NEO_ROOT_PROMPT).toContain(
+      'Add all ask steps as todos together, in order, before starting the first.'
+    );
+  });
   test.each([
     { packs: [] },
     { packs: ['coding'] },

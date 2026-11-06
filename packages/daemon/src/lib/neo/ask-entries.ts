@@ -179,6 +179,13 @@ function projectNeoTodoEntries(
 ): NeoTodoEntry[] {
   return shown.map((todo) => ({
     ...todo,
+    doneWhen:
+      todo.check?.pack === 'core' &&
+      todo.check.kind === 'evidence' &&
+      todo.check.params.path === todoEvidenceFile(todo.id) &&
+      todo.doneWhen.includes(todoEvidenceFile(todo.id))
+        ? ''
+        : todo.doneWhen,
     evidence: internalCompletionEvidence(todo) ? null : todo.evidence,
     ...neoTodoStatusLine(
       todo,

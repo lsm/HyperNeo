@@ -70,6 +70,8 @@ export interface ExtensionNav {
     overlayOpen: boolean;
     overlaySessionId: string | null;
     sessionId: string | null;
+    closeOverlay(): void;
+    clearOverlay(): void;
   } | null;
   recordingReturn(
     scopeId: string,

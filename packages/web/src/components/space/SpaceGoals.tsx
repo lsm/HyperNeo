@@ -2,7 +2,7 @@ import type { SpaceGoal, SpaceGoalEvent, SpaceGoalStatus, SpaceTask } from '@hyp
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { getGoalStatusClasses, getGoalStatusConfig } from '../../lib/goal-status';
-import { navigateToSpaceTask } from '../../lib/router';
+import { navigateToSpaceTask } from '../../lib/space-router';
 import { rightPanelTargetSignal } from '../../lib/signals';
 import { currentSpaceGoalIdSignal } from '../../lib/space-signals';
 import { spaceStore } from '../../lib/space-store';

@@ -33,12 +33,12 @@ import type {
   EvolutionRollupApplyResponse,
   MessageHub,
 } from '@hyperneo/shared';
-import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
-import type { EvolutionEpisodeService } from '../space/evolution/episode-service.ts';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
+import type { EvolutionEpisodeService } from '../evolution/episode-service.ts';
 import type {
   AddManualNoteEvidenceParams,
   EvolutionScopeService,
-} from '../space/evolution/scope-service.ts';
+} from '../evolution/scope-service.ts';
 
 interface RecordPayload {
   [key: string]: unknown;

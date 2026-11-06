@@ -9,7 +9,7 @@ import {
 } from '@hyperneo/shared';
 import { useEffect, useState } from 'preact/hooks';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { navigateToSpaceAgent, navigateToSpaceConfigure } from '../../lib/router';
+import { navigateToSpaceAgent, navigateToSpaceConfigure } from '../../lib/space-router';
 import { spaceStore } from '../../lib/space-store';
 import { getSessionSidebarStatus } from '../../lib/session-sidebar-status';
 import { getSpaceSessionUnreadCount } from '../../lib/space-unread';

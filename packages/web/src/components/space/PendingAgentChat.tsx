@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { ChevronLeftGlyph } from '../icons/common-glyphs.tsx';
 import { generateUUID } from '@hyperneo/shared';
 import { cn } from '../../lib/utils.ts';
-import { replaceOverlayHistory } from '../../lib/router.ts';
+import { replaceOverlayHistory } from '../../lib/space-router.ts';
 import { spaceStore } from '../../lib/space-store.ts';
 
 interface PendingAgentChatProps {

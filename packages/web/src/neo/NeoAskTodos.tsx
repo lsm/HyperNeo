@@ -147,7 +147,7 @@ function TodoRow({
       >
         {number === undefined
           ? neoTodoStatus(todo)
-          : t('todo.doneWhen', { doneWhen: todo.doneWhen })}
+          : todo.doneWhen && t('todo.doneWhen', { doneWhen: todo.doneWhen })}
       </span>
     </>
   );

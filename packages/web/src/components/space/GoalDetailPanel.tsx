@@ -1,6 +1,6 @@
 import type { SpaceGoal, SpaceLongHorizonAgent } from '@hyperneo/shared';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { navigateToSpaceTask } from '../../lib/router';
+import { navigateToSpaceTask } from '../../lib/space-router';
 import { connectionState } from '../../lib/state';
 import { spaceStore } from '../../lib/space-store';
 import { getGoalStatusConfig } from '../../lib/goal-status';

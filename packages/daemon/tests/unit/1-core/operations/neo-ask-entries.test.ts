@@ -27,6 +27,7 @@ import {
   neoSnapshotOmitted,
 } from '../../../../src/lib/neo/snapshot-compact.ts';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
+import { todoEvidenceFile } from '../../../../src/lib/work-locations.ts';
 
 const todo = (patch: Partial<NeoTodo>): NeoTodo =>
   ({
@@ -40,6 +41,49 @@ const todo = (patch: Partial<NeoTodo>): NeoTodo =>
   }) as NeoTodo;
 const ask = (status: NeoAsk['status'] = 'open') => ({ status }) as NeoAsk;
 const question = (state: NeoQuestion['state']) => ({ state }) as NeoQuestion;
+
+describe('human-facing completion conditions', () => {
+  test('keeps custom wording on a todo with an assigned evidence check', () => {
+    const original = todo({
+      askId: 'ask',
+      doneWhen: 'The human has reviewed the summary.',
+      check: { pack: 'core', kind: 'evidence', params: { path: todoEvidenceFile('t') } },
+    });
+    const [entry] = projectNeoAskEntries(
+      [{ id: 'ask', status: 'open' } as NeoAsk],
+      { todos: [original], questions: [], links: new Map() },
+      []
+    );
+    expect(entry.todos[0].doneWhen).toBe(original.doneWhen);
+  });
+
+  test.each(['assigned', 'external', 'different-todo', 'different-pack', 'no-check'])(
+    'projects %s evidence without changing the stored completion',
+    (kind) => {
+      const path = todoEvidenceFile(kind === 'different-todo' ? 'other' : 't');
+      const original = todo({
+        askId: 'ask',
+        doneWhen: `File ${path} exists.`,
+        check:
+          kind === 'no-check'
+            ? null
+            : {
+                pack: kind === 'different-pack' ? 'custom' : 'core',
+                kind: 'evidence',
+                params: { path: kind === 'external' ? '/results/report.md' : path },
+              },
+      });
+      const [entry] = projectNeoAskEntries(
+        [{ id: 'ask', status: 'open' } as NeoAsk],
+        { todos: [original], questions: [], links: new Map() },
+        []
+      );
+      expect(entry.todos[0].doneWhen).toBe(kind === 'assigned' ? '' : original.doneWhen);
+      expect(entry.todos[0].check).toEqual(original.check);
+      expect(original.doneWhen).toContain(path);
+    }
+  );
+});
 
 function facts(store: NeoAskTodoRepository, sessions: NeoTodoSessionRepository, asks: NeoAsk[]) {
   const ids = asks.map((ask) => ask.id);
